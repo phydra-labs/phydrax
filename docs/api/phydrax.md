@@ -342,6 +342,18 @@ routes; `RowRelation` represents fixed-width target rows with explicit case
 boundaries. Invalid capacity slots are numerically inert under routing and
 reduction, including when their stored payloads are non-finite.
 
+`gather_routes`, `route_reduce`, and `linear_apply` accept
+`accumulation="fast"` (the unchanged default), `"deterministic"`, or
+`"compensated"`. Ordered gathers sequence route events so their automatic
+transposes avoid duplicate-index atomic additions. Ordered sums and means follow
+existing route storage order, or slot order within each case-local row, without
+sorting or adding prepared state. Compensated reduction supports sums and means
+only; ordinary JVP, VJP, and mixed derivatives remain available.
+`linear_apply` applies the policy to both gathering and target reduction. This
+does not promise reproducibility for arbitrary surrounding callbacks or different
+compiled algorithms. Native symmetric-contraction projections select deterministic
+execution without changing coefficient identity or model artifact layout.
+
 `SparseLinearMap` attaches scalar route coefficients and exposes forward,
 transpose, and conjugate-adjoint actions while preserving trailing payload
 dimensions. `SparseCoordinateOperator` binds the same route algebra to

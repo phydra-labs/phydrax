@@ -593,38 +593,111 @@ def test_row_relation_cases_stay_isolated() -> None:
     np.testing.assert_allclose(result.receiver_outputs, expected, rtol=1e-14)
 
 
+def _passthrough_message(
+    parameters: dict[str, Array],
+    source: dict[str, Array],
+    receiver: dict[str, Array],
+    edge: Array,
+) -> dict[str, Array]:
+    # Copies source features without arithmetic, so an aggregate depends only
+    # on which events the route sums and in what order.
+    return {"s": source["h"], "v": jnp.broadcast_to(source["x"][:, None], (3, 2))}
+
+
+def _identity_epilogue(
+    parameters: dict[str, Array], receiver: dict[str, Array], aggregate: dict[str, Array]
+) -> dict[str, Array]:
+    return aggregate
+
+
 def test_traced_preparation_matches_host_preparation() -> None:
-    relation, *_ = _relation()
+    relation, source_index, target_index, valid = _relation()
     parameters, sources, receivers, edges = _data()
     plan = phx.sparse.StreamedRelationPlan(
         receiver_tile=2, edge_tile=3, accumulation="deterministic"
     )
-    payload = phx.sparse.StreamedPayloadSpec(_MESSAGE, _OUTPUT)
-
-    def run(source: Array, target: Array, valid: Array, epoch: Array) -> Any:
-        traced = phx.sparse.EdgeRelation(
-            source,
-            target,
-            source_size=SOURCE_COUNT,
-            target_size=RECEIVER_COUNT,
-            valid=valid,
-        )
-        prepared = plan.prepare(traced, owner_id="test-rebuild", epoch=epoch)
-        return prepared.evaluate(
-            payload, _message, _epilogue, parameters, sources, receivers, edges
-        )
-
-    traced = jax.jit(run)(
-        relation.source_indices, relation.target_indices, relation.valid, jnp.asarray(4)
-    )
-    host = plan.prepare(relation, owner_id="test-rebuild").evaluate(
-        payload, _message, _epilogue, parameters, sources, receivers, edges
+    host_prepared = plan.prepare(relation, owner_id="test-rebuild")
+    arguments = (
+        relation.source_indices,
+        relation.target_indices,
+        relation.valid,
+        jnp.asarray(4),
     )
 
+    def traced_program(message: Any, epilogue: Any, output: Any) -> Any:
+        payload = phx.sparse.StreamedPayloadSpec(_MESSAGE, output)
+
+        def run(source: Array, target: Array, mask: Array, epoch: Array) -> Any:
+            traced = phx.sparse.EdgeRelation(
+                source,
+                target,
+                source_size=SOURCE_COUNT,
+                target_size=RECEIVER_COUNT,
+                valid=mask,
+            )
+            prepared = plan.prepare(traced, owner_id="test-rebuild", epoch=epoch)
+            return prepared.evaluate(
+                payload, message, epilogue, parameters, sources, receivers, edges
+            )
+
+        return jax.jit(run)
+
+    def host_evaluate(message: Any, epilogue: Any, output: Any) -> Any:
+        return host_prepared.evaluate(
+            phx.sparse.StreamedPayloadSpec(_MESSAGE, output),
+            message,
+            epilogue,
+            parameters,
+            sources,
+            receivers,
+            edges,
+        )
+
+    # Pass-through messages and an identity epilogue leave only the ordered
+    # route's own additions, so both preparations agree exactly.
+    traced_aggregate = traced_program(_passthrough_message, _identity_epilogue, _MESSAGE)(
+        *arguments
+    )
+    host_aggregate = host_evaluate(_passthrough_message, _identity_epilogue, _MESSAGE)
     for left, right in zip(
-        jax.tree.leaves(traced.receiver_outputs), jax.tree.leaves(host.receiver_outputs)
+        jax.tree.leaves(traced_aggregate.receiver_outputs),
+        jax.tree.leaves(host_aggregate.receiver_outputs),
+        strict=True,
     ):
         np.testing.assert_array_equal(left, right)
+
+    # Message and epilogue arithmetic compile into two different programs whose
+    # rounding may differ; each program replays exactly and both match the
+    # independent reference.
+    run = traced_program(_message, _epilogue, _OUTPUT)
+    traced = run(*arguments)
+    host = host_evaluate(_message, _epilogue, _OUTPUT)
+    for first, second in (
+        (traced, run(*arguments)),
+        (host, host_evaluate(_message, _epilogue, _OUTPUT)),
+    ):
+        for left, right in zip(
+            jax.tree.leaves(first.receiver_outputs),
+            jax.tree.leaves(second.receiver_outputs),
+            strict=True,
+        ):
+            np.testing.assert_array_equal(left, right)
+    expected, _ = _reference(
+        parameters,
+        sources,
+        receivers,
+        edges,
+        source_index=source_index,
+        target_index=target_index,
+        admitted=valid,
+    )
+    for result in (traced, host):
+        np.testing.assert_allclose(
+            result.receiver_outputs["h"], expected["h"], atol=1e-13
+        )
+        np.testing.assert_allclose(
+            result.receiver_outputs["n"], expected["n"], rtol=1e-12
+        )
     assert bool(traced.evidence.successful)
     assert int(traced.evidence.tiles_used) == host.evidence.tile_count
     assert traced.evidence.tile_count >= host.evidence.tile_count

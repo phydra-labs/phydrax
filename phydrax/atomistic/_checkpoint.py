@@ -329,7 +329,11 @@ def write_atomistic_restart(
     (architecture, structure, parameters and fixed leaves). A fresh process
     restores the model with ``read_atomistic_restart_model``, rebuilds its
     dynamics over that model, and resumes with ``read_atomistic_restart``.
-    Compiled caches are not part of restart correctness.
+    Compiled caches are not part of restart correctness. The restored state is
+    exact; continued steps equal the uninterrupted trajectory bitwise only when
+    the executed graph plans select ordered streamed accumulation and the
+    resuming process uses the same device type, runtime versions, and a fixed
+    compiler profile (on GPUs, XLA autotuning disabled).
     """
 
     _require_runtime(plan, state, "state")
@@ -507,6 +511,9 @@ def write_atomistic_training_restart(
     ``directory`` in one atomic exchange: a failed or interrupted publication
     leaves any previous bundle readable and unchanged. The training data recipe
     is not stored: continuation rebuilds the same ``AtomisticTrainingProblem``.
+    The restored state is exact; resumed updates are bitwise only under the
+    ordered-accumulation and fixed-profile preconditions of
+    ``fit_atomistic_potential``.
     """
 
     if not isinstance(result, AtomisticTrainingResult):
@@ -604,7 +611,9 @@ def read_atomistic_training_restart(
     parameters and every fixed leaf must equal the artifact exactly, and the
     restored model, result, problem, policy, continuation, normalization and
     kernel identities must equal the receipt, so mixed or stale bundles refuse.
-    Resume with ``fit_atomistic_potential(..., continuation=result)``.
+    Resume with ``fit_atomistic_potential(..., continuation=result)``; resumed
+    updates are bitwise only under its ordered-accumulation and fixed-profile
+    preconditions.
     """
 
     source = Path(directory).expanduser().absolute()

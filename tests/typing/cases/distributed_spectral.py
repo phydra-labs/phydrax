@@ -14,6 +14,7 @@ from phydrax.discretization import (
     SpectralMeshTopology,
     SpectralPrecisionPolicy,
     SpectralResourceReport,
+    SpectralTranspose,
 )
 
 
@@ -60,6 +61,12 @@ def distributed_spectral_facade(
     assert_type(prepared.report.resource.transform_workspace_bytes, int)
     assert_type(prepared.report.resource.collective_payload_bytes, int)
     assert_type(prepared.report.resource.peak_live_bytes, int)
+    transpose = SpectralTranspose(
+        prepared.physical_layout, prepared.modal_layout, topology
+    )
+    assert_type(transpose.mesh_axis, str | tuple[str, ...])
+    assert_type(transpose.mesh_shape, tuple[int, ...])
+    assert_type(transpose.execute(state, topology), Array)
 
     assert_type(prepared.place(state, representation="physical"), Array)
     assert_type(prepared.place_batched(vector_state, representation="physical"), Array)

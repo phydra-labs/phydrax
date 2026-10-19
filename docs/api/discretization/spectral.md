@@ -554,11 +554,28 @@ same private immutable local-transform and public `SpectralTranspose` operations
 execute. No public stage abstraction is introduced, and `SpectralTranspose` remains
 the public atomic redistribution contract.
 
+Construct an atomic redistribution as `SpectralTranspose(source, target, topology)`.
+The declared partitions determine which mesh axes move; actual named topology sizes
+determine packing. Explicit mesh/split/concatenation constructor arguments are no
+longer accepted. Direct single-axis redistributions retain their operation; pencil
+execution packs one full-mesh all-to-all between the physical xy-pencil and modal
+z-slab. Local FFT order remains z, y, x (and its inverse), with higher spatial axes
+and trailing payload axes retaining their declared ordering.
+
+The packed schedule changes pencil sequence, execution, plan, and report identities,
+not `numerical_id` or the physical/modal layout identities. Reprepare dependent
+execution artifacts. Consumers requiring an exact spectral execution identity,
+including PSATD/PIC restart, refuse a checkpoint bound to the old pencil schedule.
+
 `SpectralResourceReport` owns `canonical_storage_bytes`,
 `padded_storage_bytes`, `transform_workspace_bytes`, and `peak_live_bytes`.
 `collective_payload_bytes` is algorithmic communication traffic and is excluded from
 the live-memory ceiling. Workflow stages, closure work, and checkpoint storage belong
 to LES, PSATD/PIC, mixed cosmology, or another consumer and are not FFT resources.
+Packing reserves an additional transform-precision buffer. These are logical
+algorithmic reservations, not a ceiling on arbitrary composed JAX programs, compiler
+alignment, or native allocator memory. Compiler buffer assignment and observed memory
+remain separate evidence.
 
 Execution keeps JAX `NamedSharding`, performs no host gather, and refuses unavailable
 process-qualified device keys or incompatible global arrays. Slab requires a
@@ -571,8 +588,9 @@ distributed `ChannelStokesPlan`.
 The unreleased qualification scope is JAX global arrays, full-complex C2C, regular
 divisible slab/pencil shards, and the current horizontal channel action. R2C/C2R,
 rank-local or vendor providers, uneven shards, mixed transforms, dynamic scheduling,
-and implicit gather are not claimed. Forced-device, one-device, and same-host runs
-cannot establish physical multi-device or multi-host qualification.
+and implicit gather are not claimed. Forced-CPU and one-device runs do not establish
+physical multi-device qualification; same-host runs do not establish multi-host
+qualification.
 
 Consumer checkpoint boundaries are not interchangeable. LES and PSATD/PIC retain
 exact `execution_id` through restart. Mixed cosmology admits scalar payload only and

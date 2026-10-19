@@ -5,9 +5,9 @@
 """Distributed PIC and PIC restart.
 
 Multi-device tests need forced host devices and run in a dedicated invocation,
-once with four and once with eight devices:
-``JAX_NUM_CPU_DEVICES=4 pytest
-tests/unit/solver/test_distributed_pic.py`` (and ``=8``).
+with at least five devices for prime-count and 4↔5 restart coverage:
+``JAX_NUM_CPU_DEVICES=5 pytest
+tests/unit/solver/test_distributed_pic.py`` (``=8`` also covers 2×2×2).
 """
 
 from __future__ import annotations
@@ -303,8 +303,10 @@ def _distributed(
     )
 
 
-def _reduced_runs(shape: tuple[int, ...]) -> tuple[Any, Any, float]:
-    base, species = _reduced_base(), _reduced_species(128)
+def _reduced_runs(
+    shape: tuple[int, ...], *, count: int = 32, capacity: int = 128
+) -> tuple[Any, Any, float]:
+    base, species = _reduced_base(count), _reduced_species(capacity)
     reference = phx.solver.ElectromagneticPICPlan(base, species=species)
     run = _distributed(base, species, _mesh(shape))
     return reference, run, 0.5 * float(base.stable_step)
@@ -398,12 +400,20 @@ def test_identity_tiles_must_nest_in_device_blocks() -> None:
 
 _ROUTES = [
     ("reduced", (4,)),
+    ("reduced", (3,)),
+    ("reduced", (5,)),
     ("cochain", (4,)),
+    ("cochain", (3,)),
+    ("cochain", (5,)),
     ("cochain", (2, 2)),
     ("cochain", (2, 2, 2)),
     ("spectral-global-fft", (4,)),
+    ("spectral-global-fft", (3,)),
+    ("spectral-global-fft", (5,)),
     ("spectral-global-fft", (2, 2)),
     ("spectral-local-guarded", (4,)),
+    ("spectral-local-guarded", (3,)),
+    ("spectral-local-guarded", (5,)),
     ("spectral-local-guarded", (2, 2)),
 ]
 
@@ -417,28 +427,45 @@ def test_distributed_run_matches_single_device_run(
     route: str, shape: tuple[int, ...]
 ) -> None:
     mesh = _mesh(shape)
+    prime = shape in ((3,), (5,))
+    parts = math.prod(shape)
     options: dict[str, Any] = {}
     match route:
         case "reduced":
-            base, species = _reduced_base(), _reduced_species(128)
-            capacity, dimension, lengths, steps = 128, 1, (1.0,), 12
+            capacity = 32 * parts if prime else 128
+            base = _reduced_base(8 * parts if prime else 32)
+            species = _reduced_species(capacity)
+            dimension, lengths, steps = 1, (1.0,), 12
+            reference_base = base
         case "cochain":
             # Block windows are local except on the eight-device 2×2×2 mesh,
             # whose 4×2×2 blocks' windows cover the grid.
             counts = {1: (16, 4, 4), 2: (16, 12, 4), 3: (8, 4, 4)}[len(shape)]
-            base, species = _cochain_base(64, counts)
+            if prime:
+                counts = (4 * parts, 4, 4)
+            capacity = 16 * parts if prime else 64
+            base, species = _cochain_base(capacity, counts)
             options["guard_cells"] = 2
-            capacity, dimension, steps = 64, 3, 10
+            dimension, steps = 3, 10
             lengths = tuple(0.125 * n for n in counts)
+            reference_base = base
         case _:
+            capacity = 16 * parts if prime else 32
+            counts = (4 * parts, 4 * parts, 4) if prime else (16, 16, 4)
+            decomposition = route.removeprefix("spectral-")
+            subdomains = (parts, 1, 1) if prime else (4, 2, 1)
             base, species = _spectral_base(
-                32,
-                mesh,
-                route.removeprefix("spectral-"),
-                subdomains=(4, 2, 1),
-                counts=(16, 16, 4),
+                capacity, mesh, decomposition, subdomains=subdomains, counts=counts
             )
-            capacity, dimension, lengths, steps = 32, 3, (2.0, 2.0, 0.5), 6
+            # The oracle owns its FFTs on one device: same grid, transfers,
+            # stencil, subdomains, and guards, so the same native numerics.
+            reference_base, _ = _spectral_base(
+                capacity, None, decomposition, subdomains=subdomains, counts=counts
+            )
+            assert reference_base.plan.topology.device_count == 1
+            assert reference_base.numerical_id == base.numerical_id
+            assert reference_base.solver_id != base.solver_id
+            dimension, lengths, steps = 3, tuple(0.125 * n for n in counts), 6
     # Local-guarded PSATD keeps Gauss's law only to its stencil truncation; the
     # cochain Coulomb initialization is an iterative solve to ~1e-8.
     tolerance = (
@@ -448,7 +475,9 @@ def test_distributed_run_matches_single_device_run(
         if route == "cochain"
         else {}
     )
-    reference = phx.solver.ElectromagneticPICPlan(base, species=species, **tolerance)
+    reference = phx.solver.ElectromagneticPICPlan(
+        reference_base, species=species, **tolerance
+    )
     run = _distributed(base, species, mesh, **tolerance, **options)
     assert run.solver.solver_id != base.solver_id
     assert run.pic.plan_id != reference.plan_id
@@ -573,12 +602,13 @@ def test_diagonal_migration_crosses_a_block_corner_in_one_packet() -> None:
     assert len(moved) == 1 and moved[0] >= 12
 
 
-def test_migration_overflow_rejects_the_whole_step() -> None:
-    _, run, dt = _reduced_runs((4,))
-    capacity = 128
+@pytest.mark.parametrize("parts", [3, 4, 5])
+def test_migration_overflow_rejects_the_whole_step(parts: int) -> None:
+    capacity = 32 * parts
+    _, run, dt = _reduced_runs((parts,), count=8 * parts, capacity=capacity)
     # Twelve electrons just below the slab-0/slab-1 face moving across it.
     position = np.full((capacity, 1), 0.1)
-    position[:12, 0] = 0.2495
+    position[:12, 0] = 1.0 / parts - 0.0005
     velocity = np.zeros((capacity, 3))
     velocity[:12, 0] = 0.4
     active = np.arange(capacity) < 24
@@ -615,12 +645,26 @@ def test_spectral_transforms_off_the_pic_mesh_are_refused() -> None:
         phx.solver.distribute_pic_field_solver(untiled, mesh)
 
 
-def test_deposits_that_are_not_window_local_are_refused() -> None:
+@pytest.mark.parametrize("shape", [(2, 2), (3,), (5,)], ids=["2x2", "3", "5"])
+def test_deposits_that_are_not_window_local_are_refused(
+    shape: tuple[int, ...],
+) -> None:
     # The continuity-projected reduced 2-D current spreads over the whole grid.
-    base, species = _reduced_base(16, 2), _reduced_species(64, 2)
-    solver = phx.solver.distribute_pic_field_solver(base, _mesh((2, 2)))
-    with pytest.raises(ValueError, match="not window-local"):
+    parts = math.prod(shape)
+    base, species = _reduced_base(4 * parts, 2), _reduced_species(16 * parts, 2)
+    solver = phx.solver.distribute_pic_field_solver(base, _mesh(shape))
+    with pytest.raises(ValueError, match="not window-local") as error:
         phx.solver.ElectromagneticPICPlan(solver, species=species)
+    assert "transfer footprint of species 0" in str(error.value)
+    assert f"block {(0,) * len(shape)}" in str(error.value)
+
+
+@pytest.mark.parametrize("parts", [3, 5])
+def test_prime_device_counts_refuse_unequal_species_capacity(parts: int) -> None:
+    mesh = _mesh((parts,))
+    base = _reduced_base(8 * parts)
+    with pytest.raises(ValueError, match="capacities must divide"):
+        _distributed(base, _reduced_species(32 * parts + 1), mesh)
 
 
 def test_size_one_mesh_axes_are_refused() -> None:
@@ -629,10 +673,11 @@ def test_size_one_mesh_axes_are_refused() -> None:
         phx.solver.distribute_pic_field_solver(base, _mesh((2, 1)))
 
 
-def test_guard_narrower_than_the_transfer_footprint_is_refused() -> None:
-    base, species = _reduced_base(), _reduced_species(128)
+@pytest.mark.parametrize("parts", [3, 4, 5])
+def test_guard_narrower_than_the_transfer_footprint_is_refused(parts: int) -> None:
+    base, species = _reduced_base(8 * parts), _reduced_species(32 * parts)
     solver = phx.solver.distribute_pic_field_solver(
-        base, _mesh((4,)), guard_cells=1, particle_margin=0.9
+        base, _mesh((parts,)), guard_cells=1, particle_margin=0.9
     )
     with pytest.raises(ValueError, match="guard_cells=1"):
         phx.solver.ElectromagneticPICPlan(solver, species=species)
@@ -1057,12 +1102,16 @@ def test_reduced_deposit_preserves_failure_and_inactive_payload_semantics(
         np.testing.assert_array_equal(result, expected)
 
 
-def test_same_topology_restart_continues_bitwise(tmp_path: Path) -> None:
-    _, run, dt = _reduced_runs((4,))
-    advance = eqx.filter_jit(lambda state: run.step_detailed(state, dt).accepted_state)
-    state = _initial(run, 128, 1, (1.0,), dt)
+@pytest.mark.parametrize("parts", [3, 4, 5])
+def test_same_topology_restart_continues_bitwise(tmp_path: Path, parts: int) -> None:
+    capacity = 32 * parts
+    _, run, dt = _reduced_runs((parts,), count=8 * parts, capacity=capacity)
+    advance = eqx.filter_jit(lambda state: run.step_detailed(state, dt))
+    state = _initial(run, capacity, 1, (1.0,), dt)
     for _ in range(3):
-        state = advance(state)
+        result = advance(state)
+        assert bool(result.successful), int(result.rejection_reason)
+        state = result.accepted_state
     plan = phx.solver.PICRestartPlan(run)
     repository = _repository(tmp_path)
     checkpoint = _publish(plan, state, repository, "pic-same")
@@ -1082,19 +1131,35 @@ def test_same_topology_restart_continues_bitwise(tmp_path: Path) -> None:
         assert left.sharding.is_equivalent_to(right.sharding, left.ndim)
     continued, resumed = state, restored.state
     for _ in range(3):
-        continued, resumed = advance(continued), advance(resumed)
+        continued_step, resumed_step = advance(continued), advance(resumed)
+        assert bool(continued_step.successful), int(continued_step.rejection_reason)
+        assert bool(resumed_step.successful), int(resumed_step.rejection_reason)
+        continued, resumed = continued_step.accepted_state, resumed_step.accepted_state
         _assert_bitwise(resumed, continued)
 
 
-def test_repartition_restart_is_a_tolerance_restart(tmp_path: Path) -> None:
-    reference, run, dt = _reduced_runs((4,))
-    state = _initial(run, 128, 1, (1.0,), dt)
-    state = eqx.filter_jit(lambda value: run.step_detailed(value, dt).accepted_state)(
-        state
-    )
+@pytest.mark.parametrize(
+    ("source_parts", "target_parts"),
+    [(4, 2), (4, 5), (5, 4)],
+    ids=["4-to-2", "4-to-5", "5-to-4"],
+)
+def test_repartition_restart_is_a_tolerance_restart(
+    tmp_path: Path, source_parts: int, target_parts: int
+) -> None:
+    common = math.lcm(source_parts, target_parts)
+    capacity = 128 if common == 4 else 160
+    count = 32 if common == 4 else 40
+    reference, run, dt = _reduced_runs((source_parts,), count=count, capacity=capacity)
+    _mesh((target_parts,))
+    state = _initial(run, capacity, 1, (1.0,), dt)
+    initial_step = eqx.filter_jit(lambda value: run.step_detailed(value, dt))(state)
+    assert bool(initial_step.successful), int(initial_step.rejection_reason)
+    state = initial_step.accepted_state
     repository = _repository(tmp_path)
-    checkpoint = _publish(phx.solver.PICRestartPlan(run), state, repository, "pic-4")
-    smaller = _distributed(reference.solver, reference.species, _mesh((2,)))
+    checkpoint = _publish(
+        phx.solver.PICRestartPlan(run), state, repository, f"pic-{source_parts}"
+    )
+    smaller = _distributed(reference.solver, reference.species, _mesh((target_parts,)))
     with pytest.raises(ValueError, match="another plan"):
         smaller.pic.restore(run.pic.checkpoint(state))
     restored = phx.solver.PICRestartPlan(smaller).restore(repository, checkpoint)
@@ -1102,13 +1167,17 @@ def test_repartition_restart_is_a_tolerance_restart(tmp_path: Path) -> None:
     assert restored.source.plan_id == run.plan_id
     assert restored.source.numerical_id == smaller.numerical_id
     assert restored.source.plan_id != smaller.plan_id
-    assert restored.source.part_count == 4
+    assert restored.source.part_count == source_parts
     # Repartition is a slot permutation: the restored state is exact.
     _assert_same_run(restored.state, state, atol=0.0)
     continued, resumed = state, restored.state
     for _ in range(4):
-        continued = run.step_detailed(continued, dt).accepted_state
-        resumed = smaller.step_detailed(resumed, dt).accepted_state
+        source_step = run.step_detailed(continued, dt)
+        target_step = smaller.step_detailed(resumed, dt)
+        assert bool(source_step.successful), int(source_step.rejection_reason)
+        assert bool(target_step.successful), int(target_step.rejection_reason)
+        continued = source_step.accepted_state
+        resumed = target_step.accepted_state
     _assert_same_run(resumed, continued, atol=1e-12)
     strict = phx.solver.PICRestartPlan(
         smaller, policy=TopologyRestartPolicy(allow_topology_change=False)

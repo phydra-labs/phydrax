@@ -662,11 +662,23 @@ operations that execute; the canonical and padded forward and inverse directions
 not maintain separate handwritten transpose descriptions. Swapping channel horizontal
 axes therefore changes execution identity.
 
+`SpectralTranspose(source, target, topology)` derives redistribution from the
+declared layouts rather than accepting independently supplied mesh/split/concatenation
+axes. Pencil execution uses one packed full-mesh exchange per direction between its
+xy-pencil physical layout and z-slab modal layout. Packing uses named topology sizes,
+not equal-shape assumptions; local FFT order and payload ordering are preserved.
+The schedule has new execution identities, so execution-bound artifacts must be
+prepared again and old exact pencil checkpoints are not silently relabeled.
+
 The core resource report owns only logical FFT storage, FFT workspaces and their live
 peak, plus algorithmic collective traffic. Traffic is communication evidence, not
 resident memory. LES stages and closure work, mixed-cosmology workflow reservations,
 and LES/PIC checkpoint bytes are budgeted and refused by those consumers, not charged
 to the FFT plan.
+Packed pencil exchange reserves an additional transform-precision buffer. This
+logical reservation is not a total compiler or device-memory guarantee; composed
+workflow liveness, compiler alignment, and native allocations require their own
+evidence.
 
 `place`, `execute_transform`, `pad_modal`, `unpad_modal`, `modal_derivative`, and
 `diagnostics` preserve the prepared `NamedSharding` and perform no host gather;

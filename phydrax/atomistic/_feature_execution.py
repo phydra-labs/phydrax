@@ -42,6 +42,7 @@ from jaxtyping import PyTree
 from .._trainable import combine_parameters, partition_parameters
 from ..discretization.spatial._distributed_relations import DistributedHaloPlan
 from ..ein import contract
+from ..sparse import RelationAccumulation, RelationExecutionState
 from ..sparse._streamed import PreparedStreamedRelation, StreamedRelationEvidence
 
 
@@ -102,6 +103,8 @@ class OwnerLayerTopology(NamedTuple):
     """One owner's prepared edges inside a mapped owner region."""
 
     relation: PreparedStreamedRelation
+    receiver_reduction: RelationExecutionState
+    source_reduction: RelationExecutionState
     receivers: Array
     columns: Array
     shifts: Array
@@ -307,6 +310,7 @@ def owner_layer_gradients(
     cutoff: float,
     *,
     message_capacity_bytes: int,
+    accumulation: RelationAccumulation,
     parameters: bool,
 ) -> OwnerLayerGradients:
     """Owned energies plus the explicit reverse layer sweep of one owner.
@@ -379,14 +383,16 @@ def owner_layer_gradients(
             jnp.add, parameter_cotangent, initial_parameters
         )
     edge_cotangent = jnp.where(topology.valid[:, None], vector_cotangent, 0.0)
-    gradient = _edge_position_gradient(halo, topology, edge_cotangent, positions)
+    gradient, reduction_successful = _edge_position_gradient(
+        halo, topology, edge_cotangent, accumulation=accumulation
+    )
     strain_gradient = contract("ea,eb->ab", edge_cotangent, geometry.displacements)
     return OwnerLayerGradients(
         atom_energies=sweep.atom_energies,
         gradient=jnp.where(atom_mask[:, None], gradient, 0.0),
         strain_gradient=strain_gradient,
         parameter_gradient=parameter_cotangent if parameters else None,
-        relation_successful=successful,
+        relation_successful=successful & reduction_successful,
     )
 
 
@@ -436,24 +442,25 @@ def _edge_position_gradient(
     halo: DistributedHaloPlan,
     topology: OwnerLayerTopology,
     edge_cotangent: Array,
-    positions: Array,
-) -> Array:
+    *,
+    accumulation: RelationAccumulation,
+) -> tuple[Array, Array]:
     """Route ``dE/dd`` to receivers and, through the halo transpose, sources.
 
-    The receiver and column accumulations are incidental single indexed
-    updates over this owner's fixed edge capacity; the cross-owner return is
-    the halo owner's exactly-once transpose.
+    The topology owns canonical target-grouped reductions in both directions.
+    Reuse their prepared route order and honor the caller's accumulation policy;
+    unordered duplicate-index scatter adds cannot provide deterministic replay.
     """
-    receivers = jnp.zeros_like(positions).at[topology.receivers].add(edge_cotangent)
-    column_count = halo.column_count
-    columns = (
-        jnp.zeros((column_count,) + positions.shape[1:], dtype=positions.dtype)
-        .at[topology.columns]
-        .add(-edge_cotangent)
+    receivers, receiver_evidence = topology.receiver_reduction.reduce(
+        edge_cotangent, accumulation=accumulation
     )
-    return receivers + halo.local_transpose(
+    columns, source_evidence = topology.source_reduction.reduce(
+        -edge_cotangent, accumulation=accumulation
+    )
+    gradient = receivers + halo.local_transpose(
         columns, topology.send_slots, topology.send_valid
     )
+    return gradient, receiver_evidence.successful & source_evidence.successful
 
 
 __all__ = [

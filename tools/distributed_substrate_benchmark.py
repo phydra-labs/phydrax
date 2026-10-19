@@ -151,6 +151,8 @@ def run(size: int, iterations: int) -> dict[str, object]:
             "local_hardware_ids_by_process": hardware_ids.tolist(),
             "nccl_nvls_enable": os.environ.get("NCCL_NVLS_ENABLE"),
             "nccl_p2p_disable": os.environ.get("NCCL_P2P_DISABLE"),
+            "nccl_launch_order_implicit": os.environ.get("NCCL_LAUNCH_ORDER_IMPLICIT"),
+            "nccl_launch_race_fatal": os.environ.get("NCCL_LAUNCH_RACE_FATAL"),
             "inventory_id": runtime.inventory.inventory_id,
             "process_host_ids": [
                 list(record) for record in runtime.inventory.process_host_ids

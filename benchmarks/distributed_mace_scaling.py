@@ -15,10 +15,12 @@ transaction. Actual alias loads, edge counts, halo loads, deduplicated halo
 columns, per-interaction halo message bytes, and migration counts are
 retained; no scaling efficiency is inferred.
 
-Owners execute on selected real/forced devices (``--owners devices``) or as
-lane-reference vmap lanes on one device (``--owners lanes``). Each row records
-the selected devices independently of owner count. CPU devices and lanes are
-functional evidence only, never accelerator scaling evidence. The model uses
+Owners execute on the first requested real/forced devices in runtime order
+(``--owners devices``) or as lane-reference vmap lanes on one device
+(``--owners lanes``). The requested device count need not divide the visible
+allocation. Each row records the selected devices independently of owner count.
+CPU devices and lanes are functional evidence only, never accelerator scaling
+evidence. The model uses
 native JAX coupling (``acceleration=None``). Compiler bytes are XLA estimates;
 allocator counters and retained-array bytes are sampled separately per device.
 The host-ingress campaign supports one process only and explicitly refuses
@@ -46,7 +48,8 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
-from phydrax._execution_runtime import ExecutionRuntime
+from phydrax._execution_resources import ExecutionGroupSpec
+from phydrax._execution_runtime import bind_execution_group, ExecutionRuntime
 from phydrax._execution_sampling import sample_device_memory, sample_host_memory
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.atomistic import AtomisticScaleContract
@@ -120,20 +123,46 @@ def _plan(
     local: int,
     execution: OwnerExecution,
 ) -> OwnerLocalAtomisticPlan:
+    if owners < 1:
+        raise ValueError("owners must be positive.")
+    if jax.process_count() != 1:
+        raise ValueError("This MACE scaling plan supports single-process ingress only.")
     periodic = PeriodicCell(cell)
     address = MortonAddressPlan((0.0,) * 3, (1.0,) * 3, 10, periodic_axes=(True,) * 3)
     runtime = ExecutionRuntime.current()
-    devices = len(jax.devices())
+    parent = runtime.root_group.spec
     match execution:
         case "devices":
-            if devices % owners:
-                raise ValueError(f"{owners} owners need a divisor of {devices} devices.")
-            ownership = DistributedOwnershipPlan(
-                address, runtime.child_groups(devices // owners)[0], local
+            if owners > parent.device_count:
+                raise ValueError(
+                    f"{owners} owners require at least {owners} visible devices; "
+                    f"only {parent.device_count} are available."
+                )
+            keys = parent.device_keys[:owners]
+            # Keep the first child's identity for previously divisible allocations.
+            group = bind_execution_group(
+                ExecutionGroupSpec(
+                    canonical_fingerprint(
+                        {
+                            "parent_group_id": parent.group_id,
+                            "group_index": 0,
+                            "device_keys": [list(key) for key in keys],
+                        }
+                    ),
+                    parent.process_indices,
+                    keys,
+                    mesh_axes=(("device", owners),),
+                    parent_group_id=parent.group_id,
+                    process_host_ids=parent.process_host_ids,
+                )
             )
+            ownership = DistributedOwnershipPlan(address, group, local)
         case "lanes":
             ownership = DistributedOwnershipPlan(
-                address, runtime.child_groups(devices)[0], local, owner_lanes=owners
+                address,
+                runtime.child_groups(parent.device_count)[0],
+                local,
+                owner_lanes=owners,
             )
     edges = local * 96
     return OwnerLocalAtomisticPlan(

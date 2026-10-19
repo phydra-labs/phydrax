@@ -3,7 +3,9 @@
 #
 
 from collections.abc import Sequence
+from math import prod
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -21,6 +23,7 @@ from phydrax.discretization import (
 from phydrax.discretization.spectral import SpectralPrecisionPolicy
 from phydrax.discretization.spectral._distributed import (
     DistributedSpectralExecutionPlan,
+    SpectralLayout,
     SpectralMeshTopology,
     SpectralResourceError,
     SpectralTranspose,
@@ -568,31 +571,48 @@ def test_rotational_dealiasing_matches_independent_reference() -> None:
     np.testing.assert_allclose(distributed, reference, rtol=3e-5, atol=3e-5)
 
 
-@pytest.mark.parametrize("device_count", [2, 4], ids=["two-devices", "four-devices"])
+@pytest.mark.parametrize("device_count", [1, 2, 3, 4, 5])
 def test_public_transpose_and_multi_device_slab_execution(device_count: int) -> None:
     devices = tuple(jax.devices())
     if len(devices) < device_count:
         pytest.skip(f"Requires {device_count} physical or explicitly configured devices.")
-    slab = _slab((8, 8, 6), devices=devices[:device_count])
+    shape = (4 * device_count, 4 * device_count, 6)
+    padded_shape = (6 * device_count, 6 * device_count, 10)
+    slab = _slab(shape, padded_shape=padded_shape, devices=devices[:device_count])
     values = (
-        np.arange(8 * 8 * 6, dtype=np.float32).reshape((8, 8, 6)).astype(np.complex64)
-    )
-    reference = np.fft.fftn(values, norm="ortho").astype(np.complex64)
-    np.testing.assert_allclose(slab.to_modal(values), reference, rtol=3e-5, atol=8e-5)
+        np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+        / np.float32(np.prod(shape))
+    ).astype(np.complex64)
+    for padded, transform_shape in ((False, shape), (True, padded_shape)):
+        field = (
+            np.arange(np.prod(transform_shape), dtype=np.float32).reshape(transform_shape)
+            / np.float32(np.prod(transform_shape))
+        ).astype(np.complex64)
+        reference = np.fft.fftn(field, norm="ortho").astype(np.complex64)
+        np.testing.assert_allclose(
+            slab.to_modal(field, padded=padded), reference, rtol=3e-5, atol=8e-5
+        )
+        np.testing.assert_allclose(
+            slab.to_physical(reference, padded=padded), field, rtol=3e-5, atol=8e-5
+        )
+        probe = field * np.complex64(0.3 + 0.2j)
+        _, pullback = jax.vjp(
+            lambda value: slab.to_modal(value, padded=padded), jnp.asarray(field)
+        )
+        adjoint = jnp.conj(pullback(jnp.conj(jnp.asarray(probe)))[0])
+        np.testing.assert_allclose(
+            adjoint, np.fft.ifftn(probe, norm="ortho"), rtol=3e-5, atol=8e-5
+        )
 
     forward = SpectralTranspose(
         slab.physical_layout,
         slab.modal_layout,
-        slab.topology.mesh_axis_names[0],
-        1,
-        0,
+        slab.topology,
     )
     inverse = SpectralTranspose(
         slab.modal_layout,
         slab.physical_layout,
-        slab.topology.mesh_axis_names[0],
-        0,
-        1,
+        slab.topology,
     )
     transposed = forward.execute(values, slab.topology)
     restored = inverse.execute(transposed, slab.topology)
@@ -604,28 +624,210 @@ def test_public_transpose_and_multi_device_slab_execution(device_count: int) -> 
     np.testing.assert_allclose(lhs, rhs, rtol=2e-6, atol=2e-6)
 
 
-def test_four_device_pencil_matches_independent_reference() -> None:
+def _pencil_topology(shape: tuple[int, int]) -> SpectralMeshTopology:
     devices = tuple(jax.devices())
-    if len(devices) < 4:
-        pytest.skip("Four physical or explicitly configured devices are required.")
-    topology = SpectralMeshTopology((2, 2), devices=devices[:4], axis_names=("px", "py"))
+    count = prod(shape)
+    if len(devices) < count:
+        pytest.skip(
+            f"Needs {count} devices; non-square coverage can use JAX_NUM_CPU_DEVICES=6."
+        )
+    return SpectralMeshTopology(shape, devices=devices[:count], axis_names=("px", "py"))
+
+
+@pytest.mark.parametrize(
+    "mesh_shape", [(2, 2), (2, 3), (3, 2)], ids=["2x2", "2x3", "3x2"]
+)
+@pytest.mark.parametrize("spatial_rank", [3, 4], ids=["rank3", "rank4"])
+def test_pencil_matches_independent_reference_and_adjoint(
+    mesh_shape: tuple[int, int], spatial_rank: int
+) -> None:
+    topology = _pencil_topology(mesh_shape)
+    px, py = mesh_shape
+    shape = (4 * px, 6 * py, 2 * prod(mesh_shape)) + ((3,) if spatial_rank == 4 else ())
+    padded_shape = (6 * px, 8 * py, 3 * prod(mesh_shape)) + (
+        (4,) if spatial_rank == 4 else ()
+    )
+    payload = (2, 3)
     pencil = DistributedSpectralExecutionPlan(
         topology,
-        (8, 8, 8),
+        shape,
         owner_id="pencil-multi-device",
         precision=_single_precision(),
-        admitted_payload_shapes=((),),
+        admitted_payload_shapes=(payload,),
+        state_shape=payload,
+        padded_shape=padded_shape,
         schedule="pencil",
     )
-    assert pencil.report.collective_count == 2
+    single = _slab(
+        shape,
+        owner_id=pencil.owner_id,
+        state_shape=payload,
+        padded_shape=padded_shape,
+    )
+    assert pencil.numerical_id == single.numerical_id
+    assert pencil.execution_id != single.execution_id
+    assert pencil.report.collective_count == 1
     assert pencil.report.forward_sequence_id != pencil.report.padded_forward_sequence_id
-    pencil_values = (
-        np.arange(8**3, dtype=np.float32).reshape((8, 8, 8)).astype(np.complex64)
+    resource = pencil.report.resource
+    assert resource.accepted
+    assert resource.collective_payload_bytes == resource.padded_storage_bytes
+    assert resource.transform_workspace_bytes == 2 * resource.padded_storage_bytes
+    with pytest.raises(SpectralResourceError) as refused:
+        DistributedSpectralExecutionPlan(
+            topology,
+            shape,
+            owner_id=pencil.owner_id,
+            precision=pencil.precision,
+            admitted_payload_shapes=(payload,),
+            state_shape=payload,
+            padded_shape=padded_shape,
+            schedule="pencil",
+            maximum_bytes=resource.peak_live_bytes - 1,
+        )
+    assert refused.value.report.peak_live_bytes == resource.peak_live_bytes
+    axes = tuple(range(spatial_rank))
+    rng = np.random.default_rng(17)
+    for padded, counts in ((False, shape), (True, padded_shape)):
+        values = (
+            rng.normal(size=(*counts, *payload))
+            + 1j * rng.normal(size=(*counts, *payload))
+        ).astype(np.complex64)
+        reference = np.fft.fftn(values, axes=axes, norm="ortho").astype(np.complex64)
+        modal = pencil.to_modal(values, padded=padded)
+        np.testing.assert_allclose(modal, reference, rtol=3e-5, atol=8e-5)
+        np.testing.assert_allclose(
+            pencil.to_physical(reference, padded=padded), values, rtol=3e-5, atol=8e-5
+        )
+        direction = values * np.complex64(0.3 + 0.2j)
+        _, tangent = jax.jvp(
+            lambda value: pencil.to_modal(value, padded=padded),
+            (jnp.asarray(values),),
+            (jnp.asarray(direction),),
+        )
+        np.testing.assert_allclose(
+            tangent, np.fft.fftn(direction, axes=axes, norm="ortho"), rtol=3e-5, atol=8e-5
+        )
+        _, pullback = jax.vjp(
+            lambda value: pencil.to_modal(value, padded=padded), jnp.asarray(values)
+        )
+        adjoint = jnp.conj(pullback(jnp.conj(jnp.asarray(direction)))[0])
+        np.testing.assert_allclose(
+            adjoint,
+            np.fft.ifftn(direction, axes=axes, norm="ortho"),
+            rtol=3e-5,
+            atol=8e-5,
+        )
+        if not padded:
+            np.testing.assert_allclose(
+                pencil.unpad_modal(pencil.pad_modal(modal)), modal, rtol=2e-6, atol=2e-6
+            )
+
+
+@pytest.mark.parametrize(
+    "mesh_shape", [(2, 2), (2, 3), (3, 2)], ids=["2x2", "2x3", "3x2"]
+)
+def test_pencil_transpose_uses_declared_axis_names(
+    mesh_shape: tuple[int, int],
+) -> None:
+    topology = _pencil_topology(mesh_shape)
+    shape = (12, 18, 12, 2)
+    physical = SpectralLayout(shape, ("py", "px", None, None), "physical", topology)
+    modal = SpectralLayout(shape, (None, None, ("px", "py"), None), "modal", topology)
+    forward = SpectralTranspose(physical, modal, topology)
+    inverse = SpectralTranspose(modal, physical, topology)
+    values = np.arange(prod(shape), dtype=np.float32).reshape(shape).astype(np.complex64)
+    transposed = forward.execute(values, topology)
+    np.testing.assert_array_equal(transposed, values)
+    np.testing.assert_array_equal(inverse.execute(transposed, topology), values)
+    assert transposed.sharding == modal.sharding(topology)
+    assert forward.mesh_shape == mesh_shape[::-1]
+
+
+def test_pencil_packing_budget_refuses_before_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    topology = _pencil_topology((2, 2))
+    precision = _single_precision()
+    payload_bytes = 16 * 16 * 4 * 11 * np.dtype(precision.coefficient_dtype).itemsize
+    with monkeypatch.context() as guard:
+        guard.setattr(
+            jnp,
+            "asarray",
+            lambda *_args, **_kwargs: pytest.fail(
+                "FFT budget admission must precede arrays"
+            ),
+        )
+        guard.setattr(
+            jax,
+            "device_put",
+            lambda *_args, **_kwargs: pytest.fail(
+                "FFT budget admission must precede placement"
+            ),
+        )
+        with pytest.raises(SpectralResourceError) as refused:
+            DistributedSpectralExecutionPlan(
+                topology,
+                (16, 16, 4),
+                owner_id="pencil-packing-budget",
+                precision=precision,
+                admitted_payload_shapes=((1, 11), (1, 6), (1, 2)),
+                state_shape=(1, 3),
+                schedule="pencil",
+                maximum_bytes=3 * payload_bytes,
+            )
+        admitted = DistributedSpectralExecutionPlan(
+            topology,
+            (16, 16, 4),
+            owner_id="pencil-packing-budget",
+            precision=precision,
+            admitted_payload_shapes=((1, 11), (1, 6), (1, 2)),
+            state_shape=(1, 3),
+            schedule="pencil",
+            maximum_bytes=4 * payload_bytes,
+        )
+    assert not refused.value.report.accepted
+    assert refused.value.report.transform_workspace_bytes == 2 * payload_bytes
+    assert refused.value.report.collective_payload_bytes == payload_bytes
+    assert refused.value.report.peak_live_bytes == 4 * payload_bytes
+    assert admitted.report.resource.accepted
+    assert admitted.report.resource.peak_live_bytes == 4 * payload_bytes
+
+
+@eqx.filter_jit
+def _pencil_field_roundtrip(
+    plan: DistributedSpectralExecutionPlan, values: Array
+) -> Array:
+    return jnp.real(plan.to_physical_batched(plan.to_modal_batched(values)[..., :6]))
+
+
+@eqx.filter_jit
+def _pencil_field_and_divergence_roundtrip(
+    plan: DistributedSpectralExecutionPlan, values: Array
+) -> Array:
+    field = jnp.real(plan.to_physical_batched(plan.to_modal_batched(values)[..., :6]))
+    return jnp.real(plan.to_physical_batched(plan.to_modal_batched(field)[..., :2]))
+
+
+def test_pencil_composed_payloads_after_prior_executable() -> None:
+    topology = _pencil_topology((2, 2))
+    if not pxconfig.x64_enabled():
+        pytest.skip("The PIC payload regression requires float64/complex128.")
+    plan = DistributedSpectralExecutionPlan(
+        topology,
+        (16, 16, 4),
+        owner_id="pencil-pic-payload-history",
+        precision=SpectralPrecisionPolicy(jnp.float64),
+        admitted_payload_shapes=((1, 11), (1, 6), (1, 2)),
+        state_shape=(1, 3),
+        schedule="pencil",
     )
-    pencil_reference = np.fft.fftn(pencil_values, norm="ortho").astype(np.complex64)
-    np.testing.assert_allclose(
-        pencil.to_modal(pencil_values), pencil_reference, rtol=3e-5, atol=8e-5
-    )
-    np.testing.assert_allclose(
-        pencil.to_physical(pencil_reference), pencil_values, rtol=3e-5, atol=8e-5
-    )
+    values = np.random.default_rng(7).normal(size=(16, 16, 4, 1, 11))
+    placed = plan.place_batched(values, representation="physical")
+    # Equinox's Callable return annotation omits its runtime lowering API.
+    first = _pencil_field_roundtrip.lower(plan, placed).compile()  # ty: ignore[unresolved-attribute]
+    first_result = jax.block_until_ready(first(plan, placed))
+    np.testing.assert_allclose(first_result, values[..., :6], rtol=1e-12, atol=1e-12)
+    chain = _pencil_field_and_divergence_roundtrip.lower(plan, placed).compile()  # ty: ignore[unresolved-attribute]
+    for _ in range(2):
+        actual = jax.block_until_ready(chain(plan, placed))
+        np.testing.assert_allclose(actual, values[..., :2], rtol=1e-12, atol=1e-12)

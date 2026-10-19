@@ -22,6 +22,7 @@ from phydrax.atomistic import (
 )
 from phydrax.execution import CallableIterationSink, IterationSession
 from phydrax.nn.atomistic import NequIPPotential, PaiNNPotential
+from phydrax.sparse import StreamedRelationPlan
 from phydrax.units import (
     ANGSTROM,
     DALTON,
@@ -34,10 +35,13 @@ SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 CUTOFF = 2.0
 
 
-def _execution(maximum_neighbors: Any = 3) -> Any:
+def _execution(
+    maximum_neighbors: Any = 3, *, streamed: StreamedRelationPlan | None = None
+) -> Any:
     return AtomisticGraphExecutionPlan(
         maximum_neighbors,
         maximum_dense_atoms=256,
+        streamed=streamed,
     )
 
 
@@ -148,8 +152,13 @@ def test_training_and_rmd17_scenario_1() -> None:
     assert first.normalization.fitted_from_problem_id == problem_a.problem_id
     batch = _batch()
     energy, _ = _targets(batch)
+    # Bitwise continuation requires ordered accumulation: fast reductions keep
+    # their nondeterministic rounding on accelerators.
     problem = AtomisticTrainingProblem(
-        batch, _execution(), cutoff=CUTOFF, training_energy=energy
+        batch,
+        _execution(streamed=StreamedRelationPlan(accumulation="deterministic")),
+        cutoff=CUTOFF,
+        training_energy=energy,
     )
     initial = _potential(jr.key(4))
     first = fit_atomistic_potential(

@@ -7,18 +7,21 @@
 Routes:
 
 - ``reduced-slabs``: reduced 1-D solver, one-axis mesh (slabs);
-- ``spectral-global-fft-blocks``: finite-order global-FFT PSATD on a two-axis
-  mesh (``1×1``, ``2×1``, ``2×2``, ``4×2`` blocks; pencil transforms) with
+- ``spectral-global-fft-blocks``: finite-order global-FFT PSATD on an exactly
+  factored mesh (prime counts use slabs, composite counts use pencils) with
   diagonal migration;
 - ``spectral-local-guarded-blocks``: the same stencil with local-guarded
   transforms, one subdomain per device, guards exchanged per step.
 
 The controlling sizes are the cells per device along each decomposed axis and
-the species slots per device: each device deposits and gathers its ``C/P``
-slots on its block window, exchanges ``guard_cells`` guards per side of every
-decomposed axis, and migrates particles through fixed ``packet_capacity``
-packets. Weak scaling holds the per-device cells and slots fixed; strong
-scaling holds the totals fixed. Each case records host preparation (including
+the species slots per device. Weak scaling rounds the requested cell width to
+one common FFT-compatible width, keeping the actual cells and slots per device
+fixed. Strong scaling rounds the largest requested grid and slot count up to
+common divisibility, not to a whole least-common-multiple of device problems.
+Local-guarded strong runs share one fixed subdomain tiling as well as the grid,
+particles, timestep, and stencil. Each case records actual sizes alongside
+the requested sizes. Each device exchanges guards and migrates particles through
+fixed ``packet_capacity`` packets. Each case records host preparation (including
 the locality and pairing probes), initialization, lowering and compilation,
 warm step execution, compiler memory, migration counts, the local-guarded
 stencil-truncation evidence, and, for strong scaling, the largest field
@@ -33,8 +36,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -86,11 +90,17 @@ def _species(capacity: int, dimension: int) -> tuple[Any, ...]:
 
 
 def _block_shape(route: str, parts: int) -> tuple[int, ...]:
-    """Blocks per decomposed axis for ``parts`` devices (``1×1``, ``2×1``, ``2×2``, …)."""
+    """Exact near-square factorization, with the larger factor first."""
+    if parts <= 0:
+        raise ValueError("parts must be positive.")
     if route == "reduced-slabs":
         return (parts,)
-    first = 1 << ((parts.bit_length() - 1 + 1) // 2)
-    return (first, parts // first)
+    if route not in _ROUTES:
+        raise ValueError(f"Unknown route {route!r}.")
+    second = math.isqrt(parts)
+    while parts % second:
+        second -= 1
+    return (parts // second, second)
 
 
 def _mesh_shape(blocks: tuple[int, ...], /) -> tuple[int, ...]:
@@ -98,14 +108,70 @@ def _mesh_shape(blocks: tuple[int, ...], /) -> tuple[int, ...]:
     return tuple(value for value in blocks if value > 1) or (1,)
 
 
+@dataclass(frozen=True)
+class _Problem:
+    counts: tuple[int, ...]
+    capacity: int
+    subdomains: tuple[int, ...] | None = None
+
+
+def _round_up(value: int, multiple: int) -> int:
+    return ((value + multiple - 1) // multiple) * multiple
+
+
+def _problem_sizes(
+    route: str, parts: list[int], cells: int, slots: int
+) -> tuple[list[_Problem], _Problem]:
+    """Size both campaigns against PIC and canonical slab/pencil FFT layouts."""
+    if not parts or any(count <= 0 for count in parts) or cells <= 0 or slots <= 0:
+        raise ValueError("parts, cells, and slots must be positive.")
+    blocks = [_block_shape(route, count) for count in parts]
+    capacity = _round_up(slots * max(parts), math.lcm(*parts))
+    if route == "reduced-slabs":
+        weak = [_Problem((cells * count,), slots * count) for count in parts]
+        strong = _Problem((_round_up(cells * max(parts), math.lcm(*parts)),), capacity)
+        return weak, strong
+
+    # Slab transposes partition y by the whole mesh; pencil transposes
+    # partition z by the whole mesh. These are native FFT layout constraints.
+    slab_multiple = math.lcm(
+        *(count for count, block in zip(parts, blocks, strict=True) if block[1] == 1)
+    )
+    pencil_multiple = math.lcm(
+        *(count for count, block in zip(parts, blocks, strict=True) if block[1] > 1)
+    )
+    width = _round_up(cells, slab_multiple)
+    depth = _round_up(8, pencil_multiple)
+    local = route == "spectral-local-guarded-blocks"
+    weak = [
+        _Problem(
+            (width * block[0], width * block[1], depth),
+            slots * count,
+            (*block, 1) if local else None,
+        )
+        for count, block in zip(parts, blocks, strict=True)
+    ]
+    tiling = tuple(math.lcm(*(block[axis] for block in blocks)) for axis in range(2))
+    counts = (
+        _round_up(cells * max(block[0] for block in blocks), tiling[0]),
+        _round_up(
+            cells * max(block[1] for block in blocks),
+            math.lcm(tiling[1], slab_multiple),
+        ),
+        depth,
+    )
+    return weak, _Problem(counts, capacity, (*tiling, 1) if local else None)
+
+
 def _base(
-    route: str, shape: tuple[int, ...], cells: int, capacity: int, mesh: Mesh
+    route: str, problem: _Problem, mesh: Mesh
 ) -> tuple[Any, tuple[Any, ...], int, tuple[float, ...]]:
     """Solver, species, particle dimension, and domain lengths of one case."""
+    counts, capacity = problem.counts, problem.capacity
     match route:
         case "reduced-slabs":
             grid = _D.TensorGridPlan(
-                (_D.UniformCellAxisSpec(cells * shape[0], periodic=True),),
+                (_D.UniformCellAxisSpec(counts[0], periodic=True),),
                 axis_names=("x",),
             ).prepare(jnp.asarray([[0.0], [1.0]]))
             base = phx.solver.ReducedMaxwellPICFieldSolver(
@@ -115,7 +181,6 @@ def _base(
             return base, _species(capacity, 1), 1, (1.0,)
         case "spectral-global-fft-blocks" | "spectral-local-guarded-blocks":
             h = 0.125
-            counts = (cells * shape[0], cells * shape[1], 8)
             grid = _D.TensorGridPlan(
                 tuple(_D.UniformCellAxisSpec(n, periodic=True) for n in counts),
                 axis_names=("x", "y", "z"),
@@ -136,7 +201,7 @@ def _base(
             blocks: dict[str, Any] = (
                 {
                     "decomposition": "local-guarded",
-                    "subdomains": (shape[0], shape[1], 1),
+                    "subdomains": problem.subdomains,
                     "guard_cells": (6, 6, 4),
                 }
                 if local
@@ -174,23 +239,20 @@ def _particles(
 def _case(
     route: str,
     parts: int,
-    scale: int,
-    cells: int,
-    slots: int,
+    problem: _Problem,
     packet: int,
     warmup: int,
     repeats: int,
 ) -> tuple[dict[str, object], Any]:
-    """One case; ``parts`` devices, grid and slots sized for ``scale`` devices."""
+    """One case with explicit scientific sizes, independent of device count."""
     start = time.perf_counter()
     shape = _mesh_shape(_block_shape(route, parts))
-    grid_shape = _block_shape(route, scale)
     mesh = Mesh(
         np.asarray(jax.devices()[:parts], dtype=object).reshape(shape),
         ("x", "y")[: len(shape)],
     )
-    capacity = slots * scale
-    base, species, dimension, lengths = _base(route, grid_shape, cells, capacity, mesh)
+    capacity = problem.capacity
+    base, species, dimension, lengths = _base(route, problem, mesh)
     solver = phx.solver.distribute_pic_field_solver(base, mesh)
     # Local-guarded PSATD keeps Gauss's law to its stencil truncation.
     tolerance = {"constraint_tolerance": 1e-2} if route.endswith("guarded-blocks") else {}
@@ -234,7 +296,18 @@ def _case(
         "route": route,
         "parts": parts,
         "mesh_shape": list(shape),
-        "cells_per_part_axis": cells,
+        "grid_shape": list(problem.counts),
+        "cells_per_part": math.prod(problem.counts) // parts,
+        "local_cells": [
+            count // blocks
+            for count, blocks in zip(
+                problem.counts,
+                (*shape, *((1,) * (len(problem.counts) - len(shape)))),
+                strict=True,
+            )
+        ],
+        "spectral_subdomains": problem.subdomains,
+        "slots_per_part": capacity // parts,
         "slots_per_species": capacity,
         "packet_capacity": packet,
         "host_preparation_seconds": preparation,
@@ -283,22 +356,32 @@ def main() -> None:
     if (
         parts[0] != 1
         or parts[-1] > len(jax.devices())
-        or any(value & (value - 1) for value in parts)
+        or args.cells_per_part <= 0
+        or args.slots_per_part <= 0
+        or args.packet_capacity <= 0
+        or args.warmup < 0
         or args.repeats <= 0
     ):
         raise ValueError(
-            "parts must be powers of two starting at 1 that fit the visible devices; "
-            "repeats must be positive."
+            "parts must be positive, start at 1, and fit the visible devices; cells, "
+            "slots, packet capacity, and repeats must be positive; warmup must be nonnegative."
         )
-    options = (args.cells_per_part, args.slots_per_part, args.packet_capacity)
     timing = (args.warmup, args.repeats)
     routes = {}
     for route in args.routes:
-        weak = [_case(route, count, count, *options, *timing)[0] for count in parts]
+        weak_problems, strong_problem = _problem_sizes(
+            route, parts, args.cells_per_part, args.slots_per_part
+        )
+        weak = [
+            _case(route, count, problem, args.packet_capacity, *timing)[0]
+            for count, problem in zip(parts, weak_problems, strict=True)
+        ]
         strong = []
         reference = None
         for count in parts:
-            record, state = _case(route, count, parts[-1], *options, *timing)
+            record, state = _case(
+                route, count, strong_problem, args.packet_capacity, *timing
+            )
             reference = state if reference is None else reference
             record["field_difference_from_one_device"] = _field_difference(
                 state, reference

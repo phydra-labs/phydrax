@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Breaking
+- `SpectralTranspose` now takes `(source, target, topology)` and derives its
+  redistribution from declared layouts. Remove explicit mesh/split/concatenation
+  constructor arguments. The canonical pencil schedule uses one full-mesh
+  exchange per direction and reserves packing workspace; its execution identities
+  change while numerical and physical/modal layout identities remain unchanged.
+  Reprepare execution artifacts; exact PSATD/PIC checkpoints tied to the previous
+  pencil schedule are refused rather than relabeled.
 - Remove CUDA 12 support, its installation extra, native companion, marker,
   build/distribution paths, and benchmark artifacts. CUDA 13 is the only
   supported CUDA major; use `phydrax[cuda13]` with an R580+ driver or the CPU-only
@@ -76,6 +83,11 @@
   native-artifact scope, profiler warnings, and phase-separated measurements
   are recorded in `benchmarks/h100_qualification.json`; no multi-host or
   RDMA claim is made.
+- Add explicit forward accumulation policies to sparse `route_reduce` and
+  `linear_apply`, and the matching ordered route gather to `gather_routes`.
+  Fast remains the default; deterministic and compensated sum/mean actions
+  reuse native ordered reductions without new model fields, topology sorting,
+  or dense materialization.
 
 ### Removed
 - Spineax, pyamgx, PyQUDA, and CuPy provider paths and dependencies in favor
@@ -84,6 +96,44 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Select requested distributed MACE device subsets independently of the total
+  visible count, and admit prime-count PIC benchmark campaigns with exact
+  decompositions and jointly divisible fixed scientific workloads.
+- Preserve ordered GPU derivatives through streamed gathers and shared-prefix
+  product graphs. Owner-local MACE force return reuses prepared native sparse
+  reductions, while symmetric basis projections explicitly select ordered
+  accumulation. Bitwise continuation requires ordered component policies;
+  fast execution retains its nondeterministic arithmetic semantics.
+- Make ordered graph execution reproducible through global atomistic
+  derivatives. Under a deterministic or compensated `streamed` plan, each
+  `AtomisticGraphTopology` prepares validated `geometry_relations` once, so
+  position and cell gathers, MACE case-energy totals, streamed receiver
+  epilogues (species-conditioned weights), and MACE species embeddings
+  accumulate in fixed order. Fast plans keep their vectorized gathers and
+  unordered GPU additions with `geometry_relations=None`. Ordered topologies
+  gain derived in-memory relation leaves; no persisted payload or identity
+  changes.
+  The periodic MACE dynamics example selects deterministic accumulation for
+  its exact restart.
+- Document atomistic bitwise continuation preconditions. Restored training and
+  dynamics states are exact; in-process continuation is bitwise under ordered
+  accumulation, and fresh-process continuation on GPUs also needs the same
+  device type, runtime versions, and a fixed compiler profile with XLA
+  autotuning disabled, because autotuning selects kernels per process. Exact
+  restart tests select ordered plans, and their fresh-process GPU scenarios
+  re-execute in an isolated pytest process with `--xla_gpu_autotune_level=0`.
+  No default compiler flag, receipt field, or restart identity changes.
+- Compile the complete PIC locality probe through one stable entry point,
+  reusing it across block coordinates without removing species, face,
+  full-capacity, exact-zero, or refusal checks.
+- Preserve explicit `UCX_MEMTYPE_CACHE` intent in CUDA-aware MPI qualification
+  and include it in benchmark environment identities. No cache policy is
+  selected automatically. Mean qualification permits only dtype-bounded
+  division roundoff; transport, dtype, placement, and shape checks remain strict.
+- Admit concurrent POSIX repository constructors when another rank creates a
+  missing root directory first. Reinspect the resulting path and retain
+  symlink and non-directory refusal; five-rank checkpoint publication no longer
+  aborts on this directory-creation race.
 - Include `NCCL_P2P_DISABLE` in benchmark environment identities and distributed
   substrate smoke reports so peer-enabled and host-staged transport evidence
   cannot share an environment fingerprint. Document the four-RTX-PRO-6000

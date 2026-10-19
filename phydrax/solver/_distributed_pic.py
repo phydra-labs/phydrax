@@ -207,6 +207,51 @@ class _AbstractPlaneLayout(StrictModule):
         raise NotImplementedError
 
 
+@eqx.filter_jit
+def _locality_probe(
+    solver: AbstractPreparedPICFieldSolver,
+    layout: _AbstractPlaneLayout,
+    decomposition: PICDomainDecomposition,
+    species: int,
+    begin: Array,
+    finish: Array,
+    charge: Array,
+    active: Array,
+    step: Array,
+    field: Any,
+    coordinates: tuple[Array, ...],
+    /,
+) -> tuple[Array, Array]:
+    """One unchanged block probe, compiled across its dynamic positions and field.
+
+    Like the deposit/Gauss pairing probe, keep one module-level compilation
+    boundary instead of dispatching each deposition and gather operation eagerly.
+    Solver arrays and block coordinates are inputs, not captured constants.
+    """
+    velocity = jnp.pad((finish - begin) / step, ((0, 0), (0, 3 - begin.shape[1])))
+    deposited = solver.deposit(species, begin, finish, velocity, charge, active, step)
+    density, _ = solver.deposit_charge(species, finish, charge, active)
+    planes = (
+        *layout.current_planes(deposited.current),
+        *layout.charge_planes(deposited.start_charge),
+        *layout.charge_planes(deposited.end_charge),
+        *layout.charge_planes(density),
+    )
+    outside = jnp.any(
+        jnp.stack(
+            tuple(decomposition.outside_window(value, coordinates) for value in planes)
+        )
+    )
+    leaked = jnp.zeros((), dtype=begin.dtype)
+    for position in (begin, finish):
+        electric, magnetic, _ = solver.gather_fields(species, position, active, field)
+        for value in (electric, magnetic):
+            maximum = jnp.max(jnp.abs(value), initial=0.0)
+            # Match the ordered host max, including its treatment of NaN operands.
+            leaked = jnp.where(maximum > leaked, maximum, leaked)
+    return outside, leaked
+
+
 def _block_particles(plan: ParticleSetPlan, parts: int, /) -> Any:
     """Prepared particle support of one ``capacity/parts`` slot block."""
     capacity = np.asarray(plan.particle_ids).shape[0]
@@ -1055,23 +1100,7 @@ class AbstractDistributedPICFieldSolver(
                 begin[row, axis] = origin + first * width
                 finish[row, axis] = origin + last * width
             begin_, finish_ = jnp.asarray(begin), jnp.asarray(finish)
-            velocity = jnp.pad(
-                (finish_ - begin_) / step, ((0, 0), (0, 3 - begin.shape[1]))
-            )
-            deposited = self.base.deposit(
-                species, begin_, finish_, velocity, charge, active, step
-            )
-            density, _ = self.base.deposit_charge(species, finish_, charge, active)
-            planes = (
-                *self.layout.current_planes(deposited.current),
-                *self.layout.charge_planes(deposited.start_charge),
-                *self.layout.charge_planes(deposited.end_charge),
-                *self.layout.charge_planes(density),
-            )
             index = tuple(jnp.asarray(value, dtype=jnp.int32) for value in coordinates)
-            outside = any(
-                bool(decomposition.outside_window(value, index)) for value in planes
-            )
             indicator = (~decomposition.window_indicator(part)).astype(np.float64)
             field = self.layout.field_from(
                 template,
@@ -1085,17 +1114,22 @@ class AbstractDistributedPICFieldSolver(
                     for value in self.layout.field_planes(template)
                 ),
             )
-            leaked = 0.0
-            for position in (begin_, finish_):
-                electric, magnetic, _ = self.base.gather_fields(
-                    species, position, active, field
+            outside, leaked = jax.device_get(
+                _locality_probe(
+                    self.base,
+                    self.layout,
+                    decomposition,
+                    species,
+                    begin_,
+                    finish_,
+                    charge,
+                    active,
+                    step,
+                    field,
+                    index,
                 )
-                leaked = max(
-                    leaked,
-                    float(jnp.max(jnp.abs(electric), initial=0.0)),
-                    float(jnp.max(jnp.abs(magnetic), initial=0.0)),
-                )
-            if outside or leaked != 0.0:
+            )
+            if bool(outside) or float(leaked) != 0.0:
                 raise ValueError(
                     f"guard_cells={decomposition.guard_cells} does not contain the "
                     f"transfer footprint of species {species} within particle_margin="

@@ -111,6 +111,18 @@ Event semantics are explicit:
   `"compensated"` streams the same order with an error-free correction term.
   `"fast"` uses the shared segment-sum reducer.
 
+Ordered execution also sequences route gathers, and maps each bounded tile's receiver
+epilogues one receiver at a time, so their automatic transposes do not use unordered
+duplicate-index GPU additions. This covers receiver-indexed parameter selections
+inside an epilogue, such as species weights. Ordinary JVP, VJP, and mixed derivatives
+remain available. This can cost more than the vectorized fast route; it does not
+change the fast default or promise deterministic arithmetic inside arbitrary user
+callbacks: edge callbacks stay vectorized across fragment lanes, so an indexed
+selection there must order itself. Fixed scientific components must select
+their own reproducible execution as well;
+`gather_routes(relation, values, accumulation=...)` provides the same ordered route
+gather for relation code.
+
 ### Callback contracts and payloads
 
 `StreamedPayloadSpec(message, output, edge_output=None)` declares one event's

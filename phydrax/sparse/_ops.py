@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from .. import ein
 from ..typing import parse
+from ._execution import _sum_segments, RelationAccumulation
 from ._relation import EdgeRelation, RowRelation, SparseRelation
 
 
@@ -49,16 +50,20 @@ def mask_routes(relation: SparseRelation, values: Any, /) -> Any:
     return jtu.tree_map(mask_leaf, values)
 
 
-def _gather_edge_leaf(relation: EdgeRelation, value: Any, /) -> Array:
+def _gather_edge_leaf(relation: EdgeRelation, value: Any, /, *, ordered: bool) -> Array:
     array = jnp.asarray(value)
     payload_shape = _require_prefix("Edge source values", array, relation.input_shape)
     safe = jnp.where(relation.valid, relation.source_indices, 0)
-    gathered = array[safe]
+    gathered = (
+        jax.lax.map(lambda index: array[index], safe)
+        if ordered and safe.size
+        else array[safe]
+    )
     valid = _expanded_mask(relation.valid, len(payload_shape))
     return jnp.where(valid, gathered, jnp.zeros((), dtype=gathered.dtype))
 
 
-def _gather_row_leaf(relation: RowRelation, value: Any, /) -> Array:
+def _gather_row_leaf(relation: RowRelation, value: Any, /, *, ordered: bool) -> Array:
     array = jnp.asarray(value)
     payload_shape = _require_prefix("Row source values", array, relation.input_shape)
     cases = relation.num_cases
@@ -68,18 +73,49 @@ def _gather_row_leaf(relation: RowRelation, value: Any, /) -> Array:
     safe = jnp.where(relation.valid, relation.source_indices, 0).reshape(
         (cases, targets, width)
     )
-    case_indices = jnp.arange(cases, dtype=jnp.int32).reshape((cases, 1, 1))
-    gathered = flattened[case_indices, safe].reshape(relation.route_shape + payload_shape)
+    if ordered and relation.capacity:
+
+        def gather_case(source: Array, indices: Array) -> Array:
+            # Cases are independent; sequence individual target/slot events
+            # within each case, not whole rows with duplicate source indices.
+            return jax.lax.map(lambda index: source[index], indices.reshape((-1,)))
+
+        gathered = jax.vmap(gather_case)(flattened, safe).reshape(
+            relation.route_shape + payload_shape
+        )
+    else:
+        case_indices = jnp.arange(cases, dtype=jnp.int32).reshape((cases, 1, 1))
+        gathered = flattened[case_indices, safe].reshape(
+            relation.route_shape + payload_shape
+        )
     valid = _expanded_mask(relation.valid, len(payload_shape))
     return jnp.where(valid, gathered, jnp.zeros((), dtype=gathered.dtype))
 
 
-def gather_routes(relation: SparseRelation, values: Any, /) -> Any:
-    """Gather source payloads onto routes using the relation's canonical source axis."""
+def gather_routes(
+    relation: SparseRelation,
+    values: Any,
+    /,
+    *,
+    accumulation: RelationAccumulation = "fast",
+) -> Any:
+    """Gather source payloads onto routes using the relation's canonical source axis.
+
+    Gathered values are identical under every policy. Ordered policies gather one
+    route event at a time, so the automatic transpose adds duplicate-source
+    cotangents in route storage order rather than by unordered GPU scatter
+    additions; ordinary JVP, VJP and mixed derivatives remain available.
+    """
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+    ordered = accumulation != "fast"
     if isinstance(relation, EdgeRelation):
-        return jtu.tree_map(lambda value: _gather_edge_leaf(relation, value), values)
+        return jtu.tree_map(
+            lambda value: _gather_edge_leaf(relation, value, ordered=ordered), values
+        )
     if isinstance(relation, RowRelation):
-        return jtu.tree_map(lambda value: _gather_row_leaf(relation, value), values)
+        return jtu.tree_map(
+            lambda value: _gather_row_leaf(relation, value, ordered=ordered), values
+        )
     raise TypeError("relation must be an EdgeRelation or RowRelation.")
 
 
@@ -116,6 +152,7 @@ def _reduce_edge_leaf(
     relation: EdgeRelation,
     value: Any,
     reduction: RouteReduction,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
     array = jnp.asarray(value)
@@ -129,8 +166,18 @@ def _reduce_edge_leaf(
         relation.target_size,
     )
     if reduction in ("sum", "mean"):
-        material = jnp.where(valid, array, jnp.zeros((), dtype=array.dtype))
-        reduced = jax.ops.segment_sum(material, safe_target, relation.target_size)
+        if accumulation == "fast":
+            material = jnp.where(valid, array, jnp.zeros((), dtype=array.dtype))
+            reduced = jax.ops.segment_sum(material, safe_target, relation.target_size)
+        else:
+            high, correction = _sum_segments(
+                array,
+                safe_target,
+                relation.valid,
+                relation.target_size,
+                accumulation=accumulation,
+            )
+            reduced = high + correction if accumulation == "compensated" else high
     elif reduction == "max":
         material = jnp.where(valid, array, _extreme_fill(array.dtype, reduction))
         reduced = jax.ops.segment_max(material, safe_target, relation.target_size)
@@ -144,6 +191,7 @@ def _reduce_row_leaf(
     relation: RowRelation,
     value: Any,
     reduction: RouteReduction,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
     array = jnp.asarray(value)
@@ -153,8 +201,25 @@ def _reduce_row_leaf(
     route_axis = len(relation.route_shape) - 1
     counts = jnp.sum(relation.valid, axis=-1, dtype=jnp.int32)
     if reduction in ("sum", "mean"):
-        material = jnp.where(valid, array, jnp.zeros((), dtype=array.dtype))
-        reduced = jnp.sum(material, axis=route_axis)
+        if accumulation == "fast":
+            material = jnp.where(valid, array, jnp.zeros((), dtype=array.dtype))
+            reduced = jnp.sum(material, axis=route_axis)
+        else:
+            row_count = prod(relation.output_shape)
+            rows = array.reshape((row_count, relation.width) + payload_shape)
+            active = relation.valid.reshape((row_count, relation.width))
+            slots = jnp.zeros((relation.width,), dtype=jnp.int32)
+
+            def reduce_row(row: Array, mask: Array) -> Array:
+                high, correction = _sum_segments(
+                    row, slots, mask, 1, accumulation=accumulation
+                )
+                total = high + correction if accumulation == "compensated" else high
+                return total[0]
+
+            reduced = jax.vmap(reduce_row)(rows, active).reshape(
+                relation.output_shape + payload_shape
+            )
     elif reduction == "max":
         material = jnp.where(valid, array, _extreme_fill(array.dtype, reduction))
         reduced = jnp.max(material, axis=route_axis)
@@ -170,16 +235,27 @@ def route_reduce(
     /,
     *,
     reduction: RouteReduction = "sum",
+    accumulation: RelationAccumulation = "fast",
 ) -> Any:
-    """Reduce route payloads only onto the relation's declared target axis."""
+    """Reduce route payloads only onto the relation's declared target axis.
+
+    Ordered sum/mean accumulation follows the existing route storage order
+    (within each row for a RowRelation), without sorting or preparing new state.
+    The policy controls this forward reduction, not every downstream adjoint.
+    """
     reduction = parse(reduction, RouteReduction, "reduction")
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+    if accumulation == "compensated" and reduction not in ("sum", "mean"):
+        raise ValueError("Compensated accumulation supports sum and mean only.")
     if isinstance(relation, EdgeRelation):
         return jtu.tree_map(
-            lambda value: _reduce_edge_leaf(relation, value, reduction), values
+            lambda value: _reduce_edge_leaf(relation, value, reduction, accumulation),
+            values,
         )
     if isinstance(relation, RowRelation):
         return jtu.tree_map(
-            lambda value: _reduce_row_leaf(relation, value, reduction), values
+            lambda value: _reduce_row_leaf(relation, value, reduction, accumulation),
+            values,
         )
     raise TypeError("relation must be an EdgeRelation or RowRelation.")
 
@@ -237,8 +313,15 @@ def linear_apply(
     coefficients: ArrayLike,
     values: Any,
     /,
+    *,
+    accumulation: RelationAccumulation = "fast",
 ) -> Any:
-    """Apply a scalar-coefficient sparse linear map to source payloads."""
+    """Apply a scalar-coefficient map with an explicit accumulation policy.
+
+    Ordered modes also sequence source-route gathers, so their automatic
+    transposes accumulate duplicate source contributions in a fixed order.
+    """
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
     weights = _coefficient_array(relation, coefficients)
     route_ndim = len(relation.route_shape)
     batch_shape = tuple(weights.shape[:-route_ndim])
@@ -250,12 +333,13 @@ def linear_apply(
             relation.input_shape,
             "Batched sparse source values",
         )
-        output = jax.vmap(lambda weight, value: linear_apply(relation, weight, value))(
-            flattened_weights,
-            flattened_values,
-        )
+        output = jax.vmap(
+            lambda weight, value: linear_apply(
+                relation, weight, value, accumulation=accumulation
+            )
+        )(flattened_weights, flattened_values)
         return _restore_operator_batch(output, batch_shape)
-    gathered = gather_routes(relation, values)
+    gathered = gather_routes(relation, values, accumulation=accumulation)
 
     def weight_leaf(value: Any, /) -> Array:
         array = jnp.asarray(value)
@@ -264,7 +348,7 @@ def linear_apply(
         return array * expanded
 
     messages = jtu.tree_map(weight_leaf, gathered)
-    return route_reduce(relation, messages)
+    return route_reduce(relation, messages, accumulation=accumulation)
 
 
 def _flatten_row_targets(relation: RowRelation, values: Any, /) -> Any:

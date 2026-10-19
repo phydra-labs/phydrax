@@ -43,7 +43,8 @@ def tiny_mace(*, seed: int = 0, cutoff: float = 3.0) -> Any:
     )
 
 
-def graph_execution() -> Any:
+def graph_execution(*, accumulation: phx.sparse.RelationAccumulation = "fast") -> Any:
+    """Particle image graph execution; bitwise replay needs ordered accumulation."""
     return phx.atomistic.AtomisticGraphExecutionPlan(
         32,
         backend="particle",
@@ -53,13 +54,19 @@ def graph_execution() -> Any:
             maximum_degree=64,
             maximum_images=343,
         ),
+        streamed=phx.sparse.StreamedRelationPlan(accumulation=accumulation),
     )
 
 
-def provider_plan(model: Any, *, skin: float = 0.4) -> Any:
+def provider_plan(
+    model: Any,
+    *,
+    skin: float = 0.4,
+    accumulation: phx.sparse.RelationAccumulation = "fast",
+) -> Any:
     return phx.atomistic.NativeAtomisticProviderPlan(
         model,
-        graph_execution(),
+        graph_execution(accumulation=accumulation),
         finite_neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(256),
         skin=skin,
         deformation_margin=0.1,
@@ -75,9 +82,13 @@ def calculator_plan(model: Any) -> Any:
 def periodic_dynamics(
     model: Any, system: Any, *, step_size: float = 0.25
 ) -> tuple[Any, Any]:
-    """Fixed-cell NVE dynamics over the same native provider recipe."""
+    """Fixed-cell NVE dynamics over the native provider recipe.
 
-    provider = provider_plan(model).prepare(system)
+    Ordered accumulation makes in-process restarts continue bitwise on every
+    backend; fresh-process GPU restarts also need ``compiler_profile``.
+    """
+
+    provider = provider_plan(model, accumulation="deterministic").prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         provider.program,
@@ -114,7 +125,7 @@ def strained_water_problem() -> Any:
             )
         )
     batch = phx.atomistic.AtomisticBatch.from_structures(structures)
-    execution = graph_execution()
+    execution = graph_execution(accumulation="deterministic")
     labels = phx.atomistic.energy_and_forces(
         tiny_mace(seed=11), batch, execution, compute_stress=True
     )

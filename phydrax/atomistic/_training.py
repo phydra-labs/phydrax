@@ -1022,6 +1022,15 @@ def fit_atomistic_potential(
     always the last finite accepted state. Unsupported periodic, cell, or
     target configurations are refused before any optimizer state exists. A
     continuation resumes its committed kernel state, including its root key.
+    It equals the uninterrupted run bitwise only when every streamed plan the
+    potential executes (the problem's graph execution and any explicit model
+    streaming plan) selects ordered ``"deterministic"`` or ``"compensated"``
+    accumulation; fast accumulation retains nondeterministic accelerator
+    rounding, so losses, the selected best potential, and the result identity
+    can differ between equal runs. A continuation in a fresh process also needs
+    the same device type, runtime versions, and a fixed compiler profile (on
+    GPUs, XLA autotuning disabled), because autotuning selects kernels per
+    process.
     """
 
     _validate_fit_inputs(potential, problem, policy)

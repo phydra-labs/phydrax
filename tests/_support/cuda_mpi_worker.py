@@ -60,13 +60,27 @@ def cuda_uuid(device: jax.Device) -> str:
 
 
 def assert_result(
-    result: jax.Array, expected: np.ndarray, device: jax.Device
+    result: jax.Array,
+    expected: np.ndarray,
+    device: jax.Device,
+    *,
+    mean_roundoff: bool = False,
 ) -> list[float]:
     result.block_until_ready()
     assert result.devices() == {device}, result.devices()
     assert result.dtype == expected.dtype, (result.dtype, expected.dtype)
-    np.testing.assert_array_equal(np.asarray(result), expected)
-    return np.asarray(result).tolist()
+    assert result.shape == expected.shape, (result.shape, expected.shape)
+    observed = np.asarray(result)
+    if mean_roundoff:
+        # Division and the reciprocal-multiply used by its derivative can differ
+        # by rounding for non-power-of-two ranks. The binary-valued probe sums
+        # are exact; allow only the two-operation relative rounding bound.
+        np.testing.assert_allclose(
+            observed, expected, rtol=2 * np.finfo(expected.dtype).eps, atol=0.0
+        )
+    else:
+        np.testing.assert_array_equal(observed, expected)
+    return observed.tolist()
 
 
 def input_values(rank: int, step: int, dtype: np.dtype) -> np.ndarray:
@@ -124,7 +138,9 @@ def primal_phase(
             "sendrecv": inputs[(rank - 1) % size],
         }
         results = {
-            name: assert_result(operation(value), expected[name], device)
+            name: assert_result(
+                operation(value), expected[name], device, mean_roundoff=name == "mean"
+            )
             for name, operation in compiled.items()
         }
         jax.effects_barrier()
@@ -172,8 +188,12 @@ def differentiation_phase(
         expected = np.sum(seeds, axis=0, dtype=dtype)
         if name == "mean":
             expected = expected / np.asarray(size, dtype=dtype)
-        assert_result(primal, expected_primals[name], device)
-        results[f"{name}.jvp"] = assert_result(tangent, expected, device)
+        assert_result(
+            primal, expected_primals[name], device, mean_roundoff=name == "mean"
+        )
+        results[f"{name}.jvp"] = assert_result(
+            tangent, expected, device, mean_roundoff=name == "mean"
+        )
         jax.effects_barrier()
     for name in ("sum", "mean", "sendrecv"):
         primal, adjoint = jax.jit(vjp_operation(routes[name]))(value, seed)
@@ -181,8 +201,12 @@ def differentiation_phase(
         expected = seeds[(rank + 1) % size] if name == "sendrecv" else seeds[rank]
         if name == "mean":
             expected = expected / np.asarray(size, dtype=dtype)
-        assert_result(primal, expected_primals[name], device)
-        results[f"{name}.vjp"] = assert_result(adjoint, expected, device)
+        assert_result(
+            primal, expected_primals[name], device, mean_roundoff=name == "mean"
+        )
+        results[f"{name}.vjp"] = assert_result(
+            adjoint, expected, device, mean_roundoff=name == "mean"
+        )
         jax.effects_barrier()
     return results
 

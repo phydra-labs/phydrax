@@ -25,6 +25,7 @@ from phydrax.atomistic import (
 from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic import MACEArchitecture, MACEPotential, PaiNNPotential
 from phydrax.precision import ScalarPrecisionDType
+from phydrax.sparse import StreamedRelationPlan
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
@@ -56,7 +57,7 @@ def _mace(key: Any) -> Any:
     )
 
 
-def _execution() -> Any:
+def _execution(*, streamed: StreamedRelationPlan | None = None) -> Any:
     return AtomisticGraphExecutionPlan(
         64,
         backend="particle",
@@ -66,6 +67,7 @@ def _execution() -> Any:
             maximum_degree=64,
             maximum_images=125,
         ),
+        streamed=streamed,
     )
 
 
@@ -113,9 +115,11 @@ def _assert_trees_bitwise_equal(observed: Any, expected: Any) -> None:
 def test_mace_energy_force_stress_fit_continues_like_an_uninterrupted_run() -> None:
     batch = _periodic_batch()
     energy, forces, stress = _teacher_labels(batch)
+    # Bitwise continuation requires ordered accumulation: fast reductions keep
+    # their nondeterministic rounding on accelerators.
     problem = AtomisticTrainingProblem(
         batch,
-        _execution(),
+        _execution(streamed=StreamedRelationPlan(accumulation="deterministic")),
         cutoff=CUTOFF,
         training_energy=energy,
         training_forces=forces,

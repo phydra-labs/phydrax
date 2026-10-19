@@ -33,6 +33,7 @@ from phydrax.atomistic._model_artifact import (
     AtomisticModelArtifactError,
     write_atomistic_model_artifact,
 )
+from tests._support.compiler_profile import isolated_in_fixed_compiler_profile
 from tests._support.mace_source import (
     admitted_source,
     committed_source_potential,
@@ -143,8 +144,9 @@ def imported() -> Any:
     return committed_source_potential("two_scale_shift")
 
 
-@pytest.fixture(scope="module")
-def md(imported: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def _nvt_restart(imported: Any, path: Path) -> dict[str, Any]:
+    """Saved NVT state, its restart bundle at ``path`` and the uninterrupted reference."""
+
     system = water_system()
     dynamics, thermodynamic = nvt_dynamics(imported, system)
     velocity = 0.003 * np.cos(np.arange(9.0)).reshape(3, 3)
@@ -159,7 +161,6 @@ def md(imported: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any
     plan = phx.atomistic.AtomisticCheckpointPlan(
         dynamics, thermodynamic, scope_id="rank-0"
     )
-    path = tmp_path_factory.mktemp("md") / "nvt.restart"
     write_atomistic_restart(path, plan, state, model=imported, licenses=["MIT"])
     reference = state
     for _ in range(CONTINUED_STEPS):
@@ -175,9 +176,19 @@ def md(imported: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any
     }
 
 
+@pytest.fixture(scope="module")
+def md(imported: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    return _nvt_restart(imported, tmp_path_factory.mktemp("md") / "nvt.restart")
+
+
 def test_fresh_process_nvt_continuation_equals_uninterrupted_evolution(
-    md: dict[str, Any], tmp_path: Path
+    request: pytest.FixtureRequest, tmp_path: Path
 ) -> None:
+    if isolated_in_fixed_compiler_profile(request):
+        return
+    md = _nvt_restart(
+        committed_source_potential("two_scale_shift"), tmp_path / "nvt.restart"
+    )
     output = tmp_path / "continued.chk"
     _fresh(_MD, [str(md["path"]), str(output), str(CONTINUED_STEPS), "-"])
     template = water_template(md["dynamics"], md["thermodynamic"])
@@ -259,18 +270,16 @@ def _policy(steps: int, **overrides: Any) -> Any:
     )
 
 
-@pytest.fixture(scope="module")
-def training(imported: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def _training_restart(imported: Any, directory: Path) -> dict[str, Any]:
+    """Partial fit published at ``directory`` and its uninterrupted counterpart."""
+
     problem = water_training_problem()
     partial = phx.atomistic.fit_atomistic_potential(
         imported, problem, _policy(2), key=jax.random.key(5)
     )
     assert bool(partial.successful)
     directory = write_atomistic_training_restart(
-        tmp_path_factory.mktemp("training") / "restart",
-        partial,
-        _policy(2),
-        licenses=["MIT"],
+        directory, partial, _policy(2), licenses=["MIT"]
     )
     uninterrupted = phx.atomistic.fit_atomistic_potential(
         imported, problem, _policy(5), key=jax.random.key(5)
@@ -281,6 +290,11 @@ def training(imported: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[st
         "uninterrupted": uninterrupted,
         "directory": directory,
     }
+
+
+@pytest.fixture(scope="module")
+def training(imported: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    return _training_restart(imported, tmp_path_factory.mktemp("training") / "restart")
 
 
 def _bundle_bytes(directory: Path) -> dict[str, bytes]:
@@ -318,8 +332,17 @@ def _assert_restores_partial(directory: Path, training: dict[str, Any]) -> None:
 
 
 def test_failed_training_restart_publication_keeps_resumable_bundle(
-    training: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if isolated_in_fixed_compiler_profile(request):
+        return
+    training = _training_restart(
+        committed_source_potential("two_scale_shift"),
+        tmp_path_factory.mktemp("training") / "restart",
+    )
     bundle = tmp_path / "restart"
     shutil.copytree(training["directory"], bundle)
     published = _bundle_bytes(bundle)
@@ -430,9 +453,11 @@ def test_training_restart_refuses_altered_targets_scales_and_model(
 
 
 def test_converted_source_restart_preserves_provenance_in_a_fresh_process(
-    tmp_path: Path,
+    request: pytest.FixtureRequest, tmp_path: Path
 ) -> None:
     provider = provider_runtime()
+    if isolated_in_fixed_compiler_profile(request):
+        return
     fixture = phx.atomistic.interchange.create_mace_provider_fixture(
         ONE_LAYER_INVARIANT_READOUT, tmp_path, provider=provider, seed=11
     )

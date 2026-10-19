@@ -256,8 +256,18 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -
         ("NPROC", "3", "4"),
         ("NCCL_NVLS_ENABLE", "0", "1"),
         ("NCCL_P2P_DISABLE", "0", "1"),
+        ("NCCL_LAUNCH_ORDER_IMPLICIT", "0", "1"),
+        ("NCCL_LAUNCH_RACE_FATAL", "0", "1"),
+        ("UCX_MEMTYPE_CACHE", "n", "y"),
     ],
-    ids=["cpu-workers", "nvls", "peer-transport"],
+    ids=[
+        "cpu-workers",
+        "nvls",
+        "peer-transport",
+        "communicator-order",
+        "launch-race-detection",
+        "ucx-memory-type-cache",
+    ],
 )
 def test_performance_configuration_changes_environment_identity(
     monkeypatch: pytest.MonkeyPatch, name: str, first: str, second: str

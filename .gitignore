@@ -50,6 +50,8 @@ _gitignore/
 benchmarks/*
 # Physical four-H100 deployment and phase-separated qualification evidence.
 !benchmarks/h100_qualification.json
+# Physical H200 deployment, diagnostics, and phase-separated qualification evidence.
+!benchmarks/h200_qualification.json
 # RTX PRO 6000 installation evidence and blocked peer-transfer qualification.
 !benchmarks/rtx_pro_6000_qualification.json
 !benchmarks/numerical_interoperability.py

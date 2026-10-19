@@ -144,7 +144,7 @@ def _repository(tmp_path: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("part_count", [2, 4], ids=["two-parts", "four-parts"])
+@pytest.mark.parametrize("part_count", [2, 3, 4, 5])
 def test_wave_amr_step_checkpoint_and_changed_partition_restart(
     tmp_path: Any,
     monkeypatch: Any,
