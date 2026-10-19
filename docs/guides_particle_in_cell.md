@@ -820,6 +820,29 @@ payload admission, and FFT resources. A changed PSATD topology is refused rather
 treated as a topology-neutral numerical checkpoint. Every route still admits a
 component only through the same scientific owner identity.
 
+### Selecting a device-count campaign
+
+`benchmarks.pic_distributed --parts 1 2 3 4 5` admits positive available device
+counts, including primes; the sweep starts at one for its scientific reference.
+Reduced execution uses slabs. Spectral execution uses an exact near-square
+factorization and drops size-one mesh axes, so prime counts use slabs rather than
+inventing a nondegenerate pencil.
+
+Weak scaling keeps actual cells and species slots per device fixed across the
+selected counts. Strong scaling rounds the requested global dimensions and capacity
+up to common divisibility constraints, holding the resulting scientific problem
+fixed. Local-guarded strong scaling also fixes the subdomain tiling across counts.
+Records expose actual grid shapes, local cell counts, capacities, and subdomains;
+requested sizes alone do not describe the rounded workload. The existing `1 2 4`
+default sizing is unchanged.
+
+For example, the mixed `1 2 3 4 5` spectral sweep at 16 requested cells per part
+uses a strong grid of `90×60×8` and common guarded tiling `30×2×1`. That guard
+volume is real work, not five-device scaling efficiency. Numerical admission still
+checks every species, block, face, full-capacity deposit, and endpoint gather.
+The locality probe is compiled once per compatible preparation and reused across
+dynamic block coordinates rather than repeatedly compiling its eager primitives.
+
 ### Measured H100 reduced-field execution
 
 `python -m benchmarks.pic_distributed --routes reduced-slabs --parts 1 2 4`

@@ -63,7 +63,7 @@ from ..discretization.spatial._distributed_relations import (
     DistributedPointLayout,
 )
 from ..ein import contract
-from ..sparse import EdgeRelation
+from ..sparse import EdgeRelation, RelationExecutionPlan, RelationExecutionState
 from ..sparse._streamed import PreparedStreamedRelation, StreamedRelationPlan
 from ..typing import Bool, Dim, Float, Int32, parse, PRNGKey, Scalar
 from ._constraints import ConstraintProjection, PreparedDistanceConstraints
@@ -2349,8 +2349,9 @@ class OwnerLocalAtomisticTopology(StrictModule, NonTrainableState):
     Owner-blocked edge routes name their receiver row and the physical source
     atom by ``(route_owners, route_slots)`` with integer image ``shifts``;
     ``halo`` maps every route onto an owned or deduplicated halo column. The
-    prepared streamed relation of every owner is retained as owner-stacked
-    leaves of ``relation_tree`` and reused until the next epoch.
+    prepared streamed relation and both geometric cotangent reductions of every
+    owner are retained as owner-stacked leaves of ``relation_tree`` and reused
+    until the next epoch.
     ``reference_positions`` are the stored coordinates the candidate edges
     were certified for.
     """
@@ -2684,13 +2685,16 @@ def _owner_edges(
 
 def _relation_function(
     plan: OwnerLocalAtomisticPlan, streaming: StreamedRelationPlan, column_count: int
-) -> Callable[[Array, Array, Array, Array, Array], PreparedStreamedRelation]:
+) -> Callable[
+    [Array, Array, Array, Array, Array],
+    tuple[PreparedStreamedRelation, RelationExecutionState, RelationExecutionState],
+]:
     local = plan.ownership.local_capacity
     owner_id = plan.topology_owner_id
 
     def prepare(
         receivers: Array, columns: Array, valid: Array, alive: Array, epoch: Array
-    ) -> PreparedStreamedRelation:
+    ) -> tuple[PreparedStreamedRelation, RelationExecutionState, RelationExecutionState]:
         relation = EdgeRelation(
             columns,
             receivers,
@@ -2698,8 +2702,13 @@ def _relation_function(
             target_size=local,
             valid=valid,
         )
-        return streaming.prepare(
-            relation, owner_id=owner_id, epoch=epoch, receiver_valid=alive
+        reduction = RelationExecutionPlan()
+        return (
+            streaming.prepare(
+                relation, owner_id=owner_id, epoch=epoch, receiver_valid=alive
+            ),
+            reduction.prepare(relation),
+            reduction.prepare(relation.transpose()),
         )
 
     return prepare
@@ -3128,10 +3137,13 @@ def _owner_inputs(state: OwnerLocalAtomisticState, /) -> _OwnerInputs:
 def _owner_view(
     topology: OwnerLocalAtomisticTopology, inputs: _OwnerInputs, /
 ) -> OwnerLayerTopology:
+    relation, receiver_reduction, source_reduction = jax.tree.unflatten(
+        topology.relation_tree, _owner_unstack(inputs.relation)
+    )
     return OwnerLayerTopology(
-        relation=jax.tree.unflatten(
-            topology.relation_tree, _owner_unstack(inputs.relation)
-        ),
+        relation=relation,
+        receiver_reduction=receiver_reduction,
+        source_reduction=source_reduction,
         receivers=inputs.receivers,
         columns=inputs.columns,
         shifts=inputs.shifts,
@@ -3175,6 +3187,7 @@ def _evaluate_owner_regions(
                 vectors,
                 plan.cutoff,
                 message_capacity_bytes=plan.message_capacity_bytes,
+                accumulation=plan.reduction.mode,
                 parameters=False,
             )
             atom_energy = result.atom_energies
@@ -3350,6 +3363,7 @@ def _owner_parameter_partials(
                 vectors,
                 plan.cutoff,
                 message_capacity_bytes=plan.message_capacity_bytes,
+                accumulation=plan.reduction.mode,
                 parameters=False,
             )
             owned = jnp.where(inputs.active, result.atom_energies, 0.0)
@@ -3496,9 +3510,11 @@ class OwnerLocalAtomisticCheckpoint(StrictModule, NonTrainableState):
     """Host continuation record of an owner-local state and its identity.
 
     ``arrays`` holds every owner-blocked and replicated continuation array,
-    including the accepted topology routes and reference positions, so a
-    restored run continues bitwise like the uninterrupted one. Derived halo
-    columns and prepared relations are rebuilt through their constructors.
+    including the accepted topology routes and reference positions. Bitwise
+    continuation requires deterministic component execution, including the
+    streamed relation and owner reductions; fast reductions can change future
+    rounding despite exact state restoration. Derived halo columns and prepared
+    relations are rebuilt through their constructors.
     """
 
     arrays: Mapping[str, np.ndarray]
@@ -3638,9 +3654,10 @@ def restore_owner_local_atomistic(
 
     The plan identity, the model numeric revision, and the content identity
     must match. The layout, halo plan, and prepared relations are rebuilt
-    through their constructors from the recorded routes, so a restored run
-    reproduces the uninterrupted accepted evolution. The topology binds its
-    recorded owner-epoch witness, never the restored layout's epochs; a
+    through their constructors from the recorded routes. Bitwise continuation
+    requires deterministic component execution; fast reductions retain their
+    declared numerical semantics. The topology binds its recorded owner-epoch
+    witness, never the restored layout's epochs; a
     record whose witness disagrees with the layout, or that lacks it, is
     refused.
     """

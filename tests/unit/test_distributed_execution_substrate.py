@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +40,7 @@ from phydrax.execution import (
     ExecutionRequirements,
     ExecutionRuntime,
     ExecutionWorksetPlan,
+    launch_local_processes,
     LocalProcessLaunchPlan,
     LogicalAxis,
     LogicalAxisKind,
@@ -360,7 +362,7 @@ def test_process_local_epoch_preserves_global_ids_and_fixed_capacity() -> None:
     assert all(len(batch.indices) == 2 for batch in four_processes)
 
 
-@pytest.mark.parametrize("partition_count", [2, 4])
+@pytest.mark.parametrize("partition_count", [1, 2, 3, 4, 5])
 def test_generic_halo_shard_map_matches_forward_and_transpose_references(
     partition_count: int,
 ) -> None:
@@ -381,8 +383,9 @@ def test_generic_halo_shard_map_matches_forward_and_transpose_references(
     halo = DistributedHaloPlan(
         jnp.repeat(jnp.arange(partition_count), 2),
         jnp.asarray(
-            [[2 * part + 1, 2 * part + 2] for part in range(partition_count - 1)]
-        ),
+            [[2 * part + 1, 2 * part + 2] for part in range(partition_count - 1)],
+            dtype=jnp.int32,
+        ).reshape((-1, 2)),
         partition_count,
     )
 
@@ -796,24 +799,36 @@ def test_local_launch_rank_projection_retains_disjoint_device_ids() -> None:
 @pytest.mark.parametrize(
     ("platform", "process_count", "devices_per_process"),
     [
-        ("cpu", 2, 1),
-        ("cpu", 1, 4),
-        ("cpu", 2, 2),
-        ("cpu", 4, 1),
-        ("gpu", 2, 1),
-        ("gpu", 1, 4),
-        ("gpu", 2, 2),
-        ("gpu", 4, 1),
+        (platform, processes, devices)
+        for platform in ("cpu", "gpu")
+        for processes, devices in (
+            (1, 1),
+            (1, 2),
+            (2, 1),
+            (1, 3),
+            (3, 1),
+            (1, 4),
+            (2, 2),
+            (4, 1),
+            (1, 5),
+            (5, 1),
+        )
     ],
     ids=[
-        "cpu-2x1",
-        "cpu-1x4",
-        "cpu-2x2",
-        "cpu-4x1",
-        "gpu-2x1",
-        "gpu-1x4",
-        "gpu-2x2",
-        "gpu-4x1",
+        f"{platform}-{processes}x{devices}"
+        for platform in ("cpu", "gpu")
+        for processes, devices in (
+            (1, 1),
+            (1, 2),
+            (2, 1),
+            (1, 3),
+            (3, 1),
+            (1, 4),
+            (2, 2),
+            (4, 1),
+            (1, 5),
+            (5, 1),
+        )
     ],
 )
 def test_local_substrate_launcher_preserves_device_ownership(
@@ -890,6 +905,12 @@ def test_local_substrate_launcher_preserves_device_ownership(
         ]
     )
     assert report["problem"]["group_identity_consistent"]
+    assert report["problem"]["logical_size"] == 17
+    total_devices = process_count * local_count
+    assert (
+        report["problem"]["padded_size"]
+        == ((17 + total_devices - 1) // total_devices) * total_devices
+    )
     hosts = runtime["process_host_ids"]
     if process_count > 1:
         assert [process for process, host in hosts] == list(range(process_count))
@@ -911,17 +932,20 @@ def test_local_substrate_launcher_preserves_device_ownership(
 
 
 @pytest.mark.strict_jax
+@pytest.mark.parametrize("device_count", [1, 2, 3, 4, 5])
 @pytest.mark.parametrize(
     ("value", "dtype"),
     [(True, jnp.bool_), (1.5, jnp.float64)],
     ids=["boolean", "float64"],
 )
 def test_replicated_scalar_checkpoint_keeps_canonical_owner_and_replica(
-    value: bool | float, dtype: DTypeLike
+    value: bool | float, dtype: DTypeLike, device_count: int
 ) -> None:
+    if jax.device_count() < device_count:
+        pytest.skip(f"requires {device_count} JAX devices")
     devices = tuple(
         sorted(
-            jax.devices(),
+            jax.devices()[:device_count],
             key=lambda device: (device.process_index, device.id),
             reverse=True,
         )
@@ -944,3 +968,127 @@ def test_replicated_scalar_checkpoint_keeps_canonical_owner_and_replica(
     np.testing.assert_array_equal(snapshot.payload, np.asarray(value, dtype=dtype))
     (repeated,) = snapshot_addressable_arrays({"scalar": array})
     assert repeated.layout_id == snapshot.layout_id
+
+
+def _publish_replicated_checkpoint_rank(directory: str) -> None:
+    from jax.experimental import multihost_utils
+
+    runtime = ExecutionRuntime.current()
+    assert jax.process_count() == 5
+    assert jax.local_device_count() == 1
+    devices = tuple(
+        sorted(
+            jax.devices(),
+            key=lambda device: (device.process_index, device.id),
+            reverse=True,
+        )
+    )
+    owner = devices[-1]
+    sharding = NamedSharding(
+        Mesh(np.asarray(devices, dtype=object), ("replicas",)), PartitionSpec()
+    )
+    payload = {
+        "boolean": jax.device_put(np.asarray(True, dtype=np.bool_), sharding),
+        "float64": jax.device_put(np.asarray(1.5, dtype=np.float64), sharding),
+    }
+    repository = _repository(Path(directory))
+    publication = publish_process_checkpoint(
+        repository,
+        "five-rank-replicated",
+        runtime.root_group.spec.group_id,
+        payload,
+        analysis_plan_id="replicated-analysis",
+        numeric_revision_id="replicated-numerics",
+        writer_id=f"rank-{jax.process_index()}",
+    )
+    assert len(publication.shards) == (
+        2 if jax.process_index() == owner.process_index else 0
+    )
+    multihost_utils.sync_global_devices("replicated-checkpoint-published")
+    manifest = assemble_distributed_checkpoint_from_repository(
+        repository,
+        "five-rank-replicated",
+        "replicated-analysis",
+        "replicated-numerics",
+        runtime.root_group.spec.group_id,
+        expected_process_count=5,
+    )
+    assert manifest.complete
+    assert len(manifest.shards) == 2
+    for shard in manifest.shards:
+        metadata = dict(shard.metadata)
+        assert metadata["process_index"] == str(owner.process_index)
+        assert metadata["device_id"] == str(owner.id)
+        assert metadata["replica_id"] == "4"
+    for name, expected in payload.items():
+        restored = restore_global_array_from_checkpoint(
+            repository, manifest, f"['{name}']", sharding
+        )
+        assert restored.dtype == expected.dtype
+        np.testing.assert_array_equal(
+            restored.addressable_data(0), expected.addressable_data(0)
+        )
+    print(
+        json.dumps(
+            {
+                "rank": jax.process_index(),
+                "inventory_id": runtime.inventory.inventory_id,
+                "group_id": runtime.root_group.spec.group_id,
+                "manifest_id": manifest.manifest_id,
+                "local_hardware_ids": [
+                    device.local_hardware_id for device in jax.local_devices()
+                ],
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize("platform", ["cpu", "gpu"])
+def test_five_rank_replicated_checkpoint_publication(
+    tmp_path: Path, platform: str
+) -> None:
+    if platform == "gpu" and (
+        jax.default_backend() != "gpu" or jax.local_device_count() < 5
+    ):
+        pytest.skip("requires five visible GPUs")
+    if not sys.platform.startswith("linux"):
+        pytest.skip("requires native process host mapping evidence")
+    root = Path(__file__).parents[2]
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            platforms=("cpu",) if platform == "cpu" else ("cuda",),
+            cpu_device_count=1,
+            cpu_collectives_implementation="gloo",
+        )
+    )
+    environment.update(
+        PYTHONPATH=str(root),
+        XLA_PYTHON_CLIENT_PREALLOCATE="false",
+        OMP_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+    )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    results = launch_local_processes(
+        (
+            sys.executable,
+            "-c",
+            "import runpy, sys; "
+            "runpy.run_path(sys.argv[1])['_publish_replicated_checkpoint_rank'](sys.argv[2])",
+            str(Path(__file__).resolve()),
+            str(tmp_path),
+        ),
+        LocalProcessLaunchPlan(5, f"127.0.0.1:{port}", devices_per_process=1),
+        environment=environment,
+        cwd=str(root),
+    )
+    reports = [
+        json.loads(result.stdout.decode().strip().splitlines()[-1]) for result in results
+    ]
+    assert [report["rank"] for report in reports] == list(range(5))
+    for identity in ("inventory_id", "group_id", "manifest_id"):
+        assert len({report[identity] for report in reports}) == 1
+    assert [report["local_hardware_ids"] for report in reports] == (
+        [[0]] * 5 if platform == "cpu" else [[rank] for rank in range(5)]
+    )

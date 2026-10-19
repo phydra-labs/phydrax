@@ -31,6 +31,7 @@ from ._precision import SpectralPrecisionPolicy
 SpectralSchedule: TypeAlias = Literal["slab", "pencil", "channel"]
 SpectralRepresentation: TypeAlias = Literal["physical", "modal"]
 _SpectralStageOperation: TypeAlias = Literal["fft", "transpose"]
+type _SpectralTransposePacking = Literal["direct", "pencil-to-slab", "slab-to-pencil"]
 
 
 class _ForwardedPlanOptions(TypedDict, total=False):
@@ -345,68 +346,162 @@ class SpectralLayout(StrictModule, NonTrainableState):
 
 @final
 class SpectralTranspose(StrictModule, NonTrainableState):
-    """One differentiable all-to-all redistribution between spectral layouts."""
+    """One all-to-all redistribution derived from declared layouts and topology."""
 
     source: SpectralLayout
     target: SpectralLayout
-    mesh_axis: str = eqx.field(static=True)
+    mesh_axis: str | tuple[str, ...] = eqx.field(static=True)
     split_axis: int = eqx.field(static=True)
     concat_axis: int = eqx.field(static=True)
+    packing: _SpectralTransposePacking = eqx.field(static=True)
+    mesh_shape: tuple[int, ...] = eqx.field(static=True)
     transpose_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         source: SpectralLayout,
         target: SpectralLayout,
-        mesh_axis: str,
-        split_axis: int,
-        concat_axis: int,
+        topology: SpectralMeshTopology,
         /,
     ) -> None:
         if not isinstance(source, SpectralLayout) or not isinstance(
             target, SpectralLayout
         ):
             raise TypeError("source and target must be SpectralLayout values.")
-        if source.topology_id != target.topology_id:
-            raise ValueError("Spectral transpose layouts must share one topology.")
-        name = str(mesh_axis)
-        split = int(split_axis)
-        concat = int(concat_axis)
-        if not name or name not in source.used_mesh_axes + target.used_mesh_axes:
-            raise ValueError("mesh_axis must participate in the transpose layouts.")
+        if not isinstance(topology, SpectralMeshTopology):
+            raise TypeError("topology must be a SpectralMeshTopology.")
         if (
-            split < 0
-            or concat < 0
-            or split >= len(source.global_shape)
-            or concat >= len(source.global_shape)
+            source.topology_id != target.topology_id
+            or source.topology_id != topology.topology_id
         ):
-            raise ValueError("Transpose axes lie outside the distributed array rank.")
-        if split == concat:
-            raise ValueError("all_to_all split and concatenation axes must differ.")
+            raise ValueError(
+                "Spectral transpose layouts must share the supplied topology."
+            )
+        if source.global_shape != target.global_shape or source.padded != target.padded:
+            raise ValueError(
+                "Spectral transpose layouts must describe the same global array."
+            )
+
+        def entries(layout: SpectralLayout) -> tuple[tuple[str, ...], ...]:
+            return tuple(
+                () if value is None else (value,) if isinstance(value, str) else value
+                for value in layout.partition
+            )
+
+        source_entries, target_entries = entries(source), entries(target)
+        source_axes = {
+            name: axis for axis, names in enumerate(source_entries) for name in names
+        }
+        target_axes = {
+            name: axis for axis, names in enumerate(target_entries) for name in names
+        }
+        if source_axes.keys() != target_axes.keys():
+            raise ValueError(
+                "An all-to-all transpose must preserve participating mesh axes."
+            )
+        moved = tuple(
+            name
+            for name in topology.mesh_axis_names
+            if name in source_axes and source_axes[name] != target_axes[name]
+        )
+        packing: _SpectralTransposePacking
+        mesh_axis: str | tuple[str, ...]
+        mesh_shape: tuple[int, ...]
+        if len(moved) == 1:
+            mesh_axis = moved[0]
+            split, concat = target_axes[mesh_axis], source_axes[mesh_axis]
+            expected = list(source_entries)
+            if expected[concat][-1] != mesh_axis:
+                raise ValueError("A direct transpose moves the innermost partition axis.")
+            expected[concat] = expected[concat][:-1]
+            expected[split] = (*expected[split], mesh_axis)
+            if tuple(expected) != target_entries:
+                raise ValueError("The target layout does not match a direct all-to-all.")
+            packing, mesh_shape = "direct", ()
+        elif (
+            len(moved) == 2 and len(topology.mesh_shape) == 2 and len(source_entries) >= 3
+        ):
+            if len(source_entries[0]) == len(source_entries[1]) == 1:
+                first, second = source_entries[0][0], source_entries[1][0]
+                packing, split, concat = "pencil-to-slab", 3, 0
+            elif len(target_entries[0]) == len(target_entries[1]) == 1:
+                first, second = target_entries[0][0], target_entries[1][0]
+                packing, split, concat = "slab-to-pencil", 0, 3
+            else:
+                raise ValueError(
+                    "A full-mesh transpose requires a declared xy-pencil layout."
+                )
+            physical = ((first,), (second,), ()) + ((),) * (len(source_entries) - 3)
+            modal = ((), (), (second, first)) + ((),) * (len(source_entries) - 3)
+            expected_source, expected_target = (
+                (physical, modal) if packing == "pencil-to-slab" else (modal, physical)
+            )
+            if source_entries != expected_source or target_entries != expected_target:
+                raise ValueError(
+                    "A full-mesh transpose requires canonical pencil and z-slab layouts."
+                )
+            mesh_axis = (second, first)
+            sizes = dict(zip(topology.mesh_axis_names, topology.mesh_shape, strict=True))
+            mesh_shape = (sizes[first], sizes[second])
+        else:
+            raise ValueError(
+                "Layouts must describe a direct or full-mesh pencil transpose."
+            )
+
+        identity: dict[str, Any] = {
+            "kind": "spectral-all-to-all-transpose",
+            "source": source.layout_id,
+            "target": target.layout_id,
+            "mesh_axis": mesh_axis if isinstance(mesh_axis, str) else list(mesh_axis),
+            "split_axis": split,
+            "concat_axis": concat,
+        }
+        if packing != "direct":
+            identity["packing"] = packing
+            identity["mesh_shape"] = list(mesh_shape)
         self.source = source
         self.target = target
-        self.mesh_axis = name
+        self.mesh_axis = mesh_axis
         self.split_axis = split
         self.concat_axis = concat
-        self.transpose_id = canonical_fingerprint(
-            {
-                "kind": "spectral-all-to-all-transpose",
-                "source": source.layout_id,
-                "target": target.layout_id,
-                "mesh_axis": name,
-                "split_axis": split,
-                "concat_axis": concat,
-            }
-        )
+        self.packing = packing
+        self.mesh_shape = mesh_shape
+        self.transpose_id = canonical_fingerprint(identity)
 
     def apply_local(self, local_value: Array, /) -> Array:
+        if self.packing == "direct":
+            return jax.lax.all_to_all(
+                local_value,
+                axis_name=self.mesh_axis,
+                split_axis=self.split_axis,
+                concat_axis=self.concat_axis,
+                tiled=True,
+            )
+        px, py = self.mesh_shape
+        nx, ny, nz, *payload = local_value.shape
+        if self.packing == "pencil-to-slab":
+            packed = jax.lax.all_to_all(
+                local_value[None],
+                axis_name=self.mesh_axis,
+                split_axis=self.split_axis,
+                concat_axis=self.concat_axis,
+                tiled=True,
+            )
+            packed = packed.reshape(py, px, nx, ny, nz // (px * py), *payload)
+            packed = packed.transpose(1, 2, 0, 3, 4, *range(5, packed.ndim))
+            return packed.reshape(px * nx, py * ny, nz // (px * py), *payload)
+        if self.packing != "slab-to-pencil":
+            raise ValueError(f"Invalid spectral transpose packing {self.packing!r}.")
+        packed = local_value.reshape(px, nx // px, py, ny // py, nz, *payload)
+        packed = packed.transpose(2, 0, 1, 3, 4, *range(5, packed.ndim))
+        packed = packed.reshape(px * py, nx // px, ny // py, nz, *payload)
         return jax.lax.all_to_all(
-            local_value,
+            packed,
             axis_name=self.mesh_axis,
             split_axis=self.split_axis,
             concat_axis=self.concat_axis,
             tiled=True,
-        )
+        )[0]
 
     def execute(self, values: ArrayLike, topology: SpectralMeshTopology, /) -> Array:
         if topology.topology_id != self.source.topology_id:
@@ -543,12 +638,12 @@ def _reverse_sequence(
 def _slab_sequence_pair(
     physical: SpectralLayout,
     modal: SpectralLayout,
-    mesh_axis: str,
+    topology: SpectralMeshTopology,
     spatial_rank: int,
     /,
 ) -> tuple[tuple[_SpectralStage, ...], tuple[_SpectralStage, ...]]:
-    forward_transpose = SpectralTranspose(physical, modal, mesh_axis, 1, 0)
-    inverse_transpose = SpectralTranspose(modal, physical, mesh_axis, 0, 1)
+    forward_transpose = SpectralTranspose(physical, modal, topology)
+    inverse_transpose = SpectralTranspose(modal, physical, topology)
     forward = (
         _SpectralStage("fft", axes=range(1, spatial_rank)),
         _SpectralStage("transpose", transpose=forward_transpose),
@@ -560,34 +655,26 @@ def _slab_sequence_pair(
 
 def _pencil_sequence_pair(
     physical: SpectralLayout,
-    middle: SpectralLayout,
     modal: SpectralLayout,
-    mesh_axes: tuple[str, str],
+    topology: SpectralMeshTopology,
     spatial_rank: int,
     /,
 ) -> tuple[tuple[_SpectralStage, ...], tuple[_SpectralStage, ...]]:
-    first, second = mesh_axes
-    first_forward = SpectralTranspose(physical, middle, second, 2, 1)
-    second_forward = SpectralTranspose(middle, modal, first, 2, 0)
-    first_inverse = SpectralTranspose(middle, physical, second, 1, 2)
-    second_inverse = SpectralTranspose(modal, middle, first, 0, 2)
+    forward_transpose = SpectralTranspose(physical, modal, topology)
+    inverse_transpose = SpectralTranspose(modal, physical, topology)
     suffix = (
         () if spatial_rank == 3 else (_SpectralStage("fft", axes=range(3, spatial_rank)),)
     )
     forward = (
         _SpectralStage("fft", axes=(2,)),
-        _SpectralStage("transpose", transpose=first_forward),
+        _SpectralStage("transpose", transpose=forward_transpose),
         _SpectralStage("fft", axes=(1,)),
-        _SpectralStage("transpose", transpose=second_forward),
         _SpectralStage("fft", axes=(0,)),
         *suffix,
     )
     inverse = _reverse_sequence(
         forward,
-        (
-            (first_forward, first_inverse),
-            (second_forward, second_inverse),
-        ),
+        ((forward_transpose, inverse_transpose),),
         symmetric_suffix_count=len(suffix),
     )
     return forward, inverse
@@ -716,31 +803,22 @@ def _prepare_layouts(
         full_padded, modal_partition, "modal", topology, padded=True
     )
     if schedule == "pencil" and len(mesh_shape) == 2 and rank >= 3:
-        middle_partition = (mesh_names[0], None, mesh_names[1]) + (None,) * (
-            rank - 3 + len(trailing)
-        )
-        middle = SpectralLayout(full_shape, middle_partition, "modal", topology)
-        middle_padded = SpectralLayout(
-            full_padded, middle_partition, "modal", topology, padded=True
-        )
         forward, inverse = _pencil_sequence_pair(
             physical,
-            middle,
             modal,
-            (mesh_names[0], mesh_names[1]),
+            topology,
             rank,
         )
         padded_forward, padded_inverse = _pencil_sequence_pair(
             padded_physical,
-            middle_padded,
             padded_modal,
-            (mesh_names[0], mesh_names[1]),
+            topology,
             rank,
         )
     elif schedule == "slab" and len(mesh_shape) == 1 and rank >= 2:
-        forward, inverse = _slab_sequence_pair(physical, modal, mesh_names[0], rank)
+        forward, inverse = _slab_sequence_pair(physical, modal, topology, rank)
         padded_forward, padded_inverse = _slab_sequence_pair(
-            padded_physical, padded_modal, mesh_names[0], rank
+            padded_physical, padded_modal, topology, rank
         )
     else:
         forward = inverse = padded_forward = padded_inverse = ()
@@ -760,7 +838,12 @@ def _prepare_layouts(
 
 @final
 class SpectralResourceReport(StrictModule, NonTrainableState):
-    """Fail-closed FFT storage, workspace, liveness, and traffic evidence."""
+    """Fail-closed logical FFT buffer and traffic admission.
+
+    Compiler temporaries, allocator alignment, runtime metadata, and composed
+    consumer workflows require separate evidence; this is not a ceiling on
+    total compiled-executable or device memory.
+    """
 
     canonical_storage_bytes: int = eqx.field(static=True)
     padded_storage_bytes: int = eqx.field(static=True)
@@ -910,11 +993,16 @@ def _prepare_fft_resource(
     canonical_storage = prod(shape) * payload_elements * coefficient_itemsize
     padded_storage = prod(padded) * payload_elements * coefficient_itemsize
     has_fft_stage = any(stage.operation == "fft" for stage in forward)
-    transform_workspace = (
-        prod(padded) * payload_elements * transform_itemsize if has_fft_stage else 0
+    transform_payload = prod(padded) * payload_elements * transform_itemsize
+    # A packed transpose can keep its communication buffer live alongside the
+    # reassembled FFT input. Reserve one additional compute-precision buffer.
+    packed = any(
+        stage.transpose is not None and stage.transpose.packing != "direct"
+        for stage in forward
     )
+    transform_workspace = transform_payload * (1 + packed) if has_fft_stage else 0
     collective_count = sum(stage.operation == "transpose" for stage in forward)
-    collective_payload = transform_workspace * collective_count
+    collective_payload = transform_payload * collective_count
     resource = SpectralResourceReport(
         canonical_storage_bytes=canonical_storage,
         padded_storage_bytes=padded_storage,

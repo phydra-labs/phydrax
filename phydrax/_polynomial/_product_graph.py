@@ -329,19 +329,31 @@ class ProductGraphPlan(StrictModule, NonTrainableState):
         term_start = 0
         node_offset = 0
         start = 0
-        # Static depth retains within-level parallelism and multiplication order.
+        # Static depth preserves multiplication order. Sequence shared-prefix
+        # gathers so automatic transposes accumulate one node event at a time.
         for depth, size in enumerate(self.level_sizes):
             if depth:
                 stop = start + size
-                level = (
-                    level[:, self.parent[start:stop]]
-                    * variables[:, self.factor[start:stop]]
+
+                def multiply_node(indices: tuple[Array, Array]) -> Array:
+                    parent, factor = indices
+                    return level[:, parent] * variables[:, factor]
+
+                level = jnp.swapaxes(
+                    jax.lax.map(
+                        multiply_node,
+                        (self.parent[start:stop], self.factor[start:stop]),
+                    ),
+                    0,
+                    1,
                 )
                 start = stop
             term_stop = term_start
             while term_stop < len(self.terms) and len(self.terms[term_stop]) == depth:
                 term_stop += 1
             if term_stop > term_start:
+                # Canonical terms are distinct and each identifies one prefix
+                # node; these terminal indices are unique within their level.
                 terminal = self.term_node[term_start:term_stop] - node_offset
                 output = output.at[:, term_start:term_stop].set(level[:, terminal])
             term_start = term_stop

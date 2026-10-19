@@ -176,6 +176,24 @@ def atomistic_execution(
     assert_type(derivatives, phx.atomistic.AtomisticEnergyDerivatives)
 
 
+def ordered_sparse_routes(
+    relation: phx.sparse.EdgeRelation | phx.sparse.RowRelation,
+    coefficients: jax.Array,
+    values: jax.Array,
+) -> None:
+    phx.sparse.gather_routes(relation, values, accumulation="deterministic")
+    phx.sparse.route_reduce(
+        relation, values, reduction="mean", accumulation="compensated"
+    )
+    phx.sparse.linear_apply(relation, coefficients, values, accumulation="deterministic")
+    phx.sparse.linear_apply(
+        relation,
+        coefficients,
+        values,
+        accumulation="unordered",  # ty: ignore[invalid-argument-type]
+    )
+
+
 def distributed_spectral_consumer(
     topology: SpectralMeshTopology,
     state: jax.Array,
@@ -203,6 +221,15 @@ def distributed_spectral_consumer(
     assert_type(plan.numerical_id, str)
     assert_type(plan.execution_id, str)
     assert_type(plan.plan_id, str)
+    transpose = phx.discretization.SpectralTranspose(
+        plan.physical_layout, plan.modal_layout, topology
+    )
+    assert_type(transpose, phx.discretization.SpectralTranspose)
+    phx.discretization.SpectralTranspose(
+        plan.physical_layout,
+        plan.modal_layout,
+        "mesh",  # ty: ignore[invalid-argument-type]
+    )
     assert_type(plan.to_modal(state), jax.Array)
     assert_type(plan.to_physical(plan.to_modal(state)), jax.Array)
     assert_type(plan.to_modal_batched(vector_state), jax.Array)

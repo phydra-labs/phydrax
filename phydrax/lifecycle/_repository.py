@@ -2621,7 +2621,7 @@ def _admit_repository_root(root: str | os.PathLike[str], /) -> Path:
         try:
             information = current.lstat()
         except FileNotFoundError:
-            current.mkdir(mode=0o700)
+            current.mkdir(mode=0o700, exist_ok=True)
             information = current.lstat()
         if stat.S_ISLNK(information.st_mode) or not stat.S_ISDIR(information.st_mode):
             raise ValueError("Repository path components must be real directories.")

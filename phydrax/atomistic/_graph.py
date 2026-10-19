@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,7 +30,7 @@ from ..discretization.particle._image_neighborhood import (
 )
 from ..discretization.particle._image_relation import ParticleImageRelationEvidence
 from ..graph import GraphIR
-from ..sparse import EdgeRelation
+from ..sparse import EdgeRelation, gather_routes, RelationAccumulation
 from ..sparse._streamed import PreparedStreamedRelation, StreamedRelationPlan
 from ..typing import parse
 from ._system import PreparedAtomisticSystem
@@ -49,6 +49,10 @@ class AtomisticGraphExecutionPlan(StrictModule, NonTrainableState):
     batch topologies and the particle neighborhood for runtime systems.
     ``image_capacity`` charges image-aware routes; ``streamed`` is the
     receiver-major streamed relation schedule plan prepared once per topology.
+    Its accumulation policy also governs the geometric route gathers of
+    ``bind_atomistic_graph``: ordered policies prepare validated geometry
+    relations once per topology, so position and cell derivatives accumulate
+    in route storage order.
     """
 
     maximum_neighbors: int = eqx.field(static=True)
@@ -119,6 +123,21 @@ class AtomisticGraphExecutionPlan(StrictModule, NonTrainableState):
         self.plan_id = identifier
 
 
+@final
+class AtomisticGeometryRelations(StrictModule, NonTrainableState):
+    """Validated relations of ordered geometric route gathers in one topology epoch.
+
+    Derived once per topology build from its canonical routes when the
+    streamed plan orders accumulation; never serialized. ``senders`` and
+    ``receivers`` read flat atom rows and ``lattices`` reads the case lattice
+    of every image route.
+    """
+
+    senders: EdgeRelation
+    receivers: EdgeRelation
+    lattices: EdgeRelation | None
+
+
 class AtomisticGraphTopology(StrictModule, NonTrainableState):
     """Prepared directed route topology, separate from numerical geometry.
 
@@ -133,7 +152,8 @@ class AtomisticGraphTopology(StrictModule, NonTrainableState):
     (``execution_id=None``) carry the relation schema as ``topology_id``; their
     content is bound by array equality (``admit_supplied_topology``),
     never by identifier, and their streamed schedule plan must be the binding
-    execution plan's.
+    execution plan's. ``geometry_relations`` holds the derived relations of
+    ordered geometric gathers and is ``None`` under fast accumulation.
     """
 
     senders: Array
@@ -159,6 +179,7 @@ class AtomisticGraphTopology(StrictModule, NonTrainableState):
     wrap_counts: Array | None
     stencil_extents: Array | None
     streamed: PreparedStreamedRelation
+    geometry_relations: AtomisticGeometryRelations | None
     case_count: int = eqx.field(static=True)
     atom_capacity: int = eqx.field(static=True)
     lattice_rank: int = eqx.field(static=True)
@@ -287,7 +308,26 @@ def _build_topology(
         receiver_valid=fields["atom_mask"],
     )
     fields["overflow"] = fields["overflow"] | ~epoch_matches
-    return AtomisticGraphTopology(streamed=prepared, **fields)
+    geometry = None
+    if prepared.plan.accumulation != "fast":
+        geometry = AtomisticGeometryRelations(
+            senders=relation,
+            receivers=relation.transpose(),
+            lattices=(
+                EdgeRelation(
+                    fields["edge_cases"],
+                    fields["receivers"],
+                    source_size=int(fields["case_count"]),
+                    target_size=size,
+                    valid=fields["candidate_mask"],
+                )
+                if int(fields["lattice_rank"]) > 0
+                else None
+            ),
+        )
+    return AtomisticGraphTopology(
+        streamed=prepared, geometry_relations=geometry, **fields
+    )
 
 
 _STATIC_TOPOLOGY_FIELDS = (
@@ -477,12 +517,27 @@ def _resolved_cell_vectors(
 def _edge_displacement(
     topology: AtomisticGraphTopology, positions: Array, vectors: Array, /
 ) -> Array:
-    raw = positions[topology.receivers] - positions[topology.senders]
-    if topology.lattice_rank > 0:
+    geometry = topology.geometry_relations
+    if geometry is None:
+        raw = positions[topology.receivers] - positions[topology.senders]
+        case_vectors = vectors[topology.edge_cases] if topology.lattice_rank else None
+    else:
+        # Ordered policies gather through the topology's validated relations so
+        # position and cell cotangents accumulate in route storage order.
+        accumulation = topology.streamed.plan.accumulation
+        raw = gather_routes(
+            geometry.receivers, positions, accumulation=accumulation
+        ) - gather_routes(geometry.senders, positions, accumulation=accumulation)
+        case_vectors = (
+            None
+            if geometry.lattices is None
+            else gather_routes(geometry.lattices, vectors, accumulation=accumulation)
+        )
+    if case_vectors is not None:
         raw = raw + contract(
             "ei,eid->ed",
             topology.image_shifts.astype(positions.dtype),
-            vectors[topology.edge_cases],
+            case_vectors,
             backend="jax",
         )
     elif topology.minimum_image_cell is not None:
@@ -493,6 +548,28 @@ def _edge_displacement(
             else cell.minimum_image_with_vectors(raw, vectors[0])
         )
     return jnp.where(topology.candidate_mask[:, None], raw, 0.0)
+
+
+def case_energy_totals(
+    atom_energy: Array,
+    atom_cases: Array,
+    case_count: int,
+    accumulation: RelationAccumulation,
+    /,
+) -> Array:
+    """Per-case sums of flat case-major atom energies.
+
+    Fast accumulation adds by ``atom_cases``. Ordered policies reduce each
+    case's contiguous atom row natively, never by unordered duplicate-index
+    additions, so repeated evaluations agree bitwise on one backend.
+    """
+    if accumulation == "fast":
+        return (
+            jnp.zeros((case_count,), dtype=atom_energy.dtype)
+            .at[atom_cases.reshape((-1,))]
+            .add(atom_energy)
+        )
+    return jnp.sum(atom_energy.reshape((case_count, -1)), axis=1)
 
 
 def _certificate_failure(
@@ -594,6 +671,10 @@ def bind_atomistic_graph(
     (``H`` = explicit ``cell_vectors``, differentiable); the historical
     selected minimum image for classical periodic pair topologies; plain
     receiver-minus-sender otherwise.  No route discovery or sort occurs.
+    Route gathers follow the topology's streamed accumulation; values are equal
+    under every policy, and ordered policies sequence position and cell
+    cotangents in route storage order through the topology's prepared
+    ``geometry_relations`` instead of unordered scatter additions.
 
     ``periodic_axes`` (``(case, 3)``) declares the runtime periodicity; a case
     whose periodicity differs from the topology's is refused on concrete host

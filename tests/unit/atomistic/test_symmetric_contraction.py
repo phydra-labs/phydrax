@@ -103,6 +103,45 @@ def test_pseudovector_output_has_no_degree_one_coupling_from_polar_vector() -> N
         SymmetricContractionBasis.native(SCALAR_VECTOR, pseudovector, 1)
 
 
+@pytest.mark.parametrize("output", [SCALAR, VECTOR], ids=["scalar", "vector"])
+@pytest.mark.parametrize("correlation", [2, 3])
+def test_basis_projection_replays_exactly_and_preserves_linear_derivatives(
+    output: O3IrrepBlock, correlation: int
+) -> None:
+    basis = SymmetricContractionBasis.native(SCALAR_VECTOR, output, correlation)
+    rng = np.random.default_rng(71)
+    monomials = jnp.asarray(rng.normal(size=(len(basis.terms), 8, 4)))
+    projection = np.asarray(basis.dense_projection())
+    expected = np.tensordot(projection, np.asarray(monomials), axes=((0,), (0,)))
+
+    def apply(current: SymmetricContractionBasis, values: jax.Array) -> jax.Array:
+        return current.path_features(values)
+
+    compiled = jax.jit(apply)
+    reference = compiled(basis, monomials)
+    np.testing.assert_allclose(reference, expected, rtol=1e-13, atol=1e-14)
+    for _ in range(5):
+        np.testing.assert_array_equal(compiled(basis, monomials), reference)
+    direction = jnp.asarray(rng.normal(size=monomials.shape))
+    _, tangent = jax.jvp(
+        lambda values: compiled(basis, values), (monomials,), (direction,)
+    )
+    np.testing.assert_allclose(
+        tangent,
+        np.tensordot(projection, np.asarray(direction), axes=((0,), (0,))),
+        rtol=1e-13,
+        atol=1e-14,
+    )
+    cotangent = jnp.asarray(rng.normal(size=reference.shape))
+    _, pullback = jax.vjp(lambda values: compiled(basis, values), monomials)
+    np.testing.assert_allclose(
+        pullback(cotangent)[0],
+        np.tensordot(projection, np.asarray(cotangent), axes=((1, 2), (0, 1))),
+        rtol=1e-13,
+        atol=1e-14,
+    )
+
+
 @pytest.mark.parametrize("improper", [False, True], ids=["rotation", "improper"])
 def test_native_contraction_is_o3_equivariant(improper: bool) -> None:
     module = _contraction(SCALAR_VECTOR_TENSOR, MIXED_OUTPUT, 3, channels=2)

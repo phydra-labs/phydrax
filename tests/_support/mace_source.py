@@ -421,11 +421,17 @@ def nvt_dynamics(
     temperature: float = 300.0,
     skin: float = 0.4,
 ) -> tuple[Any, Any]:
-    """Fixed-cell BAOAB Langevin NVT over the native provider recipe."""
+    """Fixed-cell BAOAB Langevin NVT over the native provider recipe.
+
+    Ordered accumulation makes in-process restarts continue bitwise on every
+    backend; fresh-process GPU restarts also need ``compiler_profile``.
+    """
 
     from tests._support.mace_deployment import provider_plan
 
-    provider = provider_plan(model, skin=skin).prepare(system)
+    provider = provider_plan(model, skin=skin, accumulation="deterministic").prepare(
+        system
+    )
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         provider.program,
@@ -457,7 +463,9 @@ def water_training_problem(*, label_shift: float = 0.0) -> Any:
     """Periodic E/F/S labels of a fixed teacher on strained cells.
 
     Two strains train; a third validates. ``label_shift`` alters the energy
-    targets (a different problem with otherwise identical structure).
+    targets (a different problem with otherwise identical structure). Ordered
+    accumulation makes labels and continuation bitwise within one process;
+    fresh-process GPU restarts also need ``compiler_profile``.
     """
 
     from tests._support.mace_deployment import (
@@ -485,16 +493,17 @@ def water_training_problem(*, label_shift: float = 0.0) -> Any:
         return phx.atomistic.AtomisticBatch.from_structures(structures)
 
     teacher = tiny_mace(seed=11)
+    execution = graph_execution(accumulation="deterministic")
     training, validation = batch((-0.015, 0.02)), batch((0.005,))
     labels = phx.atomistic.energy_and_forces(
-        teacher, training, graph_execution(), compute_stress=True
+        teacher, training, execution, compute_stress=True
     )
     held_out = phx.atomistic.energy_and_forces(
-        teacher, validation, graph_execution(), compute_stress=True
+        teacher, validation, execution, compute_stress=True
     )
     return phx.atomistic.AtomisticTrainingProblem(
         training,
-        graph_execution(),
+        execution,
         cutoff=3.0,
         training_energy=labels.energy + label_shift,
         training_forces=labels.forces,

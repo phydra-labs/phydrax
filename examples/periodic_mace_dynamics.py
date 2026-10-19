@@ -4,8 +4,10 @@ Two water-like molecules sit in a triclinic cell smaller than twice the
 cutoff, requiring an image-aware graph rather than a unique-image assumption.
 The same prepared program supplies the provider's energy/forces/stress and the
 dynamics forces. A portable restart bundles the pickle-free model artifact
-with the dynamics state; resuming from it reproduces the uninterrupted
-trajectory exactly. The model is a random native initialization.
+with the dynamics state; under deterministic streamed accumulation, resuming
+from it reproduces the uninterrupted trajectory exactly on any backend (fast
+accumulation may reorder accelerator additions). The model is a random native
+initialization.
 """
 
 import tempfile
@@ -82,6 +84,7 @@ def prepare(
             maximum_degree=96,
             maximum_images=343,
         ),
+        streamed=phx.sparse.StreamedRelationPlan(accumulation="deterministic"),
     )
     provider = phx.atomistic.NativeAtomisticProviderPlan(
         model,

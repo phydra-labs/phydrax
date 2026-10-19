@@ -641,16 +641,8 @@ class PreparedMACEPotential(AbstractPreparedAtomisticPotential, ExplicitFreeze):
         )
         energies = self._streamed(relation, vectors, edge_active, species, active, mask)
         atom_energy = model.atom_energies(species, mask, energies)
-        reduction = jnp.dtype(model.precision.reduction_dtype)
-        total = (
-            jnp.zeros((case_count,), dtype=reduction)
-            .at[jnp.asarray(atom_cases).reshape((-1,))]
-            .add(atom_energy)
-        )
-        output = jnp.dtype(model.precision.output_dtype)
-        return (
-            total.astype(output),
-            atom_energy.reshape((case_count, atom_capacity)).astype(output),
+        return model.case_energies(
+            relation, atom_energy, atom_cases, case_count, atom_capacity
         )
 
     def energy(self, context: Any, /) -> tuple[Array, Any]:

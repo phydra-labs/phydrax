@@ -158,7 +158,17 @@ def aggregate_rows(record: dict[str, Any], rank_count: int) -> list[dict[str, An
 def _environment(args: argparse.Namespace) -> dict[str, str]:
     environment = {
         key: os.environ[key]
-        for key in ("HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "NCCL_NVLS_ENABLE")
+        for key in (
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "LANG",
+            "TMPDIR",
+            "NCCL_NVLS_ENABLE",
+            "NCCL_LAUNCH_ORDER_IMPLICIT",
+            "NCCL_LAUNCH_RACE_FATAL",
+            "UCX_MEMTYPE_CACHE",
+        )
         if key in os.environ
     }
     mpi = args.mpi_prefix.resolve()

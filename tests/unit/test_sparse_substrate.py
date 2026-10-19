@@ -1137,3 +1137,219 @@ def test_cancelling_group_subtotal_preserves_parameter_tangent(
     np.testing.assert_array_equal(value, 3.5)
     np.testing.assert_array_equal(tangent, 1.0)
     np.testing.assert_array_equal(jax.jit(jax.grad(reduced))(parameter), 1.0)
+
+
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+@pytest.mark.parametrize("reduction", ["sum", "mean"])
+def test_route_accumulation_preserves_storage_order_masks_and_derivatives(
+    accumulation: phx.sparse.RelationAccumulation,
+    reduction: phx.sparse.RouteReduction,
+) -> None:
+    relation = phx.sparse.EdgeRelation(
+        np.zeros((7,), dtype=np.int32),
+        np.asarray([1, 0, 1, 0, 1, 0, 99], dtype=np.int32),
+        source_size=1,
+        target_size=3,
+        valid=np.asarray([True] * 6 + [False]),
+    )
+    events = np.asarray([1e16, 4.0, 1.0, 5.0, -1e16, -9.0, np.nan])
+    values = jnp.asarray(np.stack((events, -2.0 * events), axis=-1))
+
+    def reduce(material: Array) -> Array:
+        return phx.sparse.route_reduce(
+            relation, material, reduction=reduction, accumulation=accumulation
+        )
+
+    residual = 1.0 if accumulation == "compensated" else 0.0
+    divisor = 3.0 if reduction == "mean" else 1.0
+    expected = np.asarray([[0.0, 0.0], [residual, -2.0 * residual], [0.0, 0.0]])
+    np.testing.assert_array_equal(jax.jit(reduce)(values), expected / divisor)
+    gradient = jax.jit(jax.grad(lambda material: jnp.sum(reduce(material))))(values)
+    np.testing.assert_array_equal(
+        gradient, np.asarray([[1.0 / divisor] * 2] * 6 + [[0.0, 0.0]])
+    )
+
+
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+def test_ordered_row_reductions_and_batched_linear_actions(
+    accumulation: phx.sparse.RelationAccumulation,
+) -> None:
+    indices = np.broadcast_to(np.asarray([0, 1, 2, 99], dtype=np.int32), (2, 2, 4))
+    relation = phx.sparse.RowRelation(
+        indices,
+        source_size=3,
+        case_shape=(2,),
+        valid=np.broadcast_to(np.asarray([True, True, True, False]), indices.shape),
+    )
+    weights = np.broadcast_to(np.asarray([1e16, 1.0, -1e16, np.nan]), indices.shape)
+    scales = np.asarray([1.0, 2.0, 4.0])
+    sources = jnp.asarray(np.broadcast_to(scales[:, None, None, None], (3, 2, 3, 2)))
+    batched_weights = jnp.asarray(np.broadcast_to(weights, (3,) + weights.shape))
+    residual = 1.0 if accumulation == "compensated" else 0.0
+    mean = phx.sparse.route_reduce(
+        relation, weights, reduction="mean", accumulation=accumulation
+    )
+    np.testing.assert_array_equal(mean, np.full((2, 2), residual / 3.0))
+    output = jax.jit(
+        lambda coefficient, source: phx.sparse.linear_apply(
+            relation, coefficient, source, accumulation=accumulation
+        )
+    )(batched_weights, sources)
+    np.testing.assert_array_equal(
+        output,
+        np.broadcast_to((residual * scales)[:, None, None, None], (3, 2, 2, 2)),
+    )
+
+
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+@pytest.mark.parametrize("rows", [False, True], ids=["edges", "rows"])
+def test_ordered_route_reductions_accept_empty_routes(
+    accumulation: phx.sparse.RelationAccumulation, rows: bool
+) -> None:
+    relation = (
+        phx.sparse.RowRelation(
+            np.full((3, 1), -1, dtype=np.int32),
+            source_size=2,
+            valid=np.zeros((3, 1), dtype=np.bool_),
+        )
+        if rows
+        else phx.sparse.EdgeRelation(
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            source_size=2,
+            target_size=3,
+        )
+    )
+    values = jnp.zeros(relation.route_shape + (2,), dtype=jnp.float64)
+    result = phx.sparse.route_reduce(
+        relation, values, reduction="mean", accumulation=accumulation
+    )
+    np.testing.assert_array_equal(result, np.zeros((3, 2)))
+    linear = phx.sparse.linear_apply(
+        relation,
+        jnp.zeros(relation.route_shape, dtype=jnp.float64),
+        jnp.ones(relation.input_shape + (2,), dtype=jnp.float64),
+        accumulation=accumulation,
+    )
+    np.testing.assert_array_equal(linear, np.zeros((3, 2)))
+
+
+def test_sparse_route_accumulation_refuses_invalid_selectors_and_compensated_extrema() -> (
+    None
+):
+    relation = phx.sparse.EdgeRelation(
+        np.asarray([0], dtype=np.int32),
+        np.asarray([0], dtype=np.int32),
+        source_size=1,
+        target_size=1,
+    )
+    values = jnp.ones((1,), dtype=jnp.float64)
+    with pytest.raises(ValueError, match="accumulation"):
+        phx.sparse.route_reduce(relation, values, accumulation="unordered")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="accumulation"):
+        phx.sparse.linear_apply(relation, values, values, accumulation="unordered")  # ty: ignore[invalid-argument-type]
+    extrema: tuple[phx.sparse.RouteReduction, ...] = ("min", "max")
+    for reduction in extrema:
+        with pytest.raises(ValueError, match="sum and mean only"):
+            phx.sparse.route_reduce(
+                relation, values, reduction=reduction, accumulation="compensated"
+            )
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+@pytest.mark.parametrize("rows", [False, True], ids=["edges", "rows"])
+@pytest.mark.parametrize("batched", [False, True], ids=["unbatched", "batched"])
+def test_linear_apply_source_adjoints_respect_accumulation(
+    accumulation: phx.sparse.RelationAccumulation, rows: bool, batched: bool
+) -> None:
+    rng = np.random.default_rng(97)
+    source_count, target_count, width = 8, 8, 64
+    case_shape = (2,) if rows else ()
+    batch_shape = (2,) if batched else ()
+    target_indices = np.empty((0,), dtype=np.int32)
+    if rows:
+        indices = rng.integers(
+            0, source_count, case_shape + (target_count, width), dtype=np.int32
+        )
+        valid = np.ones(indices.shape, dtype=np.bool_)
+        valid[..., -1] = False
+        indices[..., -1] = 99
+        relation = phx.sparse.RowRelation(
+            indices, source_size=source_count, case_shape=case_shape, valid=valid
+        )
+    else:
+        indices = rng.integers(0, source_count, target_count * width, dtype=np.int32)
+        target_indices = rng.integers(0, target_count, indices.size, dtype=np.int32)
+        valid = np.ones(indices.shape, dtype=np.bool_)
+        valid[-1] = False
+        indices[-1], target_indices[-1] = 99, 99
+        relation = phx.sparse.EdgeRelation(
+            indices,
+            target_indices,
+            source_size=source_count,
+            target_size=target_count,
+            valid=valid,
+        )
+    coefficients = np.where(
+        valid, rng.normal(scale=0.1, size=batch_shape + relation.route_shape), np.nan
+    )
+    source = rng.normal(size=batch_shape + case_shape + (source_count, 3))
+    cotangent = rng.normal(size=batch_shape + case_shape + (target_count, 3))
+    direction = rng.normal(size=source.shape)
+    matrix = np.zeros(
+        batch_shape + case_shape + (target_count, source_count), dtype=np.float64
+    )
+    # Independent case-local dense map, assembled from the original host routes.
+    for batch in np.ndindex(batch_shape):
+        if rows:
+            for case in np.ndindex(case_shape):
+                for target in range(target_count):
+                    for slot in range(width):
+                        route = case + (target, slot)
+                        if valid[route]:
+                            matrix[batch + case + (target, indices[route])] += (
+                                coefficients[batch + route]
+                            )
+        else:
+            for route in range(indices.size):
+                if valid[route]:
+                    matrix[batch + (target_indices[route], indices[route])] += (
+                        coefficients[batch + (route,)]
+                    )
+
+    @jax.jit
+    def evaluate(
+        values: Array, weights: Array, seed: Array, tangent: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        def action(value: Array) -> Array:
+            return phx.sparse.linear_apply(
+                relation, weights, value, accumulation=accumulation
+            )
+
+        output, pullback = jax.vjp(action, values)
+        reverse = pullback(seed)[0]
+        forward = jax.jvp(action, (values,), (tangent,))[1]
+        hessian = jax.jvp(
+            jax.grad(lambda value: jnp.sum(jnp.sin(action(value)) * seed)),
+            (values,),
+            (tangent,),
+        )[1]
+        return output, reverse, forward, hessian
+
+    operands = tuple(map(jnp.asarray, (source, coefficients, cotangent, direction)))
+    expected = evaluate(*operands)
+    output = matrix @ source
+    tangent = matrix @ direction
+    transpose = np.swapaxes(matrix, -1, -2)
+    oracle = (
+        output,
+        transpose @ cotangent,
+        tangent,
+        transpose @ (-cotangent * np.sin(output) * tangent),
+    )
+    for actual, reference in zip(expected, oracle, strict=True):
+        np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-12)
+    if accumulation != "fast":
+        for _ in range(5):
+            for actual, reference in zip(evaluate(*operands), expected, strict=True):
+                np.testing.assert_array_equal(actual, reference)

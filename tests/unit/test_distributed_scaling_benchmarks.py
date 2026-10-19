@@ -6,10 +6,14 @@
 
 from types import SimpleNamespace
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.sharding import PartitionSpec
 
 from benchmarks import distributed_mace_scaling as mace, distributed_spectral as spectral
+from phydrax._execution_runtime import ExecutionRuntime
 
 
 def test_spectral_input_block_matches_global_formula() -> None:
@@ -76,3 +80,41 @@ def test_mace_refuses_unimplemented_multi_process_ingress(
 def test_mace_rejects_empty_campaign() -> None:
     with pytest.raises(ValueError, match="positive"):
         mace._row("fixed-total", 1, 0, 1, "devices", 1)
+
+
+@pytest.mark.parametrize("owners", [1, 2, 3, 4, 5])
+def test_mace_device_subset_executes_owner_collective(owners: int) -> None:
+    if jax.process_count() != 1:
+        pytest.skip("The MACE benchmark requires single-process host ingress.")
+    runtime = ExecutionRuntime.current()
+    available = runtime.root_group.spec.device_count
+    if available < owners:
+        pytest.skip(f"Requires at least {owners} visible devices.")
+    cell, _, _ = mace._structure(16, seed=16)
+    plan = mace._plan(mace._model(1), cell, owners, 16, "devices")
+    ownership = plan.ownership
+    group = ownership.execution_group
+    assert group.devices == runtime.root_group.devices[:owners]
+    assert ownership.owner_count == owners
+    assert not ownership.lane_reference
+    if available % owners == 0:
+        assert group.spec == runtime.child_groups(available // owners)[0].spec
+    values = np.arange(owners * 16, dtype=np.float64)
+    placed = ownership.place(values)
+    assert placed.sharding.device_set == set(group.devices)
+
+    def owner_sum(block: jax.Array) -> jax.Array:
+        return jax.lax.psum(jnp.sum(block), ownership.axis_name)
+
+    result = ownership.map(
+        owner_sum, PartitionSpec(ownership.axis_name), PartitionSpec()
+    )(placed)
+    np.testing.assert_array_equal(np.asarray(result), np.sum(values))
+
+
+def test_mace_device_subset_refuses_insufficient_devices() -> None:
+    if jax.process_count() != 1:
+        pytest.skip("The MACE benchmark requires single-process host ingress.")
+    cell, _, _ = mace._structure(16, seed=16)
+    with pytest.raises(ValueError, match="require at least .* visible devices"):
+        mace._plan(mace._model(1), cell, jax.device_count() + 1, 16, "devices")

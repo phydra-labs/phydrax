@@ -89,7 +89,12 @@ Verlet reuse, wrap handling, and certificates.
   `maximum_candidate_slots` guards the derived candidate work.
 - `streamed` is the `StreamedRelationPlan` (receiver tile, edge fragment,
   channel cap, accumulation, replay). Its schedule is prepared once per
-  topology. Omitting it uses the default plan.
+  topology. Omitting it uses the default plan. An ordered accumulation
+  (`"deterministic"` or `"compensated"`) also prepares validated geometry
+  relations with each topology, so position and cell derivatives, per-case
+  energy totals, receiver epilogues, and MACE species embeddings accumulate in
+  a fixed order. Bitwise reproducibility on accelerators requires it; the fast
+  default keeps vectorized gathers and unordered GPU additions.
 - `maximum_neighbors` is a separate runtime degree capacity.
 
 No capacity is implemented by truncation, clipping, repair, or partial neighbor
@@ -450,9 +455,16 @@ separate `IterationHostControl` may request stopping at an update boundary.
 - validation values and steps, progress, status, and termination identity;
 - the problem, policy, continuation, capability, and checkpoint identities.
 
-Continue deterministically by raising the total step ceiling and passing
-`continuation=result`. A continued host-controlled run must restore the
-persisted session identity and cursor.
+Continue by raising the total step ceiling and passing `continuation=result`.
+The continuation restores the committed kernel state, root key, cursors,
+selection state, and histories exactly. It equals the uninterrupted run bitwise
+only when every streamed plan the potential executes (the problem's
+`graph_execution` and any explicit model streaming plan) selects an ordered
+accumulation, such as `StreamedRelationPlan(accumulation="deterministic")` or
+`"compensated"`. The default fast accumulation keeps its nondeterministic
+accelerator rounding, so equal or continued runs can differ in losses, the
+selected best potential, and the result identity. A continued host-controlled
+run must restore the persisted session identity and cursor.
 
 Unsupported periodic, cell, or target configurations are refused before any
 optimizer state exists. A nonfinite training loss or gradient, including
@@ -535,6 +547,17 @@ Continuation across processes uses explicit bundles:
   Compiled caches are not part of restart correctness.
   `examples/periodic_mace_dynamics.py` resumes from such a bundle and compares
   the result with the uninterrupted trajectory.
+
+Restored states are always exact. Later steps reproduce the uninterrupted run
+bitwise only when the executed graph plans select ordered streamed accumulation
+and the resuming process uses the same device type, runtime versions, and a
+fixed compiler profile. XLA GPU autotuning times candidate kernels in each
+process and can select different tilings or emitters, so fresh-process bitwise
+continuation on GPUs also requires autotuning disabled in both processes, for
+example `XLA_FLAGS=--xla_gpu_autotune_level=0`. Otherwise continued values can
+differ at roundoff, and a training problem whose labels are recomputed on the
+accelerator in the new process can carry a different problem identity, which
+`read_atomistic_training_restart` refuses.
 
 ## Local rMD17 archives
 

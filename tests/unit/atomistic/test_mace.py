@@ -23,6 +23,7 @@ from phydrax.atomistic import (
 from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic._mace import MACEArchitecture, MACEPotential
 from phydrax.nn.atomistic._mace_source import mace_potential_from_source
+from phydrax.sparse import RelationAccumulation, StreamedRelationPlan
 from phydrax.special import RealCartesianHarmonics
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
@@ -45,7 +46,9 @@ def _molecule_execution() -> AtomisticGraphExecutionPlan:
     return AtomisticGraphExecutionPlan(4, maximum_dense_atoms=4)
 
 
-def _periodic_execution() -> AtomisticGraphExecutionPlan:
+def _periodic_execution(
+    *, accumulation: RelationAccumulation = "fast"
+) -> AtomisticGraphExecutionPlan:
     return AtomisticGraphExecutionPlan(
         256,
         backend="particle",
@@ -55,6 +58,7 @@ def _periodic_execution() -> AtomisticGraphExecutionPlan:
             maximum_degree=256,
             maximum_images=343,
         ),
+        streamed=StreamedRelationPlan(accumulation=accumulation),
     )
 
 
@@ -217,6 +221,78 @@ def test_source_reconstruction_matches_provider_periodic_crystal(
         -fixture[f"crystal/{head}/virials"][0],
         rtol=1e-10,
         atol=1e-11,
+    )
+
+
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+def test_ordered_periodic_derivatives_match_provider_and_replay_exactly(
+    accumulation: RelationAccumulation,
+) -> None:
+    case, head = "two_scale_shift", "Default"
+    fixture = np.load(FIXTURES / f"{case}.npz")
+    potential = _source_potential(case, head)
+    batch = AtomisticBatch.from_structure(_structure("crystal"))
+
+    def compiled(execution: AtomisticGraphExecutionPlan) -> Any:
+        topology = prepare_atomistic_graph_topology(batch, execution, cutoff=3.0)
+
+        def evaluate(positions: jax.Array, cells: jax.Array) -> tuple[jax.Array, ...]:
+            result = atomistic_energy_derivatives(
+                potential,
+                batch,
+                execution,
+                positions,
+                topology=topology,
+                cell_vectors=cells,
+                compute_stress=True,
+            )
+            assert result.forces is not None and result.stress is not None
+            return result.energy, result.forces, result.stress, result.successful
+
+        return jax.jit(evaluate)
+
+    ordered = compiled(_periodic_execution(accumulation=accumulation))
+    expected = ordered(batch.positions, batch.cells)
+    energy, forces, stress, successful = expected
+    assert bool(jnp.all(successful))
+    np.testing.assert_allclose(
+        energy, fixture[f"crystal/{head}/energy"], rtol=1e-12, atol=1e-11
+    )
+    np.testing.assert_allclose(
+        forces[0], fixture[f"crystal/{head}/forces"], rtol=1e-10, atol=1e-11
+    )
+    volume = abs(np.linalg.det(np.asarray(MANIFEST["structures"]["crystal"]["cell"])))
+    np.testing.assert_allclose(
+        np.asarray(stress[0]) * volume,
+        -fixture[f"crystal/{head}/virials"][0],
+        rtol=1e-10,
+        atol=1e-11,
+    )
+    # Every position, cell and case reduction follows the declared order, so a
+    # repeated evaluation is bitwise identical on any backend.
+    for _ in range(5):
+        for value, reference in zip(
+            ordered(batch.positions, batch.cells), expected, strict=True
+        ):
+            np.testing.assert_array_equal(value, reference)
+    # Sequenced route gathers keep forward-mode derivatives of the forces.
+    direction = jnp.where(
+        batch.atom_mask[:, :, None],
+        jnp.asarray(np.random.default_rng(13).normal(size=batch.positions.shape)),
+        0.0,
+    )
+
+    def force_tangent(evaluate: Any) -> jax.Array:
+        return jax.jvp(
+            lambda positions: evaluate(positions, batch.cells)[1],
+            (batch.positions,),
+            (direction,),
+        )[1]
+
+    _require_close_at_scale(
+        force_tangent(ordered),
+        force_tangent(compiled(_periodic_execution())),
+        1e-10,
     )
 
 
@@ -643,7 +719,10 @@ def test_float32_periodic_source_energy_forces_stress_track_float64() -> None:
         cell=np.asarray(structure.cell, dtype=np.float64),
         periodic_axes=np.ones((3,), dtype=np.bool_),
     )
-    execution = _periodic_execution()
+    # Ordered accumulation fixes every accelerator addition order, so the two
+    # routes below can agree at float32 output rounding; fast accumulation may
+    # reorder GPU additions between otherwise identical evaluations.
+    execution = _periodic_execution(accumulation="deterministic")
     observed = energy_and_forces(single, structure, execution, compute_stress=True)
     expected = energy_and_forces(double, rounded, execution, compute_stress=True)
     assert bool(observed.valid[0])

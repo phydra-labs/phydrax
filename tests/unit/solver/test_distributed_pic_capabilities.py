@@ -618,11 +618,21 @@ def _paired_run(
     box: tuple[tuple[float, ...], tuple[float, ...]],
     steps: int,
     *,
+    reference_base: Any = None,
     initial: dict[str, Any] | None = None,
     **options: Any,
 ) -> tuple[Any, Any, list[tuple[Any, Any]]]:
-    """Single-device and four-device runs of one declaration, compared per step."""
-    reference = S.ElectromagneticPICPlan(base, species=species, **options)
+    """Single-device and four-device runs of one declaration, compared per step.
+
+    A base that owns multi-device FFTs needs ``reference_base``: the same
+    declaration with its FFTs on one device and the same native numerics.
+    """
+    if reference_base is None:
+        reference_base = base
+    else:
+        assert reference_base.plan.topology.device_count == 1
+        assert reference_base.numerical_id == base.numerical_id
+    reference = S.ElectromagneticPICPlan(reference_base, species=species, **options)
     run = S.DistributedElectromagneticPICPlan(
         S.ElectromagneticPICPlan(
             S.distribute_pic_field_solver(base, _four_device_mesh()),
@@ -788,17 +798,20 @@ def _scenario_huygens() -> None:
     # Node planes 1 <= lower < upper <= points - 2 keep both staggered faces.
     lower_node, upper_node = (2, 2, 1), (14, 14, 6)
     region = ((6 * H, 6 * H, 3.5 * H), (10 * H, 10 * H, 4.5 * H))
-    bases = tuple(
-        _spectral(
-            bridge,
-            species,
-            mesh,
-            decomposition,
-            observers=(_huygens_box(lower_node, upper_node, None),),
+    pairs = tuple(
+        tuple(
+            _spectral(
+                bridge,
+                species,
+                topology,
+                decomposition,
+                observers=(_huygens_box(lower_node, upper_node, None),),
+            )
+            for topology in (mesh, None)
         )
         for decomposition in ("global-fft", "local-guarded")
     )
-    for base in bases:
+    for base, single_base in pairs:
         options = {
             "constraint_tolerance": 1e-2
             if base.pic_configuration.endswith("guarded")
@@ -810,18 +823,19 @@ def _scenario_huygens() -> None:
         z = (np.arange(8) + 0.5) * H
         magnetic = np.zeros((16, 16, 8, 3))
         magnetic[..., 0] = np.exp(-(((z - 0.5) / 0.15) ** 2))[None, None, :]
-        _, run, results = _paired_run(
+        reference, run, results = _paired_run(
             base,
             species,
             region,
             4,
+            reference_base=single_base,
             initial={"active_count": 0, "magnetic": magnetic},
             **options,
         )
         single, split = results[-1]
         _assert_same_phasors(
             run.solver.huygens_phasors(split.accepted_state.field),
-            base.huygens_phasors(single.accepted_state.field),
+            reference.solver.huygens_phasors(single.accepted_state.field),
         )
         restored = run.pic.restore(run.pic.checkpoint(split.accepted_state))
         _assert_same_state(restored, split.accepted_state, 0.0)
@@ -832,18 +846,22 @@ def _scenario_galilean() -> None:
     mesh = _four_device_mesh()
     bridge = _bridge((16, 16, 4))
     species = _species(32, 3)
-    base = _spectral(
-        bridge,
-        species,
-        mesh,
-        "global-fft",
-        variant="galilean",
-        galilean_velocity=(0.9, 0.0, 0.0),
-        charge_conservation="update-with-rho",
-    )
+    settings: dict[str, Any] = {
+        "variant": "galilean",
+        "galilean_velocity": (0.9, 0.0, 0.0),
+        "charge_conservation": "update-with-rho",
+    }
+    base = _spectral(bridge, species, mesh, "global-fft", **settings)
+    single_base = _spectral(bridge, species, None, "global-fft", **settings)
     # Particles drift −0.9 relative to the grid: ≈ 0.2 cells per step across
     # 4-cell device blocks, so some cross block faces within six steps.
-    _, run, results = _paired_run(base, species, ((0.0, 0.0, 0.0), (2.0, 2.0, 0.5)), 6)
+    _, run, results = _paired_run(
+        base,
+        species,
+        ((0.0, 0.0, 0.0), (2.0, 2.0, 0.5)),
+        6,
+        reference_base=single_base,
+    )
     # Particles move in grid coordinates at v − v_grid (compare
     # test_runtime_drifts_particles_by_the_admitted_grid_velocity), so they
     # migrate between device blocks.
@@ -929,7 +947,9 @@ def _scenario_symbol_and_projection() -> None:
     projected = spectral.project_gauss(
         _shard(empty, mesh, counts[0]), _shard(jnp.asarray(charge), mesh, counts[0])
     )
-    reference = base.project_gauss(empty, jnp.asarray(charge))
+    single_base = _spectral(bridge, species, None, "global-fft")
+    assert single_base.numerical_id == base.numerical_id
+    reference = single_base.project_gauss(empty, jnp.asarray(charge))
     assert bool(projected.successful)
     assert float(projected.divergence_after) <= 1e-10 * float(np.max(np.abs(charge)))
     np.testing.assert_allclose(

@@ -2,7 +2,7 @@
 
 Lane-reference ownership runs the owner regions as named vmap lanes on one
 device with the same collectives as device-collective ownership; the
-device-collective cases use two or four available devices. Forced CPU devices
+device-collective cases use one through five available devices. Forced CPU devices
 prove functional collective parity only, not accelerator or multi-host
 qualification. The oracle enumerates every periodic image route on the host
 by brute force and evaluates the same native MACE layers on the global graph
@@ -19,12 +19,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax._execution_runtime import ExecutionRuntime
+from phydrax._execution_resources import ExecutionGroupSpec
+from phydrax._execution_runtime import bind_execution_group, ExecutionRuntime
+from phydrax._fingerprint import canonical_fingerprint
 from phydrax._trainable import combine_parameters, partition_parameters
 from phydrax.atomistic import AtomisticScaleContract
 from phydrax.atomistic._distributed import (
     _checkpoint_identity,
     checkpoint_owner_local_atomistic,
+    DistributedReductionMode,
+    DistributedReductionPolicy,
     evaluate_owner_local_atomistic,
     owner_local_loss_gradient,
     OwnerLocalAtomisticCheckpoint,
@@ -41,7 +45,7 @@ from phydrax.discretization.spatial._distributed_relations import (
     DistributedOwnershipPlan,
 )
 from phydrax.nn.atomistic._mace import MACEArchitecture, MACEPotential
-from phydrax.sparse import EdgeRelation
+from phydrax.sparse import EdgeRelation, RelationAccumulation
 from phydrax.sparse._streamed import StreamedRelationPlan
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
@@ -79,11 +83,14 @@ def _model(layers: int, key: int = 0) -> MACEPotential:
     )
 
 
-def _streaming(model: MACEPotential) -> StreamedRelationPlan:
+def _streaming(
+    model: MACEPotential, accumulation: RelationAccumulation = "fast"
+) -> StreamedRelationPlan:
     return StreamedRelationPlan(
         receiver_tile=4,
         edge_tile=32,
         channel_capacity=model.configuration.message_payload_width(),
+        accumulation=accumulation,
     )
 
 
@@ -91,15 +98,32 @@ def _ownership(owners: int, *, devices: bool = False) -> DistributedOwnershipPla
     address = MortonAddressPlan(
         (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 8, periodic_axes=(True, True, True)
     )
+    if jax.process_count() != 1:
+        pytest.skip("These global-host-ingress cases require a single JAX process.")
     runtime = ExecutionRuntime.current()
-    count = len(jax.devices())
+    parent = runtime.root_group.spec
     if devices:
-        if count < owners or count % owners:
-            pytest.skip(f"Requires a visible device count divisible by {owners} owners.")
-        return DistributedOwnershipPlan(
-            address, runtime.child_groups(count // owners)[0], 8
+        if parent.device_count < owners:
+            pytest.skip(f"Requires at least {owners} visible devices.")
+        keys = parent.device_keys[:owners]
+        group = bind_execution_group(
+            ExecutionGroupSpec(
+                canonical_fingerprint(
+                    {
+                        "parent_group_id": parent.group_id,
+                        "group_index": 0,
+                        "device_keys": [list(key) for key in keys],
+                    }
+                ),
+                parent.process_indices,
+                keys,
+                mesh_axes=(("device", owners),),
+                parent_group_id=parent.group_id,
+                process_host_ids=parent.process_host_ids,
+            )
         )
-    group = runtime.child_groups(count)[0]
+        return DistributedOwnershipPlan(address, group, 8)
+    group = runtime.child_groups(parent.device_count)[0]
     return DistributedOwnershipPlan(address, group, 8, owner_lanes=owners)
 
 
@@ -112,13 +136,16 @@ def _plan(
     edge_capacity: int = 512,
     migration_capacity: int = 8,
     message_capacity_bytes: int = 1 << 20,
+    streaming_accumulation: RelationAccumulation = "fast",
+    reduction: DistributedReductionMode = "deterministic",
 ) -> OwnerLocalAtomisticPlan:
     periodic = PeriodicCell(cell)
     return OwnerLocalAtomisticPlan(
         _ownership(owners, devices=devices),
         FractionalOwnerPartition(periodic, (owners, 1, 1)),
         periodic.image_stencil(CUTOFF + SKIN, maximum_image_count=4096),
-        streaming=_streaming(model),
+        streaming=_streaming(model, streaming_accumulation),
+        reduction=DistributedReductionPolicy(reduction),
         cutoff=CUTOFF,
         skin=SKIN,
         alias_capacity=512,
@@ -209,9 +236,13 @@ def _prepare(
     )
 
 
-def _assert_global_parity(plan: OwnerLocalAtomisticPlan, model: MACEPotential) -> None:
-    positions, species_ids = _structure()
-    state = _prepare(plan, model, positions, species_ids)
+def _assert_global_parity(
+    plan: OwnerLocalAtomisticPlan,
+    model: MACEPotential,
+    state: OwnerLocalAtomisticState,
+    positions: np.ndarray,
+    species_ids: np.ndarray,
+) -> None:
     evaluation = evaluate_owner_local_atomistic(plan, model, state)
     assert bool(evaluation.successful)
     routes = _image_routes(positions, CELL)
@@ -248,13 +279,56 @@ def test_route_oracle_has_repeated_and_self_images() -> None:
 @pytest.mark.parametrize("layers", [2, 3], ids=["two-layer", "three-layer"])
 def test_lane_owners_match_global_energy_forces_and_strain(layers: int) -> None:
     model = _model(layers)
-    _assert_global_parity(_plan(model), model)
+    plan = _plan(model)
+    positions, species_ids = _structure()
+    state = _prepare(plan, model, positions, species_ids)
+    _assert_global_parity(plan, model, state, positions, species_ids)
 
 
-@pytest.mark.parametrize("owners", [2, 4], ids=["two-owners", "four-owners"])
+@pytest.mark.parametrize("owners", [1, 2, 3, 4, 5])
 def test_device_collective_owners_match_global(owners: int) -> None:
     model = _model(2)
-    _assert_global_parity(_plan(model, owners=owners, devices=True), model)
+    plan = _plan(model, owners=owners, devices=True)
+    positions, species_ids = _structure()
+    velocities = np.random.default_rng(9).normal(size=positions.shape)
+    state = _prepare(plan, model, positions, species_ids, velocities=velocities)
+    _assert_global_parity(plan, model, state, positions, species_ids)
+    selected = plan.ownership.execution_group.devices
+    assert len(selected) == owners
+    assert not plan.ownership.lane_reference
+    assert state.positions.sharding.device_set == set(selected)
+    if owners > 1:
+        assert int(state.topology.halo.evidence.halo_columns) > 0
+
+    # Translate every atom into its next owner; periodic wrapping and payload
+    # migration must preserve the same global energy, forces, and strain oracle.
+    displacement = np.broadcast_to(CELL[0] / owners, positions.shape)
+    moved = state.with_dynamics(
+        state.positions + state.layout.distribute(displacement),
+        state.velocities,
+        step_index=1,
+    )
+    transition = rebuild_owner_local_atomistic(plan, model, moved)
+    assert bool(transition.committed)
+    assert int(transition.migration.migrated) == (positions.shape[0] if owners > 1 else 0)
+    rebuilt = transition.state
+    np.testing.assert_allclose(
+        np.asarray(
+            rebuilt.layout.collect(
+                rebuilt.positions + rebuilt.image_counts.astype(jnp.float64) @ CELL
+            )
+        ),
+        positions + displacement,
+        atol=1e-12,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(rebuilt.layout.collect(rebuilt.velocities)), velocities
+    )
+    np.testing.assert_array_equal(
+        np.asarray(rebuilt.layout.collect(rebuilt.species)),
+        np.asarray(state.layout.collect(state.species)),
+    )
+    _assert_global_parity(plan, model, rebuilt, positions + displacement, species_ids)
 
 
 def test_multi_hop_dependency_crosses_owners_at_successive_layers() -> None:
@@ -492,24 +566,44 @@ def test_checkpoint_refuses_a_topology_of_another_layout_epoch() -> None:
     assert bool(evaluate_owner_local_atomistic(plan, model, restored).successful)
 
 
-def test_capacity_refusals_never_truncate() -> None:
+@pytest.mark.parametrize(
+    ("owners", "devices"),
+    [(2, False), (3, True), (5, True)],
+    ids=["lanes-2", "devices-3", "devices-5"],
+)
+def test_capacity_refusals_never_truncate(owners: int, devices: bool) -> None:
     model = _model(2)
     positions, species_ids = _structure()
     with pytest.raises(ValueError, match="initial owner-local topology was refused"):
-        _prepare(_plan(model, edge_capacity=4), model, positions, species_ids)
-    plan = _plan(model, message_capacity_bytes=64)
+        _prepare(
+            _plan(model, owners=owners, devices=devices, edge_capacity=4),
+            model,
+            positions,
+            species_ids,
+        )
+    plan = _plan(model, owners=owners, devices=devices, message_capacity_bytes=64)
     state = _prepare(plan, model, positions, species_ids)
     with pytest.raises(ValueError, match="message_capacity_bytes"):
         evaluate_owner_local_atomistic(plan, model, state)
 
 
-def test_failed_migration_returns_the_accepted_state() -> None:
+@pytest.mark.parametrize(
+    ("owners", "devices"),
+    [(2, False), (2, True), (3, True), (4, True), (5, True)],
+    ids=["lanes-2", "devices-2", "devices-3", "devices-4", "devices-5"],
+)
+def test_failed_migration_returns_the_accepted_state(owners: int, devices: bool) -> None:
     model = _model(2)
-    plan = _plan(model, migration_capacity=1)
+    plan = _plan(model, owners=owners, devices=devices, migration_capacity=1)
     positions, species_ids = _structure()
+    fractional = np.linalg.solve(CELL.T, positions.T).T % 1.0
+    # All atoms start on owner zero and move to owner one, guaranteeing an
+    # overflowing pair packet even for odd owner counts with otherwise idle owners.
+    fractional[:, 0] = 0.25 / owners
+    positions = fractional @ CELL
     state = _prepare(plan, model, positions, species_ids)
-    shift = np.zeros_like(positions)
-    shift[:, 0] = 0.5 * CELL[0, 0]
+    assert bool(evaluate_owner_local_atomistic(plan, model, state).successful)
+    shift = np.broadcast_to(CELL[0] / owners, positions.shape)
     moved = state.with_dynamics(
         state.positions + state.layout.distribute(shift),
         state.velocities,
@@ -564,9 +658,39 @@ def _verlet(
     return state
 
 
-def test_migration_and_restart_reproduce_uninterrupted_evolution() -> None:
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+@pytest.mark.parametrize("devices", [False, True], ids=["lanes", "devices"])
+def test_ordered_evaluation_replays_exactly(
+    accumulation: RelationAccumulation, devices: bool
+) -> None:
     model = _model(2)
-    plan = _plan(model)
+    plan = _plan(
+        model,
+        devices=devices,
+        streaming_accumulation=accumulation,
+        reduction=accumulation,
+    )
+    positions, species_ids = _structure()
+    state = _prepare(plan, model, positions, species_ids)
+    expected = evaluate_owner_local_atomistic(plan, model, state)
+    assert bool(expected.successful)
+    for _ in range(3):
+        observed = evaluate_owner_local_atomistic(plan, model, state)
+        for actual, reference in zip(
+            jax.tree.leaves(observed), jax.tree.leaves(expected), strict=True
+        ):
+            np.testing.assert_array_equal(np.asarray(actual), np.asarray(reference))
+
+
+@pytest.mark.parametrize("devices", [False, True], ids=["lanes", "devices"])
+def test_migration_and_restart_reproduce_uninterrupted_evolution(devices: bool) -> None:
+    model = _model(2)
+    plan = _plan(
+        model,
+        devices=devices,
+        streaming_accumulation="deterministic",
+        reduction="deterministic",
+    )
     positions, species_ids = _structure()
     velocities = np.zeros_like(positions)
     velocities[:, 0] = 6.0

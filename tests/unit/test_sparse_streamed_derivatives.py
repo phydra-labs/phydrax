@@ -616,3 +616,74 @@ def test_failed_message_poisons_derivatives_of_unread_inputs(
         assert bool(jnp.isnan(output(t)))
         for derivative in derivatives:
             assert bool(jnp.all(jnp.isnan(derivative)))
+
+
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+def test_duplicate_route_gradients_replay_exactly(
+    accumulation: phx.sparse.RelationAccumulation,
+) -> None:
+    rng = np.random.default_rng(59)
+    source_count, receiver_count, route_count = 8, 4, 128
+    senders = rng.integers(0, source_count, route_count, dtype=np.int32)
+    receivers = rng.integers(0, receiver_count, route_count, dtype=np.int32)
+    prepared = phx.sparse.StreamedRelationPlan(
+        receiver_tile=2, edge_tile=64, accumulation=accumulation
+    ).prepare(
+        phx.sparse.EdgeRelation(
+            senders,
+            receivers,
+            source_size=source_count,
+            target_size=receiver_count,
+        ),
+        owner_id="duplicate-route-derivatives",
+    )
+    sources = jnp.asarray(rng.normal(size=(source_count, 3)))
+    targets = jnp.asarray(rng.normal(size=(receiver_count, 3)))
+    edges = jnp.asarray(rng.uniform(0.5, 1.5, size=(route_count,)))
+    theta = _parameters()
+
+    def energy(
+        parameters: dict[str, Array], source: Array, target: Array, edge: Array
+    ) -> tuple[Array, Array]:
+        result = prepared.evaluate(
+            _PAYLOAD, _edge, _readout, parameters, source, target, edge
+        )
+        return jnp.sum(result.receiver_outputs), result.evidence.successful
+
+    def reference(
+        parameters: dict[str, Array], source: Array, target: Array, edge: Array
+    ) -> Array:
+        messages = jax.vmap(lambda s, r, e: _edge(parameters, s, r, e))(
+            source[senders], target[receivers], edge
+        )
+        # Independent row sums, not the streamed grouping or accumulation.
+        aggregate = {
+            "m": jnp.stack(
+                [
+                    jnp.sum(messages["m"][np.flatnonzero(receivers == row)], axis=0)
+                    for row in range(receiver_count)
+                ]
+            )
+        }
+        return jnp.sum(
+            jax.vmap(lambda r, a: _readout(parameters, r, a))(target, aggregate)
+        )
+
+    evaluate = jax.jit(jax.value_and_grad(energy, argnums=(0, 1, 2, 3), has_aux=True))
+    expected = evaluate(theta, sources, targets, edges)
+    assert bool(expected[0][1])
+    oracle = jax.value_and_grad(reference, argnums=(0, 1, 2, 3))(
+        theta, sources, targets, edges
+    )
+    for actual, value in zip(
+        jax.tree.leaves((expected[0][0], expected[1])),
+        jax.tree.leaves(oracle),
+        strict=True,
+    ):
+        np.testing.assert_allclose(np.asarray(actual), np.asarray(value), atol=1e-12)
+    for _ in range(5):
+        repeated = evaluate(theta, sources, targets, edges)
+        for actual, value in zip(
+            jax.tree.leaves(repeated), jax.tree.leaves(expected), strict=True
+        ):
+            np.testing.assert_array_equal(np.asarray(actual), np.asarray(value))

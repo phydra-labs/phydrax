@@ -23,6 +23,7 @@ from ...atomistic._graph import (
     AtomisticGraph,
     AtomisticGraphExecutionPlan,
     AtomisticGraphTopology,
+    case_energy_totals,
     realize_atomistic_graph,
 )
 from ...atomistic._potential import (
@@ -397,7 +398,18 @@ class PaiNNPotential(AbstractAtomisticPotential):
             "Species ID exceeds PaiNNPotential.maximum_species_id.",
         )
         mask = jnp.asarray(atom_mask, dtype=jnp.bool_).reshape((-1,))
-        scalar = self.embedding[numbers].astype(self.precision.compute_dtype)
+        # One prepared candidate schedule serves every interaction; the cutoff
+        # mask is runtime route activity, never a schedule change.
+        edges = graph.topology.streamed
+        accumulation = edges.plan.accumulation
+        # Ordered policies select one validated atom row per step, so embedding
+        # cotangents add in atom order rather than by unordered scatter additions.
+        rows = (
+            self.embedding[numbers]
+            if accumulation == "fast" or not numbers.size
+            else jax.lax.map(lambda number: self.embedding[number], numbers)
+        )
+        scalar = rows.astype(self.precision.compute_dtype)
         vector = jnp.zeros(
             (scalar.shape[0], 3, self.configuration.feature_count),
             dtype=self.precision.compute_dtype,
@@ -406,9 +418,6 @@ class PaiNNPotential(AbstractAtomisticPotential):
         ir = graph.graph
         if ir.edge_mask is None:
             raise ValueError("PaiNN requires an explicit masked edge relation.")
-        # One prepared candidate schedule serves every interaction; the cutoff
-        # mask is runtime route activity, never a schedule change.
-        edges = graph.topology.streamed
         edge_data = (
             jnp.asarray(ir.edges["distance"])[:, 0],
             jnp.asarray(ir.edges["direction"], dtype=scalar.dtype),
@@ -421,10 +430,11 @@ class PaiNNPotential(AbstractAtomisticPotential):
             vector = vector * mask[:, None, None]
         atom_energy = self.readout_energy(self.readout_hidden(scalar))
         atom_energy = atom_energy * mask.astype(atom_energy.dtype)
-        total_energy = (
-            jnp.zeros((case_count,), dtype=self.precision.reduction_dtype)
-            .at[jnp.asarray(atom_cases).reshape((-1,))]
-            .add(atom_energy.astype(self.precision.reduction_dtype))
+        total_energy = case_energy_totals(
+            atom_energy.astype(self.precision.reduction_dtype),
+            jnp.asarray(atom_cases),
+            case_count,
+            accumulation,
         )
         return (
             total_energy.astype(self.precision.output_dtype),

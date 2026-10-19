@@ -258,6 +258,7 @@ plan = phx.atomistic.OwnerLocalAtomisticPlan(
         receiver_tile=4,
         edge_tile=32,
         channel_capacity=model.configuration.message_payload_width(),
+        accumulation="deterministic",
     ),
     cutoff=cutoff,
     skin=skin,
@@ -266,6 +267,7 @@ plan = phx.atomistic.OwnerLocalAtomisticPlan(
     halo_capacity=8,
     migration_capacity=8,
     message_capacity_bytes=1 << 20,
+    reduction=phx.atomistic.DistributedReductionPolicy("deterministic"),
 )
 
 rng = np.random.default_rng(4)
@@ -322,6 +324,11 @@ measures native-JAX owner-local execution on the devices actually selected; the
 record labels CPU, lane-reference, and physical accelerator evidence separately.
 The benchmark is single-process only because preparation uses global host ingress.
 It is not evidence for accelerated Pallas MACE or multi-host execution.
+
+Device execution selects the first requested devices explicitly. On five visible
+GPUs, `--owner-counts 1 2 3 4 5` therefore exercises each requested subset instead
+of requiring every owner count to divide the visible inventory. Lane-reference
+execution remains a single-device numerical oracle, not multi-GPU evidence.
 
 Use `--total-atoms N` for fixed-global-size rows and `--atoms-per-owner N` for
 fixed-local-size rows, varying these capacities across campaigns. Fixed-global
@@ -421,8 +428,21 @@ checked by hashing parameters on every evaluation.
 and replicated continuation array, including the accepted topology routes and
 reference positions. `restore_owner_local_atomistic` requires the same plan, the same
 model revision, and an intact content identity. It rebuilds the layout, halo plan, and
-prepared relations through their constructors, so a restored run reproduces the
-uninterrupted accepted evolution.
+prepared relations through their constructors.
+
+Bitwise future continuation requires ordered component execution on the same
+implementation and backend: explicitly select deterministic or compensated streamed
+accumulation and owner reductions. Fast streaming remains fast and can produce
+different floating-point trajectories even without a checkpoint; exact checkpoint
+transport does not make that arithmetic reproducible. The example above selects
+both deterministic policies.
+
+Geometric force return retains two native sparse reduction preparations per topology
+epoch and propagates their failure evidence. These derived runtime leaves increase
+retained topology storage; checkpoint arrays still contain the original accepted
+routes, from which the preparations are rebuilt. Fixed-coefficient symmetric
+projections and shared-prefix product derivatives use ordered native operations
+without adding model artifact fields or changing learned parameter identities.
 
 ```python
 transition = phx.atomistic.rebuild_owner_local_atomistic(plan, model, state)

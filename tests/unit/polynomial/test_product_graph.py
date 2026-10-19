@@ -107,6 +107,63 @@ def test_derivatives_match_closed_form_including_zero_inputs(point: np.ndarray) 
     )
 
 
+def test_shared_prefix_gradients_and_hessians_replay_exactly() -> None:
+    plan = ProductGraphPlan.total_degree(9, 2, maximum_nodes=55)
+    rng = np.random.default_rng(83)
+    points = rng.normal(size=(8, 4, 9))
+    points[0] = 0.0
+    cotangents = rng.normal(size=(8, 4, len(plan.terms)))
+    gradient = np.zeros_like(points)
+    hessian = np.zeros(points.shape + (9,))
+    for index, term in enumerate(plan.terms):
+        for first, variable in enumerate(term):
+            remaining = term[:first] + term[first + 1 :]
+            gradient[..., variable] += cotangents[..., index] * np.prod(
+                points[..., list(remaining)], axis=-1
+            )
+            for second, other in enumerate(term):
+                if first == second:
+                    continue
+                remaining = tuple(
+                    item
+                    for position, item in enumerate(term)
+                    if position not in (first, second)
+                )
+                hessian[..., variable, other] += cotangents[..., index] * np.prod(
+                    points[..., list(remaining)], axis=-1
+                )
+
+    def objective(values: jax.Array, weights: jax.Array) -> jax.Array:
+        return jnp.sum(plan.evaluate(values) * weights)
+
+    differentiate = jax.jit(jax.grad(objective))
+    values, weights = jnp.asarray(points), jnp.asarray(cotangents)
+    expected = differentiate(values, weights)
+    np.testing.assert_allclose(expected, gradient, rtol=1e-13, atol=1e-13)
+    direction = jnp.asarray(rng.normal(size=points.shape))
+
+    @jax.jit
+    def hessian_action(
+        values: jax.Array, weights: jax.Array, tangent: jax.Array
+    ) -> jax.Array:
+        return jax.jvp(
+            lambda rows: jax.grad(objective)(rows, weights), (values,), (tangent,)
+        )[1]
+
+    expected_action = hessian_action(values, weights, direction)
+    np.testing.assert_allclose(
+        expected_action,
+        np.sum(hessian * np.asarray(direction)[..., None, :], axis=-1),
+        rtol=1e-13,
+        atol=1e-13,
+    )
+    for _ in range(5):
+        np.testing.assert_array_equal(differentiate(values, weights), expected)
+        np.testing.assert_array_equal(
+            hessian_action(values, weights, direction), expected_action
+        )
+
+
 def test_bilinear_term_has_exact_hessian_at_origin() -> None:
     plan = ProductGraphPlan(2, ((0, 1), (0, 0, 0)), maximum_nodes=8)
 

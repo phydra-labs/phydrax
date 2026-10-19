@@ -4,7 +4,9 @@
 
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 
 import pytest
@@ -494,6 +496,69 @@ def test_active_lease_and_legal_hold_pin_tombstoned_artifact(
     assert collected.removed_attempt_ids == ("attempt-a",)
     with pytest.raises(ObjectNotFoundError):
         repository.get_manifest("checkpoint-a")
+
+
+def test_posix_concurrent_constructors_admit_same_missing_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repository"
+    barrier = Barrier(5)
+    mkdir = Path.mkdir
+
+    def concurrent_mkdir(
+        path: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False
+    ) -> None:
+        if path == root and not parents:
+            barrier.wait(timeout=10)
+        mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    def open_repository(_: int) -> POSIXArtifactRepository:
+        return POSIXArtifactRepository(root, _posix_policy())
+
+    with monkeypatch.context() as guard:
+        guard.setattr(Path, "mkdir", concurrent_mkdir)
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            repositories = tuple(executor.map(open_repository, range(5)))
+    transaction, chunk = _stage(
+        repositories[0], "checkpoint", "concurrent-open", b"shared-state", started_at=1
+    )
+    manifest = repositories[0].commit(transaction, (chunk,), committed_at=2)
+    for repository in repositories:
+        assert repository.get_manifest("checkpoint").manifest_id == manifest.manifest_id
+        assert (
+            repository.read_bytes("checkpoint", "state", maximum_bytes=64)
+            == b"shared-state"
+        )
+
+
+@pytest.mark.parametrize("replacement", ["file", "symlink"])
+def test_posix_constructor_refuses_non_directory_created_during_root_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    root = tmp_path / "repository"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    mkdir = Path.mkdir
+
+    def racing_mkdir(
+        path: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False
+    ) -> None:
+        if path == root:
+            if replacement == "file":
+                path.write_bytes(b"not-a-directory")
+            else:
+                path.symlink_to(outside, target_is_directory=True)
+        mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    with monkeypatch.context() as guard:
+        guard.setattr(Path, "mkdir", racing_mkdir)
+        if replacement == "file":
+            with pytest.raises(FileExistsError):
+                POSIXArtifactRepository(root, _posix_policy())
+        else:
+            with pytest.raises(ValueError, match="real directories"):
+                POSIXArtifactRepository(root, _posix_policy())
+    assert tuple(outside.iterdir()) == ()
 
 
 def test_posix_repository_rejects_symlinked_ancestors_and_replaced_layout(

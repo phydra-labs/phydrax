@@ -278,7 +278,11 @@ class StreamedRelationPlan(StrictModule):
     its final fragment. ``channel_capacity`` caps the elements of one event's
     message plus edge output and of one receiver output. ``replay`` selects the
     shared checkpointed-scan rematerialization of tile bodies; ``transpose``
-    additionally prepares the independent source-major schedule.
+    additionally prepares the independent source-major schedule. Ordered
+    accumulation also sequences per-event gathers and maps a tile's receiver
+    epilogues one receiver at a time, so their ordinary-JAX transposes do not
+    introduce unordered duplicate-index scatter additions; fast accumulation
+    keeps vectorized gathers and epilogues.
     """
 
     receiver_tile: int = eqx.field(static=True)
@@ -1017,8 +1021,17 @@ def _row_mask(mask: Array, value: Array, /) -> Array:
     return mask.reshape(mask.shape + (1,) * (value.ndim - mask.ndim))
 
 
-def _gather(tree: PyTree[Array], indices: Array, /) -> PyTree[Array]:
-    return jax.tree.map(lambda value: value[indices], tree)
+def _gather(
+    tree: PyTree[Array], indices: Array, accumulation: RelationAccumulation, /
+) -> PyTree[Array]:
+    if accumulation == "fast":
+        return jax.tree.map(lambda value: value[indices], tree)
+    # Every caller supplies a one-dimensional route or receiver index vector.
+    # Mapping individual indices makes the automatic transpose add one event
+    # at a time, while retaining ordinary JVP/VJP and mixed-order derivatives.
+    return jax.lax.map(
+        lambda index: jax.tree.map(lambda value: value[index], tree), indices
+    )
 
 
 def _leading_rows(
@@ -1355,9 +1368,9 @@ class _StreamedKernel(NamedTuple):
                 return edge_function(self.parameters, source, receiver, edge)
 
             result = jax.vmap(event)(
-                _gather(self.sources, sources),
-                _gather(self.receivers, tile.receiver_ids[slots]),
-                _gather(self.edges, routes),
+                _gather(self.sources, sources, self.plan.accumulation),
+                _gather(self.receivers, tile.receiver_ids[slots], self.plan.accumulation),
+                _gather(self.edges, routes, self.plan.accumulation),
             )
             if edge_specs is None:
                 return _conform("edge_function", result, message_specs, (edge_tile,)), []
@@ -1452,8 +1465,8 @@ class _StreamedKernel(NamedTuple):
                 result = aggregate(
                     self.parameters,
                     self.sources,
-                    _gather(self.receivers, tile.receiver_ids),
-                    _gather(self.edges, routes),
+                    _gather(self.receivers, tile.receiver_ids, self.plan.accumulation),
+                    _gather(self.edges, routes, self.plan.accumulation),
                     fragment,
                     payload.message_tree.unflatten(seeds),
                 )
@@ -1542,12 +1555,19 @@ class _StreamedKernel(NamedTuple):
                 jnp.where(_row_mask(committed, value), value, value[representative])
                 for value in aggregates
             ]
+            rows = _gather(self.receivers, receiver_ids, self.plan.accumulation)
+            messages = payload.message_tree.unflatten(safe)
+            if self.plan.accumulation == "fast":
+                outputs = jax.vmap(receiver)(rows, messages)
+            else:
+                # Ordered policies evaluate this bounded tile's receivers one at
+                # a time, so receiver-indexed parameter selections (for example
+                # species weights) transpose into sequenced additions instead of
+                # unordered duplicate-index scatter additions.
+                outputs = jax.lax.map(lambda item: receiver(*item), (rows, messages))
             return _conform(
                 "epilogue",
-                jax.vmap(receiver)(
-                    _gather(self.receivers, receiver_ids),
-                    payload.message_tree.unflatten(safe),
-                ),
+                outputs,
                 (payload.output_tree, payload.output_shapes, payload.output_dtypes),
                 (receiver_tile,),
             )

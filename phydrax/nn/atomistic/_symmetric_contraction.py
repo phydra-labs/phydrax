@@ -805,9 +805,12 @@ class SymmetricContractionBasis(StrictModule, NonTrainableState):
         return flat.reshape((len(self.terms), self.component_count, self.path_count))
 
     def path_features(self, monomials: Array, /) -> Array:
-        """Map ``(terms, *lanes)`` monomials to ``(components, paths, *lanes)``."""
+        """Map monomials to paths in canonical route order, without atomic sums."""
         routed = linear_apply(
-            self.relation, self.coefficients.astype(monomials.dtype), monomials
+            self.relation,
+            self.coefficients.astype(monomials.dtype),
+            monomials,
+            accumulation="deterministic",
         )
         return routed.reshape(
             (self.component_count, self.path_count, *monomials.shape[1:])

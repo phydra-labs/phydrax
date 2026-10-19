@@ -43,6 +43,7 @@ from ...atomistic._graph import (
     AtomisticGraph,
     AtomisticGraphExecutionPlan,
     AtomisticGraphTopology,
+    case_energy_totals,
     prepare_atomistic_graph_topology,
     realize_atomistic_graph,
 )
@@ -57,6 +58,7 @@ from ...atomistic._types import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
 )
+from ...sparse import RelationAccumulation
 from ...sparse._streamed import (
     PreparedStreamedRelation,
     StreamedPayloadSpec,
@@ -999,11 +1001,28 @@ class MACEPotential(AbstractAtomisticPotential):
         mask = jnp.asarray(atom_mask, dtype=jnp.bool_)
         return self.species_table.indices(jnp.asarray(species_ids), mask)
 
-    def init_features(self, species: Array, atom_mask: Array, /) -> Array:
-        """Layer-0 node states ``C x 0e``: the normalized species embedding."""
+    def init_features(
+        self,
+        species: Array,
+        atom_mask: Array,
+        /,
+        *,
+        accumulation: RelationAccumulation = "fast",
+    ) -> Array:
+        """Layer-0 node states ``C x 0e``: the normalized species embedding.
+
+        ``species`` are species-table indices. Ordered ``accumulation`` selects
+        one atom's embedding row per step, so embedding cotangents add in atom
+        order instead of by unordered duplicate-index scatter additions.
+        """
         dtype = self.embedding.dtype
         fan_in = jnp.sqrt(jnp.asarray(self.embedding.shape[0], dtype=dtype))
-        features = self.embedding[species] / fan_in
+        rows = (
+            self.embedding[species]
+            if accumulation == "fast" or not species.size
+            else jax.lax.map(lambda index: self.embedding[index], species)
+        )
+        features = rows / fan_in
         return jnp.where(atom_mask[:, None], features, jnp.zeros((), dtype=dtype))
 
     def prepare_sources(
@@ -1094,6 +1113,33 @@ class MACEPotential(AbstractAtomisticPotential):
         energy = self.energy_reference.atom_energy(species, interaction)
         return jnp.where(atom_mask, energy, jnp.zeros((), dtype=reduction))
 
+    def case_energies(
+        self,
+        relation: PreparedStreamedRelation,
+        atom_energy: Array,
+        atom_cases: Array,
+        case_count: int,
+        atom_capacity: int,
+        /,
+    ) -> tuple[Array, Array]:
+        """Output-dtype case totals and ``(case, atom)`` energies of flat atoms.
+
+        Atoms are flat case-major rows of ``atom_capacity`` slots; totals
+        follow the ``relation`` accumulation policy.
+        """
+        reduction = jnp.dtype(self.precision.reduction_dtype)
+        total = case_energy_totals(
+            atom_energy.astype(reduction),
+            jnp.asarray(atom_cases),
+            case_count,
+            relation.plan.accumulation,
+        )
+        output = jnp.dtype(self.precision.output_dtype)
+        return (
+            total.astype(output),
+            atom_energy.reshape((case_count, atom_capacity)).astype(output),
+        )
+
     def node_energies(
         self,
         species: Array,
@@ -1105,7 +1151,9 @@ class MACEPotential(AbstractAtomisticPotential):
         edge_active: Array | None = None,
     ) -> tuple[Array, Array]:
         """Per-atom energies and the conjunction of every layer's success evidence."""
-        features = self.init_features(species, atom_mask)
+        features = self.init_features(
+            species, atom_mask, accumulation=relation.plan.accumulation
+        )
         energies = []
         successful = jnp.asarray(True)
         for index in range(self.interaction_count):
@@ -1171,16 +1219,8 @@ class MACEPotential(AbstractAtomisticPotential):
             jnp.asarray(ir.edges["displacement"]),
             edge_active=jnp.asarray(ir.edge_mask, dtype=jnp.bool_),
         )
-        reduction = jnp.dtype(self.precision.reduction_dtype)
-        total = (
-            jnp.zeros((case_count,), dtype=reduction)
-            .at[jnp.asarray(atom_cases).reshape((-1,))]
-            .add(atom_energy)
-        )
-        output = jnp.dtype(self.precision.output_dtype)
-        return (
-            total.astype(output),
-            atom_energy.reshape((case_count, atom_capacity)).astype(output),
+        return self.case_energies(
+            relation, atom_energy, atom_cases, case_count, atom_capacity
         )
 
     def _energy_unchecked(

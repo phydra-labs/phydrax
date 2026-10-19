@@ -249,6 +249,87 @@ environment fingerprints include `NCCL_NVLS_ENABLE`; results from different
 transport settings are not interchangeable. A same-host four-GPU run does not
 qualify multi-host operation or network GPUDirect RDMA.
 
+### Five-H200 deployment profile
+
+The five-H200 SXM host uses driver 580.95.05, JAX/JAXlib 0.11.2, CUDA 13.4,
+and NCCL 2.32.3. All twenty directed CUDA peer-copy content checks and all
+twenty directed JAX device-copy checks passed. Raw JAX collectives passed on
+one through five selected devices without `NCCL_NVLS_ENABLE` or
+`NCCL_P2P_DISABLE` overrides. This does not establish which NCCL algorithm
+executed or independently qualify NVLS; do not copy another host's transport
+workaround into this deployment.
+
+H200 uses the same sm90 target as H100. The local companion contains inspected
+sm90 AmgX/QUDA device code and a host-only cuDSS wrapper; its
+`manylinux_2_39` development wheel does not claim full release architecture or
+`manylinux_2_28` coverage.
+
+Select device subsets before JAX initializes. In particular, the single-process
+substrate smoke uses all visible devices, regardless of `--devices-per-process`;
+use `CUDA_VISIBLE_DEVICES` to preserve a smaller allocation. Five devices support
+uniform `1×5` and `5×1` process/device layouts. A four-device `2×2` job plus an
+independent fifth-device job requires disjoint allocations, not an unequal split
+through `ExecutionRuntime.child_groups`.
+
+Five-way spectral slabs require both partitioned canonical and padded dimensions
+to be divisible by five. They are not a five-device nondegenerate pencil mesh;
+retain the four-device `2×2` pencil route separately. Device-count changes also
+change execution ownership: topology-changing PIC restart requires its explicit
+tolerance admission rather than a bitwise-continuation claim.
+
+The canonical full-mesh pencil schedule passes the composed-transform and
+production `2×2` PIC checks with the default NCCL settings. The earlier subgroup
+schedule failed across executable histories. `NCCL_LAUNCH_ORDER_IMPLICIT=1`
+helped its minimal reproducer but did not qualify the production path; it is
+not a required workaround for the new schedule.
+
+CUDA-aware MPI has a separate explicit profile on this host:
+`UCX_MEMTYPE_CACHE=n`. With UCX 1.20.1 and Open MPI 5.0.10, the default cache
+misclassified CUDA buffers and the direct tests faulted. Qualification forwards
+the caller's setting and records it in the environment identity; it never
+silently selects that profile or falls back to host staging. CUDA awareness does
+not establish zero host copies or network RDMA.
+
+Exact accelerator continuation requires ordered numerical components. Across
+fresh processes it additionally requires the same device/runtime and fixed
+compiler choices: the tested replay profile sets
+`XLA_FLAGS=--xla_gpu_autotune_level=0` before JAX initializes. Timing-based
+autotuning can select different kernels and produce different future rounding
+even when a checkpoint restores every bit correctly. This profile is explicit
+for exact-replay scenarios, not a process-wide Phydrax default or a condition
+silently applied to ordinary performance measurements.
+
+Retained commands, source identities, numerical gates, failed diagnostic
+profiles, and phase-separated measurements are in
+[`h200_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/h200_qualification.json).
+
+The exclusive campaign completed 67 invocations: 24 spectral, 16 canonical
+native-JAX MACE, 24 ordered MACE, and three PIC route sweeps. Every invocation
+returned successfully with unchanged recorded sources and no foreign compute
+process present at admission. Phase-separated preparation, lowering, compilation,
+compiler memory, retained bytes, and warmed samples are retained in the record.
+
+Representative warmed medians below are seconds, with five samples per row.
+The original package is commit `41a1a1609`, measured on the same H200 allocation
+with a matched harness. It is a performance reference, not a bitwise-qualified
+MACE implementation. PIC has no completed matched original baseline.
+
+| Workload | Original, 4 GPUs | Current, 4 GPUs | Current, 5 GPUs |
+|---|---:|---:|---:|
+| Complex64 slab FFT, `480³` | 0.003565 | 0.003658 | 0.003648 |
+| Native MACE E/F/strain, 2,048 atoms, fast streaming | 0.164268 | 3.125020 | 2.500433 |
+| Native MACE E/F/strain, 2,048 atoms, ordered streaming | 1.393871 | 27.941694 | 22.561710 |
+| Reduced PIC, fixed total problem | — | 0.147840 | 0.142669 |
+| Global-FFT PIC, fixed total problem | — | 3.831720 | 3.105693 |
+| Local-guarded PIC, fixed total problem | — | 4.175138 | 3.332588 |
+
+The determinism repairs have a substantial native-MACE cost; this change is not
+a general performance improvement. Five devices help the measured MACE and
+spectral-PIC workloads relative to four, but add little for this slab FFT or
+reduced-PIC case. Treat cold preparation and compilation separately from these
+warmed values. The three-/five-part spectral PIC sweep uses its recorded common
+grid, capacities, and guarded tiling, not the smaller historical `1/2/4` problem.
+
 ## GPU-direct MPI interoperability
 
 `phydrax[mpi]` is opt-in interoperability support. GPU-direct mpi4jax requires a

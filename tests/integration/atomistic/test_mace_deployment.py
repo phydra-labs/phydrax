@@ -14,6 +14,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.backends.iree import iree_availability
+from tests._support.compiler_profile import isolated_in_fixed_compiler_profile
 from tests._support.mace_deployment import (
     calculator_plan,
     electronvolt_units,
@@ -176,7 +177,7 @@ _FRESH_PROCESS = textwrap.dedent(
         periodic_axes=jnp.asarray([True, True, True]),
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(structure, units).prepare()
-    provider = provider_plan(artifact.model).prepare(system)
+    provider = provider_plan(artifact.model, accumulation="deterministic").prepare(system)
     request = provider.prepare_request(structure.positions, None, None)
     native = provider.evaluate_request(request)
     result = {
@@ -197,12 +198,19 @@ _FRESH_PROCESS = textwrap.dedent(
 )
 
 
-def test_artifact_and_frozen_export_resume_in_a_fresh_process(tmp_path: Path) -> None:
+def test_artifact_and_frozen_export_resume_in_a_fresh_process(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
+    if isolated_in_fixed_compiler_profile(request):
+        return
     _, artifact, artifact_path = _loaded_artifact(tmp_path)
     system = _system(periodic=True)
-    provider = provider_plan(artifact.model).prepare(system)
-    request = provider.prepare_request(jnp.asarray(WATER), None, None)
-    native = provider.evaluate_request(request)
+    # Bitwise fresh-process agreement requires ordered native accumulation.
+    plan = provider_plan(artifact.model, accumulation="deterministic")
+    provider = plan.prepare(system)
+    native = provider.evaluate_request(
+        provider.prepare_request(jnp.asarray(WATER), None, None)
+    )
     arguments = [
         str(artifact_path),
         artifact.manifest.numeric_revision.revision_id,
@@ -210,7 +218,7 @@ def test_artifact_and_frozen_export_resume_in_a_fresh_process(tmp_path: Path) ->
     has_iree = iree_availability().available
     if has_iree:
         bundle = phx.export.save_atomistic_iree(
-            provider_plan(artifact.model),
+            plan,
             _structure(periodic=True),
             electronvolt_units(),
             tmp_path / "water-mace.phxiree",
@@ -294,8 +302,10 @@ print(json.dumps({
 
 
 def test_periodic_md_restart_continues_identically_in_a_fresh_process(
-    tmp_path: Path,
+    request: pytest.FixtureRequest, tmp_path: Path
 ) -> None:
+    if isolated_in_fixed_compiler_profile(request):
+        return
     from tests._support.mace_deployment import periodic_dynamics
 
     model = tiny_mace(seed=3)
@@ -372,8 +382,10 @@ print(json.dumps({
 
 
 def test_force_stress_training_continues_identically_in_a_fresh_process(
-    tmp_path: Path,
+    request: pytest.FixtureRequest, tmp_path: Path
 ) -> None:
+    if isolated_in_fixed_compiler_profile(request):
+        return
     from tests._support.mace_deployment import strained_water_problem
 
     problem = strained_water_problem()

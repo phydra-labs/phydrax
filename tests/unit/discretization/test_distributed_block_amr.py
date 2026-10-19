@@ -347,7 +347,7 @@ def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation() -> No
         np.testing.assert_allclose(actual, expected)
 
 
-@pytest.mark.parametrize("device_count", [2, 4], ids=["two-devices", "four-devices"])
+@pytest.mark.parametrize("device_count", [1, 2, 3, 4, 5])
 def test_distributed_fill_patch_and_reverse_match_serial_routes(
     device_count: int,
 ) -> None:
