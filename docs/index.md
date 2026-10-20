@@ -134,7 +134,7 @@ solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 
 ## Installation
 
-Requires Python 3.12.
+Requires Python 3.13.
 
 The base install uses CPU JAX. For NVIDIA GPUs on Linux, choose one CUDA major:
 

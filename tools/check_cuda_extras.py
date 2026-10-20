@@ -267,7 +267,7 @@ def compile_case(
             "--python-platform",
             platform,
             "--python-version",
-            "3.12",
+            "3.13",
             *(
                 argument
                 for link in find_links

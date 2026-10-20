@@ -28,7 +28,7 @@ name = "phydrax-cuda13"
 # Released in lockstep with phydrax, which pins and verifies this exact version.
 version = "0.2.2"
 description = "CUDA 13 native cuDSS, AmgX, and QUDA components for Phydrax (plain C ABI)."
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.13,<3.14"
 authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
 license = {text = "Phydra Non-Production License (PNPL)"}
 dependencies = [

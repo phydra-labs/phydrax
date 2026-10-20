@@ -1,6 +1,7 @@
 """Consumer contracts for the fresh-process ELF dependency model."""
 
 import ctypes
+import importlib.metadata
 import shutil
 import struct
 from pathlib import Path
@@ -380,13 +381,25 @@ def test_ld_so_cache_filters_architecture_and_hwcaps(
 
 
 def test_cuda_wheel_dependencies_resolve_inside_wheels() -> None:
-    site = Path("/phydrax/.venv/lib/python3.12/site-packages")
-    if not tuple((site / "jax_plugins").glob("xla_cuda*")):
-        pytest.skip("JAX CUDA plugin wheels are absent from /phydrax/.venv")
-    root = site / "nvidia/cu13/lib/libcublas.so.13"
-    if not root.is_file():
-        pytest.skip("CUDA 13 cuBLAS wheel is absent from /phydrax/.venv")
-    directories = tuple(sorted((site / "nvidia").glob("*/lib")))
+    installed = {
+        distribution.metadata["Name"].lower(): distribution
+        for distribution in importlib.metadata.distributions()
+    }
+    if "jax-cuda13-plugin" not in installed:
+        pytest.skip("CUDA 13 JAX plugin wheels are not installed")
+    if "nvidia-cublas" not in installed:
+        pytest.skip("CUDA 13 cuBLAS wheel is not installed")
+    cublas = installed["nvidia-cublas"]
+    roots = [
+        Path(str(cublas.locate_file(file)))
+        for file in cublas.files or ()
+        if file.as_posix().endswith("nvidia/cu13/lib/libcublas.so.13")
+    ]
+    assert len(roots) == 1, "the installed cuBLAS wheel lacks libcublas.so.13"
+    (root,) = roots
+    assert root.is_file(), f"the installed cuBLAS wheel lacks {root}"
+    nvidia = root.parents[2]
+    directories = tuple(sorted(nvidia.glob("*/lib")))
     closure = resolve_dependency_closure(
         root, library_path=tuple(str(path) for path in directories), executable=None
     )
@@ -397,7 +410,7 @@ def test_cuda_wheel_dependencies_resolve_inside_wheels() -> None:
     ]
     assert nvidia_needed
     resolved = {item.soname: Path(item.path) for item in closure.resolved}
-    assert all(resolved[name].is_relative_to(site / "nvidia") for name in nvidia_needed)
+    assert all(resolved[name].is_relative_to(nvidia) for name in nvidia_needed)
 
 
 def test_dynamic_constructor_validates_selector(tmp_path: Path) -> None:

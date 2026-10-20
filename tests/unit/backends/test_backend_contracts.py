@@ -164,6 +164,7 @@ def test_cuda_provider_dependency_mismatch_refuses_before_import(tmp_path: Path)
     _cuda_subprocess(
         """
 import sys
+from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 from phydrax._cuda_environment import collect_cuda_environment
 facts = collect_cuda_environment(initialize_backend=False)
@@ -175,7 +176,7 @@ directory = Path(sys.argv[1])
 soname = "libcublas.so.12"
 write_shared_object(directory / soname, soname=soname)
 extension = write_shared_object(
-    directory / "fakeprov.cpython-312-x86_64-linux-gnu.so",
+    directory / ("fakeprov" + EXTENSION_SUFFIXES[0]),
     needed=(soname,), runpath=("$ORIGIN",),
 )
 sys.path.insert(0, str(directory))

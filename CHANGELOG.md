@@ -8,6 +8,14 @@
   Compiler-derived executable identities may change; reprepare affected
   execution artifacts rather than relabeling their identities. Historical
   JAX 0.11.2 GPU/MPI qualification does not qualify the new stack.
+- Require CPython 3.13 (`>=3.13,<3.14`) for Phydrax, `phydrax-meshcore`, and
+  `phydrax-cuda13`; Python 3.12 and the free-threaded build are unsupported.
+  Require s2fft 1.5, whose stable-ABI extension loads on 3.13 (the 1.4 wheels
+  ship a CPython 3.12-only extension). Create a new environment. Identities
+  derived from plain-function code hash interpreter bytecode and generally
+  differ from 3.12; checkpoints bound to them are refused with the existing
+  identity-mismatch errors and must be reprepared. Array archives and portable
+  ML and atomistic model artifacts written under 3.12 restore unchanged.
 - Enforce the existing no-copy DLPack contract: unshareable host buffers are
   refused instead of copied. Host inference refuses declared output dtypes that
   the active JAX precision configuration would silently narrow.
@@ -109,6 +117,14 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- `AxisArray` now has a structural representation (array structure and axis
+  layout) instead of one embedding its object address. Functional discretization
+  bundle IDs, which fingerprint term representations, were therefore
+  process-dependent and functional training checkpoints could not resume in a
+  new process. They are now deterministic; identities derived from those
+  representations change, and earlier address-derived checkpoints are refused.
+- The exponential Taylor threshold generator emits the repository's canonical
+  import spacing, so regeneration reproduces the committed table byte for byte.
 - Admit stock JAX high-level NumPy operations in compiler identities and
   structural sparse derivatives without discarding their custom derivative
   semantics. Complex `sign` now retains its nonzero structural dependencies;
