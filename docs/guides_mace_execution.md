@@ -395,7 +395,7 @@ the existing explicit `cuda` or `cpu_interpret` target. There is no Pallas
 coupling. The kernels are written once for Pallas Mosaic GPU with 128-lane
 warpgroup channel tiles:
 
-- `"cuda"` admits NVIDIA devices with compute capability 8.0, 9.0, 10.0, or 12.0,
+- `"cuda"` admits NVIDIA devices with compute capability 8.0, 9.0, 10.0, 12.0, or 12.1,
   not every architecture above a numeric minimum (8.6, 8.9, and 10.3 remain refused).
   `pallas_atomistic_availability("cuda")` identifies CUDA from the runtime,
   including JAX clients labeled `"gpu"`, and refuses other devices with a
@@ -435,6 +435,14 @@ warpgroup channel tiles:
   `rtol=atol=2e-5` (reverse mode `rtol=2e-4`); float64 forward agrees at
   `rtol=atol=1e-12`. This is correctness evidence for that configuration, not
   a general GPU performance or memory qualification.
+- DGX Spark GB10 (12.1), driver 580.159.03, Python 3.13.14, JAX/JAXlib and
+  CUDA plugin 0.12.0, and CUDA runtime 13.4 passed the compiled float32/float64
+  deterministic/compensated matrix. This includes joint field/coefficient JVP,
+  VJP, reverse-over-forward and Hessian-vector checks, compiler resource
+  evidence, and fragment-budget/third-order refusal. Coefficient tangents retain
+  the constructor-prepared support. This admits GB10, not other unqualified
+  Blackwell capabilities or distributed accelerated MACE. See
+  [Spark deployment](installation.md#dgx-spark-deployment-profile).
 - `"cpu_interpret"` runs the same kernel bodies through the Mosaic GPU
   interpreter on CPU. It is semantic reference verification only. It is never
   GPU correctness, performance, or memory evidence.

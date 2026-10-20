@@ -10,9 +10,10 @@ must support CUDA 13 (R580+); pip cannot install or upgrade it. The base
 The extra installs JAX's CUDA plugin, NVIDIA runtime/math wheels, and
 `phydrax-cuda-major==13.*`. The metadata-only marker, built from
 `packaging/cuda-major/13`, records explicit installed CUDA intent for diagnostics.
-On Linux x86-64 the extra also pins the wheel-only `phydrax-cuda13` companion to
-the Phydrax release. Linux aarch64 has no native companion yet. No system CUDA
-toolkit or `LD_LIBRARY_PATH` is required for the wheel-based runtime.
+On Linux x86-64 and aarch64 the extra also pins the wheel-only
+`phydrax-cuda13` companion to the Phydrax release. A matching native companion
+wheel is required on both architectures. No system CUDA toolkit or
+`LD_LIBRARY_PATH` is required for the wheel-based runtime.
 
 The former multi-major implementation plan and its obsolete packaging,
 publication, and switching recipes are superseded by this contract. Current

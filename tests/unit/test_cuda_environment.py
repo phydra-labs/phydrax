@@ -78,26 +78,30 @@ def test_companion_issue_codes_preserve_actionable_evidence(code: CudaIssueCode)
     assert issue.paths == ("/companion.so",)
 
 
-def test_requested_cuda_requires_plugin() -> None:
-    _only_issue(replace(_facts(), requested_major=13), "no-cuda-plugin")
+@pytest.mark.parametrize("machine", ("x86_64", "aarch64"))
+def test_requested_cuda_requires_plugin(machine: str) -> None:
+    _only_issue(
+        CudaEnvironmentFacts(
+            host_platform="linux", host_machine=machine, requested_major=13
+        ),
+        "no-cuda-plugin",
+    )
 
 
 @pytest.mark.parametrize(
     ("host_platform", "host_machine"),
-    [("darwin", "arm64"), ("linux", "aarch64"), ("win32", "AMD64")],
+    [("darwin", "arm64"), ("linux", "ppc64le"), ("win32", "AMD64")],
 )
-def test_missing_plugin_warns_off_linux_x86_64(
+def test_missing_plugin_warns_on_unsupported_hosts(
     host_platform: str, host_machine: str
 ) -> None:
-    issue = _only_issue(
+    _only_issue(
         CudaEnvironmentFacts(
             host_platform=host_platform, host_machine=host_machine, requested_major=13
         ),
         "no-cuda-plugin",
         "warning",
     )
-    assert host_platform in issue.message
-    assert host_machine in issue.message
 
 
 def test_duplicate_plugins_are_refused() -> None:

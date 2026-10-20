@@ -20,6 +20,10 @@ The wheel sets omit driver stubs, so SHA256-pinned NVIDIA
 shipped. CPU-only builders need neither a GPU driver nor a system toolkit.
 A pinned `cuda_cuobjdump` redistributable supplies the matching major's binary
 inspection tool, which is also not shipped in the companion.
+The build host must be Linux x86-64 or aarch64. Support archives use NVIDIA's
+`linux-x86_64` or `linux-sbsa` platform respectively, never Jetson artifacts.
+Wheel audits verify native little-endian ELF64 machine identity for the
+companion and its NVIDIA dependencies.
 
 From the repository root, a development component build is:
 
@@ -83,11 +87,19 @@ build. Runtime deployment requires an NVIDIA R580+ driver supporting CUDA 13.
 The build tool repairs with auditwheel while excluding NVIDIA and driver
 libraries, checks ELF dependencies/shared cudart/relative RUNPATHs, lists device
 code with `cuobjdump`, and writes a JSON manifest with sizes and build identity.
-Use `--container podman` or `--container docker` for the
-`quay.io/pypa/manylinux_2_28_x86_64` build environment. Host development wheels
-receive the host-compatible manylinux tag and do not claim manylinux_2_28
-compatibility unless their actual symbol requirements satisfy it. Source
-distributions are deliberately refused; publish wheels only.
+Use `--container podman` or `--container docker` for the matching
+`quay.io/pypa/manylinux_2_28_x86_64` or `manylinux_2_28_aarch64` build environment;
+the container platform follows the native host, not an emulated cross-build.
+Host development wheels receive the host-compatible manylinux tag and do not
+claim manylinux_2_28 compatibility unless their actual symbol requirements
+satisfy it. Source distributions are deliberately refused; publish wheels only.
+
+DGX Spark has an aarch64 host and GB10 compute capability 12.1. Build locally
+with `--architectures 121-real --components cudss,amgx,quda`; use
+`--required-gpus 1` for installed-wheel qualification. The recorded Spark
+artifact is `manylinux_2_39_aarch64` with sm121 SASS, not qualification of all
+release targets or the manylinux_2_28 container. Keep both the host ELF
+architecture and GPU device-code coverage in its build manifest.
 
 B200 has compute capability 10.0, not the 12.0 of RTX PRO Blackwell. Use
 `--architectures 100-real` for a B200-local development wheel, or a release

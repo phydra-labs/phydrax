@@ -10,9 +10,10 @@ Example (development, not release architecture qualification)::
         --components cudss --python /path/to/build-env/bin/python \
         --build-dir /path/to/build/cuda13 --wheelhouse /path/to/wheelhouse
 
-Container builds use manylinux_2_28_x86_64. ``--python`` must name a provisioned
-interpreter usable *inside* that image; this tool never installs dependencies or
-creates an environment. Host environments are bind-mounted at their original
+Container builds use the host's manylinux_2_28_x86_64 or manylinux_2_28_aarch64
+image. ``--python`` must name a provisioned interpreter usable *inside* that
+image; this tool never installs dependencies or creates an environment. Host
+environments are bind-mounted at their original
 paths, but their interpreter and binary dependencies must be image-compatible.
 The host repair tag reflects the host glibc, not a manylinux_2_28 release claim.
 A JSON manifest is written beside the wheel, including on audit failure.
@@ -41,7 +42,6 @@ from pathlib import Path, PurePosixPath
 type Json = None | bool | int | float | str | Sequence[Json] | Mapping[str, Json]
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "quay.io/pypa/manylinux_2_28_x86_64:latest"
 COMPONENTS = ("cudss", "amgx", "quda")
 DRIVER_LIBRARIES = frozenset(("libcuda.so.1", "libnvidia-ml.so.1"))
 CLEAN_ENVIRONMENT = ("LD_LIBRARY_PATH", "CUDA_HOME", "CUDA_PATH", "CUDA_ROOT")
@@ -95,6 +95,38 @@ class Elf:
 
 class AuditFailure(RuntimeError):
     """A build artifact failed a packaging invariant."""
+
+
+@dataclass(frozen=True)
+class HostPlatform:
+    architecture: str
+    container_platform: str
+    loader: str
+    elf_machine: str
+
+    @property
+    def image(self) -> str:
+        return f"quay.io/pypa/manylinux_2_28_{self.architecture}:latest"
+
+
+def host_platform() -> HostPlatform:
+    architecture = platform.machine()
+    if sys.platform == "linux":
+        match architecture:
+            case "x86_64":
+                return HostPlatform(
+                    architecture,
+                    "linux/amd64",
+                    "ld-linux-x86-64.so.2",
+                    "Advanced Micro Devices X86-64",
+                )
+            case "aarch64":
+                return HostPlatform(
+                    architecture, "linux/arm64", "ld-linux-aarch64.so.1", "AArch64"
+                )
+    raise AuditFailure(
+        f"wheel builds require Linux x86_64 or aarch64: {sys.platform}/{architecture}"
+    )
 
 
 def parse_configuration(argv: Sequence[str] | None = None) -> Configuration:
@@ -227,7 +259,8 @@ def run(
 
 
 def container_command(config: Configuration) -> list[str]:
-    command = [config.container, "run", "--rm", "--platform", "linux/amd64"]
+    host = host_platform()
+    command = [config.container, "run", "--rm", "--platform", host.container_platform]
     if config.container == "podman":
         command.append("--userns=keep-id")
     else:
@@ -251,7 +284,7 @@ def container_command(config: Configuration) -> list[str]:
             command.extend(("--device", "nvidia.com/gpu=all"))
     command.extend(
         (
-            IMAGE,
+            host.image,
             str(config.python),
             str(Path(__file__).resolve()),
             "--architectures",
@@ -331,9 +364,10 @@ def manylinux_policy() -> tuple[str, frozenset[str]]:
     distribution = importlib.metadata.distribution("auditwheel")
     path = Path(str(distribution.locate_file("auditwheel/policy/manylinux-policy.json")))
     policies = json_value(json.loads(path.read_text(encoding="utf-8")))
+    architecture = host_platform()
     libc, version = platform.libc_ver()
-    if libc != "glibc" or platform.machine() != "x86_64":
-        raise AuditFailure("wheel builds require glibc Linux x86_64")
+    if libc != "glibc":
+        raise AuditFailure("wheel builds require glibc Linux x86_64 or aarch64")
     host = tuple(int(part) for part in version.split(".")[:2])
     candidates: list[tuple[tuple[int, int], str, frozenset[str]]] = []
     if not isinstance(policies, list):
@@ -349,6 +383,11 @@ def manylinux_policy() -> tuple[str, frozenset[str]]:
         if match is None:
             continue
         minimum = (int(match.group(1)), int(match.group(2)))
+        symbols = policy.get("symbol_versions")
+        if not isinstance(symbols, dict):
+            raise ValueError("auditwheel policy lacks architecture symbol versions")
+        if architecture.architecture not in symbols:
+            continue
         if (2, 28) <= minimum <= host:
             if not all(isinstance(item, str) for item in whitelist):
                 raise ValueError("invalid auditwheel system-library whitelist")
@@ -358,7 +397,7 @@ def manylinux_policy() -> tuple[str, frozenset[str]]:
     _, name, allowed = max(candidates)
     # auditwheel's policy additionally exempts the ELF loader, outside its JSON
     # whitelist (WheelPolicies.lddtree_external_references).
-    return f"{name}_x86_64", allowed.union(("ld-linux-x86-64.so.2",))
+    return f"{name}_{architecture.architecture}", allowed.union((architecture.loader,))
 
 
 def inspect_elf(
@@ -366,7 +405,26 @@ def inspect_elf(
     environment: Mapping[str, str],
     evidence: dict[str, Json],
 ) -> Elf:
-    output = run(("readelf", "--dynamic", "--wide", str(path)), environment, evidence)
+    output = run(
+        ("readelf", "--file-header", "--dynamic", "--wide", str(path)),
+        environment,
+        evidence,
+    )
+    machine = re.search(r"^\s*Machine:\s*(.+?)\s*$", output, re.MULTILINE)
+    elf_class = re.search(r"^\s*Class:\s*(\S+)", output, re.MULTILINE)
+    data = re.search(r"^\s*Data:\s*(.+?)\s*$", output, re.MULTILINE)
+    expected_machine = host_platform().elf_machine
+    if (
+        machine is None
+        or machine[1] != expected_machine
+        or elf_class is None
+        or elf_class[1] != "ELF64"
+        or data is None
+        or data[1] != "2's complement, little endian"
+    ):
+        raise AuditFailure(
+            f"{path.name}: expected little-endian ELF64 {expected_machine}"
+        )
     needed = tuple(re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", output))
     paths = re.findall(r"\((?:RUNPATH|RPATH)\).*?\[([^\]]*)\]", output)
     runpath = tuple(entry for value in paths for entry in value.split(":"))
@@ -849,6 +907,7 @@ def execute(config: Configuration) -> int:
     }
     environment = clean_environment(config.python, config.jobs)
     try:
+        evidence["host_architecture"] = host_platform().architecture
         nvidia = inventory()
         evidence["nvidia_wheels"] = dict(nvidia.versions)
         tools: dict[str, Json] = {"python": sys.version}
@@ -918,10 +977,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if config.container != "none":
         command = container_command(config)
         # Explicit image identity survives the inner no-container invocation.
-        insertion = command.index(IMAGE)
+        image = host_platform().image
+        insertion = command.index(image)
         command[insertion:insertion] = [
             "--env",
-            f"PHX_CUDA_BUILD_CONTAINER_IMAGE={IMAGE}",
+            f"PHX_CUDA_BUILD_CONTAINER_IMAGE={image}",
         ]
         return subprocess.run(command, env=environment, check=False).returncode
     if not config.python.is_file():

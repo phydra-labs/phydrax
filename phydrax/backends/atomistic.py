@@ -49,10 +49,12 @@ _BACKEND = "pallas-atomistic"
 # Architecture admission is explicit for these Lane kernels, which use no
 # WGMMA, TCGEN05, or TMA multicast instructions. Other architectures need their
 # own compiled forward and derivative evidence, not a numeric lower bound.
-_CUDA_ADMITTED_COMPUTE_CAPABILITIES = frozenset(((8, 0), (9, 0), (10, 0), (12, 0)))
+_CUDA_ADMITTED_COMPUTE_CAPABILITIES = frozenset(
+    ((8, 0), (9, 0), (10, 0), (12, 0), (12, 1))
+)
 _REQUIREMENT = (
     "JAX Pallas Mosaic GPU on an NVIDIA CUDA device with admitted compute "
-    "capability 8.0, 9.0, 10.0, or 12.0, "
+    "capability 8.0, 9.0, 10.0, 12.0, or 12.1, "
     "or the explicit CPU Mosaic GPU interpreter for reference verification"
 )
 

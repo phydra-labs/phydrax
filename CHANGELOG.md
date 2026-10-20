@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Breaking
+- Require the lockstep CUDA companion on Linux aarch64 as well as x86-64.
+  CUDA intent without a JAX plugin is now an error on both supported Linux
+  architectures. A missing ARM companion wheel no longer yields a JAX-only
+  CUDA-extra install.
 - Require JAX 0.12 and update the matched JAXlib/CUDA-plugin lock and native
   companion build requirements. Upstream x86-64 wheels require AVX2/FMA.
   Compiler-derived executable identities may change; reprepare affected
@@ -65,6 +69,19 @@
 - Share the full-width gather-fill correction across upstream accelerator
   integration and the independently packaged Metal plugin, without replacing
   JAX numerical callables or losing the high bits of scatter cotangent indices.
+- Enable native CUDA companion builds on Linux aarch64 with SHA256-pinned
+  NVIDIA SBSA support archives, native ARM64 containers, and architecture-aware
+  ELF/manylinux audits. Retain single-GB10 installed-wheel numerical and
+  lifecycle qualification for cuDSS, AmgX, and QUDA.
+- Admit GB10 compute capability 12.1 for compiled MACE coupling after
+  float32/float64 deterministic/compensated forward and derivative qualification.
+  Extend coefficient-inclusive second-order and float32 FMM derivative coverage;
+  other unqualified architectures remain refused.
+  Retain runtime identities, installed-wheel evidence, and phase-separated
+  FMM/MACE benchmark agreement in `benchmarks/spark_qualification.json`;
+  single-device correctness does not imply general acceleration.
+- Preserve optional JAX plugin namespace discovery in Metal's host inspection
+  without an environment-dependent unresolved-import suppression.
 - Add the wheel-only `metal` extra and pinned `phydrax-metal` companion for
   standard CPython 3.13, JAX/JAXlib 0.12.0, and Darwin arm64. The native runtime
   identifies as `mps`, preserves exact 64-bit indices with x64 enabled, and
@@ -128,7 +145,7 @@
   and refused; native-JAX execution and existing precision policies are unchanged.
 - The `cuda13` installation extra with JAX's CUDA plugin, NVIDIA wheels, an
   installed-intent CUDA-major marker, and the lockstep wheel-only
-  `phydrax-cuda13` companion on Linux x86-64, including cuDSS, AmgX, and QUDA.
+  `phydrax-cuda13` companion on Linux x86-64 and aarch64, including cuDSS, AmgX, and QUDA.
 - Device-resident, jittable AmgX and QUDA through public JAX FFI. AmgX uses
   dDDI with explicit float32-promotion evidence, per-RHS native diagnostics,
   and in-place native coefficient refresh while returning independent
@@ -185,6 +202,10 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Keep configuration-test subprocesses on CPU instead of clearing the parent's
+  platform selection and implicitly reserving GPU memory in parallel workers.
+  The bootstrap partial-commit scenario explicitly retains its unset-platform
+  starting state while hiding CUDA devices.
 - `AxisArray` now has a structural representation (array structure and axis
   layout) instead of one embedding its object address. Functional discretization
   bundle IDs, which fingerprint term representations, were therefore

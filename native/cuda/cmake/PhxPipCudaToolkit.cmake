@@ -11,10 +11,14 @@ import importlib.metadata as metadata
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import sys
 
 root = Path(sys.argv[1])
+architecture = platform.machine()
+if sys.platform != 'linux' or architecture not in ('x86_64', 'aarch64'):
+    raise RuntimeError(f'CUDA wheel builds require Linux x86_64 or aarch64: {sys.platform}/{architecture}')
 root.mkdir(parents=True, exist_ok=True)
 libdirs = set()
 wheels = {}
@@ -76,7 +80,7 @@ if site is None:
     raise RuntimeError('No matching NVIDIA toolkit wheels found')
 origin = site / 'phydrax_cuda13' / 'lib'
 runpath = ['$ORIGIN/' + os.path.relpath(directory, origin) for directory in sorted(libdirs)]
-(root / 'discovery.json').write_text(json.dumps({'wheels': wheels, 'library_dirs': [str(p) for p in sorted(libdirs)], 'runpath': runpath}, sort_keys=True, indent=2) + '\n')
+(root / 'discovery.json').write_text(json.dumps({'host_architecture': architecture, 'wheels': wheels, 'library_dirs': [str(p) for p in sorted(libdirs)], 'runpath': runpath}, sort_keys=True, indent=2) + '\n')
 print(';'.join(runpath))
 ]=])
 execute_process(COMMAND "${Python_EXECUTABLE}" -c "${_phx_discover}" "${PHX_CUDA_TOOLKIT}"
@@ -90,10 +94,25 @@ endif()
 # NVIDIA wheels omit driver stubs and cuobjdump. Fetch pinned redistributables
 # for link-time stubs and inspection only, never their runtime libraries.
 # CPU-only manylinux builders need no installed GPU driver or system toolkit.
-set(_phx_support_specs
-  "cuda_cudart|13.0.96|25b8071951baba827be1580b841d363464f6ee6c39f48d33a81646f90cc95ed1"
-  "cuda_nvml_dev|13.0.87|92d441fa7ae41bba92e06c928cacdb32f4703763512f68d10c9c230f09ffe6d8"
-  "cuda_cuobjdump|13.0.85|bd624dcb2089842add8f293efab1d21aa076c98b36d8dcb64347fe08fb03315d")
+# Pins from NVIDIA's redistrib_13.0.2.json; aarch64 uses the SBSA archives,
+# not Jetson/tegra artifacts. Each archive is verified before extraction.
+file(READ "${PHX_CUDA_TOOLKIT}/discovery.json" _phx_discovery)
+string(JSON _phx_host_architecture GET "${_phx_discovery}" host_architecture)
+if(_phx_host_architecture STREQUAL "x86_64")
+  set(_phx_redist_platform linux-x86_64)
+  set(_phx_support_specs
+    "cuda_cudart|13.0.96|25b8071951baba827be1580b841d363464f6ee6c39f48d33a81646f90cc95ed1"
+    "cuda_nvml_dev|13.0.87|92d441fa7ae41bba92e06c928cacdb32f4703763512f68d10c9c230f09ffe6d8"
+    "cuda_cuobjdump|13.0.85|bd624dcb2089842add8f293efab1d21aa076c98b36d8dcb64347fe08fb03315d")
+elseif(_phx_host_architecture STREQUAL "aarch64")
+  set(_phx_redist_platform linux-sbsa)
+  set(_phx_support_specs
+    "cuda_cudart|13.0.96|e2c78564330a09d890f98a066a2082a32c78256ffcc6bccca1696bd2abbaf445"
+    "cuda_nvml_dev|13.0.87|71740823e837c2a1a6e314f0fe801f8fa6aef1055220e9a504f6f4c67e21d72b"
+    "cuda_cuobjdump|13.0.85|cd0304f70ff905421da2ca0fe53cfc384baa48d6ff6b34f92a80cf723064e827")
+else()
+  message(FATAL_ERROR "Unsupported CUDA build host architecture: ${_phx_host_architecture}")
+endif()
 function(_phx_support_link source destination)
   if(IS_SYMLINK "${destination}")
     file(REAL_PATH "${destination}" existing)
@@ -109,8 +128,8 @@ foreach(spec IN LISTS _phx_support_specs)
   list(GET fields 0 family)
   list(GET fields 1 version)
   list(GET fields 2 sha)
-  set(stem "${family}-linux-x86_64-${version}-archive")
-  set(url "https://developer.download.nvidia.com/compute/cuda/redist/${family}/linux-x86_64/${stem}.tar.xz")
+  set(stem "${family}-${_phx_redist_platform}-${version}-archive")
+  set(url "https://developer.download.nvidia.com/compute/cuda/redist/${family}/${_phx_redist_platform}/${stem}.tar.xz")
   set(archive "${PHX_CUDA_DOWNLOAD_DIR}/${stem}.tar.xz")
   file(LOCK "${PHX_CUDA_DOWNLOAD_DIR}/${stem}.lock" GUARD FILE TIMEOUT 600)
   if(NOT EXISTS "${archive}")

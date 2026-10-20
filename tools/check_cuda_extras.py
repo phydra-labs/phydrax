@@ -29,7 +29,9 @@ PLATFORMS = (
     "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc",
 )
-COMPANION_MARKER = "sys_platform=='linux'andplatform_machine=='x86_64'"
+COMPANION_MARKER = (
+    "sys_platform=='linux'and(platform_machine=='x86_64'orplatform_machine=='aarch64')"
+)
 # CUDA 13 math-library distribution versions are not CUDA-major identifiers.
 NVIDIA_FAMILIES = (
     "cuda-runtime",
@@ -231,11 +233,13 @@ def resolution_errors(resolved: dict[str, str], platform: str, version: str) -> 
                 f"{nvidia}, {plugins}, {companions}"
             )
         return errors
-    if platform.startswith("x86_64-"):
+    if platform.startswith(("x86_64-", "aarch64-")):
         if companions != {"phydrax-cuda13": version}:
             errors.append(f"Expected phydrax-cuda13=={version}, resolved {companions}")
     elif companions:
-        errors.append(f"Companion resolved off Linux x86_64: {companions}")
+        errors.append(
+            f"Companion resolved off supported Linux architectures: {companions}"
+        )
     if set(plugins) != {"jax-cuda13-plugin", "jax-cuda13-pjrt"}:
         errors.append(f"Expected CUDA 13 JAX plugin and PJRT, resolved {plugins}")
     for name in nvidia:

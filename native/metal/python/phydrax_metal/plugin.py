@@ -28,7 +28,7 @@ import traceback
 import weakref
 from collections.abc import Callable, Sequence
 from functools import partial
-from importlib import metadata
+from importlib import import_module, metadata
 from pathlib import Path
 from typing import Any, Final, TYPE_CHECKING
 
@@ -181,7 +181,7 @@ def _refuse_competing_plugins() -> None:
                 "uninstall it so exactly one Apple GPU provider is installed"
             )
     try:
-        import jax_plugins  # ty: ignore[unresolved-import]
+        jax_plugins = import_module("jax_plugins")
     except ImportError:
         return
     import pkgutil

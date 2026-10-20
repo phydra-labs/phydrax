@@ -522,7 +522,7 @@ constraint-dual values with their canonical signs.
 
 ## cuDSS (native)
 
-The Linux x86-64 CUDA 13 companion provides cuDSS through
+The Linux x86-64 and aarch64 CUDA 13 companion provides cuDSS through
 `phydrax[cuda13]`. Inspect `cudss_availability`, then select
 `SparseLDLT(provider="cudss", factor_cache_capacity=8)` explicitly.
 Importing Phydrax does not load the companion or initialize CUDA.
@@ -961,7 +961,7 @@ ordinary-JAX streamed route remains the portable reference.
 
 | Target | Lowering | Admission |
 | --- | --- | --- |
-| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with an admitted compute capability: exactly 8.0, 9.0, 10.0, or 12.0. Other GPU clients, such as ROCm, and other architectures are refused. |
+| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with an admitted compute capability: exactly 8.0, 9.0, 10.0, 12.0, or 12.1. Other GPU clients, such as ROCm, and other architectures are refused. |
 | `"cpu_interpret"` | `"pallas_mosaic_gpu_interpret"` | Always available. The CPU Mosaic GPU interpreter executes the same kernel bodies for semantic reference verification. |
 
 HIP/ROCm and TPU are not implemented targets. `AtomisticKernelTarget(target)`
