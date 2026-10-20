@@ -996,6 +996,74 @@ def test_compiled_cuda_coupling_values_derivatives_and_resources(
                 atol=derivative_tolerance,
             )
 
+        # Coefficient tangents must stay on the constructor-prepared support:
+        # zero entries are static structure, not differentiated kernel operands.
+        tables = tensor_product.prepared.coefficients
+        support = tuple(jnp.asarray(np.asarray(table) != 0) for table in tables)
+        coefficient_directions = tuple(
+            jnp.where(mask, jnp.asarray(rng.normal(size=table.shape), dtype=dtype), 0.0)
+            for table, mask in zip(tables, support, strict=True)
+        )
+        all_arguments = (tables, *arguments)
+        all_directions = (coefficient_directions, *directions)
+
+        def coefficient_aggregate(
+            coefficients: tuple[Array, ...],
+            values: Array,
+            y: Array,
+            w: Array,
+            *,
+            native: bool,
+        ) -> Array:
+            product = eqx.tree_at(
+                lambda value: value.prepared.coefficients,
+                tensor_product,
+                tuple(
+                    jnp.where(mask, table, 0.0)
+                    for table, mask in zip(coefficients, support, strict=True)
+                ),
+            )
+            return (
+                _reference(product, values, y, w)
+                if native
+                else _accelerated_aggregate(coupling, relation, product, values, y, w)
+            )
+
+        def coefficient_transformed(
+            coefficients: tuple[Array, ...], *values: Array, native: bool
+        ) -> Any:
+            operands = (coefficients, *values)
+            function = partial(coefficient_aggregate, native=native)
+
+            def loss(coefficients: tuple[Array, ...], *values: Array) -> Array:
+                return jnp.sum(weights * jnp.tanh(function(coefficients, *values)))
+
+            def tangent_loss(coefficients: tuple[Array, ...], *values: Array) -> Array:
+                tangent = jax.jvp(function, (coefficients, *values), all_directions)[1]
+                return jnp.sum(weights * jnp.tanh(tangent))
+
+            tangent = jax.jvp(function, operands, all_directions)[1]
+            mixed = jax.grad(tangent_loss, argnums=(0, 1, 2, 3))(*operands)
+            hvp = jax.jvp(jax.grad(loss, argnums=(0, 1, 2, 3)), operands, all_directions)[
+                1
+            ]
+            return tangent, mixed, hvp
+
+        coefficient_results = [
+            jax.block_until_ready(
+                jax.jit(partial(coefficient_transformed, native=native))(*all_arguments)
+            )
+            for native in (False, True)
+        ]
+        for actual, wanted in zip(
+            jax.tree.leaves(coefficient_results[0]),
+            jax.tree.leaves(coefficient_results[1]),
+            strict=True,
+        ):
+            np.testing.assert_allclose(
+                actual, wanted, rtol=derivative_tolerance, atol=derivative_tolerance
+            )
+
         def source_hvp(values: Array) -> Array:
             gradient = jax.grad(
                 lambda rows: jnp.sum(jnp.tanh(accelerated(rows, harmonics, radial)))

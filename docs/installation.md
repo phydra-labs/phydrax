@@ -142,8 +142,8 @@ and math-library wheels (including NCCL), and the metadata-only
 A system CUDA toolkit and `LD_LIBRARY_PATH` are not required for
 this JAX setup. The extra does not install a CUDA backend on non-Linux platforms.
 
-On Linux x86-64, the extra also installs the lockstep wheel-only companion
-`phydrax-cuda13==0.2.2`:
+On Linux x86-64 and aarch64, the extra also requires the lockstep wheel-only
+companion `phydrax-cuda13==0.2.2`:
 
 | Component | CUDA 13 |
 | --- | --- |
@@ -153,7 +153,9 @@ On Linux x86-64, the extra also installs the lockstep wheel-only companion
 
 Release companions contain CUDA 13 SASS for sm 8.0, 8.6, 8.9, 9.0, 10.0,
 and 12.0, plus PTX 12.0.
-Linux aarch64 receives the JAX extra but has no companion yet. GPU-direct
+Installation requires a matching host-architecture companion wheel; a missing
+wheel is an installation failure, not a successful JAX-only CUDA-extra install.
+Local builds do not imply publication. GPU-direct
 mpi4jax still requires a matching user-provided build. See
 [External solver backends](api/backends.md) for component contracts.
 
@@ -205,7 +207,7 @@ resolution, not the diagnostic list of libraries already mapped in this process.
 | Issue code | Meaning and remedy |
 | --- | --- |
 | `unsupported-cuda-major` | The active runtime or single-major mapped toolkit evidence identifies a major other than 13. Remove foreign-major packages and paths, install `phydrax[cuda13]`, and restart; use the CPU-only install if CUDA 13 is unavailable. |
-| `no-cuda-plugin` | A CUDA marker is installed without a JAX CUDA plugin. Reinstall the selected extra on supported Linux; use the CPU install on unsupported platforms. This is an error on Linux x86-64 and a warning elsewhere. |
+| `no-cuda-plugin` | A CUDA marker is installed without a JAX CUDA plugin. Reinstall the selected extra on supported Linux; use the CPU install on unsupported platforms. This is an error on Linux x86-64 and aarch64, and a warning elsewhere. |
 | `duplicate-cuda-plugins` | Multiple CUDA plugins are installed. Remove the other-major plugin and its wheels, or create a fresh environment. |
 | `plugin-major-mismatch` | The installed CUDA intent marker or unique plugin does not match required major 13, including a foreign-only plugin without a marker. Remove foreign-major packages and reinstall `phydrax[cuda13]`. |
 | `foreign-nvidia-distributions` | Other-major NVIDIA wheels remain installed. Run the exact `pip uninstall` list in the message, then reinstall `phydrax[cuda13]`. |
@@ -216,7 +218,7 @@ resolution, not the diagnostic list of libraries already mapped in this process.
 | `mixed-cuda-majors` | Mapped libraries have more than one known CUDA major. Remove incompatible providers or library paths, rebuild against CUDA 13, and restart in a clean process. |
 | `provider-major-mismatch` | A user-provided provider's native dependencies target another major. Rebuild or reinstall it for JAX's CUDA major. |
 | `provider-dependency-unresolved` | A provider's CUDA dependency cannot be resolved. Install its matching dependencies and correct its RPATH or deployment paths, then retry in a new process. |
-| `companion-missing` | Install the matching CUDA extra on Linux x86-64, or supply a development library override. |
+| `companion-missing` | Install the matching CUDA extra on Linux x86-64 or aarch64, or supply a development library override. |
 | `companion-invalid` | The library is unreadable or lacks valid identity symbols or handlers. Reinstall the matching companion or rebuild the override. |
 | `companion-version-mismatch` | Companion and Phydrax releases differ. Install matching versions. |
 | `companion-major-mismatch` | The component targets a different CUDA major from JAX. Install the matching extra or rebuild the override. |
@@ -245,6 +247,70 @@ also prevent the CUDA plugin from initializing, producing
 `backend-unavailable` instead, with the backend error and affected directories.
 Remove the CUDA entries (or unset `LD_LIBRARY_PATH` if it has no other deployment
 purpose) before starting a new Python process.
+
+## DGX Spark deployment profile
+
+The qualified single-device profile is Linux aarch64, NVIDIA GB10 (compute
+capability 12.1), driver 580.159.03, CPython 3.13.14, JAX/JAXlib and CUDA plugin
+0.12.0, and wheel-provided CUDA runtime 13.4.92. The installed driver reports
+CUDA 13.0; the recorded workload checks passed without a driver upgrade.
+The system toolkit is not used by the native build or selected as a runtime
+library search path.
+
+Build the companion natively on aarch64 with `--architectures 121-real`, using
+the build environment and audit procedure in `native/cuda/README.md`. The local
+wheel is `manylinux_2_39_aarch64`, with inspected sm121 AmgX/QUDA device code;
+cuDSS kernels remain owned by its separately installed NVIDIA provider.
+This does not qualify the full release architecture set or a manylinux_2_28
+container build.
+
+Keep the audited local wheel when installing from the checkout:
+
+```bash
+uv venv --python 3.13 .venv
+uv pip install --python .venv/bin/python --no-sources \
+  --find-links dist/cuda13-sm121 -e ".[cuda13]"
+env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda,cpu \
+  JAX_ENABLE_X64=1 XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  .venv/bin/python -m tools.distributed_substrate_benchmark \
+  --size 17 --iterations 1
+```
+
+The weighted mean and PCG smoke agree with their references. Installed-wheel
+cuDSS, AmgX, and QUDA qualification covers numerical contracts, bounded
+release/rebuild behavior, and normal/hostile-path process teardown on device 0.
+The clean audit reports no CUDA issues; the hostile audit retains the expected
+`library-path-shadowing` warning while using wheel-provided CUDA libraries.
+Missing optional Grid/qlat providers and tests requiring a second GPU are not
+single-device native-provider failures.
+
+GB10 is separately admitted for MACE's Mosaic GPU coupling in float32/float64
+with deterministic/compensated accumulation, coefficient and field derivatives
+through order two, and resource/third-order refusal checks. FMM's optional
+Triton route is distinct: its forward kernel runs on CUDA, while its custom
+derivative rule executes the JAX reference. The pinned JAX release warns that
+the Pallas Triton backend is deprecated; this qualification is not a migration
+to another lowering.
+
+Keep x64 and scientific precision choices explicit; do not apply the Metal
+float32-only policy to CUDA or enable TF32 implicitly. Spark's shared physical
+memory is not independent host RAM plus GPU RAM. Allocator limits, live device
+arrays, host RSS, and compiler estimates retain their separate scopes.
+No multi-GPU, multi-host, RDMA, cross-device bitwise-replay, or general speedup
+claim follows from these checks. Exact evidence and benchmark scopes are in
+[`spark_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/spark_qualification.json).
+The checkout benchmark identity requires the local, git-ignored `uv.lock`;
+generate it with `uv lock` before running the recorded benchmark commands.
+
+For checkout verification on shared-memory Spark hosts, hide CUDA from CPU-only
+test workers with `CUDA_VISIBLE_DEVICES=""`, keep
+`XLA_PYTHON_CLIENT_PREALLOCATE=false` in their inherited environment, and bound
+worker count. A subprocess that clears `JAX_PLATFORMS` can otherwise select
+CUDA and reserve a large fraction of shared physical memory. Run GPU
+qualification separately with one visible device; do not overlap it with
+parallel test workers or the repository typing gate. Transient host cgroup
+memory limits provide an additional containment boundary, not a GPU-memory
+accounting guarantee.
 
 ## Single-B200 deployment profile
 

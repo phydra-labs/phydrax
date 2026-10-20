@@ -27,7 +27,7 @@ def _child(source: str, *, extra_environment: dict[str, str] | None = None) -> N
             "PMIX_SIZE",
         }
     }
-    environment["PYTHONPATH"] = str(_ROOT)
+    environment.update({"PYTHONPATH": str(_ROOT), "JAX_PLATFORMS": "cpu"})
     environment.update(extra_environment or {})
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
@@ -230,10 +230,12 @@ def test_provider_absent_none_and_text_inputs(value: str | None) -> None:
 
 
 def test_failed_bootstrap_commits_successful_runtime_prefix() -> None:
-    _child("""
+    _child(
+        """
         from phydrax import config
         before = config.snapshot()
         assert before.enable_x64
+        assert before.platforms is None
         try:
             config.configure(config.RuntimeConfig(
                 cpu_collectives_implementation="mpi",
@@ -258,7 +260,9 @@ def test_failed_bootstrap_commits_successful_runtime_prefix() -> None:
         assert not after.enable_x64
         assert not after.distributed_initialized
         assert not after.backends_initialized
-    """)
+        """,
+        extra_environment={"JAX_PLATFORMS": "", "CUDA_VISIBLE_DEVICES": ""},
+    )
 
 
 def test_identical_explicit_field_commits_without_claiming_an_effect() -> None:

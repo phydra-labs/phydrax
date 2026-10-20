@@ -634,19 +634,25 @@ def test_leaf_fragments_match_direct_and_seeded_reference(
     )
 
 
+@pytest.mark.parametrize("dtype", ("float32", "float64"))
 @pytest.mark.parametrize("accumulation", ("fast", "deterministic", "compensated"))
 def test_leaf_fragment_jvp_vjp_potential_and_mixed_derivatives(
     pallas_interpret: bool,
     accumulation: phx.sparse.RelationAccumulation,
+    dtype: str,
 ) -> None:
-    sources, receivers, prepared = _leaf_fragment_case("float64", accumulation)
+    sources, receivers, prepared = _leaf_fragment_case(dtype, accumulation)
     fragment = jax.tree.map(lambda value: value[0], prepared.fragments())
     receivers = jax.tree.map(lambda value: value[fragment.receiver_ids], receivers)
     rng = np.random.default_rng(513)
-    initial = jnp.asarray(rng.normal(size=(3, 3, 4)), dtype=jnp.float64)
+    initial = jnp.asarray(rng.normal(size=(3, 3, 4)), dtype=sources[0].dtype)
     correction = jnp.full_like(initial, 0.125)
     inputs = (sources[0], sources[1], receivers[0], initial, correction)
-    tangents = tuple(jnp.asarray(rng.normal(size=value.shape)) for value in inputs)
+    tangents = tuple(
+        jnp.asarray(rng.normal(size=value.shape), dtype=value.dtype) for value in inputs
+    )
+    tolerance = 4e-6 if dtype == "float32" else 2e-12
+    derivative_tolerance = 2e-4 if dtype == "float32" else 2e-11
 
     def field(
         values: tuple[jax.Array, ...], backend: SpatialDistanceBackend
@@ -667,10 +673,10 @@ def test_leaf_fragment_jvp_vjp_potential_and_mixed_derivatives(
 
     expected, expected_jvp = jax.jvp(lambda v: field(v, "jax"), (inputs,), (tangents,))
     actual, actual_jvp = jax.jvp(lambda v: field(v, "pallas"), (inputs,), (tangents,))
-    np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
-    np.testing.assert_allclose(actual_jvp, expected_jvp, rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
+    np.testing.assert_allclose(actual_jvp, expected_jvp, rtol=tolerance, atol=tolerance)
     for potential_only in (True, False):
-        cotangent = jnp.asarray(rng.normal(size=actual.shape))
+        cotangent = jnp.asarray(rng.normal(size=actual.shape), dtype=actual.dtype)
         if potential_only:
             cotangent = cotangent.at[..., :3].set(0.0)
         _, pullback = jax.vjp(lambda v: field(v, "pallas"), inputs)
@@ -681,8 +687,8 @@ def test_leaf_fragment_jvp_vjp_potential_and_mixed_derivatives(
                 jnp.vdot(tangent, gradient)
                 for tangent, gradient in zip(tangents, adjoint, strict=True)
             ),
-            rtol=2e-12,
-            atol=2e-12,
+            rtol=derivative_tolerance,
+            atol=derivative_tolerance,
         )
 
         def loss(v: tuple[jax.Array, ...], backend: SpatialDistanceBackend) -> jax.Array:
@@ -702,7 +708,9 @@ def test_leaf_fragment_jvp_vjp_potential_and_mixed_derivatives(
             strict=True,
         ):
             assert bool(jnp.all(jnp.isfinite(a)))
-            np.testing.assert_allclose(a, b, rtol=2e-11, atol=2e-11)
+            np.testing.assert_allclose(
+                a, b, rtol=derivative_tolerance, atol=derivative_tolerance
+            )
 
 
 @pytest.mark.parametrize("split", (0.25, 0.05))

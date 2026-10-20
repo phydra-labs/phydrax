@@ -286,7 +286,8 @@ def assess_cuda_environment(facts: CudaEnvironmentFacts, /) -> CudaEnvironmentRe
         add(
             "no-cuda-plugin",
             "error"
-            if (facts.host_platform, facts.host_machine) == ("linux", "x86_64")
+            if facts.host_platform == "linux"
+            and facts.host_machine in ("x86_64", "aarch64")
             else "warning",
             f"CUDA {facts.requested_major} was requested but no JAX CUDA plugin is installed on "
             f"{facts.host_platform}/{facts.host_machine}.",

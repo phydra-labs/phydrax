@@ -637,10 +637,10 @@ pip install "phydrax[cuda13]"    # Driver reports CUDA >= 13.0 (R580+)
 ```
 
 The CUDA 13 extra installs JAX's CUDA plugin, NVIDIA wheels, and a metadata
-marker recording installed CUDA intent. On Linux x86-64 it also installs the
-`phydrax-cuda13` companion with cuDSS, AmgX, and QUDA. CUDA 13 is the only
-supported CUDA major. Linux aarch64 has no companion yet. GPU-direct mpi4jax
-requires a matching user-provided build. See [Installation](docs/installation.md)
+marker recording installed CUDA intent. On Linux x86-64 and aarch64 it also
+requires the matching `phydrax-cuda13` companion wheel with cuDSS, AmgX, and QUDA.
+CUDA 13 is the only supported CUDA major. GPU-direct mpi4jax requires a matching
+user-provided build. See [Installation](docs/installation.md)
 for diagnostics, architecture coverage, and distributed deployment.
 
 On Apple Silicon, `pip install "phydrax[metal]"` selects the exact

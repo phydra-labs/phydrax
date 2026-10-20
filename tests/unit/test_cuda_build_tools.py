@@ -1,5 +1,6 @@
 """CUDA 13 build and resolver gates refuse incompatible runtime artifacts."""
 
+import json
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -15,8 +16,8 @@ def linux_resolution() -> dict[str, str]:
         """
         phydrax-cuda-major==13.0
         phydrax-cuda13==0.2.2
-        jax-cuda13-plugin==0.11.2
-        jax-cuda13-pjrt==0.11.2
+        jax-cuda13-plugin==0.12.0
+        jax-cuda13-pjrt==0.12.0
         nvidia-cuda-runtime==13.4.92
         nvidia-cublas==13.8.0.4
         nvidia-cusparse==12.8.6.72
@@ -30,8 +31,6 @@ def linux_resolution() -> dict[str, str]:
 def test_cuda13_resolution_accepts_math_library_version12(
     linux_resolution: dict[str, str], architecture: str
 ) -> None:
-    if architecture == "aarch64":
-        linux_resolution.pop("phydrax-cuda13")
     assert not extras.resolution_errors(
         linux_resolution, f"{architecture}-manylinux_2_28", "0.2.2"
     )
@@ -69,11 +68,21 @@ def test_non_linux_cuda_intent_requires_no_gpu_packages(platform: str) -> None:
     )
 
 
-def test_arm_linux_refuses_native_companion(linux_resolution: dict[str, str]) -> None:
+@pytest.mark.parametrize("architecture", ["x86_64", "aarch64"])
+@pytest.mark.parametrize("companion_version", [None, "0.2.1"])
+def test_linux_resolution_requires_lockstep_native_companion(
+    linux_resolution: dict[str, str],
+    architecture: str,
+    companion_version: str | None,
+) -> None:
+    if companion_version is None:
+        linux_resolution.pop("phydrax-cuda13")
+    else:
+        linux_resolution["phydrax-cuda13"] = companion_version
     assert any(
-        "Companion resolved off Linux x86_64" in error
+        "Expected phydrax-cuda13==0.2.2" in error
         for error in extras.resolution_errors(
-            linux_resolution, "aarch64-manylinux_2_28", "0.2.2"
+            linux_resolution, f"{architecture}-manylinux_2_28", "0.2.2"
         )
     )
 
@@ -166,3 +175,207 @@ def test_artifact_coverage_requires_every_release_architecture(
         {},
     )
     assert result["release_architecture_coverage"] is full_release
+
+
+@pytest.mark.parametrize(
+    ("architecture", "container_platform", "loader"),
+    [
+        ("x86_64", "linux/amd64", "ld-linux-x86-64.so.2"),
+        ("aarch64", "linux/arm64", "ld-linux-aarch64.so.1"),
+    ],
+)
+@pytest.mark.parametrize("container", ["podman", "docker"])
+def test_native_host_selects_matching_container(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    architecture: str,
+    container_platform: str,
+    loader: str,
+    container: str,
+) -> None:
+    monkeypatch.setattr(build.platform, "machine", lambda: architecture)
+    monkeypatch.setattr(build.sys, "platform", "linux")
+    host = build.host_platform()
+    assert host.architecture == architecture
+    assert host.loader == loader
+    config = build.Configuration(
+        ("121-real",),
+        ("cudss",),
+        Path(sys.executable),
+        tmp_path / "wheels",
+        tmp_path / "build",
+        None,
+        1,
+        container,
+    )
+    command = build.container_command(config)
+    assert command[command.index("--platform") + 1] == container_platform
+    assert f"quay.io/pypa/manylinux_2_28_{architecture}:latest" in command
+    assert command[command.index("--architectures") + 1] == "121-real"
+    assert "--gpus" not in command
+    assert "--device" not in command
+
+
+@pytest.mark.parametrize(
+    ("system", "architecture"), [("linux", "riscv64"), ("darwin", "aarch64")]
+)
+def test_build_rejects_unsupported_host(
+    monkeypatch: pytest.MonkeyPatch, system: str, architecture: str
+) -> None:
+    monkeypatch.setattr(build.platform, "machine", lambda: architecture)
+    monkeypatch.setattr(build.sys, "platform", system)
+    with pytest.raises(build.AuditFailure, match="require Linux x86_64 or aarch64"):
+        build.host_platform()
+
+
+@pytest.mark.parametrize(
+    ("architecture", "expected_tag", "loader", "foreign_loader"),
+    [
+        (
+            "x86_64",
+            "manylinux_2_35_x86_64",
+            "ld-linux-x86-64.so.2",
+            "ld-linux-aarch64.so.1",
+        ),
+        (
+            "aarch64",
+            "manylinux_2_28_aarch64",
+            "ld-linux-aarch64.so.1",
+            "ld-linux-x86-64.so.2",
+        ),
+    ],
+)
+def test_manylinux_policy_uses_host_architecture_and_loader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    architecture: str,
+    expected_tag: str,
+    loader: str,
+    foreign_loader: str,
+) -> None:
+    policies = [
+        {
+            "name": name,
+            "lib_whitelist": ["libc.so.6"],
+            "symbol_versions": dict.fromkeys(architectures, {}),
+        }
+        for name, architectures in [
+            ("manylinux_2_28", ("x86_64", "aarch64")),
+            ("manylinux_2_35", ("x86_64",)),
+            ("manylinux_2_40", ("x86_64", "aarch64")),
+        ]
+    ]
+    policy_path = tmp_path / "manylinux-policy.json"
+    policy_path.write_text(json.dumps(policies), encoding="utf-8")
+
+    class PolicyDistribution:
+        def locate_file(self, path: str) -> Path:
+            assert path == "auditwheel/policy/manylinux-policy.json"
+            return policy_path
+
+    def distribution(name: str) -> PolicyDistribution:
+        assert name == "auditwheel"
+        return PolicyDistribution()
+
+    monkeypatch.setattr(build.importlib.metadata, "distribution", distribution)
+    monkeypatch.setattr(build.platform, "machine", lambda: architecture)
+    monkeypatch.setattr(build.platform, "libc_ver", lambda: ("glibc", "2.39"))
+    monkeypatch.setattr(build.sys, "platform", "linux")
+    tag, allowed = build.manylinux_policy()
+    assert tag == expected_tag
+    assert allowed == frozenset(("libc.so.6", loader))
+    path = tmp_path / "component.so"
+    elf = build.Elf((loader,), (), None)
+    assert build.verify_dependencies(
+        path, elf, tmp_path, {}, build.NvidiaInventory({}, {}, {}), allowed
+    ) == {loader: "platform"}
+    with pytest.raises(build.AuditFailure, match="unresolved/non-policy"):
+        build.verify_dependencies(
+            path,
+            build.Elf((foreign_loader,), (), None),
+            tmp_path,
+            {},
+            build.NvidiaInventory({}, {}, {}),
+            allowed,
+        )
+
+
+@pytest.mark.parametrize(
+    ("architecture", "machine"),
+    [("x86_64", "Advanced Micro Devices X86-64"), ("aarch64", "AArch64")],
+)
+@pytest.mark.parametrize("defect", ["none", "machine", "class", "data"])
+def test_elf_audit_requires_native_64bit_little_endian(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    architecture: str,
+    machine: str,
+    defect: str,
+) -> None:
+    monkeypatch.setattr(build.platform, "machine", lambda: architecture)
+    monkeypatch.setattr(build.sys, "platform", "linux")
+    header = {
+        "Machine": "RISC-V" if defect == "machine" else machine,
+        "Class": "ELF32" if defect == "class" else "ELF64",
+        "Data": "2's complement, big endian"
+        if defect == "data"
+        else "2's complement, little endian",
+    }
+
+    def inspect(
+        command: Sequence[str],
+        environment: Mapping[str, str],
+        evidence: dict[str, build.Json],
+    ) -> str:
+        del environment, evidence
+        assert "--file-header" in command
+        return "\n".join(f"  {key}: {value}" for key, value in header.items()) + (
+            "\n 0x0001 (NEEDED) Shared library: [libcudart.so.13]\n"
+            " 0x001d (RUNPATH) Library runpath: [$ORIGIN]\n"
+        )
+
+    monkeypatch.setattr(build, "run", inspect)
+    if defect == "none":
+        assert build.inspect_elf(tmp_path / "component.so", {}, {}) == build.Elf(
+            ("libcudart.so.13",), ("$ORIGIN",), None
+        )
+    else:
+        with pytest.raises(build.AuditFailure, match="expected little-endian ELF64"):
+            build.inspect_elf(tmp_path / "component.so", {}, {})
+
+
+def test_gb10_explicit_target_does_not_change_release_qualification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = build.parse_configuration(
+        [
+            "--architectures",
+            "121-real",
+            "--components",
+            "amgx",
+            "--python",
+            sys.executable,
+            "--wheelhouse",
+            str(tmp_path),
+            "--build-dir",
+            str(tmp_path / "build"),
+        ]
+    )
+
+    def inspect(
+        command: Sequence[str],
+        environment: Mapping[str, str],
+        evidence: dict[str, build.Json],
+        *,
+        expected_failure: tuple[int, str] | None = None,
+    ) -> str:
+        del environment, evidence, expected_failure
+        return "ELF file: kernel.sm_121.cubin" if command[1] == "--list-elf" else ""
+
+    monkeypatch.setattr(build, "run", inspect)
+    result = build.inspect_device_code(
+        tmp_path / "libphydrax_cuda_amgx.so", Path("cuobjdump"), config, {}, {}
+    )
+    assert result["sass"] == ["121"]
+    assert result["release_architecture_coverage"] is False
+    assert "121-real" not in build.RELEASE_ARCHITECTURES
