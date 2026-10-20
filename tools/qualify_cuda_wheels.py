@@ -460,7 +460,7 @@ def main() -> int:
         if venv.exists():
             evidence["errors"].append(f"{venv} exists; pass --reuse-venv or remove it")
         else:
-            created = run(["uv", "venv", "--python", "3.12", str(venv)])
+            created = run(["uv", "venv", "--python", "3.13", str(venv)])
             evidence["install"].append(created)
             if created["returncode"]:
                 evidence["errors"].append(f"venv creation failed: {created['stderr']}")

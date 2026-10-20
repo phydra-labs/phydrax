@@ -1,4 +1,5 @@
 import dataclasses
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -286,6 +287,17 @@ def _reads_scalar_globals(x: Any) -> Any:
     return jnp.sin(x) * _GLOBAL_SCALE
 
 
+def _reads_global_in_nested_function(x: Any) -> Any:
+    def scale(value: Any) -> Any:
+        return value * _GLOBAL_WEIGHTS
+
+    return scale(x)
+
+
+def _reads_global_in_generator(x: Any) -> Any:
+    return sum(value * _GLOBAL_WEIGHTS for value in (x,))
+
+
 class _StaticPlan(phx.StrictModule, phx.NonTrainableState):
     fn: object = eqx.field(static=True)
 
@@ -431,6 +443,20 @@ def test_array_roles_scenario_3() -> None:
         ".value['owner'].weight",
         ".value['raw']",
     )
+
+
+@pytest.mark.parametrize(
+    "function",
+    [_reads_global_in_nested_function, _reads_global_in_generator],
+    ids=["nested-function", "generator-expression"],
+)
+def test_global_array_read_only_by_nested_code_is_hidden_state(
+    function: Callable[[Any], Any],
+) -> None:
+    tree = _PlanOwner(jnp.ones(2), _StaticPlan(function))
+    with pytest.raises(ValueError) as error:
+        phx.require_parameter_roles(tree, context="unit training")
+    assert ".plan.fn: static field -> global '_GLOBAL_WEIGHTS'" in str(error.value)
 
 
 def _stacked_members() -> Any:

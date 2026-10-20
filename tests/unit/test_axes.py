@@ -10,6 +10,21 @@ import pytest
 import phydrax as phx
 
 
+def test_axis_array_representation_describes_structure_without_object_identity() -> None:
+    axis = phx.axes.Axis(phx.axes.AxisKey("experiment", "case"), 2)
+    layout = phx.axes.AxisLayout((axis.ref(),))
+    first = phx.axes.AxisArray(jnp.asarray((1.0, 2.0)), axes=layout)
+    second = phx.axes.AxisArray(jnp.asarray((3.0, 4.0)), axes=layout)
+    other_axis = phx.axes.Axis(phx.axes.AxisKey("experiment", "control"), 2)
+    other = phx.axes.AxisArray(first.data, axes=phx.axes.AxisLayout((other_axis.ref(),)))
+
+    assert repr(first) == repr(second)
+    assert repr(first) != repr(other)
+    assert "0x" not in repr(first)
+    assert "experiment" in repr(first)
+    assert "case" in repr(first)
+
+
 def test_axes_scenario_1() -> None:
     case = phx.axes.Axis(phx.axes.AxisKey("experiment", "case"), 3)
     component = phx.axes.Axis(phx.axes.AxisKey("state", "component"), 2)

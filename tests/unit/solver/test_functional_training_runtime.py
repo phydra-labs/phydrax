@@ -1,4 +1,5 @@
 import json
+import sys
 from typing import Any
 
 import equinox as eqx
@@ -465,6 +466,58 @@ def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(
     first_path.write_text(json.dumps(first), encoding="utf-8")
     with pytest.raises(ValueError, match="metadata fields are not canonical"):
         solve("first", 1, resume=True)
+
+
+_RELAXATION_GAIN = 1.0
+
+
+def _gained_relaxation(value: Any) -> Any:
+    return _RELAXATION_GAIN * value
+
+
+def test_functional_checkpoint_binds_code_derived_relaxation_map(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    solver = _fixed_interval_solver()
+    directory = tmp_path / "relaxed"
+
+    def plan(checkpoint: Any) -> Any:
+        return phx.solver.FunctionalTrainingPlan(
+            checkpoint=checkpoint,
+            pseudo_transient=(
+                phx.solver.PseudoTransientPolicy(
+                    0,
+                    phx.solver.ResidualRelaxationMap("u", _gained_relaxation),
+                    freshness="experimental_fixed",
+                ),
+            ),
+        )
+
+    def solve(training: Any, num_iter: int, *, resume: bool = False) -> Any:
+        return solver.solve(
+            num_iter=num_iter,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=training,
+            resume=resume,
+        )
+
+    checkpointed = plan(phx.solver.FunctionalCheckpointPolicy(directory, every=1))
+    solve(checkpointed, 1)
+    resumed = solve(checkpointed, 2, resume=True)
+    uninterrupted = solve(plan(None), 2)
+    assert resumed.training_state.progress.update_step == 2
+    assert jnp.allclose(
+        resumed.training_state.current_functions["u"].func(),
+        uninterrupted.training_state.current_functions["u"].func(),
+    )
+
+    monkeypatch.setattr(sys.modules[__name__], "_RELAXATION_GAIN", 2.0)
+    changed = plan(phx.solver.FunctionalCheckpointPolicy(directory, every=1))
+    assert changed.plan_id != checkpointed.plan_id
+    with pytest.raises(ValueError, match="training-plan identity"):
+        solve(changed, 3, resume=True)
 
 
 def test_functional_session_cursor_resumes_in_memory(tmp_path: Any) -> None:

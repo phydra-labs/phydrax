@@ -154,6 +154,7 @@ def render(rows: tuple[tuple[float, ...], ...]) -> str:
         "",
         "import numpy as np",
         "",
+        "",
         "TAYLOR_THRESHOLDS = np.array(",
         "    [",
     ]

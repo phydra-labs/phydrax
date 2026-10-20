@@ -3,6 +3,8 @@
 #
 
 import json
+import sys
+from types import FunctionType
 from typing import Any
 
 import equinox as eqx
@@ -598,6 +600,58 @@ def test_checkpoint_binding_separates_dynamic_and_static_weights(tmp_path: Any) 
     manifest_path.write_text(json.dumps(corrupt), encoding="utf-8")
     with pytest.raises(ValueError, match="corrupt"):
         load(base_path, scale)
+
+
+def _doubling_output_scale(value: Any) -> Any:
+    def scaled(item: Any) -> Any:
+        return 2.0 * item
+
+    return scaled(value)
+
+
+def _tripling_output_scale(value: Any) -> Any:
+    def scaled(item: Any) -> Any:
+        return 3.0 * item
+
+    return scaled(value)
+
+
+def test_checkpoint_binding_tracks_nested_code_of_plain_static_callable(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = _linear_model()
+    optimizer_state = optax.adam(1e-2).init(eqx.filter(model, eqx.is_array))
+    path = phx.nn.operator.training.save_operator_training_checkpoint(
+        tmp_path / "checkpoint",
+        model,
+        optimizer_state,
+        step=0,
+        key=jr.key(0),
+        static_callables={"output_scale": _doubling_output_scale},
+    )
+    recorded = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+
+    def load() -> Any:
+        return phx.nn.operator.training.load_operator_training_checkpoint(
+            path,
+            model,
+            optimizer_state,
+            static_callables={"output_scale": _doubling_output_scale},
+        )
+
+    assert load().binding.to_record() == recorded["binding"]
+
+    # Same module, name, and qualified name; only the nested code's constant differs.
+    replacement = FunctionType(
+        _tripling_output_scale.__code__,
+        _doubling_output_scale.__globals__,
+        _doubling_output_scale.__name__,
+    )
+    replacement.__qualname__ = _doubling_output_scale.__qualname__
+    monkeypatch.setattr(sys.modules[__name__], "_doubling_output_scale", replacement)
+    assert float(_doubling_output_scale(jnp.asarray(1.0))) == 3.0
+    with pytest.raises(ValueError, match="executable_signature_id"):
+        load()
 
 
 def test_operator_training_scenario_2() -> None:

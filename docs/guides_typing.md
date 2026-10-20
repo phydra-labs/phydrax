@@ -339,9 +339,11 @@ The installed distribution is typed too: the wheel carries the PEP 561
 python -m tools.check_installed_typing
 ```
 
-builds the wheel, installs it for Python 3.12, and runs the pinned
+builds the wheel, installs it for Python 3.13, and runs the pinned
 ty over consumer fixtures from outside the repository, so annotations are checked
-exactly as users import them.
+exactly as users import them. Static checking targets Python 3.13.
+`typing_extensions` remains a runtime dependency: `TypeForm` and the
+forward-reference evaluation used by checked boundaries come from it.
 
 Constructors are typed by each concrete class. A concrete module that inherits a
 custom constructor from an abstract owner declares a checker-only alias,

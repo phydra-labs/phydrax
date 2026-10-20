@@ -2,7 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -25,6 +29,78 @@ def _fixed_problem(integrand: Any, *, label: Any = None) -> Any:
         integrand=integrand,
         label=label,
     )
+
+
+def test_functional_discretization_bundle_is_deterministic_in_fresh_processes() -> None:
+    root = Path(__file__).resolve().parents[3]
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("JAX_", "PHYDRAX_"))
+        and key
+        not in {
+            "XLA_FLAGS",
+            "SLURM_NTASKS",
+            "OMPI_COMM_WORLD_SIZE",
+            "PMI_SIZE",
+            "PMIX_SIZE",
+        }
+    }
+    environment.update(
+        {"PYTHONPATH": str(root), "JAX_PLATFORMS": "cpu", "PYTHONHASHSEED": "0"}
+    )
+    source = textwrap.dedent("""
+        import jax.numpy as jnp
+        import jax.random as jr
+        import phydrax as phx
+
+        def bundle_id(sample_count: int) -> str:
+            domain = phx.domain.Interval1d(0.0, 1.0)
+            component = domain.component()
+            condition = phx.conditions.Residual("u", component, lambda value: value)
+            batch = component.sample(
+                phx.domain.PointSampling(
+                    sample_count, layout=phx.domain.SampleLayout((("x",),))
+                ),
+                key=jr.key(0),
+            )
+            term = phx.terms.ResidualPenalty(
+                condition,
+                phx.integration.fixed(
+                    phx.integration.from_samples(
+                        phx.integration.mean_over(component), batch
+                    )
+                ),
+                label="state",
+            )
+            function = domain.Parameter(jnp.asarray([1.0, -2.0]))
+            payload = (repr(function.domain), repr(function.func), repr(term))
+            assert "0x" not in "".join(payload), payload
+            solver = phx.solver.FunctionalSolver(
+                functions={"u": function}, terms=(term,)
+            )
+            return solver.discretization_bundle.bundle_id
+
+        print(bundle_id(4))
+        print(bundle_id(5))
+    """)
+    results = [
+        subprocess.run(
+            [sys.executable, "-c", source],
+            env=environment,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        for _ in range(2)
+    ]
+    for result in results:
+        assert result.returncode == 0, result.stdout + result.stderr
+    first, second = (result.stdout.splitlines() for result in results)
+    assert len(first) == len(second) == 2
+    assert first == second
+    assert first[0] != first[1]
 
 
 def test_integral_functional_contracts() -> None:

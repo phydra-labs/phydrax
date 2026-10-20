@@ -140,7 +140,11 @@ class AxisLayout:
 
 @jax.tree_util.register_pytree_node_class
 class AxisArray:
-    """JAX array carrying a static semantic axis layout."""
+    """JAX array carrying a static semantic axis layout.
+
+    Its representation describes array structure and axis identity, not numerical
+    values or the Python object's address.
+    """
 
     __array_priority__ = 1000
 
@@ -168,6 +172,9 @@ class AxisArray:
             )
         self.data = value
         self.layout = layout
+
+    def __repr__(self) -> str:
+        return f"AxisArray(data={eqx.tree_pformat(self.data)}, axes={self.layout!r})"
 
     def tree_flatten(self) -> tuple[tuple[Array], AxisLayout]:
         return (self.data,), self.layout

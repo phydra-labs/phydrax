@@ -1,6 +1,7 @@
 # Installation
 
-Requires Python 3.12 and JAX 0.12. The base install uses CPU JAX:
+Requires Python 3.13 (the standard GIL-enabled CPython build) and JAX 0.12. The
+base install uses CPU JAX:
 
 ```bash
 pip install phydrax
@@ -14,6 +15,21 @@ GPU and MPI qualification is specific to the recorded software and hardware
 stack. The JAX/JAXlib 0.11.2 results below remain historical evidence, not
 qualification of 0.12. Rebuild native companions and the site-specific mpi4jax
 bridge against the target environment before qualifying a deployment.
+
+## Python 3.13
+
+Phydrax supports CPython 3.13 only; the free-threaded `3.13t` build is not
+supported. Create a new environment rather than upgrading a Python 3.12 one in
+place, because compiled dependencies are interpreter-specific.
+
+Artifacts written under Python 3.12 restore through their usual validation:
+array archives, portable ML models, atomistic model artifacts, and checkpoints
+whose identities are declared or content-derived. Identities derived from the
+code of a plain Python function hash interpreter bytecode, so they generally
+differ under 3.13. This affects, for example, a `ResidualRelaxationMap` built
+without explicit operator IDs and plain functions passed as operator-training
+`static_callables`. Checkpoints bound to such identities are refused with their
+usual identity-mismatch error; reprepare or restart them under 3.13.
 
 ## NVIDIA GPUs
 

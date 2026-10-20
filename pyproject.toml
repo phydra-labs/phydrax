@@ -32,7 +32,7 @@ authors = [
 ]
 name = "phydrax"
 version = "0.2.2"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.13,<3.14"
 license-files = ["LICENSE", "LICENSES/*", "NOTICE"]
 
 dependencies = [
@@ -51,7 +51,7 @@ dependencies = [
     "optax>=0.2.8,<0.3",
     "pyyaml>=6.0.3,<7",
     "scipy>=1.18.1,<2",
-    "s2fft>=1.4.0,<2",
+    "s2fft>=1.5.0,<2",
     "optimistix>=0.1.0,<0.2",
     "h5py>=3.16.0,<4",
     "typing-extensions>=4.16.0,<5",
@@ -361,7 +361,7 @@ order-by-type = false
 max-line-length = 90
 
 [tool.ty.environment]
-python-version = "3.12"
+python-version = "3.13"
 
 [tool.ty.src]
 include = [
@@ -394,6 +394,8 @@ replace-imports-with-any = [
   "manifold3d.**",
   "marimo.**",
   "mini_studies.**",
+  # tools/generate_cubature_data.py imports ModePy from an explicit --modepy-root.
+  "modepy.**",
   "mpi4jax.**",
   "mpi4py.**",
   # MPContext constructs its public scalar classes dynamically per context.
