@@ -100,7 +100,7 @@ def _far_field(
     local, _, _ = plan._downward_pass(structure, multipoles, operators)
     potential, gradient = jax.vmap(
         lambda value, offset, scale: operators.l2p(value, offset, scale=scale)
-    )(local[leaf], relative, scales)
+    )(plan._point_local(structure, local), relative, scales)
     active = schedule.point_order.sorted_active
     return jnp.where(active, -potential, 0.0), jnp.where(active[:, None], gradient, 0.0)
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,6 +13,8 @@ from phydrax.solver import (
     PreparedUniformFMMStructure,
     UniformFMMPlan,
 )
+from phydrax.solver._particle_gravity import _broadcast_owner_rows
+from phydrax.sparse import RelationAccumulation
 
 
 _SOFTENING = 0.01
@@ -49,6 +54,7 @@ def _plan(
     *,
     maximum_far_interactions: int | None = None,
     maximum_nodes: int | None = None,
+    accumulation: RelationAccumulation = "deterministic",
 ) -> UniformFMMPlan:
     # Small leaves and binary coarsening give several planes, so M2M/M2L/L2L
     # carry far interactions at these test sizes.
@@ -62,6 +68,7 @@ def _plan(
         maximum_leaf_occupancy=8,
         coarsening_factor=2,
         target_top_nodes=1,
+        accumulation=accumulation,
     )
 
 
@@ -374,3 +381,103 @@ def test_nonfinite_active_strength_refuses_even_without_pair_events() -> None:
     assert not bool(result.successful)
     assert np.isnan(np.asarray(result.potential)).all()
     assert np.isnan(np.asarray(result.gradient)).all()
+
+
+def _strength_derivatives(
+    plan: UniformFMMPlan,
+    structure: PreparedUniformFMMStructure,
+    weights: jax.Array,
+    direction: jax.Array,
+) -> tuple[Callable[[jax.Array], Any], Callable[[jax.Array], jax.Array]]:
+    def values(strength: jax.Array) -> tuple[jax.Array, jax.Array]:
+        result = plan.evaluate_monopole(structure, strength)
+        return result.potential, result.gradient
+
+    def objective(strength: jax.Array) -> jax.Array:
+        potential, gradient = values(strength)
+        return jnp.sum(potential) + jnp.sum(gradient * weights)
+
+    return (
+        jax.jit(lambda strength: jax.jvp(values, (strength,), (direction,))[1]),
+        jax.jit(jax.grad(objective)),
+    )
+
+
+@pytest.mark.parametrize("accumulation", ("deterministic", "compensated"))
+def test_ordered_field_and_strength_derivatives_match_fast_route(
+    accumulation: RelationAccumulation,
+) -> None:
+    positions, strengths = _points(128, 43)
+    # Inactive points leave low packed slots to coarser nodes after the leaves.
+    active = np.ones((positions.shape[0],), dtype=np.bool_)
+    active[::7] = False
+    generator = np.random.default_rng(44)
+    weights = jnp.asarray(generator.normal(size=positions.shape), dtype=jnp.float64)
+    direction = jnp.asarray(generator.normal(size=strengths.shape), dtype=jnp.float64)
+    outputs: dict[RelationAccumulation, tuple[Any, ...]] = {}
+    policies: tuple[RelationAccumulation, RelationAccumulation] = ("fast", accumulation)
+    for policy in policies:
+        plan = _plan(3, accumulation=policy)
+        structure = plan.prepare_structure(
+            positions, box_size=_BOX, depth=_DEPTH, active_mask=active
+        )
+        result = plan.evaluate_monopole(structure, strengths)
+        assert bool(result.successful)
+        assert int(result.evidence.required_far) > 0
+        assert int(result.evidence.l2l_count) > 0
+        assert result.evidence.accumulation == policy
+        jvp, vjp = _strength_derivatives(plan, structure, weights, direction)
+        outputs[policy] = (
+            result.potential,
+            result.gradient,
+            *jvp(jnp.asarray(strengths, dtype=jnp.float64)),
+            vjp(jnp.asarray(strengths, dtype=jnp.float64)),
+        )
+    for fast, ordered in zip(outputs["fast"], outputs[accumulation], strict=True):
+        np.testing.assert_allclose(ordered, fast, rtol=1e-11, atol=1e-11)
+
+
+def test_ordered_compiled_strength_derivatives_replay_bitwise() -> None:
+    # On GPU the unordered duplicate-index transposes of the L2L parent and
+    # L2P leaf gathers made this strength VJP differ between replays.
+    positions, strengths = _points(64, 47)
+    generator = np.random.default_rng(48)
+    weights = jnp.asarray(generator.normal(size=positions.shape), dtype=jnp.float64)
+    direction = jnp.asarray(generator.normal(size=strengths.shape), dtype=jnp.float64)
+    plan = _plan(3)
+    structure = plan.prepare_structure(positions, box_size=_BOX, depth=_DEPTH)
+    jvp, vjp = _strength_derivatives(plan, structure, weights, direction)
+    values = jnp.asarray(strengths, dtype=jnp.float64)
+    expected = jax.block_until_ready((jvp(values), vjp(values)))
+    for _ in range(8):
+        actual = jax.block_until_ready((jvp(values), vjp(values)))
+        for left, right in zip(
+            jax.tree.leaves(expected), jax.tree.leaves(actual), strict=True
+        ):
+            assert np.asarray(left).tobytes() == np.asarray(right).tobytes()
+
+
+def test_owner_row_broadcast_masks_unowned_values_and_cotangents() -> None:
+    rows = jnp.asarray(np.random.default_rng(49).normal(size=(3, 2)), dtype=jnp.float64)
+    members = jnp.asarray([[0, 1, 4], [2, 3, 4], [4, 4, 4]], dtype=jnp.int32)
+    owned = jnp.asarray(
+        [[True, True, False], [True, True, True], [False, False, False]],
+        dtype=jnp.bool_,
+    )
+    rows = rows.at[2].set(jnp.nan)
+    broadcast = _broadcast_owner_rows(rows, members, owned, 5)
+    expected = np.zeros((5, 2), dtype=np.float64)
+    expected[[0, 1]] = np.asarray(rows[0])
+    expected[[2, 3, 4]] = np.asarray(rows[1])
+    np.testing.assert_array_equal(broadcast, expected)
+
+    cotangent = jnp.arange(10, dtype=jnp.float64).reshape(5, 2)
+    _, pullback = jax.vjp(lambda row: _broadcast_owner_rows(row, members, owned, 5), rows)
+    np.testing.assert_array_equal(
+        pullback(cotangent)[0],
+        [
+            np.sum(np.asarray(cotangent)[[0, 1]], axis=0),
+            np.sum(np.asarray(cotangent)[[2, 3, 4]], axis=0),
+            [0.0, 0.0],
+        ],
+    )

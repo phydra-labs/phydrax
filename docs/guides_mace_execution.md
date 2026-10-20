@@ -358,8 +358,8 @@ It is not qualified automatically:
 coupling. The kernels are written once for Pallas Mosaic GPU with 128-lane
 warpgroup channel tiles:
 
-- `"cuda"` admits NVIDIA devices with compute capability 8.0, 9.0, or 12.0,
-  not every architecture above a numeric minimum (8.6 and 8.9 remain refused).
+- `"cuda"` admits NVIDIA devices with compute capability 8.0, 9.0, 10.0, or 12.0,
+  not every architecture above a numeric minimum (8.6, 8.9, and 10.3 remain refused).
   `pallas_atomistic_availability("cuda")` identifies CUDA from the runtime,
   including JAX clients labeled `"gpu"`, and refuses other devices with a
   reason. The Lane kernels use no Hopper-only WGMMA or TMA instructions.
@@ -385,6 +385,14 @@ warpgroup channel tiles:
   inactive/invalid lanes, resource refusal, and third-order refusal.
   This is single-device compiled-kernel evidence. The separate H100
   owner-scaling campaign uses native JAX, not distributed accelerated coupling.
+- B200 (10.0), driver 595.91.07, JAX/JAXlib 0.11.2, and CUDA runtime 13.4
+  passed the compiled float32/float64 deterministic/compensated matrix, including
+  all-operand JVP/VJP, mixed derivatives and Hessian-vector products through
+  order two, coefficient gradients, compiler resource evidence, and fragment-budget
+  and third-order refusal. A separate changed-input compiled smoke agreed with
+  the dense reference in both precisions. This is single-device B200 evidence,
+  not admission of B300 (10.3), cross-device bitwise replay, or distributed
+  accelerated MACE.
 - RTX 5090 (12.0) was exercised with JAX/JAXlib 0.11.2 and the CUDA 13 plugin.
   Forward and operand derivatives agree with native JAX at float32 tolerances
   `rtol=atol=2e-5` (reverse mode `rtol=2e-4`); float64 forward agrees at
@@ -395,6 +403,13 @@ warpgroup channel tiles:
   GPU correctness, performance, or memory evidence.
 - No target substitutes ordinary JAX for a kernel. HIP and TPU acceleration are
   not implemented.
+
+`python -m benchmarks.mace_execution_scaling --target cuda ...` measures
+preparation, lowering, compilation, first execution, warmed samples, and compiler
+memory separately. Its model tier accepts `--model-interactions 1` with the
+canonical linear readout; multi-interaction models retain the nonlinear readout.
+The B200 campaign records both precisions and both operator/model tiers in
+`benchmarks/b200_qualification.json`, without a general acceleration claim.
 
 ```python
 coupling = phx.nn.atomistic.MACEAcceleratedCoupling(
@@ -446,8 +461,8 @@ receivers with halo source rows per layer. Reverse cotangents are returned in
 reverse layer order. See
 [distributed atomistic execution](guides_atomistic_distributed_execution.md).
 The local owner-lane oracle is a numerical check, not hardware qualification.
-Actual execution on two forced CPU devices is distinct from multi-host or GPU
-tuples, which are not qualified.
+Actual execution on two forced CPU devices is distinct from multi-host or
+distributed accelerated GPU tuples, which are not qualified.
 
 ## Source checkpoints and rights
 

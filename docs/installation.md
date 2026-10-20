@@ -126,6 +126,57 @@ also prevent the CUDA plugin from initializing, producing
 Remove the CUDA entries (or unset `LD_LIBRARY_PATH` if it has no other deployment
 purpose) before starting a new Python process.
 
+## Single-B200 deployment profile
+
+The single NVIDIA B200 host uses compute capability 10.0, driver 595.91.07,
+JAX/JAXlib 0.11.2, and CUDA runtime 13.4.92. Qualification selects one visible
+GPU before startup, retains CPU reference/callback support, and applies no
+NCCL or UCX transport workaround:
+
+```bash
+env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda,cpu \
+  XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  .venv/bin/python -m tools.distributed_substrate_benchmark \
+  --size 17 --iterations 1
+```
+
+The observed runtime has one process and one GPU; the weighted reduction and
+PCG solve pass their numerical checks. `--devices-per-process` is not a
+single-process visibility limit: use `CUDA_VISIBLE_DEVICES` before JAX
+initializes. No MPI installation or distributed coordinator is required.
+
+The development companion was built with `--architectures 100-real`. Inspected
+AmgX/QUDA device code is sm100-only; cuDSS uses its separately installed NVIDIA
+provider kernels through a host-only wrapper. All three native providers pass
+single-device numerical and lifecycle qualification, including clean and hostile
+library-path audits. The latter reports the expected `library-path-shadowing`
+warning while mapping CUDA 13 wheel libraries. This `manylinux_2_39` artifact
+does not qualify the full release architecture set or `manylinux_2_28`.
+
+Keep the audited local wheel when installing from this checkout:
+
+```bash
+uv pip install --python .venv/bin/python --no-sources \
+  --find-links dist/cuda13-sm100 -e ".[cuda13]"
+```
+
+Native-JAX MACE and the explicitly selected Pallas MACE route are distinct.
+B200 is admitted for compiled MACE with float32/float64 forward and derivative
+evidence; B300 (10.3) remains refused. The exercised native-JAX workflows also
+cover ordered sparse adjoints, one-device spectral transforms, PIC evolution
+and restart, dense linear algebra, and compiled FMM forward/derivative parity.
+Ordered FMM strength adjoints also replay bitwise within the same compiled
+program after removing duplicate-index GPU accumulation from the ownership
+transposes. Fresh-process exact MACE continuation still requires ordered
+components and the declared fixed compiler profile; this is not a
+cross-H200/B200 bitwise-continuation guarantee.
+
+Exact commands, numerical outcomes, artifact identities, and measurement
+scopes are retained in
+[`b200_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/b200_qualification.json).
+Single-device evidence does not qualify peer transfers, multi-GPU collectives,
+multi-host execution, or network RDMA.
+
 ## Multi-GPU and multi-node execution
 
 Use JAX global arrays and NCCL for NVIDIA multi-GPU communication, with

@@ -654,7 +654,7 @@ def _model(case: ModelCase, /) -> tuple[MACEPotential, AtomisticBatch, Any, Any,
         + ("real-agnostic-residual",) * (case.interactions - 1),
         correlations=(case.correlation,) * case.interactions,
         radial_widths=(16,),
-        readout_width=8,
+        readout_width=8 if case.interactions > 1 else None,
         average_neighbor_count=10.0,
     )
     scale = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
