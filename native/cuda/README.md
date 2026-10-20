@@ -89,6 +89,15 @@ receive the host-compatible manylinux tag and do not claim manylinux_2_28
 compatibility unless their actual symbol requirements satisfy it. Source
 distributions are deliberately refused; publish wheels only.
 
+B200 has compute capability 10.0, not the 12.0 of RTX PRO Blackwell. Use
+`--architectures 100-real` for a B200-local development wheel, or a release
+wheel containing sm100 SASS. An sm90-only H100/H200 wheel or sm120-only RTX
+wheel does not qualify B200. The single-B200 CUDA 13 qualification exercised
+all three components, their numerical contracts, and normal/hostile-path
+teardown with `--required-gpus 1`; the inspected local wheel is sm100-only
+`manylinux_2_39`, not a full release-architecture artifact. See
+`benchmarks/b200_qualification.json` for exact artifact and runtime evidence.
+
 ## A100 hardware qualification
 
 For an A100-only artifact, select `--architectures 80-real` explicitly, not

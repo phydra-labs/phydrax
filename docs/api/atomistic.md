@@ -187,7 +187,7 @@ fixed data bound to one `W` revision.
 
 ### Accelerated edge coupling
 
-Target admission (`"cuda"` with compute capability 8.0, 9.0, or 12.0, or the
+Target admission (`"cuda"` with compute capability 8.0, 9.0, 10.0, or 12.0, or the
 `"cpu_interpret"` Mosaic GPU interpreter used only for semantic reference
 verification) is owned by the [backend API](backends.md). See the
 [MACE execution guide](../guides_mace_execution.md) for architecture-specific

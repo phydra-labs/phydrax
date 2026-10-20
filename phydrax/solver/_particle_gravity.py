@@ -48,6 +48,8 @@ from ..sparse import (
     KeyGroupAccumulation,
     PreparedStreamedRelation,
     RelationAccumulation,
+    route_reduce,
+    RowRelation,
     StreamedFragment,
     StreamedPayloadSpec,
     StreamedRelationEvidence,
@@ -1496,6 +1498,31 @@ def _near_epilogue(
     return aggregate
 
 
+def _broadcast_owner_rows(
+    rows: Array,
+    members: Array,
+    owned: Array,
+    capacity: int,
+    /,
+) -> Array:
+    """Copy each owner row onto its distinct members, leaving others zero.
+
+    ``members[i, k]`` with ``owned[i, k]`` names distinct members, so every
+    member receives one nonzero contribution. The adjoint is a gather followed
+    by a bounded per-owner sum, not a duplicate-index scatter of member
+    cotangents into owners.
+    """
+    payload = (1,) * (rows.ndim - 1)
+    material = jnp.where(
+        owned.reshape(owned.shape + payload), rows[:, None], jnp.zeros((), rows.dtype)
+    )
+    return (
+        jnp.zeros((capacity,) + rows.shape[1:], dtype=rows.dtype)
+        .at[members]
+        .add(material)
+    )
+
+
 @final
 class _CartesianFarEvent(StrictModule):
     operators: CartesianFMMOperators
@@ -1971,19 +1998,53 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         schedule = structure.schedule
         schedule_plan = structure.schedule_plan
         node_capacity = schedule_plan.node_capacity
-        safe_point_leaf = jnp.maximum(schedule.sorted_point_leaf_slots, 0)
-        multipole = jnp.zeros(
-            (node_capacity, self.expansion.coefficient_count),
-            dtype=structure.positions.dtype,
-        )
-        for coefficient, exponent in enumerate(self.expansion.exponents):
-            particle_coefficient = sorted_strength
-            for axis in range(3):
-                particle_coefficient = (
-                    particle_coefficient * normalized_relative[:, axis] ** exponent[axis]
+        if self.accumulation == "fast":
+            safe_point_leaf = jnp.maximum(schedule.sorted_point_leaf_slots, 0)
+            multipole = jnp.zeros(
+                (node_capacity, self.expansion.coefficient_count),
+                dtype=structure.positions.dtype,
+            )
+            for coefficient, exponent in enumerate(self.expansion.exponents):
+                particle_coefficient = sorted_strength
+                for axis in range(3):
+                    particle_coefficient = (
+                        particle_coefficient
+                        * normalized_relative[:, axis] ** exponent[axis]
+                    )
+                multipole = multipole.at[safe_point_leaf, coefficient].add(
+                    particle_coefficient
                 )
-            multipole = multipole.at[safe_point_leaf, coefficient].add(
-                particle_coefficient
+        else:
+            # Ordered P2M sums each leaf's storage row in slot order through the
+            # shared sparse row reducer instead of a duplicate-index scatter.
+            safe_storage, mask = self._ordered_leaf_rows(structure)
+            retained = mask.shape[0]
+            leaf_relative = normalized_relative[safe_storage]
+            leaf_strength = jnp.where(mask, sorted_strength[safe_storage], 0.0)
+            coefficients = []
+            for exponent in self.expansion.exponents:
+                particle_coefficient = leaf_strength
+                for axis in range(3):
+                    particle_coefficient = (
+                        particle_coefficient * leaf_relative[..., axis] ** exponent[axis]
+                    )
+                coefficients.append(particle_coefficient)
+            rows = RowRelation(
+                safe_storage, source_size=schedule_plan.point_capacity, valid=mask
+            )
+            leaf_multipole = route_reduce(
+                rows,
+                jnp.stack(coefficients, axis=-1),
+                accumulation=self.accumulation,
+            )
+            multipole = jnp.concatenate(
+                (
+                    leaf_multipole,
+                    jnp.zeros(
+                        (node_capacity - retained, leaf_multipole.shape[1]),
+                        dtype=leaf_multipole.dtype,
+                    ),
+                )
             )
 
         child_offsets = jnp.arange(schedule_plan.coarsening_factor, dtype=jnp.int32)
@@ -2048,6 +2109,11 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         for plane in range(structure.schedule_plan.plane_count - 2, -1, -1):
             at_plane = schedule.node_active & (schedule.node_planes == plane)
             parents = jnp.maximum(schedule.node_parents, 0)
+            parent_local = (
+                local[parents]
+                if self.accumulation == "fast"
+                else self._ordered_parent_local(structure, local, plane)
+            )
             inherited = jax.vmap(
                 lambda value, shift, source_scale, target_scale: operators.l2l(
                     value,
@@ -2056,7 +2122,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
                     target_scale=target_scale,
                 )
             )(
-                local[parents],
+                parent_local,
                 schedule.node_centers - schedule.node_centers[parents],
                 schedule.node_scales[parents],
                 schedule.node_scales,
@@ -2064,6 +2130,83 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             local = local + jnp.where(at_plane[:, None], inherited, 0.0)
             l2l_count = l2l_count + jnp.sum(at_plane, dtype=jnp.int32)
         return local, far_reduction, l2l_count
+
+    @staticmethod
+    def _ordered_parent_local(
+        structure: PreparedUniformFMMStructure,
+        local: Array,
+        plane: int,
+        /,
+    ) -> Array:
+        """Parent local rows of plane nodes, broadcast from contiguous child ranges."""
+        schedule = structure.schedule
+        plan = structure.schedule_plan
+        offsets = jnp.arange(plan.coarsening_factor, dtype=jnp.int32)
+        children = jnp.clip(
+            schedule.node_child_starts[:, None] + offsets[None, :],
+            0,
+            plan.node_capacity - 1,
+        )
+        owns = (schedule.node_active & (schedule.node_planes == plane + 1))[:, None] & (
+            offsets[None, :] < schedule.node_child_counts[:, None]
+        )
+        return _broadcast_owner_rows(local, children, owns, plan.node_capacity)
+
+    @staticmethod
+    def _leaf_rows(
+        structure: PreparedUniformFMMStructure,
+        /,
+    ) -> tuple[Array, Array]:
+        """Leaf-major storage rows: clipped point slots and live-slot mask."""
+        schedule = structure.schedule
+        plan = structure.schedule_plan
+        offsets = jnp.arange(plan.maximum_leaf_occupancy, dtype=jnp.int32)
+        leaf_slots = jnp.arange(plan.plane_capacities[0], dtype=jnp.int32)
+        leaf_nodes = jnp.minimum(leaf_slots, plan.node_capacity - 1)
+        storage = schedule.node_item_starts[leaf_nodes, None] + offsets[None, :]
+        safe_storage = jnp.clip(storage, 0, plan.point_capacity - 1)
+        mask = (
+            (leaf_slots[:, None] < plan.node_capacity)
+            & schedule.node_active[leaf_nodes, None]
+            & (offsets[None, :] < schedule.node_item_counts[leaf_nodes, None])
+            & (storage < plan.point_capacity)
+            & schedule.point_order.sorted_active[safe_storage]
+        )
+        return safe_storage, mask
+
+    @classmethod
+    def _ordered_leaf_rows(
+        cls,
+        structure: PreparedUniformFMMStructure,
+        /,
+    ) -> tuple[Array, Array]:
+        """Leaf rows owning distinct points: plane-0 nodes below the node capacity.
+
+        Low packed slots past the active leaves hold coarser nodes whose item
+        ranges overlap their leaves, so they are masked here.
+        """
+        plan = structure.schedule_plan
+        retained = min(plan.plane_capacities[0], plan.node_capacity)
+        safe_storage, mask = cls._leaf_rows(structure)
+        leaf = structure.schedule.node_planes[:retained, None] == 0
+        return safe_storage[:retained], mask[:retained] & leaf
+
+    def _point_local(
+        self,
+        structure: PreparedUniformFMMStructure,
+        local: Array,
+        /,
+    ) -> Array:
+        """Each storage point's leaf local expansion for L2P."""
+        if self.accumulation == "fast":
+            return local[jnp.maximum(structure.schedule.sorted_point_leaf_slots, 0)]
+        safe_storage, mask = self._ordered_leaf_rows(structure)
+        return _broadcast_owner_rows(
+            local[: mask.shape[0]],
+            safe_storage,
+            mask,
+            structure.schedule_plan.point_capacity,
+        )
 
     def _near_field(
         self,
@@ -2077,20 +2220,8 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         """Complete exact P2P through bounded receiver-major leaf fragments."""
         schedule = structure.schedule
         plan = structure.schedule_plan
-        leaves = plan.plane_capacities[0]
         width = plan.maximum_leaf_occupancy
-        offsets = jnp.arange(width, dtype=jnp.int32)
-        leaf_slots = jnp.arange(leaves, dtype=jnp.int32)
-        leaf_nodes = jnp.minimum(leaf_slots, plan.node_capacity - 1)
-        storage = schedule.node_item_starts[leaf_nodes, None] + offsets[None, :]
-        safe_storage = jnp.clip(storage, 0, plan.point_capacity - 1)
-        mask = (
-            (leaf_slots[:, None] < plan.node_capacity)
-            & schedule.node_active[leaf_nodes, None]
-            & (offsets[None, :] < schedule.node_item_counts[leaf_nodes, None])
-            & (storage < plan.point_capacity)
-            & schedule.point_order.sorted_active[safe_storage]
-        )
+        safe_storage, mask = self._leaf_rows(structure)
         leaf_position = jnp.where(mask[..., None], sorted_position[safe_storage], 0.0)
         leaf_strength = jnp.where(mask, sorted_strength[safe_storage], 0.0)
         field_shape = jax.ShapeDtypeStruct((width, 4), sorted_position.dtype)
@@ -2163,13 +2294,14 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             multipole,
             operators,
         )
+        point_local = self._point_local(structure, local)
         local_potential, local_gradient = jax.vmap(
             lambda value, offset, scale: operators.l2p(
                 value,
                 offset,
                 scale=scale,
             )
-        )(local[safe_point_leaf], relative, point_scale)
+        )(point_local, relative, point_scale)
         local_gradient = jnp.where(sorted_active[:, None], local_gradient, 0.0)
         near_gradient, near_potential, near_reduction, direct_count = self._near_field(
             structure,

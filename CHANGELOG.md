@@ -37,6 +37,11 @@
   policy and plan identities.
 
 ### Added
+- Admit compiled MACE coupling on B200 (compute capability 10.0), with real-device
+  float32/float64 deterministic/compensated forward, all-operand and coefficient
+  derivatives, second-order derivatives, compiler resource evidence, and
+  resource/derivative-order refusal coverage. B300 (10.3) remains unqualified
+  and refused; native-JAX execution and existing precision policies are unchanged.
 - The `cuda13` installation extra with JAX's CUDA plugin, NVIDIA wheels, an
   installed-intent CUDA-major marker, and the lockstep wheel-only
   `phydrax-cuda13` companion on Linux x86-64, including cuDSS, AmgX, and QUDA.
@@ -96,6 +101,14 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Honor deterministic and compensated accumulation throughout Cartesian FMM
+  P2M and the L2L/L2P ownership transposes. Ordered strength derivatives no
+  longer use unordered duplicate-index GPU additions; B200 float32/float64
+  JAX and compiled-Pallas replay checks pass. Reuse existing leaf/child topology
+  without adding prepared fields or changing plan identities; preserve the
+  fast route. The phase-separated FMM benchmark uses the same L2P owner.
+- Construct the MACE execution benchmark's one-interaction model with its
+  canonical linear readout instead of an invalid nonlinear-readout width.
 - Select requested distributed MACE device subsets independently of the total
   visible count, and admit prime-count PIC benchmark campaigns with exact
   decompositions and jointly divisible fixed scientific workloads.

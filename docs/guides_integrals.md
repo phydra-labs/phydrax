@@ -1071,6 +1071,16 @@ exact P2P completion. The default deterministic reduction orders contributions
 by stable route identity. `fast` and `compensated` accumulation are explicit
 alternatives.
 
+Ordered P2M uses the existing leaf-slot rows and native sparse reduction.
+L2L and L2P broadcast through distinct child/particle ownership, so their
+transposes sum cotangents within bounded owner rows rather than issuing
+unordered duplicate-index GPU additions. On the qualified B200 runtime,
+deterministic and compensated float32/float64 primal, strength JVP, and strength
+VJP evaluations replay bitwise within the same compiled program, including
+after evaluating changed strengths. The fast route retains its unordered
+arithmetic semantics; cross-program or cross-device bitwise equality is not
+implied. Prepared fields and plan identities are unchanged.
+
 ```python
 tree = phx.solver.ParticleOctreePlan3D((1.0, 1.0, 1.0), 8).prepare(
     positions,
