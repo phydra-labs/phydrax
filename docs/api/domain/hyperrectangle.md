@@ -48,6 +48,15 @@ vector.
     data = phx.terms.ObservationPenalty(observation, source)
     ```
 
+`dtype` (keyword-only, default `None`) selects the real coordinate dtype,
+`float32` or `float64`, of the bounds and of every coordinate-valued result:
+sampled points, gates, normals, volumes and boundary measures. Host sampling
+designs are prepared in float64 and rounded once to that dtype. `None` keeps the
+existing float64 coordinates. For example,
+`HyperRectangle(np.zeros(2), np.ones(2), dtype=jnp.float32)` is the geometry of
+an explicit float32 workload with x64 enabled; other dtypes are refused before
+any bound array is created.
+
 ::: phydrax.domain.HyperRectangle
     options:
         members:

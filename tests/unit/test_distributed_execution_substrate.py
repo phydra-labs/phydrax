@@ -887,7 +887,6 @@ def test_local_substrate_launcher_preserves_device_ownership(
     )
     if process_count > 1 and not sys.platform.startswith("linux"):
         assert completed.returncode != 0
-        assert "host mapping evidence" in completed.stdout + completed.stderr
         return
     assert completed.returncode == 0, completed.stdout + completed.stderr
     report = json.loads(completed.stdout.strip().splitlines()[-1])

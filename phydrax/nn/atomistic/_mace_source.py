@@ -389,6 +389,7 @@ class _Reconstruction:
                         output_transform=self.transforms[block.degree],
                         maximum_entries=self.maximum_entries,
                         equivariance_tolerance=_basis_tolerance(tensor.dtype),
+                        dtype=self.dtype,
                     )
                 )
             block_weights: list[np.ndarray] = []

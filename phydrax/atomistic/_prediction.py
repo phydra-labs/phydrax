@@ -271,7 +271,9 @@ def atomistic_energy_derivatives(
     coordinate = jnp.asarray(positions, dtype=potential.precision.coordinate_dtype)
     if coordinate.shape != batch.positions.shape:
         raise ValueError("positions must have the batch shape (case, atom, 3).")
-    coordinate = jnp.where(batch.atom_mask[:, :, None], coordinate, 0.0)
+    coordinate = jnp.where(
+        batch.atom_mask[:, :, None], coordinate, jnp.zeros((), dtype=coordinate.dtype)
+    )
     supplied_vectors = batch.cells if cell_vectors is None else cell_vectors
     vectors = (
         None
@@ -310,7 +312,7 @@ def atomistic_energy_derivatives(
         volume_valid = ~requested_stress | (
             measure_valid & jnp.any(batch.periodic_axes, axis=1)
         )
-        volume = jnp.where(volume_valid, volumes, 1.0)
+        volume = jnp.where(volume_valid, volumes, jnp.ones((), dtype=volumes.dtype))
         reference_vectors = vectors
 
         def strained(
@@ -334,7 +336,8 @@ def atomistic_energy_derivatives(
                 strained, argnums=1, has_aux=True
             )(coordinate, zero_strain)
         stress = (
-            0.5 * (strain_gradient + strain_gradient.transpose((0, 2, 1)))
+            jnp.asarray(0.5, dtype=strain_gradient.dtype)
+            * (strain_gradient + strain_gradient.transpose((0, 2, 1)))
         ) / volume[:, None, None]
     else:
 
@@ -359,12 +362,19 @@ def atomistic_energy_derivatives(
         & jnp.all(jnp.isfinite(coordinate), axis=(1, 2))
     )
     if forces is not None:
-        forces = jnp.where(batch.atom_mask[:, :, None], forces, 0.0)
+        forces = jnp.where(
+            batch.atom_mask[:, :, None], forces, jnp.zeros((), dtype=forces.dtype)
+        )
         finite = finite & jnp.all(jnp.isfinite(forces), axis=(1, 2))
     if stress is not None:
         finite = finite & (~requested_stress | jnp.all(jnp.isfinite(stress), axis=(1, 2)))
     finite = finite & jnp.all(
-        jnp.isfinite(jnp.where(batch.atom_mask, atom_energy, 0.0)), axis=1
+        jnp.isfinite(
+            jnp.where(
+                batch.atom_mask, atom_energy, jnp.zeros((), dtype=atom_energy.dtype)
+            )
+        ),
+        axis=1,
     )
     successful = graph_valid & finite
     nan = jnp.asarray(jnp.nan, dtype=energy.dtype)
@@ -374,7 +384,9 @@ def atomistic_energy_derivatives(
     return AtomisticEnergyDerivatives(
         energy=energy * case_scale,
         atom_energy=(
-            jnp.where(batch.atom_mask, atom_energy, 0.0)
+            jnp.where(
+                batch.atom_mask, atom_energy, jnp.zeros((), dtype=atom_energy.dtype)
+            )
             * case_scale.astype(atom_energy.dtype)[:, None]
         ),
         forces=(
@@ -455,10 +467,13 @@ def energy_and_forces(
         raise RuntimeError("The requested force derivative was not returned.")
     forces = derivative.forces
     mask = batch.atom_mask
-    forces = jnp.where(mask[:, :, None], forces, 0.0)
+    forces = jnp.where(mask[:, :, None], forces, jnp.zeros((), dtype=forces.dtype))
     finite_energy = jnp.isfinite(energy)
     finite_forces = jnp.all(
-        jnp.isfinite(jnp.where(mask[:, :, None], forces, 0.0)), axis=(1, 2)
+        jnp.isfinite(
+            jnp.where(mask[:, :, None], forces, jnp.zeros((), dtype=forces.dtype))
+        ),
+        axis=(1, 2),
     )
     valid = derivative.successful & finite_energy & finite_forces
     status = jnp.where(
@@ -472,19 +487,27 @@ def energy_and_forces(
     ).astype(jnp.int32)
     nan = jnp.asarray(jnp.nan, dtype=energy.dtype)
     energy = jnp.where(valid, energy, nan)
-    atom_energy = jnp.where(valid[:, None], jnp.where(mask, atom_energy, 0.0), nan)
-    forces = jnp.where(
-        valid[:, None, None],
-        jnp.where(mask[:, :, None], forces, 0.0),
+    atom_energy = jnp.where(
+        valid[:, None],
+        jnp.where(mask, atom_energy, jnp.zeros((), dtype=atom_energy.dtype)),
         nan,
     )
-    diagnostic_forces = jnp.where(mask[:, :, None], forces, 0.0)
+    forces = jnp.where(
+        valid[:, None, None],
+        jnp.where(mask[:, :, None], forces, jnp.zeros((), dtype=forces.dtype)),
+        nan,
+    )
+    diagnostic_forces = jnp.where(
+        mask[:, :, None], forces, jnp.zeros((), dtype=forces.dtype)
+    )
     net_force = jnp.sum(diagnostic_forces, axis=1)
     torque_dtype = jnp.dtype(potential.precision.reduction_dtype)
-    mass = jnp.where(mask, batch.masses, 0.0).astype(torque_dtype)
-    torque_positions = jnp.where(mask[:, :, None], batch.positions, 0.0).astype(
+    mass = jnp.where(mask, batch.masses, jnp.zeros((), dtype=batch.masses.dtype)).astype(
         torque_dtype
     )
+    torque_positions = jnp.where(
+        mask[:, :, None], batch.positions, jnp.zeros((), dtype=batch.positions.dtype)
+    ).astype(torque_dtype)
     center = (
         contract("ba,bad->bd", mass, torque_positions) / jnp.sum(mass, axis=1)[:, None]
     )

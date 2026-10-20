@@ -866,7 +866,11 @@ def _solve_prepared(
     )
     residual_norm = _coordinate_norm(problem.operator.target, canonical_residual)
     rhs_norm = _coordinate_norm(problem.operator.target, canonical_rhs)
-    relative_residual = jnp.where(rhs_norm > 0.0, residual_norm / rhs_norm, residual_norm)
+    relative_residual = jnp.where(
+        rhs_norm > jnp.zeros((), dtype=rhs_norm.dtype),
+        residual_norm / rhs_norm,
+        residual_norm,
+    )
     roundoff_relative = (
         10.0
         * jnp.finfo(canonical_rhs.real.dtype).eps
@@ -881,6 +885,14 @@ def _solve_prepared(
         prepared.plan.policy.tolerance.absolute
         if control is None or control.absolute_tolerance is None
         else control.absolute_tolerance
+    )
+    relative_tolerance = jnp.asarray(
+        relative_tolerance,
+        dtype=rhs_norm.dtype if type(relative_tolerance) is float else None,
+    )
+    absolute_tolerance = jnp.asarray(
+        absolute_tolerance,
+        dtype=rhs_norm.dtype if type(absolute_tolerance) is float else None,
     )
     effective_relative = jnp.maximum(
         relative_tolerance,
@@ -1708,7 +1720,10 @@ def _assess_linear_system_result(
     else:
         relative = check_policy.relative_tolerance
         absolute = check_policy.absolute_tolerance
-    threshold = absolute + relative * rhs_norm
+    threshold = (
+        jnp.asarray(absolute, dtype=rhs_norm.dtype)
+        + jnp.asarray(relative, dtype=rhs_norm.dtype) * rhs_norm
+    )
     finite = (
         jnp.all(jnp.isfinite(canonical_rhs), axis=-2)
         & jnp.all(jnp.isfinite(canonical_value), axis=-2)
@@ -1733,6 +1748,7 @@ def _assess_linear_system_result(
         check_policy,
         stability_operator,
         operator,
+        residual_norm.dtype,
     )
     (
         compatibility_residual,
@@ -1783,13 +1799,14 @@ def _check_stability_certificate(
     policy: LinearSolveCheckPolicy | LinearDerivativeSolvePolicy,
     original_operator: AbstractLinearOperator,
     checked_operator: AbstractLinearOperator,
+    real_dtype: DTypeLike,
     /,
 ) -> tuple[bool, Array, Array, str | None, str | None, str | None]:
     certificate = policy.stability_lower_bound
     if certificate is None:
         return (
             False,
-            jnp.asarray(jnp.nan),
+            jnp.asarray(jnp.nan, dtype=real_dtype),
             jnp.asarray(True),
             None,
             None,
@@ -1802,7 +1819,7 @@ def _check_stability_certificate(
         jnp.asarray(matches)
         & jnp.asarray(certificate.valid)
         & jnp.isfinite(certificate.lower_bound)
-        & (certificate.lower_bound > 0.0)
+        & (certificate.lower_bound > jnp.zeros((), dtype=certificate.lower_bound.dtype))
     )
     return (
         True,
@@ -2341,7 +2358,8 @@ def _coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array
 
     def norm(column: Array) -> Array:
         vector = space.unflatten(column)
-        return jnp.sqrt(jnp.maximum(jnp.real(space.inner(vector, vector)), 0.0))
+        squared = jnp.real(space.inner(vector, vector))
+        return jnp.sqrt(jnp.maximum(squared, jnp.zeros((), dtype=squared.dtype)))
 
     return jax.vmap(norm)(flattened).reshape(output_shape)
 

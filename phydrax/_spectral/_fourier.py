@@ -120,23 +120,23 @@ def phase_shift_fourier_coefficients(
         if size % 2 == 0:
             result = resize_fourier_axis(result, axis, size + 1)
     for local_axis, (axis, offset) in enumerate(zip(axes, offsets_value, strict=True)):
-        raw_offset = jnp.asarray(offset)
-        if raw_offset.ndim != 0:
+        offset_shape = jnp.shape(offset)
+        if offset_shape != ():
             raise ValueError(
-                f"phase_offsets[{local_axis}] must be scalar; got {raw_offset.shape}."
+                f"phase_offsets[{local_axis}] must be scalar; got {offset_shape}."
             )
-        if jnp.issubdtype(raw_offset.dtype, jnp.complexfloating):
+        if jnp.iscomplexobj(offset):
             raise TypeError("Fourier phase offsets must be real-valued.")
-        offset_value = jnp.asarray(raw_offset, dtype=result.real.dtype)
+        offset_value = jnp.asarray(offset, dtype=result.real.dtype)
         offset_value = eqx.error_if(
             offset_value,
             ~jnp.isfinite(offset_value),
             "Fourier phase offsets must be finite.",
         )
         size = result.shape[axis]
-        modes = jnp.fft.fftfreq(size).astype(result.real.dtype) * size
-        angle = 2.0 * jnp.asarray(jnp.pi, dtype=result.real.dtype) * modes * offset_value
-        phase = jnp.exp(1j * angle).astype(result.dtype)
+        modes = jnp.fft.fftfreq(size, dtype=result.real.dtype) * size
+        angle = jnp.asarray(2.0 * jnp.pi, dtype=result.real.dtype) * modes * offset_value
+        phase = jnp.exp(jnp.asarray(1j, dtype=result.dtype) * angle.astype(result.dtype))
         shape = [1] * result.ndim
         shape[axis] = size
         result = result * phase.reshape(tuple(shape))

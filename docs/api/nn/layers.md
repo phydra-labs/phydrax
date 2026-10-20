@@ -7,6 +7,11 @@ Low-level model building blocks.
 
     - `Linear` supports Random Weight Factorization (RWF) or one explicit
       shape-preserving physical weight transform.
+    - `Linear(..., dtype=...)` builds the weight, RWF log-scales and bias in one
+      real floating dtype (for example `float32` with x64 enabled); invalid
+      dtypes are refused before any key use. `None` keeps the default
+      initialization and values. The dtype is a construction choice: inputs are
+      not cast and no dtype field is stored.
     - `ComplexLinear` and `LowRankComplexLinear` keep trainable leaves real while
       evaluating exact complex-affine maps. The low-rank layer records spectral
       initializer truncation evidence and materializes its dense weight only on request.

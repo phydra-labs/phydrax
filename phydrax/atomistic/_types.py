@@ -12,7 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -160,7 +160,11 @@ class AtomisticPrecisionPolicy(StrictModule, NonTrainableState):
 
 
 class AtomicStructure(StrictModule, NonTrainableState):
-    """One fixed-capacity finite molecular structure with stable material atoms."""
+    """One fixed-capacity finite molecular structure with stable material atoms.
+
+    Mass totals use float64 unless `mass_accumulation_dtype` explicitly selects
+    another real precision; coordinate precision alone never lowers it.
+    """
 
     atomic_numbers: Array
     positions: Array
@@ -191,8 +195,10 @@ class AtomicStructure(StrictModule, NonTrainableState):
         periodic_axes: ArrayLike | None = None,
         name: str = "molecule",
         coordinate_dtype: Any | None = None,
+        mass_accumulation_dtype: DTypeLike = jnp.float64,
         numeric_version: str = "0",
     ) -> None:
+        accumulation = real_precision_dtype_name(mass_accumulation_dtype)
         numbers = np.asarray(atomic_numbers)
         if numbers.ndim != 1 or numbers.size == 0:
             raise ValueError("atomic_numbers must be a non-empty rank-1 array.")
@@ -273,7 +279,10 @@ class AtomicStructure(StrictModule, NonTrainableState):
             domain_labels=("atom",),
             coordinate_dtype=dtype,
         )
-        particles = particle_plan.prepare(numeric_version=numeric_version)
+        particles = particle_plan.prepare(
+            numeric_version=numeric_version,
+            measure_accumulation_dtype=accumulation,
+        )
         self.atomic_numbers = jnp.asarray(numbers, dtype=jnp.int32)
         self.positions = jnp.asarray(position_host, dtype=dtype)
         self.particle_ids = particles.particle_ids
@@ -350,7 +359,12 @@ def _atomistic_batch_id(
 
 
 class AtomisticBatch(StrictModule, NonTrainableState):
-    """Case-isolated fixed-capacity batch of finite molecular structures."""
+    """Case-isolated fixed-capacity batch of finite molecular structures.
+
+    `mass_accumulation_dtype` selects one reduction precision for all cases or a
+    sequence of per-case precisions. Structure conversion preserves each owning
+    mass measure's selection, including heterogeneous batches.
+    """
 
     atomic_numbers: Array
     atom_type_ids: Array
@@ -387,6 +401,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         periodic_axes: ArrayLike | None = None,
         structure_ids: Sequence[str] | None = None,
         coordinate_dtype: Any | None = None,
+        mass_accumulation_dtype: DTypeLike | Sequence[DTypeLike] = jnp.float64,
         numeric_version: str = "0",
     ) -> None:
         numbers = np.asarray(atomic_numbers)
@@ -475,6 +490,20 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         if periodic_host is not None and np.any(periodic_host) and cell_host is None:
             raise ValueError("Periodic axes require preserved cell metadata.")
 
+        if isinstance(mass_accumulation_dtype, Sequence) and not isinstance(
+            mass_accumulation_dtype, str
+        ):
+            accumulations = tuple(
+                real_precision_dtype_name(value) for value in mass_accumulation_dtype
+            )
+            if len(accumulations) != case_count:
+                raise ValueError(
+                    "mass_accumulation_dtype must provide one precision per case."
+                )
+        else:
+            accumulation = real_precision_dtype_name(mass_accumulation_dtype)
+            accumulations = (accumulation,) * case_count
+
         particles = tuple(
             ParticleSetPlan(
                 ids[index],
@@ -484,7 +513,10 @@ class AtomisticBatch(StrictModule, NonTrainableState):
                 name=f"{ids_host[index]}-atoms",
                 domain_labels=("atom",),
                 coordinate_dtype=dtype,
-            ).prepare(numeric_version=numeric_version)
+            ).prepare(
+                numeric_version=numeric_version,
+                measure_accumulation_dtype=accumulations[index],
+            )
             for index in range(case_count)
         )
         atom_cases = np.repeat(np.arange(case_count, dtype=np.int32), atom_capacity)
@@ -584,6 +616,9 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             periodic_axes=periodic,
             structure_ids=tuple(value.structure_id for value in values),
             coordinate_dtype=dtype,
+            mass_accumulation_dtype=tuple(
+                value.particles.mass_measure.total_mass.dtype for value in values
+            ),
         )
 
     @classmethod

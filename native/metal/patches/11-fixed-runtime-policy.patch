@@ -1,0 +1,777 @@
+diff --git a/src/pjrt_plugin/mlx_client.cc b/src/pjrt_plugin/mlx_client.cc
+index a9975df1098bdf964d96b9083d44c9c3590e7a88..c036a1e6121c0c9a8c7e271f62ad29d73c0087ef 100644
+--- a/src/pjrt_plugin/mlx_client.cc
++++ b/src/pjrt_plugin/mlx_client.cc
+@@ -2,11 +2,10 @@
+ 
+ #include "pjrt_plugin/mlx_client.h"
+ 
++#include <mlx/backend/gpu/device_info.h>
+ #include <mlx/mlx.h>
+ 
+-#include <cstdlib>
+-#include <exception>
+-#include <string>
++#include <stdexcept>
+ 
+ #include "pjrt_plugin/logging.h"
+ #include "pjrt_plugin/mlx_buffer.h"
+@@ -17,50 +16,19 @@
+ namespace jax_mps {
+ 
+ MlxClient::MlxClient() {
+-    // Create a single device
+-    devices_.push_back(std::make_unique<MlxDevice>(0));
+-
+-    // Set MLX to use GPU (Metal) device
+-    mlx::core::set_default_device(mlx::core::Device::gpu);
+-
+-    // Optional cap on MLX's internal buffer cache. MLX's own default sizes the
+-    // cache at ~1.5x the recommended working set (tens of GB on Apple Silicon),
+-    // which matches what training/inference workloads actually want — a hard
+-    // 1 GiB cap caused 30–70% regressions on Max-class GPUs (#134) because each
+-    // training iteration evicts and reallocates MTLBuffers.
+-    //
+-    // The pathological case the cap was originally added for (#139) is the
+-    // upstream JAX test suite: thousands of unrelated computations in one
+-    // process, where freed MTLBuffers stay resident and eventually swap. That
+-    // scenario sets JAX_MPS_CACHE_LIMIT_BYTES explicitly via
+-    // scripts/run_jax_tests.py.
+-    if (const char* env = std::getenv("JAX_MPS_CACHE_LIMIT_BYTES")) {
+-        // std::stoull accepts a leading '-' (wraps to a huge unsigned) and
+-        // silently stops at trailing junk like "1024abc". Validate
+-        // explicitly so a typo doesn't accidentally disable the cap.
+-        std::string s(env);
+-        size_t pos = 0;
+-        size_t cache_limit = 0;
+-        bool ok = !s.empty() && s.find('-') == std::string::npos;
+-        if (ok) {
+-            try {
+-                cache_limit = std::stoull(s, &pos);
+-            } catch (const std::exception&) {
+-                ok = false;
+-            }
+-        }
+-        if (!ok || pos != s.size()) {
+-            // Caller meant to set a cap and got it wrong. Fall back to 1 GiB
+-            // rather than the MLX default — a typo shouldn't silently
+-            // re-enable unbounded residency growth in the scenarios that
+-            // motivated this knob (long multi-computation processes).
+-            cache_limit = 1ULL << 30;
+-            MPS_LOG_WARN("Invalid JAX_MPS_CACHE_LIMIT_BYTES=%s, falling back to %zu\n", env,
+-                         cache_limit);
+-        }
+-        mlx::core::set_cache_limit(cache_limit);
+-        MPS_LOG_DEBUG("MlxClient cache_limit set to %zu\n", cache_limit);
++    // gpu::is_available() only reports whether MLX was built with Metal.
++    // Querying device_info initializes the actual MTLDevice and metallib, and
++    // throws when the GPU is inaccessible. Do this before exposing any device.
++    if (!mlx::core::gpu::is_available() ||
++        mlx::core::gpu::device_count() != 1) {
++        throw std::runtime_error("phydrax-metal requires one accessible Metal GPU");
+     }
++    const auto& info = mlx::core::gpu::device_info(0);
++    if (info.empty()) {
++        throw std::runtime_error("phydrax-metal could not initialize the Metal GPU");
++    }
++    mlx::core::set_default_device(mlx::core::Device::gpu);
++    devices_.push_back(std::make_unique<MlxDevice>(0));
+ 
+     MPS_LOG_DEBUG("MlxClient initialized with MLX GPU backend\n");
+ }
+@@ -79,8 +47,8 @@ MlxDevice* MlxClient::device(int index) {
+ }
+ 
+ void* MlxClient::metal_device() const {
+-    // MLX manages its own Metal device internally
+-    // Return non-null to indicate we have a valid device
++    // Opaque availability token, not an MTLDevice pointer. Construction already
++    // initialized and validated the real Metal device before publishing this client.
+     return reinterpret_cast<void*>(1);
+ }
+ 
+diff --git a/src/pjrt_plugin/mlx_device.cc b/src/pjrt_plugin/mlx_device.cc
+index ac4aaae76e8bebfe6f614f437a4ad3f3508eb748..368ab30bf0136fd475db3b67145f2ac4f6740239 100644
+--- a/src/pjrt_plugin/mlx_device.cc
++++ b/src/pjrt_plugin/mlx_device.cc
+@@ -2,9 +2,23 @@
+ 
+ #include "pjrt_plugin/mlx_device.h"
+ 
++#include <mlx/backend/gpu/device_info.h>
++
++#include <stdexcept>
++#include <variant>
++
+ namespace jax_mps {
+ 
+-MlxDevice::MlxDevice(int id) : id_(id) {}
++MlxDevice::MlxDevice(int id) : id_(id) {
++    const auto& info = mlx::core::gpu::device_info(id);
++    auto entry = info.find("device_name");
++    const auto* name =
++        entry == info.end() ? nullptr : std::get_if<std::string>(&entry->second);
++    if (!name || name->empty()) {
++        throw std::runtime_error("phydrax-metal: Metal GPU did not report its device name");
++    }
++    device_kind_ = *name;
++}
+ 
+ int MlxDevice::id() const {
+     return id_;
+@@ -14,4 +28,8 @@ int MlxDevice::local_hardware_id() const {
+     return id_;
+ }
+ 
++const std::string& MlxDevice::kind() const {
++    return device_kind_;
++}
++
+ }  // namespace jax_mps
+diff --git a/src/pjrt_plugin/mlx_device.h b/src/pjrt_plugin/mlx_device.h
+index d38eceba4365ee63d88425d341663ac4f79f780d..60fef6930db7d1f236bf7c4076cd9b295c7b5aef 100644
+--- a/src/pjrt_plugin/mlx_device.h
++++ b/src/pjrt_plugin/mlx_device.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <cstdint>
++#include <string>
+ 
+ namespace jax_mps {
+ 
+@@ -11,9 +12,11 @@ public:
+ 
+     int id() const;
+     int local_hardware_id() const;
++    const std::string& kind() const;
+ 
+ private:
+     int id_;
++    std::string device_kind_;
+ };
+ 
+ }  // namespace jax_mps
+diff --git a/src/pjrt_plugin/ops/linalg.cc b/src/pjrt_plugin/ops/linalg.cc
+index 0618f6f6a487a006e05789c2c829db10e259b090..c66793164e1d1fe962b933fb84aba8448b749051 100644
+--- a/src/pjrt_plugin/ops/linalg.cc
++++ b/src/pjrt_plugin/ops/linalg.cc
+@@ -8,7 +8,6 @@
+ #include <mlx/einsum.h>
+ 
+ #include <algorithm>
+-#include <cstdlib>
+ #include <limits>
+ #include <numeric>
+ #include <unordered_set>
+@@ -123,6 +122,31 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+         return false;
+     }
+ 
++    // MLX TF32 is disabled in the locked dependency, so DEFAULT/HIGH/HIGHEST
++    // all retain every float32 input bit. Half inputs use a float32 contraction
++    // for a float32 result or HIGH/HIGHEST precision; never round the result
++    // through the half storage type first. Explicit algorithms have already
++    // been admitted by the parser.
++    auto lhsValue = *lhs;
++    auto rhsValue = *rhs;
++    if (!exactInteger) {
++        bool promoteHalf = *resultDtype == mlx::core::float32;
++        if (auto precision = op->getAttrOfType<mlir::ArrayAttr>("precision_config")) {
++            for (mlir::Attribute attribute : precision) {
++                auto value = mlir::cast<mlir::stablehlo::PrecisionAttr>(attribute).getValue();
++                promoteHalf |= value != mlir::stablehlo::Precision::DEFAULT;
++            }
++        }
++        if (promoteHalf) {
++            if (lhsValue.dtype() == mlx::core::float16 ||
++                lhsValue.dtype() == mlx::core::bfloat16)
++                lhsValue = mlx::core::astype(lhsValue, mlx::core::float32);
++            if (rhsValue.dtype() == mlx::core::float16 ||
++                rhsValue.dtype() == mlx::core::bfloat16)
++                rhsValue = mlx::core::astype(rhsValue, mlx::core::float32);
++        }
++    }
++
+     // Degenerate case: a rank-0 operand. A scalar has no dimensions to batch or
+     // contract over, and StableHLO requires the batch/contract dim lists of the
+     // two operands to have equal length -- so if either operand is rank-0 there
+@@ -132,9 +156,11 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+     // also avoids the einsum path, whose subscript would be e.g. ",->" for two
+     // scalars -- a string MLX's einsum parser cannot handle.
+     if (lhsRank == 0 || rhsRank == 0) {
+-        auto accumulate = *resultDtype == mlx::core::bool_ ? mlx::core::int32 : *resultDtype;
+-        auto result = mlx::core::multiply(mlx::core::astype(*lhs, accumulate),
+-                                          mlx::core::astype(*rhs, accumulate));
++        auto accumulate = *resultDtype == mlx::core::bool_ ? mlx::core::int32 :
++                          (exactInteger ? *resultDtype :
++                           mlx::core::promote_types(lhsValue.dtype(), rhsValue.dtype()));
++        auto result = mlx::core::multiply(mlx::core::astype(lhsValue, accumulate),
++                                         mlx::core::astype(rhsValue, accumulate));
+         values.emplace(ToKey(op->getResult(0)), mlx::core::astype(result, *resultDtype));
+         return true;
+     }
+@@ -143,7 +169,7 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+         std::string subscript = BuildEinsumSubscript(lhsRank, rhsRank, lhsBatchDims, rhsBatchDims,
+                                                      lhsContractDims, rhsContractDims);
+         MPS_LOG_DEBUG("dot_general einsum: %s\n", subscript.c_str());
+-        auto result = mlx::core::einsum(subscript, {*lhs, *rhs});
++        auto result = mlx::core::einsum(subscript, {lhsValue, rhsValue});
+         if (result.dtype() != *resultDtype)
+             result = mlx::core::astype(result, *resultDtype);
+         values.emplace(ToKey(op->getResult(0)), std::move(result));
+@@ -153,8 +179,8 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+     // Exact integer contraction: [batch, lhsFree, contract] x [batch, contract,
+     // rhsFree] as a broadcast product summed over the contracting axis, in the
+     // result integer type (or int32 for predicates, then compared to zero).
+-    auto lhsVal = *lhs;
+-    auto rhsVal = *rhs;
++    auto lhsVal = std::move(lhsValue);
++    auto rhsVal = std::move(rhsValue);
+ 
+     // Standard path: transpose -> reshape -> matmul -> reshape
+     std::unordered_set<int> lhsContractSet(lhsContractDims.begin(), lhsContractDims.end());
+diff --git a/src/pjrt_plugin/pjrt_client.cc b/src/pjrt_plugin/pjrt_client.cc
+index 0f9424ba1a2429a83476fb96c05af9f8f359582a..b0f7b6c5e4675b0a510152270cfff3209445d874 100644
+--- a/src/pjrt_plugin/pjrt_client.cc
++++ b/src/pjrt_plugin/pjrt_client.cc
+@@ -1,8 +1,8 @@
+ // PJRT Client API implementation for Metal backend
+ 
+-#include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+-#include <mutex>
++#include <exception>
+ 
+ #include "llvm/ADT/StringExtras.h"
+ #include "llvm/Support/SHA256.h"
+@@ -105,31 +105,34 @@ PJRT_Error* MPS_Plugin_Attributes(PJRT_Plugin_Attributes_Args* args) {
+ // Client API
+ // ============================================================================
+ 
+-// Print a one-time notice about the async-dispatch mode at client creation
+-// (the natural "startup" point — this is where JAX brings up the MPS backend).
+-static void AnnounceAsyncDispatch() {
+-    static std::once_flag once;
+-    std::call_once(once, [] {
+-        if (jax_mps::IsAsyncDispatchEnabled()) {
+-            std::fprintf(stderr,
+-                         "[jax-mps] JAX_MPS_ASYNC_DISPATCH is ON: async dispatch enabled — "
+-                         "may be much faster, but experimental and may break. "
+-                         "Unset it for safe synchronous execution.\n");
+-        } else {
+-            std::fprintf(stderr,
+-                         "[jax-mps] Tip: set JAX_MPS_ASYNC_DISPATCH=1 to opt into async dispatch "
+-                         "(experimental; can be much faster for dispatch-bound workloads).\n");
+-        }
+-    });
+-}
+-
+ PJRT_Error* MPS_Client_Create(PJRT_Client_Create_Args* args) {
+     MPS_LOG_DEBUG(" PJRT_Client_Create called, args=%p\n", (void*)args);
+-    AnnounceAsyncDispatch();
++    // These upstream switches are outside the qualified execution policy.
++    // Refuse them explicitly rather than silently changing the native path.
++    for (const char* name : {
++             "JAX_MPS_ASYNC_DISPATCH", "MPS_NO_COMPILE", "JAX_MPS_CACHE_LIMIT_BYTES",
++             "MPS_PROFILE", "JAX_MPS_GPU_CAPTURE", "MTL_CAPTURE_ENABLED",
++             "JAX_MPS_GPU_CAPTURE_DISPATCHES", "JAX_MPS_DUMP_OPTIMIZED_IR",
++             "MLX_DISABLE_COMPILE", "MLX_METAL_GPU_ARCH", "MLX_METAL_FAST_SYNCH",
++             "MLX_ENABLE_TF32"}) {
++        if (std::getenv(name) != nullptr) {
++            return MakeError(std::string("phydrax-metal: environment switch ") + name +
++                                 " is not supported by the qualified execution policy",
++                             PJRT_Error_Code_INVALID_ARGUMENT);
++        }
++    }
+ 
+-    PJRT_Client* client = GetOrCreateDefaultClient();
++    PJRT_Client* client = nullptr;
++    try {
++        client = GetOrCreateDefaultClient();
++    } catch (const std::exception& e) {
++        return MakeError(std::string("phydrax-metal: Metal GPU initialization failed: ") +
++                             e.what(),
++                         PJRT_Error_Code_UNAVAILABLE);
++    }
+     if (!client) {
+-        return MakeError("Failed to create MPS client");
++        return MakeError("phydrax-metal: failed to create Metal GPU client",
++                         PJRT_Error_Code_UNAVAILABLE);
+     }
+ 
+     MPS_LOG_DEBUG(" PJRT_Client_Create setting client=%p\n", (void*)client);
+diff --git a/src/pjrt_plugin/pjrt_device.cc b/src/pjrt_plugin/pjrt_device.cc
+index b04f0398ad1306773fceb7116514ba872bd77708..745014fdb2c4bdeb9be023f6e6424510aa7252c2 100644
+--- a/src/pjrt_plugin/pjrt_device.cc
++++ b/src/pjrt_plugin/pjrt_device.cc
+@@ -33,9 +33,14 @@ PJRT_Error* MPS_DeviceDescription_Attributes(PJRT_DeviceDescription_Attributes_A
+ }
+ 
+ PJRT_Error* MPS_DeviceDescription_Kind(PJRT_DeviceDescription_Kind_Args* args) {
+-    static const char* kind = "gpu";
+-    args->device_kind = kind;
+-    args->device_kind_size = 3;
++    if (!args->device_description || !args->device_description->device ||
++        !args->device_description->device->device) {
++        return MakeError("phydrax-metal: missing Metal GPU device description",
++                         PJRT_Error_Code_INVALID_ARGUMENT);
++    }
++    const auto& kind = args->device_description->device->device->kind();
++    args->device_kind = kind.data();
++    args->device_kind_size = kind.size();
+     return nullptr;
+ }
+ 
+diff --git a/src/pjrt_plugin/stablehlo_parser.cc b/src/pjrt_plugin/stablehlo_parser.cc
+index b7d0ef7085d6f0105de47300cadf2d841e84ef08..47cf64f8a964bcc6a24288e4dc4469f29662e03e 100644
+--- a/src/pjrt_plugin/stablehlo_parser.cc
++++ b/src/pjrt_plugin/stablehlo_parser.cc
+@@ -3,9 +3,6 @@
+ 
+ #include "pjrt_plugin/stablehlo_parser.h"
+ 
+-#include <atomic>
+-#include <cstdio>
+-#include <cstdlib>
+ #include <optional>
+ #include <algorithm>
+ #include <limits>
+@@ -13,17 +10,18 @@
+ 
+ #include <mlx/backend/gpu/device_info.h>
+ #include <mlx/memory.h>
+-#include <system_error>
+ #include <unordered_set>
+ 
+-#include "llvm/Support/FileSystem.h"
++#include "llvm/ADT/APFloat.h"
++#include "llvm/ADT/SetVector.h"
+ #include "llvm/Support/MemoryBuffer.h"
+-#include "llvm/Support/Process.h"
+ #include "llvm/Support/SourceMgr.h"
+ #include "llvm/Support/raw_ostream.h"
+ #include "mlir/Bytecode/BytecodeReader.h"
+ #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
++#include "mlir/IR/Builders.h"
++#include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/MLIRContext.h"
+ #include "mlir/IR/OwningOpRef.h"
+@@ -126,7 +124,10 @@ bool runInlinerPass(mlir::MLIRContext& context, mlir::ModuleOp module) {
+     });
+ 
+     mlir::PassManager pm(&context);
+-    pm.addPass(mlir::createInlinerPass());
++    // The stock default pipeline includes a canonicalizer. Do not let it erase
++    // unsupported arithmetic (or rewrite NaN/signed-zero behavior) before type
++    // admission; this pass is strictly inlining and dead-callee elimination.
++    pm.addPass(mlir::createInlinerPass({}, [](mlir::OpPassManager&) {}));
+     // Drop now-dead private callees so the has_uninlined_call scan in
+     // finalizeModule only sees func.calls that are actually reachable (a
+     // func.call left in a dead function would otherwise needlessly force eager).
+@@ -204,6 +205,43 @@ std::string checkSingleDevice(mlir::ModuleOp module) {
+     return refusal;
+ }
+ 
++// Only the native IEEE float32 algorithm is implemented. TF32, split BF16,
++// lower-precision accumulation, and other algorithm presets must not silently
++// become an ordinary MLX contraction. Check before any folding can erase a dot.
++std::string checkDotAlgorithms(mlir::ModuleOp module) {
++    std::string refusal;
++    module.walk([&](mlir::stablehlo::DotGeneralOp dot) {
++        auto algorithm = dot->getAttrOfType<mlir::stablehlo::DotAlgorithmAttr>("algorithm");
++        if (!algorithm)
++            return mlir::WalkResult::advance();
++        auto isF32Tensor = [](mlir::Type type) {
++            auto shaped = mlir::dyn_cast<mlir::ShapedType>(type);
++            return shaped && shaped.getElementType().isF32();
++        };
++        if (algorithm.getLhsPrecisionType().isF32() &&
++            algorithm.getRhsPrecisionType().isF32() &&
++            algorithm.getAccumulationType().isF32() &&
++            algorithm.getLhsComponentCount() == 1 &&
++            algorithm.getRhsComponentCount() == 1 &&
++            algorithm.getNumPrimitiveOperations() == 1 &&
++            !algorithm.getAllowImpreciseAccumulation() &&
++            isF32Tensor(dot->getOperand(0).getType()) &&
++            isF32Tensor(dot->getOperand(1).getType()) &&
++            isF32Tensor(dot->getResult(0).getType())) {
++            return mlir::WalkResult::advance();
++        }
++        std::string text;
++        llvm::raw_string_ostream os(text);
++        static_cast<mlir::Attribute>(algorithm).print(os);
++        refusal = "phydrax-metal: dot_general algorithm " + text +
++                  " is not supported; only F32_F32_F32 with one primitive operation, "
++                  "one component per operand, and precise accumulation is supported "
++                  "for float32 operands and result";
++        return mlir::WalkResult::interrupt();
++    });
++    return refusal;
++}
++
+ // Name of an element type Metal cannot represent exactly, or nullopt when the
+ // type is supported (f32/f16/bf16, complex<f32>, 1/8/16/32/64-bit integers,
+ // tokens). Metal has no 64-bit floating point, so float64/complex128 are
+@@ -248,9 +286,264 @@ std::optional<std::string> unsupportedElementType(mlir::Type type) {
+     return name;
+ }
+ 
+-// Refuse a program if any input, constant, intermediate or result has an
+-// unsupported element type. Runs before any transformation so the message names
+-// the operation JAX emitted.
++// Bounded host preparation of scalar CONSTANT graphs only. This is deliberately
++// not a greedy rewrite/floating optimization pass: no runtime operand can be
++// discarded by an algebraic identity. Unsupported/large graphs stay unchanged
++// for normal type admission. In particular this can prove static solver setup
++// through pure, constant-selected error guards without executing callbacks.
++mlir::DenseElementsAttr evaluateScalarConstant(mlir::Value value,
++                                              unsigned& budget,
++                                              unsigned depth = 0) {
++    auto type = mlir::dyn_cast<mlir::RankedTensorType>(value.getType());
++    if (!type || type.getRank() != 0 || depth >= 64 || budget == 0)
++        return {};
++    --budget;
++    auto* op = value.getDefiningOp();
++    if (!op)
++        return {};
++    if (auto constant = mlir::dyn_cast<mlir::stablehlo::ConstantOp>(op))
++        return mlir::dyn_cast<mlir::DenseElementsAttr>(constant.getValue());
++
++    auto evaluate = [&](mlir::Value operand) {
++        return evaluateScalarConstant(operand, budget, depth + 1);
++    };
++    auto integerResult = [&](const llvm::APInt& result) {
++        return mlir::DenseIntElementsAttr::get(type, result);
++    };
++    auto floatResult = [&](const llvm::APFloat& result) {
++        return mlir::DenseFPElementsAttr::get(type, result);
++    };
++    if (auto branch = mlir::dyn_cast<mlir::stablehlo::CaseOp>(op)) {
++        auto index = evaluate(op->getOperand(0));
++        if (!index || !mlir::isa<mlir::IntegerType>(index.getElementType()))
++            return {};
++        int64_t selected = (*index.getValues<llvm::APInt>().begin()).getSExtValue();
++        auto regions = branch.getBranches();
++        if (regions.empty())
++            return {};
++        if (selected < 0 || static_cast<uint64_t>(selected) >= regions.size())
++            selected = regions.size() - 1;
++        auto& region = regions[selected];
++        // Only a bare return: the chosen branch cannot have hidden effects.
++        if (!region.hasOneBlock() || region.front().getOperations().size() != 1)
++            return {};
++        auto ret = mlir::dyn_cast<mlir::stablehlo::ReturnOp>(region.front().front());
++        if (!ret)
++            return {};
++        return evaluate(ret.getOperand(mlir::cast<mlir::OpResult>(value).getResultNumber()));
++    }
++    if (op->getNumOperands() == 0 || op->getNumOperands() > 3)
++        return {};
++    mlir::DenseElementsAttr operands[3];
++    for (unsigned i = 0; i < op->getNumOperands(); ++i) {
++        operands[i] = evaluate(op->getOperand(i));
++        if (!operands[i])
++            return {};
++    }
++    auto name = op->getName().getStringRef();
++    auto element = operands[0].getElementType();
++    auto intValue = [&](unsigned i) {
++        return *operands[i].getValues<llvm::APInt>().begin();
++    };
++    auto floatValue = [&](unsigned i) {
++        return *operands[i].getValues<llvm::APFloat>().begin();
++    };
++    if (name == "stablehlo.select") {
++        if (!element.isInteger(1))
++            return {};
++        return intValue(0).isZero() ? operands[2] : operands[1];
++    }
++    if (auto reduce = mlir::dyn_cast<mlir::stablehlo::ReduceOp>(op)) {
++        if (!element.isInteger(1) || op->getNumOperands() != 2 ||
++            !reduce.getDimensions().empty() || !reduce.getBody().hasOneBlock())
++            return {};
++        auto& body = reduce.getBody().front();
++        if (body.getOperations().size() != 2)
++            return {};
++        auto& combine = body.front();
++        auto ret = mlir::dyn_cast<mlir::stablehlo::ReturnOp>(body.back());
++        if (combine.getNumOperands() != 2 || combine.getNumResults() != 1 ||
++            combine.getOperand(0) != body.getArgument(0) ||
++            combine.getOperand(1) != body.getArgument(1) || !ret ||
++            ret.getNumOperands() != 1 || ret.getOperand(0) != combine.getResult(0))
++            return {};
++        auto reducer = combine.getName().getStringRef();
++        if (reducer == "stablehlo.or")
++            return integerResult(intValue(0) | intValue(1));
++        if (reducer == "stablehlo.and")
++            return integerResult(intValue(0) & intValue(1));
++        return {};
++    }
++    if (name == "stablehlo.convert") {
++        auto targetFloat = mlir::dyn_cast<mlir::FloatType>(type.getElementType());
++        auto targetInt = mlir::dyn_cast<mlir::IntegerType>(type.getElementType());
++        if (targetFloat) {
++            llvm::APFloat result(targetFloat.getFloatSemantics());
++            llvm::APFloat::opStatus status;
++            if (mlir::isa<mlir::FloatType>(element)) {
++                result = floatValue(0);
++                bool losesInfo;
++                status = result.convert(targetFloat.getFloatSemantics(),
++                                        llvm::RoundingMode::NearestTiesToEven,
++                                        &losesInfo);
++            } else if (auto sourceInt = mlir::dyn_cast<mlir::IntegerType>(element)) {
++                status = result.convertFromAPInt(
++                    intValue(0), !sourceInt.isUnsigned() && sourceInt.getWidth() != 1,
++                    llvm::RoundingMode::NearestTiesToEven);
++            } else {
++                return {};
++            }
++            if ((status & llvm::APFloat::opInvalidOp) != 0)
++                return {};
++            return floatResult(result);
++        }
++        if (targetInt && mlir::isa<mlir::IntegerType>(element)) {
++            auto source = mlir::cast<mlir::IntegerType>(element);
++            auto bits = intValue(0);
++            if (targetInt.getWidth() == 1)
++                return integerResult(llvm::APInt(1, !bits.isZero()));
++            return integerResult(source.isUnsigned() || source.getWidth() == 1
++                                     ? bits.zextOrTrunc(targetInt.getWidth())
++                                     : bits.sextOrTrunc(targetInt.getWidth()));
++        }
++        return {};
++    }
++    if (element.isInteger(1)) {
++        if (name == "stablehlo.not")
++            return integerResult(~intValue(0));
++        if (name == "stablehlo.and")
++            return integerResult(intValue(0) & intValue(1));
++        if (name == "stablehlo.or")
++            return integerResult(intValue(0) | intValue(1));
++        if (name == "stablehlo.xor")
++            return integerResult(intValue(0) ^ intValue(1));
++    }
++    if (!mlir::isa<mlir::FloatType>(element))
++        return {};
++    if (name == "stablehlo.is_finite") {
++        auto number = floatValue(0);
++        return integerResult(llvm::APInt(1, !number.isNaN() && !number.isInfinity()));
++    }
++    if (auto compare = mlir::dyn_cast<mlir::stablehlo::CompareOp>(op)) {
++        if (compare.getCompareType() != mlir::stablehlo::ComparisonType::FLOAT)
++            return {};
++        auto order = floatValue(0).compare(floatValue(1));
++        using D = mlir::stablehlo::ComparisonDirection;
++        bool result;
++        switch (compare.getComparisonDirection()) {
++            case D::EQ: result = order == llvm::APFloat::cmpEqual; break;
++            case D::NE: result = order != llvm::APFloat::cmpEqual; break;
++            case D::LT: result = order == llvm::APFloat::cmpLessThan; break;
++            case D::LE: result = order == llvm::APFloat::cmpLessThan ||
++                                 order == llvm::APFloat::cmpEqual; break;
++            case D::GT: result = order == llvm::APFloat::cmpGreaterThan; break;
++            case D::GE: result = order == llvm::APFloat::cmpGreaterThan ||
++                                 order == llvm::APFloat::cmpEqual; break;
++            default: return {};
++        }
++        return integerResult(llvm::APInt(1, result));
++    }
++    if (op->getNumOperands() != 2)
++        return {};
++    auto result = floatValue(0);
++    auto rhs = floatValue(1);
++    llvm::APFloat::opStatus status;
++    if (name == "stablehlo.add")
++        status = result.add(rhs, llvm::RoundingMode::NearestTiesToEven);
++    else if (name == "stablehlo.subtract")
++        status = result.subtract(rhs, llvm::RoundingMode::NearestTiesToEven);
++    else if (name == "stablehlo.multiply")
++        status = result.multiply(rhs, llvm::RoundingMode::NearestTiesToEven);
++    else if (name == "stablehlo.divide")
++        status = result.divide(rhs, llvm::RoundingMode::NearestTiesToEven);
++    else
++        return {};
++    if ((status & llvm::APFloat::opInvalidOp) != 0)
++        return {};
++    return floatResult(result);
++}
++
++// Remove only evaluated, now-unused wide scalar producers. Supported producers
++// and region-bearing operations stay in the IR, including any effects in cases.
++void eraseDeadWideScalar(mlir::Operation* op) {
++    if (!op)
++        return;
++    // A unique worklist avoids dangling references for shared/diamond graphs.
++    llvm::SmallSetVector<mlir::Operation*, 8> pending;
++    pending.insert(op);
++    unsigned budget = 256;
++    while (!pending.empty() && budget-- != 0) {
++        auto* current = pending.pop_back_val();
++        if (current->getNumResults() != 1 ||
++            !current->getResult(0).use_empty() || current->getNumRegions() != 0)
++            continue;
++        auto type = mlir::dyn_cast<mlir::RankedTensorType>(
++            current->getResult(0).getType());
++        if (!type || !type.getElementType().isF64())
++            continue;
++        auto name = current->getName().getStringRef();
++        if (name != "stablehlo.constant" && name != "stablehlo.convert" &&
++            name != "stablehlo.add" && name != "stablehlo.subtract" &&
++            name != "stablehlo.multiply" && name != "stablehlo.divide")
++            continue;
++        for (auto operand : current->getOperands()) {
++            if (auto* producer = operand.getDefiningOp())
++                pending.insert(producer);
++        }
++        current->erase();
++    }
++}
++
++// Normalize explicit casts to supported precision only. Dense literal casts
++// retain splats; nonliteral scalar sources must be proven wholly constant by
++// the bounded evaluator above. APFloat uses nearest-ties-to-even with signed
++// zero/nonfinite semantics; invalid operations remain refused. Allocation
++// admission precedes all evaluation, including for splat tensors.
++void normalizeLiteralConversions(mlir::ModuleOp module) {
++    module.walk([&](mlir::stablehlo::ConvertOp convert) {
++        auto source = convert.getOperand();
++        auto literal = source.getDefiningOp<mlir::stablehlo::ConstantOp>();
++        mlir::DenseFPElementsAttr values;
++        if (literal) {
++            values = mlir::dyn_cast<mlir::DenseFPElementsAttr>(literal.getValue());
++        } else if (auto type = mlir::dyn_cast<mlir::RankedTensorType>(source.getType());
++                   type && type.getElementType().isF64()) {
++            unsigned budget = 256;
++            values = mlir::dyn_cast_or_null<mlir::DenseFPElementsAttr>(
++                evaluateScalarConstant(source, budget));
++        }
++        auto target = mlir::dyn_cast<mlir::FloatType>(convert.getType().getElementType());
++        if (!values || !values.getElementType().isF64() || !target ||
++            !(target.isF32() || target.isF16() || target.isBF16()))
++            return;
++
++        bool invalid = false;
++        auto narrowed = values.mapValues(target, [&](const llvm::APFloat& value) {
++            llvm::APFloat result = value;
++            bool losesInfo;
++            auto status = result.convert(target.getFloatSemantics(),
++                                         llvm::RoundingMode::NearestTiesToEven,
++                                         &losesInfo);
++            invalid |= (status & llvm::APFloat::opInvalidOp) != 0;
++            return result.bitcastToAPInt();
++        });
++        if (invalid)
++            return;
++
++        mlir::OpBuilder builder(convert);
++        auto replacement = builder.create<mlir::stablehlo::ConstantOp>(
++            convert.getLoc(), narrowed);
++        convert.getResult().replaceAllUsesWith(replacement.getResult());
++        convert.erase();
++        // Shared wide results remain visible to admission. Only the evaluated
++        // pure wide graph is removed; no unrelated dead computation is hidden.
++        eraseDeadWideScalar(source.getDefiningOp());
++    });
++}
++
++// Refuse unsupported inputs, arithmetic, results, and any remaining constants.
++// Only explicitly cast constants/fully proven scalar constant graphs have been
++// prepared on the host. General folding must not hide runtime wide arithmetic.
+ std::string checkElementTypes(mlir::ModuleOp module) {
+     std::string refusal;
+     auto refuse = [&](mlir::Operation* op, mlir::Type type, const std::string& name,
+@@ -292,14 +585,16 @@ std::string checkElementTypes(mlir::ModuleOp module) {
+     return refusal;
+ }
+ 
+-// Byte size of one element of a supported type (0 for tokens).
++// Unsupported element types are refused after constant preparation, not sized.
+ uint64_t elementBytes(mlir::Type type) {
+     if (mlir::isa<mlir::stablehlo::TokenType>(type))
+         return 0;
+     if (auto complex = mlir::dyn_cast<mlir::ComplexType>(type))
+         return 2 * elementBytes(complex.getElementType());
++    if (!mlir::isa<mlir::IntegerType, mlir::FloatType>(type))
++        return 0;
+     const unsigned bits = type.getIntOrFloatBitWidth();
+-    return bits <= 8 ? 1 : bits / 8;
++    return (bits + 7) / 8;
+ }
+ 
+ // Refuse a program if any statically shaped value (input, constant,
+@@ -325,7 +620,8 @@ std::string checkAllocationSizes(mlir::ModuleOp module) {
+             if (mlir::ShapedType::isDynamic(dim) || dim < 0 ||
+                 dim > std::numeric_limits<int32_t>::max()) {
+                 refusal = "phydrax-metal: dimension " + std::to_string(dim) + " of " +
+-                          op->getName().getStringRef().str() + " is not supported";
++                          op->getName().getStringRef().str() +
++                          " is not supported by Metal's static int32 shapes; not executed";
+                 return false;
+             }
+             overflow = overflow || __builtin_mul_overflow(bytes, static_cast<uint64_t>(dim), &bytes);
+@@ -370,10 +666,10 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+         return result;
+     }
+ 
+-    // Structural refusals come first, before any transformation of the module.
++    // Preserve structural/resource evidence before any inlining or folding.
+     result.refusal = checkSingleDevice(*module);
+     if (result.refusal.empty()) {
+-        result.refusal = checkElementTypes(*module);
++        result.refusal = checkDotAlgorithms(*module);
+     }
+     if (!result.refusal.empty()) {
+         return result;
+@@ -389,6 +685,14 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+         return result;
+     }
+ 
++    // Admit explicitly cast constants, including bounded scalar constant setup,
++    // never wide runtime computation merely because its final result is narrow.
++    normalizeLiteralConversions(*module);
++    result.refusal = checkElementTypes(*module);
++    if (!result.refusal.empty()) {
++        return result;
++    }
++
+     // Exact constant folding after inlining so it sees fully-inlined IR without
+     // func.call ops. Fatal on failure because a failed pass may leave the module
+     // partially transformed.
+@@ -396,33 +700,6 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+         return result;
+     }
+ 
+-    // Optional: dump the post-pass module to a file. Tests use this to inspect
+-    // the IR that our passes produced (see tests/test_fusion.py). Path is the
+-    // env var's value; one file per parsed module, named after a counter.
+-    if (const char* dumpPath = std::getenv("JAX_MPS_DUMP_OPTIMIZED_IR")) {
+-        static std::atomic<int> counter{0};
+-        int id = counter.fetch_add(1);
+-        std::error_code ec;
+-        if (auto dirEc = llvm::sys::fs::create_directories(dumpPath)) {
+-            MPS_LOG_WARN("JAX_MPS_DUMP_OPTIMIZED_IR: could not create %s: %s\n", dumpPath,
+-                         dirEc.message().c_str());
+-        } else {
+-            // PID-stamped so concurrent processes pointing at the same
+-            // directory don't overwrite each other's dumps.
+-            std::string filename = std::string(dumpPath) + "/module_" +
+-                                   std::to_string(llvm::sys::Process::getProcessId()) + "_" +
+-                                   std::to_string(id) + ".mlir";
+-            llvm::raw_fd_ostream os(filename, ec);
+-            if (ec) {
+-                MPS_LOG_WARN("JAX_MPS_DUMP_OPTIMIZED_IR: could not open %s: %s\n", filename.c_str(),
+-                             ec.message().c_str());
+-            } else {
+-                module->print(os);
+-                os.flush();
+-            }
+-        }
+-    }
+-
+     // Find the entry function
+     mlir::func::FuncOp entry = findEntryFunction(*module);
+     if (!entry) {

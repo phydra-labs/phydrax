@@ -2,6 +2,14 @@
 
 ## Material support and execution
 
+`ParticleSetPlan.prepare(measure_accumulation_dtype=...)` and direct
+`ParticleDiscretization` construction choose material-mass accumulation precision.
+The default is float64, independently of coordinate storage; explicitly select
+float32 when the complete prepared object must contain only single-precision
+floating arrays. `mass_measure` is the canonical accessor. The physical weights'
+measure identity is unchanged, while nondefault prepared arithmetic participates
+in the prepared/container identity.
+
 ::: phydrax.discretization.ParticleSetPlan
 
 ---

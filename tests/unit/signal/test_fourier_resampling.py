@@ -172,3 +172,64 @@ def test_zero_phase_offsets_equal_ordinary_resampling() -> None:
     )
 
     assert jnp.allclose(shifted, ordinary, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
+@pytest.mark.parametrize("complex_values", (False, True))
+def test_shifted_resampling_preserves_precision_under_transforms(
+    dtype: Any, complex_values: bool
+) -> None:
+    x = jnp.arange(6, dtype=dtype)[:, None] / 6
+    y = jnp.arange(5, dtype=dtype)[None, :] / 5
+    tau = jnp.asarray(2.0 * jnp.pi, dtype=dtype)
+    angle = tau * (x + y)
+    values = (
+        jax.lax.complex(jnp.cos(angle), jnp.sin(angle))
+        if complex_values
+        else jnp.cos(angle)
+    )
+    # A payload axis must remain untouched while both spatial axes are shifted.
+    values = jnp.stack((values, 2 * values), axis=1)
+    offsets = jnp.asarray((0.137, -0.219), dtype=dtype)
+    direction = jnp.asarray((0.3, -0.1), dtype=dtype)
+
+    @jax.jit
+    def shifted(phase_offsets: Any) -> Any:
+        return fourier_resample(values, (9, 8), axes=(0, 2), phase_offsets=phase_offsets)
+
+    output, tangent = jax.jvp(shifted, (offsets,), (direction,))
+    qx = jnp.arange(9, dtype=dtype)[:, None] / 9 + offsets[0]
+    qy = jnp.arange(8, dtype=dtype)[None, :] / 8 + offsets[1]
+    target_angle = tau * (qx + qy)
+    expected = (
+        jax.lax.complex(jnp.cos(target_angle), jnp.sin(target_angle))
+        if complex_values
+        else jnp.cos(target_angle)
+    )
+    derivative = (
+        jax.lax.complex(-jnp.sin(target_angle), jnp.cos(target_angle))
+        if complex_values
+        else -jnp.sin(target_angle)
+    ) * (tau * jnp.sum(direction)).astype(expected.dtype)
+    expected = jnp.stack((expected, 2 * expected), axis=1)
+    derivative = jnp.stack((derivative, 2 * derivative), axis=1)
+    tolerance = 3e-6 if dtype == jnp.float32 else 1e-12
+    assert output.dtype == values.dtype
+    assert tangent.dtype == values.dtype
+    assert jnp.allclose(output, expected, rtol=tolerance, atol=tolerance)
+    assert jnp.allclose(tangent, derivative, rtol=tolerance, atol=tolerance)
+
+    cotangent = jnp.conj(derivative)
+    _, pullback = jax.vjp(shifted, offsets)
+    adjoint = pullback(cotangent)[0]
+    assert adjoint.dtype == offsets.dtype
+    assert jnp.allclose(
+        jnp.sum(adjoint * direction),
+        jnp.real(jnp.sum(cotangent * tangent)),
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    zero_shift = fourier_resample(values, (9, 8), axes=(0, 2), phase_offsets=(0.0, 0.0))
+    ordinary = fourier_resample(values, (9, 8), axes=(0, 2))
+    assert jnp.allclose(zero_shift, ordinary, rtol=tolerance, atol=tolerance)

@@ -1,0 +1,257 @@
+{
+  "deployment_target": "14.0",
+  "jax": {
+    "jax_version": "0.12.0",
+    "jaxlib_version": "0.12.0",
+    "jax_commit": "8dcb7aeced770bd22531b42d0b925c7342787c27",
+    "xla_pin": "https://github.com/jax-ml/jax/blob/8dcb7aeced770bd22531b42d0b925c7342787c27/MODULE.bazel"
+  },
+  "sources": [
+    {
+      "name": "jax-mps",
+      "role": "PJRT plugin implementation (patched by native/metal/patches)",
+      "url": "https://github.com/tillahoffmann/jax-mps/archive/127ab63d0cab71320702e562703c4aaa0c6570d1.tar.gz",
+      "commit": "127ab63d0cab71320702e562703c4aaa0c6570d1",
+      "sha256": "7754bb3d2572506853bed3ea16dc6049f9a7ffcdd5ee373d488001fb0b13ac00",
+      "strip_prefix": "jax-mps-127ab63d0cab71320702e562703c4aaa0c6570d1",
+      "license": "Apache-2.0",
+      "license_files": ["LICENSE"]
+    },
+    {
+      "name": "xla",
+      "role": "PJRT C API headers and the StableHLO/Shardy patches jaxlib 0.12.0 was built with",
+      "url": "https://github.com/openxla/xla/archive/d867969800d4a8fd045505eabc65e1e66f30794f.tar.gz",
+      "commit": "d867969800d4a8fd045505eabc65e1e66f30794f",
+      "sha256": "50a67f42a9f8536ef84cbe2de5c988f3b33dc9844857392c6e61690b2e7fdf88",
+      "strip_prefix": "xla-d867969800d4a8fd045505eabc65e1e66f30794f",
+      "license": "Apache-2.0",
+      "license_files": ["LICENSE"]
+    },
+    {
+      "name": "llvm-project",
+      "role": "LLVM/MLIR at the XLA d8679698 pin (third_party/llvm/workspace.bzl)",
+      "url": "https://github.com/llvm/llvm-project/archive/2b35fb9283a44aae92cb72a41d077ee8de2be7ad.tar.gz",
+      "commit": "2b35fb9283a44aae92cb72a41d077ee8de2be7ad",
+      "sha256": "b61c85c97cde1c3e96ea7cfd09737c24578d6d0656c392d79ce402da6904b828",
+      "strip_prefix": "llvm-project-2b35fb9283a44aae92cb72a41d077ee8de2be7ad",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "license_files": ["llvm/LICENSE.TXT", "mlir/LICENSE.TXT"]
+    },
+    {
+      "name": "stablehlo",
+      "role": "StableHLO/VHLO at the XLA d8679698 pin (third_party/stablehlo/workspace.bzl)",
+      "url": "https://github.com/openxla/stablehlo/archive/b9029ac2228a12e176ea20e56f7d3dcb6bf8a019.zip",
+      "commit": "b9029ac2228a12e176ea20e56f7d3dcb6bf8a019",
+      "sha256": "16af6c8f0baacda15dd72d98dc295a213be455b8fa1899af46e144d6dae670bd",
+      "strip_prefix": "stablehlo-b9029ac2228a12e176ea20e56f7d3dcb6bf8a019",
+      "license": "Apache-2.0",
+      "license_files": ["LICENSE"]
+    },
+    {
+      "name": "shardy",
+      "role": "Shardy sdy dialect at the XLA d8679698 pin (third_party/shardy/workspace.bzl)",
+      "url": "https://github.com/openxla/shardy/archive/38ab99f4d252c59d491899a694fe8cbadfeccec3.zip",
+      "commit": "38ab99f4d252c59d491899a694fe8cbadfeccec3",
+      "sha256": "f8a14581ac86bf170c1aa6814daa000112f9c3a93afa677c28315433e7b2a33f",
+      "strip_prefix": "shardy-38ab99f4d252c59d491899a694fe8cbadfeccec3",
+      "license": "Apache-2.0",
+      "license_files": ["LICENSE"]
+    },
+    {
+      "name": "mlx",
+      "role": "Metal array runtime (static) at the jax-mps third_party/mlx/version.txt pin",
+      "url": "https://github.com/ml-explore/mlx/archive/refs/tags/v0.32.0.tar.gz",
+      "commit": "7a1d4f5c12ac82f4b4d0a6e71538d89ca0605247",
+      "sha256": "8e74a0eb613861ce50c09402dd99dbc42b65a762e7fdd291caa39f611db978ec",
+      "strip_prefix": "mlx-0.32.0",
+      "license": "MIT",
+      "license_files": ["LICENSE"]
+    },
+    {
+      "name": "metal-cpp",
+      "role": "Apple metal-cpp headers fetched by MLX v0.32.0 (METAL_CPP_URL)",
+      "url": "https://developer.apple.com/metal/cpp/files/metal-cpp_26.zip",
+      "commit": null,
+      "sha256": "4df3c078b9aadcb516212e9cb03004cbc5ce9a3e9c068fa3144d021db585a3a4",
+      "strip_prefix": "metal-cpp",
+      "license": "Apache-2.0",
+      "license_files": ["LICENSE.txt"]
+    },
+    {
+      "name": "nlohmann-json",
+      "role": "JSON headers fetched by MLX v0.32.0",
+      "url": "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz",
+      "commit": null,
+      "sha256": "d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d",
+      "strip_prefix": "json",
+      "license": "MIT",
+      "license_files": ["LICENSE.MIT"]
+    },
+    {
+      "name": "fmt",
+      "role": "fmt header-only library fetched by MLX v0.32.0 (GIT_TAG 12.1.0)",
+      "url": "https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz",
+      "commit": "407c905e45ad75fc29bf0f9bb7c5c2fd3475976f",
+      "sha256": "ea7de4299689e12b6dddd392f9896f08fb0777ac7168897a244a6d6085043fea",
+      "strip_prefix": "fmt-12.1.0",
+      "license": "MIT",
+      "license_files": ["LICENSE"]
+    }
+  ],
+  "patches": [
+    {
+      "target": "stablehlo",
+      "origin": "xla",
+      "path": "third_party/stablehlo/temporary.patch",
+      "sha256": "31e5cfd041a8ad2c3f8a653ac1634cb0a888e3c2fd46591e75659050556d2dad",
+      "strip": 1
+    },
+    {
+      "target": "shardy",
+      "origin": "xla",
+      "path": "third_party/shardy/temporary.patch",
+      "sha256": "dd329ac05b89da6ba65d3047e93ebdbed2647607c12d7a5d57815e9eeb7b2525",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "jax-mps",
+      "path": "third_party/mlx/patches/02-metallib-colocated-only.patch",
+      "sha256": "f1909ba91e6e8cc14324da25b13139476b85d6dc2da1127ccb0e7a6a8b522d75",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "jax-mps",
+      "path": "third_party/mlx/patches/07-compiler-cache-detach-on-destroy.patch",
+      "sha256": "e6a073fa81ddd50379fbd6d85c9d3b2a9ba0459367e397ed3b1e20563183ea38",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "jax-mps",
+      "path": "third_party/mlx/patches/09-disable-jaccl.patch",
+      "sha256": "cc4a7d0a549cc56d83900eacc0978d8cac2cab8d8b4b526431d1beb0e9c65e27",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "jax-mps",
+      "path": "third_party/mlx/patches/10-scheduler-catch-task-exceptions.patch",
+      "sha256": "df828275229b67d1a99ddb532314ef477df7b8552ec2577661c9334dae871507",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "jax-mps",
+      "path": "third_party/mlx/patches/11-scatter-complex64-support.patch",
+      "sha256": "c37af3b2c7f67739d27596603b5fc45eae5858a8a0195e06a7efc5423b3a608f",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "jax-mps",
+      "path": "third_party/mlx/patches/13-compile-fuse-buffer-budget.patch",
+      "sha256": "26aebd3ec0ba4dfd22959155d7511f6799520a17fbc13d0b4a03c099dce53e10",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "jax-mps",
+      "path": "third_party/mlx/patches/14-dynamic-offset-fence-tracking.patch",
+      "sha256": "7ea0cb6f65c93d4abf2ec16a113cbfa237956a38f90f9e7ae7523c8844b2282b",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/01-current-jax-abi-identity-shardy.patch",
+      "sha256": "deef70d4f424a02e1aff89b98ab3370114b341b9417d6d44c21c8b11b9f1a9cb",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/02-refuse-float64-complex128.patch",
+      "sha256": "7efe8a0321a122890c15adc45e8a467538250c20732ce34d7cfa0e940bd5a2ba",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/03-host-callbacks-effects.patch",
+      "sha256": "901a34412b4d85a94d303cd6e13c19bff63d78b1fb34c07a8feeef6b858bcc65",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/04-exact-integer-dot-gpu-triangular-solve.patch",
+      "sha256": "fefe1cfc7f99f23116261471accf570e97661e06af94f2fea527d670e38f8275",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/05-refuse-oversized-allocations.patch",
+      "sha256": "972f5241e9395cbc9b98ab9b7194a489cf335a4bab4646f2299f0cba3ae671af",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "native/metal",
+      "path": "patches/06-mlx-disable-tf32.patch",
+      "sha256": "cbb10387d781bd43a1e55cbc9bb185902ecdd5ed5ac31328d24df9445506b720",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/07-index-sort-semantics.patch",
+      "sha256": "1186b35af011e3af17754cbc6caefbb6dbd67b12c6b04a576911949a162f72ab",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/08-reduction-arithmetic-semantics.patch",
+      "sha256": "8948ab17f7428ba5f2c433afb68c4d912b0d16eec13bc86af410959058aa1bde",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/09-buffer-lifecycle-metadata.patch",
+      "sha256": "eddd3db2b015f2d4b77b6526ad60e7c69b226852cc811c3d0c67feb9a0e5eef0",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "native/metal",
+      "path": "patches/10-mlx-fixed-runtime-policy.patch",
+      "sha256": "8e3b505028209f0b79d5993b4f4231583aee903019aae0c79230f1dfd6d05ae2",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/11-fixed-runtime-policy.patch",
+      "sha256": "0b9a22e692141e461e8d79fe3bfc741a0474712672b3b45ab04c2bbf4ff862b0",
+      "strip": 1
+    },
+    {
+      "target": "jax-mps",
+      "origin": "native/metal",
+      "path": "patches/12-bounded-numerical-execution.patch",
+      "sha256": "340bd28a7a14cccdfe7db2937ab585ac8fedf12877fd4d9305545969444e0df8",
+      "strip": 1
+    },
+    {
+      "target": "mlx",
+      "origin": "native/metal",
+      "path": "patches/13-mlx-output-argument-separators.patch",
+      "sha256": "9546277d0b81d3083dbbbc52adf38539e32ef977b5684c9c655a664735fdb5e6",
+      "strip": 1
+    }
+  ]
+}

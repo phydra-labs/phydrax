@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
 
 import jax
-import jax.numpy as jnp
 import jaxlib
 import numpy as np
 
@@ -688,7 +687,7 @@ def capture_environment() -> RuntimeEnvironment:
     package_fingerprint = installed_package_fingerprint()
     backend = jax.default_backend()
     x64_enabled = bool(pxconfig.x64_enabled())
-    default_float_dtype = str(jnp.asarray(0.0).dtype)
+    default_float_dtype = str(jax.dtypes.canonicalize_dtype(np.float64))
     evidence = {
         "python_version": python_version,
         "phydrax_version": phydrax_version,

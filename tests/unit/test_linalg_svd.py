@@ -13,10 +13,66 @@ import pytest
 import phydrax as phx
 from phydrax._execution_device import device_platform
 from phydrax._jax_config import default_device
+from phydrax.linalg._svd_dense import prepare_host_svd
 
 
 la = phx.linalg
 svd = la.svd
+
+
+@pytest.mark.parametrize("require_full_rank", [False, True])
+def test_host_table_svd_uses_canonical_float64_rank_and_status(
+    require_full_rank: bool,
+) -> None:
+    matrix = np.diag(np.asarray([4.0, 2.0, 1e-12], dtype=np.float64))
+    policy = la.RankPolicy(relative_cutoff=1e-10, require_full_rank=require_full_rank)
+    result = prepare_host_svd(matrix, policy)
+    expected = (
+        svd.SVDSolveStatus.RANK_DEFICIENT
+        if require_full_rank
+        else svd.SVDSolveStatus.SUCCESS
+    )
+    assert int(result.primal_status) == expected
+    assert isinstance(result.right_coordinates, np.ndarray)
+    assert result.right_coordinates.dtype == np.dtype(np.float64)
+    assert not result.right_coordinates.flags.writeable
+    rank = svd.require_exact_svd_rank(result.rank_evidence)
+    assert isinstance(rank, np.ndarray)
+    assert int(rank) == 2
+    assert not rank.flags.writeable
+    assert float(result.rank_evidence.threshold_lower) == 4e-10
+    assert float(result.rank_evidence.threshold_upper) == 4e-10
+    assert result.rank_evidence.full_spectrum
+    assert bool(result.rank_evidence.deterministic_exact)
+    with pytest.raises(TypeError, match="NumPy float64"):
+        prepare_host_svd(matrix.astype(np.float32), policy)
+
+
+def test_nonfinite_host_table_svd_refuses_exact_rank_evidence() -> None:
+    result = prepare_host_svd(
+        np.asarray([[1.0, np.nan], [0.0, 2.0]], dtype=np.float64), la.RankPolicy()
+    )
+    assert int(result.primal_status) == svd.SVDSolveStatus.PREPARATION_FAILED
+    assert np.all(np.isnan(result.right_coordinates))
+    with pytest.raises(ValueError, match="Deterministic exact global"):
+        svd.require_exact_svd_rank(result.rank_evidence)
+
+
+def test_failed_host_table_svd_never_substitutes_an_identity_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scipy.linalg
+
+    def nonconverged(*args: Any, **kwargs: Any) -> Any:
+        raise scipy.linalg.LinAlgError("nonconverged")
+
+    monkeypatch.setattr(scipy.linalg, "svd", nonconverged)
+    result = prepare_host_svd(np.eye(3, dtype=np.float64), la.RankPolicy())
+    assert int(result.primal_status) == svd.SVDSolveStatus.NONFINITE_OUTPUT
+    assert np.all(np.isnan(result.right_coordinates))
+    assert not bool(result.rank_evidence.available)
+    with pytest.raises(ValueError, match="Deterministic exact global"):
+        svd.require_exact_svd_rank(result.rank_evidence)
 
 
 @pytest.mark.parametrize("compiled", (False, True), ids=("eager", "jit"))

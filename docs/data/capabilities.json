@@ -1,5 +1,5 @@
 {
-  "catalog_id": "a2c825a4336b10a43418bc08f4ff2c844be66998d8cdf32731d41de4471c16ae",
+  "catalog_id": "f4c82b6659823a126eb093568d0c4b0fb88ccd2716e0d5287c563ee02bc12f73",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -685,6 +685,162 @@
       ],
       "public_symbols": [
         "phydrax.acoustics.VibroacousticSystem"
+      ]
+    },
+    {
+      "capability": "apple-metal-execution",
+      "declaration_id": "51bb12634f7099b724ce0c41a62a0cb956fff09db41ba39f36c371c41373577b",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-device-scientific-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-cuda-native-provider-parity",
+        "no-float64-or-complex128",
+        "no-hardware-qualification-from-installation",
+        "no-implicit-cpu-numerical-fallback",
+        "no-multi-device-or-multi-host",
+        "no-pallas-metal-kernels",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.backends",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "apple-metal-execution.profile",
+          "profile_id": "4370e3e405919411b15b7fc967a75ba64eadba0ff75ac5d985976751bb5d5b1d",
+          "provider": "phydrax-metal",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-errors",
+            "derivative-reference",
+            "exact-integer-addressing",
+            "forward-reference",
+            "installed-wheel",
+            "native-build-identity",
+            "native-lifecycle",
+            "ordered-replay",
+            "phase-separated-performance",
+            "precision-refusal",
+            "real-device",
+            "resource-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "mps",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "native-mace",
+                "x64_enabled": true
+              },
+              "capability": "apple-metal-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0e2fed97f2bb0858fc36c7bcea126d044539fa45669be7603a7d119b2cc382e9"
+            },
+            {
+              "attributes": {
+                "device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "mps",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "prepared-neighbors",
+                "x64_enabled": true
+              },
+              "capability": "apple-metal-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3a6856ea5aba5aa17fdfddfeec6513b5c37bbffad26b2f4f150a72bc087ce414"
+            },
+            {
+              "attributes": {
+                "device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "mps",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "ordered-sparse",
+                "x64_enabled": true
+              },
+              "capability": "apple-metal-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6e21c95d488f5b74e29712025020045f2d0a6e3d5b5af544302b1bac4aa42027"
+            },
+            {
+              "attributes": {
+                "device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "mps",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "pde-mlp",
+                "x64_enabled": true
+              },
+              "capability": "apple-metal-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "739e967c3b4a6db2aee7a4631c9d2ffb877a36be9e95881023d994a6724e2f0a"
+            },
+            {
+              "attributes": {
+                "device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "mps",
+                "precision": "complex64",
+                "process_count": 1,
+                "workload": "fourier",
+                "x64_enabled": true
+              },
+              "capability": "apple-metal-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "772682b13e174959091efb66b416be77603ce9f53d77aa1d2ae1d02d568c0bd5"
+            },
+            {
+              "attributes": {
+                "device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "mps",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "temporal",
+                "x64_enabled": true
+              },
+              "capability": "apple-metal-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ca8bf0d7d06ca521c2b5f147677f5bb9d5baf42b000c561b8381dab01d78aeee"
+            },
+            {
+              "attributes": {
+                "device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "mps",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "iterative-linear",
+                "x64_enabled": true
+              },
+              "capability": "apple-metal-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e9fe6bfebb496832041522a2e13841f8eaa300bbf1e4d0d32cc6a6b7d1feda47"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.backends.assess_metal_environment",
+        "phydrax.backends.metal_environment"
       ]
     },
     {

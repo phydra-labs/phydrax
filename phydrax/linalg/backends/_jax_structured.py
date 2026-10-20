@@ -969,11 +969,12 @@ def _prepare_tridiagonal(
             eliminate,
             (diagonal, upper, second_upper, cosines, sines),
         )
+    zero = jnp.zeros((), dtype=diagonal.real.dtype)
     scale = jnp.maximum(
         jnp.max(jnp.abs(operator.diagonal)),
         jnp.maximum(
-            jnp.max(jnp.abs(operator.upper), initial=0.0),
-            jnp.max(jnp.abs(operator.lower), initial=0.0),
+            jnp.max(jnp.abs(operator.upper), initial=zero),
+            jnp.max(jnp.abs(operator.lower), initial=zero),
         ),
     )
     threshold = jnp.finfo(diagonal.real.dtype).eps * jnp.maximum(scale, 1)

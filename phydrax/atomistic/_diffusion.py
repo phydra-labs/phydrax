@@ -278,6 +278,9 @@ def atomistic_score_equivariance(
         periodic_axes=batch.periodic_axes,
         structure_ids=batch.structure_ids,
         coordinate_dtype=batch.positions.dtype,
+        mass_accumulation_dtype=tuple(
+            particles.mass_measure.total_mass.dtype for particles in batch.particles
+        ),
     )
     permuted_score = jnp.asarray(score_model(permuted, time))
     if permuted_score.shape != base.shape:

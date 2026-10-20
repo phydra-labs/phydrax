@@ -563,11 +563,13 @@ def test_non_finite_message_poisons_residual_outputs_and_derivatives(
     ("theta", "admitted"), [(0.0, False), (2.0, True)], ids=["infinite-message", "finite"]
 )
 @pytest.mark.parametrize("bound", [False, True], ids=["parameters", "callback-array"])
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64], ids=["float32", "float64"])
 def test_failed_message_poisons_derivatives_of_unread_inputs(
-    theta: float, admitted: bool, bound: bool
+    theta: float, admitted: bool, bound: bool, dtype: Any
 ) -> None:
     prepared = _single_receiver(2)
-    payload = phx.sparse.StreamedPayloadSpec(_SCALAR, _SCALAR)
+    scalar = jax.ShapeDtypeStruct((), dtype)
+    payload = phx.sparse.StreamedPayloadSpec(scalar, scalar)
 
     def message(t: Array, s: Array) -> Array:
         return 1.0 / t + s
@@ -585,12 +587,12 @@ def test_failed_message_poisons_derivatives_of_unread_inputs(
             lambda p, receiver, aggregate: 2.0 * receiver**2,
             parameters,
             x,
-            jnp.asarray([3.0]),
-            jnp.zeros((2,)),
+            jnp.asarray([3.0], dtype),
+            jnp.zeros((2,), dtype),
         )
 
-    x = jnp.asarray([0.25, -0.5])
-    t = jnp.asarray(theta)
+    x = jnp.asarray([0.25, -0.5], dtype)
+    t = jnp.asarray(theta, dtype)
 
     def output(t: Array) -> Array:
         return evaluate(t, x).receiver_outputs[0]
@@ -601,7 +603,7 @@ def test_failed_message_poisons_derivatives_of_unread_inputs(
 
     derivatives = [
         jax.grad(output)(t),
-        jax.jvp(output, (t,), (jnp.ones(()),))[1],
+        jax.jvp(output, (t,), (jnp.ones((), dtype),))[1],
         jax.grad(jax.grad(output))(t),
         jax.jacfwd(jax.jacfwd(output))(t),
         jax.grad(force_loss)(t),

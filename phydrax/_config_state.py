@@ -132,6 +132,21 @@ def _admit(settings: RuntimeConfig, /) -> None:
                 f"a JAX backend is already initialized with {effective!r}; "
                 f"{requested!r} binds only at backend initialization.",
             )
+    if settings.platforms is not None and "mps" in settings.platforms:
+        from ._metal_environment import (
+            assess_metal_environment,
+            collect_metal_environment,
+        )
+
+        report = assess_metal_environment(collect_metal_environment())
+        if not report.successful:
+            raise ConfigurationApplicationError(
+                "platforms",
+                (),
+                "; ".join(
+                    issue.message for issue in report.issues if issue.severity == "error"
+                ),
+            )
     bootstrap = settings.bootstrap
     if bootstrap is not None and bootstrap.requests_distributed_initialization:
         if _jax_config.distributed_initialized():

@@ -157,6 +157,7 @@ _STRUCTURE_FIELDS = frozenset(
     {
         "cell",
         "coordinate_dtype",
+        "mass_accumulation_dtype",
         "name",
         "numeric_version",
         "periodic_axes",
@@ -1033,6 +1034,7 @@ def _structure_record(
         "name": structure.name,
         "numeric_version": structure.particles.numeric_version,
         "coordinate_dtype": str(np.asarray(structure.positions).dtype),
+        "mass_accumulation_dtype": str(structure.particles.mass_measure.total_mass.dtype),
         "cell": structure.cell is not None,
         "periodic_axes": structure.periodic_axes is not None,
         "structure_id": structure.structure_id,
@@ -1062,6 +1064,7 @@ def _restored_structure(
         ),
         name=str(record["name"]),
         coordinate_dtype=str(record["coordinate_dtype"]),
+        mass_accumulation_dtype=str(record["mass_accumulation_dtype"]),
         numeric_version=str(record["numeric_version"]),
     )
     if structure.structure_id != record["structure_id"]:

@@ -8,11 +8,13 @@ from typing import Literal
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 from phydrax.ein import contract
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ..._dtype_names import real_precision_dtype_name
 from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import activated_affine
@@ -58,6 +60,11 @@ class Linear(_AbstractBaseModel):
     physically constrained effective weights at evaluation time. A
     `LowRankUpdate` instead applies a frozen-base adaptation without
     materializing its dense update.
+
+    `dtype` selects the real floating dtype of every constructed parameter
+    (weight, RWF log-scales and bias) under the active JAX canonicalization
+    policy. It is a construction choice, not an input cast: inputs are used
+    as given. `None` keeps JAX's default floating dtype.
     """
 
     weight: Array | LowRankUpdate  # In RWF mode, this stores V (unscaled weights)
@@ -87,8 +94,11 @@ class Linear(_AbstractBaseModel):
         use_bias: bool = True,
         bias_init_lim: float = 1.0,
         weight_transform: AbstractParameterTransform | None = None,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = _key,
     ) -> None:
+        # Resolve an explicit parameter dtype before any allocation.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         # Initialize the weight matrix and (optionally) RWF scales and bias
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
@@ -104,6 +114,7 @@ class Linear(_AbstractBaseModel):
         self.weight = _initializer_dict[initializer](
             wkey,
             (out_size_, in_size_),
+            dtype=param_dtype,
         )
 
         # Random Weight Factorization setup
@@ -126,7 +137,9 @@ class Linear(_AbstractBaseModel):
         self.random_weight_factorization = rwf_params is not None
         if rwf_params is not None:
             mu, sigma = rwf_params
-            self.rwf_log_scales = mu + sigma * jr.normal(skey, shape=(out_size_,))
+            self.rwf_log_scales = mu + sigma * jr.normal(
+                skey, shape=(out_size_,), dtype=param_dtype
+            )
         else:
             self.rwf_log_scales = None
         if weight_transform is not None:
@@ -142,11 +155,19 @@ class Linear(_AbstractBaseModel):
                 )
 
         if use_bias:
+            if param_dtype is None:
+                bias_lower, bias_upper = -bias_init_lim, bias_init_lim
+            else:
+                # Typed bounds: Python floats would enter the sampler as x64
+                # constants before conversion to the requested dtype.
+                bias_lower = jnp.asarray(-bias_init_lim, dtype=param_dtype)
+                bias_upper = jnp.asarray(bias_init_lim, dtype=param_dtype)
             self.bias = jr.uniform(
                 bkey,
                 (out_size_,),
-                minval=-bias_init_lim,
-                maxval=bias_init_lim,
+                dtype=param_dtype,
+                minval=bias_lower,
+                maxval=bias_upper,
             )
         else:
             self.bias = None

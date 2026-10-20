@@ -10,7 +10,9 @@ from typing import Literal
 
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
+
+from .._dtype_names import real_precision_dtype_name
 
 
 _TimeLayout = Literal["shared", "per_path"]
@@ -37,12 +39,17 @@ def validate_solution_arrays(
     state_shape: Sequence[int] | None,
     time_layout: _TimeLayout,
     owner: str,
+    time_dtype: DTypeLike = jnp.float64,
 ) -> ValidatedSolutionArrays:
-    """Validate the common sample/time/state layout of a saved result."""
+    """Validate the common sample/time/state layout of a saved result.
+
+    ``time_dtype`` is the owner's real clock dtype; saved times are
+    canonicalized into it.
+    """
     samples = tuple(sample_shape)
     if any(size <= 0 for size in samples):
         raise ValueError(f"{owner} sample dimensions must be positive.")
-    time_values = jnp.asarray(times, dtype=jnp.float64)
+    time_values = jnp.asarray(times, dtype=real_precision_dtype_name(time_dtype))
     state_values = jnp.asarray(states)
     valid_values = jnp.asarray(valid, dtype=jnp.bool_)
     if time_layout == "shared":

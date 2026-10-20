@@ -6,6 +6,10 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
     Key notes:
 
     - `MLP` is a standard feed-forward network with optional residual connection.
+      Its keyword-only `dtype` (default `None`) selects the real floating dtype of
+      every `Linear` parameter: hidden and final layers, RWF scales, biases and the
+      residual projection. `dtype=jnp.float32` builds float32 parameters with x64
+      enabled; `None` keeps the default initialization and values.
     - `ModifiedMLP` reuses two persistent input encoders in every hidden-layer
       gate to improve information flow through deep coordinate networks.
     - `KAN` replaces node activations with typed edge functions. It defaults to
@@ -128,6 +132,10 @@ pointwise comparison against `MLP` and `ModifiedMLP`. Its manufactured suite
 contains Poisson, Helmholtz, and nonlinear stationary Allen–Cahn equations and
 records residual/boundary losses, derivative statistics, relative L2/H1 error,
 compile and execution time, parameter counts, and available peak memory.
+`--dtype float32` (with `--architectures mlp`) builds the model, training,
+boundary and evaluation points in that dtype and records the observed workload
+dtype; architectures without explicit-dtype construction are refused rather
+than silently run at the default precision.
 
 ---
 

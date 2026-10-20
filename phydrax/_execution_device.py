@@ -37,5 +37,8 @@ def device_vendor(device: jax.Device, /) -> str | None:
             return "amd"
         case "tpu":
             return "google"
+        case "mps":
+            runtime = device.client.platform_version.split()
+            return "apple" if runtime and runtime[0] == "phydrax-metal" else None
         case _:
             return None

@@ -804,3 +804,32 @@ service contracts. No proprietary binary was inspected. No GPL or unlicensed
 source, tests, fixtures, assets, configuration vocabulary, output, shader, or
 executable is copied, translated, linked, imported, bundled, or redistributed.
 No external runtime dependency is bundled.
+
+Phydrax Metal companion
+The optional phydrax-metal wheel builds a modified JAX-MPS PJRT implementation
+with MLX, LLVM/MLIR, StableHLO, Shardy, and the OpenXLA PJRT headers. Source
+commits, archive hashes, applied patches, and dependency provenance are recorded
+in native/metal/sources.lock.json and the companion's build manifest.
+
+JAX-MPS (https://github.com/tillahoffmann/jax-mps), StableHLO
+(https://github.com/openxla/stablehlo), and Shardy
+(https://github.com/openxla/shardy) use Apache-2.0. Their identical inspected
+license text is reproduced in LICENSES/METAL-APACHE-2.0.txt. OpenXLA
+(https://github.com/openxla/xla) uses Apache-2.0; its text is reproduced in
+LICENSES/METAL-XLA-APACHE-2.0.txt. Apple's Metal C++ headers retain their
+Apache-2.0 text in LICENSES/METAL-CPP-APACHE-2.0.txt.
+
+LLVM and MLIR (https://github.com/llvm/llvm-project) retain their complete
+license and exception notices in
+LICENSES/METAL-LLVM-APACHE-LLVM-EXCEPTION.txt and
+LICENSES/METAL-MLIR-APACHE-LLVM-EXCEPTION.txt. MLX
+(https://github.com/ml-explore/mlx), nlohmann-json
+(https://github.com/nlohmann/json), and fmt (https://github.com/fmtlib/fmt)
+retain their MIT terms in LICENSES/METAL-MLX-MIT.txt,
+LICENSES/METAL-JSON-MIT.txt, and LICENSES/METAL-FMT-MIT.txt.
+
+Phydrax changes the integration, dtype and resource refusal, integer/index and
+reduction semantics, callback/effect handling, buffer lifetime, and packaging
+boundaries. The companion also includes each dependency's original license
+files in its distribution metadata. Upstream components retain their own
+copyrights and license terms; Phydrax's license does not replace those terms.

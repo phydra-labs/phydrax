@@ -1,0 +1,737 @@
+diff --git a/src/pjrt_plugin/mlx_executable.cc b/src/pjrt_plugin/mlx_executable.cc
+index c1cb434e49dfb50c4ccc849e4dd8637d871efe5f..0b6014c38f66333237a1814c6ba325d3b0225a58 100644
+--- a/src/pjrt_plugin/mlx_executable.cc
++++ b/src/pjrt_plugin/mlx_executable.cc
+@@ -853,14 +853,21 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+     }
+     std::vector<mlx::core::array> outputs;
+ 
++    // Programs with host callbacks run only on the compiled path and are never
++    // re-run eagerly: a callback executes exactly once per program execution.
++    const bool hasHostCallbacks = parsed_module_.has_host_callbacks;
+     static bool disable_compile = std::getenv("MPS_NO_COMPILE") != nullptr;
+     {
+         // Safety net: if a func.call survived inlining (a multi-block / control-
+         // flow callee the inliner can't clone), use the eager path instead of
+         // compile() (jax-mps#170). Single-block callees are inlined and compile.
+-        if (!compile_attempted_ && !disable_compile && !parsed_module_.has_uninlined_call) {
++        // (The parser refuses such modules when they contain host callbacks.)
++        if (!compile_attempted_ && (hasHostCallbacks || !disable_compile) &&
++            !parsed_module_.has_uninlined_call) {
+             compile_attempted_ = true;
+ 
++            // Returns the entry results followed by the effect markers of
++            // side-effecting host callbacks, which are evaluated with them.
+             auto exec_fn =
+                 [this](
+                     const std::vector<mlx::core::array>& inputs) -> std::vector<mlx::core::array> {
+@@ -870,12 +877,16 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+                 local_ctx.inside_compile = true;
+ 
+                 if (!ExecuteFunction(parsed_module_.entry_func, inputs, outs, local_ctx)) {
+-                    return {};
++                    throw std::runtime_error(local_ctx.error_message.empty()
++                                                 ? "entry function failed to trace"
++                                                 : local_ctx.error_message);
+                 }
+                 // Remember whether this graph contains control-flow primitives,
+                 // so the async path can skip the control-flow walk when it
+                 // doesn't (set during the compile trace; replays reuse it).
+                 has_control_flow_ = local_ctx.produced_control_flow;
++                outs.insert(outs.end(), local_ctx.side_effects.begin(),
++                            local_ctx.side_effects.end());
+                 return outs;
+             };
+ 
+@@ -887,7 +898,12 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+                 compiled_fn_ = mlx::core::compile(exec_fn);
+ 
+                 auto test_outputs = compiled_fn_(inputArrays);
+-                if (!test_outputs.empty()) {
++                if (hasHostCallbacks) {
++                    // Tracing succeeded. Evaluation (and any callback error)
++                    // happens once, below; there is no fallback execution.
++                    compile_succeeded_ = true;
++                    outputs = std::move(test_outputs);
++                } else if (!test_outputs.empty()) {
+                     mlx::core::eval(test_outputs);
+                     // An exception thrown by a primitive's eval on a stream
+                     // worker thread is caught there (MLX patch 10) and parked;
+@@ -906,6 +922,10 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+             } catch (const std::exception& e) {
+                 MPS_LOG_INFO("MLX compile() failed (%s), using direct path\n", e.what());
+                 compile_succeeded_ = false;
++                if (hasHostCallbacks) {
++                    result.error_message = e.what();
++                    return result;
++                }
+             }
+         }
+     }
+@@ -913,6 +933,11 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+     if (compile_succeeded_ && outputs.empty()) {
+         outputs = compiled_fn_(inputArrays);
+     } else if (outputs.empty()) {
++        if (hasHostCallbacks) {
++            result.error_message =
++                "phydrax-metal: a program with host callbacks failed to compile";
++            return result;
++        }
+         if (!ExecuteFunction(parsed_module_.entry_func, inputArrays, outputs, ctx)) {
+             MPS_LOG_ERROR("Failed to execute entry function\n");
+             result.error_message = std::move(ctx.error_message);
+@@ -924,7 +949,7 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+         dispatch_end = Clock::now();
+     }
+ 
+-    if (outputs.size() != num_outputs_) {
++    if (outputs.size() < num_outputs_) {
+         MPS_LOG_ERROR("Output count mismatch: expected %zu, got %zu\n", num_outputs_,
+                       outputs.size());
+         if (result.error_message.empty()) {
+@@ -936,6 +961,8 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+     if (profiling) {
+         eval_start = Clock::now();
+     }
++    // outputs = entry results followed by host-callback effect markers; all are
++    // evaluated, then the markers are dropped.
+     if (!outputs.empty()) {
+         // While a GPU trace capture window is open we force a synchronous eval:
+         // async_eval returns before the GPU work completes, which would leave
+@@ -982,6 +1009,7 @@ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+         eval_end = Clock::now();
+     }
+ 
++    outputs.resize(num_outputs_, mlx::core::array(0.0F));
+     for (auto& arr : outputs) {
+         result.buffers.push_back(MlxBuffer::FromArray(std::move(arr)));
+     }
+diff --git a/src/pjrt_plugin/ops/control_flow.cc b/src/pjrt_plugin/ops/control_flow.cc
+index be69eb9c90c69d4438726b0a40571a4c0b6d246e..310fb5cf15999c7318041e19f82548d7ec077ae1 100644
+--- a/src/pjrt_plugin/ops/control_flow.cc
++++ b/src/pjrt_plugin/ops/control_flow.cc
+@@ -1,6 +1,7 @@
+ // Control flow op handlers (while, case, call, return, composite, custom_call,
+ // optimization_barrier).
+ 
++#include <mlx/allocator.h>
+ #include <mlx/compile.h>
+ #include <mlx/fast.h>
+ #include <mlx/linalg.h>
+@@ -13,6 +14,7 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <cstdint>
++#include <cstring>
+ #include <functional>
+ #include <limits>
+ #include <memory>
+@@ -393,16 +395,23 @@ public:
+     // bodyHasControlFlow: set by the body/cond trace when the regions contain
+     //   nested control-flow primitives (while/case). The counted path uses it
+     //   to decide whether the periodic flush may be async (see eval_impl).
++    // hasEffects: the body or cond contains side-effecting host callbacks.
++    //   cond/bodyCond functions then return their effect markers after the
++    //   cond/body results, every iteration is evaluated synchronously (no
++    //   counted fast path, which would skip cond effects), and the primitive
++    //   gets a trailing scalar effect-marker output.
+     WhileLoopPrimitive(mlx::core::Stream stream, CondFn condFn, BodyFn bodyCondFn, size_t nLoopVars,
+                        size_t nExt, std::optional<CountedExec> counted = std::nullopt,
+-                       std::shared_ptr<std::atomic<bool>> bodyHasControlFlow = nullptr)
++                       std::shared_ptr<std::atomic<bool>> bodyHasControlFlow = nullptr,
++                       bool hasEffects = false)
+         : Primitive(stream),
+           compiledBodyCond_(mlx::core::compile(std::move(bodyCondFn))),
+           compiledCond_(mlx::core::compile(std::move(condFn))),
+           nLoopVars_(nLoopVars),
+           nExt_(nExt),
+-          counted_(counted),
+-          bodyHasControlFlow_(std::move(bodyHasControlFlow)) {
++          counted_(hasEffects ? std::nullopt : counted),
++          bodyHasControlFlow_(std::move(bodyHasControlFlow)),
++          hasEffects_(hasEffects) {
+         if (stream.device.type != mlx::core::Device::cpu) {
+             throw std::runtime_error(
+                 "WhileLoopPrimitive must be on the CPU stream \u2014 GPU stream "
+@@ -431,9 +440,11 @@ public:
+     std::vector<mlx::core::Shape> output_shapes(
+         const std::vector<mlx::core::array>& inputs) override {
+         std::vector<mlx::core::Shape> shapes;
+-        shapes.reserve(nLoopVars_);
++        shapes.reserve(nLoopVars_ + 1);
+         for (size_t i = 0; i < nLoopVars_; ++i)
+             shapes.push_back(inputs[i].shape());
++        if (hasEffects_)
++            shapes.push_back({});
+         return shapes;
+     }
+ 
+@@ -506,15 +517,16 @@ private:
+             //
+             // Initial condition check (before first body execution).
+             auto initCond = compiledCond_(current);
+-            if (initCond.size() != 1 || initCond[0].size() != 1)
++            if (initCond.empty() || initCond[0].size() != 1)
+                 throw std::runtime_error("WhileLoopPrimitive: cond must return a single scalar");
+-            mlx::core::eval(initCond[0]);
++            mlx::core::eval(initCond);
++            mlx::core::scheduler::rethrow_pending_exception();
+             bool condTrue = initCond[0].item<bool>();
+ 
+             // Loop: body+cond combined per iteration.
+             while (condTrue) {
+                 auto combined = compiledBodyCond_(current);
+-                if (combined.size() != 1 + nLoopVars_)
++                if (combined.size() < 1 + nLoopVars_)
+                     throw std::runtime_error("WhileLoopPrimitive: bodyCondFn returned " +
+                                              std::to_string(combined.size()) +
+                                              " results, expected " +
+@@ -544,6 +556,11 @@ private:
+ 
+         for (size_t i = 0; i < nLoopVars_; ++i)
+             outputs[i].copy_shared_buffer(current[i]);
++        if (hasEffects_) {
++            auto& marker = outputs[nLoopVars_];
++            marker.set_data(mlx::core::allocator::malloc(marker.nbytes()));
++            std::memset(marker.data<char>(), 0, marker.nbytes());
++        }
+     }
+ 
+     // Trip count for the counted fast path, or nullopt to use the dynamic
+@@ -584,6 +601,7 @@ private:
+     std::optional<CountedExec> counted_;
+     // Set during the body/cond trace; gates the async periodic flush.
+     std::shared_ptr<std::atomic<bool>> bodyHasControlFlow_;
++    bool hasEffects_;
+ };
+ 
+ // Custom MLX primitive that encapsulates a multi-branch case/switch with
+@@ -609,7 +627,10 @@ public:
+     //   Each takes external values as inputs and returns branch results.
+     // nOutputs: number of outputs (same for all branches, from MLIR types).
+     // nExt: number of external captures threaded as inputs.
+-    // outShapes: output shapes from MLIR result types.
++    // outShapes: output shapes from MLIR result types, plus one trailing scalar
++    //   effect marker when a branch contains side-effecting host callbacks.
++    //   Branch functions return their results followed by their effect markers;
++    //   all of them are evaluated, only the results are copied out.
+     CasePrimitive(mlx::core::Stream stream, CompiledFn indexFn, std::vector<CompiledFn> branches,
+                   size_t nOutputs, size_t nExt, std::vector<mlx::core::Shape> outShapes)
+         : Primitive(stream),
+@@ -676,7 +697,7 @@ private:
+ 
+         // Execute the selected compiled branch.
+         auto branchResults = branches_[branchIdx](inputs);
+-        if (branchResults.size() != nOutputs_)
++        if (branchResults.size() < nOutputs_)
+             throw std::runtime_error("CasePrimitive: branch " + std::to_string(branchIdx) +
+                                      " returned " + std::to_string(branchResults.size()) +
+                                      " results, expected " + std::to_string(nOutputs_));
+@@ -689,6 +710,10 @@ private:
+ 
+         for (size_t i = 0; i < nOutputs_; ++i)
+             outputs[i].copy_shared_buffer(branchResults[i]);
++        for (size_t i = nOutputs_; i < outputs.size(); ++i) {
++            outputs[i].set_data(mlx::core::allocator::malloc(outputs[i].nbytes()));
++            std::memset(outputs[i].data<char>(), 0, outputs[i].nbytes());
++        }
+     }
+ 
+     CompiledFn indexFn_;
+@@ -780,6 +805,12 @@ bool HandleWhile(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::a
+             outShapes.push_back(loopVars[i].shape());
+             outDtypes.push_back(loopVars[i].dtype());
+         }
++        const bool hasEffects =
++            RegionHasHostEffects(bodyRegion) || RegionHasHostEffects(condRegion);
++        if (hasEffects) {
++            outShapes.push_back({});
++            outDtypes.push_back(mlx::core::bool_);
++        }
+ 
+         // Build condFn for initial condition check
+         auto condFn =
+@@ -797,7 +828,10 @@ bool HandleWhile(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::a
+             compileCtx.inside_compile = true;
+ 
+             if (!ExecuteRegion(condRegion, args, results, compileCtx, &parentVals))
+-                throw std::runtime_error("WhileLoopPrimitive: cond region execution failed");
++                throw std::runtime_error("WhileLoopPrimitive: cond region execution failed: " +
++                                         compileCtx.error_message);
++            results.insert(results.end(), compileCtx.side_effects.begin(),
++                           compileCtx.side_effects.end());
+             return results;
+         };
+ 
+@@ -828,7 +862,8 @@ bool HandleWhile(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::a
+             bodyCtx.inside_compile = true;
+ 
+             if (!ExecuteRegion(bodyRegion, args, bodyResults, bodyCtx, &parentVals))
+-                throw std::runtime_error("WhileLoopPrimitive: body region failed");
++                throw std::runtime_error("WhileLoopPrimitive: body region failed: " +
++                                         bodyCtx.error_message);
+ 
+             // Execute cond on body results (new loop vars)
+             ValueMap condParentVals;
+@@ -840,18 +875,24 @@ bool HandleWhile(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::a
+             condCtx.inside_compile = true;
+ 
+             if (!ExecuteRegion(condRegion, bodyResults, condResults, condCtx, &condParentVals))
+-                throw std::runtime_error("WhileLoopPrimitive: cond region failed");
++                throw std::runtime_error("WhileLoopPrimitive: cond region failed: " +
++                                         condCtx.error_message);
+ 
+             if (bodyCtx.produced_control_flow || condCtx.produced_control_flow)
+                 bodyHasControlFlow->store(true, std::memory_order_relaxed);
+             if (condResults.size() != 1 || condResults[0].size() != 1)
+                 throw std::runtime_error("WhileLoopPrimitive: cond must return a single scalar");
+ 
+-            // Return [condScalar, bodyResult0, bodyResult1, ...]
++            // Return [condScalar, bodyResult0, ..., body effects..., cond effects...]
+             std::vector<mlx::core::array> combined;
+-            combined.reserve(1 + bodyResults.size());
++            combined.reserve(1 + bodyResults.size() + bodyCtx.side_effects.size() +
++                             condCtx.side_effects.size());
+             combined.push_back(condResults[0]);
+             combined.insert(combined.end(), bodyResults.begin(), bodyResults.end());
++            combined.insert(combined.end(), bodyCtx.side_effects.begin(),
++                            bodyCtx.side_effects.end());
++            combined.insert(combined.end(), condCtx.side_effects.begin(),
++                            condCtx.side_effects.end());
+             return combined;
+         };
+ 
+@@ -861,12 +902,14 @@ bool HandleWhile(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::a
+         auto cpuStream = mlx::core::default_stream(mlx::core::Device::cpu);
+         auto prim = std::make_shared<WhileLoopPrimitive>(cpuStream, std::move(condFn),
+                                                          std::move(bodyCondFn), nLoopVars, nExt,
+-                                                         counted, bodyHasControlFlow);
++                                                         counted, bodyHasControlFlow, hasEffects);
+ 
+         auto outputArrays =
+             mlx::core::array::make_arrays(std::move(outShapes), outDtypes, prim, primInputs);
+         for (size_t i = 0; i < nLoopVars; ++i)
+             values.emplace(ToKey(op->getResult(i)), std::move(outputArrays[i]));
++        if (hasEffects)
++            ctx.side_effects.push_back(std::move(outputArrays[nLoopVars]));
+         return true;
+     }
+ 
+@@ -1213,6 +1256,9 @@ bool HandleCase(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::ar
+                 if (!ExecuteRegion(branchRegion, branchArgs, results, branchCtx, &parentVals))
+                     throw std::runtime_error("CasePrimitive: branch " + std::to_string(b) +
+                                              " execution failed");
++                // Effect markers follow the branch results (see CasePrimitive).
++                results.insert(results.end(), branchCtx.side_effects.begin(),
++                               branchCtx.side_effects.end());
+                 return results;
+             };
+             compiledBranches.push_back(mlx::core::compile(std::move(branchFn)));
+@@ -1233,6 +1279,13 @@ bool HandleCase(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::ar
+                 return false;
+             }
+         }
++        bool hasEffects = false;
++        for (size_t b = 0; b < numBranches; ++b)
++            hasEffects = hasEffects || RegionHasHostEffects(branches[b]);
++        if (hasEffects) {
++            outShapes.push_back({});
++            outDtypes.push_back(mlx::core::bool_);
++        }
+ 
+         // Build primitive inputs: external values only (index is in extArrays).
+         std::vector<mlx::core::array> primInputs = extArrays;
+@@ -1249,6 +1302,8 @@ bool HandleCase(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::ar
+             mlx::core::array::make_arrays(std::move(outShapes), outDtypes, prim, primInputs);
+         for (size_t i = 0; i < nOutputs; ++i)
+             values.emplace(ToKey(op->getResult(i)), std::move(outputArrays[i]));
++        if (hasEffects)
++            ctx.side_effects.push_back(std::move(outputArrays[nOutputs]));
+         return true;
+     }
+ 
+@@ -1422,6 +1477,9 @@ bool HandleCustomCall(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+ 
+     auto callTargetName = customCallOp.getCallTargetName().str();
+ 
++    if (callTargetName == kHostCallbackTarget)
++        return HandleHostCallback(op, values, ctx);
++
+     // Handle Sharding annotation and SPMD shape ops - just pass input through
+     if (callTargetName == "Sharding" || callTargetName == "SPMDFullToShardShape" ||
+         callTargetName == "SPMDShardToFullShape") {
+diff --git a/src/pjrt_plugin/ops/handler_utils.h b/src/pjrt_plugin/ops/handler_utils.h
+index 683ef205bcd7388af8666579d05ff6a06c0e7a74..8eabdfcbf86e78aaca226699f6a0498adae6124e 100644
+--- a/src/pjrt_plugin/ops/handler_utils.h
++++ b/src/pjrt_plugin/ops/handler_utils.h
+@@ -40,6 +40,11 @@ struct ExecContext {
+     // a silent return-false. Empty only if no failure occurred. The
+     // dispatcher writes only when empty so the first error wins.
+     std::string error_message;
++    // Effect markers of side-effecting host callbacks (and of control-flow
++    // primitives whose regions contain them) emitted into this graph. They are
++    // evaluated together with the outputs so an effect runs even when none of
++    // its results is consumed.
++    std::vector<mlx::core::array> side_effects;
+ };
+ 
+ // Op handler function type
+@@ -162,6 +167,14 @@ bool ExecuteRegion(mlir::Region& region, std::vector<mlx::core::array>& args,
+ bool ExecuteFunction(mlir::func::FuncOp func, const std::vector<mlx::core::array>& inputs,
+                      std::vector<mlx::core::array>& outputs, ExecContext& ctx);
+ 
++// --- Host callbacks (defined in host_callback.cc) ---
++
++extern const char* const kHostCallbackTarget;
++bool IsHostCallback(mlir::Operation* op);
++// True if the region (transitively) contains a side-effecting host callback.
++bool RegionHasHostEffects(mlir::Region& region);
++bool HandleHostCallback(mlir::Operation* op, ValueMap& values, ExecContext& ctx);
++
+ // --- Shared enums/helpers (defined in gather_scatter.cc, used by reduction.cc) ---
+ 
+ enum class ScatterType { Update, Add, Sub, Mul, Min, Max, Unknown };
+diff --git a/src/pjrt_plugin/ops/host_callback.cc b/src/pjrt_plugin/ops/host_callback.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..85fba9c067495a171b2dcea9f68728e519ab73fc
+--- /dev/null
++++ b/src/pjrt_plugin/ops/host_callback.cc
+@@ -0,0 +1,262 @@
++// Host callbacks (jax.pure_callback, jax.experimental.io_callback,
++// jax.debug.callback/print, and therefore equinox.error_if) for phydrax-metal.
++//
++// The companion's Python registration lowers the callback primitives on the
++// "mps" platform to
++//
++//   stablehlo.custom_call @phydrax_metal.host_callback(token?, args...)
++//       {backend_config = "{\"callback_id\": N}", has_side_effect = ...}
++//
++// where N names a Python callable in the companion's process-local registry.
++// The registry holds only weak references; the strong reference is owned by
++// the JAX executable's host callbacks, so a callback lives exactly as long as
++// the executables that can invoke it. Callback ids are never serialized.
++//
++// Execution: a HostCallbackPrimitive on the CPU stream waits for producing GPU
++// work, hands contiguous host views of its operands to the installed
++// trampoline, and receives results in freshly allocated unified-memory
++// buffers. A Python exception becomes a C++ exception carrying its text, which
++// surfaces as the failing PJRT execution. Tokens are data dependencies only.
++// Side-effecting callbacks are recorded in ExecContext::side_effects so they
++// are evaluated even when no result is consumed.
++
++#include <mlx/allocator.h>
++#include <mlx/mlx.h>
++#include <mlx/primitives.h>
++
++#include <atomic>
++#include <cstdint>
++#include <cstring>
++#include <memory>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++#include "llvm/Support/JSON.h"
++#include "pjrt_plugin/ops/handler_utils.h"
++#include "stablehlo/dialect/StablehloOps.h"
++#include "xla/pjrt/c/pjrt_c_api.h"
++
++extern "C" {
++
++// One host buffer handed across the trampoline: row-major, contiguous. The
++// memory belongs to the plugin for the duration of the call only.
++struct PhydraxMetalHostBuffer {
++    void* data;
++    int32_t element_type;  // PJRT_Buffer_Type
++    int32_t rank;
++    const int64_t* dims;
++};
++
++// Returns 0 on success. On failure writes a NUL-terminated message (at most
++// error_size bytes including the terminator) and returns nonzero. Must not
++// throw or unwind across this boundary.
++typedef int32_t (*PhydraxMetalHostCallbackTrampoline)(
++    uint64_t callback_id, int32_t num_inputs, const PhydraxMetalHostBuffer* inputs,
++    int32_t num_outputs, const PhydraxMetalHostBuffer* outputs, char* error,
++    int32_t error_size);
++
++// Installs the trampoline once per process. Re-installing the same function is
++// a no-op; installing a different one is refused (returns nonzero) so a second
++// loader cannot silently take over callbacks of live executables.
++__attribute__((visibility("default"))) int32_t PhydraxMetal_SetHostCallbackTrampoline(
++    PhydraxMetalHostCallbackTrampoline trampoline);
++
++}  // extern "C"
++
++namespace {
++
++std::atomic<PhydraxMetalHostCallbackTrampoline> g_trampoline{nullptr};
++
++constexpr int32_t kErrorSize = 1 << 16;
++
++}  // namespace
++
++int32_t PhydraxMetal_SetHostCallbackTrampoline(PhydraxMetalHostCallbackTrampoline trampoline) {
++    if (trampoline == nullptr)
++        return 1;
++    PhydraxMetalHostCallbackTrampoline expected = nullptr;
++    if (g_trampoline.compare_exchange_strong(expected, trampoline))
++        return 0;
++    return expected == trampoline ? 0 : 1;
++}
++
++namespace jax_mps {
++
++const char* const kHostCallbackTarget = "phydrax_metal.host_callback";
++
++namespace {
++
++class HostCallbackPrimitive : public mlx::core::Primitive {
++public:
++    HostCallbackPrimitive(mlx::core::Stream stream, uint64_t callbackId, size_t numTokens,
++                          std::vector<int32_t> resultTypes)
++        : Primitive(stream),
++          callbackId_(callbackId),
++          numTokens_(numTokens),
++          resultTypes_(std::move(resultTypes)) {}
++
++    void eval_cpu(const std::vector<mlx::core::array>& inputs,
++                  std::vector<mlx::core::array>& outputs) override {
++        eval_impl(inputs, outputs);
++    }
++
++    void eval_gpu(const std::vector<mlx::core::array>& inputs,
++                  std::vector<mlx::core::array>& outputs) override {
++        eval_impl(inputs, outputs);
++    }
++
++    const char* name() const override {
++        return "PhydraxHostCallback";
++    }
++
++    bool is_equivalent(const mlx::core::Primitive& other) const override {
++        return false;
++    }
++
++private:
++    void eval_impl(const std::vector<mlx::core::array>& inputs,
++                   std::vector<mlx::core::array>& outputs) {
++        // Operands may still be in flight on the GPU stream: an evaluated
++        // status only means their kernels were encoded.
++        mlx::core::synchronize(mlx::core::default_stream(mlx::core::Device::gpu));
++
++        PhydraxMetalHostCallbackTrampoline trampoline = g_trampoline.load();
++        if (trampoline == nullptr)
++            throw std::runtime_error(
++                "phydrax-metal: host callback invoked but the phydrax_metal loader did not "
++                "install its callback bridge");
++
++        std::vector<std::vector<int64_t>> dims;
++        dims.reserve(inputs.size() + outputs.size());
++        std::vector<PhydraxMetalHostBuffer> hostInputs;
++        for (size_t i = numTokens_; i < inputs.size(); ++i) {
++            const auto& in = inputs[i];
++            if (!in.flags().row_contiguous)
++                throw std::runtime_error("phydrax-metal: host callback operand is not contiguous");
++            dims.emplace_back(in.shape().begin(), in.shape().end());
++            hostInputs.push_back({const_cast<void*>(static_cast<const void*>(in.data<char>())),
++                                  MlxDtypeToPjrt(in.dtype()),
++                                  static_cast<int32_t>(in.ndim()), dims.back().data()});
++        }
++
++        // outputs[0] is the effect marker; outputs[1..] are callback results.
++        outputs[0].set_data(mlx::core::allocator::malloc(outputs[0].nbytes()));
++        std::memset(outputs[0].data<char>(), 0, outputs[0].nbytes());
++        std::vector<PhydraxMetalHostBuffer> hostOutputs;
++        for (size_t i = 1; i < outputs.size(); ++i) {
++            auto& out = outputs[i];
++            out.set_data(mlx::core::allocator::malloc(out.nbytes()));
++            dims.emplace_back(out.shape().begin(), out.shape().end());
++            hostOutputs.push_back({out.data<char>(), resultTypes_[i - 1],
++                                   static_cast<int32_t>(out.ndim()), dims.back().data()});
++        }
++
++        std::string error(kErrorSize, '\0');
++        int32_t status = trampoline(callbackId_, static_cast<int32_t>(hostInputs.size()),
++                                    hostInputs.data(), static_cast<int32_t>(hostOutputs.size()),
++                                    hostOutputs.data(), error.data(), kErrorSize);
++        if (status != 0) {
++            error.resize(std::strlen(error.c_str()));
++            throw std::runtime_error("phydrax-metal: host callback failed: " + error);
++        }
++    }
++
++    uint64_t callbackId_;
++    size_t numTokens_;
++    std::vector<int32_t> resultTypes_;
++};
++
++}  // namespace
++
++bool IsHostCallback(mlir::Operation* op) {
++    auto call = mlir::dyn_cast<mlir::stablehlo::CustomCallOp>(op);
++    return call && call.getCallTargetName() == kHostCallbackTarget;
++}
++
++bool RegionHasHostEffects(mlir::Region& region) {
++    bool found = false;
++    region.walk([&](mlir::stablehlo::CustomCallOp call) {
++        if (call.getCallTargetName() == kHostCallbackTarget && call.getHasSideEffect()) {
++            found = true;
++            return mlir::WalkResult::interrupt();
++        }
++        return mlir::WalkResult::advance();
++    });
++    return found;
++}
++
++bool HandleHostCallback(mlir::Operation* op, ValueMap& values, ExecContext& ctx) {
++    auto call = mlir::cast<mlir::stablehlo::CustomCallOp>(op);
++
++    std::optional<uint64_t> callbackId;
++    if (auto config = op->getAttrOfType<mlir::StringAttr>("backend_config")) {
++        if (auto parsed = llvm::json::parse(config.getValue())) {
++            if (auto* object = parsed->getAsObject()) {
++                if (auto id = object->getInteger("callback_id"); id && *id > 0)
++                    callbackId = static_cast<uint64_t>(*id);
++            }
++        } else {
++            llvm::consumeError(parsed.takeError());
++        }
++    }
++    if (!callbackId) {
++        ctx.error_message = "phydrax-metal: host callback without a valid callback_id";
++        return false;
++    }
++
++    // Leading token operands order this call after earlier ordered effects.
++    std::vector<mlx::core::array> inputs;
++    size_t numTokens = 0;
++    for (mlir::Value operand : op->getOperands()) {
++        auto* value = RequireValue(values, operand, kHostCallbackTarget);
++        if (!value)
++            return false;
++        if (mlir::isa<mlir::stablehlo::TokenType>(operand.getType())) {
++            if (numTokens != inputs.size()) {
++                ctx.error_message = "phydrax-metal: host callback tokens must precede operands";
++                return false;
++            }
++            ++numTokens;
++            inputs.push_back(*value);
++        } else {
++            inputs.push_back(mlx::core::contiguous(*value));
++        }
++    }
++
++    std::vector<mlx::core::Shape> shapes{{}};
++    std::vector<mlx::core::Dtype> dtypes{mlx::core::bool_};
++    std::vector<int32_t> resultTypes;
++    for (mlir::Type type : op->getResultTypes()) {
++        if (mlir::isa<mlir::stablehlo::TokenType>(type))
++            continue;
++        auto tensor = mlir::dyn_cast<mlir::RankedTensorType>(type);
++        if (!tensor) {
++            ctx.error_message = "phydrax-metal: host callback results must be ranked tensors";
++            return false;
++        }
++        auto dtype = MlirTypeToMlxDtype(tensor.getElementType());
++        shapes.push_back(GetShape(tensor));
++        dtypes.push_back(dtype);
++        resultTypes.push_back(MlxDtypeToPjrt(dtype));
++    }
++
++    auto primitive = std::make_shared<HostCallbackPrimitive>(
++        mlx::core::default_stream(mlx::core::Device::cpu), *callbackId, numTokens,
++        std::move(resultTypes));
++    auto arrays = mlx::core::array::make_arrays(std::move(shapes), dtypes, primitive, inputs);
++
++    size_t next = 1;
++    for (mlir::OpResult result : op->getResults()) {
++        if (mlir::isa<mlir::stablehlo::TokenType>(result.getType())) {
++            values.emplace(ToKey(result), arrays[0]);
++        } else {
++            values.emplace(ToKey(result), arrays[next++]);
++        }
++    }
++    if (call.getHasSideEffect())
++        ctx.side_effects.push_back(arrays[0]);
++    return true;
++}
++
++}  // namespace jax_mps
+diff --git a/src/pjrt_plugin/pjrt_executable.cc b/src/pjrt_plugin/pjrt_executable.cc
+index 82c84da32de6e562783b72a757ef8e068ec6812b..790770e2e413c07f87067c18110eba48ec838030 100644
+--- a/src/pjrt_plugin/pjrt_executable.cc
++++ b/src/pjrt_plugin/pjrt_executable.cc
+@@ -216,13 +216,13 @@ PJRT_Error* MPS_LoadedExecutable_Execute(PJRT_LoadedExecutable_Execute_Args* arg
+     // eval failure) — surface it even when the output count happens to match
+     // (e.g. a zero-output executable whose handler still failed).
+     size_t expected_outputs = mlx_executable->num_outputs();
+-    if (result.buffers.size() != expected_outputs || !result.error_message.empty()) {
+-        std::string msg = "Output count mismatch: expected " + std::to_string(expected_outputs) +
+-                          ", got " + std::to_string(result.buffers.size());
+-        if (!result.error_message.empty()) {
+-            msg += " (" + result.error_message + ")";
+-        }
+-        return MakeError(msg);
++    if (!result.error_message.empty()) {
++        return MakeError("phydrax-metal: execution failed: " + result.error_message);
++    }
++    if (result.buffers.size() != expected_outputs) {
++        return MakeError("phydrax-metal: execution failed: expected " +
++                         std::to_string(expected_outputs) + " outputs, produced " +
++                         std::to_string(result.buffers.size()));
+     }
+ 
+     // Allocate output buffer array
+diff --git a/src/pjrt_plugin/stablehlo_parser.cc b/src/pjrt_plugin/stablehlo_parser.cc
+index 6f9ba9234facdafeb508407a153da60d939d8893..d58b9e742dc3f56b347813472bf76206c07a2cc3 100644
+--- a/src/pjrt_plugin/stablehlo_parser.cc
++++ b/src/pjrt_plugin/stablehlo_parser.cc
+@@ -26,6 +26,7 @@
+ #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+ #include "mlir/Transforms/Passes.h"
+ #include "pjrt_plugin/logging.h"
++#include "pjrt_plugin/ops/handler_utils.h"
+ #include "pjrt_plugin/ops/registry.h"
+ #include "pjrt_plugin/passes/stablehlo_inliner_interface.h"
+ #include "shardy/dialect/sdy/ir/dialect.h"
+@@ -361,6 +362,20 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+             "avoid jax-mps#170 miscompile\n");
+     }
+ 
++    module->walk([&](mlir::Operation* op) {
++        if (jax_mps::IsHostCallback(op)) {
++            result.has_host_callbacks = true;
++            return mlir::WalkResult::interrupt();
++        }
++        return mlir::WalkResult::advance();
++    });
++    if (result.has_host_callbacks && result.has_uninlined_call) {
++        result.refusal =
++            "phydrax-metal: host callbacks inside a non-inlinable function call are not "
++            "supported";
++        return result;
++    }
++
+     // Transfer ownership
+     result.context = std::move(context);
+     result.module = std::move(module);
+diff --git a/src/pjrt_plugin/stablehlo_parser.h b/src/pjrt_plugin/stablehlo_parser.h
+index ce3b1c93b42ff54c4c621e3566ff3e0002eae350..2f20f3e1fc2f3388f47cbb751bb08e24f5f92e3b 100644
+--- a/src/pjrt_plugin/stablehlo_parser.h
++++ b/src/pjrt_plugin/stablehlo_parser.h
+@@ -30,7 +30,12 @@ struct ParsedModule {
+     // the dead callees, so this flag flips true only for the rare residual call.
+     bool has_uninlined_call = false;
+ 
+-    // Check if parsing was successful
++    // True if the module contains phydrax_metal host callbacks. Such modules
++    // only run on the compiled path, where each callback executes exactly once
++    // per program execution; they never take the eager fallback, which could
++    // re-run effects.
++    bool has_host_callbacks = false;
++
+     // Reason the module was refused (unsupported precision, multi-device
+     // program, ...). Non-empty means compilation must fail with
+     // INVALID_ARGUMENT; the module is never executed in a narrowed form.

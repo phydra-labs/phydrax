@@ -666,6 +666,7 @@ def _native_contraction_plan(
     input_degree: int,
     output_degree: int,
     correlation: int,
+    dtype: np.dtype,
     /,
 ) -> SymmetricContractionPlan:
     return SymmetricContractionPlan.native(
@@ -674,6 +675,7 @@ def _native_contraction_plan(
         correlation,
         species_count=architecture.contraction_species_count,
         channel_count=architecture.channel_count,
+        dtype=dtype,
     )
 
 
@@ -734,6 +736,7 @@ def _native_layer(
                 architecture.edge_degree,
                 outputs.blocks[-1].degree,
                 architecture.correlations[index],
+                dtype,
             ),
             key=keys[5],
             dtype=dtype,
@@ -799,7 +802,7 @@ def _native_readout_product(
     return MACEInvariantReadoutProduct(
         SymmetricContraction.initialize(
             _native_contraction_plan(
-                architecture, architecture.hidden_degree, 0, correlation
+                architecture, architecture.hidden_degree, 0, correlation, dtype
             ),
             key=contraction_key,
             dtype=dtype,
@@ -1508,12 +1511,7 @@ def _check_layer(
 
 
 def _layer_compute_arrays(layer: MACELayer, /) -> tuple[Array, ...]:
-    """Original parameters and the runtime numerical tables this model owns.
-
-    Fixed symmetric-contraction coupling bases are excluded deliberately: their
-    owner stores them host-exact in float64 (their identity is that exact table)
-    and converts them explicitly to the feature dtype at evaluation.
-    """
+    """Original parameters and explicit compute-dtype numerical tables."""
     interaction = layer.interaction
     arrays: list[Array] = [
         *interaction.linear_up.weights,
@@ -1523,6 +1521,11 @@ def _layer_compute_arrays(layer: MACELayer, /) -> tuple[Array, ...]:
         *interaction.tensor_product.prepared.coefficients,
         *(() if interaction.density is None else interaction.density.weights),
         *(weight for block in layer.product.contraction.weights for weight in block),
+        *(
+            basis.coefficients
+            for block in layer.product.contraction.plan.bases
+            for basis in block
+        ),
         *layer.product.linear.weights,
     ]
     match layer.readout:
@@ -1537,6 +1540,11 @@ def _layer_compute_arrays(layer: MACELayer, /) -> tuple[Array, ...]:
     product = layer.readout_product
     if product is not None:
         arrays.extend(weight for block in product.contraction.weights for weight in block)
+        arrays.extend(
+            basis.coefficients
+            for block in product.contraction.plan.bases
+            for basis in block
+        )
         arrays.extend(product.linear.weights)
     pair = layer.pair_repulsion
     if pair is not None:

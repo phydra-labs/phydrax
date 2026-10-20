@@ -33,6 +33,33 @@ OrthogonalFamily: TypeAlias = Literal[
 LegendreRuleKind: TypeAlias = Literal["gauss", "radau", "lobatto"]
 
 
+def _validated_rule_arrays(
+    nodes: ArrayLike, weights: ArrayLike, measure_mass: float, /
+) -> tuple[np.ndarray, np.ndarray, float]:
+    nodes_host = np.asarray(nodes)
+    weights_host = np.asarray(weights)
+    if (
+        nodes_host.ndim != 1
+        or weights_host.shape != nodes_host.shape
+        or not nodes_host.size
+    ):
+        raise ValueError("Orthogonal rule nodes and weights must be nonempty vectors.")
+    if (
+        np.any(~np.isfinite(nodes_host))
+        or np.any(~np.isfinite(weights_host))
+        or np.any(weights_host <= 0.0)
+        or np.any(np.diff(nodes_host) <= 0.0)
+    ):
+        raise ValueError(
+            "Orthogonal rule nodes must increase and weights must be finite and positive."
+        )
+    mass = float(measure_mass)
+    tolerance = 64.0 * np.finfo(weights_host.dtype).eps * max(1, weights_host.size)
+    if not np.isclose(np.sum(weights_host), mass, rtol=tolerance, atol=tolerance):
+        raise ValueError("Orthogonal rule weights do not have their declared mass.")
+    return nodes_host, weights_host, mass
+
+
 class OrthogonalRuleData(StrictModule, NonTrainableState):
     """Prepared one-dimensional rule with explicit family and measure semantics."""
 
@@ -65,29 +92,9 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         endpoint_policy: str,
         backend: str,
     ) -> None:
-        nodes_host = np.asarray(nodes)
-        weights_host = np.asarray(weights)
-        if (
-            nodes_host.ndim != 1
-            or weights_host.shape != nodes_host.shape
-            or not nodes_host.size
-        ):
-            raise ValueError(
-                "Orthogonal rule nodes and weights must be nonempty vectors."
-            )
-        if (
-            np.any(~np.isfinite(nodes_host))
-            or np.any(~np.isfinite(weights_host))
-            or np.any(weights_host <= 0.0)
-            or np.any(np.diff(nodes_host) <= 0.0)
-        ):
-            raise ValueError(
-                "Orthogonal rule nodes must increase and weights must be finite and positive."
-            )
-        mass = float(measure_mass)
-        tolerance = 64.0 * np.finfo(weights_host.dtype).eps * max(1, weights_host.size)
-        if not np.isclose(np.sum(weights_host), mass, rtol=tolerance, atol=tolerance):
-            raise ValueError("Orthogonal rule weights do not have their declared mass.")
+        nodes_host, weights_host, mass = _validated_rule_arrays(
+            nodes, weights, measure_mass
+        )
         self.nodes = jnp.asarray(nodes_host)
         self.weights = jnp.asarray(weights_host)
         self.exact_degree = int(exact_degree)
@@ -390,6 +397,17 @@ def legendre_rule_data(
     )
 
 
+def standard_normal_hermite_host_arrays(
+    num_nodes: int, /, *, dtype: DTypeLike = np.float64
+) -> tuple[np.ndarray, np.ndarray]:
+    """Prepare validated standard-normal quadrature without device allocation."""
+    count = _node_count(num_nodes)
+    nodes, raw_weights = np.polynomial.hermite_e.hermegauss(count)
+    nodes_, weights_ = _canonical_arrays(nodes, raw_weights / np.sqrt(2.0 * np.pi), dtype)
+    _validated_rule_arrays(nodes_, weights_, 1.0)
+    return nodes_, weights_
+
+
 def standard_normal_hermite_rule_data(
     num_nodes: int,
     /,
@@ -398,12 +416,7 @@ def standard_normal_hermite_rule_data(
 ) -> OrthogonalRuleData:
     """Return a probabilists' Hermite rule normalized as a standard-normal expectation."""
     count = _node_count(num_nodes)
-    nodes, raw_weights = np.polynomial.hermite_e.hermegauss(count)
-    nodes_, weights_ = _canonical_arrays(
-        nodes,
-        raw_weights / np.sqrt(2.0 * np.pi),
-        dtype,
-    )
+    nodes_, weights_ = standard_normal_hermite_host_arrays(count, dtype=dtype)
     return OrthogonalRuleData(
         nodes_,
         weights_,
@@ -426,6 +439,7 @@ __all__ = [
     "legendre_rule_data",
     "standard_derivative_matrix",
     "standard_affine_coefficients",
+    "standard_normal_hermite_host_arrays",
     "standard_normal_hermite_rule_data",
     "standard_series_derivative_coefficients",
     "standard_series_value",

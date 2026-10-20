@@ -31,6 +31,57 @@ without explicit operator IDs and plain functions passed as operator-training
 `static_callables`. Checkpoints bound to such identities are refused with their
 usual identity-mismatch error; reprepare or restart them under 3.13.
 
+## Apple Silicon GPUs
+
+The Apple extra selects the exact wheel-only `phydrax-metal==0.2.2` companion:
+
+```bash
+pip install "phydrax[metal]"
+```
+
+This release command requires the matching companion to have been published.
+For local qualification, build the core and companion wheels, supply their
+wheel directory with `--find-links`, and use the installed-artifact tools
+documented in `native/metal/README.md`. No package publication is implied by a
+local build.
+
+| Boundary | Companion contract |
+| --- | --- |
+| Host | Apple Silicon, native Darwin arm64; not Rosetta or Intel macOS |
+| Python | Standard GIL-enabled CPython 3.13 only |
+| JAX / JAXlib | Exactly 0.12.0 / 0.12.0 |
+| Deployment target | macOS 14.0 minimum; actual OS/device qualification is recorded separately |
+| Runtime | `mps`, provider `phydrax-metal` |
+| Numerical profile | Explicit float32/complex64, exact int64/uint64, x64 enabled |
+| Topology | One local Apple GPU; no multi-device or multi-host claim |
+
+The extra has no platform marker that silently removes its companion on an
+unsupported host. A missing compatible wheel is an installation failure, not a
+successful CPU-only Metal install. Published wheels bundle their native library,
+Metal library, and licenses; ordinary installation does not require LLVM, CMake,
+Ninja, Homebrew, or an Xcode source build.
+
+Use `JAX_PLATFORMS=mps JAX_ENABLE_X64=1` before launching the program, or configure
+`RuntimeConfig(platforms=("mps",), enable_x64=True)` before numerical imports.
+Keep x64 enabled for exact indices; explicitly choose float32 model parameters,
+geometry, state, and coefficients. Float64/complex128 arrays and computations
+are refused, not silently narrowed. CPU execution remains available in a
+separate process selected with `JAX_PLATFORMS=cpu`.
+
+`phydrax.backends.metal_environment(initialize_backend=False)` inspects package,
+native asset, source/build, and JAX identity without initializing a device.
+The default `metal_environment()` additionally probes MPS. A successful unprobed
+report is not hardware qualification. Missing assets, mismatched versions,
+unsupported hosts, competing plugin entry points, and runtime identity mismatch
+retain their own diagnostic issues. Use a fresh environment without other Apple
+JAX plugins rather than relying on plugin discovery order; restart after fixing
+an installation.
+
+The catalog's Metal profiles remain candidates. Follow the
+[Apple GPU execution guide](guides_metal_execution.md) for the scientific scope,
+installed-wheel evidence, performance methodology, and unsupported operations.
+CUDA providers and Pallas CUDA kernels are not included in the Metal companion.
+
 ## NVIDIA GPUs
 
 On Linux, install the CUDA 13 extra. `uv pip install` or `uv add` can be

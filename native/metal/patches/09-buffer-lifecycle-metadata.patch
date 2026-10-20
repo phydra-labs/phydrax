@@ -1,0 +1,1935 @@
+diff --git a/src/pjrt_plugin/mlx_buffer.cc b/src/pjrt_plugin/mlx_buffer.cc
+index e5ad74a6e5b00418732c4f7b511c58062c49418f..279349f6fb7b77e15ab338dc44a785d518445713 100644
+--- a/src/pjrt_plugin/mlx_buffer.cc
++++ b/src/pjrt_plugin/mlx_buffer.cc
+@@ -3,15 +3,77 @@
+ #include "pjrt_plugin/mlx_buffer.h"
+ 
+ #include <xla/pjrt/c/pjrt_c_api.h>
++#include <mlx/backend/gpu/device_info.h>
++#include <mlx/memory.h>
++#include <mlx/scheduler.h>
+ 
++#include <algorithm>
+ #include <cstddef>
+ #include <cstring>
++#include <limits>
++#include <variant>
+ #include <stdexcept>
+ 
+ #include "pjrt_plugin/logging.h"
+ 
+ namespace jax_mps {
+ 
++namespace {
++
++// Used before constructing any MLX array or staging allocation.
++size_t CheckedByteSize(const std::vector<int64_t>& dims, size_t element_size,
++                       bool check_device_limit) {
++    bool empty = false;
++    for (int64_t dim : dims) {
++        if (dim < 0 || dim > std::numeric_limits<int>::max())
++            throw std::invalid_argument("phydrax-metal: unsupported buffer dimension " +
++                                        std::to_string(dim));
++        empty = empty || dim == 0;
++    }
++    size_t bytes = empty ? 0 : element_size;
++    for (int64_t dim : dims) {
++        if (__builtin_mul_overflow(bytes, static_cast<size_t>(dim), &bytes))
++            throw std::invalid_argument("phydrax-metal: buffer shape byte size overflows");
++    }
++    if (bytes > static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max()))
++        throw std::invalid_argument("phydrax-metal: buffer byte size exceeds pointer range");
++    if (check_device_limit) {
++        size_t limit = mlx::core::get_memory_limit();
++        const auto& info = mlx::core::gpu::device_info(0);
++        if (auto it = info.find("max_buffer_length"); it != info.end()) {
++            if (const auto* max_buffer = std::get_if<size_t>(&it->second))
++                limit = std::min(limit, *max_buffer);
++        }
++        if (bytes > limit)
++            throw std::invalid_argument("phydrax-metal: host transfer needs " +
++                std::to_string(bytes) + " bytes, above the Metal allocation limit of " +
++                std::to_string(limit) + " bytes; not allocated");
++    }
++    return bytes;
++}
++
++void CheckStridedOffsets(const std::vector<int64_t>& dims,
++                         const std::vector<int64_t>& strides, size_t element_size) {
++    if (strides.empty()) return;
++    if (strides.size() != dims.size())
++        throw std::invalid_argument("phydrax-metal: host stride rank does not match shape");
++    if (std::find(dims.begin(), dims.end(), 0) != dims.end()) return;
++    std::ptrdiff_t low = 0, high = 0;
++    for (size_t i = 0; i < dims.size(); ++i) {
++        std::ptrdiff_t extent;
++        if (__builtin_mul_overflow(static_cast<std::ptrdiff_t>(dims[i] - 1),
++                                   strides[i], &extent) ||
++            (extent < 0 ? __builtin_add_overflow(low, extent, &low)
++                        : __builtin_add_overflow(high, extent, &high)))
++            throw std::invalid_argument("phydrax-metal: host stride offset overflows");
++    }
++    if (high > std::numeric_limits<std::ptrdiff_t>::max() -
++                   static_cast<std::ptrdiff_t>(element_size - 1))
++        throw std::invalid_argument("phydrax-metal: host stride byte range overflows");
++}
++
++}  // namespace
++
+ mlx::core::Dtype PjrtDtypeToMlx(int dtype) {
+     switch (dtype) {
+         case PJRT_Buffer_Type_F32:
+@@ -83,30 +145,28 @@ int MlxDtypeToPjrt(mlx::core::Dtype dtype) {
+         case mlx::core::complex64:
+             return PJRT_Buffer_Type_C64;
+         default:
+-            MPS_LOG_ERROR("Unsupported MLX dtype\n");
+-            return PJRT_Buffer_Type_F32;
++            throw std::invalid_argument("phydrax-metal: unsupported MLX buffer dtype");
+     }
+ }
+ 
+ MlxBuffer::MlxBuffer(mlx::core::array arr) : array_(std::move(arr)), deleted_(false) {
+-    dtype_ = MlxDtypeToPjrt(array_.dtype());
+-
+-    // Copy shape
+-    dimensions_.clear();
+-    dimensions_.reserve(array_.ndim());
+-    size_t num_elements = 1;
+-    for (int i = 0; i < array_.ndim(); ++i) {
+-        dimensions_.push_back(array_.shape(i));
+-        num_elements *= array_.shape(i);
+-    }
+-
+-    byte_size_ = num_elements * GetMlxDtypeSize(array_.dtype());
++    dtype_ = MlxDtypeToPjrt(array().dtype());
++    dimensions_.assign(array().shape().begin(), array().shape().end());
++    byte_size_ = CheckedByteSize(dimensions_, GetMlxDtypeSize(array().dtype()), false);
++    minor_to_major_.reserve(dimensions_.size());
++    for (size_t i = dimensions_.size(); i > 0; --i)
++        minor_to_major_.push_back(static_cast<int64_t>(i - 1));
+ }
+ 
+ std::unique_ptr<MlxBuffer> MlxBuffer::FromHostBuffer(const void* data, int dtype,
+                                                      const std::vector<int64_t>& dims,
+                                                      const std::vector<int64_t>& byte_strides) {
+     mlx::core::Dtype mlx_dtype = PjrtDtypeToMlx(dtype);
++    const size_t elem_size = GetMlxDtypeSize(mlx_dtype);
++    const size_t bytes = CheckedByteSize(dims, elem_size, true);
++    CheckStridedOffsets(dims, byte_strides, elem_size);
++    if (bytes != 0 && !data)
++        throw std::invalid_argument("phydrax-metal: null host data for nonempty buffer");
+ 
+     // Convert int64_t dims to MLX Shape
+     mlx::core::Shape mlx_shape;
+@@ -114,7 +174,6 @@ std::unique_ptr<MlxBuffer> MlxBuffer::FromHostBuffer(const void* data, int dtype
+         mlx_shape.push_back(static_cast<int>(d));
+     }
+ 
+-    size_t elem_size = GetMlxDtypeSize(mlx_dtype);
+ 
+     // Handle zero-sized tensors - create empty array without reading data
+     bool is_zero_sized = false;
+@@ -158,11 +217,8 @@ std::unique_ptr<MlxBuffer> MlxBuffer::FromHostBuffer(const void* data, int dtype
+         // (for a reversed numpy view that is the last element of the base
+         // allocation), so `data + sum(index[d] * byte_strides[d])` stays inside
+         // the allocation as long as the arithmetic is signed. See jax-mps#234.
+-        size_t num_elements = 1;
+-        for (auto d : dims)
+-            num_elements *= d;
+-
+-        contiguous_buf.resize(num_elements * elem_size);
++        const size_t num_elements = bytes / elem_size;
++        contiguous_buf.resize(bytes);
+         size_t ndim = dims.size();
+         const auto* src = static_cast<const uint8_t*>(data);
+ 
+@@ -247,9 +303,7 @@ std::unique_ptr<MlxBuffer> MlxBuffer::FromHostBuffer(const void* data, int dtype
+                                    mlx_dtype);
+             break;
+         default:
+-            // Fallback - treat as float32
+-            arr = mlx::core::array(static_cast<const float*>(data), mlx_shape, mlx_dtype);
+-            break;
++            throw std::invalid_argument("phydrax-metal: unsupported host transfer dtype");
+     }
+ 
+     auto buffer = std::unique_ptr<MlxBuffer>(new MlxBuffer(std::move(arr)));
+@@ -263,8 +317,16 @@ std::unique_ptr<MlxBuffer> MlxBuffer::FromHostBuffer(const void* data, int dtype
+     return buffer;
+ }
+ 
+-std::unique_ptr<MlxBuffer> MlxBuffer::FromArray(mlx::core::array arr) {
++std::unique_ptr<MlxBuffer> MlxBuffer::FromArray(mlx::core::array arr, int logical_dtype) {
+     auto buffer = std::unique_ptr<MlxBuffer>(new MlxBuffer(std::move(arr)));
++    if (logical_dtype == PJRT_Buffer_Type_TOKEN) {
++        if (buffer->array().ndim() != 0)
++            throw std::runtime_error("phydrax-metal: invalid token backing array");
++        buffer->dtype_ = logical_dtype;
++        buffer->byte_size_ = 0;
++    } else if (logical_dtype != -1 && buffer->dtype_ != logical_dtype) {
++        throw std::runtime_error("phydrax-metal: compiled output dtype does not match MLX output");
++    }
+ 
+     MPS_LOG_DEBUG("Created MlxBuffer from array: dtype=%d, ndim=%zu, byte_size=%zu\n",
+                   buffer->dtype_, buffer->dimensions_.size(), buffer->byte_size_);
+@@ -286,6 +348,9 @@ size_t MlxBuffer::byte_size() const {
+ 
+ void MlxBuffer::Delete() {
+     deleted_ = true;
++    // Drop this owner's storage immediately. MLX graph references and PJRT
++    // completion events retain their own array ownership for in-flight work.
++    array_.reset();
+ }
+ 
+ bool MlxBuffer::IsDeleted() const {
+@@ -293,41 +358,20 @@ bool MlxBuffer::IsDeleted() const {
+ }
+ 
+ bool MlxBuffer::ToHostBuffer(void* dst) {
+-    if (deleted_) {
+-        MPS_LOG_ERROR("Attempting to read deleted buffer\n");
+-        return false;
+-    }
+-
+-    // Zero-sized tensors have nothing to copy
+-    if (byte_size_ == 0) {
+-        return true;
+-    }
+-
+-    if (!dst) {
+-        MPS_LOG_ERROR("Null destination buffer\n");
+-        return false;
+-    }
+-
+-    // Validate dtype consistency - the array's dtype should match what we stored
+-    int current_dtype = MlxDtypeToPjrt(array_.dtype());
+-    if (current_dtype != dtype_) {
+-        MPS_LOG_ERROR("Dtype mismatch: buffer has %d but array has %d\n", dtype_, current_dtype);
+-        return false;
+-    }
+-
+-    // Make the array contiguous (broadcasts create views that share memory)
+-    // and evaluate to ensure computation is complete
+-    try {
+-        array_ = mlx::core::contiguous(array_);
+-        mlx::core::eval(array_);
+-    } catch (const std::exception& e) {
+-        MPS_LOG_ERROR("MLX eval failed in ToHostBuffer: %s\n", e.what());
+-        return false;
+-    }
+-
+-    std::memcpy(dst, array_.data<void>(), byte_size_);
+-
+-    MPS_LOG_DEBUG("Copied %zu bytes to host\n", byte_size_);
++    if (deleted_)
++        throw std::runtime_error("phydrax-metal: cannot read a deleted buffer");
++    if (byte_size_ != 0 && !dst)
++        throw std::invalid_argument("phydrax-metal: null host destination");
++    if (dtype_ != PJRT_Buffer_Type_TOKEN && MlxDtypeToPjrt(array().dtype()) != dtype_)
++        throw std::runtime_error("phydrax-metal: buffer dtype metadata mismatch");
++
++    // Do not mutate the source's graph or swallow dependency/callback errors.
++    // Even empty outputs must wait: they may depend on effectful callbacks.
++    auto host_array = mlx::core::contiguous(array());
++    mlx::core::eval(host_array);
++    mlx::core::scheduler::rethrow_pending_exception();
++    if (byte_size_ != 0)
++        std::memcpy(dst, host_array.data<void>(), byte_size_);
+     return true;
+ }
+ 
+diff --git a/src/pjrt_plugin/mlx_buffer.h b/src/pjrt_plugin/mlx_buffer.h
+index c38e5b223b026e05c90bbc8662953240ad8ff892..507748d9d866b117ed555900dccbd39b6f9a26c7 100644
+--- a/src/pjrt_plugin/mlx_buffer.h
++++ b/src/pjrt_plugin/mlx_buffer.h
+@@ -5,6 +5,8 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <memory>
++#include <optional>
++#include <stdexcept>
+ #include <vector>
+ 
+ #include "pjrt_plugin/logging.h"
+@@ -38,8 +40,7 @@ inline size_t GetMlxDtypeSize(mlx::core::Dtype dtype) {
+         case mlx::core::bool_:
+             return 1;
+         default:
+-            MPS_LOG_ERROR("GetMlxDtypeSize: unknown dtype, defaulting to 4 bytes\n");
+-            return 4;
++            throw std::invalid_argument("phydrax-metal: unsupported MLX element size");
+     }
+ }
+ 
+@@ -53,31 +54,35 @@ public:
+                                                      const std::vector<int64_t>& byte_strides);
+ 
+     // Factory method to create buffer from existing MLX array
+-    static std::unique_ptr<MlxBuffer> FromArray(mlx::core::array arr);
++    static std::unique_ptr<MlxBuffer> FromArray(mlx::core::array arr, int logical_dtype = -1);
+ 
+     int dtype() const;
+     const std::vector<int64_t>& dimensions() const;
++    const std::vector<int64_t>& minor_to_major() const { return minor_to_major_; }
+     size_t byte_size() const;
+     void Delete();
+     bool IsDeleted() const;
+ 
+-    // Copy array data to host buffer. Returns true on success, false on error.
++    // Copy to host synchronously. Throws on a deleted buffer or dependency error.
+     bool ToHostBuffer(void* dst);
+ 
+     // Access the underlying MLX array
+     mlx::core::array& array() {
+-        return array_;
++        if (!array_) throw std::runtime_error("phydrax-metal: buffer has been deleted");
++        return *array_;
+     }
+     const mlx::core::array& array() const {
+-        return array_;
++        if (!array_) throw std::runtime_error("phydrax-metal: buffer has been deleted");
++        return *array_;
+     }
+ 
+ private:
+     // Private constructor that takes an initialized array
+     explicit MlxBuffer(mlx::core::array arr);
+ 
+-    mlx::core::array array_;
++    std::optional<mlx::core::array> array_;
+     std::vector<int64_t> dimensions_;
++    std::vector<int64_t> minor_to_major_;
+     int dtype_ = 0;
+     size_t byte_size_ = 0;
+     bool deleted_ = false;
+diff --git a/src/pjrt_plugin/mlx_executable.cc b/src/pjrt_plugin/mlx_executable.cc
+index 0b6014c38f66333237a1814c6ba325d3b0225a58..d0d22b637262b1e520fd18cfc42ae1f32c339cd3 100644
+--- a/src/pjrt_plugin/mlx_executable.cc
++++ b/src/pjrt_plugin/mlx_executable.cc
+@@ -2,17 +2,12 @@
+ 
+ #include "pjrt_plugin/mlx_executable.h"
+ 
+-#include <mlx/backend/metal/metal.h>
+ #include <mlx/compile.h>
+-#include <mlx/memory.h>
+ #include <mlx/mlx.h>
+-#include <mlx/primitives.h>
+ #include <mlx/scheduler.h>
+ 
+-#include <cctype>
+-#include <chrono>
++#include <algorithm>
+ #include <cstdint>
+-#include <cstdlib>
+ #include <cstring>
+ #include <functional>
+ #include <stdexcept>
+@@ -29,6 +24,7 @@
+ #include "pjrt_plugin/mlx_buffer.h"
+ #include "pjrt_plugin/ops/handler_utils.h"
+ #include "pjrt_plugin/type_utils.h"
++#include "stablehlo/dialect/StablehloOps.h"
+ 
+ namespace jax_mps {
+ 
+@@ -308,266 +304,8 @@ OpHandler MakeLogicalShiftHandler(const char* opName, BinaryMlxFn shiftFn) {
+     };
+ }
+ 
+-// Opt-in async dispatch (JAX_MPS_ASYNC_DISPATCH). When enabled, the final
+-// materialization of an executable's outputs uses mlx::core::async_eval instead
+-// of the blocking mlx::core::eval, letting Execute() return before the GPU
+-// finishes so the caller can dispatch the next computation (CPU/GPU pipelining).
+-// PJRT completion events (see PJRT_Event) track real GPU completion, so
+-// block_until_ready() and host reads remain correct.
+-//
+-// The value is parsed, not just tested for presence: "1"/"true"/"yes"/"on"
+-// (case-insensitive) enable it; anything else — including "0" and unset —
+-// disables it, so JAX_MPS_ASYNC_DISPATCH=0 turns it off as expected. Declared in
+-// the header so the startup notice (pjrt_client.cc) uses the identical check.
+-bool IsAsyncDispatchEnabled() {
+-    static const bool enabled = [] {
+-        const char* value = std::getenv("JAX_MPS_ASYNC_DISPATCH");
+-        if (value == nullptr) {
+-            return false;
+-        }
+-        auto iequals = [](const char* a, const char* b) {
+-            for (; *a != '\0' && *b != '\0'; ++a, ++b) {
+-                if (std::tolower(static_cast<unsigned char>(*a)) !=
+-                    std::tolower(static_cast<unsigned char>(*b))) {
+-                    return false;
+-                }
+-            }
+-            return *a == *b;
+-        };
+-        return iequals(value, "1") || iequals(value, "true") || iequals(value, "yes") ||
+-               iequals(value, "on");
+-    }();
+-    return enabled;
+-}
+-
+ namespace {
+ 
+-// Profiling infrastructure
+-using Clock = std::chrono::high_resolution_clock;
+-using Duration = std::chrono::duration<double, std::milli>;
+-
+-bool IsProfilingEnabled() {
+-    static bool enabled = std::getenv("MPS_PROFILE") != nullptr;
+-    return enabled;
+-}
+-
+-// Collect the outputs of control-flow primitives (while/case) reachable from
+-// `roots` in the lazy graph. Those primitives run a host-controlled loop via a
+-// nested synchronous mlx::core::eval(); that re-entrant eval is only safe under
+-// a *synchronous* outer pass. Under async dispatch we therefore resolve their
+-// dependency cones with a synchronous eval() first (see Execute), then
+-// async_eval() the remainder so independent/downstream work — and the next
+-// dispatch — still pipeline. Traversal stops at each control-flow output: a
+-// synchronous eval() of it pulls in its inputs (and any nested/upstream
+-// control flow) transitively.
+-std::vector<mlx::core::array> CollectControlFlowOutputs(
+-    const std::vector<mlx::core::array>& roots) {
+-    std::vector<mlx::core::array> found;
+-    std::unordered_set<std::uintptr_t> visited;
+-    std::vector<mlx::core::array> stack(roots.begin(), roots.end());
+-    while (!stack.empty()) {
+-        mlx::core::array arr = std::move(stack.back());
+-        stack.pop_back();
+-        if (!visited.insert(arr.id()).second)
+-            continue;
+-        if (!arr.has_primitive())
+-            continue;
+-        const char* pname = arr.primitive().name();
+-        if (std::strcmp(pname, "WhileLoop") == 0 || std::strcmp(pname, "Case") == 0) {
+-            found.push_back(std::move(arr));
+-            continue;
+-        }
+-        for (const auto& in : arr.inputs())
+-            stack.push_back(in);
+-    }
+-    return found;
+-}
+-
+-struct OpTimingStats {
+-    double total_ms = 0.0;
+-    size_t count = 0;
+-};
+-
+-struct ProfilingState {
+-    std::unordered_map<std::string, OpTimingStats> op_times;
+-    double dispatch_overhead_ms = 0.0;
+-    double eval_time_ms = 0.0;
+-    double total_execution_ms = 0.0;
+-    size_t execution_count = 0;
+-
+-    double cumulative_dispatch_ms = 0.0;
+-    double cumulative_eval_ms = 0.0;
+-    double cumulative_total_ms = 0.0;
+-
+-    Clock::time_point last_execute_end;
+-    double cumulative_between_calls_ms = 0.0;
+-    bool has_last_time = false;
+-
+-    void Reset() {
+-        op_times.clear();
+-        dispatch_overhead_ms = 0.0;
+-        eval_time_ms = 0.0;
+-        total_execution_ms = 0.0;
+-    }
+-
+-    void RecordOp(const std::string& name, double ms) {
+-        auto& stats = op_times[name];
+-        stats.total_ms += ms;
+-        stats.count++;
+-    }
+-
+-    void PrintSummary() {
+-        execution_count++;
+-        cumulative_dispatch_ms += dispatch_overhead_ms;
+-        cumulative_eval_ms += eval_time_ms;
+-        cumulative_total_ms += total_execution_ms;
+-
+-        if (execution_count % 1000 != 0) {
+-            return;
+-        }
+-
+-        fprintf(stderr, "\n=== MPS Final Summary (%zu executions) ===\n", execution_count);
+-        fprintf(stderr, "Total GPU time: %.0f ms (dispatch: %.0f ms, eval: %.0f ms)\n",
+-                cumulative_total_ms, cumulative_dispatch_ms, cumulative_eval_ms);
+-
+-        std::vector<std::pair<std::string, OpTimingStats>> sorted_ops(op_times.begin(),
+-                                                                      op_times.end());
+-        std::sort(sorted_ops.begin(), sorted_ops.end(), [](const auto& a, const auto& b) {
+-            return a.second.total_ms > b.second.total_ms;
+-        });
+-
+-        fprintf(stderr, "\nTop ops by dispatch time:\n");
+-        int shown = 0;
+-        for (const auto& [name, stats] : sorted_ops) {
+-            if (shown++ >= 5)
+-                break;
+-            fprintf(stderr, "  %-25s: %.1f ms (%zu calls)\n", name.c_str(), stats.total_ms,
+-                    stats.count);
+-        }
+-
+-        size_t peak_mem = mlx::core::get_peak_memory();
+-        fprintf(stderr, "Peak memory: %.0f MB\n", static_cast<double>(peak_mem) / 1e6);
+-        fprintf(stderr, "=========================================\n");
+-
+-        Reset();
+-    }
+-};
+-
+-ProfilingState& GetProfilingState() {
+-    static ProfilingState state;
+-    return state;
+-}
+-
+-// GPU trace capture, gated by JAX_MPS_GPU_CAPTURE=<path-to-.gputrace>.
+-//
+-// Captures a bounded window of Execute() dispatches into a single Metal trace
+-// document (openable in Xcode/Instruments) via MLX's pure-C++ wrappers around
+-// MTLCaptureManager. The window spans JAX_MPS_GPU_CAPTURE_DISPATCHES dispatches
+-// (default 1): capture starts before the first and stops after the last.
+-//
+-// Apple gates programmatic capture behind MTL_CAPTURE_ENABLED=1, which must be
+-// present in the environment at process start. We check it ourselves and
+-// disable capture with a clear message, rather than letting MLX's
+-// start_capture() throw mid-execution. (We still guard start_capture with a
+-// try/catch for the residual failure modes, e.g. an unwritable destination.)
+-//
+-// State is process-global and only meaningful for single-threaded debugging;
+-// concurrent Execute() calls would race the dispatch counter, which is
+-// acceptable for an opt-in capture tool.
+-struct GpuCaptureState {
+-    bool enabled = false;
+-    bool active = false;
+-    bool finished = false;
+-    std::string path;
+-    int total_dispatches = 1;
+-    int seen = 0;
+-
+-    // Call before eval. Returns true when capture is active for this dispatch,
+-    // in which case the caller MUST use a synchronous eval so the GPU work is
+-    // enclosed by the capture window (async_eval returns before completion).
+-    bool BeginDispatch() {
+-        if (!enabled || finished) {
+-            return false;
+-        }
+-        if (seen == 0) {
+-            try {
+-                mlx::core::metal::start_capture(path);
+-            } catch (const std::exception& e) {
+-                fprintf(stderr, "[JAX_MPS_GPU_CAPTURE] failed to start capture: %s\n", e.what());
+-                enabled = false;
+-                return false;
+-            }
+-            active = true;
+-            fprintf(stderr, "[JAX_MPS_GPU_CAPTURE] capturing %d dispatch(es) to %s\n",
+-                    total_dispatches, path.c_str());
+-        }
+-        return active;
+-    }
+-
+-    // Call after the dispatch's outputs are materialized. Finalizes the trace
+-    // once the window is full.
+-    void EndDispatch() {
+-        if (!active) {
+-            return;
+-        }
+-        if (++seen >= total_dispatches) {
+-            mlx::core::metal::stop_capture();
+-            active = false;
+-            finished = true;
+-            fprintf(stderr, "[JAX_MPS_GPU_CAPTURE] wrote trace to %s\n", path.c_str());
+-        }
+-    }
+-
+-    // Call on the eval error path. Stops and flushes an in-progress capture
+-    // unconditionally: EndDispatch only stops once the window is full, so a
+-    // multi-dispatch window interrupted by an exception would otherwise leave
+-    // MTLCaptureManager capturing indefinitely and never write the .gputrace.
+-    void AbortCapture() {
+-        if (!active) {
+-            return;
+-        }
+-        mlx::core::metal::stop_capture();
+-        active = false;
+-        finished = true;
+-        fprintf(stderr,
+-                "[JAX_MPS_GPU_CAPTURE] eval failed mid-capture; wrote partial trace to %s\n",
+-                path.c_str());
+-    }
+-};
+-
+-GpuCaptureState& GetGpuCaptureState() {
+-    static GpuCaptureState state = [] {
+-        GpuCaptureState s;
+-        const char* path = std::getenv("JAX_MPS_GPU_CAPTURE");
+-        if (path == nullptr || path[0] == '\0') {
+-            return s;  // disabled
+-        }
+-        // Apple's Metal runtime only honors programmatic capture when
+-        // MTL_CAPTURE_ENABLED=1 is set in the environment at process start;
+-        // otherwise startCapture fails. Match that exact gate so we skip
+-        // gracefully in the same cases Apple would reject.
+-        const char* cap = std::getenv("MTL_CAPTURE_ENABLED");
+-        const bool cap_enabled = cap != nullptr && std::strcmp(cap, "1") == 0;
+-        if (!cap_enabled) {
+-            fprintf(stderr,
+-                    "[JAX_MPS_GPU_CAPTURE] ignoring: Metal GPU capture requires "
+-                    "MTL_CAPTURE_ENABLED=1 in the environment at process start.\n");
+-            return s;
+-        }
+-        s.path = path;
+-        s.enabled = true;
+-        if (const char* n = std::getenv("JAX_MPS_GPU_CAPTURE_DISPATCHES")) {
+-            char* end = nullptr;
+-            const long parsed = std::strtol(n, &end, 10);
+-            if (end != n && *end == '\0' && parsed > 0) {
+-                s.total_dispatches = static_cast<int>(parsed);
+-            }
+-        }
+-        return s;
+-    }();
+-    return state;
+-}
+-
+ // --- Op dispatch table ---
+ 
+ const std::unordered_map<std::string, OpHandler>& GetOpHandlers() {
+@@ -636,14 +374,7 @@ bool DispatchOp(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::ar
+ 
+     bool result;
+     try {
+-        if (IsProfilingEnabled()) {
+-            auto start = Clock::now();
+-            result = it->second(op, values, outputs, ctx);
+-            auto end = Clock::now();
+-            GetProfilingState().RecordOp(opName, Duration(end - start).count());
+-        } else {
+-            result = it->second(op, values, outputs, ctx);
+-        }
++        result = it->second(op, values, outputs, ctx);
+     } catch (const std::exception& e) {
+         MPS_LOG_ERROR("Exception dispatching %s: %s\n", opName.c_str(), e.what());
+         if (ctx.error_message.empty()) {
+@@ -761,6 +492,14 @@ std::unique_ptr<MlxExecutable> MlxExecutable::Create(mps::ParsedModule parsed_mo
+     }
+ 
+     executable->parsed_module_ = std::move(parsed_module);
++    auto entry = executable->parsed_module_.entry_func;
++    for (unsigned i = 0; i < entry.getNumArguments(); ++i) {
++        auto donor = entry.getArgAttr(i, "jax.buffer_donor");
++        const auto donor_flag = mlir::dyn_cast_or_null<mlir::BoolAttr>(donor);
++        if (entry.getArgAttr(i, "tf.aliasing_output") ||
++            (donor && (!donor_flag || donor_flag.getValue())))
++            executable->donated_input_indices_.push_back(i);
++    }
+ 
+     auto funcType = executable->parsed_module_.entry_func.getFunctionType();
+     executable->num_outputs_ = funcType.getNumResults();
+@@ -774,10 +513,11 @@ std::unique_ptr<MlxExecutable> MlxExecutable::Create(mps::ParsedModule parsed_mo
+                 info.shape.push_back(dim);
+             }
+             executable->output_info_.push_back(info);
++        } else if (mlir::isa<mlir::stablehlo::TokenType>(resultType)) {
++            executable->output_info_.push_back({PJRT_Buffer_Type_TOKEN, {}});
+         } else {
+-            OutputInfo info;
+-            info.dtype = PJRT_Buffer_Type_F32;
+-            executable->output_info_.push_back(info);
++            executable->error_ = "phydrax-metal: unsupported compiled output type";
++            return executable;
+         }
+     }
+ 
+@@ -803,240 +543,124 @@ size_t MlxExecutable::num_outputs() const {
+ 
+ MlxExecuteResult MlxExecutable::Execute(const std::vector<MlxBuffer*>& inputs) {
+     MlxExecuteResult result;
+-    const bool profiling = IsProfilingEnabled();
+-    Clock::time_point exec_start;
+-    Clock::time_point dispatch_start;
+-    Clock::time_point dispatch_end;
+-    Clock::time_point eval_start;
+-    Clock::time_point eval_end;
+-    Clock::time_point exec_end;
+-
+-    if (profiling) {
+-        exec_start = Clock::now();
+-        auto& state = GetProfilingState();
+-        if (state.has_last_time) {
+-            state.cumulative_between_calls_ms +=
+-                Duration(exec_start - state.last_execute_end).count();
+-        }
+-    }
+-
+     if (!valid_) {
+-        MPS_LOG_ERROR("Cannot execute invalid executable: %s\n", error_.c_str());
++        result.error_message = error_.empty() ? "invalid executable" : error_;
+         return result;
+     }
+-
+-    MPS_LOG_DEBUG("Executing with %zu inputs\n", inputs.size());
+-
+     auto& block = parsed_module_.entry_func.front();
+-    size_t numArgs = block.getNumArguments();
+-
+-    if (inputs.size() != numArgs) {
+-        MPS_LOG_ERROR("Input count mismatch: expected %zu, got %zu\n", numArgs, inputs.size());
++    if (inputs.size() != block.getNumArguments()) {
++        result.error_message = "input count mismatch: expected " +
++            std::to_string(block.getNumArguments()) + ", got " + std::to_string(inputs.size());
+         return result;
+     }
+-
+-    std::vector<mlx::core::array> inputArrays;
+-    inputArrays.reserve(inputs.size());
++    std::vector<mlx::core::array> input_arrays;
++    input_arrays.reserve(inputs.size());
+     for (size_t i = 0; i < inputs.size(); ++i) {
+-        if (!inputs[i]) {
+-            MPS_LOG_ERROR("Null input buffer at index %zu\n", i);
++        if (!inputs[i] || inputs[i]->IsDeleted()) {
++            result.error_message = "null or deleted input at index " + std::to_string(i);
+             return result;
+         }
+-        inputArrays.push_back(inputs[i]->array());
++        if (mlir::isa<mlir::stablehlo::TokenType>(block.getArgument(i).getType()) &&
++            inputs[i]->array().ndim() != 0) {
++            // JAX seeds an ordered-effect token with an empty bool buffer.
++            // Internally tokens are scalar dependency markers, including when
++            // threaded through a zero-trip while loop. Preserve the incoming
++            // buffer's dependency rather than replacing it with a constant;
++            // never reshape an empty buffer or change tensor operand shapes.
++            input_arrays.push_back(
++                mlx::core::depends({mlx::core::array(false)}, {inputs[i]->array()})[0]);
++        } else {
++            input_arrays.push_back(inputs[i]->array());
++        }
+     }
+ 
+-    ExecContext ctx;
+-    ctx.module = *parsed_module_.module;
+-
+-    if (profiling) {
+-        dispatch_start = Clock::now();
+-    }
+     std::vector<mlx::core::array> outputs;
+-
+-    // Programs with host callbacks run only on the compiled path and are never
+-    // re-run eagerly: a callback executes exactly once per program execution.
+-    const bool hasHostCallbacks = parsed_module_.has_host_callbacks;
+-    static bool disable_compile = std::getenv("MPS_NO_COMPILE") != nullptr;
+-    {
+-        // Safety net: if a func.call survived inlining (a multi-block / control-
+-        // flow callee the inliner can't clone), use the eager path instead of
+-        // compile() (jax-mps#170). Single-block callees are inlined and compile.
+-        // (The parser refuses such modules when they contain host callbacks.)
+-        if (!compile_attempted_ && (hasHostCallbacks || !disable_compile) &&
+-            !parsed_module_.has_uninlined_call) {
+-            compile_attempted_ = true;
+-
+-            // Returns the entry results followed by the effect markers of
+-            // side-effecting host callbacks, which are evaluated with them.
+-            auto exec_fn =
+-                [this](
+-                    const std::vector<mlx::core::array>& inputs) -> std::vector<mlx::core::array> {
+-                std::vector<mlx::core::array> outs;
+-                ExecContext local_ctx;
+-                local_ctx.module = *parsed_module_.module;
+-                local_ctx.inside_compile = true;
+-
+-                if (!ExecuteFunction(parsed_module_.entry_func, inputs, outs, local_ctx)) {
+-                    throw std::runtime_error(local_ctx.error_message.empty()
+-                                                 ? "entry function failed to trace"
+-                                                 : local_ctx.error_message);
+-                }
+-                // Remember whether this graph contains control-flow primitives,
+-                // so the async path can skip the control-flow walk when it
+-                // doesn't (set during the compile trace; replays reuse it).
+-                has_control_flow_ = local_ctx.produced_control_flow;
+-                outs.insert(outs.end(), local_ctx.side_effects.begin(),
+-                            local_ctx.side_effects.end());
+-                return outs;
+-            };
+-
+-            try {
+-                // Public compile() overload wraps capturing closures in a
+-                // shared_ptr whose deleter calls compile_erase when the
+-                // returned std::function dies — eviction is tied to
+-                // compiled_fn_'s lifetime, no manual erase needed.
+-                compiled_fn_ = mlx::core::compile(exec_fn);
+-
+-                auto test_outputs = compiled_fn_(inputArrays);
+-                if (hasHostCallbacks) {
+-                    // Tracing succeeded. Evaluation (and any callback error)
+-                    // happens once, below; there is no fallback execution.
+-                    compile_succeeded_ = true;
+-                    outputs = std::move(test_outputs);
+-                } else if (!test_outputs.empty()) {
+-                    mlx::core::eval(test_outputs);
+-                    // An exception thrown by a primitive's eval on a stream
+-                    // worker thread is caught there (MLX patch 10) and parked;
+-                    // eval() above can complete without traversing an
+-                    // array::wait() that would rethrow it. Probe explicitly so
+-                    // a failed trace run triggers the catch below (falling back
+-                    // to the eager path) instead of returning outputs whose
+-                    // producing task died — i.e. never-written buffers. Also
+-                    // consumes the parked exception so it cannot poison the
+-                    // eager fallback run.
+-                    mlx::core::scheduler::rethrow_pending_exception();
+-                    compile_succeeded_ = true;
+-                    outputs = std::move(test_outputs);
+-                    MPS_LOG_INFO("MLX compile() succeeded - using compiled execution path\n");
+-                }
+-            } catch (const std::exception& e) {
+-                MPS_LOG_INFO("MLX compile() failed (%s), using direct path\n", e.what());
+-                compile_succeeded_ = false;
+-                if (hasHostCallbacks) {
+-                    result.error_message = e.what();
+-                    return result;
+-                }
++    bool dispatched = false;
++    const bool has_host_callbacks = parsed_module_.has_host_callbacks;
++    // Structural unsupported call forms take the direct native MLX path.
++    // Host callbacks must trace successfully and must never execute twice.
++    if (!compile_attempted_ && !parsed_module_.has_uninlined_call) {
++        compile_attempted_ = true;
++        auto execute = [this](const std::vector<mlx::core::array>& arrays) {
++            std::vector<mlx::core::array> values;
++            ExecContext context;
++            context.module = *parsed_module_.module;
++            context.inside_compile = true;
++            if (!ExecuteFunction(parsed_module_.entry_func, arrays, values, context))
++                throw std::runtime_error(context.error_message.empty()
++                    ? "entry function failed to trace" : context.error_message);
++            values.insert(values.end(), context.side_effects.begin(), context.side_effects.end());
++            return values;
++        };
++        try {
++            compiled_fn_ = mlx::core::compile(execute);
++            outputs = compiled_fn_(input_arrays);
++            compile_succeeded_ = true;
++            dispatched = true;
++        } catch (const std::exception& e) {
++            compile_succeeded_ = false;
++            compiled_fn_ = {};
++            if (has_host_callbacks) {
++                result.error_message = e.what();
++                return result;
+             }
+         }
+     }
+-
+-    if (compile_succeeded_ && outputs.empty()) {
+-        outputs = compiled_fn_(inputArrays);
+-    } else if (outputs.empty()) {
+-        if (hasHostCallbacks) {
+-            result.error_message =
+-                "phydrax-metal: a program with host callbacks failed to compile";
+-            return result;
+-        }
+-        if (!ExecuteFunction(parsed_module_.entry_func, inputArrays, outputs, ctx)) {
+-            MPS_LOG_ERROR("Failed to execute entry function\n");
+-            result.error_message = std::move(ctx.error_message);
+-            return result;
++    if (!dispatched) {
++        if (compile_succeeded_) {
++            outputs = compiled_fn_(input_arrays);
++        } else {
++            if (has_host_callbacks) {
++                result.error_message = "program with host callbacks failed to compile";
++                return result;
++            }
++            ExecContext context;
++            context.module = *parsed_module_.module;
++            if (!ExecuteFunction(parsed_module_.entry_func, input_arrays, outputs, context)) {
++                result.error_message = context.error_message.empty()
++                    ? "entry function execution failed" : context.error_message;
++                return result;
++            }
++            outputs.insert(outputs.end(), context.side_effects.begin(), context.side_effects.end());
+         }
+     }
+-
+-    if (profiling) {
+-        dispatch_end = Clock::now();
+-    }
+-
+     if (outputs.size() < num_outputs_) {
+-        MPS_LOG_ERROR("Output count mismatch: expected %zu, got %zu\n", num_outputs_,
+-                      outputs.size());
+-        if (result.error_message.empty()) {
+-            result.error_message = std::move(ctx.error_message);
+-        }
++        result.error_message = "output count mismatch: expected at least " +
++            std::to_string(num_outputs_) + ", got " + std::to_string(outputs.size());
+         return result;
+     }
+-
+-    if (profiling) {
+-        eval_start = Clock::now();
++    try {
++        // Fixed synchronous baseline: evaluate data AND effect markers before
++        // returning, including a callback program with no public data outputs.
++        if (!outputs.empty()) mlx::core::eval(outputs);
++        mlx::core::scheduler::rethrow_pending_exception();
++    } catch (const std::exception& e) {
++        result.error_message = std::string("eval: ") + e.what();
++        return result;
+     }
+-    // outputs = entry results followed by host-callback effect markers; all are
+-    // evaluated, then the markers are dropped.
+-    if (!outputs.empty()) {
+-        // While a GPU trace capture window is open we force a synchronous eval:
+-        // async_eval returns before the GPU work completes, which would leave
+-        // the dispatched command buffers outside the capture window.
+-        auto& capture = GetGpuCaptureState();
+-        const bool capturing = capture.BeginDispatch();
+-        try {
+-            if (IsAsyncDispatchEnabled() && !capturing) {
+-                // Resolve any control-flow primitives (while/case) synchronously
+-                // first: their internal re-entrant eval() deadlocks under an
+-                // async_eval outer pass (it waits cross-stream on a per-stream
+-                // completion event that the outer pass only signals at its end).
+-                // This syncs just the loop(s) and their dependency cone — which
+-                // a data-dependent loop forces to complete anyway — then the
+-                // async_eval below pipelines all independent/downstream work and
+-                // lets the next dispatch overlap.
+-                if (has_control_flow_) {
+-                    std::vector<mlx::core::array> cf_outputs = CollectControlFlowOutputs(outputs);
+-                    if (!cf_outputs.empty()) {
+-                        mlx::core::eval(cf_outputs);
+-                    }
+-                }
+-                mlx::core::async_eval(outputs);
+-            } else {
+-                mlx::core::eval(outputs);
++    result.buffers.reserve(num_outputs_);
++    for (size_t i = 0; i < num_outputs_; ++i) {
++        const auto& expected = output_info_[i];
++        const auto& shape = outputs[i].shape();
++        if (shape.size() != expected.shape.size() ||
++            !std::equal(shape.begin(), shape.end(), expected.shape.begin())) {
++            result.buffers.clear();
++            result.error_message = "compiled output " + std::to_string(i) +
++                " shape does not match MLX output: expected (";
++            for (size_t dim = 0; dim < expected.shape.size(); ++dim) {
++                if (dim) result.error_message += ", ";
++                result.error_message += std::to_string(expected.shape[dim]);
+             }
+-            // Surface exceptions parked by stream worker threads (MLX patch
+-            // 10) that the eval above did not traverse an array::wait() for.
+-            // Without this, a primitive whose eval threw (e.g. an unencodable
+-            // kernel) leaves its outputs as never-written buffers and the
+-            // Execute "succeeds" with garbage. Async note: work still in
+-            // flight after async_eval surfaces later parked exceptions at the
+-            // buffer/event wait, which goes through array::wait().
+-            mlx::core::scheduler::rethrow_pending_exception();
+-        } catch (const std::exception& e) {
+-            MPS_LOG_ERROR("MLX evaluation failed: %s\n", e.what());
+-            result.error_message = std::string("eval: ") + e.what();
+-            capture.AbortCapture();
++            result.error_message += "), got (";
++            for (size_t dim = 0; dim < shape.size(); ++dim) {
++                if (dim) result.error_message += ", ";
++                result.error_message += std::to_string(shape[dim]);
++            }
++            result.error_message += ")";
+             return result;
+         }
+-        capture.EndDispatch();
+-    }
+-    if (profiling) {
+-        eval_end = Clock::now();
+-    }
+-
+-    outputs.resize(num_outputs_, mlx::core::array(0.0F));
+-    for (auto& arr : outputs) {
+-        result.buffers.push_back(MlxBuffer::FromArray(std::move(arr)));
+-    }
+-
+-    if (profiling) {
+-        exec_end = Clock::now();
+-        auto& state = GetProfilingState();
+-        state.dispatch_overhead_ms = Duration(dispatch_end - dispatch_start).count();
+-        state.eval_time_ms = Duration(eval_end - eval_start).count();
+-        state.total_execution_ms = Duration(exec_end - exec_start).count();
+-        state.last_execute_end = exec_end;
+-        state.has_last_time = true;
+-
+-        static size_t slow_count = 0;
+-        static double slow_total_ms = 0;
+-        if (state.total_execution_ms > 100.0) {
+-            slow_count++;
+-            slow_total_ms += state.total_execution_ms;
+-            fprintf(stderr, "[COMPUTE #%zu] %.0f ms (eval: %.0f ms)\n", slow_count,
+-                    state.total_execution_ms, state.eval_time_ms);
+-        }
+-
+-        state.PrintSummary();
++        result.buffers.push_back(MlxBuffer::FromArray(std::move(outputs[i]), expected.dtype));
+     }
+-
+-    MPS_LOG_DEBUG("Execution complete with %zu outputs\n", result.buffers.size());
+-
+     return result;
+ }
+ 
+diff --git a/src/pjrt_plugin/mlx_executable.h b/src/pjrt_plugin/mlx_executable.h
+index f1ede6a9b165daa9a84a8e97befa2e9499756418..737c4548e717b11ded4e77205d4f2f800bc8b3d4 100644
+--- a/src/pjrt_plugin/mlx_executable.h
++++ b/src/pjrt_plugin/mlx_executable.h
+@@ -17,10 +17,6 @@ namespace jax_mps {
+ // Returns the set of op names that have handlers in the MLX executable
+ std::unordered_set<std::string> GetSupportedOpNames();
+ 
+-// True when JAX_MPS_ASYNC_DISPATCH is set to an enabling value
+-// ("1"/"true"/"yes"/"on", case-insensitive). Shared so the executable and the
+-// startup notice agree. Evaluated once and cached.
+-bool IsAsyncDispatchEnabled();
+ 
+ class MlxBuffer;
+ 
+@@ -48,6 +44,7 @@ public:
+     bool IsValid() const;
+     std::string error() const;
+     size_t num_outputs() const;
++    const std::vector<size_t>& donated_input_indices() const { return donated_input_indices_; }
+ 
+     // Get output metadata (dtype and shape for each output)
+     const std::vector<OutputInfo>& output_info() const {
+@@ -62,16 +59,13 @@ private:
+     mps::ParsedModule parsed_module_;
+     std::string error_;
+     bool valid_ = false;
++    std::vector<size_t> donated_input_indices_;
+     size_t num_outputs_ = 0;
+     std::vector<OutputInfo> output_info_;
+ 
+     // MLX compile support (thread safety via GetPjrtGlobalMutex at PJRT layer)
+     mutable bool compile_attempted_ = false;
+     mutable bool compile_succeeded_ = false;
+-    // True once the compiled graph is known to contain a control-flow primitive
+-    // (WhileLoop/Case). Gates the async-dispatch control-flow graph walk so pure
+-    // executables skip it entirely.
+-    mutable bool has_control_flow_ = false;
+     mutable std::function<std::vector<mlx::core::array>(const std::vector<mlx::core::array>&)>
+         compiled_fn_;
+ };
+diff --git a/src/pjrt_plugin/ops/control_flow.cc b/src/pjrt_plugin/ops/control_flow.cc
+index 310fb5cf15999c7318041e19f82548d7ec077ae1..dda81316ce69d4104f174dfba255ec2a5b1c12d9 100644
+--- a/src/pjrt_plugin/ops/control_flow.cc
++++ b/src/pjrt_plugin/ops/control_flow.cc
+@@ -2321,26 +2321,26 @@ bool HandleComposite(mlir::Operation* op, ValueMap& values, std::vector<mlx::cor
+     return true;
+ }
+ 
+-// Handlers for stablehlo.create_token / stablehlo.after_all.
+-//
+-// A token (!stablehlo.token) carries no data — it only threads execution
+-// ordering between side-effecting ops. The MPS backend executes a module's ops
+-// in program order, so the ordering is already implied; we just need a value to
+-// stand in for the token wherever it flows (notably as a jit function result or
+-// argument). We represent it as a trivial scalar placeholder. Output marshalling
+-// already maps non-tensor results to an f32 scalar buffer (see MlxExecutable),
+-// and input binding is by position, so a token round-trips as that scalar.
++// Tokens have no numerical payload. A scalar boolean carries their dependency
++// edges through the MLX graph; public PJRT metadata retains the TOKEN type.
+ bool HandleCreateToken(mlir::Operation* op, ValueMap& values,
+                        std::vector<mlx::core::array>& outputs, ExecContext& ctx) {
+-    values.emplace(ToKey(op->getResult(0)), mlx::core::array(0.0F));
++    values.emplace(ToKey(op->getResult(0)), mlx::core::array(false));
+     return true;
+ }
+ 
+-// after_all merges N input tokens into one. Tokens carry no data, so the merged
+-// token is just a fresh placeholder; the operand tokens are ignored.
++// Read every predecessor marker so joined effects retain their dependencies.
+ bool HandleAfterAll(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+                     ExecContext& ctx) {
+-    values.emplace(ToKey(op->getResult(0)), mlx::core::array(0.0F));
++    auto marker = mlx::core::array(false);
++    for (auto operand : op->getOperands()) {
++        auto* predecessor = RequireValue(values, operand, "stablehlo.after_all");
++        if (!predecessor)
++            return false;
++        marker = mlx::core::logical_or(
++            marker, mlx::core::astype(*predecessor, mlx::core::bool_));
++    }
++    values.emplace(ToKey(op->getResult(0)), std::move(marker));
+     return true;
+ }
+ 
+diff --git a/src/pjrt_plugin/pjrt_buffer.cc b/src/pjrt_plugin/pjrt_buffer.cc
+index b805b0604b8f42e07ec6cbd73e39901c0e3cb427..4fd7161eb47a28425623eb90c07f487984317d85 100644
+--- a/src/pjrt_plugin/pjrt_buffer.cc
++++ b/src/pjrt_plugin/pjrt_buffer.cc
+@@ -1,6 +1,8 @@
+ // PJRT Buffer API implementation for Metal backend
+ 
+ #include <string>
++#include <mlx/scheduler.h>
++#include <mlx/fast.h>
+ 
+ #include "pjrt_plugin/logging.h"
+ #include "pjrt_plugin/pjrt_mutex.h"
+@@ -20,9 +22,9 @@ PJRT_Error* MPS_Buffer_Destroy(PJRT_Buffer_Destroy_Args* args) {
+ // being deleted/destroyed concurrently with these calls.
+ 
+ PJRT_Error* MPS_Buffer_ElementType(PJRT_Buffer_ElementType_Args* args) {
+-    args->type = args->buffer && args->buffer->buffer
+-                     ? static_cast<PJRT_Buffer_Type>(args->buffer->buffer->dtype())
+-                     : PJRT_Buffer_Type_F32;
++    if (!args->buffer || !args->buffer->buffer)
++        return MakeError("Null buffer", PJRT_Error_Code_INVALID_ARGUMENT);
++    args->type = static_cast<PJRT_Buffer_Type>(args->buffer->buffer->dtype());
+     return nullptr;
+ }
+ 
+@@ -57,7 +59,15 @@ PJRT_Error* MPS_Buffer_DynamicDimensionIndices(PJRT_Buffer_DynamicDimensionIndic
+ }
+ 
+ PJRT_Error* MPS_Buffer_GetMemoryLayout(PJRT_Buffer_GetMemoryLayout_Args* args) {
+-    args->layout.type = PJRT_Buffer_MemoryLayout_Type_Strides;
++    if (!args->buffer || !args->buffer->buffer)
++        return MakeError("Null buffer", PJRT_Error_Code_INVALID_ARGUMENT);
++    const auto& order = args->buffer->buffer->minor_to_major();
++    args->layout = {};
++    args->layout.struct_size = PJRT_Buffer_MemoryLayout_STRUCT_SIZE;
++    args->layout.type = PJRT_Buffer_MemoryLayout_Type_Tiled;
++    args->layout.tiled.struct_size = PJRT_Buffer_MemoryLayout_Tiled_STRUCT_SIZE;
++    args->layout.tiled.minor_to_major = order.data();
++    args->layout.tiled.minor_to_major_size = order.size();
+     return nullptr;
+ }
+ 
+@@ -104,6 +114,7 @@ PJRT_Error* MPS_Buffer_Delete(PJRT_Buffer_Delete_Args* args) {
+ 
+ static PJRT_Error* CopyBuffer(PJRT_Buffer* src, PJRT_Buffer** dst_out) {
+     std::scoped_lock lock(GetPjrtGlobalMutex());
++    *dst_out = nullptr;
+     if (!src || !src->buffer) {
+         return MakeError("Buffer copy: source buffer is null");
+     }
+@@ -111,12 +122,29 @@ static PJRT_Error* CopyBuffer(PJRT_Buffer* src, PJRT_Buffer** dst_out) {
+         return MakeError("Buffer copy: source buffer has been deleted");
+     }
+ 
+-    // Create a deep copy via MLX copy()
++    // Explicit PJRT copies own independent Metal storage.
+     try {
+-        auto copied = mlx::core::copy(src->buffer->array());
++        const auto& source = src->buffer->array();
++        const auto shape = source.shape();
++        const auto kernel_shape = shape.empty() ? mlx::core::Shape{1} : shape;
++        auto input = shape.empty() ? mlx::core::reshape(source, kernel_shape) : source;
++        const size_t elements = source.size();
++        // MLX copy() aliases storage. Copy without arithmetic, preserving signed
++        // zero, NaNs and exact integers. The shader loop has bounded working set.
++        const std::string code =
++            "for (ulong i = thread_position_in_grid.x; i < " +
++            std::to_string(elements) +
++            "ul; i += 65536ul) { dst[i] = src[i]; }";
++        auto kernel = mlx::core::fast::metal_kernel(
++            "phydrax_buffer_copy", {"src"}, {"dst"}, code, "", true);
++        auto copied = elements == 0 ? mlx::core::zeros(shape, source.dtype()) :
++            kernel({input}, {kernel_shape}, {source.dtype()}, {65536, 1, 1},
++                   {256, 1, 1}, {}, std::nullopt, false, {}).front();
++        if (shape.empty()) copied = mlx::core::reshape(copied, shape);
+         mlx::core::eval(copied);
++        mlx::core::scheduler::rethrow_pending_exception();
+ 
+-        auto new_buffer = jax_mps::MlxBuffer::FromArray(std::move(copied));
++        auto new_buffer = jax_mps::MlxBuffer::FromArray(std::move(copied), src->buffer->dtype());
+         if (!new_buffer) {
+             return MakeError("Buffer copy: failed to create copy");
+         }
+@@ -141,14 +169,58 @@ PJRT_Error* MPS_Buffer_CopyToMemory(PJRT_Buffer_CopyToMemory_Args* args) {
+ 
+ PJRT_Error* MPS_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
+     std::scoped_lock lock(GetPjrtGlobalMutex());
+-    if (args->src && args->src->buffer && args->dst) {
+-        args->src->buffer->ToHostBuffer(args->dst);
++    args->event = nullptr;
++    if (!args->src || !args->src->buffer)
++        return MakeError("Host read: null source buffer", PJRT_Error_Code_INVALID_ARGUMENT);
++    const auto& buffer = *args->src->buffer;
++    if (buffer.IsDeleted())
++        return MakeError("Host read: source buffer has been deleted",
++                         PJRT_Error_Code_FAILED_PRECONDITION);
++    if (args->host_layout) {
++        const auto& layout = *args->host_layout;
++        const auto& dims = buffer.dimensions();
++        bool dense = true;
++        if (layout.type == PJRT_Buffer_MemoryLayout_Type_Tiled) {
++            const auto& tiled = layout.tiled;
++            dense = tiled.num_tiles == 0 && tiled.minor_to_major_size == dims.size() &&
++                    (dims.empty() || tiled.minor_to_major);
++            for (size_t i = 0; dense && i < dims.size(); ++i)
++                dense = tiled.minor_to_major[i] == static_cast<int64_t>(dims.size() - i - 1);
++        } else if (layout.type == PJRT_Buffer_MemoryLayout_Type_Strides) {
++            const auto& strides = layout.strides;
++            dense = strides.num_byte_strides == dims.size() &&
++                    (dims.empty() || strides.byte_strides);
++            int64_t expected = buffer.dtype() == PJRT_Buffer_Type_TOKEN ? 0 :
++                jax_mps::GetMlxDtypeSize(jax_mps::PjrtDtypeToMlx(buffer.dtype()));
++            for (size_t i = dims.size(); dense && i > 0; --i) {
++                dense = dims[i - 1] <= 1 || strides.byte_strides[i - 1] == expected;
++                if (__builtin_mul_overflow(expected, dims[i - 1], &expected))
++                    dense = false;
++            }
++        } else {
++            dense = false;
++        }
++        if (!dense)
++            return MakeError("Host read: only untiled row-major host layout is supported",
++                             PJRT_Error_Code_UNIMPLEMENTED);
++    }
++    const size_t needed = buffer.byte_size();
++    if (!args->dst) {
++        args->dst_size = needed;
++        args->event = new PJRT_Event();
++        return nullptr;
++    }
++    if (args->dst_size < needed)
++        return MakeError("Host read: destination is smaller than the buffer",
++                         PJRT_Error_Code_INVALID_ARGUMENT);
++    try {
++        if (!args->src->buffer->ToHostBuffer(args->dst))
++            return MakeError("Host read: MLX transfer failed");
++        args->event = new PJRT_Event();
++        return nullptr;
++    } catch (const std::exception& e) {
++        return MakeError(std::string("Host read: ") + e.what());
+     }
+-
+-    // ToHostBuffer already eval'd and copied to host, so the transfer is done.
+-    args->event = new PJRT_Event();
+-
+-    return nullptr;
+ }
+ 
+ PJRT_Error* MPS_Buffer_IsOnCpu(PJRT_Buffer_IsOnCpu_Args* args) {
+@@ -158,33 +230,42 @@ PJRT_Error* MPS_Buffer_IsOnCpu(PJRT_Buffer_IsOnCpu_Args* args) {
+ 
+ PJRT_Error* MPS_Buffer_ReadyEvent(PJRT_Buffer_ReadyEvent_Args* args) {
+     std::scoped_lock lock(GetPjrtGlobalMutex());
+-    std::vector<mlx::core::array> arrays;
+-    if (args->buffer && args->buffer->buffer && !args->buffer->buffer->IsDeleted()) {
+-        arrays.push_back(args->buffer->buffer->array());
++    args->event = nullptr;
++    if (!args->buffer || !args->buffer->buffer)
++        return MakeError("Ready event: null buffer", PJRT_Error_Code_INVALID_ARGUMENT);
++    if (args->buffer->buffer->IsDeleted())
++        return MakeError("Ready event: buffer has been deleted",
++                         PJRT_Error_Code_FAILED_PRECONDITION);
++    try {
++        std::vector<mlx::core::array> arrays{args->buffer->buffer->array()};
++        args->event = new PJRT_Event(std::move(arrays));
++        return nullptr;
++    } catch (const std::exception& e) {
++        return MakeError(std::string("Ready event: ") + e.what());
+     }
+-    args->event = new PJRT_Event(std::move(arrays));
+-    return nullptr;
+ }
+ 
+ PJRT_Error* MPS_Buffer_UnsafePointer(PJRT_Buffer_UnsafePointer_Args* args) {
+-    args->buffer_pointer = 0;
+-    return nullptr;
++    return MakeError("Metal buffers do not expose a host/device pointer; DLPack export is unsupported",
++                     PJRT_Error_Code_UNIMPLEMENTED);
+ }
+ 
+ PJRT_Error* MPS_Buffer_IncreaseExternalReferenceCount(
+     PJRT_Buffer_IncreaseExternalReferenceCount_Args* args) {
+-    return nullptr;
++    return MakeError("Metal external references and DLPack export are unsupported",
++                     PJRT_Error_Code_UNIMPLEMENTED);
+ }
+ 
+ PJRT_Error* MPS_Buffer_DecreaseExternalReferenceCount(
+     PJRT_Buffer_DecreaseExternalReferenceCount_Args* args) {
+-    return nullptr;
++    return MakeError("Metal external references and DLPack export are unsupported",
++                     PJRT_Error_Code_UNIMPLEMENTED);
+ }
+ 
+ PJRT_Error* MPS_Buffer_OpaqueDeviceMemoryDataPointer(
+     PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args* args) {
+-    args->device_memory_ptr = nullptr;
+-    return nullptr;
++    return MakeError("Metal buffers do not expose an opaque device memory pointer",
++                     PJRT_Error_Code_UNIMPLEMENTED);
+ }
+ 
+ // ============================================================================
+diff --git a/src/pjrt_plugin/pjrt_event.cc b/src/pjrt_plugin/pjrt_event.cc
+index 46c2526c5e3a4a89dfa776d43a9288c217315767..53a5c0c077bc9874843139b18f4c974778269655 100644
+--- a/src/pjrt_plugin/pjrt_event.cc
++++ b/src/pjrt_plugin/pjrt_event.cc
+@@ -1,10 +1,5 @@
+-// PJRT Event API implementation for Metal backend.
+-//
+-// Events are backed by MLX stream events (see PJRT_Event in pjrt_types.h). The
+-// implementation here only ever touches the snapshotted mlx::core::Event
+-// copies, which wrap thread-safe MTLSharedEvents — it never reads or mutates an
+-// mlx::core::array, so the completion machinery is safe to run on a background
+-// thread concurrently with the main dispatch thread.
++// PJRT completion events retain storage and persistent dependency error status.
++#include <mlx/scheduler.h>
+ 
+ #include <condition_variable>
+ #include <deque>
+@@ -12,181 +7,191 @@
+ #include <mutex>
+ #include <string>
+ #include <thread>
++#include <stdexcept>
+ #include <utility>
+ #include <vector>
+ 
+-#include "pjrt_plugin/logging.h"
+ #include "pjrt_plugin/pjrt_types.h"
+ 
++struct PJRT_Event::State {
++    std::mutex mu;
++    std::condition_variable cv;
++    std::vector<mlx::core::array> arrays;
++    std::vector<mlx::core::Event> events;
++    std::vector<std::pair<PJRT_Event_OnReadyCallback, void*>> callbacks;
++    bool ready = false;
++    std::string error;
++};
++
+ namespace {
+ 
+-// A single shared background thread that waits on MLX events and then fires
+-// PJRT OnReady callbacks. GPU work on a stream completes in submission order,
+-// so serial processing of the queue is both correct and efficient. The service
+-// is an intentionally-leaked singleton: the worker loops until process exit,
+-// which sidesteps any static-destruction-order hazards with Metal teardown.
++PJRT_Error* CompletionError(const std::string& error) {
++    return error.empty() ? nullptr : MakeError("Metal completion: " + error);
++}
++
++// Snapshot array events on the dispatch thread, then only touch thread-safe
++// event handles on the worker. The shared state outlives public event deletion.
+ class CompletionService {
+ public:
+     CompletionService() : worker_([this] { Run(); }) {}
+ 
+-    void Enqueue(std::vector<mlx::core::Event> events, PJRT_Event_OnReadyCallback callback,
+-                 void* user_arg) {
++    void Enqueue(std::shared_ptr<PJRT_Event::State> state) {
+         {
+-            std::scoped_lock lk(mu_);
+-            queue_.push_back({std::move(events), callback, user_arg});
++            std::scoped_lock lock(mu_);
++            queue_.push_back(std::move(state));
+         }
+         cv_.notify_one();
+     }
+ 
+ private:
+-    struct Entry {
+-        std::vector<mlx::core::Event> events;
+-        PJRT_Event_OnReadyCallback callback;
+-        void* user_arg;
+-    };
+-
+     void Run() {
+         for (;;) {
+-            Entry entry;
++            std::shared_ptr<PJRT_Event::State> state;
+             {
+-                std::unique_lock<std::mutex> lk(mu_);
+-                cv_.wait(lk, [this] { return !queue_.empty(); });
+-                entry = std::move(queue_.front());
++                std::unique_lock lock(mu_);
++                cv_.wait(lock, [this] { return !queue_.empty(); });
++                state = std::move(queue_.front());
+                 queue_.pop_front();
+             }
+-
+-            PJRT_Error* error = nullptr;
+-            try {
+-                for (auto& event : entry.events) {
+-                    if (event.valid()) {
+-                        event.wait();
+-                    }
++            std::string error;
++            // Wait every dependency even if one fails, so releasing ownership
++            // never races remaining GPU work. MLX worker failures are parked
++            // by the native scheduler patch and must be checked explicitly.
++            for (auto& event : state->events) {
++                try {
++                    event.wait();
++                } catch (const std::exception& e) {
++                    if (error.empty()) error = e.what();
++                } catch (...) {
++                    if (error.empty()) error = "unknown dependency failure";
+                 }
++            }
++            try {
++                mlx::core::scheduler::rethrow_pending_exception();
+             } catch (const std::exception& e) {
+-                error = MakeError(std::string("async completion: ") + e.what(),
+-                                  PJRT_Error_Code_INTERNAL);
++                if (error.empty()) error = e.what();
++            } catch (...) {
++                if (error.empty()) error = "unknown MLX worker failure";
+             }
+-            // PJRT contract: the callback takes ownership of `error`.
+-            entry.callback(error, entry.user_arg);
++            std::vector<std::pair<PJRT_Event_OnReadyCallback, void*>> callbacks;
++            {
++                std::scoped_lock lock(state->mu);
++                state->error = std::move(error);
++                state->ready = true;
++                callbacks = std::move(state->callbacks);
++            }
++            state->cv.notify_all();
++            // Never invoke framework callbacks under the state/queue locks.
++            // Each callback takes ownership of its own independent error.
++            for (const auto& callback : callbacks)
++                callback.first(CompletionError(state->error), callback.second);
+         }
+     }
+ 
+     std::mutex mu_;
+     std::condition_variable cv_;
+-    std::deque<Entry> queue_;
++    std::deque<std::shared_ptr<PJRT_Event::State>> queue_;
+     std::thread worker_;
+ };
+ 
+ CompletionService& GetCompletionService() {
+-    static CompletionService* service = new CompletionService();  // intentionally leaked
++    // Keep the service alive through Metal/framework static teardown.
++    static auto* service = new CompletionService();
+     return *service;
+ }
+ 
+ }  // namespace
+ 
+-// ============================================================================
+-// PJRT_Event method implementations
+-// ============================================================================
+-
+ PJRT_Event::PJRT_Event(std::vector<mlx::core::array> arrays) {
+-    for (auto& array : arrays) {
+-        const mlx::core::Event& event = array.event();
+-        if (event.valid()) {
+-            events_.push_back(event);
+-        }
++    if (arrays.empty()) return;
++    auto state = std::make_shared<State>();
++    state->arrays = std::move(arrays);
++    for (const auto& array : state->arrays) {
++        if (array.event().valid() && !array.event().is_signaled())
++            state->events.push_back(array.event());
+     }
+-    ready_ = events_.empty();
++    if (state->events.empty()) {
++        // Synchronous evaluation has already surfaced worker errors.
++        state->ready = true;
++    } else {
++        GetCompletionService().Enqueue(state);
++    }
++    state_ = std::move(state);
+ }
+ 
+ bool PJRT_Event::IsReady() {
+-    std::scoped_lock lk(mu_);
+-    if (ready_) {
+-        return true;
+-    }
+-    for (auto& event : events_) {
+-        if (event.valid() && !event.is_signaled()) {
+-            return false;
+-        }
+-    }
+-    ready_ = true;
+-    return true;
++    if (!state_) return true;
++    std::scoped_lock lock(state_->mu);
++    return state_->ready;
+ }
+ 
+ void PJRT_Event::Await() {
+-    std::vector<mlx::core::Event> snapshot;
+-    {
+-        std::scoped_lock lk(mu_);
+-        if (ready_) {
+-            return;
+-        }
+-        snapshot = events_;  // cheap: shared handles
+-    }
+-    // Wait outside the lock so concurrent IsReady()/OnReady() are not blocked.
+-    for (auto& event : snapshot) {
+-        if (event.valid()) {
+-            event.wait();
+-        }
+-    }
+-    std::scoped_lock lk(mu_);
+-    ready_ = true;
++    if (!state_) return;
++    std::unique_lock lock(state_->mu);
++    state_->cv.wait(lock, [this] { return state_->ready; });
++    if (!state_->error.empty()) throw std::runtime_error(state_->error);
++}
++
++std::string PJRT_Event::Error() {
++    if (!state_) return {};
++    std::scoped_lock lock(state_->mu);
++    if (!state_->ready) throw std::logic_error("event is not ready");
++    return state_->error;
+ }
+ 
+ void PJRT_Event::OnReady(PJRT_Event_OnReadyCallback callback, void* user_arg) {
+-    if (!callback) {
+-        return;
+-    }
+-    std::vector<mlx::core::Event> snapshot;
+-    {
+-        std::scoped_lock lk(mu_);
+-        if (!ready_) {
+-            snapshot = events_;
++    if (!callback) throw std::invalid_argument("null event callback");
++    std::string error;
++    if (state_) {
++        std::scoped_lock lock(state_->mu);
++        if (!state_->ready) {
++            state_->callbacks.emplace_back(callback, user_arg);
++            return;
+         }
++        error = state_->error;
+     }
+-    if (snapshot.empty()) {
+-        callback(nullptr, user_arg);
+-        return;
+-    }
+-    GetCompletionService().Enqueue(std::move(snapshot), callback, user_arg);
++    callback(CompletionError(error), user_arg);
+ }
+ 
+-// ============================================================================
+-// Event C API
+-// ============================================================================
+-
+ PJRT_Error* MPS_Event_Destroy(PJRT_Event_Destroy_Args* args) {
+     delete args->event;
+     return nullptr;
+ }
+ 
+ PJRT_Error* MPS_Event_IsReady(PJRT_Event_IsReady_Args* args) {
+-    args->is_ready = args->event ? args->event->IsReady() : true;
++    if (!args->event) return MakeError("Null event", PJRT_Error_Code_INVALID_ARGUMENT);
++    args->is_ready = args->event->IsReady();
+     return nullptr;
+ }
+ 
+ PJRT_Error* MPS_Event_Error(PJRT_Event_Error_Args* args) {
+-    // Runtime GPU-execution errors are not currently captured here (MLX surfaces
+-    // most failures synchronously during graph building). Returns no error.
+-    return nullptr;
++    if (!args->event) return MakeError("Null event", PJRT_Error_Code_INVALID_ARGUMENT);
++    try {
++        return CompletionError(args->event->Error());
++    } catch (const std::logic_error& e) {
++        return MakeError(e.what(), PJRT_Error_Code_FAILED_PRECONDITION);
++    } catch (const std::exception& e) {
++        return MakeError(e.what());
++    }
+ }
+ 
+ PJRT_Error* MPS_Event_Await(PJRT_Event_Await_Args* args) {
+-    if (args->event) {
+-        // mlx::core::Event::wait() can throw; an exception must not cross the
+-        // PJRT C API boundary (UB). Surface it as a PJRT_Error instead.
+-        try {
+-            args->event->Await();
+-        } catch (const std::exception& e) {
+-            return MakeError(std::string("event await: ") + e.what(), PJRT_Error_Code_INTERNAL);
+-        }
++    if (!args->event) return MakeError("Null event", PJRT_Error_Code_INVALID_ARGUMENT);
++    try {
++        args->event->Await();
++        return nullptr;
++    } catch (const std::exception& e) {
++        return CompletionError(e.what());
+     }
+-    return nullptr;
+ }
+ 
+ PJRT_Error* MPS_Event_OnReady(PJRT_Event_OnReady_Args* args) {
+-    if (args->event) {
++    if (!args->event || !args->callback)
++        return MakeError("Null event or callback", PJRT_Error_Code_INVALID_ARGUMENT);
++    try {
+         args->event->OnReady(args->callback, args->user_arg);
+-    } else if (args->callback) {
+-        args->callback(nullptr, args->user_arg);
++        return nullptr;
++    } catch (const std::exception& e) {
++        return MakeError(std::string("Event callback registration: ") + e.what());
+     }
+-    return nullptr;
+ }
+diff --git a/src/pjrt_plugin/pjrt_executable.cc b/src/pjrt_plugin/pjrt_executable.cc
+index 790770e2e413c07f87067c18110eba48ec838030..e4e403a3962cc7844c8ba68f66312663c4ca4b9a 100644
+--- a/src/pjrt_plugin/pjrt_executable.cc
++++ b/src/pjrt_plugin/pjrt_executable.cc
+@@ -1,12 +1,67 @@
+ // PJRT Executable and LoadedExecutable API implementation for Metal backend
+ 
+ #include <string>
++#include <algorithm>
++#include <cstddef>
++#include <mlx/scheduler.h>
++#include <memory>
++#include <stdexcept>
+ #include <vector>
+ 
+ #include "pjrt_plugin/logging.h"
+ #include "pjrt_plugin/pjrt_mutex.h"
+ #include "pjrt_plugin/pjrt_types.h"
+ 
++static PJRT_Error* InitOutputMetadata(PJRT_Executable* executable) {
++    std::scoped_lock lock(GetPjrtGlobalMutex());
++    if (!executable)
++        return MakeError("Null executable", PJRT_Error_Code_INVALID_ARGUMENT);
++    try {
++        std::call_once(executable->output_metadata_flag, [executable] {
++            if (!executable->executable)
++                throw std::runtime_error("Executable has been deleted");
++            const auto& outputs = executable->executable->output_info();
++            std::vector<PJRT_Buffer_Type> types;
++            std::vector<int64_t> dims;
++            std::vector<size_t> dim_sizes;
++            types.reserve(outputs.size());
++            dim_sizes.reserve(outputs.size());
++            for (const auto& output : outputs) {
++                types.push_back(static_cast<PJRT_Buffer_Type>(output.dtype));
++                dim_sizes.push_back(output.shape.size());
++                dims.insert(dims.end(), output.shape.begin(), output.shape.end());
++            }
++            executable->output_memory_kinds.assign(outputs.size(), "device");
++            executable->output_memory_kind_sizes.assign(outputs.size(), 6);
++            executable->output_types = std::move(types);
++            executable->output_dims = std::move(dims);
++            executable->output_dim_sizes = std::move(dim_sizes);
++        });
++        return nullptr;
++    } catch (const std::exception& e) {
++        return MakeError(std::string("Executable output metadata: ") + e.what());
++    }
++}
++
++// Compiled closures and control-flow regions belong to the executable. Drain
++// every MLX stream before freeing them, including CPU host-callback work.
++static std::string DrainExecutionStreams() {
++    std::string error;
++    for (const auto& stream : mlx::core::get_streams()) {
++        try {
++            mlx::core::synchronize(stream);
++        } catch (const std::exception& e) {
++            if (error.empty()) error = e.what();
++        }
++    }
++    try {
++        mlx::core::scheduler::rethrow_pending_exception();
++    } catch (const std::exception& e) {
++        if (error.empty()) error = e.what();
++    }
++    return error;
++}
++
+ // ============================================================================
+ // Executable API
+ // ============================================================================
+@@ -18,8 +73,9 @@ PJRT_Error* MPS_Executable_Destroy(PJRT_Executable_Destroy_Args* args) {
+     if (args->executable && args->executable->owned_by_loaded) {
+         return nullptr;
+     }
++    const std::string error = args->executable ? DrainExecutionStreams() : "";
+     delete args->executable;
+-    return nullptr;
++    return error.empty() ? nullptr : MakeError("Executable teardown: " + error);
+ }
+ 
+ PJRT_Error* MPS_Executable_Name(PJRT_Executable_Name_Args* args) {
+@@ -44,16 +100,15 @@ PJRT_Error* MPS_Executable_NumPartitions(PJRT_Executable_NumPartitions_Args* arg
+ // is not being destroyed concurrently with these calls.
+ 
+ PJRT_Error* MPS_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
+-    args->num_outputs = args->executable && args->executable->executable
+-                            ? args->executable->executable->num_outputs()
+-                            : 1;
++    if (auto* error = InitOutputMetadata(args->executable)) return error;
++    args->num_outputs = args->executable->output_types.size();
+     return nullptr;
+ }
+ 
+ PJRT_Error* MPS_Executable_SizeOfGeneratedCodeInBytes(
+     PJRT_Executable_SizeOfGeneratedCodeInBytes_Args* args) {
+-    args->size_in_bytes = 0;
+-    return nullptr;
++    return MakeError("MLX does not expose the generated Metal code size",
++                     PJRT_Error_Code_UNIMPLEMENTED);
+ }
+ 
+ PJRT_Error* MPS_Executable_GetCostAnalysis(PJRT_Executable_GetCostAnalysis_Args* args) {
+@@ -66,7 +121,7 @@ PJRT_Error* MPS_Executable_OutputMemoryKinds(PJRT_Executable_OutputMemoryKinds_A
+     if (!args->executable) {
+         return MakeError("Null executable", PJRT_Error_Code_INVALID_ARGUMENT);
+     }
+-    args->executable->initOutputMetadata();
++    if (auto* error = InitOutputMetadata(args->executable)) return error;
+     size_t num_outputs = args->executable->output_memory_kinds.size();
+     args->num_outputs = num_outputs;
+     args->memory_kinds = args->executable->output_memory_kinds.data();
+@@ -78,7 +133,7 @@ PJRT_Error* MPS_Executable_OutputElementTypes(PJRT_Executable_OutputElementTypes
+     if (!args->executable) {
+         return MakeError("Null executable", PJRT_Error_Code_INVALID_ARGUMENT);
+     }
+-    args->executable->initOutputMetadata();
++    if (auto* error = InitOutputMetadata(args->executable)) return error;
+     size_t num_outputs = args->executable->output_types.size();
+     args->output_types = args->executable->output_types.data();
+     args->num_output_types = num_outputs;
+@@ -89,7 +144,7 @@ PJRT_Error* MPS_Executable_OutputDimensions(PJRT_Executable_OutputDimensions_Arg
+     if (!args->executable) {
+         return MakeError("Null executable", PJRT_Error_Code_INVALID_ARGUMENT);
+     }
+-    args->executable->initOutputMetadata();
++    if (auto* error = InitOutputMetadata(args->executable)) return error;
+     size_t num_outputs = args->executable->output_dim_sizes.size();
+     args->num_outputs = num_outputs;
+     args->dims = args->executable->output_dims.data();
+@@ -120,12 +175,13 @@ PJRT_Error* MPS_Executable_Fingerprint(PJRT_Executable_Fingerprint_Args* args) {
+ 
+ PJRT_Error* MPS_LoadedExecutable_Destroy(PJRT_LoadedExecutable_Destroy_Args* args) {
+     std::scoped_lock lock(GetPjrtGlobalMutex());
++    const std::string error = args->executable ? DrainExecutionStreams() : "";
+     if (args->executable) {
+         // Delete the owned PJRT_Executable first (owns MpsExecutable with MLIR context)
+         delete args->executable->executable;
+     }
+     delete args->executable;
+-    return nullptr;
++    return error.empty() ? nullptr : MakeError("Executable teardown: " + error);
+ }
+ 
+ PJRT_Error* MPS_LoadedExecutable_GetExecutable(PJRT_LoadedExecutable_GetExecutable_Args* args) {
+@@ -165,18 +221,28 @@ PJRT_Error* MPS_LoadedExecutable_AddressableDevices(
+ }
+ 
+ PJRT_Error* MPS_LoadedExecutable_Delete(PJRT_LoadedExecutable_Delete_Args* args) {
+-    return nullptr;
++    std::scoped_lock lock(GetPjrtGlobalMutex());
++    if (!args->executable || !args->executable->executable)
++        return MakeError("Null loaded executable", PJRT_Error_Code_INVALID_ARGUMENT);
++    auto* executable = args->executable->executable;
++    if (auto* error = InitOutputMetadata(executable)) return error;
++    const std::string error = DrainExecutionStreams();
++    executable->executable.reset();
++    return error.empty() ? nullptr : MakeError("Executable delete: " + error);
+ }
+ 
+ PJRT_Error* MPS_LoadedExecutable_IsDeleted(PJRT_LoadedExecutable_IsDeleted_Args* args) {
++    std::scoped_lock lock(GetPjrtGlobalMutex());
+     MPS_LOG_DEBUG(" PJRT_LoadedExecutable_IsDeleted called\n");
+-    args->is_deleted = false;
++    args->is_deleted = !args->executable || !args->executable->executable ||
++                       !args->executable->executable->executable;
+     return nullptr;
+ }
+ 
+ PJRT_Error* MPS_LoadedExecutable_Execute(PJRT_LoadedExecutable_Execute_Args* args) {
+     std::scoped_lock lock(GetPjrtGlobalMutex());
+     MPS_LOG_INFO("Executing program\n");
++    try {
+ 
+     if (!args->executable || !args->executable->executable) {
+         return MakeError("No executable to execute");
+@@ -193,6 +259,12 @@ PJRT_Error* MPS_LoadedExecutable_Execute(PJRT_LoadedExecutable_Execute_Args* arg
+     if (!client || !client->client) {
+         return MakeError("No client for execution");
+     }
++    if (args->num_devices != 1 || !args->argument_lists ||
++        (args->num_args != 0 && !args->argument_lists[0]) ||
++        !args->output_lists ||
++        (mlx_executable->num_outputs() != 0 && !args->output_lists[0]))
++        return MakeError("Execution requires one device and valid input/output lists",
++                         PJRT_Error_Code_INVALID_ARGUMENT);
+ 
+     // Gather input buffers
+     size_t num_args = args->num_args;
+@@ -202,12 +274,43 @@ PJRT_Error* MPS_LoadedExecutable_Execute(PJRT_LoadedExecutable_Execute_Args* arg
+ 
+     for (size_t i = 0; i < num_args; ++i) {
+         if (arg_buffers[i] && arg_buffers[i]->buffer) {
++            if (arg_buffers[i]->buffer->IsDeleted())
++                return MakeError("Input buffer has been deleted at index " + std::to_string(i),
++                                 PJRT_Error_Code_FAILED_PRECONDITION);
+             inputs.push_back(arg_buffers[i]->buffer.get());
+         } else {
+             return MakeError("Null input buffer at index " + std::to_string(i));
+         }
+     }
+ 
++    std::vector<bool> non_donatable(num_args, false);
++    if (args->options &&
++        args->options->struct_size >= offsetof(PJRT_ExecuteOptions, num_non_donatable_input_indices) +
++                                          sizeof(size_t)) {
++        const auto* indices = args->options->non_donatable_input_indices;
++        const size_t count = args->options->num_non_donatable_input_indices;
++        if (count && !indices)
++            return MakeError("Null non-donatable index list", PJRT_Error_Code_INVALID_ARGUMENT);
++        for (size_t i = 0; i < count; ++i) {
++            if (indices[i] < 0 || static_cast<size_t>(indices[i]) >= num_args)
++                return MakeError("Invalid non-donatable input index",
++                                 PJRT_Error_Code_INVALID_ARGUMENT);
++            non_donatable[indices[i]] = true;
++        }
++    }
++    std::vector<PJRT_Buffer*> donated;
++    for (size_t index : mlx_executable->donated_input_indices()) {
++        if (index >= num_args)
++            return MakeError("Compiled donor index is outside the input list");
++        if (non_donatable[index]) continue;
++        for (size_t other = 0; other < num_args; ++other) {
++            if (other != index && arg_buffers[other] == arg_buffers[index])
++                return MakeError("Cannot donate an input buffer referenced more than once",
++                                 PJRT_Error_Code_INVALID_ARGUMENT);
++        }
++        donated.push_back(arg_buffers[index]);
++    }
++
+     // Execute
+     auto result = mlx_executable->Execute(inputs);
+ 
+@@ -234,26 +337,33 @@ PJRT_Error* MPS_LoadedExecutable_Execute(PJRT_LoadedExecutable_Execute_Args* arg
+     PJRT_Buffer** output_list = args->output_lists[0];
+ 
+     std::vector<mlx::core::array> output_arrays;
++    std::vector<std::unique_ptr<PJRT_Buffer>> output_buffers;
+     output_arrays.reserve(num_outputs);
++    output_buffers.reserve(num_outputs);
+     for (size_t i = 0; i < num_outputs; ++i) {
+-        // Create new PJRT_Buffer wrapping the MlxBuffer
+-        auto* pjrt_buffer = new PJRT_Buffer();
+-        pjrt_buffer->buffer = std::move(result.buffers[i]);
+-        pjrt_buffer->client = client;
+-        output_list[i] = pjrt_buffer;
+-        output_arrays.push_back(pjrt_buffer->buffer->array());
+-    }
+-
+-    // Completion event tracking the outputs. Under async dispatch these arrays
+-    // are still in flight (mlx::core::async_eval), so the event reports real
+-    // GPU completion via their MLX stream events; in synchronous mode they are
+-    // already evaluated and the event is immediately ready.
+-    if (args->device_complete_events) {
+-        args->device_complete_events[0] = new PJRT_Event(std::move(output_arrays));
++        auto buffer = std::make_unique<PJRT_Buffer>();
++        buffer->buffer = std::move(result.buffers[i]);
++        buffer->client = client;
++        output_arrays.push_back(buffer->buffer->array());
++        output_buffers.push_back(std::move(buffer));
+     }
++    std::unique_ptr<PJRT_Event> completion;
++    if (args->device_complete_events)
++        completion = std::make_unique<PJRT_Event>(std::move(output_arrays));
++    // Consume ownership only after successful synchronous execution and after
++    // all outputs/events own their array references. Identity/aliased results
++    // remain valid while the caller's donated handles become unusable.
++    for (auto* buffer : donated) buffer->buffer->Delete();
++    for (size_t i = 0; i < num_outputs; ++i)
++        output_list[i] = output_buffers[i].release();
++    if (args->device_complete_events)
++        args->device_complete_events[0] = completion.release();
+ 
+     MPS_LOG_INFO("Execution complete\n");
+     return nullptr;
++    } catch (const std::exception& e) {
++        return MakeError(std::string("phydrax-metal: execution failed: ") + e.what());
++    }
+ }
+ 
+ PJRT_Error* MPS_Executable_GetCompiledMemoryStats(
+diff --git a/src/pjrt_plugin/pjrt_types.h b/src/pjrt_plugin/pjrt_types.h
+index 8f7f7f11529665685388cf592c439ed9d9b95ed5..18bd51f6d957d84ae4e9d060bf71b95554683235 100644
+--- a/src/pjrt_plugin/pjrt_types.h
++++ b/src/pjrt_plugin/pjrt_types.h
+@@ -87,16 +87,6 @@ struct PJRT_Executable {
+     mutable std::vector<size_t> output_dim_sizes;
+     mutable std::once_flag output_metadata_flag;
+ 
+-    void initOutputMetadata() const {
+-        std::call_once(output_metadata_flag, [this] {
+-            size_t num_outputs = executable ? executable->num_outputs() : 1;
+-            output_memory_kinds.resize(num_outputs, "device");
+-            output_memory_kind_sizes.resize(num_outputs, 6);  // strlen("device")
+-            output_types.resize(num_outputs, PJRT_Buffer_Type_F32);
+-            output_dims.resize(num_outputs * 8, 0);  // up to 8 dims per output
+-            output_dim_sizes.resize(num_outputs, 0);
+-        });
+-    }
+ };
+ 
+ struct PJRT_LoadedExecutable {
+@@ -105,40 +95,18 @@ struct PJRT_LoadedExecutable {
+     std::vector<PJRT_Device*> addressable_devices;
+ };
+ 
+-// A PJRT completion event backed by MLX stream events.
+-//
+-// Under async dispatch (JAX_MPS_ASYNC_DISPATCH), Execute() returns before the
+-// GPU finishes, so PJRT events must report real completion. We snapshot a copy
+-// of each tracked array's MLX `Event` (the underlying MTLSharedEvent) at
+-// construction time. All readiness queries operate ONLY on these Event copies —
+-// never on the mlx::core::array / array_desc — because the array's `status`
+-// field is a plain enum with no synchronization and may be mutated by the
+-// scheduler or by a subsequent Execute() on the main thread. The MLX Event, by
+-// contrast, wraps an MTLSharedEvent that is safe to wait/poll from any thread.
+-//
+-// In synchronous mode (flag off) the tracked arrays are already evaluated, so
+-// `events_` is empty (or the events are already signaled) and the object
+-// behaves as immediately-ready — preserving the previous behavior exactly.
++// Completion state is shared with the worker so destroying the public event or
++// deleting its buffers cannot invalidate in-flight storage or callback state.
+ struct PJRT_Event {
+-    // Trivially-ready event (no work to wait on).
++    struct State;
+     PJRT_Event() = default;
+-
+-    // Track completion of the given arrays. Copies their valid MLX events.
+     explicit PJRT_Event(std::vector<mlx::core::array> arrays);
+-
+-    // Non-blocking: true once all tracked work has completed.
+     bool IsReady();
+-
+-    // Blocks the calling thread until all tracked work has completed.
+     void Await();
+-
+-    // Registers `callback` to fire once ready. If already ready it is invoked
+-    // inline; otherwise a shared background thread waits and then invokes it.
++    std::string Error();
+     void OnReady(PJRT_Event_OnReadyCallback callback, void* user_arg);
+ 
+-    std::mutex mu_;
+-    std::vector<mlx::core::Event> events_;
+-    bool ready_ = true;
++    std::shared_ptr<State> state_;
+ };
+ 
+ // ============================================================================

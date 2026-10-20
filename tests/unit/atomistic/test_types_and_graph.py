@@ -1,3 +1,4 @@
+from copy import copy, deepcopy
 from itertools import product
 from typing import Any
 
@@ -43,6 +44,104 @@ def test_structure_preserves_particles_masks_ids_masses_and_scale() -> None:
     np.testing.assert_allclose(structure.masses[:3], [15.999, 1.008, 1.008])
     assert structure.particles.entities.entity_set_id
     assert structure.axis_names == ("atom", "cartesian")
+
+
+def test_structure_mass_precision_survives_copies_batching_and_position_updates() -> None:
+    arguments = (
+        np.asarray([1, 1], dtype=np.int32),
+        np.zeros((2, 3), dtype=np.float32),
+        np.asarray([2**24, 1], dtype=np.float32),
+        SCALE,
+    )
+    default = AtomicStructure(*arguments, coordinate_dtype=jnp.float32)
+    selected = AtomicStructure(
+        *arguments,
+        coordinate_dtype=jnp.float32,
+        mass_accumulation_dtype=jnp.float32,
+    )
+
+    assert default.particles.mass_measure.total_mass.dtype == jnp.float64
+    assert float(default.particles.mass_measure.total_mass) == 2**24 + 1
+    assert selected.particles.mass_measure.total_mass.dtype == jnp.float32
+    assert float(selected.particles.mass_measure.total_mass) == 2**24
+    assert selected.structure_id != default.structure_id
+    assert selected.particles.mass_measure.measure_id == (
+        default.particles.mass_measure.measure_id
+    )
+    for duplicate in (copy(selected), deepcopy(selected)):
+        assert duplicate.structure_id == selected.structure_id
+        assert duplicate.particles.mass_measure.total_mass.dtype == jnp.float32
+
+    batch = AtomisticBatch.from_structure(selected)
+    padded = AtomisticBatch.from_structures((selected,), atom_capacity=4)
+    moved = padded.with_positions(padded.positions + np.float32(0.25))
+    for value in (batch, padded, moved):
+        assert value.particles[0].mass_measure.total_mass.dtype == jnp.float32
+        floating = [
+            leaf
+            for leaf in jax.tree.leaves(value)
+            if hasattr(leaf, "dtype") and jnp.issubdtype(leaf.dtype, jnp.floating)
+        ]
+        assert floating
+        assert all(leaf.dtype == jnp.float32 for leaf in floating)
+    assert moved.particles[0].prepared_id == padded.particles[0].prepared_id
+    assert moved.batch_id != padded.batch_id
+    mixed = AtomisticBatch.from_structures((selected, default), atom_capacity=3)
+    assert tuple(value.mass_measure.total_mass.dtype for value in mixed.particles) == (
+        jnp.float32,
+        jnp.float64,
+    )
+    assert mixed.with_positions(mixed.positions).batch_id == mixed.batch_id
+
+
+def test_batch_mass_precision_is_explicit_and_part_of_container_identity() -> None:
+    arguments = (
+        np.asarray([[1, 1]], dtype=np.int32),
+        np.zeros((1, 2, 3), dtype=np.float32),
+        np.asarray([[2**24, 1]], dtype=np.float32),
+        SCALE,
+    )
+    default = AtomisticBatch(*arguments)
+    selected = AtomisticBatch(*arguments, mass_accumulation_dtype=jnp.float32)
+    assert default.particles[0].mass_measure.total_mass.dtype == jnp.float64
+    assert selected.particles[0].mass_measure.total_mass.dtype == jnp.float32
+    assert selected.batch_id != default.batch_id
+    assert selected.with_positions(selected.positions).batch_id == selected.batch_id
+    with pytest.raises(ValueError, match="one precision per case"):
+        AtomisticBatch(*arguments, mass_accumulation_dtype=(jnp.float32, jnp.float64))
+
+
+@pytest.mark.parametrize("dtype", [jnp.int32, jnp.bool_, jnp.complex64])
+def test_atomic_structure_refuses_nonreal_mass_precision(dtype: Any) -> None:
+    with pytest.raises(ValueError, match="precision dtype|not real"):
+        AtomicStructure(
+            np.asarray([1], dtype=np.int32),
+            np.zeros((1, 3), dtype=np.float32),
+            np.ones(1, dtype=np.float32),
+            SCALE,
+            mass_accumulation_dtype=dtype,
+        )
+    with pytest.raises(ValueError, match="precision dtype|not real"):
+        AtomisticBatch(
+            np.asarray([[1]], dtype=np.int32),
+            np.zeros((1, 1, 3), dtype=np.float32),
+            np.ones((1, 1), dtype=np.float32),
+            SCALE,
+            mass_accumulation_dtype=dtype,
+        )
+
+
+def test_atomic_structure_refuses_overflow_in_selected_mass_precision() -> None:
+    arguments = (
+        np.asarray([1, 1], dtype=np.int32),
+        np.zeros((2, 3), dtype=np.float32),
+        np.full(2, np.finfo(np.float32).max, dtype=np.float32),
+        SCALE,
+    )
+    default = AtomicStructure(*arguments)
+    assert bool(default.particles.mass_measure.valid)
+    with pytest.raises(ValueError, match="total mass must be finite"):
+        AtomicStructure(*arguments, mass_accumulation_dtype=jnp.float32)
 
 
 @pytest.mark.parametrize(

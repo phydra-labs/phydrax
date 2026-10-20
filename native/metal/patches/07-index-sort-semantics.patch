@@ -1,0 +1,1467 @@
+diff --git a/src/pjrt_plugin/ops/gather_scatter.cc b/src/pjrt_plugin/ops/gather_scatter.cc
+index 4f679ddb64b4667510d74262ea62941bbdaf337a..84ed7f49845706ed1c78e9a42894d58a6ab592c4 100644
+--- a/src/pjrt_plugin/ops/gather_scatter.cc
++++ b/src/pjrt_plugin/ops/gather_scatter.cc
+@@ -1,7 +1,10 @@
+ // Gather and scatter op handlers.
+ 
+ #include <algorithm>
++#include <limits>
++#include <mlx/fast.h>
+ #include <set>
++#include <stdexcept>
+ 
+ #include "pjrt_plugin/ops/handler_utils.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+@@ -11,119 +14,42 @@ namespace jax_mps {
+ // --- Shared scatter utilities (declared in handler_utils.h) ---
+ 
+ ScatterType DetectScatterType(mlir::Region& body) {
+-    if (body.empty())
++    if (body.empty() || body.front().getNumArguments() != 2)
+         return ScatterType::Unknown;
+-
+     auto& block = body.front();
+-    auto arg0 = block.getArgument(0);
+-    auto arg1 = block.getArgument(1);
+-
+-    for (auto& op : block.getOperations()) {
+-        auto opName = op.getName().getStringRef();
+-        // For simple update: return the second arg directly
+-        if (opName == "stablehlo.return") {
+-            if (op.getNumOperands() == 1 && op.getOperand(0) == arg1) {
+-                return ScatterType::Update;
+-            }
+-            continue;
+-        }
+-        // Only match binary ops that use BOTH block arguments.
+-        // This avoids misclassifying scatter_apply bodies like
+-        // `arg0 * constant` as ScatterType::Mul.
+-        if (op.getNumOperands() == 2) {
+-            auto lhs = op.getOperand(0);
+-            auto rhs = op.getOperand(1);
+-            bool usesArg0 = (lhs == arg0 || rhs == arg0);
+-            bool usesArg1 = (lhs == arg1 || rhs == arg1);
+-            if (usesArg0 && usesArg1) {
+-                if (opName == "stablehlo.add")
+-                    return ScatterType::Add;
+-                if (opName == "stablehlo.subtract")
+-                    return ScatterType::Sub;
+-                if (opName == "stablehlo.multiply")
+-                    return ScatterType::Mul;
+-                if (opName == "stablehlo.minimum")
+-                    return ScatterType::Min;
+-                if (opName == "stablehlo.maximum")
+-                    return ScatterType::Max;
+-            }
+-        }
+-    }
++    auto& terminator = block.back();
++    if (terminator.getNumOperands() != 1)
++        return ScatterType::Unknown;
++    auto returned = terminator.getOperand(0);
++    auto lhs = block.getArgument(0);
++    auto rhs = block.getArgument(1);
++    if (returned == rhs)
++        return ScatterType::Update;
++    auto* combine = returned.getDefiningOp();
++    if (!combine || combine->getNumOperands() != 2)
++        return ScatterType::Unknown;
++    bool direct = combine->getOperand(0) == lhs && combine->getOperand(1) == rhs;
++    bool reversed = combine->getOperand(0) == rhs && combine->getOperand(1) == lhs;
++    if (!direct && !reversed)
++        return ScatterType::Unknown;
++    auto name = combine->getName().getStringRef();
++    if (name == "stablehlo.add")
++        return ScatterType::Add;
++    if (name == "stablehlo.subtract" && direct)
++        return ScatterType::Sub;
++    if (name == "stablehlo.multiply")
++        return ScatterType::Mul;
++    if (name == "stablehlo.minimum")
++        return ScatterType::Min;
++    if (name == "stablehlo.maximum")
++        return ScatterType::Max;
+     return ScatterType::Unknown;
+ }
+ 
+-std::optional<mlx::core::array> ApplyScatter(ScatterType scatterType,
+-                                             const mlx::core::array& operand,
+-                                             const std::vector<mlx::core::array>& idxVec,
+-                                             const mlx::core::array& updates,
+-                                             const std::vector<int>& axes) {
+-    switch (scatterType) {
+-        case ScatterType::Update:
+-            return mlx::core::scatter(operand, idxVec, updates, axes);
+-        case ScatterType::Add:
+-            return mlx::core::scatter_add(operand, idxVec, updates, axes);
+-        case ScatterType::Sub:
+-            return mlx::core::scatter_add(operand, idxVec, mlx::core::negative(updates), axes);
+-        case ScatterType::Mul:
+-            return mlx::core::scatter_prod(operand, idxVec, updates, axes);
+-        case ScatterType::Min:
+-            return mlx::core::scatter_min(operand, idxVec, updates, axes);
+-        case ScatterType::Max:
+-            return mlx::core::scatter_max(operand, idxVec, updates, axes);
+-        default:
+-            MPS_LOG_ERROR("stablehlo.scatter: unsupported scatter update type\n");
+-            return std::nullopt;
+-    }
+-}
+-
+-// Generic scatter fallback: gather current values, execute the body region
+-// on (current, updates), then scatter the result back.
+-// This handles scatter_apply and any non-standard update computations.
+-// Note: for duplicate indices, this gives implementation-defined (last-write)
+-// behaviour rather than compounding, which is permitted by the StableHLO spec.
+-std::optional<mlx::core::array> ApplyScatterGeneric(mlir::Region& body,
+-                                                    const mlx::core::array& operand,
+-                                                    const std::vector<mlx::core::array>& idxVec,
+-                                                    const mlx::core::array& updates,
+-                                                    const std::vector<int>& axes, ExecContext& ctx,
+-                                                    const ValueMap& parentValues) {
+-    // Step 1: Gather current values at scatter indices.
+-    // Derive slice_sizes from updates: the caller has already reshaped updates
+-    // to have size-1 at scatter axes and the correct window extent elsewhere.
+-    // The trailing operand-rank dims of updates give us the slice shape.
+-    auto idxBatchRank = static_cast<int>(updates.ndim()) - static_cast<int>(operand.ndim());
+-    mlx::core::Shape sliceSizes;
+-    for (int d = 0; d < operand.ndim(); ++d) {
+-        sliceSizes.push_back(updates.shape(idxBatchRank + d));
+-    }
+-    auto gathered = mlx::core::gather(operand, idxVec, axes, sliceSizes);
+-
+-    // Reshape gathered to match updates shape for the body.
+-    if (gathered.shape() != updates.shape()) {
+-        gathered = mlx::core::reshape(gathered, updates.shape());
+-    }
+-
+-    // Step 2: Execute the body region on (gathered_current, updates).
+-    std::vector<mlx::core::array> bodyArgs = {gathered, updates};
+-    std::vector<mlx::core::array> bodyResults;
+-    if (!ExecuteRegion(body, bodyArgs, bodyResults, ctx, &parentValues)) {
+-        MPS_LOG_ERROR("stablehlo.scatter: failed to execute generic body\n");
+-        return std::nullopt;
+-    }
+-    if (bodyResults.empty()) {
+-        MPS_LOG_ERROR("stablehlo.scatter: generic body produced no results\n");
+-        return std::nullopt;
+-    }
+-
+-    // Step 3: Scatter the results back using simple update (last-write-wins).
+-    return mlx::core::scatter(operand, idxVec, bodyResults[0], axes);
+-}
+-
+ namespace {
+ 
+-// Helper: extract per-axis index arrays from start_indices and convert to int32.
+-// Returns the index arrays and their axes, plus the batch shape (start_indices
+-// shape with index_vector_dim removed).
++// Extract indices without narrowing. The gather caller clamps to the operand
++// extent in this dtype before converting to MLX's int32 address representation.
+ struct IndexExtraction {
+     std::vector<mlx::core::array> idxVec;
+     std::vector<int> axes;
+@@ -163,9 +89,6 @@ std::optional<IndexExtraction> ExtractPerAxisIndices(const mlx::core::array& sta
+                 mlx::core::squeeze(mlx::core::slice(startIndices, starts, stops), {indexVectorDim});
+         }
+ 
+-        if (axisIdx.dtype() != mlx::core::int32) {
+-            axisIdx = mlx::core::astype(axisIdx, mlx::core::int32);
+-        }
+         result.idxVec.push_back(axisIdx);
+     }
+ 
+@@ -234,8 +157,13 @@ bool HandleGather(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::
+     for (size_t i = 0; i < idxVec.size(); ++i) {
+         int axis = axes[i];
+         int maxStart = operand->shape(axis) - sliceSizes[axis];
+-        idxVec[i] = mlx::core::clip(idxVec[i], mlx::core::array(0, mlx::core::int32),
+-                                    mlx::core::array(std::max(0, maxStart), mlx::core::int32));
++        auto dtype = mlx::core::issubdtype(idxVec[i].dtype(), mlx::core::unsignedinteger) ?
++            mlx::core::uint64 : mlx::core::int64;
++        auto wide = mlx::core::astype(idxVec[i], dtype);
++        idxVec[i] = mlx::core::astype(
++            mlx::core::clip(wide, mlx::core::array(0, dtype),
++                            mlx::core::array(std::max(0, maxStart), dtype)),
++            mlx::core::int32);
+     }
+ 
+     // Step 2: Add iota indices for operand_batching_dims
+@@ -293,431 +221,261 @@ bool HandleGather(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::
+     return true;
+ }
+ 
+-bool HandleScatter(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+-                   ExecContext& ctx) {
+-    auto scatterOp = CastOp<mlir::stablehlo::ScatterOp>(op, "stablehlo.scatter");
+-    if (!scatterOp)
+-        return false;
+-
+-    // Only support single-input scatter for now
+-    if (scatterOp.getInputs().size() != 1) {
+-        MPS_LOG_ERROR("stablehlo.scatter: multi-input scatter not supported\n");
+-        return false;
+-    }
+-
+-    auto* operand = RequireValue(values, scatterOp.getInputs()[0], "stablehlo.scatter");
+-    auto* scatterIndices = RequireValue(values, scatterOp.getScatterIndices(), "stablehlo.scatter");
+-    auto* updates = RequireValue(values, scatterOp.getUpdates()[0], "stablehlo.scatter");
+-    if (!operand || !scatterIndices || !updates)
+-        return false;
+-
+-    auto dn = scatterOp.getScatterDimensionNumbers();
+-    auto insertedWindowDims = dn.getInsertedWindowDims();
+-    auto scatterDimsToOperandDims = dn.getScatterDimsToOperandDims();
+-    int indexVectorDim = static_cast<int>(dn.getIndexVectorDim());
+-    auto updateWindowDims = dn.getUpdateWindowDims();
+-    auto inputBatchingDims = dn.getInputBatchingDims();
+-    auto scatterIndicesBatchingDims = dn.getScatterIndicesBatchingDims();
+-
+-    auto& body = scatterOp.getUpdateComputation();
+-    auto scatterType = DetectScatterType(body);
+-
+-    // Determine which operand dims have window extent > 1
+-    std::set<int> insertedSet(insertedWindowDims.begin(), insertedWindowDims.end());
+-    std::set<int> batchingSet(inputBatchingDims.begin(), inputBatchingDims.end());
+-
+-    std::vector<int> windowOperandDims;
+-    for (int d = 0; d < operand->ndim(); ++d) {
+-        if (!insertedSet.count(d) && !batchingSet.count(d)) {
+-            windowOperandDims.push_back(d);
++// A single destination per update element, never an operand/update Cartesian
++// tensor. Immutable metadata describes shapes and StableHLO dimension numbers.
++mlx::core::array ScatterDestinations(const mlx::core::array& indices,
++                                     const mlx::core::array& metadata, int count) {
++    static const auto kernel = mlx::core::fast::metal_kernel(
++        "phydrax_scatter_destinations", {"indices", "meta"}, {"destinations"}, R"(
++        uint u = thread_position_in_grid.x;
++        int rank = meta[0], urank = meta[1], irank = meta[2];
++        int os = 4, us = os + rank, ust = us + urank;
++        int ist = ust + urank, wm = ist + irank;
++        int bm = wm + rank, cm = bm + rank, im = cm + rank;
++        ulong index_offset = 0;
++        for (int d = 0; d < irank; ++d) {
++            int ud = meta[im + d];
++            if (ud >= 0)
++                index_offset += ulong((u / uint(meta[ust + ud])) %
++                                      uint(meta[us + ud])) * ulong(meta[ist + d]);
+         }
+-    }
+-
+-    bool hasWindowScatter = false;
+-    for (auto dim : scatterDimsToOperandDims) {
+-        int d = static_cast<int>(dim);
+-        if (!insertedSet.count(d)) {
+-            for (int j = 0; j < static_cast<int>(windowOperandDims.size()); ++j) {
+-                if (windowOperandDims[j] == d) {
+-                    int updateDim = static_cast<int>(updateWindowDims[j]);
+-                    if (updates->shape(updateDim) > 1) {
+-                        hasWindowScatter = true;
+-                    }
+-                    break;
+-                }
++        ulong destination = 0;
++        for (int d = 0; d < rank; ++d) {
++            int wd = meta[wm + d], bd = meta[bm + d], component = meta[cm + d];
++            long extent = long(meta[os + d]);
++            long window_extent = wd < 0 ? 1 : long(meta[us + wd]);
++            long max_start = extent - window_extent;
++            // FILL_OR_DROP admits the complete window, not its individual
++            // elements. Use its mapped update extent even when window and
++            // batch dimensions are interleaved. Compare before any addition
++            // or narrowing so INT64_MIN/MAX and UINT64_MAX cannot wrap.
++            long start = 0;
++            if (max_start < 0) {
++                destinations[u] = 0xffffffffu;
++                return;
+             }
+-        }
+-        if (hasWindowScatter)
+-            break;
+-    }
+-
+-    bool hasIdxVecDim = indexVectorDim < scatterIndices->ndim();
+-
+-    // ===== Window scatter path: scatter axes with window extent > 1 =====
+-    // Mixed point-and-window scatter (non-empty insertedWindowDims plus
+-    // window-extent > 1 on other scatter axes).
+-    if (hasWindowScatter && insertedWindowDims.empty()) {
+-        // For multi-axis window scatter, use slice_update loop.
+-        if (scatterDimsToOperandDims.size() > 1) {
+-            std::vector<int> batchDims;
+-            int batchSize = 1;
+-            for (int d = 0; d < scatterIndices->ndim(); ++d) {
+-                if (!hasIdxVecDim || d != indexVectorDim) {
+-                    batchDims.push_back(d);
+-                    batchSize *= scatterIndices->shape(d);
+-                }
+-            }
+-
+-            bool singleUpdate = (batchSize == 1);
+-            int numPositions = singleUpdate ? 1 : batchSize;
+-            mlx::core::array result = *operand;
+-            for (int b = 0; b < numPositions; ++b) {
+-                // Decode the scatter-index position once. Batching dimensions
+-                // are present in scatterIndices and identify the matching
+-                // operand slice, but are intentionally absent from updates.
+-                // Make them explicit dynamic-slice axes below.
+-                std::vector<int> batchCoordinates(scatterIndices->ndim(), 0);
+-                if (!singleUpdate) {
+-                    int remaining = b;
+-                    for (int bd = static_cast<int>(batchDims.size()) - 1; bd >= 0; --bd) {
+-                        int dim = batchDims[bd];
+-                        batchCoordinates[dim] = remaining % scatterIndices->shape(dim);
+-                        remaining /= scatterIndices->shape(dim);
+-                    }
+-                }
+-
+-                std::vector<mlx::core::array> perAxisIdx;
+-                for (size_t i = 0; i < scatterDimsToOperandDims.size(); ++i) {
+-                    mlx::core::Shape starts(scatterIndices->ndim(), 0);
+-                    mlx::core::Shape stops(scatterIndices->shape().begin(),
+-                                           scatterIndices->shape().end());
+-                    if (hasIdxVecDim) {
+-                        starts[indexVectorDim] = static_cast<int>(i);
+-                        stops[indexVectorDim] = static_cast<int>(i) + 1;
+-                    }
+-                    std::vector<int> squeezeDims;
+-                    if (hasIdxVecDim)
+-                        squeezeDims.push_back(indexVectorDim);
+-                    if (!singleUpdate) {
+-                        for (int dim : batchDims) {
+-                            starts[dim] = batchCoordinates[dim];
+-                            stops[dim] = starts[dim] + 1;
+-                        }
+-                        for (int bd : batchDims)
+-                            squeezeDims.push_back(bd);
+-                    } else {
+-                        for (int bd : batchDims) {
+-                            if (scatterIndices->shape(bd) == 1)
+-                                squeezeDims.push_back(bd);
+-                        }
+-                    }
+-                    auto axisIdx = mlx::core::slice(*scatterIndices, starts, stops);
+-                    if (!squeezeDims.empty()) {
+-                        axisIdx = mlx::core::squeeze(axisIdx, squeezeDims);
+-                    }
+-                    if (axisIdx.dtype() != mlx::core::int32) {
+-                        axisIdx = mlx::core::astype(axisIdx, mlx::core::int32);
+-                    }
+-                    perAxisIdx.push_back(mlx::core::reshape(axisIdx, {1}));
+-                }
+-                auto axes = ToIntVec(scatterDimsToOperandDims);
+-                for (size_t i = 0; i < inputBatchingDims.size(); ++i) {
+-                    int operandAxis = static_cast<int>(inputBatchingDims[i]);
+-                    int indexAxis = static_cast<int>(scatterIndicesBatchingDims[i]);
+-                    if (indexAxis < 0 || indexAxis >= static_cast<int>(batchCoordinates.size())) {
+-                        MPS_LOG_ERROR(
+-                            "stablehlo.scatter: invalid scatter index batching dimension\n");
+-                        return false;
+-                    }
+-                    axes.push_back(operandAxis);
+-                    perAxisIdx.push_back(mlx::core::reshape(
+-                        mlx::core::array(batchCoordinates[indexAxis], mlx::core::int32), {1}));
+-                }
+-                auto startArr = mlx::core::concatenate(perAxisIdx, 0);
+-
+-                auto updateVal = *updates;
+-                std::set<int> windowDimSet(updateWindowDims.begin(), updateWindowDims.end());
+-                if (singleUpdate) {
+-                    std::vector<int> squeezeDims;
+-                    for (int d = 0; d < updateVal.ndim(); ++d) {
+-                        if (!windowDimSet.count(d) && updateVal.shape(d) == 1) {
+-                            squeezeDims.push_back(d);
+-                        }
+-                    }
+-                    if (!squeezeDims.empty()) {
+-                        updateVal = mlx::core::squeeze(updateVal, squeezeDims);
++            if (component >= 0) {
++                ulong pos = index_offset + ulong(component) * ulong(meta[3]);
++                if constexpr (SIGNED_INDEX) {
++                    start = long(indices[pos]);
++                    if (start < 0 || start > max_start) {
++                        destinations[u] = 0xffffffffu;
++                        return;
+                     }
+                 } else {
+-                    int numBatchDims = static_cast<int>(updateVal.ndim()) -
+-                                       static_cast<int>(updateWindowDims.size());
+-                    mlx::core::Shape starts(updateVal.ndim(), 0);
+-                    mlx::core::Shape stops(updateVal.shape().begin(), updateVal.shape().end());
+-                    int remaining = b;
+-                    for (int bd = numBatchDims - 1; bd >= 0; --bd) {
+-                        starts[bd] = remaining % updateVal.shape(bd);
+-                        stops[bd] = starts[bd] + 1;
+-                        remaining /= updateVal.shape(bd);
+-                    }
+-                    updateVal = mlx::core::slice(updateVal, starts, stops);
+-                    std::vector<int> squeezeDims;
+-                    squeezeDims.reserve(numBatchDims);
+-                    for (int d = 0; d < numBatchDims; ++d)
+-                        squeezeDims.push_back(d);
+-                    if (!squeezeDims.empty()) {
+-                        updateVal = mlx::core::squeeze(updateVal, squeezeDims);
++                    ulong unsigned_start = ulong(indices[pos]);
++                    if (unsigned_start > ulong(max_start)) {
++                        destinations[u] = 0xffffffffu;
++                        return;
+                     }
+-                }
+-
+-                // MLX aligns a lower-rank update by prepending dimensions. A
+-                // StableHLO input-batching dimension can instead be interior
+-                // to the operand (for example [batch, 1, rows, cols]), so
+-                // retain an explicit singleton at every batching axis before
+-                // calling dynamic slice_update.
+-                std::vector<int> batchingAxes = ToIntVec(inputBatchingDims);
+-                std::sort(batchingAxes.begin(), batchingAxes.end());
+-                for (int axis : batchingAxes) {
+-                    auto updateShape = updateVal.shape();
+-                    updateShape.insert(updateShape.begin() + axis, 1);
+-                    updateVal = mlx::core::reshape(updateVal, updateShape);
+-                }
+-
+-                // Add and Mul must read the current window back before
+-                // combining. MLX right-aligns a lower-rank update against the
+-                // operand, so map each update axis onto the trailing operand
+-                // axes and keep the leading (batching) axes at extent 1.
+-                auto readWindow = [&]() {
+-                    mlx::core::Shape sliceSizes(operand->shape());
+-                    int dimDiff = std::max(
+-                        static_cast<int>(operand->ndim()) - static_cast<int>(updateVal.ndim()), 0);
+-                    for (int d = dimDiff; d < static_cast<int>(operand->ndim()); ++d) {
+-                        sliceSizes[d] = updateVal.shape(d - dimDiff);
+-                    }
+-                    for (int axis : axes) {
+-                        if (axis < dimDiff) {
+-                            sliceSizes[axis] = 1;
+-                        }
+-                    }
+-                    return mlx::core::slice(result, startArr, axes, sliceSizes);
+-                };
+-
+-                switch (scatterType) {
+-                    case ScatterType::Update:
+-                        result = mlx::core::slice_update(result, updateVal, startArr, axes);
+-                        break;
+-                    case ScatterType::Add:
+-                        result = mlx::core::slice_update(
+-                            result, mlx::core::add(readWindow(), updateVal), startArr, axes);
+-                        break;
+-                    case ScatterType::Mul:
+-                        result = mlx::core::slice_update(
+-                            result, mlx::core::multiply(readWindow(), updateVal), startArr, axes);
+-                        break;
+-                    default:
+-                        MPS_LOG_ERROR(
+-                            "stablehlo.scatter: unsupported scatter update type "
+-                            "for multi-dim slice update\n");
+-                        return false;
++                    start = long(unsigned_start);
+                 }
+             }
+-
+-            values.emplace(ToKey(op->getResult(0)), std::move(result));
+-            return true;
+-        }
+-
+-        // Single-axis window scatter: expand start indices to per-element indices
+-        int scatterDim = static_cast<int>(scatterDimsToOperandDims[0]);
+-
+-        auto indices = *scatterIndices;
+-        if (hasIdxVecDim && scatterIndices->shape(indexVectorDim) == 1) {
+-            indices = mlx::core::squeeze(*scatterIndices, {indexVectorDim});
+-        }
+-        if (indices.dtype() != mlx::core::int32) {
+-            indices = mlx::core::astype(indices, mlx::core::int32);
+-        }
+-        if (indices.ndim() == 0) {
+-            indices = mlx::core::reshape(indices, {1});
+-        }
+-
+-        mlx::core::Shape idxBatchShape;
+-        for (int d = 0; d < scatterIndices->ndim(); ++d) {
+-            if (!hasIdxVecDim || d != indexVectorDim) {
+-                idxBatchShape.push_back(scatterIndices->shape(d));
++            long coordinate = wd < 0 ? 0 :
++                long((u / uint(meta[ust + wd])) % uint(meta[us + wd]));
++            if (bd >= 0)
++                coordinate = long((u / uint(meta[ust + bd])) % uint(meta[us + bd]));
++            coordinate += start;
++            if (coordinate < 0 || coordinate >= extent) {
++                destinations[u] = 0xffffffffu;
++                return;
+             }
++            destination = destination * ulong(extent) + ulong(coordinate);
+         }
++        destinations[u] = uint(destination);
++        )");
++    // A zero-component index vector is valid (a window-only scatter). Bind a
++    // nonempty buffer even though that shader specialization never reads it.
++    auto flatIndices = indices.size() == 0 ?
++        mlx::core::zeros({1}, indices.dtype(), mlx::core::Device::gpu) :
++        mlx::core::reshape(indices, {static_cast<int>(indices.size())});
++    return kernel(
++        {flatIndices, metadata},
++        {{count}}, {mlx::core::uint32}, {count, 1, 1}, {std::min(count, 256), 1, 1},
++        {{"SIGNED_INDEX", mlx::core::issubdtype(indices.dtype(), mlx::core::signedinteger)}},
++        std::nullopt, false, mlx::core::Device::gpu)[0];
++}
+ 
+-        int winIdx = 0;
+-        for (int j = 0; j < static_cast<int>(windowOperandDims.size()); ++j) {
+-            if (windowOperandDims[j] == scatterDim) {
+-                winIdx = j;
+-                break;
+-            }
++// Stable destination sort retains original update order. Each output lane
++// owns its complete fold: exact 64-bit/complex stores need no MLX atomics and
++// duplicates cannot race or disappear. Storage O(O+U), work
++// O(U log U + O log U + U). A heavily repeated destination is a serial GPU fold.
++mlx::core::array FoldScatter(ScatterType type, const mlx::core::array& operand,
++                             const mlx::core::array& updates,
++                             const mlx::core::array& destinations) {
++    static const auto kernel = mlx::core::fast::metal_kernel(
++        "phydrax_scatter_fold", {"operand", "updates", "destinations", "order"}, {"result"},
++        R"(
++        uint destination = thread_position_in_grid.x;
++        uint lo = 0, hi = UPDATE_COUNT;
++        while (lo < hi) {
++            uint mid = lo + (hi - lo) / 2;
++            if (destinations[order[mid]] < destination) lo = mid + 1;
++            else hi = mid;
+         }
+-        int windowDimForScatterAxis = static_cast<int>(updateWindowDims[winIdx]);
+-        int windowSize = updates->shape(windowDimForScatterAxis);
+-
+-        // Expand: indices[..., None] + arange(windowSize)
+-        auto offsets = mlx::core::arange(windowSize, mlx::core::int32);
+-        auto idxShape = indices.shape();
+-        mlx::core::Shape broadcastIdxShape = idxShape;
+-        broadcastIdxShape.push_back(1);
+-        auto reshapedIdx = mlx::core::reshape(indices, broadcastIdxShape);
+-        mlx::core::Shape broadcastOffsetShape(indices.ndim(), 1);
+-        broadcastOffsetShape.push_back(windowSize);
+-        auto reshapedOffsets = mlx::core::reshape(offsets, broadcastOffsetShape);
+-        auto expandedIndices = mlx::core::add(reshapedIdx, reshapedOffsets);
+-
+-        int totalIndices = 1;
+-        for (auto s : expandedIndices.shape())
+-            totalIndices *= static_cast<int>(s);
+-        expandedIndices = mlx::core::reshape(expandedIndices, {totalIndices});
+-
+-        std::vector<mlx::core::array> idxVec = {expandedIndices};
+-        std::vector<int> axes = {scatterDim};
+-
+-        for (size_t i = 0; i < inputBatchingDims.size(); ++i) {
+-            int operandAxis = static_cast<int>(inputBatchingDims[i]);
+-            int idxBatchDim = static_cast<int>(scatterIndicesBatchingDims[i]);
+-            if (hasIdxVecDim && idxBatchDim > indexVectorDim) {
+-                --idxBatchDim;
++        T value = operand[destination];
++        for (uint p = lo; p < UPDATE_COUNT; ++p) {
++            uint update = order[p];
++            if (destinations[update] != destination) break;
++            T next = updates[update];
++            if constexpr (MODE == 0) value = next;
++            if constexpr (MODE == 1) {
++                if constexpr (INTEGER) value = T(ulong(value) + ulong(next));
++                else value = value + next;
+             }
+-
+-            axes.push_back(operandAxis);
+-
+-            int batchSz = operand->shape(operandAxis);
+-            mlx::core::Shape iotaShape(idxBatchShape.size(), 1);
+-            iotaShape[idxBatchDim] = batchSz;
+-            auto iota = mlx::core::reshape(mlx::core::arange(batchSz, mlx::core::int32), iotaShape);
+-            iota = mlx::core::broadcast_to(iota, idxBatchShape);
+-            mlx::core::Shape iotaExpShape = iota.shape();
+-            iotaExpShape.push_back(1);
+-            iota = mlx::core::reshape(iota, iotaExpShape);
+-            mlx::core::Shape bcastShape = iota.shape();
+-            bcastShape.back() = windowSize;
+-            iota = mlx::core::broadcast_to(iota, bcastShape);
+-            iota = mlx::core::reshape(iota, {totalIndices});
+-            idxVec.push_back(iota);
+-        }
+-
+-        std::set<int> coveredDims;
+-        coveredDims.insert(scatterDim);
+-        for (auto d : insertedWindowDims)
+-            coveredDims.insert(static_cast<int>(d));
+-        for (auto d : inputBatchingDims)
+-            coveredDims.insert(static_cast<int>(d));
+-
+-        std::set<int> windowDimSet(updateWindowDims.begin(), updateWindowDims.end());
+-        int updNdim = static_cast<int>(updates->ndim());
+-
+-        std::vector<int> transposeOrder;
+-        for (int i = 0; i < updNdim; ++i) {
+-            if (!windowDimSet.count(i))
+-                transposeOrder.push_back(i);
+-        }
+-        transposeOrder.push_back(windowDimForScatterAxis);
+-        for (int i = 0; i < updNdim; ++i) {
+-            if (windowDimSet.count(i) && i != windowDimForScatterAxis) {
+-                transposeOrder.push_back(i);
++            if constexpr (MODE == 2) {
++                if constexpr (INTEGER) value = T(ulong(value) - ulong(next));
++                else value = value - next;
+             }
+-        }
+-
+-        auto transposedUpdates = *updates;
+-        if (!IsIdentityPermutation(transposeOrder)) {
+-            transposedUpdates = mlx::core::transpose(*updates, transposeOrder);
+-        }
+-        auto tShape = transposedUpdates.shape();
+-
+-        int numIdxDims = updNdim - static_cast<int>(updateWindowDims.size());
+-        int flatIdxSize = 1;
+-        for (int i = 0; i <= numIdxDims; ++i)
+-            flatIdxSize *= tShape[i];
+-
+-        mlx::core::Shape newShape;
+-        newShape.push_back(flatIdxSize);
+-        int otherWindowIdx = numIdxDims + 1;
+-        for (int d = 0; d < operand->ndim(); ++d) {
+-            if (coveredDims.count(d)) {
+-                newShape.push_back(1);
+-            } else {
+-                newShape.push_back(tShape[otherWindowIdx++]);
++            if constexpr (MODE == 3) {
++                if constexpr (INTEGER) value = T(ulong(value) * ulong(next));
++                else value = value * next;
++            }
++            if constexpr (MODE == 4 || MODE == 5) {
++                if constexpr (FLOATING) {
++                    // Propagate NaNs; min(-0,+0)=-0, max(-0,+0)=+0.
++                    if (isnan(value)) {}
++                    else if (isnan(next)) value = next;
++                    else if (value == T(0) && next == T(0)) {
++                        uint a = as_type<uint>(value), b = as_type<uint>(next);
++                        value = as_type<float>(MODE == 4 ? (a | b) : (a & b));
++                    } else if (MODE == 4 ? next < value : next > value) value = next;
++                } else {
++                    if (MODE == 4 ? next < value : next > value) value = next;
++                }
+             }
+         }
+-        auto reshapedUpdates = mlx::core::reshape(transposedUpdates, newShape);
+-
+-        std::optional<mlx::core::array> result;
+-        if (scatterType != ScatterType::Unknown) {
+-            result = ApplyScatter(scatterType, *operand, idxVec, reshapedUpdates, axes);
+-        } else {
+-            result =
+-                ApplyScatterGeneric(body, *operand, idxVec, reshapedUpdates, axes, ctx, values);
+-        }
+-        if (!result)
+-            return false;
+-        values.emplace(ToKey(op->getResult(0)), std::move(*result));
+-        return true;
++        result[destination] = value;
++        )");
++    int mode;
++    switch (type) {
++        case ScatterType::Update: mode = 0; break;
++        case ScatterType::Add: mode = 1; break;
++        case ScatterType::Sub: mode = 2; break;
++        case ScatterType::Mul: mode = 3; break;
++        case ScatterType::Min: mode = 4; break;
++        case ScatterType::Max: mode = 5; break;
++        default: throw std::invalid_argument("phydrax-metal: unsupported scatter body");
+     }
++    const int count = static_cast<int>(operand.size());
++    const int updateCount = static_cast<int>(updates.size());
++    auto order = mlx::core::argsort(destinations, 0, mlx::core::Device::gpu);
++    auto result = kernel(
++        {mlx::core::reshape(operand, {count}), mlx::core::reshape(updates, {updateCount}),
++         destinations, order},
++        {{count}}, {operand.dtype()}, {count, 1, 1}, {std::min(count, 256), 1, 1},
++        {{"T", operand.dtype()}, {"MODE", mode}, {"UPDATE_COUNT", updateCount},
++         {"INTEGER", mlx::core::issubdtype(operand.dtype(), mlx::core::integer)},
++         {"FLOATING", operand.dtype() == mlx::core::float32}},
++        std::nullopt, false, mlx::core::Device::gpu)[0];
++    return mlx::core::reshape(result, operand.shape());
++}
+ 
+-    // ===== General point scatter path =====
+-    auto extraction_opt = ExtractPerAxisIndices(*scatterIndices, scatterDimsToOperandDims,
+-                                                indexVectorDim, "stablehlo.scatter");
+-    if (!extraction_opt)
++bool HandleScatter(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
++                   ExecContext& ctx) {
++    auto scatterOp = CastOp<mlir::stablehlo::ScatterOp>(op, "stablehlo.scatter");
++    if (!scatterOp)
++        return false;
++    if (scatterOp.getInputs().size() != 1) {
++        MPS_LOG_ERROR("stablehlo.scatter: multi-input scatter not supported\n");
+         return false;
+-    auto& idxVec = extraction_opt->idxVec;
+-    auto& axes = extraction_opt->axes;
+-    auto& idxBatchShape = extraction_opt->idxBatchShape;
+-
+-    // Add iota indices for batching dims
+-    AddBatchingIotas(idxVec, axes, *operand, idxBatchShape, inputBatchingDims,
+-                     scatterIndicesBatchingDims, hasIdxVecDim, indexVectorDim);
+-
+-    // Reshape updates from StableHLO format to MLX format
+-    std::set<int> windowDimSet(updateWindowDims.begin(), updateWindowDims.end());
+-    int updNdim = static_cast<int>(updates->ndim());
+-
+-    std::vector<int> transposeOrder;
+-    for (int i = 0; i < updNdim; ++i) {
+-        if (!windowDimSet.count(i))
+-            transposeOrder.push_back(i);
+     }
+-    int numIdxDims = static_cast<int>(transposeOrder.size());
+-    for (int i = 0; i < updNdim; ++i) {
+-        if (windowDimSet.count(i))
+-            transposeOrder.push_back(i);
++    auto* operand = RequireValue(values, scatterOp.getInputs()[0], "stablehlo.scatter");
++    auto* indices = RequireValue(values, scatterOp.getScatterIndices(), "stablehlo.scatter");
++    auto* updates = RequireValue(values, scatterOp.getUpdates()[0], "stablehlo.scatter");
++    if (!operand || !indices || !updates)
++        return false;
++    auto type = DetectScatterType(scatterOp.getUpdateComputation());
++    if (type == ScatterType::Unknown) {
++        // Gather/body/scatter is not valid for compounding duplicate updates.
++        MPS_LOG_ERROR("stablehlo.scatter: unsupported update computation\n");
++        return false;
+     }
+-
+-    auto transposedUpdates = *updates;
+-    if (!IsIdentityPermutation(transposeOrder)) {
+-        transposedUpdates = mlx::core::transpose(*updates, transposeOrder);
++    if ((!mlx::core::issubdtype(operand->dtype(), mlx::core::integer) &&
++         operand->dtype() != mlx::core::bool_ && operand->dtype() != mlx::core::float32 &&
++         operand->dtype() != mlx::core::complex64) ||
++        (operand->dtype() == mlx::core::complex64 &&
++         (type == ScatterType::Min || type == ScatterType::Max))) {
++        MPS_LOG_ERROR("stablehlo.scatter: unsupported value dtype/update combination\n");
++        return false;
+     }
+-    auto tShape = transposedUpdates.shape();
+-
+-    mlx::core::Shape newShape;
+-    for (int i = 0; i < numIdxDims; ++i) {
+-        newShape.push_back(tShape[i]);
++    if (operand->size() == 0 || updates->size() == 0) {
++        values.emplace(ToKey(op->getResult(0)), *operand);
++        return true;
+     }
+-    int windowIdx = 0;
+-    for (int d = 0; d < operand->ndim(); ++d) {
+-        // Inserted / input-batching operand dims are collapsed in updates
+-        // (no slot in tShape) — emit a size-1 entry. Every other operand dim
+-        // (window dim, whether or not it is also a scatter axis) has a real
+-        // entry in the transposed-updates shape that must be consumed.
+-        if (insertedSet.count(d) || batchingSet.count(d)) {
+-            newShape.push_back(1);
+-        } else {
+-            newShape.push_back(tShape[numIdxDims + windowIdx++]);
+-        }
++    constexpr size_t limit = std::numeric_limits<int>::max();
++    if (operand->size() > limit || updates->size() > limit || indices->size() > limit) {
++        MPS_LOG_ERROR("stablehlo.scatter: array exceeds supported int32 dispatch capacity\n");
++        return false;
+     }
+-    auto reshapedUpdates = mlx::core::reshape(transposedUpdates, newShape);
+-
+-    std::optional<mlx::core::array> result;
+-    if (scatterType != ScatterType::Unknown) {
+-        result = ApplyScatter(scatterType, *operand, idxVec, reshapedUpdates, axes);
+-    } else {
+-        result = ApplyScatterGeneric(body, *operand, idxVec, reshapedUpdates, axes, ctx, values);
++    auto dn = scatterOp.getScatterDimensionNumbers();
++    int rank = static_cast<int>(operand->ndim());
++    int urank = static_cast<int>(updates->ndim());
++    int irank = static_cast<int>(indices->ndim());
++    int iv = static_cast<int>(dn.getIndexVectorDim());
++    std::vector<int> updateStrides(urank), indexStrides(irank);
++    int stride = 1;
++    for (int d = urank; d-- > 0;) {
++        updateStrides[d] = stride;
++        stride *= updates->shape(d);
+     }
+-    if (!result)
++    stride = 1;
++    for (int d = irank; d-- > 0;) {
++        indexStrides[d] = stride;
++        stride *= indices->shape(d);
++    }
++    std::set<int64_t> inserted(dn.getInsertedWindowDims().begin(),
++                               dn.getInsertedWindowDims().end());
++    std::set<int64_t> batching(dn.getInputBatchingDims().begin(),
++                               dn.getInputBatchingDims().end());
++    std::set<int64_t> window(dn.getUpdateWindowDims().begin(), dn.getUpdateWindowDims().end());
++    std::vector<int> windowMap(rank, -1), batchMap(rank, -1), componentMap(rank, -1);
++    std::vector<int> indexUpdateMap(irank, -1), updateScatterDims;
++    for (int d = 0; d < urank; ++d)
++        if (!window.count(d))
++            updateScatterDims.push_back(d);
++    size_t batch = 0;
++    for (int d = 0; d < irank; ++d) {
++        if (d == iv)
++            continue;
++        if (batch >= updateScatterDims.size()) {
++            MPS_LOG_ERROR("stablehlo.scatter: inconsistent update/index batch ranks\n");
++            return false;
++        }
++        indexUpdateMap[d] = updateScatterDims[batch++];
++    }
++    if (batch != updateScatterDims.size()) {
++        MPS_LOG_ERROR("stablehlo.scatter: inconsistent update/index batch ranks\n");
+         return false;
+-
+-    values.emplace(ToKey(op->getResult(0)), std::move(*result));
++    }
++    size_t w = 0;
++    for (int d = 0; d < rank; ++d) {
++        if (!inserted.count(d) && !batching.count(d)) {
++            if (w >= dn.getUpdateWindowDims().size()) {
++                MPS_LOG_ERROR("stablehlo.scatter: inconsistent window ranks\n");
++                return false;
++            }
++            windowMap[d] = static_cast<int>(dn.getUpdateWindowDims()[w++]);
++        }
++    }
++    for (size_t i = 0; i < dn.getInputBatchingDims().size(); ++i)
++        batchMap[dn.getInputBatchingDims()[i]] =
++            indexUpdateMap[dn.getScatterIndicesBatchingDims()[i]];
++    for (size_t i = 0; i < dn.getScatterDimsToOperandDims().size(); ++i)
++        componentMap[dn.getScatterDimsToOperandDims()[i]] = static_cast<int>(i);
++    std::vector<int32_t> meta{rank, urank, irank, iv < irank ? indexStrides[iv] : 0};
++    auto append = [&](const auto& items) { meta.insert(meta.end(), items.begin(), items.end()); };
++    append(operand->shape());
++    append(updates->shape());
++    append(updateStrides);
++    append(indexStrides);
++    append(windowMap);
++    append(batchMap);
++    append(componentMap);
++    append(indexUpdateMap);
++    auto metadata = mlx::core::array(meta.begin(), {static_cast<int>(meta.size())});
++    auto destinations = ScatterDestinations(*indices, metadata, static_cast<int>(updates->size()));
++    values.emplace(ToKey(op->getResult(0)), FoldScatter(type, *operand, *updates, destinations));
+     return true;
+ }
+ 
+diff --git a/src/pjrt_plugin/ops/handler_utils.h b/src/pjrt_plugin/ops/handler_utils.h
+index 8eabdfcbf86e78aaca226699f6a0498adae6124e..6c2dfcee8ca6fbc6d6a202ebc793d34a7bba86d1 100644
+--- a/src/pjrt_plugin/ops/handler_utils.h
++++ b/src/pjrt_plugin/ops/handler_utils.h
+@@ -181,12 +181,6 @@ enum class ScatterType { Update, Add, Sub, Mul, Min, Max, Unknown };
+ 
+ ScatterType DetectScatterType(mlir::Region& body);
+ 
+-std::optional<mlx::core::array> ApplyScatter(ScatterType scatterType,
+-                                             const mlx::core::array& operand,
+-                                             const std::vector<mlx::core::array>& idxVec,
+-                                             const mlx::core::array& updates,
+-                                             const std::vector<int>& axes);
+-
+ // --- Shared sort utilities (defined in sort_fft_complex.cc) ---
+ 
+ // Compute top-k values and indices along the last axis using ascending argsort.
+diff --git a/src/pjrt_plugin/ops/slice.cc b/src/pjrt_plugin/ops/slice.cc
+index 263095ef88215eac28d4658ba111100e4dcc64ff..1c1dda02637f7f301abb91c251c9e75845022d6c 100644
+--- a/src/pjrt_plugin/ops/slice.cc
++++ b/src/pjrt_plugin/ops/slice.cc
+@@ -97,9 +97,15 @@ ClampedStarts BuildClampedStarts(const mlx::core::array& ref,
+     axes.reserve(static_cast<size_t>(n));
+     for (int d = 0; d < n; ++d) {
+         const int maxStart = std::max(0, ref.shape(d) - regionSizes[d]);
+-        parts.push_back(mlx::core::clip(
+-            mlx::core::astype(mlx::core::reshape(*starts[d], {1}), mlx::core::int32),
+-            mlx::core::array(0), mlx::core::array(maxStart)));
++        // Clamp in the declared index dtype: narrowing first can turn a high
++        // uint64 index into zero, or a large positive int64 index negative.
++        auto dtype = mlx::core::issubdtype(starts[d]->dtype(), mlx::core::unsignedinteger) ?
++            mlx::core::uint64 : mlx::core::int64;
++        auto index = mlx::core::astype(mlx::core::reshape(*starts[d], {1}), dtype);
++        auto clamped = mlx::core::clip(
++            index, mlx::core::array(0, index.dtype()),
++            mlx::core::array(maxStart, index.dtype()));
++        parts.push_back(mlx::core::astype(clamped, mlx::core::int32));
+         axes.push_back(d);
+     }
+     auto start = parts.size() == 1 ? std::move(parts[0]) : mlx::core::concatenate(parts, 0);
+diff --git a/src/pjrt_plugin/ops/sort_fft_complex.cc b/src/pjrt_plugin/ops/sort_fft_complex.cc
+index 4d0f0a1ccda6fa5941ccb3588d3ad25668ae2f27..0bd51c8fcae66a1924dcc6d171db3d8ebf45ee4e 100644
+--- a/src/pjrt_plugin/ops/sort_fft_complex.cc
++++ b/src/pjrt_plugin/ops/sort_fft_complex.cc
+@@ -1,8 +1,10 @@
+ // Sort, FFT, and complex op handlers.
+ 
+ #include <mlx/fft.h>
++#include <mlx/fast.h>
+ 
+-#include <complex>
++#include <algorithm>
++#include <limits>
+ 
+ #include "pjrt_plugin/ops/handler_utils.h"
+ #include "stablehlo/dialect/ChloOps.h"
+@@ -82,292 +84,219 @@ std::pair<mlx::core::array, mlx::core::array> TopKImplFn(const mlx::core::array&
+     return {topValues, mlx::core::astype(partitionedIndices, mlx::core::int32)};
+ }
+ 
+-// One operand of a lexicographic sort comparator: which sort input acts as the
+-// key, and whether it is compared ascending.
+-struct SortKey {
+-    int index;
+-    bool ascending;
+-};
+-
+-// Find the unique comparator block argument feeding `value`. JAX wraps each
+-// argument in a canonicalization chain (select/compare against zero and NaN for
+-// total-order float compares), so the argument is rarely the compare's direct
+-// operand. Returns -1 if the cone reaches zero or more than one distinct
+-// argument.
+-int TraceBlockArg(mlir::Value value) {
+-    llvm::SmallVector<mlir::Value, 8> worklist{value};
+-    llvm::SmallPtrSet<mlir::Operation*, 8> visited;
+-    int found = -1;
+-    while (!worklist.empty()) {
+-        mlir::Value current = worklist.pop_back_val();
+-        if (auto arg = mlir::dyn_cast<mlir::BlockArgument>(current)) {
+-            int number = static_cast<int>(arg.getArgNumber());
+-            if (found != -1 && found != number)
+-                return -1;
+-            found = number;
+-            continue;
+-        }
+-        auto* defOp = current.getDefiningOp();
+-        if (!defOp || !visited.insert(defOp).second)
+-            continue;
+-        for (auto operand : defOp->getOperands())
+-            worklist.push_back(operand);
++// Recognize only comparisons we actually implement. In particular, tracing an
++// arbitrary expression back to an argument does not make it an identity key.
++struct SortOperand {
++    int argument;
++    int component;  // 0: whole value, 1: complex real, 2: complex imaginary
++    bool canonicalZero = false;
++    bool canonicalNaN = false;
++    bool operator==(const SortOperand& other) const {
++        return argument == other.argument && component == other.component &&
++               canonicalZero == other.canonicalZero && canonicalNaN == other.canonicalNaN;
+     }
+-    return found;
+-}
++};
+ 
+-// Decompose a comparator expression into its lexicographic key list.
+-// `lax.sort(..., num_keys=n)` emits either
+-//   or(lt_0, and(eq_0, <rest>))          or
+-//   select(eq_0, <rest>, lt_0)
+-// nested once per additional key. Returns false for any other shape.
+-bool CollectSortKeys(mlir::Value value, std::vector<SortKey>& keys) {
+-    auto* defOp = value.getDefiningOp();
+-    if (!defOp)
++bool IsFloatConstant(mlir::Value value, bool nan) {
++    auto constant = value.getDefiningOp<mlir::stablehlo::ConstantOp>();
++    if (!constant)
+         return false;
++    auto dense = mlir::dyn_cast<mlir::DenseFPElementsAttr>(constant.getValue());
++    if (!dense || dense.getNumElements() != 1)
++        return false;
++    auto number = *dense.getValues<llvm::APFloat>().begin();
++    // JAX canonicalizes both zero signs to positive zero, and every NaN to a
++    // positive quiet NaN. Other constants change the comparison, so refuse.
++    return nan ? number.bitcastToAPInt().getBitWidth() == 32 &&
++                     number.bitcastToAPInt().getZExtValue() == 0x7fc00000 :
++                 number.isZero() && !number.isNegative();
++}
+ 
+-    if (auto orOp = mlir::dyn_cast<mlir::stablehlo::OrOp>(defOp)) {
+-        if (!CollectSortKeys(orOp.getLhs(), keys))
+-            return false;
+-        auto* rhsDefOp = orOp.getRhs().getDefiningOp();
+-        auto andOp = rhsDefOp ? mlir::dyn_cast<mlir::stablehlo::AndOp>(rhsDefOp) : nullptr;
+-        if (!andOp)
+-            return false;
+-        // The equality operand is the tie test on the keys collected so far; the
+-        // other operand describes the remaining keys.
+-        for (auto operand : {andOp.getLhs(), andOp.getRhs()}) {
+-            auto* operandDefOp = operand.getDefiningOp();
+-            auto cmpOp =
+-                operandDefOp ? mlir::dyn_cast<mlir::stablehlo::CompareOp>(operandDefOp) : nullptr;
+-            if (cmpOp && cmpOp.getComparisonDirection() == mlir::stablehlo::ComparisonDirection::EQ)
+-                continue;
+-            if (!CollectSortKeys(operand, keys))
+-                return false;
+-        }
+-        return true;
++std::optional<SortOperand> ParseSortOperand(mlir::Value value) {
++    if (auto arg = mlir::dyn_cast<mlir::BlockArgument>(value))
++        return SortOperand{static_cast<int>(arg.getArgNumber()), 0};
++    auto* def = value.getDefiningOp();
++    if (!def)
++        return std::nullopt;
++    auto name = def->getName().getStringRef();
++    if ((name == "stablehlo.real" || name == "stablehlo.imag") && def->getNumOperands() == 1) {
++        auto arg = mlir::dyn_cast<mlir::BlockArgument>(def->getOperand(0));
++        if (arg)
++            return SortOperand{static_cast<int>(arg.getArgNumber()),
++                               name == "stablehlo.real" ? 1 : 2};
++        return std::nullopt;
+     }
+-
+-    if (auto selOp = mlir::dyn_cast<mlir::stablehlo::SelectOp>(defOp)) {
+-        // select(eq_i, tiebreak, primary): the false branch is the primary compare.
+-        return CollectSortKeys(selOp.getOnFalse(), keys) &&
+-               CollectSortKeys(selOp.getOnTrue(), keys);
++    auto select = mlir::dyn_cast<mlir::stablehlo::SelectOp>(def);
++    if (!select)
++        return std::nullopt;
++    auto compare = select.getPred().getDefiningOp<mlir::stablehlo::CompareOp>();
++    auto key = ParseSortOperand(select.getOnFalse());
++    if (!compare || !key)
++        return std::nullopt;
++    auto compareType = compare.getCompareType();
++    if (compareType && *compareType != mlir::stablehlo::ComparisonType::FLOAT &&
++        *compareType != mlir::stablehlo::ComparisonType::NOTYPE)
++        return std::nullopt;
++    auto direction = compare.getComparisonDirection();
++    if (IsFloatConstant(select.getOnTrue(), false) &&
++        direction == mlir::stablehlo::ComparisonDirection::EQ &&
++        ((compare.getLhs() == select.getOnFalse() && IsFloatConstant(compare.getRhs(), false)) ||
++         (compare.getRhs() == select.getOnFalse() && IsFloatConstant(compare.getLhs(), false)))) {
++        key->canonicalZero = true;
++        return key;
+     }
+-
+-    auto cmpOp = mlir::dyn_cast<mlir::stablehlo::CompareOp>(defOp);
+-    if (!cmpOp)
+-        return false;
+-    auto dir = cmpOp.getComparisonDirection();
+-    if (dir == mlir::stablehlo::ComparisonDirection::EQ ||
+-        dir == mlir::stablehlo::ComparisonDirection::NE)
+-        return false;
+-    int lhsArg = TraceBlockArg(cmpOp.getLhs());
+-    int rhsArg = TraceBlockArg(cmpOp.getRhs());
+-    // The two sides must be the lhs/rhs pair of the same sort input.
+-    if (lhsArg < 0 || rhsArg < 0 || lhsArg / 2 != rhsArg / 2 || lhsArg == rhsArg)
+-        return false;
+-    bool isGtGe = (dir == mlir::stablehlo::ComparisonDirection::GT ||
+-                   dir == mlir::stablehlo::ComparisonDirection::GE);
+-    // GT(rhs_i, lhs_i) is equivalent to LT(lhs_i, rhs_i).
+-    bool swapped = (lhsArg % 2 == 1);
+-    keys.push_back({lhsArg / 2, swapped ? isGtGe : !isGtGe});
+-    return true;
++    if (IsFloatConstant(select.getOnTrue(), true) &&
++        direction == mlir::stablehlo::ComparisonDirection::NE &&
++        compare.getLhs() == compare.getRhs()) {
++        auto tested = ParseSortOperand(compare.getLhs());
++        if (tested && tested->argument == key->argument && tested->component == key->component) {
++            key->canonicalNaN = true;
++            return key;
++        }
++    }
++    return std::nullopt;
+ }
+ 
+-// Analyze a sort comparator to recover its lexicographic keys, in order of
+-// decreasing significance. Returns an empty list when the comparator does not
+-// match a recognized shape, in which case callers fall back to
+-// `DetectAscending` and a single-key sort.
+-std::vector<SortKey> DetectSortKeys(mlir::stablehlo::SortOp sortOp) {
+-    std::vector<SortKey> keys;
+-    auto& comparator = sortOp.getComparator();
+-    if (comparator.empty())
+-        return keys;
+-    auto& returnOp = comparator.front().back();
+-    if (returnOp.getNumOperands() == 0)
+-        return keys;
+-    if (!CollectSortKeys(returnOp.getOperand(0), keys))
+-        keys.clear();
+-    // The keys must be sort inputs 0..n-1 in order; anything else is a shape we
+-    // do not model.
+-    if (keys.size() > sortOp.getInputs().size())
+-        keys.clear();
+-    for (size_t i = 0; i < keys.size(); ++i) {
+-        if (keys[i].index != static_cast<int>(i)) {
+-            keys.clear();
+-            break;
+-        }
++struct SortKey {
++    SortOperand operand;
++    bool ascending;
++};
++
++std::optional<SortKey> ParseSortComparison(mlir::Value value, bool equality = false) {
++    auto compare = value.getDefiningOp<mlir::stablehlo::CompareOp>();
++    if (!compare)
++        return std::nullopt;
++    auto direction = compare.getComparisonDirection();
++    if (equality ? direction != mlir::stablehlo::ComparisonDirection::EQ :
++        (direction != mlir::stablehlo::ComparisonDirection::LT &&
++         direction != mlir::stablehlo::ComparisonDirection::GT))
++        return std::nullopt;
++    auto lhs = ParseSortOperand(compare.getLhs());
++    auto rhs = ParseSortOperand(compare.getRhs());
++    if (!lhs || !rhs || lhs->argument / 2 != rhs->argument / 2 ||
++        lhs->argument == rhs->argument || lhs->component != rhs->component ||
++        lhs->canonicalZero != rhs->canonicalZero || lhs->canonicalNaN != rhs->canonicalNaN)
++        return std::nullopt;
++    auto element = mlir::cast<mlir::RankedTensorType>(compare.getLhs().getType()).getElementType();
++    auto comparisonType = compare.getCompareType();
++    if (mlir::isa<mlir::FloatType>(element)) {
++        if (!element.isF32() || !comparisonType ||
++            *comparisonType != mlir::stablehlo::ComparisonType::TOTALORDER)
++            return std::nullopt;
++    } else if (auto integer = mlir::dyn_cast<mlir::IntegerType>(element)) {
++        auto expected = integer.isUnsigned() || integer.getWidth() == 1 ?
++            mlir::stablehlo::ComparisonType::UNSIGNED : mlir::stablehlo::ComparisonType::SIGNED;
++        if (comparisonType && *comparisonType != mlir::stablehlo::ComparisonType::NOTYPE &&
++            *comparisonType != expected)
++            return std::nullopt;
++    } else {
++        return std::nullopt;
+     }
+-    return keys;
++    bool ascending = (direction == mlir::stablehlo::ComparisonDirection::LT) ==
++                     (lhs->argument % 2 == 0);
++    lhs->argument /= 2;
++    return SortKey{*lhs, ascending};
+ }
+ 
+-// Prepare a sort key for a stable ascending argsort. MLX's Metal block_sort
+-// kernel has no bool variant, and a descending key is flipped rather than
+-// reversed so ties still resolve to ascending original index.
+-mlx::core::array PrepareSortKey(const mlx::core::array& key, bool ascending) {
+-    auto prepared = key.dtype() == mlx::core::bool_ ? mlx::core::astype(key, mlx::core::int8) : key;
+-    return ascending ? prepared : DescendingKey(prepared);
++bool IsSortTie(mlir::Value condition, const SortKey& key) {
++    auto equality = ParseSortComparison(condition, true);
++    return equality && equality->operand == key.operand;
+ }
+ 
+-// Analyze a sort comparator to determine sort direction.
+-// The comparator block has args (lhs0, rhs0, lhs1, rhs1, ...) where
+-// lhs_i/rhs_i are the pair for input i. A "normal" ascending comparator
+-// returns compare LT, %arg0, %arg1 (lhs < rhs). But optimization passes
+-// may produce compare GT, %arg1, %arg0 (rhs > lhs) which is equivalent.
+-// We check which block arguments the compare uses to handle this correctly.
+-bool DetectAscending(mlir::stablehlo::SortOp sortOp) {
+-    auto& comparator = sortOp.getComparator();
+-    if (comparator.empty())
++bool CollectSortKeys(mlir::Value value, std::vector<SortKey>& keys) {
++    if (auto key = ParseSortComparison(value)) {
++        keys.push_back(*key);
+         return true;
+-
+-    auto& block = comparator.front();
+-    // Find the compare op that feeds the return value
+-    auto& returnOp = block.back();
+-    mlir::stablehlo::CompareOp cmpOp = nullptr;
+-    if (returnOp.getNumOperands() > 0) {
+-        mlir::Value result = returnOp.getOperand(0);
+-        if (auto* defOp = result.getDefiningOp()) {
+-            cmpOp = mlir::dyn_cast<mlir::stablehlo::CompareOp>(defOp);
+-            if (!cmpOp) {
+-                // Try through select: select(eq, tiebreak, primary)
+-                if (auto selOp = mlir::dyn_cast<mlir::stablehlo::SelectOp>(defOp)) {
+-                    if (auto* falseDefOp = selOp.getOnFalse().getDefiningOp()) {
+-                        cmpOp = mlir::dyn_cast<mlir::stablehlo::CompareOp>(falseDefOp);
+-                    }
+-                    if (!cmpOp) {
+-                        if (auto* trueDefOp = selOp.getOnTrue().getDefiningOp()) {
+-                            cmpOp = mlir::dyn_cast<mlir::stablehlo::CompareOp>(trueDefOp);
+-                        }
+-                    }
+-                }
+-                // Try through or: or(primary_lt, and(eq, tiebreak))
+-                if (!cmpOp) {
+-                    if (auto orOp = mlir::dyn_cast<mlir::stablehlo::OrOp>(defOp)) {
+-                        if (auto* lhsDefOp = orOp.getLhs().getDefiningOp()) {
+-                            cmpOp = mlir::dyn_cast<mlir::stablehlo::CompareOp>(lhsDefOp);
+-                        }
+-                    }
+-                }
+-            }
+-        }
+     }
+-    // Fallback: scan for first CompareOp in the block
+-    if (!cmpOp) {
+-        for (auto& compOp : block.getOperations()) {
+-            if (auto found = mlir::dyn_cast<mlir::stablehlo::CompareOp>(compOp)) {
+-                cmpOp = found;
+-                break;
++    if (auto select = value.getDefiningOp<mlir::stablehlo::SelectOp>()) {
++        auto primary = ParseSortComparison(select.getOnFalse());
++        if (!primary || !IsSortTie(select.getPred(), *primary))
++            return false;
++        keys.push_back(*primary);
++        return CollectSortKeys(select.getOnTrue(), keys);
++    }
++    if (auto either = value.getDefiningOp<mlir::stablehlo::OrOp>()) {
++        for (bool swap : {false, true}) {
++            auto primary = ParseSortComparison(swap ? either.getRhs() : either.getLhs());
++            auto rest = swap ? either.getLhs() : either.getRhs();
++            auto both = rest.getDefiningOp<mlir::stablehlo::AndOp>();
++            if (!primary || !both)
++                continue;
++            if (IsSortTie(both.getLhs(), *primary)) {
++                keys.push_back(*primary);
++                return CollectSortKeys(both.getRhs(), keys);
++            }
++            if (IsSortTie(both.getRhs(), *primary)) {
++                keys.push_back(*primary);
++                return CollectSortKeys(both.getLhs(), keys);
+             }
+         }
+     }
+-    if (!cmpOp)
+-        return true;
++    return false;
++}
+ 
+-    auto dir = cmpOp.getComparisonDirection();
+-    bool isGtGe = (dir == mlir::stablehlo::ComparisonDirection::GT ||
+-                   dir == mlir::stablehlo::ComparisonDirection::GE);
+-    // Check if operands are swapped (e.g., GT(%arg1, %arg0) = LT(%arg0, %arg1)).
+-    bool swapped = false;
+-    if (auto lhsArg = mlir::dyn_cast<mlir::BlockArgument>(cmpOp.getLhs())) {
+-        if (auto rhsArg = mlir::dyn_cast<mlir::BlockArgument>(cmpOp.getRhs())) {
+-            swapped = (lhsArg.getArgNumber() % 2 == 1) && (rhsArg.getArgNumber() % 2 == 0);
+-        }
++// Integer sorting stays integer, including the complete uint64 range. Floating
++// TOTALORDER keys use their bits; JAX's explicit zero/NaN canonicalizations are
++// applied only when present in the comparator. Inversion, not reversal, gives
++// descending order without reversing equal-key payloads (including tie IDs).
++mlx::core::array PrepareSortKey(const mlx::core::array& input, const SortKey& key) {
++    auto prepared = key.operand.component == 1 ? mlx::core::real(input) :
++                    key.operand.component == 2 ? mlx::core::imag(input) : input;
++    if (prepared.dtype() == mlx::core::bool_)
++        prepared = mlx::core::astype(prepared, mlx::core::uint8);
++    if (prepared.dtype() == mlx::core::float32) {
++        auto bits = mlx::core::view(prepared, mlx::core::uint32);
++        if (key.operand.canonicalZero)
++            bits = mlx::core::where(mlx::core::equal(prepared, mlx::core::array(0.0f)),
++                                    mlx::core::array(uint32_t{0}), bits);
++        if (key.operand.canonicalNaN)
++            bits = mlx::core::where(mlx::core::isnan(prepared),
++                                    mlx::core::array(uint32_t{0x7fc00000}), bits);
++        auto sign = mlx::core::array(uint32_t{0x80000000});
++        prepared = mlx::core::where(
++            mlx::core::not_equal(mlx::core::bitwise_and(bits, sign),
++                                 mlx::core::array(uint32_t{0})),
++            mlx::core::bitwise_invert(bits), mlx::core::bitwise_xor(bits, sign));
+     }
+-    return swapped ? isGtGe : !isGtGe;
++    return key.ascending ? prepared : mlx::core::bitwise_invert(prepared);
+ }
+ 
+-// Handler for stablehlo.sort
+ bool HandleSort(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+                 ExecContext& ctx) {
+     auto sortOp = CastOp<mlir::stablehlo::SortOp>(op, "stablehlo.sort");
+     if (!sortOp)
+         return false;
+-
+-    int dimension = static_cast<int>(sortOp.getDimension());
+-    auto sortKeys = DetectSortKeys(sortOp);
+-    bool ascending = sortKeys.empty() ? DetectAscending(sortOp) : sortKeys[0].ascending;
+-    size_t numInputs = sortOp.getInputs().size();
+-
+-    if (numInputs == 1) {
+-        auto* input = RequireValue(values, sortOp.getInputs()[0], "stablehlo.sort");
+-        if (!input)
++    std::vector<SortKey> keys;
++    auto& comparator = sortOp.getComparator();
++    if (comparator.empty() || comparator.front().back().getNumOperands() != 1 ||
++        !CollectSortKeys(comparator.front().back().getOperand(0), keys) || keys.empty()) {
++        MPS_LOG_ERROR("stablehlo.sort: unsupported comparator; no approximate key fallback\n");
++        return false;
++    }
++    int axis = static_cast<int>(sortOp.getDimension());
++    std::optional<mlx::core::array> indices;
++    for (size_t i = keys.size(); i-- > 0;) {
++        if (keys[i].operand.argument < 0 ||
++            static_cast<size_t>(keys[i].operand.argument) >= sortOp.getInputs().size()) {
++            MPS_LOG_ERROR("stablehlo.sort: invalid comparator input\n");
+             return false;
+-        // MLX's Metal block_sort kernel has no bool variant
+-        // (`ncarg_block_sort_bool__uint32_*` is not loaded). Cast to int8
+-        // around the sort and cast the result back to bool.
+-        const bool inputIsBool = input->dtype() == mlx::core::bool_;
+-        const auto sortInput = inputIsBool ? mlx::core::astype(*input, mlx::core::int8) : *input;
+-        auto result = mlx::core::sort(sortInput, dimension);
+-        if (!ascending) {
+-            result = ReverseAxis(result, dimension);
+         }
+-        if (inputIsBool) {
+-            result = mlx::core::astype(result, mlx::core::bool_);
+-        }
+-        values.emplace(ToKey(op->getResult(0)), std::move(result));
+-    } else {
+-        // Sort-by-key. Only the keys need int8 casting — take_along_axis on
+-        // bool values is supported by MLX's gather kernel.
+-        auto* keys = RequireValue(values, sortOp.getInputs()[0], "stablehlo.sort");
+-        if (!keys)
++        auto* input = RequireValue(values, sortOp.getInputs()[keys[i].operand.argument],
++                                   "stablehlo.sort");
++        if (!input)
+             return false;
+-
+-        if (sortKeys.size() > 1) {
+-            // Lexicographic sort: argsort by the least significant key, then
+-            // re-sort stably by each more significant key in turn. MLX's argsort
+-            // is stable, so each pass preserves the order established by the
+-            // less significant keys.
+-            mlx::core::array indices = mlx::core::array(0);
+-            for (size_t i = sortKeys.size(); i-- > 0;) {
+-                auto* key = RequireValue(values, sortOp.getInputs()[i], "stablehlo.sort");
+-                if (!key)
+-                    return false;
+-                auto prepared = PrepareSortKey(*key, sortKeys[i].ascending);
+-                if (i + 1 == sortKeys.size()) {
+-                    indices = mlx::core::argsort(prepared, dimension);
+-                    continue;
+-                }
+-                auto permuted = mlx::core::take_along_axis(prepared, indices, dimension);
+-                auto order = mlx::core::argsort(permuted, dimension);
+-                indices = mlx::core::take_along_axis(indices, order, dimension);
+-            }
+-            for (size_t i = 0; i < numInputs; ++i) {
+-                auto* input = RequireValue(values, sortOp.getInputs()[i], "stablehlo.sort");
+-                if (!input)
+-                    return false;
+-                values.emplace(ToKey(op->getResult(i)),
+-                               mlx::core::take_along_axis(*input, indices, dimension));
+-            }
+-            return true;
+-        }
+-
+-        const bool keysAreBool = keys->dtype() == mlx::core::bool_;
+-        const auto argsortInput = keysAreBool ? mlx::core::astype(*keys, mlx::core::int8) : *keys;
+-        mlx::core::array indices = mlx::core::array(0);
+-        if (!ascending && keysAreBool) {
+-            // Bool inputs are tie-heavy. A `cast → argsort → reverse` would
+-            // flip the tie order within the equal-True and equal-False
+-            // groups and violate JAX's stable-descending semantics. Sort the
+-            // flipped key (1 - x) ascending instead — argsort is stable, so
+-            // ties resolve to ascending original index in either direction.
+-            auto descKey =
+-                mlx::core::subtract(mlx::core::array(static_cast<int8_t>(1)), argsortInput);
+-            indices = mlx::core::argsort(descKey, dimension);
+-        } else {
+-            indices = mlx::core::argsort(argsortInput, dimension);
+-            if (!ascending) {
+-                indices = ReverseAxis(indices, dimension);
+-            }
+-        }
+-
+-        for (size_t i = 0; i < numInputs; ++i) {
+-            auto* input = RequireValue(values, sortOp.getInputs()[i], "stablehlo.sort");
+-            if (!input)
+-                return false;
+-            auto sorted = mlx::core::take_along_axis(*input, indices, dimension);
+-            values.emplace(ToKey(op->getResult(i)), std::move(sorted));
+-        }
++        auto prepared = PrepareSortKey(*input, keys[i]);
++        if (indices)
++            prepared = mlx::core::take_along_axis(prepared, *indices, axis);
++        auto order = mlx::core::argsort(prepared, axis, mlx::core::Device::gpu);
++        indices = indices ? mlx::core::take_along_axis(*indices, order, axis) : order;
++    }
++    for (size_t i = 0; i < sortOp.getInputs().size(); ++i) {
++        auto* input = RequireValue(values, sortOp.getInputs()[i], "stablehlo.sort");
++        if (!input)
++            return false;
++        values.emplace(ToKey(op->getResult(i)), mlx::core::take_along_axis(*input, *indices, axis));
+     }
+-
+     return true;
+ }
+ 
+@@ -384,28 +313,43 @@ bool HandleFft(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::arr
+ 
+     auto fftType = fftOp.getFftType();
+     auto fftLength = fftOp.getFftLength();
++    if (fftLength.empty() || fftLength.size() > input->ndim() ||
++        (fftType == mlir::stablehlo::FftType::RFFT ?
++             input->dtype() != mlx::core::float32 : input->dtype() != mlx::core::complex64)) {
++        MPS_LOG_ERROR("stablehlo.fft: expected float32 RFFT or complex64 transform\n");
++        return false;
++    }
+ 
+     std::vector<int> axes;
+     mlx::core::Shape lengths;
+     int ndim = static_cast<int>(input->ndim());
+     for (size_t i = 0; i < fftLength.size(); ++i) {
++        if (fftLength[i] <= 0 || fftLength[i] > std::numeric_limits<int>::max()) {
++            MPS_LOG_ERROR("stablehlo.fft: unsupported transform length\n");
++            return false;
++        }
+         axes.push_back(ndim - static_cast<int>(fftLength.size()) + static_cast<int>(i));
+         lengths.push_back(static_cast<int>(fftLength[i]));
+     }
+ 
++    // StableHLO has an unnormalized forward transform and a 1/N inverse.
++    // Rader/Bluestein CPU work prepares immutable shape-derived twiddle tables;
++    // runtime input transforms stay on the explicitly selected GPU stream.
++    constexpr auto norm = mlx::core::fft::FFTNorm::Backward;
++    auto gpu = mlx::core::Device::gpu;
+     mlx::core::array result = *input;
+     switch (fftType) {
+         case mlir::stablehlo::FftType::FFT:
+-            result = mlx::core::fft::fftn(*input, lengths, axes);
++            result = mlx::core::fft::fftn(*input, lengths, axes, norm, gpu);
+             break;
+         case mlir::stablehlo::FftType::IFFT:
+-            result = mlx::core::fft::ifftn(*input, lengths, axes);
++            result = mlx::core::fft::ifftn(*input, lengths, axes, norm, gpu);
+             break;
+         case mlir::stablehlo::FftType::RFFT:
+-            result = mlx::core::fft::rfftn(*input, lengths, axes);
++            result = mlx::core::fft::rfftn(*input, lengths, axes, norm, gpu);
+             break;
+         case mlir::stablehlo::FftType::IRFFT:
+-            result = mlx::core::fft::irfftn(*input, lengths, axes);
++            result = mlx::core::fft::irfftn(*input, lengths, axes, norm, gpu);
+             break;
+         default:
+             MPS_LOG_ERROR("stablehlo.fft: unsupported fft type\n");
+@@ -423,10 +367,31 @@ bool HandleComplex(mlir::Operation* op, ValueMap& values, std::vector<mlx::core:
+     auto* imag = RequireValue(values, op->getOperand(1), "stablehlo.complex");
+     if (!real || !imag)
+         return false;
+-    auto imag_unit = mlx::core::array(std::complex<float>(0.0F, 1.0F));
+-    auto result = mlx::core::add(
+-        mlx::core::astype(*real, mlx::core::complex64),
+-        mlx::core::multiply(mlx::core::astype(*imag, mlx::core::complex64), imag_unit));
++    if (real->dtype() != mlx::core::float32 || imag->dtype() != mlx::core::float32 ||
++        real->shape() != imag->shape() ||
++        real->size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
++        MPS_LOG_ERROR("stablehlo.complex: expected matching float32 components within capacity\n");
++        return false;
++    }
++    if (real->size() == 0) {
++        values.emplace(ToKey(op->getResult(0)),
++                       mlx::core::zeros(real->shape(), mlx::core::complex64,
++                                        mlx::core::Device::gpu));
++        return true;
++    }
++    // Construct components, not real + i*imag: the latter contaminates real
++    // with 0*inf/NaN and changes signed-zero bits in otherwise valid components.
++    static const auto kernel = mlx::core::fast::metal_kernel(
++        "phydrax_complex_components", {"real_part", "imag_part"}, {"result"}, R"(
++        uint i = thread_position_in_grid.x;
++        result[i] = complex64_t(real_part[i], imag_part[i]);
++        )");
++    int count = static_cast<int>(real->size());
++    auto flat = mlx::core::Shape{count};
++    auto result = mlx::core::reshape(
++        kernel({mlx::core::reshape(*real, flat), mlx::core::reshape(*imag, flat)}, {flat},
++               {mlx::core::complex64}, {count, 1, 1}, {std::min(count, 256), 1, 1},
++               {}, std::nullopt, false, mlx::core::Device::gpu)[0], real->shape());
+     values.emplace(ToKey(op->getResult(0)), std::move(result));
+     return true;
+ }

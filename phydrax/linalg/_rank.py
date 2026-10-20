@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple, overload
 
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from ._policies import RankPolicy
@@ -21,6 +22,17 @@ class NumericalRankData(NamedTuple):
     finite: Array
 
 
+class HostNumericalRankData(NamedTuple):
+    """Canonical rank data retained entirely as concrete NumPy arrays."""
+
+    retained: np.ndarray
+    rank: np.ndarray
+    cutoff: np.ndarray
+    condition_estimate: np.ndarray
+    full_rank: np.ndarray
+    finite: np.ndarray
+
+
 def numerical_rank_data(
     singular_values: Array,
     rows: int,
@@ -29,49 +41,107 @@ def numerical_rank_data(
     /,
 ) -> NumericalRankData:
     """Resolve one canonical numerical-rank decision over trailing modes."""
-    values = jnp.asarray(singular_values)
+    return _numerical_rank_data(singular_values, rows, columns, policy, host=False)
+
+
+def host_numerical_rank_data(
+    singular_values: np.ndarray,
+    rows: int,
+    columns: int,
+    policy: RankPolicy,
+    /,
+) -> HostNumericalRankData:
+    """The same rank policy for immutable host preparation, without JAX staging."""
+    return _numerical_rank_data(singular_values, rows, columns, policy, host=True)
+
+
+@overload
+def _numerical_rank_data(
+    singular_values: Array,
+    rows: int,
+    columns: int,
+    policy: RankPolicy,
+    /,
+    *,
+    host: Literal[False],
+) -> NumericalRankData: ...
+
+
+@overload
+def _numerical_rank_data(
+    singular_values: np.ndarray,
+    rows: int,
+    columns: int,
+    policy: RankPolicy,
+    /,
+    *,
+    host: Literal[True],
+) -> HostNumericalRankData: ...
+
+
+def _numerical_rank_data(
+    singular_values: Array | np.ndarray,
+    rows: int,
+    columns: int,
+    policy: RankPolicy,
+    /,
+    *,
+    host: bool,
+) -> NumericalRankData | HostNumericalRankData:
+    # Only this numerical kernel is shared; runtime callers retain JAX arrays.
+    xp = np if host else jnp
+    values = xp.asarray(singular_values)
     if values.ndim < 1:
         raise ValueError("singular_values must have a trailing mode axis.")
     if rows < 1 or columns < 1:
         raise ValueError("Matrix dimensions must be positive.")
-    if not jnp.issubdtype(values.dtype, jnp.floating):
+    if not xp.issubdtype(values.dtype, xp.floating):
         raise TypeError("singular_values must have a real floating dtype.")
 
     relative = (
-        float(max(rows, columns)) * float(jnp.finfo(values.dtype).eps)
+        float(max(rows, columns)) * float(xp.finfo(values.dtype).eps)
         if policy.relative_cutoff is None
         else policy.relative_cutoff
     )
     absolute = 0.0 if policy.absolute_cutoff is None else policy.absolute_cutoff
-    largest = jnp.max(values, axis=-1)
+    largest = xp.max(values, axis=-1)
     cutoff = (
-        jnp.asarray(absolute, dtype=values.dtype)
-        + jnp.asarray(
+        xp.asarray(absolute, dtype=values.dtype)
+        + xp.asarray(
             relative,
             dtype=values.dtype,
         )
         * largest
     )
-    finite = jnp.all(jnp.isfinite(values), axis=-1) & jnp.isfinite(cutoff)
-    retained = (values > cutoff[..., None]) & jnp.isfinite(values)
-    rank = jnp.sum(retained, axis=-1, dtype=jnp.int32)
-    smallest_retained = jnp.min(
-        jnp.where(retained, values, jnp.asarray(jnp.inf, dtype=values.dtype)),
+    finite = xp.all(xp.isfinite(values), axis=-1) & xp.isfinite(cutoff)
+    retained = (values > cutoff[..., None]) & xp.isfinite(values)
+    rank = xp.sum(retained, axis=-1, dtype=xp.int32)
+    smallest_retained = xp.min(
+        xp.where(retained, values, xp.asarray(xp.inf, dtype=values.dtype)),
         axis=-1,
     )
-    condition = jnp.where(
+    condition = xp.where(
         rank > 0,
         largest / smallest_retained,
-        jnp.asarray(jnp.inf, dtype=values.dtype),
+        xp.asarray(xp.inf, dtype=values.dtype),
     )
     full_rank = rank == min(rows, columns)
+    if host:
+        return HostNumericalRankData(
+            retained=np.asarray(retained),
+            rank=np.asarray(rank),
+            cutoff=np.asarray(cutoff),
+            condition_estimate=np.asarray(condition),
+            full_rank=np.asarray(full_rank),
+            finite=np.asarray(finite),
+        )
     return NumericalRankData(
-        retained=retained,
-        rank=rank,
-        cutoff=cutoff,
-        condition_estimate=condition,
-        full_rank=full_rank,
-        finite=finite,
+        retained=jnp.asarray(retained),
+        rank=jnp.asarray(rank),
+        cutoff=jnp.asarray(cutoff),
+        condition_estimate=jnp.asarray(condition),
+        full_rank=jnp.asarray(full_rank),
+        finite=jnp.asarray(finite),
     )
 
 

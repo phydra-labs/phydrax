@@ -42,6 +42,14 @@ Applications use this public facade rather than direct upstream configuration
 access. Scientific dtype choices, mixed-precision policies, tolerances, and
 qualification evidence remain with their scientific owners.
 
+Apple GPU selection is `RuntimeConfig(platforms=("mps",), enable_x64=True)`.
+Before applying it, admission checks the matching Metal companion's installation
+and identity; it does not silently select another provider. Keep x64 enabled
+for int64/uint64 addressing and choose float32/complex64 at numerical owners.
+The configuration facade does not downcast models or change scientific dtype
+policies. See [Apple GPU execution](../guides_metal_execution.md) and the
+[Metal environment API](backends.md#apple-metal-environment).
+
 Persistent records use one canonical wire form. Every union value is written as
 `{"case": ..., "value": ...}`; nominal union alternatives (records and enums)
 declare their own `__config_kind__`, which names their case. Enum values record

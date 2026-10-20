@@ -20,6 +20,10 @@ estimates of each transformed executable; sampled peaks are
 ``PhaseMemorySampler`` observations, never bounds; declared bytes are the
 substrate's ``StreamedRelationResources`` logical bounds, which exclude callback
 internals and compiler temporaries. Capacity refusals are retained rows.
+
+``--dtype`` selects every floating input, parameter and declared payload. The
+default float64 campaign keeps its 1e-9 streamed/materialized gate; float32
+uses the separately derived bound of ``_defect_bound``.
 """
 
 from __future__ import annotations
@@ -59,6 +63,9 @@ StreamedRoute: TypeAlias = Literal["streamed", "materialized"]
 StreamedTransform: TypeAlias = Literal["forward", "reverse", "force-loss", "hvp"]
 ROUTES: tuple[StreamedRoute, ...] = get_args(StreamedRoute)
 TRANSFORMS: tuple[StreamedTransform, ...] = get_args(StreamedTransform)
+StreamedDtype: TypeAlias = Literal["float64", "float32"]
+# Retained higher-precision gate of the default float64 campaign.
+FLOAT64_DEFECT_BOUND = 1.0e-9
 
 type Parameters = dict[str, Array]
 type Energy = Callable[[Parameters, Array], Array]
@@ -78,6 +85,7 @@ class StreamedCase:
     edge_tile: int
     accumulation: phx.sparse.RelationAccumulation
     seed: int
+    dtype: StreamedDtype
 
     @property
     def routes(self) -> int:
@@ -97,6 +105,7 @@ class CampaignConfig:
     repeats: int
     memory_interval_seconds: float
     seed: int
+    dtype: StreamedDtype
 
 
 def _cases(config: CampaignConfig, /) -> list[StreamedCase]:
@@ -125,6 +134,7 @@ def _cases(config: CampaignConfig, /) -> list[StreamedCase]:
             edge_tile=tiles[1],
             accumulation=config.accumulation,
             seed=config.seed,
+            dtype=config.dtype,
         )
 
     cases = [case(f"receivers-{count}", receivers=count) for count in config.receivers]
@@ -151,12 +161,14 @@ def _topology(case: StreamedCase, /) -> tuple[np.ndarray, np.ndarray]:
 def _parameters(case: StreamedCase, /) -> Parameters:
     rng = np.random.default_rng(case.seed + 1)
     return {
-        "w1": jnp.asarray(rng.normal(size=(4, case.hidden)) / 2.0),
+        "w1": jnp.asarray(rng.normal(size=(4, case.hidden)) / 2.0, dtype=case.dtype),
         "w2": jnp.asarray(
-            rng.normal(size=(case.hidden, case.channels)) / np.sqrt(case.hidden)
+            rng.normal(size=(case.hidden, case.channels)) / np.sqrt(case.hidden),
+            dtype=case.dtype,
         ),
         "w3": jnp.asarray(
-            rng.normal(size=(case.channels, case.hidden)) / np.sqrt(case.channels)
+            rng.normal(size=(case.channels, case.hidden)) / np.sqrt(case.channels),
+            dtype=case.dtype,
         ),
     }
 
@@ -291,27 +303,48 @@ def _measure_transform(
 def _defect(left: Any, right: Any, /) -> float:
     """Largest streamed/materialized difference relative to the reference scale."""
     return max(
-        float(jnp.max(jnp.abs(a - b)) / jnp.maximum(1.0, jnp.max(jnp.abs(b))))
+        float(
+            jnp.max(jnp.abs(a - b))
+            / jnp.maximum(jnp.ones((), dtype=b.real.dtype), jnp.max(jnp.abs(b)))
+        )
         for a, b in zip(jax.tree.leaves(left), jax.tree.leaves(right), strict=True)
     )
+
+
+def _defect_bound(case: StreamedCase, maximum_receiver_degree: int, /) -> float:
+    """Streamed/materialized gate, declared before any measurement.
+
+    float64 keeps the original 1e-9 gate. In float32 both routes evaluate the
+    same per-event messages and differ only in summation order, so the defect
+    is bounded by two orderings of the recursive-summation constant gamma_n ~ n
+    eps of the longest sums: the receiver aggregate (maximum degree), the dense
+    contractions (hidden, channels) and the four input features. A further
+    factor 4 covers reverse and second-order transforms, which traverse each
+    sum in both directions.
+    """
+    if case.dtype == "float64":
+        return FLOAT64_DEFECT_BOUND
+    length = maximum_receiver_degree + case.hidden + case.channels + 4
+    return 2.0 * 4.0 * length * float(np.finfo(np.float32).eps)
 
 
 def _case_rows(case: StreamedCase, config: CampaignConfig, /) -> list[dict[str, Any]]:
     sources, receivers = _topology(case)
     rng = np.random.default_rng(case.seed + 2)
     positions = jnp.asarray(
-        rng.normal(size=(case.receivers, 3)) * case.receivers ** (1 / 3)
+        rng.normal(size=(case.receivers, 3)) * case.receivers ** (1 / 3),
+        dtype=case.dtype,
     )
-    edge_scale = jnp.asarray(rng.uniform(0.5, 1.5, size=sources.size))
-    labels = jnp.asarray(rng.normal(size=positions.shape))
-    direction = jnp.asarray(rng.normal(size=positions.shape))
+    edge_scale = jnp.asarray(rng.uniform(0.5, 1.5, size=sources.size), dtype=case.dtype)
+    labels = jnp.asarray(rng.normal(size=positions.shape), dtype=case.dtype)
+    direction = jnp.asarray(rng.normal(size=positions.shape), dtype=case.dtype)
     theta = _parameters(case)
     relation = phx.sparse.EdgeRelation(
         sources, receivers, source_size=case.receivers, target_size=case.receivers
     )
     payload = phx.sparse.StreamedPayloadSpec(
-        jax.ShapeDtypeStruct((case.channels,), jnp.float64),
-        jax.ShapeDtypeStruct((), jnp.float64),
+        jax.ShapeDtypeStruct((case.channels,), case.dtype),
+        jax.ShapeDtypeStruct((), case.dtype),
     )
     plan = _streamed_plan(case)
     # Host preparation is synchronized: the grouping work runs eagerly on device.
@@ -355,6 +388,9 @@ def _case_rows(case: StreamedCase, config: CampaignConfig, /) -> list[dict[str, 
         rows[-1]["streamed_materialized_defect"] = _defect(
             values["streamed"], values["materialized"]
         )
+        rows[-1]["defect_bound"] = _defect_bound(
+            case, common["schedule"]["maximum_receiver_degree"]
+        )
     return rows
 
 
@@ -392,10 +428,10 @@ def _capacity_refusal(config: CampaignConfig, /) -> dict[str, Any]:
         channel_capacity=case.channels,
     ).prepare(relation, owner_id="benchmark-streamed-relation")
     payload = phx.sparse.StreamedPayloadSpec(
-        jax.ShapeDtypeStruct((case.channels + 1,), jnp.float64),
-        jax.ShapeDtypeStruct((), jnp.float64),
+        jax.ShapeDtypeStruct((case.channels + 1,), case.dtype),
+        jax.ShapeDtypeStruct((), case.dtype),
     )
-    positions = jnp.zeros((case.receivers, 3))
+    positions = jnp.zeros((case.receivers, 3), dtype=case.dtype)
     try:
         prepared.evaluate(
             payload,
@@ -404,7 +440,7 @@ def _capacity_refusal(config: CampaignConfig, /) -> dict[str, Any]:
             _parameters(case),
             positions,
             positions,
-            jnp.ones((sources.size,)),
+            jnp.ones((sources.size,), dtype=case.dtype),
         )
     except ValueError as error:
         return {"case": case.name, "status": "refused", "reason": str(error)}
@@ -416,7 +452,10 @@ def run(config: CampaignConfig, /) -> dict[str, Any]:
     refusal = _capacity_refusal(config)
     passed = refusal["status"] == "refused" and all(
         row["schedule"]["successful"]
-        and row.get("streamed_materialized_defect", 0.0) < 1.0e-9
+        and (
+            "streamed_materialized_defect" not in row
+            or row["streamed_materialized_defect"] < row["defect_bound"]
+        )
         for row in rows
     )
     configuration = {
@@ -485,6 +524,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--memory-interval-seconds", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--dtype", choices=get_args(StreamedDtype), default="float64")
     parser.add_argument(
         "--output", type=Path, default=Path("benchmarks/streamed_relation_scaling.json")
     )
@@ -503,6 +543,7 @@ def main() -> None:
         repeats=arguments.repeats,
         memory_interval_seconds=arguments.memory_interval_seconds,
         seed=arguments.seed,
+        dtype=parse(arguments.dtype, StreamedDtype, "dtype"),
     )
     record = run(config)
     write_json_atomic(arguments.output, record)

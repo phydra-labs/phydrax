@@ -13,6 +13,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -481,14 +482,19 @@ def evaluate_dem_barrier(
     step_size: Array,
     /,
     *,
-    time: Array = jnp.asarray(0.0),
+    time: ArrayLike = 0.0,
     args: Any = None,
     body_properties: CompliantDEMBodyProperties | None = None,
     normal_tolerance: float = 1.0e-12,
     capillary_plan: DEMBarrierCapillaryPlan | None = None,
     frame_tolerance: float = 1.0e-10,
 ) -> DEMBoundaryResponse:
-    """Evaluate one exact-SDF barrier with explicit contact-point motion."""
+    """Evaluate one exact-SDF barrier with explicit contact-point motion.
+
+    ``time`` defaults to zero and is converted to a JAX array when evaluating
+    the motion, not when importing this module. Conversion preserves the
+    configured scalar precision and any explicitly supplied array dtype.
+    """
 
     if not isinstance(barrier, ImplicitDEMBarrier):
         raise TypeError("barrier must be an ImplicitDEMBarrier.")

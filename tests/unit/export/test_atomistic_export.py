@@ -34,7 +34,7 @@ WATER = np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]])
 MOVED = WATER + np.array([[0.02, -0.01, 0.0], [0.0, 0.015, -0.02], [0.0, 0.0, 0.01]])
 
 
-def _structure(*, periodic: bool) -> Any:
+def _structure(*, periodic: bool, mass_accumulation_dtype: Any = jnp.float64) -> Any:
     return phx.atomistic.AtomicStructure(
         jnp.asarray([8, 1, 1]),
         jnp.asarray(WATER),
@@ -42,12 +42,17 @@ def _structure(*, periodic: bool) -> Any:
         electronvolt_units().scale,
         cell=jnp.asarray(CELL) if periodic else None,
         periodic_axes=jnp.asarray([True, True, True]) if periodic else None,
+        mass_accumulation_dtype=mass_accumulation_dtype,
     )
 
 
-def _export(directory: Path, *, periodic: bool) -> tuple[Any, Any, Any]:
+def _export(
+    directory: Path, *, periodic: bool, mass_accumulation_dtype: Any = jnp.float64
+) -> tuple[Any, Any, Any]:
     plan = provider_plan(tiny_mace(seed=2))
-    structure = _structure(periodic=periodic)
+    structure = _structure(
+        periodic=periodic, mass_accumulation_dtype=mass_accumulation_dtype
+    )
     bundle = phx.export.save_atomistic_iree(
         plan,
         structure,
@@ -263,7 +268,9 @@ def test_loaded_frozen_export_refuses_differentiation(
 
 @needs_iree
 def test_frozen_aperiodic_export_matches_native(tmp_path: Path) -> None:
-    provider, bundle, loaded = _export(tmp_path, periodic=False)
+    provider, bundle, loaded = _export(
+        tmp_path, periodic=False, mass_accumulation_dtype=jnp.float32
+    )
     assert not bundle.contract.stress and bundle.contract.input_names == ("positions",)
     request = provider.prepare_request(jnp.asarray(WATER), None, None)
     moved = provider.prepare_request(jnp.asarray(MOVED), None, request.neighborhood)

@@ -377,6 +377,19 @@ Topology construction sorts by validity, Morton code, and stable physical ID.
 Integer codes, permutations, refinement decisions, and relation routes are
 discrete stop-gradient state.
 
+### Apple GPU precision scope
+
+The [Metal candidate profile](guides_metal_execution.md) covers prepared neighbor
+queries with float32 geometry and exact full-width integer keys and stable IDs.
+Keep x64 enabled. Preparation, refresh, invalid geometry, capacity refusal,
+periodic seams, and stable tie ordering are separate qualification obligations;
+do not infer them from one successful query.
+
+This profile does not convert every hierarchy or voxel geometry operation to
+float32. Cell-geometry and other scientific owners can still construct or require
+float64 bounds, which the companion refuses. Preserve those guards and precision
+contracts rather than disabling x64 or silently narrowing geometry.
+
 ## Point hierarchies
 
 ```python

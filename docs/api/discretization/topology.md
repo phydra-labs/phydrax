@@ -35,6 +35,12 @@ filtrations, and persistence live in [`phydrax.topology`](../topology/index.md).
 
 ---
 
+`DiscreteMeasure(..., accumulation_dtype=...)` selects the precision of the
+derived total mass; the default remains float64. It does not change the
+weight-defined scientific measure identity. Selected-precision overflow is
+refused eagerly and makes traced `valid` false; `admit()` retains the refusal.
+Probability normalization still uses the original host validation tolerance.
+
 ::: phydrax.discretization.DiscreteMeasure
 
 ---

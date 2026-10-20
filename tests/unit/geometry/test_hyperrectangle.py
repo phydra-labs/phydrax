@@ -157,3 +157,53 @@ def test_hyperrectangle_finite_observation_with_stacked_points() -> None:
 
     loss = term.loss({"u": u}, key=jr.key(0))
     assert loss < 1e-10
+
+
+def test_hyperrectangle_explicit_float32_coordinates() -> None:
+    lower, upper = np.asarray([0.0, -1.0]), np.asarray([2.0, 3.0])
+    default = phx.domain.HyperRectangle(lower, upper)
+    box = phx.domain.HyperRectangle(lower, upper, dtype=jnp.float32)
+    line = phx.domain.HyperRectangle(np.zeros(1), np.full(1, 2.0), dtype="float32")
+
+    assert default.lower.dtype == default.upper.dtype == jnp.float64
+    points = jnp.asarray([[0.0, 1.0], [2.0, 3.0]], dtype=jnp.float32)
+    returned = {
+        "lower": box.lower,
+        "upper": box.upper,
+        "bounds": box.bounds,
+        "volume": box.volume,
+        "boundary measure": box.boundary_measure_value,
+        "line boundary measure": line.boundary_measure_value,
+        "adf": box.adf(points),
+        "normals": box._boundary_normals(points),
+        "interior": box.sample_interior(8, key=jr.key(0)),
+        "boundary": box.sample_boundary(8, key=jr.key(1)),
+        "filtered": box.sample_interior(
+            8, where=lambda x: x[0] > 1.0, sampler="uniform", key=jr.key(2)
+        ),
+        "separable": box._sample_interior_separable(3, key=jr.key(3))[0][1],
+    }
+    for role, value in returned.items():
+        assert value.dtype == jnp.float32, role
+    np.testing.assert_allclose(
+        returned["normals"], [[-1.0, 0.0], [2.0**-0.5, 2.0**-0.5]], rtol=1e-6
+    )
+    assert bool(jnp.all(box._contains(returned["interior"])))
+    assert bool(jnp.all(box._on_boundary(returned["boundary"])))
+    assert bool(jnp.all(returned["filtered"][:, 0] > 1.0))
+
+
+@pytest.mark.parametrize(
+    ("dtype", "message"),
+    (
+        (jnp.float16, "support float32 or float64"),
+        (jnp.int32, "'int32'"),
+        (jnp.complex64, "not real floating-point"),
+    ),
+)
+def test_hyperrectangle_refuses_unsupported_coordinate_dtype_first(
+    dtype: Any, message: str
+) -> None:
+    # Mismatched bounds would fail later; the dtype refusal comes first.
+    with pytest.raises(ValueError, match=message):
+        phx.domain.HyperRectangle(jnp.zeros((2,)), jnp.ones((3,)), dtype=dtype)

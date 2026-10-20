@@ -348,3 +348,97 @@ def test_traced_invalid_measure_exposes_failed_admission() -> None:
     assert not bool(measure.valid)
     with pytest.raises(ValueError, match="non-negative"):
         measure.admit()
+
+
+def test_measure_total_precision_is_explicit_without_changing_weight_identity() -> None:
+    weights = np.asarray([2**24, 1], dtype=np.float32)
+    default = phx.discretization.DiscreteMeasure("mass", "points", "atoms", weights)
+    selected = phx.discretization.DiscreteMeasure(
+        "mass", "points", "atoms", weights, accumulation_dtype=jnp.float32
+    )
+
+    assert default.total_mass.dtype == jnp.float64
+    assert float(default.total_mass) == 2**24 + 1
+    assert selected.total_mass.dtype == jnp.float32
+    assert float(selected.total_mass) == 2**24
+    assert selected.measure_id == default.measure_id
+    np.testing.assert_array_equal(selected.weights, default.weights)
+    assert bool(default.valid)
+    assert bool(selected.valid)
+
+
+@pytest.mark.parametrize("dtype", [jnp.int32, jnp.bool_, jnp.complex64])
+def test_measure_refuses_nonreal_accumulation_precision(dtype: Any) -> None:
+    with pytest.raises(ValueError, match="precision dtype|not real"):
+        phx.discretization.DiscreteMeasure(
+            "mass",
+            "points",
+            "atoms",
+            np.ones(2, dtype=np.float32),
+            accumulation_dtype=dtype,
+        )
+
+
+@pytest.mark.parametrize("normalization", ["physical", "signed"])
+def test_selected_measure_overflow_is_refused_eagerly_and_invalid_when_traced(
+    normalization: Any,
+) -> None:
+    weights = np.full(2, np.finfo(np.float32).max, dtype=np.float32)
+    default = phx.discretization.DiscreteMeasure(
+        "mass", "points", "atoms", weights, normalization=normalization
+    )
+    assert bool(default.valid)
+    assert np.isfinite(float(default.total_mass))
+    with pytest.raises(ValueError, match="total mass must be finite"):
+        phx.discretization.DiscreteMeasure(
+            "mass",
+            "points",
+            "atoms",
+            weights,
+            normalization=normalization,
+            accumulation_dtype=jnp.float32,
+        )
+
+    @jax.jit
+    def prepare(values: Array) -> phx.discretization.DiscreteMeasure:
+        return phx.discretization.DiscreteMeasure(
+            "mass",
+            "points",
+            "atoms",
+            values,
+            normalization=normalization,
+            accumulation_dtype=jnp.float32,
+            measure_id="overflow-binding",
+        )
+
+    measure = prepare(jnp.asarray(weights))
+    assert not bool(measure.valid)
+    assert np.isinf(float(measure.total_mass))
+    with pytest.raises(ValueError, match="total mass must be finite"):
+        measure.admit()
+
+
+@pytest.mark.parametrize("dtype", [jnp.float64, jnp.float32])
+def test_probability_host_validation_is_independent_of_accumulation_precision(
+    dtype: Any,
+) -> None:
+    # These float32 weights sum to one only after float32 rounding.
+    with pytest.raises(ValueError, match="sum to one"):
+        phx.discretization.DiscreteMeasure(
+            "probability",
+            "points",
+            "atoms",
+            np.asarray([0.1, 0.9], dtype=np.float32),
+            normalization="probability",
+            accumulation_dtype=dtype,
+        )
+    exact = phx.discretization.DiscreteMeasure(
+        "probability",
+        "points",
+        "atoms",
+        np.asarray([0.25, 0.75], dtype=np.float32),
+        normalization="probability",
+        accumulation_dtype=dtype,
+    )
+    assert bool(exact.valid)
+    assert exact.admit() is exact

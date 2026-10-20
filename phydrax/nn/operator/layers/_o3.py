@@ -698,9 +698,10 @@ class O3IrrepLinear(StrictModule):
         mixed: list[Array] = []
         for weight, matches in zip(self.weights, self.sources, strict=True):
             stacked = jnp.concatenate([blocks[index] for index in matches], axis=-2)
+            contracted = ein.contract("of,...fd->...od", weight, stacked)
             mixed.append(
-                ein.contract("of,...fd->...od", weight, stacked)
-                / sqrt(float(weight.shape[1]))
+                contracted
+                / jnp.asarray(sqrt(float(weight.shape[1])), dtype=contracted.dtype)
             )
         return self.out_layout.join(mixed)
 

@@ -63,6 +63,33 @@ def _case() -> Any:
     return units, target, structure, system, surface
 
 
+def test_geometry_optimization_preserves_explicit_mass_accumulation_precision() -> None:
+    _, target, source, system, surface = _case()
+    structure = phx.atomistic.AtomicStructure(
+        source.atomic_numbers,
+        source.positions,
+        source.masses,
+        source.scale,
+        particle_ids=source.particle_ids,
+        name=source.name,
+        mass_accumulation_dtype=jnp.float32,
+    )
+    convergence = phx.chemistry.MolecularGeometryConvergencePlan(
+        maximum_force=1.0e-7,
+        rms_force=1.0e-7,
+        maximum_steps=64,
+        maximum_evaluations=256,
+    )
+    optimized = phx.chemistry.MolecularGeometryOptimizationPlan(
+        system, surface, convergence=convergence
+    ).run(structure)
+    assert bool(optimized.successful)
+    np.testing.assert_allclose(optimized.final_structure.positions, target, atol=1.0e-7)
+    assert (
+        optimized.final_structure.particles.mass_measure.total_mass.dtype == jnp.float32
+    )
+
+
 def test_workflows_scenario_1() -> None:
     units, target, structure, system, surface = _case()
     convergence = phx.chemistry.MolecularGeometryConvergencePlan(

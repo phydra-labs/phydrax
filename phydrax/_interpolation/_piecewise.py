@@ -837,7 +837,7 @@ class CubicSplineSlopePlan(StrictModule, NonTrainableState):
         columns = math.prod(payload_shape)
         y = source.reshape((self.grid.node_count, columns))
         h = self.grid.spacing
-        interior = 3.0 * (y[2:] - y[:-2]) / h
+        interior = jnp.asarray(3.0, dtype=dtype) * (y[2:] - y[:-2]) / h
         first = self._end_rhs(
             self.left, 1.0, y[0], y[1], y[2:3], left_slope, payload_shape
         )
@@ -875,12 +875,16 @@ class CubicSplineSlopePlan(StrictModule, NonTrainableState):
                 )
                 return slope_.reshape(edge.shape)
             case "natural":
-                return orientation * 3.0 * (neighbor - edge) / h
+                return (
+                    jnp.asarray(orientation * 3.0, dtype=h.dtype) * (neighbor - edge) / h
+                )
             case "not-a-knot":
                 far = beyond[0]
+                two = jnp.asarray(2.0, dtype=h.dtype)
+                three = jnp.asarray(3.0, dtype=h.dtype)
                 return (
-                    orientation
-                    * (2.0 * (-edge + 2.0 * neighbor - far) + 3.0 * (far - edge))
+                    jnp.asarray(orientation, dtype=h.dtype)
+                    * (two * (-edge + two * neighbor - far) + three * (far - edge))
                     / h
                 )
             case _:

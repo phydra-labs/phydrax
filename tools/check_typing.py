@@ -43,6 +43,7 @@ FIRST_PARTY = (
     "mkdocstrings_setup.py",
     "native/meshcore/python",
     "native/cuda13",
+    "native/metal",
 )
 ANNOTATION_RULES = "ANN001,ANN002,ANN003,ANN201,ANN202,ANN204,ANN205,ANN206"
 _CHECKER_COMMENT = re.compile(r"#\s*(?:(?:type|pyright|mypy|pytype)\s*:|pyre-)")

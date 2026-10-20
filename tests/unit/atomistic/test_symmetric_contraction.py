@@ -45,10 +45,17 @@ def _rotation(seed: int) -> np.ndarray:
     return q if np.linalg.det(q) > 0.0 else -q
 
 
-def _features(seed: int, nodes: int, channels: int, size: int) -> jax.Array:
+def _features(
+    seed: int,
+    nodes: int,
+    channels: int,
+    size: int,
+    *,
+    dtype: np.dtype = np.dtype(np.float64),
+) -> jax.Array:
     return jnp.asarray(
         np.random.default_rng(seed).normal(size=(nodes, channels, size)),
-        dtype=jnp.float64,
+        dtype=dtype,
     )
 
 
@@ -60,6 +67,7 @@ def _contraction(
     species: int = 2,
     channels: int = 3,
     seed: int = 0,
+    dtype: np.dtype = np.dtype(np.float64),
 ) -> SymmetricContraction:
     plan = SymmetricContractionPlan.native(
         input_layout,
@@ -67,8 +75,9 @@ def _contraction(
         correlation,
         species_count=species,
         channel_count=channels,
+        dtype=dtype,
     )
-    return SymmetricContraction.initialize(plan, key=jr.key(seed))
+    return SymmetricContraction.initialize(plan, key=jr.key(seed), dtype=dtype)
 
 
 @pytest.mark.parametrize(
@@ -86,14 +95,82 @@ def _contraction(
         pytest.param(VECTOR, 3, 2, id="vector-degree3"),
     ],
 )
+@pytest.mark.parametrize("dtype", [np.dtype(np.float32), np.dtype(np.float64)])
 def test_native_basis_path_count_is_invariant_theory_dimension(
-    output: O3IrrepBlock, correlation: int, expected: int
+    output: O3IrrepBlock, correlation: int, expected: int, dtype: np.dtype
 ) -> None:
-    basis = SymmetricContractionBasis.native(SCALAR_VECTOR, output, correlation)
+    basis = SymmetricContractionBasis.native(
+        SCALAR_VECTOR, output, correlation, dtype=dtype
+    )
+    basis.validate(SCALAR_VECTOR, output)
 
     assert basis.path_count == expected
     assert basis.origin == "native-coupling"
     assert all(len(term) == correlation for term in basis.terms)
+    assert basis.coefficients.dtype == dtype
+    assert basis._host_projection().dtype == dtype
+    assert basis.equivariance_residual <= (
+        basis.equivariance_tolerance + basis.equivariance_roundoff_bound
+    )
+    assert (basis.equivariance_roundoff_bound == 0.0) == (dtype == np.dtype(np.float64))
+
+
+def test_basis_identity_belongs_to_its_explicit_stored_representation() -> None:
+    default = SymmetricContractionBasis.native(SCALAR_VECTOR_TENSOR, VECTOR, 3)
+    explicit = SymmetricContractionBasis.native(
+        SCALAR_VECTOR_TENSOR, VECTOR, 3, dtype=np.float64
+    )
+    single = SymmetricContractionBasis.native(
+        SCALAR_VECTOR_TENSOR, VECTOR, 3, dtype=np.float32
+    )
+    projection = default._host_projection().astype(np.float32)
+    reconstructed = SymmetricContractionBasis(
+        default.terms,
+        projection,
+        SCALAR_VECTOR_TENSOR,
+        VECTOR,
+        3,
+        origin="native-coupling",
+        source_id="native-real-coupling",
+        dtype=np.float32,
+    )
+    assert default.basis_id == explicit.basis_id
+    assert single.basis_id != default.basis_id
+    assert single.basis_id == reconstructed.basis_id
+    assert default.equivariance_tolerance == 1e-9
+    assert default.equivariance_roundoff_bound == 0.0
+    np.testing.assert_array_equal(single._host_projection(), projection)
+    assert single.dense_projection().dtype == np.dtype(np.float32)
+    np.testing.assert_array_equal(
+        single.dense_projection(dtype=np.float64), projection.astype(np.float64)
+    )
+    single.validate(SCALAR_VECTOR_TENSOR, VECTOR)
+    # Even an exactly representable scalar path owns a dtype-specific identity.
+    scalar64 = SymmetricContractionBasis.native(SCALAR_VECTOR, SCALAR, 1)
+    scalar32 = SymmetricContractionBasis.native(
+        SCALAR_VECTOR, SCALAR, 1, dtype=np.float32
+    )
+    np.testing.assert_array_equal(
+        scalar64._host_projection(), scalar32._host_projection()
+    )
+    assert scalar64.basis_id != scalar32.basis_id
+
+
+@pytest.mark.parametrize("dtype", [np.dtype(np.float32), np.dtype(np.float64)])
+def test_native_storage_allowance_does_not_admit_rescaled_basis(dtype: np.dtype) -> None:
+    basis = SymmetricContractionBasis.native(SCALAR_VECTOR, SCALAR, 2, dtype=dtype)
+    rescaled = SymmetricContractionBasis(
+        basis.terms,
+        basis._host_projection() * 1.001,
+        SCALAR_VECTOR,
+        SCALAR,
+        2,
+        origin="native-coupling",
+        source_id="native-real-coupling",
+        dtype=dtype,
+    )
+    with pytest.raises(ValueError, match="orthonormal"):
+        rescaled.validate(SCALAR_VECTOR, SCALAR)
 
 
 def test_pseudovector_output_has_no_degree_one_coupling_from_polar_vector() -> None:
@@ -105,12 +182,16 @@ def test_pseudovector_output_has_no_degree_one_coupling_from_polar_vector() -> N
 
 @pytest.mark.parametrize("output", [SCALAR, VECTOR], ids=["scalar", "vector"])
 @pytest.mark.parametrize("correlation", [2, 3])
+@pytest.mark.parametrize("dtype", [np.dtype(np.float32), np.dtype(np.float64)])
 def test_basis_projection_replays_exactly_and_preserves_linear_derivatives(
-    output: O3IrrepBlock, correlation: int
+    output: O3IrrepBlock, correlation: int, dtype: np.dtype
 ) -> None:
-    basis = SymmetricContractionBasis.native(SCALAR_VECTOR, output, correlation)
+    basis = SymmetricContractionBasis.native(
+        SCALAR_VECTOR, output, correlation, dtype=dtype
+    )
     rng = np.random.default_rng(71)
-    monomials = jnp.asarray(rng.normal(size=(len(basis.terms), 8, 4)))
+    monomials = jnp.asarray(rng.normal(size=(len(basis.terms), 8, 4)), dtype=dtype)
+    rtol, atol = (2e-6, 2e-7) if dtype == np.dtype(np.float32) else (1e-13, 1e-14)
     projection = np.asarray(basis.dense_projection())
     expected = np.tensordot(projection, np.asarray(monomials), axes=((0,), (0,)))
 
@@ -119,26 +200,26 @@ def test_basis_projection_replays_exactly_and_preserves_linear_derivatives(
 
     compiled = jax.jit(apply)
     reference = compiled(basis, monomials)
-    np.testing.assert_allclose(reference, expected, rtol=1e-13, atol=1e-14)
+    np.testing.assert_allclose(reference, expected, rtol=rtol, atol=atol)
     for _ in range(5):
         np.testing.assert_array_equal(compiled(basis, monomials), reference)
-    direction = jnp.asarray(rng.normal(size=monomials.shape))
+    direction = jnp.asarray(rng.normal(size=monomials.shape), dtype=dtype)
     _, tangent = jax.jvp(
         lambda values: compiled(basis, values), (monomials,), (direction,)
     )
     np.testing.assert_allclose(
         tangent,
         np.tensordot(projection, np.asarray(direction), axes=((0,), (0,))),
-        rtol=1e-13,
-        atol=1e-14,
+        rtol=rtol,
+        atol=atol,
     )
-    cotangent = jnp.asarray(rng.normal(size=reference.shape))
+    cotangent = jnp.asarray(rng.normal(size=reference.shape), dtype=dtype)
     _, pullback = jax.vjp(lambda values: compiled(basis, values), monomials)
     np.testing.assert_allclose(
         pullback(cotangent)[0],
         np.tensordot(projection, np.asarray(cotangent), axes=((1, 2), (0, 1))),
-        rtol=1e-13,
-        atol=1e-14,
+        rtol=rtol,
+        atol=atol,
     )
 
 
@@ -270,8 +351,12 @@ def _block_transform(frame: np.ndarray) -> np.ndarray:
         ),
     ],
 )
+@pytest.mark.parametrize("dtype", [np.dtype(np.float32), np.dtype(np.float64)])
 def test_imported_basis_reproduces_source_contraction_in_source_frame(
-    tensor: np.ndarray, output_block: O3IrrepBlock, output_transform: np.ndarray
+    tensor: np.ndarray,
+    output_block: O3IrrepBlock,
+    output_transform: np.ndarray,
+    dtype: np.dtype,
 ) -> None:
     input_transform = _block_transform(_source_vector_frame())
     basis = SymmetricContractionBasis.from_source_tensor(
@@ -283,20 +368,23 @@ def test_imported_basis_reproduces_source_contraction_in_source_frame(
         input_transform=input_transform,
         output_transform=output_transform,
         maximum_entries=tensor.size,
+        dtype=dtype,
     )
     output_layout = O3IrrepLayout(
         (O3IrrepBlock("out", output_block.degree, output_block.parity),)
     )
-    first = SymmetricContractionBasis.native(SCALAR_VECTOR, output_layout.blocks[0], 1)
+    first = SymmetricContractionBasis.native(
+        SCALAR_VECTOR, output_layout.blocks[0], 1, dtype=dtype
+    )
     plan = SymmetricContractionPlan(
         SCALAR_VECTOR, output_layout, ((first, basis),), species_count=1, channel_count=2
     )
     weights = (
         (
-            jnp.zeros((1, first.path_count, 2), dtype=jnp.float64),
+            jnp.zeros((1, first.path_count, 2), dtype=dtype),
             jnp.asarray(
                 np.random.default_rng(7).normal(size=(1, tensor.shape[-1], 2)),
-                dtype=jnp.float64,
+                dtype=dtype,
             ),
         ),
     )
@@ -313,10 +401,16 @@ def test_imported_basis_reproduces_source_contraction_in_source_frame(
         source_features,
     )
     expected = contract("om,ncm->nco", output_transform, source_output)
-    actual = module(jnp.asarray(native_features), jnp.zeros((3,), dtype=jnp.int32))
+    actual = module(
+        jnp.asarray(native_features, dtype=dtype), jnp.zeros((3,), dtype=jnp.int32)
+    )
 
     assert basis.origin == "imported-source"
-    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    basis.validate(SCALAR_VECTOR, output_block)
+    assert basis.coefficients.dtype == dtype
+    assert actual.dtype == dtype
+    tolerance = 2e-6 if dtype == np.dtype(np.float32) else 1e-12
+    np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
 
 
 def test_imported_tensor_is_charged_before_conversion() -> None:
@@ -395,7 +489,10 @@ def test_import_refuses_block_mixing_transform() -> None:
         )
 
 
-def test_import_refuses_basis_that_is_not_equivariant_in_declared_frame() -> None:
+@pytest.mark.parametrize("dtype", [np.dtype(np.float32), np.dtype(np.float64)])
+def test_import_refuses_basis_that_is_not_equivariant_in_declared_frame(
+    dtype: np.dtype,
+) -> None:
     # A wrong declared output frame turns the s v coupling non-equivariant.
     wrong = np.diag([1.0, 1.0, -1.0])
 
@@ -409,18 +506,24 @@ def test_import_refuses_basis_that_is_not_equivariant_in_declared_frame() -> Non
             input_transform=np.eye(4),
             output_transform=wrong,
             maximum_entries=64,
+            dtype=dtype,
         )
 
 
-def test_merged_binding_matches_and_refuses_stale_weights() -> None:
-    module = _contraction(SCALAR_VECTOR_TENSOR, MIXED_OUTPUT, 3)
-    features = _features(9, 4, 3, SCALAR_VECTOR_TENSOR.packed_size)
+@pytest.mark.parametrize("dtype", [np.dtype(np.float32), np.dtype(np.float64)])
+def test_merged_binding_matches_and_refuses_stale_weights(dtype: np.dtype) -> None:
+    module = _contraction(SCALAR_VECTOR_TENSOR, MIXED_OUTPUT, 3, dtype=dtype)
+    module.validate()
+    features = _features(9, 4, 3, SCALAR_VECTOR_TENSOR.packed_size, dtype=dtype)
     species = jnp.asarray([0, 1, 1, 0], dtype=jnp.int32)
     merged = module.merged()
 
     merged.require_current(module)
+    merged.validate(module)
+    assert all(value.dtype == dtype for value in merged.coefficients)
+    rtol, atol = (3e-5, 2e-6) if dtype == np.dtype(np.float32) else (1e-11, 1e-12)
     np.testing.assert_allclose(
-        merged(features, species), module(features, species), rtol=1e-11, atol=1e-12
+        merged(features, species), module(features, species), rtol=rtol, atol=atol
     )
     assert jax.tree_util.tree_leaves(partition_parameters(merged)[0]) == []
 
@@ -483,6 +586,10 @@ def _with_entry(values: jax.Array, value: float) -> jax.Array:
 _NATIVE_TAMPERS = {
     # Each keeps every recorded basis/plan identity and the array shapes.
     "basis-scaled": (lambda m: m.plan.bases[1][1].coefficients, lambda c: c * 2.0),
+    "basis-dtype": (
+        lambda m: m.plan.bases[1][1].coefficients,
+        lambda c: c.astype(jnp.float64 if c.dtype == jnp.float32 else jnp.float32),
+    ),
     "basis-entry": (
         lambda m: m.plan.bases[1][1].coefficients,
         lambda c: _with_entry(c, c[0] + 1.0e-3),
@@ -501,10 +608,11 @@ _NATIVE_TAMPERS = {
 
 
 @pytest.mark.parametrize("tamper", sorted(_NATIVE_TAMPERS))
+@pytest.mark.parametrize("dtype", [np.dtype(np.float32), np.dtype(np.float64)])
 def test_restored_native_plan_revalidates_fixed_data_not_recorded_ids(
-    tamper: str,
+    tamper: str, dtype: np.dtype
 ) -> None:
-    module = _contraction(SCALAR_VECTOR, MIXED_OUTPUT, 2)
+    module = _contraction(SCALAR_VECTOR, MIXED_OUTPUT, 2, dtype=dtype)
     module.validate()
     where, replace = _NATIVE_TAMPERS[tamper]
     changed = _set(module, where, replace)

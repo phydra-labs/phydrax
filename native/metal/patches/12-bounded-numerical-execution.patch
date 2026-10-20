@@ -1,0 +1,1196 @@
+diff --git a/src/pjrt_plugin/ops/reduction.cc b/src/pjrt_plugin/ops/reduction.cc
+--- a/src/pjrt_plugin/ops/reduction.cc
++++ b/src/pjrt_plugin/ops/reduction.cc
+@@ -44,9 +44,9 @@
+     return ReduceType::Unknown;
+ }
+ 
+-// Safe math preserves the declared fold order and NaN/zero rules. Explicit
+-// compensated scientific loops remain their own operations, not reducer policy.
+-// One thread owns one output; long axes are serial with O(output) workspace.
++// The custom fallback preserves NaN/zero rules and its declared fold order.
++// Ordinary sums may use a parallel tree below; explicitly compensated/ordered
++// scientific loops remain their own operations, not reducer policy.
+ const char* kReductionHeader = R"(
+ template <typename T> T hlo_max(T a, T b) { return a > b ? a : b; }
+ template <typename T> T hlo_min(T a, T b) { return a < b ? a : b; }
+@@ -181,15 +181,10 @@
+ 
+ // Decode output/reduction coordinates without allocating index tensors.
+ std::string ReductionOffsets(const mlx::core::Shape& shape, const std::vector<int>& axes,
+-                             int64_t& reducedSize, mlx::core::Shape& outputShape) {
++                             int64_t reducedSize) {
+     std::vector<int64_t> strides(shape.size(), 1);
+     for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i)
+         strides[i] = strides[i + 1] * shape[i + 1];
+-    reducedSize = 1;
+-    for (int axis : axes) reducedSize *= shape[axis];
+-    for (size_t i = 0; i < shape.size(); ++i)
+-        if (std::find(axes.begin(), axes.end(), i) == axes.end())
+-            outputShape.push_back(shape[i]);
+     std::ostringstream code;
+     code << "ulong base = 0, q = thread_position_in_grid.x;\n";
+     for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+@@ -205,6 +200,45 @@
+              << "ul; k /= " << std::max(shape[i], 1) << "ul;\n";
+     }
+     return code.str();
++}
++
++// MLX 0.32's row-contiguous reduction plans never copy the input: arbitrary
++// axes use its all/row/column kernels. Other layouts stay on the existing GPU
++// route instead of admitting MLX's GeneralReduce contiguous materialization.
++// The pinned kernels use at most 4096 accumulators for an all-reduce, no
++// device workspace for a row-reduce, and 128 accumulators per output for a
++// column-reduce. Apply the conservative column bound to every admitted shape:
++// singleton reduced axes can disappear during planning, exposing a column plan.
++bool AdmitParallelReduction(const mlx::core::array& input, const std::vector<int>& axes,
++                            int64_t reducedSize, int64_t outputSize, ReduceType type) {
++    if (axes.empty() || reducedSize <= 1 || !input.flags().row_contiguous)
++        return false;
++    auto dtype = input.dtype();
++    bool integer = mlx::core::issubdtype(dtype, mlx::core::integer);
++    bool sum = type == ReduceType::Sum && (dtype == mlx::core::float32 || integer);
++    bool product = type == ReduceType::Prod && integer;
++    bool logical = dtype == mlx::core::bool_ && (type == ReduceType::And || type == ReduceType::Or);
++    if (!sum && !product && !logical)
++        return false;
++    constexpr int64_t kMaxWorkspaceBytes = 64 * 1024 * 1024;
++    int64_t accumulatorBytes = std::max<int64_t>(dtype.size(), 4);
++    return outputSize <= kMaxWorkspaceBytes / (128 * accumulatorBytes);
++}
++
++mlx::core::array ParallelReduction(const mlx::core::array& input, const mlx::core::array& init,
++                                   const std::vector<int>& axes, ReduceType type) {
++    if (type == ReduceType::And)
++        return mlx::core::logical_and(init, mlx::core::all(input, axes));
++    if (type == ReduceType::Or)
++        return mlx::core::logical_or(init, mlx::core::any(input, axes));
++    auto result =
++        type == ReduceType::Sum ? mlx::core::sum(input, axes) : mlx::core::prod(input, axes);
++    // MLX promotes 8/16-bit integer accumulators to 32 bits. Narrowing back
++    // before combining the supplied init preserves arithmetic modulo 2^width,
++    // including full-width int64/uint64 without conversion through floating point.
++    result = mlx::core::astype(result, input.dtype());
++    return type == ReduceType::Sum ? mlx::core::add(init, result)
++                                   : mlx::core::multiply(init, result);
+ }
+ 
+ bool HandleReduce(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>&,
+@@ -221,8 +255,12 @@
+     if (!input || !init) return false;
+     ShapeSize(input->shape());
+     mlx::core::Shape outputShape;
+-    int64_t reducedSize;
+-    auto offsets = ReductionOffsets(input->shape(), axes, reducedSize, outputShape);
++    int64_t reducedSize = 1;
++    for (int axis : axes)
++        reducedSize *= input->shape(axis);
++    for (int i = 0; i < input->ndim(); ++i)
++        if (std::find(axes.begin(), axes.end(), i) == axes.end())
++            outputShape.push_back(input->shape(i));
+     if (count == 2) {
+         auto body = PairReducer(reduce.getBody());
+         auto* indices = RequireValue(values, reduce.getInputs()[1], "stablehlo.reduce");
+@@ -237,7 +275,8 @@
+             values.emplace(ToKey(op->getResult(1)), mlx::core::full(outputShape, *initialIndex, indexDtype));
+             return true;
+         }
+-        auto source = "T a = initial[0]; I ai = initial_index[0];\n" + offsets +
++        auto source = "T a = initial[0]; I ai = initial_index[0];\n" +
++                      ReductionOffsets(input->shape(), axes, reducedSize) +
+                       "T b = input[offset]; I bi = indices[offset];\n" + body +
+                       "}\nvalue[thread_position_in_grid.x] = a;\n"
+                       "index[thread_position_in_grid.x] = ai;\n";
+@@ -266,9 +305,14 @@
+             mlx::core::add(*init, result) : mlx::core::multiply(*init, result));
+         return true;
+     }
+-    auto source = std::string("T a = initial[0];\n") + offsets +
+-        "a = " + Combine(type, "a", "input[offset]") + ";\n" +
+-        "}\nresult[thread_position_in_grid.x] = a;\n";
++    if (AdmitParallelReduction(*input, axes, reducedSize, ShapeSize(outputShape), type)) {
++        values.emplace(ToKey(op->getResult(0)), ParallelReduction(*input, *init, axes, type));
++        return true;
++    }
++    auto source = std::string("T a = initial[0];\n") +
++                  ReductionOffsets(input->shape(), axes, reducedSize) +
++                  "a = " + Combine(type, "a", "input[offset]") + ";\n" +
++                  "}\nresult[thread_position_in_grid.x] = a;\n";
+     auto result = ReductionKernel(source,
+         {mlx::core::reshape(*input, {-1}), mlx::core::reshape(*init, {1})},
+         {"input", "initial"}, {"result"}, outputShape, {input->dtype()}, {{"T", input->dtype()}});
+diff --git a/src/pjrt_plugin/ops/gather_scatter.cc b/src/pjrt_plugin/ops/gather_scatter.cc
+--- a/src/pjrt_plugin/ops/gather_scatter.cc
++++ b/src/pjrt_plugin/ops/gather_scatter.cc
+@@ -296,27 +296,86 @@
+         std::nullopt, false, mlx::core::Device::gpu)[0];
+ }
+ 
+-// Stable destination sort retains original update order. Each output lane
+-// owns its complete fold: exact 64-bit/complex stores need no MLX atomics and
+-// duplicates cannot race or disappear. Storage O(O+U), work
+-// O(U log U + O log U + U). A heavily repeated destination is a serial GPU fold.
++// Every output lane owns its complete fold; exact 64-bit/complex stores need
++// no atomics. A singleton window directly inverts its injective mapping in
++// O(O * rank) work, with no destination buffer, sort, or binary search.
++// Otherwise stable destination sorting retains original update order:
++// O(O+U) storage, O(U log U + O log U + U) work, with serial duplicate folds.
+ mlx::core::array FoldScatter(ScatterType type, const mlx::core::array& operand,
+-                             const mlx::core::array& updates,
+-                             const mlx::core::array& destinations) {
++                             const mlx::core::array& updates, const mlx::core::array& destinations,
++                             const mlx::core::array& indices, const mlx::core::array& metadata,
++                             bool singleWindow) {
+     static const auto kernel = mlx::core::fast::metal_kernel(
+-        "phydrax_scatter_fold", {"operand", "updates", "destinations", "order"}, {"result"},
++        "phydrax_scatter_fold", {"operand", "updates", "destinations", "order", "indices", "meta"},
++        {"result"},
+         R"(
+         uint destination = thread_position_in_grid.x;
+-        uint lo = 0, hi = UPDATE_COUNT;
+-        while (lo < hi) {
+-            uint mid = lo + (hi - lo) / 2;
+-            if (destinations[order[mid]] < destination) lo = mid + 1;
+-            else hi = mid;
++        uint lo = 0, end = UPDATE_COUNT, single_update = 0;
++        if constexpr (SINGLE_WINDOW) {
++            // Invert a single injective window, one output lane at a time.
++            // Every non-window update dimension is singleton, so no duplicate
++            // destinations exist and neither sorting nor searching is needed.
++            int rank = meta[0], urank = meta[1], irank = meta[2];
++            int os = 4, us = os + rank, ust = us + urank;
++            int ist = ust + urank, wm = ist + irank;
++            int bm = wm + rank, cm = bm + rank;
++            uint remaining = destination;
++            bool inside = true;
++            for (int d = rank; d-- > 0;) {
++                long extent = long(meta[os + d]);
++                long coordinate = long(remaining % uint(extent));
++                remaining /= uint(extent);
++                int wd = meta[wm + d], component = meta[cm + d];
++                long window_extent = wd < 0 ? 1 : long(meta[us + wd]);
++                long max_start = extent - window_extent, start = 0;
++                if (max_start < 0) {
++                    inside = false;
++                    break;
++                }
++                if (component >= 0) {
++                    ulong pos = ulong(component) * ulong(meta[3]);
++                    // Compare in the original signed/unsigned width before
++                    // subtraction; invalid whole windows are dropped.
++                    if constexpr (SIGNED_INDEX) {
++                        start = long(indices[pos]);
++                        if (start < 0 || start > max_start) {
++                            inside = false;
++                            break;
++                        }
++                    } else {
++                        ulong unsigned_start = ulong(indices[pos]);
++                        if (unsigned_start > ulong(max_start)) {
++                            inside = false;
++                            break;
++                        }
++                        start = long(unsigned_start);
++                    }
++                }
++                long offset = coordinate - start;
++                if (offset < 0 || offset >= window_extent) {
++                    inside = false;
++                    break;
++                }
++                if (wd >= 0)
++                    single_update += uint(offset) * uint(meta[ust + wd]);
++            }
++            end = inside ? 1 : 0;
++        } else {
++            uint hi = UPDATE_COUNT;
++            while (lo < hi) {
++                uint mid = lo + (hi - lo) / 2;
++                if (destinations[order[mid]] < destination) lo = mid + 1;
++                else hi = mid;
++            }
+         }
+         T value = operand[destination];
+-        for (uint p = lo; p < UPDATE_COUNT; ++p) {
+-            uint update = order[p];
+-            if (destinations[update] != destination) break;
++        for (uint p = lo; p < end; ++p) {
++            uint update;
++            if constexpr (SINGLE_WINDOW) update = single_update;
++            else {
++                update = order[p];
++                if (destinations[update] != destination) break;
++            }
+             T next = updates[update];
+             if constexpr (MODE == 0) value = next;
+             if constexpr (MODE == 1) {
+@@ -359,15 +418,25 @@
+     }
+     const int count = static_cast<int>(operand.size());
+     const int updateCount = static_cast<int>(updates.size());
+-    auto order = mlx::core::argsort(destinations, 0, mlx::core::Device::gpu);
+-    auto result = kernel(
+-        {mlx::core::reshape(operand, {count}), mlx::core::reshape(updates, {updateCount}),
+-         destinations, order},
+-        {{count}}, {operand.dtype()}, {count, 1, 1}, {std::min(count, 256), 1, 1},
+-        {{"T", operand.dtype()}, {"MODE", mode}, {"UPDATE_COUNT", updateCount},
+-         {"INTEGER", mlx::core::issubdtype(operand.dtype(), mlx::core::integer)},
+-         {"FLOATING", operand.dtype() == mlx::core::float32}},
+-        std::nullopt, false, mlx::core::Device::gpu)[0];
++    // A window-only scatter has no index components; provide a nonempty
++    // unused buffer as ScatterDestinations does for the general route.
++    auto flatIndices = indices.size() == 0
++                           ? metadata
++                           : mlx::core::reshape(indices, {static_cast<int>(indices.size())});
++    auto order =
++        singleWindow ? metadata : mlx::core::argsort(destinations, 0, mlx::core::Device::gpu);
++    auto result =
++        kernel({mlx::core::reshape(operand, {count}), mlx::core::reshape(updates, {updateCount}),
++                destinations, order, flatIndices, metadata},
++               {{count}}, {operand.dtype()}, {count, 1, 1}, {std::min(count, 256), 1, 1},
++               {{"T", operand.dtype()},
++                {"MODE", mode},
++                {"UPDATE_COUNT", updateCount},
++                {"INTEGER", mlx::core::issubdtype(operand.dtype(), mlx::core::integer)},
++                {"FLOATING", operand.dtype() == mlx::core::float32},
++                {"SINGLE_WINDOW", singleWindow},
++                {"SIGNED_INDEX", mlx::core::issubdtype(indices.dtype(), mlx::core::signedinteger)}},
++               std::nullopt, false, mlx::core::Device::gpu)[0];
+     return mlx::core::reshape(result, operand.shape());
+ }
+ 
+@@ -474,8 +543,19 @@
+     append(componentMap);
+     append(indexUpdateMap);
+     auto metadata = mlx::core::array(meta.begin(), {static_cast<int>(meta.size())});
+-    auto destinations = ScatterDestinations(*indices, metadata, static_cast<int>(updates->size()));
+-    values.emplace(ToKey(op->getResult(0)), FoldScatter(type, *operand, *updates, destinations));
++    // Singleton index-batch dimensions select exactly one indexed window.
++    // StableHLO maps each window dimension once to an operand dimension;
++    // therefore its elements cannot collide, including a scalar point update.
++    // Keep every multi-index case on the ordered general GPU route.
++    bool singleWindow = std::all_of(updateScatterDims.begin(), updateScatterDims.end(),
++                                    [&](int d) { return updates->shape(d) == 1; });
++    auto destinations =
++        singleWindow ? metadata
++                     : ScatterDestinations(*indices, metadata, static_cast<int>(updates->size()));
++    // The singleton specialization never reads destinations/order. Bind the
++    // existing metadata instead of allocating unused intermediate buffers.
++    values.emplace(ToKey(op->getResult(0)), FoldScatter(type, *operand, *updates, destinations,
++                                                        *indices, metadata, singleWindow));
+     return true;
+ }
+ 
+diff --git a/src/pjrt_plugin/ops/control_flow.cc b/src/pjrt_plugin/ops/control_flow.cc
+--- a/src/pjrt_plugin/ops/control_flow.cc
++++ b/src/pjrt_plugin/ops/control_flow.cc
+@@ -26,6 +26,7 @@
+ #include "llvm/Support/JSON.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+ #include "mlir/IR/Matchers.h"
++#include "pjrt_plugin/ops/device_regions.h"
+ #include "pjrt_plugin/ops/handler_utils.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+ 
+@@ -729,6 +730,30 @@
+     auto whileOp = CastOp<mlir::stablehlo::WhileOp>(op, "stablehlo.while");
+     if (!whileOp)
+         return false;
++
++    // A deliberately bounded pure indexed recurrence/map can own all of its
++    // loop-carried state inside one GPU invocation. Admission walks every op
++    // (and called function/branch), including dead callback results. The general
++    // CPU-orchestrated GPU path below remains authoritative for all other IR.
++    if (auto counted = DetectCountedLoop(whileOp);
++        counted && counted->staticLimit && counted->step == 1) {
++        auto initial =
++            MatchIntSplatConstant(op->getOperand(counted->counterIdx), counted->isUnsigned);
++        auto counterType =
++            mlir::cast<mlir::RankedTensorType>(op->getOperand(counted->counterIdx).getType())
++                .getElementType();
++        if (initial && *initial >= 0 && *counted->staticLimit >= 0 &&
++            *counted->staticLimit <= 4096 &&
++            (counterType.isInteger(32) || counterType.isInteger(64))) {
++            int64_t trips = std::max<int64_t>(0, *counted->staticLimit - *initial);
++            if (auto result = TryDeviceCountedRegion(whileOp, counted->counterIdx, trips, values,
++                                                     ctx.module)) {
++                for (size_t i = 0; i < result->size(); ++i)
++                    values.insert_or_assign(ToKey(op->getResult(i)), (*result)[i]);
++                return true;
++            }
++        }
++    }
+ 
+     if (ctx.inside_compile) {
+         // --- Custom primitive approach ---
+@@ -1274,8 +1299,15 @@
+             if (resultType) {
+                 outShapes.push_back(GetShape(resultType));
+                 outDtypes.push_back(MlirTypeToMlxDtype(resultType.getElementType()));
++            } else if (mlir::isa<mlir::stablehlo::TokenType>(op->getResult(i).getType())) {
++                // Match create_token/host_callback: tokens are scalar boolean
++                // dependency markers internally, not omitted case results.
++                // CasePrimitive evaluates only the selected branch (including
++                // its effects) and copies that branch's returned token buffer.
++                outShapes.push_back({});
++                outDtypes.push_back(mlx::core::bool_);
+             } else {
+-                MPS_LOG_ERROR("HandleCase: result %zu is not a RankedTensorType\n", i);
++                MPS_LOG_ERROR("HandleCase: result %zu is neither a ranked tensor nor a token\n", i);
+                 return false;
+             }
+         }
+diff --git a/src/pjrt_plugin/ops/linalg.cc b/src/pjrt_plugin/ops/linalg.cc
+--- a/src/pjrt_plugin/ops/linalg.cc
++++ b/src/pjrt_plugin/ops/linalg.cc
+@@ -6,8 +6,11 @@
+ // CPU LAPACK route (cholesky) have no handler and are refused at compile time.
+ 
+ #include <mlx/einsum.h>
++#include <mlx/fast.h>
+ 
+ #include <algorithm>
++#include <array>
++#include <initializer_list>
+ #include <limits>
+ #include <numeric>
+ #include <unordered_set>
+@@ -88,12 +91,274 @@
+     return lhsSub + "," + rhsSub + "->" + outSub;
+ }
+ 
++// The three dots emitted by O3TensorProduct._contribution, not an algebraic
++// reassociation of its four operands. Keep the i, j, and v reductions separate.
++// The measured MACE path has small component tables and one right channel.
++// Also admit a small right multiplicity, but never large generic contractions.
++bool UvuDotDimensions(mlir::stablehlo::DotGeneralOp dot, const std::vector<int64_t>& lhsBatch,
++                      const std::vector<int64_t>& rhsBatch,
++                      std::initializer_list<int64_t> lhsContract,
++                      std::initializer_list<int64_t> rhsContract) {
++    auto dims = dot.getDotDimensionNumbers();
++    return dims.getLhsBatchingDimensions() == llvm::ArrayRef<int64_t>(lhsBatch) &&
++           dims.getRhsBatchingDimensions() == llvm::ArrayRef<int64_t>(rhsBatch) &&
++           dims.getLhsContractingDimensions() == llvm::ArrayRef<int64_t>(lhsContract) &&
++           dims.getRhsContractingDimensions() == llvm::ArrayRef<int64_t>(rhsContract) &&
++           !dot.getAlgorithm() &&
++           mlir::cast<mlir::RankedTensorType>(dot.getResult().getType()).getElementType().isF32();
++}
++
++bool UvuPermutation(mlir::stablehlo::TransposeOp transpose, const std::vector<int64_t>& expected) {
++    return transpose && transpose.getPermutation() == llvm::ArrayRef<int64_t>(expected);
++}
++
++bool TryWeightedUvu(mlir::stablehlo::DotGeneralOp final, ValueMap& values) {
++    auto resultType = mlir::dyn_cast<mlir::RankedTensorType>(final.getResult().getType());
++    if (!resultType || !resultType.getElementType().isF32() || resultType.getRank() < 2 ||
++        resultType.getRank() > 5)
++        return false;
++    const int batchRank = resultType.getRank() - 2;
++    std::vector<int64_t> batch(batchRank), finalBatch(batchRank + 1);
++    std::iota(batch.begin(), batch.end(), 0);
++    std::iota(finalBatch.begin(), finalBatch.end(), 0);
++    if (!UvuDotDimensions(final, finalBatch, finalBatch, {batchRank + 1}, {batchRank + 1}))
++        return false;
++
++    // opt_einsum may exchange the two inputs of either of the last two dots.
++    // Inspect both orientations; all four leaves remain runtime ValueMap arrays.
++    for (int pairedSide = 0; pairedSide < 2; ++pairedSide) {
++        auto pairedView =
++            final.getOperand(pairedSide).getDefiningOp<mlir::stablehlo::TransposeOp>();
++        if (!pairedView)
++            continue;
++        auto paired = pairedView.getOperand().getDefiningOp<mlir::stablehlo::DotGeneralOp>();
++        if (!paired)
++            continue;
++        for (int coupledSide = 0; coupledSide < 2; ++coupledSide) {
++            auto coupledView =
++                paired.getOperand(coupledSide).getDefiningOp<mlir::stablehlo::TransposeOp>();
++            if (!coupledView)
++                continue;
++            auto coupled = coupledView.getOperand().getDefiningOp<mlir::stablehlo::DotGeneralOp>();
++            if (!coupled || coupled->getBlock() != final->getBlock() ||
++                coupledView->getBlock() != final->getBlock() ||
++                paired->getBlock() != final->getBlock() ||
++                pairedView->getBlock() != final->getBlock() ||
++                !UvuDotDimensions(coupled, {}, {}, {1}, {batchRank + 1}))
++                continue;
++            std::vector<int64_t> coupledPermutation;
++            coupledPermutation.reserve(batchRank + 3);
++            for (int i = 0; i < batchRank + 1; ++i)
++                coupledPermutation.push_back(i + 2);
++            coupledPermutation.push_back(0);
++            coupledPermutation.push_back(1);
++            std::vector<int64_t> pairedPermutation = batch;
++            if (coupledSide == 0) {
++                if (!UvuDotDimensions(paired, batch, batch, {batchRank + 2}, {batchRank + 1}))
++                    continue;
++                pairedPermutation.insert(pairedPermutation.end(),
++                                         {batchRank, batchRank + 2, batchRank + 1});
++            } else {
++                if (!UvuDotDimensions(paired, batch, batch, {batchRank + 1}, {batchRank + 2}))
++                    continue;
++                pairedPermutation.insert(pairedPermutation.end(),
++                                         {batchRank + 1, batchRank, batchRank + 2});
++            }
++            if (!UvuPermutation(coupledView, coupledPermutation) ||
++                !UvuPermutation(pairedView, pairedPermutation))
++                continue;
++
++            const mlir::Value leaves[] = {coupled.getOperand(1), coupled.getOperand(0),
++                                          paired.getOperand(1 - coupledSide),
++                                          final.getOperand(1 - pairedSide)};
++            std::vector<mlx::core::array> inputs;
++            inputs.reserve(4);
++            bool admitted = true;
++            for (auto leaf : leaves) {
++                auto it = values.find(ToKey(leaf));
++                if (it == values.end() || it->second.dtype() != mlx::core::float32) {
++                    admitted = false;
++                    break;
++                }
++                inputs.push_back(it->second);
++            }
++            if (!admitted)
++                continue;
++            const auto& left = inputs[0];
++            const auto& coefficients = inputs[1];
++            const auto& right = inputs[2];
++            const auto& weights = inputs[3];
++            if (left.ndim() != batchRank + 2 || coefficients.ndim() != 3 ||
++                right.ndim() != batchRank + 2 || weights.ndim() != batchRank + 2)
++                continue;
++            const int u = left.shape(batchRank), i = left.shape(batchRank + 1);
++            const int o = coefficients.shape(0), j = coefficients.shape(2);
++            const int v = right.shape(batchRank);
++            auto component = [](int n) { return n == 1 || n == 3 || n == 5 || n == 7; };
++            if (!component(i) || !component(j) || !component(o) || u < 1 || u > 64 || v < 1 ||
++                v > 4 || coefficients.shape(1) != i || right.shape(batchRank + 1) != j ||
++                weights.shape(batchRank) != u || weights.shape(batchRank + 1) != v)
++                continue;
++            int64_t count = int64_t{u} * o;
++            for (int b = 0; b < batchRank; ++b) {
++                int n = left.shape(b);
++                if (n < 1 || n != right.shape(b) || n != weights.shape(b) ||
++                    count > std::numeric_limits<int32_t>::max() / n) {
++                    admitted = false;
++                    break;
++                }
++                count *= n;
++            }
++            if (!admitted)
++                continue;
++
++            // Reverse-mode JAX uses saved coupled/paired activations. Emit those
++            // from this same dispatch only when needed, and replace every view
++            // in ValueMap before its later consumers are interpreted. An earlier
++            // consumer would retain the old lazy graph: refuse that case rather
++            // than duplicating work or changing effects across a region boundary.
++            const std::array<mlir::Operation*, 4> chain = {
++                coupled.getOperation(), coupledView.getOperation(), paired.getOperation(),
++                pairedView.getOperation()};
++            bool saveCoupled = false, savePaired = false;
++            for (size_t k = 0; k < chain.size(); ++k) {
++                for (mlir::Operation* user : chain[k]->getResult(0).getUsers()) {
++                    if (user == final.getOperation() ||
++                        std::find(chain.begin(), chain.end(), user) != chain.end())
++                        continue;
++                    if (user->getBlock() != final->getBlock() || !final->isBeforeInBlock(user)) {
++                        admitted = false;
++                        break;
++                    }
++                    if (k < 2)
++                        saveCoupled = true;
++                    else
++                        savePaired = true;
++                }
++            }
++            if (!admitted)
++                continue;
++            // Include AD-requested saved stages in the bounded fused workspace.
++            // Each stage was an original program value, but this kernel emits
++            // them together and must not overflow its dispatch/index arithmetic.
++            constexpr int64_t kMaxFusedOutputBytes = 64 * 1024 * 1024;
++            const int64_t outputFactor = 1 + (saveCoupled ? j : 0) + (savePaired ? v : 0);
++            if (count > kMaxFusedOutputBytes / (sizeof(float) * outputFactor))
++                continue;
++
++            std::string source =
++                "uint t = thread_position_in_grid.x;\n"
++                "uint o = t % O, u = (t / O) % U, b = t / (O * U);\n"
++                "int64_t lb = 0, rb = 0, wb = 0;\n";
++            source.reserve(4096);
++            for (int b = batchRank - 1; b >= 0; --b) {
++                auto axis = std::to_string(b);
++                source += "uint b" + axis + " = b % left_shape[" + axis + "]; b /= left_shape[" +
++                          axis + "];\n";
++                const char* names[] = {"left", "right", "weights"};
++                const char* bases[] = {"lb", "rb", "wb"};
++                for (int input = 0; input < 3; ++input)
++                    source += std::string(bases[input]) + " += int64_t(b" + axis + ") * " +
++                              names[input] + "_strides[" + axis + "];\n";
++            }
++            const auto n = std::to_string(batchRank);
++            const auto next = std::to_string(batchRank + 1);
++            source += "lb += int64_t(u) * left_strides[" + n +
++                      "];\n"
++                      "wb += int64_t(u) * weights_strides[" +
++                      n +
++                      "];\n"
++                      "float c[J];\n"
++                      "for (uint j = 0; j < J; ++j) {\n"
++                      "  int64_t cb = int64_t(o) * coefficients_strides[0] + "
++                      "int64_t(j) * coefficients_strides[2];\n"
++                      "  float a = left[lb] * coefficients[cb];\n"
++                      "  for (uint i = 1; i < I; ++i)\n"
++                      "    a = metal::fma(left[lb + int64_t(i) * left_strides[" +
++                      next +
++                      "]], coefficients[cb + int64_t(i) * coefficients_strides[1]], a);\n"
++                      "  c[j] = a;\n";
++            if (saveCoupled)
++                source += "  saved_coupled[ulong(t) * J + j] = a;\n";
++            source +=
++                "}\nfloat result_value = 0.0f;\n"
++                "for (uint v = 0; v < V; ++v) {\n"
++                "  int64_t r = rb + int64_t(v) * right_strides[" +
++                n +
++                "];\n"
++                "  float p = c[0] * right[r];\n"
++                "  for (uint j = 1; j < J; ++j)\n"
++                "    p = metal::fma(c[j], right[r + int64_t(j) * right_strides[" +
++                next + "]], p);\n";
++            if (savePaired)
++                source += "  saved_paired[(ulong(t) / O * V + v) * O + o] = p;\n";
++            source += "  float w = weights[wb + int64_t(v) * weights_strides[" + next +
++                      "]];\n"
++                      "  if (v == 0) result_value = p * w;\n"
++                      "  else result_value = metal::fma(p, w, result_value);\n"
++                      "}\nresult[t] = result_value;\n";
++            mlx::core::Shape resultShape(left.shape().begin(), left.shape().begin() + batchRank);
++            resultShape.insert(resultShape.end(), {u, o});
++            std::vector<std::string> names = {"result"};
++            std::vector<mlx::core::Shape> shapes = {resultShape};
++            if (saveCoupled) {
++                names.push_back("saved_coupled");
++                auto shape = resultShape;
++                shape.push_back(j);
++                shapes.push_back(std::move(shape));
++            }
++            if (savePaired) {
++                names.push_back("saved_paired");
++                auto shape = resultShape;
++                shape.insert(shape.end() - 1, v);
++                shapes.push_back(std::move(shape));
++            }
++            // Use input strides, including broadcast/slice strides. No hidden
++            // contiguous copies, approximate passes, sparse coefficient masks,
++            // or compile-time captures of weights/tables.
++            auto kernel = mlx::core::fast::metal_kernel(
++                "phydrax_weighted_uvu_" + std::to_string(batchRank) + (saveCoupled ? "_c" : "") +
++                    (savePaired ? "_p" : ""),
++                {"left", "coefficients", "right", "weights"}, names, source, "", false);
++            auto fused = kernel(
++                inputs, shapes, std::vector<mlx::core::Dtype>(shapes.size(), mlx::core::float32),
++                {static_cast<int>(count), 1, 1},
++                {static_cast<int>(std::min<int64_t>(count, 256)), 1, 1},
++                {{"I", i}, {"J", j}, {"O", o}, {"U", u}, {"V", v}}, std::nullopt, false, {});
++            values.emplace(ToKey(final.getResult()), fused[0]);
++            size_t saved = 1;
++            auto replaceSaved = [&](mlir::stablehlo::DotGeneralOp dot,
++                                    mlir::stablehlo::TransposeOp view,
++                                    const std::vector<int64_t>& permutation) {
++                std::vector<int> inverse(permutation.size());
++                for (size_t k = 0; k < permutation.size(); ++k)
++                    inverse[permutation[k]] = static_cast<int>(k);
++                values.insert_or_assign(ToKey(view.getResult()), fused[saved]);
++                values.insert_or_assign(ToKey(dot.getResult()),
++                                        mlx::core::transpose(fused[saved], inverse));
++                ++saved;
++            };
++            if (saveCoupled)
++                replaceSaved(coupled, coupledView, coupledPermutation);
++            if (savePaired)
++                replaceSaved(paired, pairedView, pairedPermutation);
++            MPS_LOG_DEBUG("weighted uvu fused: batch_rank=%d u=%d i=%d j=%d o=%d v=%d saved=%zu\n",
++                          batchRank, u, i, j, o, v, shapes.size() - 1);
++            return true;
++        }
++    }
++    return false;
++}
++
+ // Handler for stablehlo.dot_general
+ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+                       ExecContext& ctx) {
+     auto dotOp = CastOp<mlir::stablehlo::DotGeneralOp>(op, "stablehlo.dot_general");
+     if (!dotOp)
+         return false;
++
++    if (TryWeightedUvu(dotOp, values))
++        return true;
+ 
+     auto* lhs = RequireValue(values, op->getOperand(0), "stablehlo.dot_general");
+     auto* rhs = RequireValue(values, op->getOperand(1), "stablehlo.dot_general");
+diff --git a/src/pjrt_plugin/ops/device_regions.cc b/src/pjrt_plugin/ops/device_regions.cc
+new file mode 100644
+--- /dev/null
++++ b/src/pjrt_plugin/ops/device_regions.cc
+@@ -0,0 +1,537 @@
++// Deliberately small device-region dialect: fixed-trip, small-state indexed
++// maps/recurrences. No reductions, scatter, dot, nested while, custom calls or
++// general function lowering. A single GPU thread owns event order and state.
++#include "pjrt_plugin/ops/device_regions.h"
++
++#include <mlx/fast.h>
++#include <mlx/ops.h>
++
++#include <algorithm>
++#include <sstream>
++#include <unordered_set>
++
++namespace jax_mps {
++namespace {
++constexpr int64_t kMaxTrips = 4096;
++constexpr int64_t kMaxStateElements = 2048;
++constexpr int64_t kMaxTemporaryBytes = 32768;
++constexpr int64_t kMaxElementWork = 4 * 1024 * 1024;
++constexpr size_t kMaxOperations = 512;
++constexpr size_t kMaxCallDepth = 8;
++
++struct Tensor {
++    std::string name;
++    mlir::RankedTensorType type;
++    int64_t size;
++    bool strided = false;
++    std::string at(const std::string& index) const {
++        if (!strided)
++            return name + "[" + index + "]";
++        std::string offset = "0l";
++        int64_t stride = size;
++        for (int d = 0; d < type.getRank(); ++d) {
++            stride /= type.getDimSize(d);
++            offset += "+long(((" + index + ")/" + std::to_string(stride) + ")%" +
++                      std::to_string(type.getDimSize(d)) + ")*" + name + "_strides[" +
++                      std::to_string(d) + "]";
++        }
++        return name + "[" + offset + "]";
++    }
++};
++using Bindings = std::unordered_map<void*, Tensor>;
++
++std::string MetalType(mlir::Type t) {
++    if (t.isF32())
++        return "float";
++    auto i = mlir::dyn_cast<mlir::IntegerType>(t);
++    if (!i)
++        return {};
++    if (i.getWidth() == 1)
++        return "bool";
++    if (i.getWidth() == 32)
++        return i.isUnsigned() ? "uint" : "int";
++    if (i.getWidth() == 64)
++        return i.isUnsigned() ? "ulong" : "long";
++    return {};
++}
++
++std::optional<Tensor> Describe(mlir::Type t, std::string name) {
++    auto type = mlir::dyn_cast<mlir::RankedTensorType>(t);
++    if (!type || !type.hasStaticShape() || type.getRank() > 4 ||
++        MetalType(type.getElementType()).empty())
++        return std::nullopt;
++    int64_t size = 1;
++    for (int64_t dim : type.getShape()) {
++        if (dim <= 0 || dim > (1 << 20) || size > (1 << 20) / dim)
++            return std::nullopt;
++        size *= dim;
++    }
++    return Tensor{std::move(name), type, size};
++}
++
++std::string Coordinate(const Tensor& t, int axis, const std::string& index) {
++    int64_t stride = 1;
++    for (int d = axis + 1; d < t.type.getRank(); ++d)
++        stride *= t.type.getDimSize(d);
++    return "((" + index + "/" + std::to_string(stride) + ")%" +
++           std::to_string(t.type.getDimSize(axis)) + ")";
++}
++
++// All admission is structural, before constructing any MLX kernel. Never read
++// dynamic numerical arrays on the host, and never convert a failed dispatch into
++// an optimization miss. Explicit inputs remain graph edges across compile replay.
++class RegionEmitter {
++public:
++    RegionEmitter(const ValueMap& values, mlir::ModuleOp module, int64_t trips)
++        : values_(values), module_(module), trips_(trips) {}
++
++    std::optional<Tensor> input(mlir::Value value) {
++        auto existing = captures_.find(ToKey(value));
++        if (existing != captures_.end())
++            return existing->second;
++        auto it = values_.find(ToKey(value));
++        if (it == values_.end())
++            return std::nullopt;
++        auto tensor = Describe(value.getType(), "input" + std::to_string(inputs.size()));
++        if (!tensor || it->second.size() != tensor->size ||
++            it->second.dtype() != MlirTypeToMlxDtype(tensor->type.getElementType()))
++            return std::nullopt;
++        if (it->second.ndim() != tensor->type.getRank())
++            return std::nullopt;
++        for (int d = 0; d < tensor->type.getRank(); ++d)
++            if (it->second.shape(d) != tensor->type.getDimSize(d))
++                return std::nullopt;
++        tensor->strided = tensor->type.getRank() != 0;
++        // Read real strides in the device kernel: broadcasts/transposes are not
++        // secretly materialized just to make this optimization admissible.
++        inputs.push_back(tensor->strided ? it->second : mlx::core::reshape(it->second, {1}));
++        inputNames.push_back(tensor->name);
++        captures_.emplace(ToKey(value), *tensor);
++        return tensor;
++    }
++
++    std::optional<Tensor> temporary(mlir::Type type) {
++        auto t = Describe(type, "v" + std::to_string(next_++));
++        if (!t)
++            return std::nullopt;
++        int64_t bytes = t->size * (t->type.getElementType().isInteger(1)
++                                       ? 1
++                                       : t->type.getElementType().getIntOrFloatBitWidth() / 8);
++        bytes_ += bytes;
++        work_ += t->size;
++        if (bytes_ > kMaxTemporaryBytes || work_ > kMaxElementWork / std::max<int64_t>(1, trips_))
++            return std::nullopt;
++        source << MetalType(t->type.getElementType()) << " " << t->name << "[" << t->size << "];\n";
++        return t;
++    }
++
++    void copy(const Tensor& to, const Tensor& from) {
++        source << "for (uint e=0; e<" << to.size << "; ++e) " << to.at("e") << "=" << from.at("e")
++               << ";\n";
++    }
++
++    std::optional<std::vector<Tensor>> block(mlir::Block& block, Bindings env, size_t depth = 0) {
++        if (depth > kMaxCallDepth)
++            return std::nullopt;
++        for (auto& op : block) {
++            if (++operations_ > kMaxOperations)
++                return std::nullopt;
++            auto name = op.getName().getStringRef();
++            std::vector<Tensor> args;
++            for (auto value : op.getOperands()) {
++                auto it = env.find(ToKey(value));
++                if (it != env.end()) {
++                    args.push_back(it->second);
++                    continue;
++                }
++                auto t = input(value);
++                if (!t)
++                    return std::nullopt;
++                args.push_back(*t);
++            }
++            if (name == "stablehlo.return" || name == "func.return")
++                return args;
++            if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op)) {
++                auto fn = module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
++                if (!fn || fn.isExternal() || !fn.getBody().hasOneBlock() ||
++                    fn.getNumArguments() != args.size() || activeCalls_.count(fn.getOperation()))
++                    return std::nullopt;
++                Bindings local = env;
++                for (size_t i = 0; i < args.size(); ++i)
++                    local.insert_or_assign(ToKey(fn.getArgument(i)), args[i]);
++                activeCalls_.insert(fn.getOperation());
++                auto results = this->block(fn.getBody().front(), std::move(local), depth + 1);
++                activeCalls_.erase(fn.getOperation());
++                if (!results || results->size() != op.getNumResults())
++                    return std::nullopt;
++                for (size_t i = 0; i < results->size(); ++i)
++                    env.insert_or_assign(ToKey(op.getResult(i)), (*results)[i]);
++                continue;
++            }
++            if (auto caseOp = mlir::dyn_cast<mlir::stablehlo::CaseOp>(op)) {
++                if (args.size() != 1 || args[0].size != 1 ||
++                    !mlir::isa<mlir::IntegerType>(args[0].type.getElementType()))
++                    return std::nullopt;
++                std::vector<Tensor> results;
++                for (auto type : op.getResultTypes()) {
++                    auto t = temporary(type);
++                    if (!t)
++                        return std::nullopt;
++                    results.push_back(*t);
++                }
++                auto branches = caseOp.getBranches();
++                if (branches.empty() || branches.size() > 8)
++                    return std::nullopt;
++                source << "switch (" << args[0].at("0") << ") {\n";
++                for (size_t b = 0; b < branches.size(); ++b) {
++                    if (!branches[b].hasOneBlock())
++                        return std::nullopt;
++                    // StableHLO's out-of-range case index selects the last branch.
++                    if (b + 1 == branches.size())
++                        source << "default: {\n";
++                    else
++                        source << "case " << b << ": {\n";
++                    auto values = this->block(branches[b].front(), env, depth + 1);
++                    if (!values || values->size() != results.size())
++                        return std::nullopt;
++                    for (size_t i = 0; i < results.size(); ++i)
++                        copy(results[i], (*values)[i]);
++                    source << "break; }\n";
++                }
++                source << "}\n";
++                for (size_t i = 0; i < results.size(); ++i)
++                    env.insert_or_assign(ToKey(op.getResult(i)), results[i]);
++                continue;
++            }
++            // The whitelist, not a side-effect annotation, is authoritative.
++            // This rejects EVERY custom call (including pure host callbacks),
++            // token/effect op and unsupported region, even when results are dead.
++            if (op.getNumRegions() || op.getNumResults() != 1)
++                return std::nullopt;
++            auto result = temporary(op.getResult(0).getType());
++            if (!result || !emit(op, args, *result))
++                return std::nullopt;
++            env.insert_or_assign(ToKey(op.getResult(0)), *result);
++        }
++        return std::nullopt;
++    }
++
++    std::ostringstream source;
++    std::vector<mlx::core::array> inputs;
++    std::vector<std::string> inputNames;
++
++private:
++    bool emit(mlir::Operation& op, const std::vector<Tensor>& a, const Tensor& r) {
++        auto name = op.getName().getStringRef();
++        auto each = [&](const std::string& expression) {
++            source << "for (uint e=0; e<" << r.size << "; ++e) " << r.at("e") << "=" << expression
++                   << ";\n";
++            return true;
++        };
++        if (auto constant = mlir::dyn_cast<mlir::stablehlo::ConstantOp>(op)) {
++            auto dense = mlir::dyn_cast<mlir::DenseElementsAttr>(constant.getValue());
++            if (!dense)
++                return false;
++            std::vector<std::string> literals;
++            if (r.type.getElementType().isF32()) {
++                for (auto value : dense.getValues<llvm::APFloat>()) {
++                    literals.push_back("as_type<float>(uint(" +
++                                       std::to_string(value.bitcastToAPInt().getZExtValue()) +
++                                       "u))");
++                    if (dense.isSplat())
++                        break;
++                }
++            } else {
++                for (auto value : dense.getValues<llvm::APInt>()) {
++                    literals.push_back(MetalType(r.type.getElementType()) + "(" +
++                                       std::to_string(value.getZExtValue()) + "ul)");
++                    if (dense.isSplat())
++                        break;
++                }
++            }
++            if (dense.isSplat())
++                return each(literals.front());
++            for (size_t i = 0; i < literals.size(); ++i)
++                source << r.at(std::to_string(i)) << "=" << literals[i] << ";\n";
++            return true;
++        }
++        if (name == "stablehlo.reshape") {
++            if (a.size() != 1 || a[0].size != r.size)
++                return false;
++            copy(r, a[0]);
++            return true;
++        }
++        if (auto broadcast = mlir::dyn_cast<mlir::stablehlo::BroadcastInDimOp>(op)) {
++            if (a.size() != 1)
++                return false;
++            auto dims = broadcast.getBroadcastDimensions();
++            if (dims.size() != static_cast<size_t>(a[0].type.getRank()))
++                return false;
++            std::string index = "0";
++            for (size_t d = 0; d < dims.size(); ++d) {
++                int64_t size = a[0].type.getDimSize(d);
++                index = "(" + index + "*" + std::to_string(size) + "+" +
++                        (size == 1 ? "0" : Coordinate(r, dims[d], "e")) + ")";
++            }
++            return each(a[0].at(index));
++        }
++        if (name == "stablehlo.dynamic_slice" || name == "stablehlo.dynamic_update_slice") {
++            bool update = name == "stablehlo.dynamic_update_slice";
++            if (a.empty())
++                return false;
++            int rank = a[0].type.getRank();
++            if (a.size() != static_cast<size_t>(rank + (update ? 2 : 1)))
++                return false;
++            const Tensor& window = update ? a[1] : r;
++            if (window.type.getRank() != rank)
++                return false;
++            std::vector<std::string> starts;
++            for (int d = 0; d < rank; ++d) {
++                const auto& start = a[d + (update ? 2 : 1)];
++                auto integer = mlir::dyn_cast<mlir::IntegerType>(start.type.getElementType());
++                if (start.size != 1 || !integer || integer.getWidth() == 1)
++                    return false;
++                int64_t bound = a[0].type.getDimSize(d) - window.type.getDimSize(d);
++                if (bound < 0)
++                    return false;
++                std::string s = "s" + std::to_string(next_++);
++                source << "long " << s << "=";
++                if (integer.isUnsigned())
++                    source << "long(min(ulong(" << start.at("0") << "),ulong(" << bound << ")))";
++                else
++                    source << "clamp(long(" << start.at("0") << "),0l," << bound << "l)";
++                source << ";\n";
++                starts.push_back(s);
++            }
++            if (update)
++                copy(r, a[0]);
++            std::string index = "0";
++            for (int d = 0; d < rank; ++d)
++                index = "(" + index + "*" + std::to_string(a[0].type.getDimSize(d)) + "+" +
++                        starts[d] + "+" + Coordinate(window, d, "e") + ")";
++            if (!update)
++                return each(a[0].at(index));
++            source << "for (uint e=0; e<" << window.size << "; ++e) " << r.at(index) << "="
++                   << window.at("e") << ";\n";
++            return true;
++        }
++        if (name == "stablehlo.select") {
++            if (a.size() != 3 || !a[0].type.getElementType().isInteger(1) ||
++                (a[0].size != 1 && a[0].type.getShape() != r.type.getShape()) ||
++                a[1].type.getShape() != r.type.getShape() ||
++                a[2].type.getShape() != r.type.getShape())
++                return false;
++            return each("(" + a[0].at(a[0].size == 1 ? "0" : "e") + "?" + a[1].at("e") + ":" +
++                        a[2].at("e") + ")");
++        }
++        // All remaining operations are exactly shape-preserving pointwise ops.
++        for (const auto& arg : a)
++            if (arg.type.getShape() != r.type.getShape())
++                return false;
++        if (name == "stablehlo.convert") {
++            if (a.size() != 1)
++                return false;
++            // Float/integer conversions have separate overflow/NaN contracts.
++            // Do not admit them incidentally through C-style Metal casts.
++            if (a[0].type.getElementType().isF32() != r.type.getElementType().isF32())
++                return false;
++            return each(MetalType(r.type.getElementType()) + "(" + a[0].at("e") + ")");
++        }
++        if (auto compare = mlir::dyn_cast<mlir::stablehlo::CompareOp>(op)) {
++            if (a.size() != 2)
++                return false;
++            auto type = compare.getCompareType();
++            if (type && *type == mlir::stablehlo::ComparisonType::TOTALORDER)
++                return false;
++            std::string cast;
++            if (mlir::isa<mlir::IntegerType>(a[0].type.getElementType())) {
++                bool unsign =
++                    (type && *type == mlir::stablehlo::ComparisonType::UNSIGNED) ||
++                    ((!type || *type == mlir::stablehlo::ComparisonType::NOTYPE) &&
++                     mlir::cast<mlir::IntegerType>(a[0].type.getElementType()).isUnsigned());
++                cast = unsign ? (a[0].type.getElementType().isInteger(64) ? "ulong" : "uint")
++                              : (a[0].type.getElementType().isInteger(64) ? "long" : "int");
++            }
++            std::string symbol;
++            switch (compare.getComparisonDirection()) {
++                case mlir::stablehlo::ComparisonDirection::EQ:
++                    symbol = "==";
++                    break;
++                case mlir::stablehlo::ComparisonDirection::NE:
++                    symbol = "!=";
++                    break;
++                case mlir::stablehlo::ComparisonDirection::LT:
++                    symbol = "<";
++                    break;
++                case mlir::stablehlo::ComparisonDirection::LE:
++                    symbol = "<=";
++                    break;
++                case mlir::stablehlo::ComparisonDirection::GT:
++                    symbol = ">";
++                    break;
++                case mlir::stablehlo::ComparisonDirection::GE:
++                    symbol = ">=";
++                    break;
++            }
++            return each("(" + cast + "(" + a[0].at("e") + ")" + symbol + cast + "(" + a[1].at("e") +
++                        "))");
++        }
++        std::string symbol;
++        if (name == "stablehlo.add")
++            symbol = "+";
++        else if (name == "stablehlo.subtract")
++            symbol = "-";
++        else if (name == "stablehlo.multiply")
++            symbol = "*";
++        else if (name == "stablehlo.and")
++            symbol = "&";
++        else if (name == "stablehlo.or")
++            symbol = "|";
++        else if (name == "stablehlo.xor")
++            symbol = "^";
++        else
++            return false;
++        if (a.size() != 2)
++            return false;
++        bool floating = r.type.getElementType().isF32();
++        if (floating && (symbol == "&" || symbol == "|" || symbol == "^"))
++            return false;
++        if (r.type.getElementType().isInteger(1) &&
++            (symbol == "+" || symbol == "-" || symbol == "*"))
++            return false;
++        std::string left = a[0].at("e"), right = a[1].at("e");
++        // Unsigned intermediates make signed integer overflow modular, not UB.
++        if (!floating) {
++            left = "ulong(" + left + ")";
++            right = "ulong(" + right + ")";
++        }
++        return each(MetalType(r.type.getElementType()) + "(" + left + symbol + right + ")");
++    }
++
++    const ValueMap& values_;
++    mlir::ModuleOp module_;
++    int64_t trips_;
++    int64_t bytes_ = 0;
++    int64_t work_ = 0;
++    size_t operations_ = 0;
++    size_t next_ = 0;
++    Bindings captures_;
++    std::unordered_set<mlir::Operation*> activeCalls_;
++};
++}  // namespace
++
++std::optional<std::vector<mlx::core::array>> TryDeviceCountedRegion(mlir::stablehlo::WhileOp op,
++                                                                    size_t counterIndex,
++                                                                    int64_t trips,
++                                                                    const ValueMap& values,
++                                                                    mlir::ModuleOp module) {
++    if (trips < 0 || trips > kMaxTrips || !op.getBody().hasOneBlock() ||
++        !op.getCond().hasOneBlock() || op.getNumOperands() > 32)
++        return std::nullopt;
++    auto& body = op.getBody().front();
++    auto& cond = op.getCond().front();
++    auto* ret = body.getTerminator();
++    if (ret->getNumOperands() != op.getNumOperands())
++        return std::nullopt;
++    RegionEmitter emitter(values, module, trips);
++    Bindings bodyEnv, condEnv;
++    std::vector<Tensor> state;
++    std::vector<size_t> changed;
++    int64_t stateSize = 0;
++    for (size_t i = 0; i < op.getNumOperands(); ++i) {
++        auto initial = emitter.input(op->getOperand(i));
++        if (!initial)
++            return std::nullopt;
++        // Loop-invariant arrays remain device input pointers, not local copies.
++        bool invariant = ret->getOperand(i) == body.getArgument(i);
++        Tensor current = *initial;
++        if (!invariant) {
++            stateSize += initial->size;
++            if (stateSize > kMaxStateElements)
++                return std::nullopt;
++            auto local = emitter.temporary(initial->type);
++            if (!local)
++                return std::nullopt;
++            emitter.copy(*local, *initial);
++            current = *local;
++            changed.push_back(i);
++        }
++        state.push_back(current);
++        bodyEnv.emplace(ToKey(body.getArgument(i)), current);
++        condEnv.emplace(ToKey(cond.getArgument(i)), current);
++    }
++    if (counterIndex >= state.size() || changed.size() < 2)
++        return std::nullopt;
++    emitter.source << "for (uint iteration=0; iteration<" << trips << "; ++iteration) {\n";
++    // Validate and emit the whole condition too: unused callbacks/effects cannot
++    // hide behind a canonical compare or an apparently zero-trip loop.
++    auto conditions = emitter.block(cond, std::move(condEnv));
++    if (!conditions || conditions->size() != 1 || (*conditions)[0].size != 1)
++        return std::nullopt;
++    emitter.source << "if (!" << (*conditions)[0].at("0") << ") break;\n";
++    auto next = emitter.block(body, std::move(bodyEnv));
++    if (!next || next->size() != state.size())
++        return std::nullopt;
++    // Parallel assignment of loop-carried results. Body temporaries are distinct
++    // from current state, but a result can directly alias another carried state.
++    std::vector<Tensor> assignments;
++    for (size_t i : changed) {
++        const auto& value = (*next)[i];
++        bool aliasesOtherState = std::any_of(changed.begin(), changed.end(), [&](size_t j) {
++            return j != i && value.name == state[j].name;
++        });
++        if (aliasesOtherState) {
++            auto snapshot = emitter.temporary(state[i].type);
++            if (!snapshot)
++                return std::nullopt;
++            emitter.copy(*snapshot, value);
++            assignments.push_back(*snapshot);
++        } else
++            assignments.push_back(value);
++    }
++    for (size_t j = 0; j < changed.size(); ++j)
++        if (state[changed[j]].name != assignments[j].name)
++            emitter.copy(state[changed[j]], assignments[j]);
++    emitter.source << "}\n";
++    // One buffer per input/output plus at most one stride buffer per input.
++    // Refuse before dispatch if the conservative Metal argument budget is full.
++    if (2 * emitter.inputs.size() + changed.size() > 31)
++        return std::nullopt;
++    std::vector<std::string> names;
++    std::vector<mlx::core::Shape> shapes;
++    std::vector<mlx::core::Dtype> dtypes;
++    for (size_t j = 0; j < changed.size(); ++j) {
++        size_t i = changed[j];
++        std::string name = "output" + std::to_string(j);
++        names.push_back(name);
++        shapes.push_back({static_cast<int32_t>(state[i].size)});
++        dtypes.push_back(MlirTypeToMlxDtype(state[i].type.getElementType()));
++        emitter.source << "for (uint e=0; e<" << state[i].size << "; ++e) " << name
++                       << "[e]=" << state[i].at("e") << ";\n";
++    }
++    // MLX's safe-math default plus disabled FP contraction preserve explicit
++    // event/compensation operations. This is never a reduction reassociation.
++    std::string source = emitter.source.str();
++    std::string identity = source;
++    for (const auto& input : emitter.inputs)
++        identity += ":" + std::to_string(static_cast<int>(input.dtype().val()));
++    std::string kernelName =
++        "phydrax_bounded_ordered_region_" + std::to_string(std::hash<std::string>{}(identity));
++    auto kernel =
++        mlx::core::fast::metal_kernel(kernelName, emitter.inputNames, names, source,
++                                      "#pragma clang fp contract(off)\n", false, false, {});
++    auto output =
++        kernel(emitter.inputs, shapes, dtypes, {1, 1, 1}, {1, 1, 1}, {}, std::nullopt, false, {});
++    std::vector<mlx::core::array> results;
++    size_t j = 0;
++    for (size_t i = 0; i < state.size(); ++i) {
++        if (j < changed.size() && changed[j] == i) {
++            results.push_back(mlx::core::reshape(output[j++], GetShape(state[i].type)));
++        } else
++            results.push_back(values.at(ToKey(op->getOperand(i))));
++    }
++    MPS_LOG_DEBUG("device region: %lld trips, %zu carried outputs, %lld state elements\n",
++                  static_cast<long long>(trips), changed.size(), static_cast<long long>(stateSize));
++    return results;
++}
++}  // namespace jax_mps
+diff --git a/src/pjrt_plugin/ops/device_regions.h b/src/pjrt_plugin/ops/device_regions.h
+new file mode 100644
+--- /dev/null
++++ b/src/pjrt_plugin/ops/device_regions.h
+@@ -0,0 +1,16 @@
++// Bounded, pure indexed recurrences executed by one ordered GPU invocation.
++#pragma once
++
++#include "pjrt_plugin/ops/handler_utils.h"
++#include "stablehlo/dialect/StablehloOps.h"
++
++namespace jax_mps {
++// The caller proves a canonical constant-trip loop with non-overflowing counter.
++// Admission is otherwise entirely owned here. nullopt means use the general path;
++// an admitted kernel failure is never caught and retried on another device.
++std::optional<std::vector<mlx::core::array>> TryDeviceCountedRegion(mlir::stablehlo::WhileOp op,
++                                                                    size_t counterIndex,
++                                                                    int64_t trips,
++                                                                    const ValueMap& values,
++                                                                    mlir::ModuleOp module);
++}  // namespace jax_mps

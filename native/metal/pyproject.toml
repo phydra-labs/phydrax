@@ -1,0 +1,28 @@
+[build-system]
+# The native plugin is built and audited by tools/build_metal_wheels.py; this
+# backend only packages that verified staging tree (no build dependencies).
+requires = []
+build-backend = "_build_backend"
+backend-path = ["."]
+
+[project]
+name = "phydrax-metal"
+# Released in lockstep with phydrax, which pins and verifies this exact version.
+version = "0.2.2"
+description = "Apple GPU (Metal, platform 'mps') PJRT runtime companion for Phydrax, built from patched jax-mps."
+requires-python = ">=3.13,<3.14"
+authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
+license = {text = "Phydra Non-Production License (PNPL) for Phydrax-authored files; bundled jax-mps, LLVM/MLIR, StableHLO, Shardy, XLA, MLX, metal-cpp, nlohmann-json and fmt under their own licenses (see licenses/)"}
+classifiers = [
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3.13",
+  "Environment :: GPU",
+]
+# The exact JAX/JAXlib pair the PJRT plugin, StableHLO and Shardy were built for.
+dependencies = [
+  "jax==0.12.0",
+  "jaxlib==0.12.0",
+]
+
+[project.entry-points.jax_plugins]
+mps = "phydrax_metal.plugin"
