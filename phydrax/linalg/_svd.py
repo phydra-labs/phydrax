@@ -50,6 +50,7 @@ from ._svd_evidence import (
     compressed_spectrum_allowance,
     discarded_singular_maximum,
     leading_evidence,
+    primal_svd_status,
     rank_evidence,
     spectral_margins,
     triplet_evidence,
@@ -618,20 +619,7 @@ def _admission(
 ) -> _Admission:
     policy = prepared.plan.policy
     finite = jnp.all(jnp.isfinite(factors.values)) & jnp.all(jnp.isfinite(relative))
-    converged = jnp.all(relative <= policy.tolerance.residual) & (
-        orthogonality <= policy.tolerance.orthogonality
-    )
-    status = jnp.where(
-        finite,
-        jnp.where(
-            converged,
-            int(SVDSolveStatus.SUCCESS),
-            int(SVDSolveStatus.RESIDUAL_TOLERANCE_NOT_MET),
-        ),
-        int(SVDSolveStatus.NONFINITE_OUTPUT),
-    ).astype(jnp.int32)
     available = prepared.state.preparation_status == int(SVDSolveStatus.SUCCESS)
-    status = jnp.where(available, status, prepared.state.preparation_status)
     rank = rank_evidence(
         factors.values,
         factors.eta,
@@ -640,19 +628,16 @@ def _admission(
         prepared.plan,
         factors.probability,
     )
-    if policy.rank.require_full_rank:
-        rank_status = jnp.where(
-            rank.available
-            & rank.deterministic_exact
-            & (rank.lower_bound == rank.upper_bound),
-            jnp.where(
-                rank.lower_bound == prepared.problem.maximum_rank,
-                status,
-                int(SVDSolveStatus.RANK_DEFICIENT),
-            ),
-            int(SVDSolveStatus.GLOBAL_RANK_UNCERTIFIED),
-        )
-        status = jnp.where(available & finite, rank_status, status)
+    status = primal_svd_status(
+        factors.values,
+        relative,
+        orthogonality,
+        prepared.state.preparation_status,
+        rank,
+        prepared.problem.maximum_rank,
+        policy.tolerance,
+        policy.rank,
+    )
     spectrum_allowance = compressed_spectrum_allowance(
         factors.values, prepared.problem, prepared.plan
     )

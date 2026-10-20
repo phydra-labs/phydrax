@@ -30,6 +30,7 @@ for _key in ("SLURM_NTASKS", "OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "PMIX_SIZE"):
 import jax
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax._execution_device import device_platform
 from phydrax.backends.distributed import mpi4jax_availability, Mpi4JaxCollectiveProvider
 
@@ -304,7 +305,7 @@ def main() -> None:
         )
     assert jax.process_count() == 1, "Rank-local MPI must not bootstrap JAX multi-host"
     dtype = np.dtype(dtype_name)
-    assert jax.config.x64_enabled, (
+    assert pxconfig.x64_enabled(), (
         "JAX_ENABLE_X64=true is required for this qualification"
     )
     control = MPI.COMM_WORLD.Dup()

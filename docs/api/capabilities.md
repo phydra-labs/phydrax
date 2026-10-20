@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `a2c825a4336b10a43418bc08f4ff2c844be66998d8cdf32731d41de4471c16ae`
+Catalog ID: `f4c82b6659823a126eb093568d0c4b0fb88ccd2716e0d5287c563ee02bc12f73`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 304 |
+| candidate | 305 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |
@@ -31,6 +31,7 @@ Catalog ID: `a2c825a4336b10a43418bc08f4ff2c844be66998d8cdf32731d41de4471c16ae`
 | `accelerator.wake-impedance` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
 | `acoustics.bubbly-medium` | `phydrax.acoustics` | candidate | candidate | 1 |
 | `acoustics.vibroacoustic` | `phydrax.acoustics` | candidate | implementation-qualified-candidate | 1 |
+| `apple-metal-execution` | `phydrax.backends` | candidate | unreleased-candidate | 1 |
 | `application.accelerator` | `phydrax.applications.accelerator` | research | application-research | 0 |
 | `application.additive-manufacturing` | `phydrax.applications.additive_manufacturing` | research | application-research | 0 |
 | `application.aerothermodynamics` | `phydrax.applications.aerothermodynamics` | research | application-research | 0 |

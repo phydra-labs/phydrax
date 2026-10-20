@@ -20,12 +20,17 @@ from phydrax.atomistic import (
     energy_and_forces,
     prepare_atomistic_graph_topology,
 )
+from phydrax.atomistic._model_artifact import (
+    read_atomistic_model_artifact,
+    write_atomistic_model_artifact,
+)
 from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic._mace import MACEArchitecture, MACEPotential
 from phydrax.nn.atomistic._mace_source import mace_potential_from_source
 from phydrax.sparse import RelationAccumulation, StreamedRelationPlan
 from phydrax.special import RealCartesianHarmonics
 from phydrax.units import ANGSTROM, ELECTRONVOLT
+from tests._support.mace_source import FLOAT32_GATES
 
 
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
@@ -159,7 +164,11 @@ def _source_tensors(
 
 
 def _source_potential(
-    case: str, head: str, offsets: dict[str, np.ndarray] | None = None
+    case: str,
+    head: str,
+    offsets: dict[str, np.ndarray] | None = None,
+    *,
+    precision: AtomisticPrecisionPolicy | None = None,
 ) -> MACEPotential:
     fixture = np.load(FIXTURES / f"{case}.npz")
     transforms, couplings = _source_basis(fixture)
@@ -170,6 +179,7 @@ def _source_potential(
         degree_transforms=transforms,
         couplings=couplings,
         source_id=f"mace-torch-0.3.16-fixture:{case}",
+        precision=precision,
     )
 
 
@@ -358,6 +368,7 @@ def _native(**overrides: Any) -> MACEPotential:
         "energy_scaling": "scale-shift",
     }
     energies = overrides.pop("energies", {})
+    precision = overrides.pop("precision", None)
     declaration.update(overrides)
     return MACEPotential(
         SCALE,
@@ -368,7 +379,86 @@ def _native(**overrides: Any) -> MACEPotential:
         energy_scale=np.asarray(energies.get("energy_scale", [1.3]), dtype=np.float64),
         energy_shift=np.asarray(energies.get("energy_shift", [0.2]), dtype=np.float64),
         key=jr.key(5),
+        precision=precision,
     )
+
+
+@pytest.mark.parametrize("construction", ["native", "native-readout", "source"])
+def test_float32_coupling_bases_execute_and_persist_their_stored_representation(
+    construction: str, tmp_path: Path
+) -> None:
+    precision = AtomisticPrecisionPolicy(
+        coordinate_dtype="float32",
+        compute_dtype="float32",
+        reduction_dtype="float32",
+        output_dtype="float32",
+    )
+    if construction == "source":
+        potential = _source_potential("two_scale_shift", "Default", precision=precision)
+    elif construction == "native-readout":
+        potential = _native(
+            interactions=("real-agnostic",),
+            correlations=(2,),
+            edge_degree=1,
+            hidden_degree=1,
+            readout_correlation=2,
+            precision=precision,
+        )
+    else:
+        potential = _native(precision=precision)
+    potential.validate()
+    plans = [layer.product.contraction.plan for layer in potential.layers]
+    plans.extend(
+        layer.readout_product.contraction.plan
+        for layer in potential.layers
+        if layer.readout_product is not None
+    )
+    assert all(
+        basis.coefficients.dtype == np.dtype(np.float32)
+        and basis._host_projection().dtype == np.dtype(np.float32)
+        for plan in plans
+        for block in plan.bases
+        for basis in block
+    )
+    path = tmp_path / f"{construction}.phydrax"
+    write_atomistic_model_artifact(path, potential)
+    restored = read_atomistic_model_artifact(path).model
+    restored.validate()
+    assert restored.architecture_id == potential.architecture_id
+    original_leaves, original_tree = jax.tree_util.tree_flatten(potential)
+    restored_leaves, restored_tree = jax.tree_util.tree_flatten(restored)
+    assert original_tree == restored_tree
+    for original, current in zip(original_leaves, restored_leaves, strict=True):
+        if eqx.is_array(original):
+            assert eqx.is_array(current) and original.dtype == current.dtype
+            np.testing.assert_array_equal(original, current)
+        else:
+            assert original == current
+    source = _structure("molecule")
+    structure = AtomicStructure(
+        source.atomic_numbers,
+        np.asarray(source.positions, dtype=np.float32),
+        np.asarray(source.masses, dtype=np.float32),
+        SCALE,
+    )
+    before = energy_and_forces(potential, structure, _molecule_execution())
+    after = energy_and_forces(restored, structure, _molecule_execution())
+    assert bool(before.valid[0]) and bool(after.valid[0])
+    assert before.energy.dtype == np.dtype(np.float32)
+    assert before.forces.dtype == np.dtype(np.float32)
+    assert np.all(np.isfinite(before.energy)) and np.all(np.isfinite(before.forces))
+    np.testing.assert_allclose(after.energy, before.energy, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(after.forces, before.forces, rtol=1e-6, atol=1e-6)
+    if construction == "source":
+        fixture = np.load(FIXTURES / "two_scale_shift.npz")
+        for name, value in (("energy", before.energy), ("forces", before.forces[0])):
+            absolute, relative = FLOAT32_GATES[name]
+            np.testing.assert_allclose(
+                value,
+                fixture[f"molecule/Default/{name}"],
+                rtol=relative,
+                atol=absolute,
+            )
 
 
 @pytest.mark.parametrize(

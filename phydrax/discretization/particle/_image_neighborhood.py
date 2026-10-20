@@ -19,7 +19,6 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from ...sparse import EdgeRelation, KeyGroupPlan
 from ...typing import checked
 from .._core import (
@@ -545,13 +544,12 @@ def _host_reach(vectors: np.ndarray, /) -> np.ndarray:
         singular_values = np.linalg.svd(matrix, compute_uv=False)
         if singular_values[-1] <= np.finfo(np.float64).eps * max(singular_values[0], 1.0):
             raise ValueError("Reference lattice is rank deficient.")
-        coordinate_solve = solve(
-            LinearSystem(DenseLinearOperator(matrix @ matrix.T)),
-            matrix,
-            policy=LinearSolvePolicy(DenseLU()),
-        )
-        inverse = np.asarray(coordinate_solve.value).T
-        reach.append(np.sqrt(np.sum(inverse * inverse, axis=0)))
+        # Immutable reference-cell preparation, not runtime particle algebra.
+        # Keep this bounded host solve off the selected JAX device.
+        reciprocal = np.linalg.solve(matrix @ matrix.T, matrix).T
+        if not np.all(np.isfinite(reciprocal)):
+            raise ValueError("Reference lattice coordinate solve is non-finite.")
+        reach.append(np.sqrt(np.sum(reciprocal * reciprocal, axis=0)))
     return np.stack(reach)
 
 

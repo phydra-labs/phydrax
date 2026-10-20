@@ -100,6 +100,22 @@ def dtype_specifications(indices: jax.Array) -> None:
     assert_type(degree(indices, dtype=np.dtype("float64")), jax.Array)
 
 
+def mlp_precision(key: pt.PRNGKey) -> None:
+    layer = phx.nn.layers.Linear(in_size=2, out_size=3, dtype=jnp.float32, key=key)
+    assert_type(layer, phx.nn.layers.Linear)
+    model = phx.nn.models.MLP(
+        in_size=2, out_size="scalar", width_size=4, depth=1, dtype="float32", key=key
+    )
+    assert_type(model, phx.nn.models.MLP)
+    assert_type(model(jnp.ones((2,), dtype=jnp.float32)), jax.Array)
+    phx.nn.models.MLP(
+        in_size=2,
+        out_size=1,
+        hidden_sizes=(4,),
+        dtype=1.5,  # ty: ignore[invalid-argument-type]
+    )
+
+
 def constructors() -> None:
     catalog = ChemicalComponentCatalog(
         ("H2",), np.asarray((2.016,)), ("H",), np.asarray(((2,),))

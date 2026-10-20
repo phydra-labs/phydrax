@@ -156,6 +156,14 @@ The symmetric product keeps the source parameterization:
   Native construction admits dense coupling-family and projection workspace
   before generation or SVD. Fixed source tensors must be real; complex values
   are refused rather than projected onto their real part.
+  Constructors, `native`, source import, and native plan preparation accept an
+  explicit `dtype`, defaulting to float64. Float32 coefficients remain dynamic
+  arrays; no hidden float64 byte copy is retained. Their rounded values and dtype
+  own the basis fingerprint and replay. `equivariance_tolerance` is the caller's
+  scientific tolerance, `equivariance_residual` is the measured stored-basis
+  residual, and `equivariance_roundoff_bound` separately bounds declared storage
+  rounding. Float64 has a zero storage-rounding allowance. Restore recomputes
+  evidence and refuses corrupt or rescaled native bases.
 
 - `SymmetricContractionPlan` shares one sparse product graph across the
   correlation orders. It bounds its node count before allocation.
@@ -351,6 +359,35 @@ It is not qualified automatically:
   and `admitted_derivative_order`. These errors are in internal radial feature
   units and do not bound energy, force, or stress errors. End-to-end E/F/S and
   NVE comparisons are separate evidence.
+
+## Native JAX on Apple GPUs
+
+The [Metal candidate profile](guides_metal_execution.md) uses ordinary native-JAX
+MACE execution, not the accelerated Pallas coupling below. Keep x64 enabled for
+topology and stable IDs, and explicitly select float32 for every model, batch,
+geometry, coefficient, and precision-policy role. A float32 parameter leaf alone
+does not convert an existing float64 model or scientific artifact.
+
+Native and source-imported MACE bases follow `AtomisticPrecisionPolicy.compute_dtype`.
+Changing basis storage from float64 to float32 intentionally changes its identity;
+do not relabel old models or prepared bindings with the new IDs. Host basis/rank
+and frame certification remains float64 preparation, not GPU numerical fallback.
+For structures, also select
+`mass_accumulation_dtype=precision.reduction_dtype` together with
+`coordinate_dtype=precision.coordinate_dtype`. The mass accumulator's default
+remains float64, independently of coordinate precision, for existing scientific
+workflows. Structure copies, batching, and position updates preserve the choice.
+
+Topology preparation remains a host boundary. Prepared replay, masks, source
+revision checks, ordered accumulation, energy-force consistency, strain and
+parameter derivatives retain their owning contracts. The Metal qualification
+matrix is separate from CUDA kernel and distributed qualification; one device
+probe or model evaluation does not admit all architectures or capacities.
+
+Native-only `benchmarks.mace_execution_scaling` routes omit `--target`; they must
+not be labeled `cpu_interpret`. Selecting an accelerated route still requires
+the existing explicit `cuda` or `cpu_interpret` target. There is no Pallas
+`metal` target and no substitution of ordinary JAX for an accelerated kernel.
 
 ## Accelerated coupling
 

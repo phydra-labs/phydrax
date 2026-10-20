@@ -9,9 +9,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ..._dtype_names import real_precision_dtype_name
 from ..._model import KFACAffineBlock, KFACLayoutProvider
 from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
@@ -98,6 +100,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
         scan: bool = False,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         r"""Construct an MLP.
@@ -125,8 +128,13 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
         - `scan`: If `True`, uses `jax.lax.scan` over repeated hidden layers when
           their topology is compatible. If not compatible, falls back to the
           standard loop path.
+        - `dtype`: Real floating dtype of every `Linear` parameter (hidden, final
+          and residual projection), resolved under the active JAX canonicalization
+          policy. Inputs are not cast. `None` keeps JAX's default floating dtype.
         - `key`: PRNG key.
         """
+        # Resolve an explicit parameter dtype before any allocation.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         if (width_size is None) ^ (depth is None):
             raise ValueError("width_size and depth must be provided together.")
 
@@ -171,6 +179,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                     initializer=initializer,
                     rwf=rwf_val,
                     use_bias=use_bias,
+                    dtype=param_dtype,
                     key=layer_keys[0],
                 )
             )
@@ -185,6 +194,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                         initializer=initializer,
                         rwf=rwf_val,
                         use_bias=use_bias,
+                        dtype=param_dtype,
                         key=layer_keys[idx],
                     )
                 )
@@ -196,6 +206,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                     initializer=initializer,
                     rwf=rwf_val,
                     use_bias=use_final_bias,
+                    dtype=param_dtype,
                     key=layer_keys[-1],
                 )
             )
@@ -208,6 +219,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                     initializer=initializer,
                     rwf=rwf_val,
                     use_bias=use_final_bias,
+                    dtype=param_dtype,
                     key=layer_keys[0],
                 )
             )
@@ -246,6 +258,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                 initializer=initializer,
                 rwf=rwf_val,
                 use_bias=False,
+                dtype=param_dtype,
                 key=proj_key,
             )
         else:

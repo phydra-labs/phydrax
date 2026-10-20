@@ -10,8 +10,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, core as jax_core
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
+from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -60,6 +61,9 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
 
     Traced construction requires an explicit stable `measure_id`. Its numerical
     admissibility is exposed by `valid` and can be checked eagerly with `admit`.
+
+    `accumulation_dtype` selects total-mass arithmetic, not scientific measure
+    identity. It defaults to float64 independently of the weights' precision.
     """
 
     __strict_contract__ = True
@@ -86,11 +90,13 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
         normalization: MeasureNormalization = "physical",
         probability_tolerance: float = 1e-10,
         measure_id: str | None = None,
+        accumulation_dtype: DTypeLike = jnp.float64,
     ) -> None:
         name_ = nonempty_identifier("name", name)
         support_id_ = nonempty_identifier("support_id", support_id)
         entity_set_id_ = nonempty_identifier("entity_set_id", entity_set_id)
         normalization = parse(normalization, MeasureNormalization, "normalization")
+        accumulation = real_precision_dtype_name(accumulation_dtype)
         values = jnp.asarray(weights)
         if values.ndim != 1:
             raise ValueError("Discrete measure weights must be rank-1.")
@@ -140,8 +146,11 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
                     },
                 )
         total = jnp.sum(
-            jnp.where(mask, values, jnp.zeros((), dtype=values.dtype)), dtype=jnp.float64
+            jnp.where(mask, values, jnp.zeros((), dtype=values.dtype)),
+            dtype=accumulation,
         )
+        if not traced and not np.isfinite(np.asarray(total)):
+            raise ValueError("Accumulated measure total mass must be finite.")
         self.name = name_
         self.support_id = support_id_
         self.entity_set_id = entity_set_id_
@@ -156,7 +165,9 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
     def valid(self) -> Bool[Scalar]:
         """Device-resident admissibility of active weights and normalization."""
         active = self.active_mask
-        valid = jnp.all(~active | jnp.isfinite(self.weights))
+        valid = jnp.all(~active | jnp.isfinite(self.weights)) & jnp.isfinite(
+            self.total_mass
+        )
         match self.normalization:
             case "signed":
                 return valid
@@ -190,6 +201,8 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
         _validate_host_measure(
             self.weights, self.active_mask, self.normalization, self.probability_tolerance
         )
+        if not np.isfinite(np.asarray(self.total_mass)):
+            raise ValueError("Accumulated measure total mass must be finite.")
         return self
 
     def masked_weights(self, /) -> Array:

@@ -1,0 +1,17 @@
+diff --git a/mlx/utils.h b/mlx/utils.h
+index 9fa332fd2..9fab0e2e1 100644
+--- a/mlx/utils.h
++++ b/mlx/utils.h
+@@ -192,9 +192,10 @@ inline bool metal_fast_synch() {
+   return metal_fast_synch;
+ }
+ 
++// phydrax-metal: float32 contractions are IEEE float32. TF32 is never enabled,
++// and the MLX_ENABLE_TF32 environment variable cannot change that.
+ inline bool enable_tf32() {
+-  static bool enable_tf32_ = get_var("MLX_ENABLE_TF32", 1);
+-  return enable_tf32_;
++  return false;
+ }
+ 
+ inline int nccl_timeout(int default_value) {

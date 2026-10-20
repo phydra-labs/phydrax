@@ -1,0 +1,144 @@
+diff --git a/src/pjrt_plugin/pjrt_client.cc b/src/pjrt_plugin/pjrt_client.cc
+index 1c8cc42f80aa9f2ff42175e469793a53c14503a1..0f9424ba1a2429a83476fb96c05af9f8f359582a 100644
+--- a/src/pjrt_plugin/pjrt_client.cc
++++ b/src/pjrt_plugin/pjrt_client.cc
+@@ -266,7 +266,7 @@ PJRT_Error* MPS_Client_Compile(PJRT_Client_Compile_Args* args) {
+     }
+ 
+     if (!parsed_module.refusal.empty()) {
+-        return MakeError(parsed_module.refusal, PJRT_Error_Code_INVALID_ARGUMENT);
++        return MakeError(parsed_module.refusal, parsed_module.refusal_code);
+     }
+ 
+     if (!parsed_module.ok()) {
+diff --git a/src/pjrt_plugin/stablehlo_parser.cc b/src/pjrt_plugin/stablehlo_parser.cc
+index d58b9e742dc3f56b347813472bf76206c07a2cc3..b7d0ef7085d6f0105de47300cadf2d841e84ef08 100644
+--- a/src/pjrt_plugin/stablehlo_parser.cc
++++ b/src/pjrt_plugin/stablehlo_parser.cc
+@@ -7,6 +7,12 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <optional>
++#include <algorithm>
++#include <limits>
++#include <variant>
++
++#include <mlx/backend/gpu/device_info.h>
++#include <mlx/memory.h>
+ #include <system_error>
+ #include <unordered_set>
+ 
+@@ -286,6 +292,75 @@ std::string checkElementTypes(mlir::ModuleOp module) {
+     return refusal;
+ }
+ 
++// Byte size of one element of a supported type (0 for tokens).
++uint64_t elementBytes(mlir::Type type) {
++    if (mlir::isa<mlir::stablehlo::TokenType>(type))
++        return 0;
++    if (auto complex = mlir::dyn_cast<mlir::ComplexType>(type))
++        return 2 * elementBytes(complex.getElementType());
++    const unsigned bits = type.getIntOrFloatBitWidth();
++    return bits <= 8 ? 1 : bits / 8;
++}
++
++// Refuse a program if any statically shaped value (input, constant,
++// intermediate, result) needs more bytes than one Metal buffer may hold or than
++// the MLX allocator's actual memory limit, or has a dimension MLX cannot index
++// (int32 shapes). Sizes use checked multiplication; nothing is truncated, and
++// the check runs before constant folding or any MLX array exists.
++std::string checkAllocationSizes(mlir::ModuleOp module) {
++    uint64_t limit = mlx::core::get_memory_limit();
++    const auto& info = mlx::core::gpu::device_info(0);
++    if (auto it = info.find("max_buffer_length"); it != info.end()) {
++        if (const auto* maxBuffer = std::get_if<size_t>(&it->second))
++            limit = std::min<uint64_t>(limit, *maxBuffer);
++    }
++    std::string refusal;
++    auto check = [&](mlir::Operation* op, mlir::Type type) {
++        auto shaped = mlir::dyn_cast<mlir::RankedTensorType>(type);
++        if (!shaped)
++            return true;
++        uint64_t bytes = elementBytes(shaped.getElementType());
++        bool overflow = false;
++        for (int64_t dim : shaped.getShape()) {
++            if (mlir::ShapedType::isDynamic(dim) || dim < 0 ||
++                dim > std::numeric_limits<int32_t>::max()) {
++                refusal = "phydrax-metal: dimension " + std::to_string(dim) + " of " +
++                          op->getName().getStringRef().str() + " is not supported";
++                return false;
++            }
++            overflow = overflow || __builtin_mul_overflow(bytes, static_cast<uint64_t>(dim), &bytes);
++        }
++        if (overflow || bytes > limit) {
++            std::string typeText;
++            llvm::raw_string_ostream os(typeText);
++            type.print(os);
++            refusal = "phydrax-metal: " + op->getName().getStringRef().str() + " value " +
++                      typeText + " needs " + (overflow ? std::string("more than 2^64") :
++                                              std::to_string(bytes)) +
++                      " bytes, above the Metal allocation limit of " + std::to_string(limit) +
++                      " bytes; not executed";
++            return false;
++        }
++        return true;
++    };
++    module.walk([&](mlir::Operation* op) {
++        for (mlir::Type type : op->getResultTypes()) {
++            if (!check(op, type))
++                return mlir::WalkResult::interrupt();
++        }
++        for (mlir::Region& region : op->getRegions()) {
++            for (mlir::Block& block : region) {
++                for (mlir::BlockArgument argument : block.getArguments()) {
++                    if (!check(op, argument.getType()))
++                        return mlir::WalkResult::interrupt();
++                }
++            }
++        }
++        return mlir::WalkResult::advance();
++    });
++    return refusal;
++}
++
+ // Common parsing logic - takes an already-parsed module
+ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+                             mlir::OwningOpRef<mlir::ModuleOp> module) {
+@@ -303,6 +378,11 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+     if (!result.refusal.empty()) {
+         return result;
+     }
++    result.refusal = checkAllocationSizes(*module);
++    if (!result.refusal.empty()) {
++        result.refusal_code = PJRT_Error_Code_RESOURCE_EXHAUSTED;
++        return result;
++    }
+ 
+     // Run the inliner pass to inline all func.call operations
+     if (!runInlinerPass(*context, *module)) {
+diff --git a/src/pjrt_plugin/stablehlo_parser.h b/src/pjrt_plugin/stablehlo_parser.h
+index 2f20f3e1fc2f3388f47cbb751bb08e24f5f92e3b..98a4868d704a63ea228e1e755390e30b2e72443c 100644
+--- a/src/pjrt_plugin/stablehlo_parser.h
++++ b/src/pjrt_plugin/stablehlo_parser.h
+@@ -9,6 +9,7 @@
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/MLIRContext.h"
+ #include "mlir/IR/OwningOpRef.h"
++#include "xla/pjrt/c/pjrt_c_api.h"
+ 
+ namespace mps {
+ 
+@@ -37,9 +38,11 @@ struct ParsedModule {
+     bool has_host_callbacks = false;
+ 
+     // Reason the module was refused (unsupported precision, multi-device
+-    // program, ...). Non-empty means compilation must fail with
+-    // INVALID_ARGUMENT; the module is never executed in a narrowed form.
++    // program, allocation above the Metal limit, ...). Non-empty means
++    // compilation fails with refusal_code; the module is never executed in a
++    // narrowed or truncated form.
+     std::string refusal;
++    PJRT_Error_Code refusal_code = PJRT_Error_Code_INVALID_ARGUMENT;
+ 
+     bool ok() const {
+         return context && module && entry_func && refusal.empty();

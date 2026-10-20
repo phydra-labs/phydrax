@@ -9,6 +9,8 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
+
 
 def validate_save_times(
     t0: ArrayLike,
@@ -16,8 +18,12 @@ def validate_save_times(
     values: ArrayLike,
     /,
 ) -> Array:
-    """Validate one ordered, finite save schedule inside a time interval."""
-    times = jnp.asarray(values, dtype=jnp.float64)
+    """Validate one ordered, finite save schedule inside a time interval.
+
+    Save times take the real dtype of the interval bounds, so single-precision
+    bounds validate their schedule without a float64 intermediate.
+    """
+    times = jnp.asarray(values, dtype=inexact_result_type(t0, t1))
     if times.ndim != 1 or times.shape[0] <= 0:
         raise ValueError("save_times must be a non-empty rank-1 array.")
     times = eqx.error_if(

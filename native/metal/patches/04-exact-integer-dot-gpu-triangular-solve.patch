@@ -1,0 +1,344 @@
+diff --git a/src/pjrt_plugin/ops/linalg.cc b/src/pjrt_plugin/ops/linalg.cc
+index d4466bdd9c260896eb882380ba448e76c542bc15..0618f6f6a487a006e05789c2c829db10e259b090 100644
+--- a/src/pjrt_plugin/ops/linalg.cc
++++ b/src/pjrt_plugin/ops/linalg.cc
+@@ -1,4 +1,9 @@
+-// Linear algebra op handlers (dot_general, convolution, cholesky, triangular_solve).
++// Linear algebra op handlers (dot_general, convolution, triangular_solve).
++//
++// Every handler runs on the Metal GPU. Integer contractions are computed
++// exactly in the result integer type (two's-complement wraparound, as XLA);
++// they never pass through floating point. Decompositions that would need a
++// CPU LAPACK route (cholesky) have no handler and are refused at compile time.
+ 
+ #include <mlx/einsum.h>
+ 
+@@ -15,11 +20,10 @@ namespace jax_mps {
+ 
+ namespace {
+ 
+-// Use einsum for dot_general by default (single fused op vs transpose+reshape+matmul+reshape).
+-bool UseEinsumForDotGeneral() {
+-    static bool use_einsum = std::getenv("MPS_NO_EINSUM") == nullptr;
+-    return use_einsum;
+-}
++// Elements of the broadcast product an exact integer contraction materializes.
++// Larger integer contractions are refused rather than silently routed through
++// floating point or the CPU.
++constexpr int64_t kMaxIntegerDotElements = int64_t{1} << 27;
+ 
+ // Build einsum subscript string for dot_general
+ std::string BuildEinsumSubscript(int lhsRank, int rhsRank, llvm::ArrayRef<int64_t> lhsBatchDims,
+@@ -107,16 +111,17 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+     auto lhsRank = static_cast<int>(lhs->ndim());
+     auto rhsRank = static_cast<int>(rhs->ndim());
+ 
+-    // MLX matmul/einsum only supports inexact types (float/complex). For integer/bool
+-    // inputs, cast to float32, compute, and cast back to the expected output type.
+     auto resultDtype = GetResultDtype(op, "stablehlo.dot_general");
+     if (!resultDtype)
+         return false;
+-    bool lhsNeedsCast = !mlx::core::issubdtype(lhs->dtype(), mlx::core::inexact);
+-    bool rhsNeedsCast = !mlx::core::issubdtype(rhs->dtype(), mlx::core::inexact);
+-    bool needsCast = lhsNeedsCast || rhsNeedsCast;
+-    mlx::core::array lhsVal = lhsNeedsCast ? mlx::core::astype(*lhs, mlx::core::float32) : *lhs;
+-    mlx::core::array rhsVal = rhsNeedsCast ? mlx::core::astype(*rhs, mlx::core::float32) : *rhs;
++    const bool exactInteger = !mlx::core::issubdtype(*resultDtype, mlx::core::inexact);
++    if (exactInteger != !mlx::core::issubdtype(lhs->dtype(), mlx::core::inexact) ||
++        exactInteger != !mlx::core::issubdtype(rhs->dtype(), mlx::core::inexact)) {
++        ctx.error_message =
++            "phydrax-metal: dot_general mixing integer and floating-point operands is not "
++            "supported";
++        return false;
++    }
+ 
+     // Degenerate case: a rank-0 operand. A scalar has no dimensions to batch or
+     // contract over, and StableHLO requires the batch/contract dim lists of the
+@@ -127,25 +132,30 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+     // also avoids the einsum path, whose subscript would be e.g. ",->" for two
+     // scalars -- a string MLX's einsum parser cannot handle.
+     if (lhsRank == 0 || rhsRank == 0) {
+-        auto result = mlx::core::multiply(lhsVal, rhsVal);
+-        if (needsCast)
+-            result = mlx::core::astype(result, *resultDtype);
+-        values.emplace(ToKey(op->getResult(0)), std::move(result));
++        auto accumulate = *resultDtype == mlx::core::bool_ ? mlx::core::int32 : *resultDtype;
++        auto result = mlx::core::multiply(mlx::core::astype(*lhs, accumulate),
++                                          mlx::core::astype(*rhs, accumulate));
++        values.emplace(ToKey(op->getResult(0)), mlx::core::astype(result, *resultDtype));
+         return true;
+     }
+ 
+-    // Try einsum path if enabled
+-    if (UseEinsumForDotGeneral()) {
++    if (!exactInteger) {
+         std::string subscript = BuildEinsumSubscript(lhsRank, rhsRank, lhsBatchDims, rhsBatchDims,
+                                                      lhsContractDims, rhsContractDims);
+         MPS_LOG_DEBUG("dot_general einsum: %s\n", subscript.c_str());
+-        auto result = mlx::core::einsum(subscript, {lhsVal, rhsVal});
+-        if (needsCast)
++        auto result = mlx::core::einsum(subscript, {*lhs, *rhs});
++        if (result.dtype() != *resultDtype)
+             result = mlx::core::astype(result, *resultDtype);
+         values.emplace(ToKey(op->getResult(0)), std::move(result));
+         return true;
+     }
+ 
++    // Exact integer contraction: [batch, lhsFree, contract] x [batch, contract,
++    // rhsFree] as a broadcast product summed over the contracting axis, in the
++    // result integer type (or int32 for predicates, then compared to zero).
++    auto lhsVal = *lhs;
++    auto rhsVal = *rhs;
++
+     // Standard path: transpose -> reshape -> matmul -> reshape
+     std::unordered_set<int> lhsContractSet(lhsContractDims.begin(), lhsContractDims.end());
+     std::unordered_set<int> rhsContractSet(rhsContractDims.begin(), rhsContractDims.end());
+@@ -181,8 +191,9 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+     for (int d : rhsFreeDims)
+         rhsPerm.push_back(d);
+ 
+-    auto lhsT = mlx::core::transpose(lhsVal, lhsPerm);
+-    auto rhsT = mlx::core::transpose(rhsVal, rhsPerm);
++    auto accumulate = *resultDtype == mlx::core::bool_ ? mlx::core::int32 : *resultDtype;
++    auto lhsT = mlx::core::transpose(mlx::core::astype(lhsVal, accumulate), lhsPerm);
++    auto rhsT = mlx::core::transpose(mlx::core::astype(rhsVal, accumulate), rhsPerm);
+ 
+     int numBatch = static_cast<int>(lhsBatchDims.size());
+     int numLhsFree = static_cast<int>(lhsFreeDims.size());
+@@ -224,15 +235,25 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+         rhsFreeShape.push_back(rhsT.shape(i));
+     }
+ 
+-    mlx::core::Shape lhsShape3d = {static_cast<int>(batchSize), static_cast<int>(lhsFreeSize),
+-                                   static_cast<int>(contractSize)};
+-    mlx::core::Shape rhsShape3d = {static_cast<int>(batchSize), static_cast<int>(contractSize),
++    if (batchSize * lhsFreeSize * contractSize * rhsFreeSize > kMaxIntegerDotElements) {
++        ctx.error_message =
++            "phydrax-metal: integer dot_general with " +
++            std::to_string(batchSize * lhsFreeSize * contractSize * rhsFreeSize) +
++            " product elements is not supported (exact integer contraction limit " +
++            std::to_string(kMaxIntegerDotElements) + ")";
++        return false;
++    }
++
++    mlx::core::Shape lhsShape4d = {static_cast<int>(batchSize), static_cast<int>(lhsFreeSize),
++                                   static_cast<int>(contractSize), 1};
++    mlx::core::Shape rhsShape4d = {static_cast<int>(batchSize), 1,
++                                   static_cast<int>(contractSize),
+                                    static_cast<int>(rhsFreeSize)};
+ 
+-    auto lhs3d = mlx::core::reshape(lhsT, lhsShape3d);
+-    auto rhs3d = mlx::core::reshape(rhsT, rhsShape3d);
++    auto lhs4d = mlx::core::reshape(lhsT, lhsShape4d);
++    auto rhs4d = mlx::core::reshape(rhsT, rhsShape4d);
+ 
+-    auto result3d = mlx::core::matmul(lhs3d, rhs3d);
++    auto result3d = mlx::core::sum(mlx::core::multiply(lhs4d, rhs4d), 2, /*keepdims=*/false);
+ 
+     mlx::core::Shape finalShape;
+     for (int s : batchShape)
+@@ -243,7 +264,9 @@ bool HandleDotGeneral(mlir::Operation* op, ValueMap& values, std::vector<mlx::co
+         finalShape.push_back(s);
+ 
+     auto result = mlx::core::reshape(result3d, finalShape);
+-    if (needsCast)
++    if (*resultDtype == mlx::core::bool_)
++        result = mlx::core::not_equal(result, mlx::core::array(0, mlx::core::int32));
++    else if (result.dtype() != *resultDtype)
+         result = mlx::core::astype(result, *resultDtype);
+     values.emplace(ToKey(op->getResult(0)), std::move(result));
+     return true;
+@@ -549,27 +572,61 @@ bool HandleConvolution(mlir::Operation* op, ValueMap& values,
+     return true;
+ }
+ 
+-// Handler for stablehlo.cholesky
+-bool HandleCholesky(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+-                    ExecContext& ctx) {
+-    auto cholOp = CastOp<mlir::stablehlo::CholeskyOp>(op, "stablehlo.cholesky");
+-    if (!cholOp)
+-        return false;
++// Slice rows [r0, r1) and columns [c0, c1) of the trailing matrix dimensions.
++mlx::core::array SliceMatrix(const mlx::core::array& a, int r0, int r1, int c0, int c1) {
++    const int rank = static_cast<int>(a.ndim());
++    mlx::core::Shape start(rank, 0);
++    mlx::core::Shape stop = a.shape();
++    start[rank - 2] = r0;
++    stop[rank - 2] = r1;
++    start[rank - 1] = c0;
++    stop[rank - 1] = c1;
++    return mlx::core::slice(a, start, stop);
++}
+ 
+-    auto* a = RequireValue(values, cholOp.getA(), "stablehlo.cholesky");
+-    if (!a)
+-        return false;
++mlx::core::array SwapLast2(const mlx::core::array& a) {
++    std::vector<int> perm(a.ndim());
++    std::iota(perm.begin(), perm.end(), 0);
++    std::swap(perm[perm.size() - 2], perm[perm.size() - 1]);
++    return mlx::core::transpose(a, perm);
++}
+ 
+-    bool lower = cholOp.getLower();
+-    // Run cholesky on the CPU (LAPACK). The vendored MPS path is racy under
+-    // MLX's untracked-resource model (intermittently corrupts itself and nearby
+-    // ops) and 10-300x slower than CPU; triangular_solve already runs on CPU.
+-    auto result = mlx::core::linalg::cholesky(*a, /*upper=*/!lower, mlx::core::Device::cpu);
+-    values.emplace(ToKey(op->getResult(0)), std::move(result));
+-    return true;
++// Solve M X = B on the GPU by forward (lower) or backward (upper) substitution,
++// reading only the selected triangle of M. Row i is
++//   x_i = (b_i - M[i, solved] @ X[solved]) / M[i, i]
++// with IEEE division (a zero pivot yields inf/nan, which callers' nonfinite
++// checks observe), and no division when the diagonal is implicitly one.
++mlx::core::array SubstitutionSolve(const mlx::core::array& m, const mlx::core::array& b,
++                                   bool lower, bool unitDiagonal) {
++    const int n = m.shape(-1);
++    const int k = b.shape(-1);
++    std::vector<mlx::core::array> rows;
++    rows.reserve(n);
++    std::optional<mlx::core::array> solved;  // rows solved so far, in solve order
++    for (int step = 0; step < n; ++step) {
++        const int i = lower ? step : n - 1 - step;
++        auto row = SliceMatrix(b, i, i + 1, 0, k);
++        if (solved) {
++            auto coefficients = lower ? SliceMatrix(m, i, i + 1, 0, i)
++                                      : SliceMatrix(m, i, i + 1, i + 1, n);
++            row = mlx::core::subtract(row, mlx::core::matmul(coefficients, *solved));
++        }
++        if (!unitDiagonal)
++            row = mlx::core::divide(row, SliceMatrix(m, i, i + 1, i, i + 1));
++        rows.push_back(row);
++        if (!solved)
++            solved = row;
++        else
++            solved = lower ? mlx::core::concatenate({*solved, row}, -2)
++                           : mlx::core::concatenate({row, *solved}, -2);
++    }
++    if (!solved)
++        return b;
++    return *solved;
+ }
+ 
+-// Handler for stablehlo.triangular_solve
++// Handler for stablehlo.triangular_solve (left/right side, lower/upper,
++// no transpose/transpose/adjoint, unit diagonal), batched over leading dims.
+ bool HandleTriangularSolve(mlir::Operation* op, ValueMap& values,
+                            std::vector<mlx::core::array>& outputs, ExecContext& ctx) {
+     auto triSolveOp = CastOp<mlir::stablehlo::TriangularSolveOp>(op, "stablehlo.triangular_solve");
+@@ -581,81 +638,35 @@ bool HandleTriangularSolve(mlir::Operation* op, ValueMap& values,
+     if (!a_ptr || !b_ptr)
+         return false;
+ 
+-    bool left_side = triSolveOp.getLeftSide();
++    // op(A) for the requested transpose; transposing swaps the triangle used.
++    auto m = *a_ptr;
+     bool lower = triSolveOp.getLower();
+-    bool unit_diagonal = triSolveOp.getUnitDiagonal();
+-    auto transpose = triSolveOp.getTransposeA();
+-
+-    auto a_solve = *a_ptr;
+-    auto b_solve = *b_ptr;
+-
+-    if (unit_diagonal) {
+-        int n = a_solve.shape()[a_solve.ndim() - 1];
+-        auto eye = mlx::core::eye(n, a_solve.dtype());
+-        a_solve = a_solve * (1.0F - eye) + eye;
+-    }
+-
+-    // Guard against singular triangular matrices
+-    int n_dim = a_solve.shape()[a_solve.ndim() - 1];
+-    auto diag = mlx::core::diagonal(a_solve, 0, -2, -1);
+-    auto zero_mask = mlx::core::equal(diag, mlx::core::zeros_like(diag));
+-    auto batch_singular = mlx::core::any(zero_mask, std::vector<int>{-1}, false);
+-
+-    auto eye_mat = mlx::core::eye(n_dim, a_solve.dtype());
+-    auto eps = mlx::core::array(1e-30F, a_solve.dtype());
+-    a_solve = a_solve + mlx::core::expand_dims(zero_mask, -1) * eye_mat * eps;
+-
+-    // Helper to swap last two dims
+-    auto swapLast2 = [](const mlx::core::array& arr) {
+-        auto ndim = arr.ndim();
+-        std::vector<int> perm(ndim);
+-        std::iota(perm.begin(), perm.end(), 0);
+-        std::swap(perm[ndim - 2], perm[ndim - 1]);
+-        return std::make_pair(mlx::core::transpose(arr, perm), perm);
+-    };
+-
+-    if (transpose == mlir::stablehlo::Transpose::TRANSPOSE ||
+-        transpose == mlir::stablehlo::Transpose::ADJOINT) {
+-        auto [transposed, _] = swapLast2(a_solve);
+-        a_solve = transposed;
+-        lower = !lower;
+-    }
+-
+-    auto nan_guard = [&](mlx::core::array result) -> mlx::core::array {
+-        auto nan_val = mlx::core::full(result.shape(), std::numeric_limits<float>::quiet_NaN(),
+-                                       result.dtype());
+-        auto mask = batch_singular;
+-        for (int i = 0; i < 2; ++i) {
+-            mask = mlx::core::expand_dims(mask, -1);
+-        }
+-        return mlx::core::where(mask, nan_val, result);
+-    };
+-
+-    try {
+-        if (!left_side) {
+-            auto [a_t, _] = swapLast2(a_solve);
+-            a_solve = a_t;
++    switch (triSolveOp.getTransposeA()) {
++        case mlir::stablehlo::Transpose::NO_TRANSPOSE:
++        case mlir::stablehlo::Transpose::TRANSPOSE_INVALID:
++            break;
++        case mlir::stablehlo::Transpose::TRANSPOSE:
++            m = SwapLast2(m);
+             lower = !lower;
++            break;
++        case mlir::stablehlo::Transpose::ADJOINT:
++            m = mlx::core::conjugate(SwapLast2(m));
++            lower = !lower;
++            break;
++    }
+ 
+-            auto [b_t, perm_b] = swapLast2(b_solve);
+-            b_solve = b_t;
+-
+-            auto x_t = mlx::core::linalg::solve_triangular(a_solve, b_solve, /*upper=*/!lower,
+-                                                           mlx::core::Device::cpu);
+-            auto result = nan_guard(mlx::core::transpose(x_t, perm_b));
+-            values.emplace(ToKey(op->getResult(0)), std::move(result));
+-            return true;
+-        }
+-
+-        auto result = nan_guard(mlx::core::linalg::solve_triangular(a_solve, b_solve,
+-                                                                    /*upper=*/!lower,
+-                                                                    mlx::core::Device::cpu));
+-        values.emplace(ToKey(op->getResult(0)), std::move(result));
+-        return true;
+-    } catch (const std::exception& e) {
+-        MPS_LOG_ERROR("stablehlo.triangular_solve: %s\n", e.what());
+-        return false;
++    const bool unitDiagonal = triSolveOp.getUnitDiagonal();
++    mlx::core::array result = *b_ptr;
++    if (triSolveOp.getLeftSide()) {
++        // op(A) X = B.
++        result = SubstitutionSolve(m, *b_ptr, lower, unitDiagonal);
++    } else {
++        // X op(A) = B  <=>  op(A)^T X^T = B^T.
++        result = SwapLast2(
++            SubstitutionSolve(SwapLast2(m), SwapLast2(*b_ptr), !lower, unitDiagonal));
+     }
++    values.emplace(ToKey(op->getResult(0)), std::move(result));
++    return true;
+ }
+ 
+ }  // namespace
+@@ -663,7 +674,6 @@ bool HandleTriangularSolve(mlir::Operation* op, ValueMap& values,
+ void RegisterLinalgHandlers(std::unordered_map<std::string, OpHandler>& handlers) {
+     handlers.insert({"stablehlo.dot_general", HandleDotGeneral});
+     handlers.insert({"stablehlo.convolution", HandleConvolution});
+-    handlers.insert({"stablehlo.cholesky", HandleCholesky});
+     handlers.insert({"stablehlo.triangular_solve", HandleTriangularSolve});
+ }
+ 

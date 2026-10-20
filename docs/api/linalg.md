@@ -37,6 +37,18 @@ contract holds for this solve: implicit contracts require convergence (the same
 evidence that guards the returned value's derivative), unrolled contracts
 require finite arithmetic, and a stopped contract is never valid.
 
+## Apple GPU iterative execution
+
+The [Metal candidate profile](../guides_metal_execution.md) exercises native
+float32 iterative operator solves. Preparation is reusable, operator actions
+remain in their declared representation, and true residual, termination status,
+and derivative validity still reach the caller. A finite answer is not evidence
+of convergence, and a failed derivative is not replaced by zeros.
+
+This is not a GPU LAPACK or direct-factorization support claim. Selecting an
+unsupported native operation fails rather than executing numerical CPU fallback;
+CUDA-specific cuDSS, AmgX, and QUDA providers remain separate.
+
 ## Certified banded spectral brackets
 
 The native certificate substrate never materializes a dense matrix. Scalar bands

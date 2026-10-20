@@ -32,6 +32,20 @@ resource evidence; preparation records the declared per-fragment kernel bytes
 retained bytes, plus a sampled resident peak (an observation, never a bound).
 Refused or failed configurations are retained. CPU interpreter timings verify
 kernels; they are not GPU performance evidence.
+
+``--target`` is required exactly when an accelerated route (``accelerated``,
+or the model tier's ``trainable_accelerated``/``accelerated``) is selected.
+Native-only runs (``--routes streamed dense``, ``--model-routes exact
+streamed``) resolve no accelerator target and execute ordinary JAX on the
+selected default backend; their record has ``"target": null``.
+
+``--host-initialization`` constructs model parameters and inputs on CPU once,
+then explicitly transfers their dynamic array payloads to the selected execution
+device. This is input preparation, not a numerical fallback: all scientific
+transforms execute on the selected device. Content fingerprints hash actual
+array bytes, dtypes and shapes, not random seeds. Initialization, topology
+preparation, route preparation and synchronized transfer are separate from
+lowering, compilation, first execution and warmed execution.
 """
 
 from __future__ import annotations
@@ -62,6 +76,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax._jax_config import default_device, default_device_selection
 from phydrax._trainable import combine_parameters, partition_parameters
 from phydrax.atomistic import (
     AtomicStructure,
@@ -174,6 +189,57 @@ class ModelCase:
     edge_tile: int
     channel_tile: int
     seed: int
+
+
+def _execution_device() -> jax.Device:
+    """Resolve the configured execution placement before entering a CPU scope."""
+    selected = default_device_selection()
+    if isinstance(selected, jax.Device):
+        return selected
+    return jax.devices(selected)[0] if isinstance(selected, str) else jax.devices()[0]
+
+
+def _array_evidence(value: Any, /) -> dict[str, Any]:
+    """Hash dynamic array content outside timed phases; report actual storage."""
+    digest = hashlib.sha256()
+    arrays = []
+    for path, leaf in jax.tree_util.tree_flatten_with_path(value)[0]:
+        if not isinstance(leaf, (jax.Array, np.ndarray)):
+            continue
+        host = np.asarray(jax.device_get(leaf))
+        name = jax.tree_util.keystr(path)
+        descriptor = f"{name}:{host.dtype.str}:{host.shape}:".encode()
+        content = host.tobytes(order="C")
+        digest.update(descriptor)
+        digest.update(content)
+        arrays.append(
+            {
+                "path": name,
+                "dtype": str(host.dtype),
+                "shape": list(host.shape),
+                "bytes": int(host.nbytes),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "devices": sorted(str(device) for device in leaf.devices())
+                if isinstance(leaf, jax.Array)
+                else ["host"],
+            }
+        )
+    return {"sha256": digest.hexdigest(), "arrays": arrays}
+
+
+def _transfer(value: Any, device: jax.Device, /) -> Any:
+    """Transfer dynamic arrays only; retain every dtype and static tree field."""
+    transferred: dict[int, Array] = {}
+
+    def transfer_leaf(leaf: Any) -> Any:
+        if not isinstance(leaf, (jax.Array, np.ndarray)):
+            return leaf
+        identifier = id(leaf)
+        if identifier not in transferred:
+            transferred[identifier] = jax.device_put(leaf, device)
+        return transferred[identifier]
+
+    return jax.tree.map(transfer_leaf, value)
 
 
 def failure_record(error: BaseException, /) -> dict[str, Any]:
@@ -433,7 +499,13 @@ def _measure(
     compiled, timing = measure_lower_and_compile(
         partial(jax.jit(function).lower, *arguments), lambda lowered: lowered.compile()
     )
-    _, first = measure_synchronized(partial(compiled, *arguments))
+    output, first = measure_synchronized(partial(compiled, *arguments))
+    execution_device = _execution_device()
+    output_arrays = [
+        leaf for leaf in jax.tree.leaves(output) if isinstance(leaf, jax.Array)
+    ]
+    if any(leaf.devices() != {execution_device} for leaf in output_arrays):
+        raise RuntimeError("Scientific output did not remain on the execution device.")
     devices = tuple(device for device in jax.local_devices() if device.platform != "cpu")
     with PhaseMemorySampler(
         name, interval_seconds=_SAMPLE_INTERVAL, devices=devices
@@ -441,15 +513,29 @@ def _measure(
         _, warm = measure_repeated(
             partial(compiled, *arguments), warmup=1, repeats=repeats
         )
+    host_outputs = tuple(np.asarray(leaf) for leaf in output_arrays)
+    if any(not np.all(np.isfinite(leaf)) for leaf in host_outputs):
+        raise ValueError("Measured MACE outputs must be finite.")
     record: dict[str, Any] = {
         "status": "measured",
         "lowering_seconds": timing.lowering_seconds,
         "compilation_seconds": timing.compilation_seconds,
         "first_seconds": first,
         "warm": warm.to_dict(unit="seconds"),
+        "output_devices": sorted(
+            {str(device) for leaf in output_arrays for device in leaf.devices()}
+        ),
+        "output_dtypes": sorted({str(leaf.dtype) for leaf in output_arrays}),
+        "output_values": [
+            {"dtype": str(leaf.dtype), "shape": list(leaf.shape), "values": leaf.tolist()}
+            for leaf in host_outputs
+        ],
         "compiler": asdict(
             compiler_evidence(
-                compiled.cost_analysis(), compiled.memory_analysis(), source="xla"
+                compiled.cost_analysis(),
+                compiled.memory_analysis(),
+                source="xla",
+                unavailable_reason="The selected backend did not expose compiler estimates.",
             )
         ),
         "sampled_peak_increase_bytes": sampler.evidence.sampled_peak_increase_bytes,
@@ -460,12 +546,14 @@ def _measure(
 
 
 def _coupling(
-    target: AtomisticAccelerationTarget,
+    target: AtomisticAccelerationTarget | None,
     precision: AtomisticKernelPrecision,
     channel_tile: int,
     budget: KernelBudget,
     accumulation: RelationAccumulation = "deterministic",
 ) -> MACEAcceleratedCoupling:
+    if target is None:
+        raise ValueError("Accelerated MACE routes require an explicit --target.")
     return MACEAcceleratedCoupling(
         MACEKernelPlan(
             target=target,
@@ -510,7 +598,7 @@ def _streamed_relation(
 def _route_aggregate(
     route: Route,
     case: CouplingCase,
-    target: AtomisticAccelerationTarget,
+    target: AtomisticAccelerationTarget | None,
     budget: KernelBudget,
     graph: tuple[Array, Array, Array],
     product: O3TensorProduct,
@@ -575,14 +663,9 @@ def _route_aggregate(
             raise ValueError(f"Unsupported route {route!r}.")
 
 
-def coupling_rows(
-    case: CouplingCase,
-    routes: tuple[Route, ...],
-    transforms: tuple[Transform, ...],
-    target: AtomisticAccelerationTarget,
-    budget: KernelBudget,
-    repeats: int,
-) -> list[dict[str, Any]]:
+def _coupling_inputs(
+    case: CouplingCase, /
+) -> tuple[tuple[Array, Array, Array], O3TensorProduct, tuple[Any, ...]]:
     dtype = np.dtype(case.precision)
     senders_, receivers_, positions_ = _graph(case)
     senders, receivers = jnp.asarray(senders_), jnp.asarray(receivers_)
@@ -608,12 +691,53 @@ def coupling_rows(
         jnp.zeros((3, 3), dtype=dtype),
         parameters,
     )
+    return graph, product, arguments
+
+
+def coupling_rows(
+    case: CouplingCase,
+    routes: tuple[Route, ...],
+    transforms: tuple[Transform, ...],
+    target: AtomisticAccelerationTarget | None,
+    budget: KernelBudget,
+    repeats: int,
+    host_initialization: bool = False,
+) -> list[dict[str, Any]]:
+    device = _execution_device()
+    initialization_device = jax.devices("cpu")[0] if host_initialization else device
+    with default_device(initialization_device):
+        payload, initialization_seconds = measure_synchronized(
+            lambda: _coupling_inputs(case)
+        )
+    initialized_content = _array_evidence(payload)
+    if host_initialization:
+        payload, transfer_seconds = measure_synchronized(
+            lambda: _transfer(payload, device)
+        )
+    else:
+        transfer_seconds = None
+    execution_content = _array_evidence(payload)
+    if initialized_content["sha256"] != execution_content["sha256"]:
+        raise RuntimeError("Input transfer changed dynamic array content.")
+    graph, product, arguments = payload
+    senders, receivers, _ = graph
     rows = []
     for route in routes:
         record: dict[str, Any] = {
             "case": asdict(case),
             "route": route,
             "edges": int(senders.shape[0]),
+            "initialization": {
+                "host_initialization": host_initialization,
+                "device": str(initialization_device),
+                "execution_device": str(device),
+                "initialization_seconds": initialization_seconds,
+                "shared_across_routes": True,
+                "content": initialized_content,
+            },
+            "transfer_seconds": transfer_seconds,
+            "transfer_shared_across_routes": True,
+            "execution_content": execution_content,
         }
         try:
             aggregate, coupling = _route_aggregate(
@@ -640,7 +764,9 @@ def coupling_rows(
     return rows
 
 
-def _model(case: ModelCase, /) -> tuple[MACEPotential, AtomisticBatch, Any, Any, float]:
+def _model(
+    case: ModelCase, /
+) -> tuple[MACEPotential, AtomisticBatch, Any, float, tuple[Array, Array]]:
     dtype = case.precision
     architecture = MACEArchitecture(
         species=_SPECIES[: case.species],
@@ -678,9 +804,10 @@ def _model(case: ModelCase, /) -> tuple[MACEPotential, AtomisticBatch, Any, Any,
     structure = AtomicStructure(
         numbers,
         positions,
-        np.ones(case.atoms, dtype=np.float64),
+        np.ones(case.atoms, dtype=dtype),
         scale,
         coordinate_dtype=dtype,
+        mass_accumulation_dtype=dtype,
     )
     batch = AtomisticBatch.from_structure(structure)
     execution = AtomisticGraphExecutionPlan(
@@ -692,49 +819,100 @@ def _model(case: ModelCase, /) -> tuple[MACEPotential, AtomisticBatch, Any, Any,
             accumulation="deterministic",
         ),
     )
-    topology = prepare_atomistic_graph_topology(batch, execution, cutoff=3.0)
-    return model, batch, execution, topology, 3.0
+    arguments = (batch.positions, jnp.zeros((3, 3), dtype=dtype))
+    return model, batch, execution, 3.0, arguments
 
 
 def model_rows(
     case: ModelCase,
     routes: tuple[ModelRoute, ...],
     transforms: tuple[ModelTransform, ...],
-    target: AtomisticAccelerationTarget,
+    target: AtomisticAccelerationTarget | None,
     budget: KernelBudget,
     repeats: int,
+    host_initialization: bool = False,
 ) -> list[dict[str, Any]]:
-    model, batch, execution, topology, cutoff = _model(case)
+    device = _execution_device()
+    initialization_device = jax.devices("cpu")[0] if host_initialization else device
+    with default_device(initialization_device):
+        initialized, initialization_seconds = measure_synchronized(lambda: _model(case))
+        (
+            model,
+            source_batch,
+            execution,
+            source_topology_cutoff,
+            source_arguments,
+        ) = initialized
+        source_topology, topology_seconds = measure_synchronized(
+            lambda: prepare_atomistic_graph_topology(
+                source_batch, execution, cutoff=source_topology_cutoff
+            )
+        )
+    source_evidence = {
+        "model": _array_evidence(model),
+        "inputs": _array_evidence((source_batch, source_arguments)),
+        "topology": _array_evidence(source_topology),
+    }
     rows = []
     for route in routes:
-        record: dict[str, Any] = {"case": asdict(case), "route": route}
+        record: dict[str, Any] = {
+            "case": asdict(case),
+            "route": route,
+            "initialization": {
+                "host_initialization": host_initialization,
+                "device": str(initialization_device),
+                "execution_device": str(device),
+                "initialization_seconds": initialization_seconds,
+                "topology_seconds": topology_seconds,
+                "shared_across_routes": True,
+                "content": source_evidence,
+            },
+        }
         coupling = None
         try:
-            match route:
-                case "exact":
-                    potential: MACEPotential | PreparedMACEPotential = model
-                case "trainable_accelerated":
-                    coupling = _coupling(
-                        target, case.precision, case.channel_tile, budget
-                    )
-                    potential = model.with_acceleration(coupling)
-                    record["lowering"] = coupling.target.lowering
-                case "streamed":
-                    potential, seconds = measure_host(
-                        lambda: prepare_mace_potential(model)
-                    )
-                    record["preparation_seconds"] = seconds
-                case "accelerated":
-                    coupling = _coupling(
-                        target, case.precision, case.channel_tile, budget
-                    )
-                    potential, seconds = measure_host(
-                        lambda: prepare_mace_potential(model, edge_coupling=coupling)
-                    )
-                    record["preparation_seconds"] = seconds
-                    record["lowering"] = coupling.target.lowering
-                case _:
-                    raise ValueError(f"Unsupported model route {route!r}.")
+
+            def prepare_route() -> MACEPotential | PreparedMACEPotential:
+                nonlocal coupling
+                match route:
+                    case "exact":
+                        return model
+                    case "trainable_accelerated":
+                        coupling = _coupling(
+                            target, case.precision, case.channel_tile, budget
+                        )
+                        return model.with_acceleration(coupling)
+                    case "streamed":
+                        return prepare_mace_potential(model)
+                    case "accelerated":
+                        coupling = _coupling(
+                            target, case.precision, case.channel_tile, budget
+                        )
+                        return prepare_mace_potential(model, edge_coupling=coupling)
+                    case _:
+                        raise ValueError(f"Unsupported model route {route!r}.")
+
+            with default_device(initialization_device):
+                potential, seconds = measure_synchronized(prepare_route)
+            record["preparation_seconds"] = seconds
+            if coupling is not None:
+                record["lowering"] = coupling.target.lowering
+            payload = (potential, source_batch, source_topology, source_arguments)
+            record["prepared_content"] = _array_evidence(payload)
+            if host_initialization:
+                payload, transfer_seconds = measure_synchronized(
+                    lambda: _transfer(payload, device)
+                )
+            else:
+                transfer_seconds = None
+            potential, batch, topology, arguments = payload
+            cutoff = source_topology_cutoff
+            record["transfer_seconds"] = transfer_seconds
+            record["execution_content"] = _array_evidence(payload)
+            if (
+                record["prepared_content"]["sha256"]
+                != record["execution_content"]["sha256"]
+            ):
+                raise RuntimeError("Input transfer changed dynamic array content.")
         except (ValueError, TypeError, RuntimeError) as error:
             rows.append({**record, **failure_record(error)})
             continue
@@ -769,10 +947,7 @@ def model_rows(
                 (jnp.ones_like(values),),
             )[1],
         }
-        arguments = (
-            batch.positions.astype(case.precision),
-            jnp.zeros((3, 3), dtype=case.precision),
-        )
+        # Arguments were constructed and synchronized in the initialization phase.
         record["logical_retained_bytes"] = logical_array_bytes(
             (potential, batch, topology)
         )
@@ -859,7 +1034,10 @@ def _parse_all(values: list[str], form: Any, /) -> tuple[Any, ...]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--target", choices=get_args(AtomisticAccelerationTarget), required=True
+        "--target",
+        choices=get_args(AtomisticAccelerationTarget),
+        default=None,
+        help="accelerator target; required only for accelerated routes",
     )
     parser.add_argument("--nodes", type=int, nargs="+", default=[32, 128])
     parser.add_argument("--degrees", type=int, nargs="+", default=[8])
@@ -916,13 +1094,32 @@ def main() -> None:
         default=list(get_args(ModelTransform)),
     )
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--host-initialization",
+        action="store_true",
+        help="initialize on CPU, then explicitly transfer inputs to the execution device",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--label", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.repeats < 1 or any(value < 2 for value in args.nodes):
         raise ValueError("repeats must be positive and node counts at least two.")
-    target = parse(args.target, AtomisticAccelerationTarget, "target")
+    routes = _parse_all(args.routes, Route)
+    transforms = _parse_all(args.transforms, Transform)
+    model_routes = _parse_all(args.model_routes, ModelRoute)
+    model_transforms = _parse_all(args.model_transforms, ModelTransform)
+    accelerated_model_routes = {"trainable_accelerated", "accelerated"}
+    accelerated = "accelerated" in routes or (
+        bool(args.model_atoms) and not accelerated_model_routes.isdisjoint(model_routes)
+    )
+    if accelerated and args.target is None:
+        parser.error("--target is required when an accelerated route is selected.")
+    target = (
+        None
+        if args.target is None
+        else parse(args.target, AtomisticAccelerationTarget, "target")
+    )
     budget = KernelBudget(
         args.program_tile, args.reduction_programs, args.fragment_budget_bytes
     )
@@ -954,10 +1151,6 @@ def main() -> None:
             args.channel_tiles,
         )
     ]
-    routes = _parse_all(args.routes, Route)
-    transforms = _parse_all(args.transforms, Transform)
-    model_routes = _parse_all(args.model_routes, ModelRoute)
-    model_transforms = _parse_all(args.model_transforms, ModelTransform)
     root = Path(__file__).resolve().parents[1]
     owners = (
         "phydrax/backends/atomistic.py",
@@ -971,6 +1164,7 @@ def main() -> None:
         "benchmark": "mace-execution-scaling",
         "label": args.label,
         "target": target,
+        "host_initialization": args.host_initialization,
         "scope": {
             "timing": "synchronized host wall time per phase",
             "compiler": "XLA executable estimates; kernel registers and shared memory excluded",
@@ -978,10 +1172,15 @@ def main() -> None:
             "workspace": "declared per-program planning bound of the accelerated kernels",
             "fragment": "declared per-fragment kernel operand/result bytes; no node/edge scaling",
             "interpret": "cpu_interpret verifies kernel semantics; not GPU performance evidence",
+            "initialization": "shared constructor/input and topology phases are not per-route costs",
+            "transfer": "explicit dynamic-array device_put plus synchronization; null when not requested",
+            "content": "SHA-256 of actual dynamic-array paths, dtype, shape and C-order bytes; device-independent",
         },
         "environment": capture_environment().to_dict(),
         "identity": capture_benchmark_identity(
-            root, Path(__file__), ("coupling", "model", "environment", "source_sha256")
+            root,
+            Path(__file__),
+            ("coupling", "model", "host_initialization", "environment", "source_sha256"),
         ).to_dict(),
         "source_sha256": {
             path: hashlib.sha256((root / path).read_bytes()).hexdigest()
@@ -991,14 +1190,26 @@ def main() -> None:
             row
             for case in coupling_cases
             for row in coupling_rows(
-                case, routes, transforms, target, budget, args.repeats
+                case,
+                routes,
+                transforms,
+                target,
+                budget,
+                args.repeats,
+                host_initialization=args.host_initialization,
             )
         ],
         "model": [
             row
             for case in model_cases
             for row in model_rows(
-                case, model_routes, model_transforms, target, budget, args.repeats
+                case,
+                model_routes,
+                model_transforms,
+                target,
+                budget,
+                args.repeats,
+                host_initialization=args.host_initialization,
             )
         ],
     }

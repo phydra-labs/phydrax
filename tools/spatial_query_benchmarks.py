@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any, get_args, Literal, NamedTuple, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,8 +18,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from benchmarks._runtime import (
+    capture_benchmark_identity,
+    capture_environment,
     compiler_evidence,
     logical_array_bytes,
+    measure_host,
     measure_lower_and_compile,
     measure_repeated,
 )
@@ -32,6 +35,32 @@ from phydrax.discretization.spatial import (
     MortonSourcePlan,
 )
 from phydrax.graph import query_neighbors, QueryNeighborhood
+from phydrax.typing import parse
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+NearestRoute: TypeAlias = Literal["all", "morton"]
+
+
+class _HostNeighbors(NamedTuple):
+    indices: np.ndarray
+    mask: np.ndarray
+
+
+def _host_nearest(points: np.ndarray, targets: np.ndarray, count: int) -> _HostNeighbors:
+    """Independent dense reference on identical rounded inputs, in bounded chunks."""
+    source = points.astype(np.float64)
+    queries = targets.reshape((-1, targets.shape[-1]))
+    indices = np.empty((queries.shape[0], count), dtype=np.int64)
+    for start in range(0, queries.shape[0], 32):
+        query = queries[start : start + 32].astype(np.float64)
+        difference = query[:, None, :] - source[None, :, :]
+        distance = np.sum(difference * difference, axis=-1)
+        indices[start : start + query.shape[0]] = np.argsort(
+            distance, axis=-1, kind="stable"
+        )[:, :count]
+    shape = (*targets.shape[:-1], count)
+    return _HostNeighbors(indices.reshape(shape), np.ones(shape, dtype=np.bool_))
 
 
 def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
@@ -86,6 +115,7 @@ def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
                 executable.compiled.cost_analysis(),
                 executable.compiled.memory_analysis(),
                 source="jax-compiled-executable",
+                unavailable_reason="The selected backend did not expose compiler estimates.",
             )
         ),
         "output_bytes": logical_array_bytes(result),
@@ -129,6 +159,7 @@ def _phase(
                 executable.compiled.cost_analysis(),
                 executable.compiled.memory_analysis(),
                 source="jax-compiled-executable",
+                unavailable_reason="The selected backend did not expose compiler estimates.",
             )
         ),
         "output_bytes": logical_array_bytes(result),
@@ -168,7 +199,7 @@ def _family_phases[P: _PreparedSources, R: _QueryResult](
     query: Callable[[P, jax.Array], R],
     points: jax.Array,
     targets: jax.Array,
-    dense: QueryNeighborhood,
+    dense: QueryNeighborhood | _HostNeighbors,
     repeats: int,
 ) -> dict[str, Any]:
     """Separate one-time source preparation from repeated prepared and raw queries."""
@@ -211,7 +242,34 @@ def run_nearest_neighbors(
     distribution: str,
     dtype: str,
     repeats: int,
+    *,
+    route: NearestRoute = "all",
 ) -> dict[str, Any]:
+    route = parse(route, NearestRoute, "route")
+    if (
+        source_count < 1
+        or query_count < 1
+        or repeats < 1
+        or not 1 <= neighbors <= source_count
+    ):
+        raise ValueError(
+            "Counts and repeats must be positive; neighbors must fit sources."
+        )
+    if route == "morton":
+        if not 1 <= dimension <= 3:
+            raise ValueError(
+                "The prepared Morton route requires one to three dimensions."
+            )
+        query_rows = 3 * query_count
+        reference_bytes = (
+            min(32, query_rows) * source_count * (2 * dimension + 4) * 8
+            + (source_count + query_rows) * dimension * 8
+            + query_rows * neighbors * 9
+        )
+        if reference_bytes > 256 * 1024**2:
+            raise ValueError(
+                "The host nearest reference exceeds its 256 MiB working-set bound."
+            )
     rng = np.random.default_rng(0)
     match distribution:
         case "uniform":
@@ -222,29 +280,37 @@ def run_nearest_neighbors(
             host = np.full((source_count, dimension), 0.5, dtype=np.float64)
         case _:
             raise ValueError("Unknown distribution.")
-    points = jnp.asarray(host, dtype=jnp.dtype(dtype))
-    targets = jnp.asarray(
-        rng.uniform(0.0, 1.0, (3, query_count, dimension)), dtype=points.dtype
-    )
-    bvh_source = BVHSourcePlan(dimension, source_count)
-    bvh = BVHNeighborQueryPlan(bvh_source, query_count, neighbors)
-    # The dense reference uses budget-derived exact tiles (256 MiB workspace),
-    # not deliberately tiny chunks that would serialize millions of tile steps.
-    dense, dense_timing = _phase(
-        lambda source, target: query_neighbors(
-            source,
-            target,
-            max_neighbors=neighbors,
-            query_workspace_bytes=256 * 1024**2,
-        ),
-        (points, targets),
-        repeats,
-    )
-    dense_timing.update(
-        successful=bool(dense.evidence.successful),
-        exactness_vs_dense=True,
-    )
-    phases: dict[str, Any] = {"dense_blocked_graph_query": dense_timing}
+    host = np.asarray(host, dtype=np.dtype(dtype))
+    host_targets = rng.uniform(0.0, 1.0, (3, query_count, dimension)).astype(host.dtype)
+    points, targets = jnp.asarray(host), jnp.asarray(host_targets)
+    phases: dict[str, Any] = {}
+    dense: QueryNeighborhood | _HostNeighbors
+    if route == "morton":
+        dense, reference_seconds = measure_host(
+            lambda: _host_nearest(host, host_targets, neighbors)
+        )
+        reference = {
+            "kind": "host-float64-dense",
+            "seconds": reference_seconds,
+            "working_set_bound_bytes": reference_bytes,
+        }
+    else:
+        # The generic graph reference deliberately owns float64 geometry.
+        dense, dense_timing = _phase(
+            lambda source, target: query_neighbors(
+                source,
+                target,
+                max_neighbors=neighbors,
+                query_workspace_bytes=256 * 1024**2,
+            ),
+            (points, targets),
+            repeats,
+        )
+        dense_timing.update(
+            successful=bool(dense.evidence.successful), exactness_vs_dense=True
+        )
+        phases["dense_blocked_graph_query"] = dense_timing
+        reference = {"kind": "jax-float64-dense"}
     # Morton addressing is defined for one to three dimensions only.
     if dimension <= 3:
         address = MortonAddressPlan((0.0,) * dimension, (1.0,) * dimension, 6)
@@ -261,21 +327,45 @@ def run_nearest_neighbors(
                 repeats,
             )
         )
-    phases.update(
-        _family_phases(
-            "bvh", bvh_source.prepare, bvh.query, points, targets, dense, repeats
+        # Refresh moves every source by a quarter of a finest cell in the
+        # declared dtype; its candidate must equal a fresh preparation exactly.
+        prepared = morton_source.prepare(points)
+        moved = points + jnp.asarray(0.25 / address.resolution, dtype=points.dtype)
+        transition, refresh = _phase(morton_source.refresh, (prepared, moved), repeats)
+        fresh = morton_source.prepare(moved)
+        refresh.update(
+            successful=bool(transition.successful),
+            reused_order=bool(transition.reused_order),
+            coordinate_dtype=str(transition.accepted.points.dtype),
+            matches_fresh_preparation=all(
+                bool(jnp.array_equal(candidate, reference))
+                for candidate, reference in zip(
+                    jax.tree.leaves(transition.candidate),
+                    jax.tree.leaves(fresh),
+                    strict=True,
+                )
+            ),
         )
-    )
-    host_points = np.asarray(points)
-    start = perf_counter()
-    host_tree = prepare_bvh(host_points, host_points, policy=BVHBuildPolicy(leaf_size=8))
-    jax.block_until_ready(host_tree)
-    phases["host_prepare_bvh_and_transfer"] = {
-        "seconds": perf_counter() - start,
-        "output_bytes": logical_array_bytes(host_tree),
-    }
+        phases["morton_refresh"] = refresh
+    if route == "all":
+        bvh_source = BVHSourcePlan(dimension, source_count)
+        bvh = BVHNeighborQueryPlan(bvh_source, query_count, neighbors)
+        phases.update(
+            _family_phases(
+                "bvh", bvh_source.prepare, bvh.query, points, targets, dense, repeats
+            )
+        )
+        start = perf_counter()
+        host_tree = prepare_bvh(host, host, policy=BVHBuildPolicy(leaf_size=8))
+        jax.block_until_ready(host_tree)
+        phases["host_prepare_bvh_and_transfer"] = {
+            "seconds": perf_counter() - start,
+            "output_bytes": logical_array_bytes(host_tree),
+        }
     return {
         "campaign": "phase-separated-nearest-neighbors",
+        "route": route,
+        "reference": reference,
         "source_count": source_count,
         "query_count": query_count,
         "neighbors": neighbors,
@@ -284,6 +374,13 @@ def run_nearest_neighbors(
         "dtype": dtype,
         "target_batches": targets.shape[0],
         "phases": phases,
+        # Every phase that reports status, dense exactness or refresh identity passed.
+        "passed": all(
+            bool(phase.get("successful", True))
+            and bool(phase.get("exactness_vs_dense", True))
+            and bool(phase.get("matches_fresh_preparation", True))
+            for phase in phases.values()
+        ),
     }
 
 
@@ -295,6 +392,7 @@ def main() -> None:
     parser.add_argument(
         "--scenario", choices=("primitive", "nearest"), default="primitive"
     )
+    parser.add_argument("--route", choices=get_args(NearestRoute), default="all")
     parser.add_argument("--sources", type=int, default=128)
     parser.add_argument("--neighbors", type=int, default=8)
     parser.add_argument("--dimension", type=int, default=3)
@@ -306,6 +404,8 @@ def main() -> None:
     parser.add_argument("--dtype", choices=("float32", "float64"), default="float64")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
+    if arguments.scenario != "nearest" and arguments.route != "all":
+        parser.error("--route applies only to the nearest scenario.")
     result = (
         run_nearest_neighbors(
             arguments.sources,
@@ -315,6 +415,7 @@ def main() -> None:
             arguments.distribution,
             arguments.dtype,
             arguments.repeats,
+            route=arguments.route,
         )
         if arguments.scenario == "nearest"
         else run_spatial_query_scaling(
@@ -323,6 +424,10 @@ def main() -> None:
             repeats=arguments.repeats,
         )
     )
+    result["environment"] = capture_environment().to_dict()
+    result["identity"] = capture_benchmark_identity(
+        PROJECT_ROOT, Path(__file__), tuple(result)
+    ).to_dict()
     serialized = json.dumps(result, sort_keys=True)
     if arguments.output is not None:
         arguments.output.write_text(serialized + "\n", encoding="utf-8")

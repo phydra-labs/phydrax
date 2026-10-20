@@ -1,0 +1,479 @@
+diff --git a/src/pjrt_plugin/issue_url.h b/src/pjrt_plugin/issue_url.h
+index 963bab18c5022580b8a9a2395879233a1dd44d90..f52b1c1f594bd2758340ab43bc149db50d31a947 100644
+--- a/src/pjrt_plugin/issue_url.h
++++ b/src/pjrt_plugin/issue_url.h
+@@ -1,36 +1,23 @@
+ #ifndef ISSUE_URL_H
+ #define ISSUE_URL_H
+ 
++#include <algorithm>
+ #include <string>
+ #include <vector>
+ 
+ namespace jax_mps {
+ 
+-/// Build a full error message for unsupported ops, including links to the
+-/// GitHub issue template and CONTRIBUTING.md.
+-inline std::string UnsupportedOpsMessage(const std::vector<std::string>& op_names) {
+-    // Build comma-separated list of op names.
++/// Build the refusal message for a program containing operations this plugin
++/// has no handler for. The program is refused as a whole; nothing runs.
++inline std::string UnsupportedOpsMessage(std::vector<std::string> op_names) {
++    std::sort(op_names.begin(), op_names.end());
+     std::string op_list;
+     for (size_t i = 0; i < op_names.size(); i++) {
+         if (i > 0)
+             op_list += ", ";
+         op_list += op_names[i];
+     }
+-
+-    // URL-encode dots in the first op name for query parameters.
+-    std::string encoded = op_names[0];
+-    for (size_t pos = 0; (pos = encoded.find('.', pos)) != std::string::npos; pos += 3) {
+-        encoded.replace(pos, 1, "%2E");
+-    }
+-
+-    return "Unsupported operation(s): " + op_list +
+-           ". The MPS backend does not have a handler for these operations.\n\n"
+-           "File an issue: "
+-           "https://github.com/tillahoffmann/jax-mps/issues/new?template=missing-op.yml"
+-           "&title=Missing+op:+" +
+-           encoded + "&op-name=" + encoded +
+-           "\n"
+-           "Add it yourself: https://github.com/tillahoffmann/jax-mps/blob/main/CONTRIBUTING.md";
++    return "phydrax-metal: operation(s) not supported: " + op_list;
+ }
+ 
+ }  // namespace jax_mps
+diff --git a/src/pjrt_plugin/ops/control_flow.cc b/src/pjrt_plugin/ops/control_flow.cc
+index 572a9279a55aa4fba506f41ef7abd92c8893b97f..be69eb9c90c69d4438726b0a40571a4c0b6d246e 100644
+--- a/src/pjrt_plugin/ops/control_flow.cc
++++ b/src/pjrt_plugin/ops/control_flow.cc
+@@ -2298,6 +2298,17 @@ bool HandleOptimizationBarrier(mlir::Operation* op, ValueMap& values,
+     return true;
+ }
+ 
++// Handler for sdy.sharding_constraint. The parser admits only single-device
++// meshes (see checkSingleDevice), where a sharding constraint is the identity.
++bool HandleShardingConstraint(mlir::Operation* op, ValueMap& values,
++                              std::vector<mlx::core::array>& outputs, ExecContext& ctx) {
++    auto* val = RequireValue(values, op->getOperand(0), "sdy.sharding_constraint");
++    if (!val)
++        return false;
++    values.emplace(ToKey(op->getResult(0)), *val);
++    return true;
++}
++
+ // Handler for stablehlo.rng_bit_generator.
+ // Uses MLX's PRNG seeded from the state. Random values will differ from CPU/GPU backends
+ // but the state is correctly tracked (counter incremented by ceil(output_bytes / 16)).
+@@ -2373,6 +2384,7 @@ void RegisterControlFlowHandlers(std::unordered_map<std::string, OpHandler>& han
+     handlers.insert({"stablehlo.rng_bit_generator", HandleRngBitGenerator});
+     handlers.insert({"stablehlo.create_token", HandleCreateToken});
+     handlers.insert({"stablehlo.after_all", HandleAfterAll});
++    handlers.insert({"sdy.sharding_constraint", HandleShardingConstraint});
+ }
+ 
+ }  // namespace jax_mps
+diff --git a/src/pjrt_plugin/pjrt_api.cc b/src/pjrt_plugin/pjrt_api.cc
+index c56229921859708b4d0b86a5639de46cd61772e5..630c15d6008dfc85deb6944cfb58a50262b749cf 100644
+--- a/src/pjrt_plugin/pjrt_api.cc
++++ b/src/pjrt_plugin/pjrt_api.cc
+@@ -15,7 +15,13 @@
+ // ============================================================================
+ 
+ const char* const kPlatformName = "mps";
+-const char* const kPlatformVersion = "0.1.0";
++#if !defined(PHYDRAX_METAL_VERSION) || !defined(PHYDRAX_METAL_SOURCE_ID)
++#error "phydrax-metal builds must define PHYDRAX_METAL_VERSION and PHYDRAX_METAL_SOURCE_ID"
++#endif
++// The runtime identity JAX reports as `client.platform_version`: the companion
++// release and the content hash of its locked source closure (lock + patches).
++const char* const kPlatformVersion =
++    "phydrax-metal " PHYDRAX_METAL_VERSION " " PHYDRAX_METAL_SOURCE_ID;
+ 
+ // ============================================================================
+ // Global state
+diff --git a/src/pjrt_plugin/pjrt_client.cc b/src/pjrt_plugin/pjrt_client.cc
+index 1fa48f402299e74c030a0803199c7f6ec285cbf3..b1a8b99e0c2b113f41e7b516ea5aba55f1b145be 100644
+--- a/src/pjrt_plugin/pjrt_client.cc
++++ b/src/pjrt_plugin/pjrt_client.cc
+@@ -4,6 +4,9 @@
+ #include <cstring>
+ #include <mutex>
+ 
++#include "llvm/ADT/StringExtras.h"
++#include "llvm/Support/SHA256.h"
++
+ #include "pjrt_plugin/issue_url.h"
+ #include "pjrt_plugin/logging.h"
+ #include "pjrt_plugin/pjrt_mutex.h"
+@@ -68,9 +71,33 @@ PJRT_Error* MPS_Plugin_Initialize(PJRT_Plugin_Initialize_Args* args) {
+     return nullptr;
+ }
+ 
++// The framework serializes each program as a portable artifact targeting
++// min(plugin, framework) StableHLO/Shardy versions. Report the exact versions
++// this plugin was built with (the XLA revision pinned by the jaxlib release)
++// instead of letting the framework fall back to a 12-week-old default.
+ PJRT_Error* MPS_Plugin_Attributes(PJRT_Plugin_Attributes_Args* args) {
+-    args->num_attributes = 0;
+-    args->attributes = nullptr;
++    static const PJRT_NamedValue* attributes = [] {
++        const auto& versions = mps::GetDialectVersions();
++        auto int64List = [](const char* name, const int64_t* values) {
++            PJRT_NamedValue value{};
++            value.struct_size = PJRT_NamedValue_STRUCT_SIZE;
++            value.extension_start = nullptr;
++            value.name = name;
++            value.name_size = std::strlen(name);
++            value.type = PJRT_NamedValue_kInt64List;
++            value.int64_array_value = values;
++            value.value_size = 3;
++            return value;
++        };
++        static const PJRT_NamedValue values[] = {
++            int64List("stablehlo_current_version", versions.stablehlo_current),
++            int64List("stablehlo_minimum_version", versions.stablehlo_minimum),
++            int64List("sdy_current_version", versions.sdy_current),
++        };
++        return values;
++    }();
++    args->attributes = attributes;
++    args->num_attributes = 3;
+     return nullptr;
+ }
+ 
+@@ -230,12 +257,16 @@ PJRT_Error* MPS_Client_Compile(PJRT_Client_Compile_Args* args) {
+     if (format_str == "mlir") {
+         // MLIR bytecode format (StableHLO portable artifact)
+         parsed_module = mps::parseStableHLOBytecode(args->program->code, args->program->code_size);
+-    } else if (format_str == "hlo" || format_str == "hlo_with_config") {
+-        // Text HLO format (legacy)
+-        std::string program_str(args->program->code, args->program->code_size);
+-        parsed_module = mps::parseStableHLOText(program_str);
+     } else {
+-        return MakeError("Unknown program format: " + format_str);
++        // "hlo"/"hlo_with_config" carry serialized HloModuleProtos, which this
++        // plugin cannot execute; JAX submits StableHLO ("mlir").
++        return MakeError("phydrax-metal: program format '" + format_str +
++                             "' is not supported; only StableHLO ('mlir') programs are supported",
++                         PJRT_Error_Code_UNIMPLEMENTED);
++    }
++
++    if (!parsed_module.refusal.empty()) {
++        return MakeError(parsed_module.refusal, PJRT_Error_Code_INVALID_ARGUMENT);
+     }
+ 
+     if (!parsed_module.ok()) {
+@@ -254,7 +285,8 @@ PJRT_Error* MPS_Client_Compile(PJRT_Client_Compile_Args* args) {
+ 
+     // Check for unsupported operations discovered during parsing
+     if (!parsed_module.unsupported_ops.empty()) {
+-        return MakeError(jax_mps::UnsupportedOpsMessage(parsed_module.unsupported_ops));
++        return MakeError(jax_mps::UnsupportedOpsMessage(parsed_module.unsupported_ops),
++                         PJRT_Error_Code_UNIMPLEMENTED);
+     }
+ 
+     // Compile the ParsedModule to MPS executable (takes ownership)
+@@ -273,6 +305,11 @@ PJRT_Error* MPS_Client_Compile(PJRT_Client_Compile_Args* args) {
+     executable->executable = std::move(mps_exec);
+     executable->client = client;
+     executable->owned_by_loaded = true;  // Mark as owned by LoadedExecutable
++    // Content fingerprint of the submitted program (portable artifact bytes).
++    executable->fingerprint = llvm::toHex(
++        llvm::SHA256::hash(llvm::arrayRefFromStringRef(
++            llvm::StringRef(args->program->code, args->program->code_size))),
++        /*LowerCase=*/true);
+ 
+     // Wrap in LoadedExecutable
+     auto* loaded_executable = new PJRT_LoadedExecutable();
+diff --git a/src/pjrt_plugin/pjrt_executable.cc b/src/pjrt_plugin/pjrt_executable.cc
+index 0f16b7d93e2a125e9f948349f844cfcff84cdb5a..82c84da32de6e562783b72a757ef8e068ec6812b 100644
+--- a/src/pjrt_plugin/pjrt_executable.cc
++++ b/src/pjrt_plugin/pjrt_executable.cc
+@@ -3,7 +3,6 @@
+ #include <string>
+ #include <vector>
+ 
+-#include "device_assignment.pb.h"
+ #include "pjrt_plugin/logging.h"
+ #include "pjrt_plugin/pjrt_mutex.h"
+ #include "pjrt_plugin/pjrt_types.h"
+@@ -107,11 +106,11 @@ PJRT_Error* MPS_Executable_Serialize(PJRT_Executable_Serialize_Args* args) {
+ }
+ 
+ PJRT_Error* MPS_Executable_Fingerprint(PJRT_Executable_Fingerprint_Args* args) {
+-    MPS_LOG_DEBUG(" PJRT_Executable_Fingerprint called\n");
+-    // Return a static fingerprint for the executable
+-    static const char* fingerprint = "mps_exec_fingerprint";
+-    args->executable_fingerprint = fingerprint;
+-    args->executable_fingerprint_size = 20;
++    if (!args->executable) {
++        return MakeError("Null executable", PJRT_Error_Code_INVALID_ARGUMENT);
++    }
++    args->executable_fingerprint = args->executable->fingerprint.data();
++    args->executable_fingerprint_size = args->executable->fingerprint.size();
+     return nullptr;
+ }
+ 
+@@ -271,9 +270,12 @@ PJRT_Error* MPS_Executable_DeserializeAndLoad(PJRT_Executable_DeserializeAndLoad
+ }
+ 
+ PJRT_Error* MPS_LoadedExecutable_Fingerprint(PJRT_LoadedExecutable_Fingerprint_Args* args) {
+-    MPS_LOG_DEBUG(" PJRT_LoadedExecutable_Fingerprint called\n");
+-    args->executable_fingerprint = nullptr;
+-    args->executable_fingerprint_size = 0;
++    if (!args->executable || !args->executable->executable) {
++        return MakeError("Null executable", PJRT_Error_Code_INVALID_ARGUMENT);
++    }
++    const std::string& fingerprint = args->executable->executable->fingerprint;
++    args->executable_fingerprint = fingerprint.data();
++    args->executable_fingerprint_size = fingerprint.size();
+     return nullptr;
+ }
+ 
+@@ -291,15 +293,15 @@ PJRT_Error* MPS_LoadedExecutable_GetDeviceAssignment(
+     PJRT_LoadedExecutable_GetDeviceAssignment_Args* args) {
+     MPS_LOG_DEBUG(" PJRT_LoadedExecutable_GetDeviceAssignment called\n");
+ 
+-    // Create DeviceAssignment proto: 1 replica, 1 computation, device 0
+-    xla::DeviceAssignmentProto proto;
+-    proto.set_replica_count(1);
+-    proto.set_computation_count(1);
+-    auto* comp_device = proto.add_computation_devices();
+-    comp_device->add_replica_device_ids(0);
+-
++    // xla.DeviceAssignmentProto{replica_count: 1, computation_count: 1,
++    // computation_devices: [{replica_device_ids: [0]}]} in protobuf wire format
++    // (field 1 varint, field 2 varint, field 3 message holding packed field 1).
++    // The plugin has exactly one device, so this is the only assignment.
++    static constexpr char kSingleDeviceAssignment[] = {
++        0x08, 0x01, 0x10, 0x01, 0x1A, 0x03, 0x0A, 0x01, 0x00,
++    };
+     auto* serialized = new MpsDeviceAssignmentSerialized();
+-    proto.SerializeToString(&serialized->data);
++    serialized->data.assign(kSingleDeviceAssignment, sizeof(kSingleDeviceAssignment));
+ 
+     args->serialized_bytes = serialized->data.data();
+     args->serialized_bytes_size = serialized->data.size();
+diff --git a/src/pjrt_plugin/pjrt_types.h b/src/pjrt_plugin/pjrt_types.h
+index 4bcca53bbd1ce8100d627eec00ec6c183a9d46c3..8f7f7f11529665685388cf592c439ed9d9b95ed5 100644
+--- a/src/pjrt_plugin/pjrt_types.h
++++ b/src/pjrt_plugin/pjrt_types.h
+@@ -76,6 +76,9 @@ struct PJRT_Executable {
+     // and should not be deleted directly by PJRT_Executable_Destroy
+     bool owned_by_loaded = false;
+ 
++    // Lowercase hex SHA-256 of the compiled portable artifact.
++    std::string fingerprint;
++
+     // Dynamic storage for output metadata (lazily initialized, thread-safe)
+     mutable std::vector<const char*> output_memory_kinds;
+     mutable std::vector<size_t> output_memory_kind_sizes;
+diff --git a/src/pjrt_plugin/stablehlo_parser.cc b/src/pjrt_plugin/stablehlo_parser.cc
+index 23d0fca40d6220cbf755608a765b06a7c08cc163..ce907a9a1aecf5a63a0d68059451b3d88ec5ea73 100644
+--- a/src/pjrt_plugin/stablehlo_parser.cc
++++ b/src/pjrt_plugin/stablehlo_parser.cc
+@@ -26,11 +26,12 @@
+ #include "mlir/Transforms/Passes.h"
+ #include "pjrt_plugin/logging.h"
+ #include "pjrt_plugin/ops/registry.h"
+-#include "pjrt_plugin/passes/mps_fusion_pass.h"
+ #include "pjrt_plugin/passes/stablehlo_inliner_interface.h"
++#include "shardy/dialect/sdy/ir/dialect.h"
+ #include "stablehlo/dialect/ChloOps.h"
+ #include "stablehlo/dialect/Serialization.h"
+ #include "stablehlo/dialect/StablehloOps.h"
++#include "stablehlo/dialect/Version.h"
+ #include "stablehlo/dialect/VhloOps.h"
+ #include "stablehlo/transforms/optimization/Passes.h"
+ 
+@@ -62,6 +63,11 @@ void registerDialects(mlir::MLIRContext& context) {
+     registry.insert<mlir::stablehlo::StablehloDialect>();
+     registry.insert<mlir::vhlo::VhloDialect>();
+     registry.insert<mlir::chlo::ChloDialect>();
++    // JAX 0.12 keeps Shardy enabled and the framework serializes mixed
++    // StableHLO + sdy portable artifacts (single-device meshes, sharding
++    // attributes on callbacks/constraints). Register the dialect at the exact
++    // XLA-pinned revision instead of allowing unregistered dialects.
++    registry.insert<mlir::sdy::SdyDialect>();
+     // The func dialect's inliner interface (which makes func.call inlinable) lives
+     // in a separate extension; without it MLIR's inliner cannot inline any call.
+     mlir::func::registerInlinerExtension(registry);
+@@ -71,47 +77,23 @@ void registerDialects(mlir::MLIRContext& context) {
+     // inline func.call ops whose bodies are those ops (jnp.std/var/numpyro lower
+     // their guard `where` to func.call @_where).
+     registerStablehloInlinerInterfaces(context);
+-    // Allow unknown dialects (e.g., sdy/Shardy for sharding) to pass through
+-    context.allowUnregisteredDialects();
+ }
+ 
+-// Run StableHLO algebraic simplification passes (x*1 -> x, x+0 -> x, etc.)
+-// Disable by setting JAX_MPS_NO_OPTIMIZE=1 if you encounter issues.
++// Exact constant folding only. Integer/shape/index constant subgraphs are
++// folded once at compile time (exact in two's complement); optimizeFloat=false
++// keeps every floating-point operation as written. No algebraic simplification
++// (x+0 -> x changes signed zeros, x*0 -> 0 drops NaN/inf) and no pattern
++// fusion into approximate kernels: the program executes the arithmetic JAX
++// emitted.
+ bool runOptimizationPasses(mlir::MLIRContext& context, mlir::ModuleOp module) {
+-    // Read every call so tests (and interactive bisection) can flip this
+-    // mid-process without restarting the plugin.
+-    const char* env = std::getenv("JAX_MPS_NO_OPTIMIZE");
+-    if (env && std::string(env) == "1")
+-        return true;
+-
+     mlir::PassManager pm(&context);
+-    // Algebraic simplification: x*1 -> x, x+0 -> x, broadcast/reshape cleanup,
+-    // constant-to-rhs canonicalization, etc.
+-    pm.addNestedPass<mlir::func::FuncOp>(
+-        mlir::stablehlo::createStablehloAggressiveSimplificationPass());
+-    // Constant folding: evaluate constant subgraphs (2*3 -> 6, transpose/slice
+-    // of constants, etc.) once at compile time instead of every Execute on the
+-    // GPU. Simplification doesn't fold; this is the companion pass (together
+-    // they make up StablehloTargetIndependentOptimization). Folding can also
+-    // expose more fusion opportunities for the MPS pass below.
+-    //
+-    // optimizeFloat=false: skip folds that reassociate/perturb float arithmetic
+-    // (they drift results by ~1 ULP, which trips the suite's 1e-5/1e-6
+-    // tolerances). Integer/shape/index constant folding — the bulk of the
+-    // per-step win and numerically exact — still runs.
+     mlir::stablehlo::StablehloAggressiveFolderPassOptions folderOpts;
+     folderOpts.optimizeFloat = false;
+     pm.addNestedPass<mlir::func::FuncOp>(mlir::stablehlo::createStablehloAggressiveFolderPass(
+         folderOpts, mlir::GreedyRewriteConfig()));
+-    // MPS-specific fusions (matmul+bias -> addmm, etc.). Run after upstream
+-    // simplification + folding so patterns like x+0 are already cleaned up
+-    // before we try to match.
+-    pm.addNestedPass<mlir::func::FuncOp>(createMpsFusionPass());
+ 
+     if (mlir::failed(pm.run(module))) {
+-        fprintf(stderr,
+-                "ERROR: StableHLO optimization pass failed. The module may be in a partially "
+-                "transformed state. Set JAX_MPS_NO_OPTIMIZE=1 to skip optimization passes.\n");
++        MPS_LOG_ERROR("StableHLO constant folding failed\n");
+         return false;
+     }
+ 
+@@ -173,6 +155,11 @@ std::vector<std::string> checkUnsupportedOps(mlir::ModuleOp module) {
+         if (mlir::isa<mlir::ModuleOp>(op) || mlir::isa<mlir::func::FuncOp>(op)) {
+             return;
+         }
++        // Module-level mesh symbols carry no computation; single-device use is
++        // enforced in checkSingleDevice.
++        if (mlir::isa<mlir::sdy::MeshOp>(op) && mlir::isa<mlir::ModuleOp>(op->getParentOp())) {
++            return;
++        }
+ 
+         std::string name = op->getName().getStringRef().str();
+         if (supported.find(name) == supported.end()) {
+@@ -183,6 +170,32 @@ std::vector<std::string> checkUnsupportedOps(mlir::ModuleOp module) {
+     return std::vector<std::string>(unsupported_set.begin(), unsupported_set.end());
+ }
+ 
++// The plugin exposes exactly one device. Refuse replicated/partitioned
++// programs and Shardy meshes spanning more than one device instead of running
++// one shard as if it were the whole computation.
++std::string checkSingleDevice(mlir::ModuleOp module) {
++    for (const char* name : {"mhlo.num_partitions", "mhlo.num_replicas"}) {
++        if (auto attr = module->getAttrOfType<mlir::IntegerAttr>(name)) {
++            if (attr.getInt() != 1) {
++                return std::string("phydrax-metal: ") + name + "=" +
++                       std::to_string(attr.getInt()) +
++                       " is not supported; only single-device programs are supported";
++            }
++        }
++    }
++    std::string refusal;
++    module.walk([&](mlir::sdy::MeshOp mesh) {
++        auto meshAttr = mesh.getMesh();
++        if (meshAttr.getTotalSize() != 1 || meshAttr.getDeviceIds().size() > 1) {
++            refusal = "phydrax-metal: sdy.mesh @" + mesh.getSymName().str() +
++                      " spans more than one device; only single-device programs are supported";
++            return mlir::WalkResult::interrupt();
++        }
++        return mlir::WalkResult::advance();
++    });
++    return refusal;
++}
++
+ // Common parsing logic - takes an already-parsed module
+ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+                             mlir::OwningOpRef<mlir::ModuleOp> module) {
+@@ -192,14 +205,20 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+         return result;
+     }
+ 
++    // Structural refusals come first, before any transformation of the module.
++    result.refusal = checkSingleDevice(*module);
++    if (!result.refusal.empty()) {
++        return result;
++    }
++
+     // Run the inliner pass to inline all func.call operations
+     if (!runInlinerPass(*context, *module)) {
+         return result;
+     }
+ 
+-    // Run StableHLO algebraic simplification passes after inlining so the passes
+-    // see fully-inlined IR without func.call ops. Fatal on failure because a
+-    // failed pass may leave the module partially transformed.
++    // Exact constant folding after inlining so it sees fully-inlined IR without
++    // func.call ops. Fatal on failure because a failed pass may leave the module
++    // partially transformed.
+     if (!runOptimizationPasses(*context, *module)) {
+         return result;
+     }
+@@ -260,6 +279,20 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+ 
+ }  // namespace
+ 
++const DialectVersions& GetDialectVersions() {
++    static const DialectVersions versions = [] {
++        const auto current = mlir::vhlo::Version::getCurrentVersion();
++        const auto minimum = mlir::vhlo::Version::getMinimumVersion();
++        const auto sdy = mlir::sdy::SdyDialectVersion::getCurrentVersion();
++        return DialectVersions{
++            {current.getMajor(), current.getMinor(), current.getPatch()},
++            {minimum.getMajor(), minimum.getMinor(), minimum.getPatch()},
++            {sdy.getMajor(), sdy.getMinor(), sdy.getPatch()},
++        };
++    }();
++    return versions;
++}
++
+ ParsedModule parseStableHLOBytecode(const char* data, size_t size) {
+     auto context = std::make_unique<mlir::MLIRContext>();
+     registerDialects(*context);
+diff --git a/src/pjrt_plugin/stablehlo_parser.h b/src/pjrt_plugin/stablehlo_parser.h
+index a47c1efc498022bca6fe76ce94579bc030468e88..ce3b1c93b42ff54c4c621e3566ff3e0002eae350 100644
+--- a/src/pjrt_plugin/stablehlo_parser.h
++++ b/src/pjrt_plugin/stablehlo_parser.h
+@@ -31,11 +31,25 @@ struct ParsedModule {
+     bool has_uninlined_call = false;
+ 
+     // Check if parsing was successful
++    // Reason the module was refused (unsupported precision, multi-device
++    // program, ...). Non-empty means compilation must fail with
++    // INVALID_ARGUMENT; the module is never executed in a narrowed form.
++    std::string refusal;
++
+     bool ok() const {
+-        return context && module && entry_func;
++        return context && module && entry_func && refusal.empty();
+     }
+ };
+ 
++// Dialect versions this parser deserializes, reported to the framework as PJRT
++// plugin attributes so the framework serializes programs for exactly them.
++struct DialectVersions {
++    int64_t stablehlo_current[3];
++    int64_t stablehlo_minimum[3];
++    int64_t sdy_current[3];
++};
++const DialectVersions& GetDialectVersions();
++
+ // Parse MLIR bytecode (StableHLO portable artifact) into a module
+ // Returns a ParsedModule with ownership of context and module
+ ParsedModule parseStableHLOBytecode(const char* data, size_t size);

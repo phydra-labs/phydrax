@@ -95,6 +95,9 @@ cuda13 = [
   "phydrax-cuda-major==13.*",
   "phydrax-cuda13==0.2.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+metal = [
+  "phydrax-metal==0.2.2",
+]
 fmi = [
   "fmpy>=0.3.32,<0.4",
 ]
@@ -261,6 +264,7 @@ conflicts = [
 phydrax-meshcore = { path = "native/meshcore" }
 phydrax-cuda-major = { path = "packaging/cuda-major/13", extra = "cuda13" }
 phydrax-cuda13 = { path = "native/cuda13", extra = "cuda13" }
+phydrax-metal = { path = "native/metal", extra = "metal" }
 
 [tool.uv.extra-build-variables]
 # Developer builds target only the local GPU; release wheels use tools/build_cuda_wheels.py.
@@ -373,6 +377,7 @@ include = [
   "mkdocstrings_setup.py",
   "native/meshcore/python",
   "native/cuda13",
+  "native/metal",
 ]
 
 [tool.ty.analysis]
@@ -446,6 +451,7 @@ markers = [
     "strict_jax: enforces strict dtype/rank promotion and warnings at native-JAX contract surfaces",
     "meshcore: requires the native phydrax-meshcore library (installed or PHYDRAX_MESHCORE_LIBRARY)",
     "cuda_native: requires a Phydrax CUDA companion library (installed or PHYDRAX_CUDA_<COMPONENT>_LIBRARY)",
+    "metal_native: requires the installed Phydrax Metal companion and a real Apple GPU",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",

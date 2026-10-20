@@ -1,0 +1,272 @@
+diff --git a/src/pjrt_plugin/mlx_buffer.cc b/src/pjrt_plugin/mlx_buffer.cc
+index f5cad7f3a41183e318583ba7d5ec71cea573f27e..e5ad74a6e5b00418732c4f7b511c58062c49418f 100644
+--- a/src/pjrt_plugin/mlx_buffer.cc
++++ b/src/pjrt_plugin/mlx_buffer.cc
+@@ -38,18 +38,19 @@ mlx::core::Dtype PjrtDtypeToMlx(int dtype) {
+             return mlx::core::uint8;
+         case PJRT_Buffer_Type_PRED:
+             return mlx::core::bool_;
+-        case PJRT_Buffer_Type_F64:
+-            throw std::runtime_error(
+-                "MLX does not support float64 (F64). Use "
+-                "jax.config.update('jax_enable_x64', False) "
+-                "or ensure your arrays are float32.");
+         case PJRT_Buffer_Type_C64:
+             return mlx::core::complex64;
++        // Metal has no 64-bit floating point. Refuse instead of narrowing: a
++        // float32 copy would silently change the declared precision.
++        case PJRT_Buffer_Type_F64:
++            throw std::invalid_argument(
++                "phydrax-metal: float64 is not supported; Metal arrays must be float32");
+         case PJRT_Buffer_Type_C128:
+-            MPS_LOG_WARN("MLX does not support complex128, downcast to complex64\n");
+-            return mlx::core::complex64;
++            throw std::invalid_argument(
++                "phydrax-metal: complex128 is not supported; Metal arrays must be complex64");
+         default:
+-            throw std::runtime_error("Unsupported PJRT dtype: " + std::to_string(dtype));
++            throw std::invalid_argument("phydrax-metal: PJRT element type " +
++                                        std::to_string(dtype) + " is not supported");
+     }
+ }
+ 
+diff --git a/src/pjrt_plugin/mlx_executable.cc b/src/pjrt_plugin/mlx_executable.cc
+index 7f0178eaf937194c8a2f1e7c8d5c2da344da255e..c1cb434e49dfb50c4ccc849e4dd8637d871efe5f 100644
+--- a/src/pjrt_plugin/mlx_executable.cc
++++ b/src/pjrt_plugin/mlx_executable.cc
+@@ -46,15 +46,16 @@ std::optional<std::reference_wrapper<mlx::core::array>> GetValue(ValueMap& value
+     return std::ref(it->second);
+ }
+ 
++// Unsupported element types (float64, complex128, ...) are refused when the
++// module is parsed (mps::findUnsupportedElementType); reaching one here is an
++// internal error, never a reason to substitute another dtype.
+ mlx::core::Dtype MlirTypeToMlxDtype(mlir::Type type) {
+     int pjrt_dtype = MlirTypeToPjrtDtype(type);
+     if (pjrt_dtype == -1) {
+-        MPS_LOG_ERROR("Unknown MLIR type, defaulting to float32\n");
+-        return mlx::core::float32;
+-    }
+-    if (type.isF64()) {
+-        MPS_LOG_WARN("MLX doesn't support float64, downcasting to float32\n");
+-        return mlx::core::float32;
++        std::string name;
++        llvm::raw_string_ostream os(name);
++        type.print(os);
++        throw std::invalid_argument("phydrax-metal: element type " + name + " is not supported");
+     }
+     return PjrtDtypeToMlx(pjrt_dtype);
+ }
+@@ -158,53 +159,6 @@ std::optional<mlx::core::array> MaybeBitcastNonFiniteFloat(const void* data,
+     return std::nullopt;
+ }
+ 
+-// jax-mps#231: MLX has no float64, so MlirTypeToMlxDtype narrows f64 -> float32
+-// (and complex<f64> -> complex64). That changes only the dtype *tag*: the
+-// attribute payload is still 8-byte doubles, and the readers below reinterpret
+-// the raw bytes through a `const float*` / `const complex64_t*`. Narrow by value
+-// here so they don't decode garbage (#231: pi came back as 3.37e12, because its
+-// low four bytes read as a float are 3370280550400.0). Returns nullopt when the
+-// element type needs no narrowing, so callers use the raw bytes unchanged.
+-struct NarrowResult {
+-    std::optional<std::vector<char>> data;  // narrowed bytes, if narrowing applied
+-    bool malformed = false;                 // payload too short for its element width
+-};
+-
+-NarrowResult NarrowF64Data(mlir::Type elemType, const void* data, size_t dataSize,
+-                           size_t numElements) {
+-    size_t doublesPerElement = 0;
+-    if (elemType.isF64()) {
+-        doublesPerElement = 1;
+-    } else if (auto complexType = mlir::dyn_cast<mlir::ComplexType>(elemType);
+-               complexType && complexType.getElementType().isF64()) {
+-        doublesPerElement = 2;
+-    } else {
+-        return NarrowResult{std::nullopt, false};
+-    }
+-
+-    const size_t numDoubles = numElements * doublesPerElement;
+-    if (dataSize < numDoubles * sizeof(double)) {
+-        // Cannot fall through to the size check below: `expectedSize` there is
+-        // computed from the *narrowed* dtype (4 bytes for f64, 8 for
+-        // complex<f64>), so a truncated payload would pass it and be
+-        // reinterpreted as a plausible value. Report it here instead.
+-        MPS_LOG_ERROR("Constant f64 data size mismatch: got %zu bytes, expected %zu\n", dataSize,
+-                      numDoubles * sizeof(double));
+-        return NarrowResult{std::nullopt, true};
+-    }
+-
+-    // memcpy both ways: DenseElementsAttr::getRawData() is byte-oriented and not
+-    // guaranteed to be element-aligned.
+-    std::vector<char> narrowed(numDoubles * sizeof(float));
+-    for (size_t i = 0; i < numDoubles; ++i) {
+-        double value;
+-        std::memcpy(&value, static_cast<const char*>(data) + i * sizeof(double), sizeof(double));
+-        const float narrowedValue = static_cast<float>(value);
+-        std::memcpy(narrowed.data() + i * sizeof(float), &narrowedValue, sizeof(float));
+-    }
+-    return NarrowResult{std::move(narrowed), false};
+-}
+-
+ std::optional<mlx::core::array> CreateArrayFromDenseAttr(mlir::DenseElementsAttr attr) {
+     auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(attr.getType());
+     if (!tensorType) {
+@@ -222,19 +176,8 @@ std::optional<mlx::core::array> CreateArrayFromDenseAttr(mlir::DenseElementsAttr
+         numElements *= dim;
+     }
+ 
+-    // jax-mps#231: f64/complex<f64> payloads must be narrowed by value before
+-    // any of the typed reads below. `narrowed` owns the converted bytes for the
+-    // rest of this function.
+     const void* dataPtr = rawData.data();
+     size_t dataSize = rawData.size();
+-    auto narrowed = NarrowF64Data(elemType, dataPtr, dataSize, attr.isSplat() ? 1 : numElements);
+-    if (narrowed.malformed) {
+-        return std::nullopt;
+-    }
+-    if (narrowed.data) {
+-        dataPtr = narrowed.data->data();
+-        dataSize = narrowed.data->size();
+-    }
+ 
+     // Handle splat constants (single value broadcast to shape)
+     if (attr.isSplat()) {
+diff --git a/src/pjrt_plugin/pjrt_client.cc b/src/pjrt_plugin/pjrt_client.cc
+index b1a8b99e0c2b113f41e7b516ea5aba55f1b145be..1c8cc42f80aa9f2ff42175e469793a53c14503a1 100644
+--- a/src/pjrt_plugin/pjrt_client.cc
++++ b/src/pjrt_plugin/pjrt_client.cc
+@@ -365,11 +365,13 @@ PJRT_Error* MPS_Client_BufferFromHostBuffer(PJRT_Client_BufferFromHostBuffer_Arg
+         mps_buffer = client->client->BufferFromHostBuffer(
+             args->data, static_cast<int>(args->type), dims, byte_strides,
+             args->device ? args->device->device : nullptr);
++    } catch (const std::invalid_argument& e) {
++        // Unsupported element types (float64, complex128, ...) are refused at
++        // the transfer boundary, never narrowed.
++        return MakeError(e.what(), PJRT_Error_Code_INVALID_ARGUMENT);
+     } catch (const std::exception& e) {
+-        // PjrtDtypeToMlx throws on unsupported dtypes (notably F64); surface the
+-        // message as a clean PJRT error so JAX sees the real cause instead of
+-        // an uncaught exception across the C boundary.
+-        return MakeError(std::string("BufferFromHostBuffer failed: ") + e.what());
++        return MakeError(std::string("phydrax-metal: host-to-device transfer failed: ") +
++                         e.what());
+     }
+ 
+     if (!mps_buffer) {
+diff --git a/src/pjrt_plugin/stablehlo_parser.cc b/src/pjrt_plugin/stablehlo_parser.cc
+index ce907a9a1aecf5a63a0d68059451b3d88ec5ea73..6f9ba9234facdafeb508407a153da60d939d8893 100644
+--- a/src/pjrt_plugin/stablehlo_parser.cc
++++ b/src/pjrt_plugin/stablehlo_parser.cc
+@@ -6,6 +6,7 @@
+ #include <atomic>
+ #include <cstdio>
+ #include <cstdlib>
++#include <optional>
+ #include <system_error>
+ #include <unordered_set>
+ 
+@@ -196,6 +197,94 @@ std::string checkSingleDevice(mlir::ModuleOp module) {
+     return refusal;
+ }
+ 
++// Name of an element type Metal cannot represent exactly, or nullopt when the
++// type is supported (f32/f16/bf16, complex<f32>, 1/8/16/32/64-bit integers,
++// tokens). Metal has no 64-bit floating point, so float64/complex128 are
++// refused rather than narrowed.
++std::optional<std::string> unsupportedElementType(mlir::Type type) {
++    if (auto tuple = mlir::dyn_cast<mlir::TupleType>(type)) {
++        for (mlir::Type element : tuple.getTypes()) {
++            if (auto name = unsupportedElementType(element))
++                return name;
++        }
++        return std::nullopt;
++    }
++    if (auto shaped = mlir::dyn_cast<mlir::ShapedType>(type))
++        type = shaped.getElementType();
++    if (mlir::isa<mlir::stablehlo::TokenType>(type))
++        return std::nullopt;
++    if (type.isF32() || type.isF16() || type.isBF16())
++        return std::nullopt;
++    if (type.isF64())
++        return "float64";
++    if (auto complex = mlir::dyn_cast<mlir::ComplexType>(type)) {
++        if (complex.getElementType().isF32())
++            return std::nullopt;
++        if (complex.getElementType().isF64())
++            return "complex128";
++    }
++    if (auto integer = mlir::dyn_cast<mlir::IntegerType>(type)) {
++        switch (integer.getWidth()) {
++            case 1:
++            case 8:
++            case 16:
++            case 32:
++            case 64:
++                return std::nullopt;
++            default:
++                break;
++        }
++    }
++    std::string name;
++    llvm::raw_string_ostream os(name);
++    type.print(os);
++    return name;
++}
++
++// Refuse a program if any input, constant, intermediate or result has an
++// unsupported element type. Runs before any transformation so the message names
++// the operation JAX emitted.
++std::string checkElementTypes(mlir::ModuleOp module) {
++    std::string refusal;
++    auto refuse = [&](mlir::Operation* op, mlir::Type type, const std::string& name,
++                      const char* role) {
++        std::string typeText;
++        llvm::raw_string_ostream os(typeText);
++        type.print(os);
++        refusal = "phydrax-metal: " + name + " is not supported (" +
++                  op->getName().getStringRef().str() + " " + role + " " + typeText +
++                  "); Metal programs must use float32/complex64";
++    };
++    module.walk([&](mlir::Operation* op) {
++        for (mlir::Type type : op->getResultTypes()) {
++            if (auto name = unsupportedElementType(type)) {
++                refuse(op, type, *name, "result");
++                return mlir::WalkResult::interrupt();
++            }
++        }
++        for (mlir::Region& region : op->getRegions()) {
++            for (mlir::Block& block : region) {
++                for (mlir::BlockArgument argument : block.getArguments()) {
++                    if (auto name = unsupportedElementType(argument.getType())) {
++                        refuse(op, argument.getType(), *name, "argument");
++                        return mlir::WalkResult::interrupt();
++                    }
++                }
++            }
++        }
++        if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(op)) {
++            for (mlir::Type type : func.getFunctionType().getResults()) {
++                if (auto name = unsupportedElementType(type)) {
++                    refuse(op, type, *name, "result");
++                    return mlir::WalkResult::interrupt();
++                }
++            }
++        }
++        return mlir::WalkResult::advance();
++    });
++    return refusal;
++}
++
+ // Common parsing logic - takes an already-parsed module
+ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+                             mlir::OwningOpRef<mlir::ModuleOp> module) {
+@@ -207,6 +296,9 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+ 
+     // Structural refusals come first, before any transformation of the module.
+     result.refusal = checkSingleDevice(*module);
++    if (result.refusal.empty()) {
++        result.refusal = checkElementTypes(*module);
++    }
+     if (!result.refusal.empty()) {
+         return result;
+     }

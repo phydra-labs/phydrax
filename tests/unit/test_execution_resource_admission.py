@@ -255,8 +255,19 @@ def test_execution_resource_admission_scenario_3() -> None:
         ("gpu", "gpu", "", None),
         ("tpu", "tpu", "", "google"),
         ("cpu", "cpu", "", None),
+        ("mps", "mps", "phydrax-metal 0.2.2 source", "apple"),
+        ("mps", "mps", "foreign-plugin", None),
     ],
-    ids=("cuda-runtime", "cuda-client", "rocm-runtime", "unknown-gpu", "tpu", "cpu"),
+    ids=(
+        "cuda-runtime",
+        "cuda-client",
+        "rocm-runtime",
+        "unknown-gpu",
+        "tpu",
+        "cpu",
+        "apple-runtime",
+        "unknown-mps",
+    ),
 )
 def test_accelerator_vendor_comes_from_the_loaded_runtime(
     platform: str, client: str, runtime: str, vendor: str | None

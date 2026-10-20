@@ -1,24 +1,31 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from typing import Literal, overload
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from ._operators import DenseLinearOperator
-from ._rank import numerical_rank_data
+from ._policies import RankPolicy
+from ._rank import host_numerical_rank_data, numerical_rank_data
 from ._spaces import (
     _coordinate_pairing_weights,
     _has_diagonal_pairing,
     AbstractVectorSpace,
 )
 from ._svd_contracts import (
+    HostSVDRankEvidence,
     SVDLeadingEvidence,
     SVDProblem,
     SVDRankEvidence,
     SVDSolvePlan,
+    SVDSolveStatus,
     SVDTarget,
+    SVDTolerancePolicy,
 )
 
 
@@ -184,6 +191,157 @@ def compressed_spectrum_allowance(
     )
 
 
+@overload
+def exact_spectrum_rank_evidence(
+    values: Array,
+    rows: int,
+    columns: int,
+    policy: RankPolicy,
+    available: Array,
+    /,
+    *,
+    host: Literal[False] = False,
+) -> SVDRankEvidence: ...
+
+
+@overload
+def exact_spectrum_rank_evidence(
+    values: np.ndarray,
+    rows: int,
+    columns: int,
+    policy: RankPolicy,
+    available: np.ndarray,
+    /,
+    *,
+    host: Literal[True],
+) -> HostSVDRankEvidence: ...
+
+
+def exact_spectrum_rank_evidence(
+    values: Array | np.ndarray,
+    rows: int,
+    columns: int,
+    policy: RankPolicy,
+    available: Array | np.ndarray,
+    /,
+    *,
+    host: bool = False,
+) -> SVDRankEvidence | HostSVDRankEvidence:
+    """One complete-spectrum certificate for runtime and immutable host tables."""
+    xp = np if host else jnp
+    rank = (
+        host_numerical_rank_data(np.asarray(values), rows, columns, policy)
+        if host
+        else numerical_rank_data(jnp.asarray(values), rows, columns, policy)
+    )
+    lower = xp.where(available, rank.rank, 0)
+    upper = xp.where(available, rank.rank, min(rows, columns))
+    threshold = xp.where(available, rank.cutoff, xp.nan)
+    probability = xp.asarray(0, values.dtype)
+    full = values.shape[0] == min(rows, columns)
+    if host:
+        return HostSVDRankEvidence(
+            np.asarray(lower),
+            np.asarray(upper),
+            np.asarray(threshold),
+            np.asarray(threshold),
+            np.asarray(available),
+            full,
+            np.asarray(available),
+            "exact-spectrum",
+            np.asarray(probability),
+        )
+    return SVDRankEvidence(
+        jnp.asarray(lower),
+        jnp.asarray(upper),
+        jnp.asarray(threshold),
+        jnp.asarray(threshold),
+        jnp.asarray(available),
+        full,
+        jnp.asarray(available),
+        "exact-spectrum",
+        jnp.asarray(probability),
+    )
+
+
+@overload
+def primal_svd_status(
+    values: Array,
+    relative: Array,
+    orthogonality: Array,
+    preparation_status: Array,
+    rank: SVDRankEvidence,
+    maximum_rank: int,
+    tolerance: SVDTolerancePolicy,
+    rank_policy: RankPolicy,
+    /,
+    *,
+    host: Literal[False] = False,
+) -> Array: ...
+
+
+@overload
+def primal_svd_status(
+    values: np.ndarray,
+    relative: np.ndarray,
+    orthogonality: np.ndarray,
+    preparation_status: np.ndarray,
+    rank: HostSVDRankEvidence,
+    maximum_rank: int,
+    tolerance: SVDTolerancePolicy,
+    rank_policy: RankPolicy,
+    /,
+    *,
+    host: Literal[True],
+) -> np.ndarray: ...
+
+
+def primal_svd_status(
+    values: Array | np.ndarray,
+    relative: Array | np.ndarray,
+    orthogonality: Array | np.ndarray,
+    preparation_status: Array | np.ndarray,
+    rank: SVDRankEvidence | HostSVDRankEvidence,
+    maximum_rank: int,
+    tolerance: SVDTolerancePolicy,
+    rank_policy: RankPolicy,
+    /,
+    *,
+    host: bool = False,
+) -> Array | np.ndarray:
+    """Canonical finite/residual/rank admission, including precedence of failures."""
+    xp = np if host else jnp
+    finite = xp.all(xp.isfinite(values)) & xp.all(xp.isfinite(relative))
+    converged = xp.all(relative <= tolerance.residual) & (
+        orthogonality <= tolerance.orthogonality
+    )
+    status = xp.where(
+        finite,
+        xp.where(
+            converged,
+            int(SVDSolveStatus.SUCCESS),
+            int(SVDSolveStatus.RESIDUAL_TOLERANCE_NOT_MET),
+        ),
+        int(SVDSolveStatus.NONFINITE_OUTPUT),
+    ).astype(xp.int32)
+    available = preparation_status == int(SVDSolveStatus.SUCCESS)
+    status = xp.where(available, status, preparation_status)
+    if rank_policy.require_full_rank:
+        rank_status = xp.where(
+            rank.available
+            & rank.deterministic_exact
+            & (rank.lower_bound == rank.upper_bound),
+            xp.where(
+                rank.lower_bound == maximum_rank,
+                status,
+                int(SVDSolveStatus.RANK_DEFICIENT),
+            ),
+            int(SVDSolveStatus.GLOBAL_RANK_UNCERTIFIED),
+        )
+        status = xp.where(available & finite, rank_status, status)
+    return np.asarray(status) if host else jnp.asarray(status)
+
+
 def rank_evidence(
     values: Array,
     eta: Array,
@@ -196,8 +354,11 @@ def rank_evidence(
     rows, columns = problem.operator.target.size, problem.operator.source.size
     full = values.shape[0] == problem.maximum_rank
     exact = plan.certificate_kind == "exact-spectrum"
+    if exact:
+        return exact_spectrum_rank_evidence(
+            values, rows, columns, plan.policy.rank, available
+        )
     policy = plan.policy.rank
-    rank = numerical_rank_data(values, rows, columns, policy)
     relative = (
         max(rows, columns) * jnp.finfo(values.dtype).eps
         if policy.relative_cutoff is None
@@ -212,8 +373,6 @@ def rank_evidence(
     lower = jnp.sum(values - allowance > high, dtype=jnp.int32)
     upper = jnp.sum(values + eta + allowance > low, dtype=jnp.int32)
     upper = upper + jnp.where(eta > low, problem.maximum_rank - values.shape[0], 0)
-    if exact:
-        lower, upper, low, high = rank.rank, rank.rank, rank.cutoff, rank.cutoff
     deterministic = exact or (full and plan.certificate_kind == "deterministic-frobenius")
     exact_available = available & deterministic & (lower == upper)
     return SVDRankEvidence(

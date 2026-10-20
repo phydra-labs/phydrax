@@ -1211,7 +1211,9 @@ class StreamedFragment(NonTrainableState, StrictModule):
         return reduced
 
 
-def _input_link(trees: tuple[object, ...], /) -> Array:
+def _input_link(
+    trees: tuple[object, ...], output_dtypes: tuple[np.dtype, ...], /
+) -> Array:
     """An exact zero whose derivatives of every order reach each input leaf.
 
     ``trees`` are the evaluation's differentiable inputs, including the
@@ -1219,12 +1221,22 @@ def _input_link(trees: tuple[object, ...], /) -> Array:
     masked first, so the link is an exact zero even for padding NaN rows. The
     final ``sin`` keeps every derivative order structurally present (a linear
     link has an identically zero Hessian, so HVPs and force-loss mixed
-    derivatives of a failed evaluation would stay finite).
+    derivatives of a failed evaluation would stay finite). Its real dtype
+    follows the inexact inputs and declared outputs, including output-only
+    evaluations; integer roles do not widen this numerical dependency.
     """
-    link = jnp.zeros(())
-    for leaf in jax.tree.leaves(trees):
-        if not isinstance(leaf, jax.Array) or not jnp.issubdtype(leaf.dtype, jnp.inexact):
-            continue
+    leaves = [
+        leaf
+        for leaf in jax.tree.leaves(trees)
+        if isinstance(leaf, jax.Array) and jnp.issubdtype(leaf.dtype, jnp.inexact)
+    ]
+    real_dtypes = tuple(jnp.finfo(leaf.dtype).dtype for leaf in leaves) + tuple(
+        jnp.finfo(dtype).dtype
+        for dtype in output_dtypes
+        if jnp.issubdtype(dtype, jnp.inexact)
+    )
+    link = jnp.zeros((), np.result_type(*real_dtypes) if real_dtypes else np.float32)
+    for leaf in leaves:
         safe = jnp.where(jnp.isfinite(leaf), leaf, jnp.zeros((), leaf.dtype))
         touch = jnp.sum(safe - jax.lax.stop_gradient(safe))
         if jnp.issubdtype(leaf.dtype, jnp.complexfloating):
@@ -1244,7 +1256,7 @@ def _poison(value: Array, successful: Array, link: Array, /) -> Array:
     # admitted evaluation multiplies by exactly one with a zero-scaled link
     # tangent, leaving values and derivatives unchanged.
     real = jnp.finfo(value.dtype).dtype
-    scale = jnp.where(successful, jnp.zeros((), real), jnp.nan)
+    scale = jnp.where(successful, jnp.zeros((), real), jnp.asarray(jnp.nan, real))
     return value * (1 + scale * link.astype(real))
 
 
@@ -1990,7 +2002,10 @@ class PreparedStreamedRelation(StrictModule):
         # poisons all of them, so consumers that never read the evidence still
         # cannot use finite values or derivatives from a failed evaluation.
         successful = schedule.successful & finite
-        link = _input_link((parameters, sources, receivers, edges, callbacks))
+        link = _input_link(
+            (parameters, sources, receivers, edges, callbacks),
+            payload.output_dtypes + payload.edge_output_dtypes,
+        )
         receiver_outputs = [
             _poison(
                 jnp.zeros((schedule.receiver_count,) + shape, dtype)

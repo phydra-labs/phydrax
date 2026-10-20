@@ -4,6 +4,8 @@
 !native/providers/**/CMakeLists.txt
 !native/meshcore/**/CMakeLists.txt
 !native/cuda/**/CMakeLists.txt
+!native/metal/**/CMakeLists.txt
+!LICENSES/METAL-*.txt
 !LICENSES/BEMPP-CL-MIT.txt
 !LICENSES/FMMAX-MIT.txt
 !LICENSES/JZTREE-MIT.txt
@@ -28,6 +30,7 @@
 *.phx
 *.png
 .venv
+.venv313
 .tmp
 .notes
 .prompts
@@ -54,6 +57,10 @@ benchmarks/*
 !benchmarks/h200_qualification.json
 # RTX PRO 6000 installation evidence and blocked peer-transfer qualification.
 !benchmarks/rtx_pro_6000_qualification.json
+# Apple GPU primitive/scientific drivers and retained build/performance evidence.
+!benchmarks/metal_execution_scaling.py
+!benchmarks/m1_max_qualification.json
+!benchmarks/m1_max_optimization.json
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
 !benchmarks/analyze_adaptive_campaign.py

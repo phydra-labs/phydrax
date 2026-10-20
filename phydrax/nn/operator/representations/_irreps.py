@@ -72,6 +72,23 @@ def _orthogonal_frame(orthogonal: ArrayLike, /) -> tuple[Array, Array]:
     return matrix, determinant_small_linear(SmallLinearSolvePlan(3), matrix)
 
 
+def _host_orthogonal_frame(orthogonal: np.ndarray, /) -> tuple[np.ndarray, np.float64]:
+    """Validate a concrete host frame without staging numerical device values."""
+    if not isinstance(orthogonal, np.ndarray):
+        raise TypeError("Host O(3) preparation requires a NumPy frame matrix.")
+    if orthogonal.shape != (3, 3):
+        raise ValueError("O(3) transforms require a (3, 3) matrix.")
+    if not np.issubdtype(orthogonal.dtype, np.number) or np.issubdtype(
+        orthogonal.dtype, np.complexfloating
+    ):
+        raise TypeError("Host O(3) frame matrices must be real numeric arrays.")
+    matrix = np.asarray(orthogonal, dtype=np.float64)
+    error = np.max(np.abs(matrix.T @ matrix - np.eye(3, dtype=matrix.dtype)))
+    if not np.all(np.isfinite(matrix)) or float(error) > 1e-6:
+        raise ValueError("O(3) transform matrix must be orthogonal.")
+    return matrix, np.float64(np.linalg.det(matrix))
+
+
 @final
 class O3IrrepBlock(StrictModule):
     """One named real O(3) irrep ``(l, parity)`` repeated over channels.
@@ -251,6 +268,30 @@ class O3IrrepLayout(StrictModule, NonTrainableState):
             start = stop
         return packed
 
+    def host_representation_matrix(self, orthogonal: np.ndarray, /) -> np.ndarray:
+        """Prepare a packed float64 host action for immutable numerical evidence.
+
+        This is separate from the differentiable device action: no frame,
+        determinant, coupling table or result is staged on a JAX device.
+        Both substrates use the same component-normalized coupling recurrence.
+        """
+        matrix, determinant = _host_orthogonal_frame(orthogonal)
+        actions = _host_proper_actions(
+            determinant * matrix, max(block.degree for block in self.blocks)
+        )
+        packed = np.zeros((self.packed_size, self.packed_size), dtype=np.float64)
+        start = 0
+        for block in self.blocks:
+            parity = block.parity if determinant < 0 else 1
+            action = parity * actions[block.degree]
+            stop = start + block.size
+            packed[start:stop, start:stop] = np.kron(
+                np.eye(block.multiplicity, dtype=np.float64), action
+            )
+            start = stop
+        packed.setflags(write=False)
+        return packed
+
     def transform(self, values: ArrayLike, orthogonal: ArrayLike, /) -> Array:
         """Apply one orthogonal frame change, including reflections, to packed values."""
         matrix, determinant = _orthogonal_frame(orthogonal)
@@ -283,15 +324,35 @@ def _proper_actions(rotation: Array, maximum_degree: int, /) -> tuple[Array, ...
     ``D_l = C (D_{l-1} kron D_1) C^T``, valid because the component-normalized
     coupling rows are orthonormal.
     """
+    return tuple(
+        jnp.asarray(action)
+        for action in _rotation_actions(rotation, maximum_degree, host=False)
+    )
+
+
+def _host_proper_actions(
+    rotation: np.ndarray, maximum_degree: int, /
+) -> tuple[np.ndarray, ...]:
+    return tuple(
+        np.asarray(action, dtype=np.float64)
+        for action in _rotation_actions(rotation, maximum_degree, host=True)
+    )
+
+
+def _rotation_actions(
+    rotation: Array | np.ndarray, maximum_degree: int, /, *, host: bool
+) -> tuple[Array | np.ndarray, ...]:
+    """The canonical real Wigner recurrence for either explicit substrate."""
+    xp = np if host else jnp
     dtype = rotation.dtype
-    axes = jnp.asarray(_DEGREE_ONE_CARTESIAN_AXES)
-    actions = [jnp.ones((1, 1), dtype=dtype)]
+    axes = xp.asarray(_DEGREE_ONE_CARTESIAN_AXES)
+    actions = [xp.ones((1, 1), dtype=dtype)]
     if maximum_degree == 0:
         return tuple(actions)
     first = rotation[axes][:, axes]
     actions.append(first)
     for degree in range(2, maximum_degree + 1):
-        coupling = jnp.asarray(
+        coupling = xp.asarray(
             o3_real_coupling(degree - 1, 1, degree).dense(), dtype=dtype
         )
         actions.append(

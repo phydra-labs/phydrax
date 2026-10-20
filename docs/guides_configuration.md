@@ -145,6 +145,14 @@ effects that ran. `snapshot()` never discovers devices;
 `phydrax.execution.runtime_info()` does. These settings do not replace scientific
 precision policies, explicit array dtypes, or execution plans.
 
+Apple GPU execution uses the same runtime record, not a separate configuration
+API: select `RuntimeConfig(platforms=("mps",), enable_x64=True)` before numerical
+imports. Admission checks the matching Metal companion before applying settings.
+Construct numerical arrays explicitly as float32/complex64; x64 stays enabled
+for exact integer addressing. Changing platform selection after initialization,
+or disabling x64 to hide a float64 construction, does not establish a valid
+scientific profile. See [Apple GPU execution](guides_metal_execution.md).
+
 Logging emission is selected by
 `config.configure(config.LoggingConfig(enabled=True))`; handlers, sinks, and
 correlation context remain with `phydrax.logging`. Provider paths and worker

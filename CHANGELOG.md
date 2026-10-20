@@ -53,6 +53,62 @@
   policy and plan identities.
 
 ### Added
+- Add the wheel-only `metal` extra and pinned `phydrax-metal` companion for
+  standard CPython 3.13, JAX/JAXlib 0.12.0, and Darwin arm64. The native runtime
+  identifies as `mps`, preserves exact 64-bit indices with x64 enabled, and
+  refuses unsupported float64/complex128 instead of narrowing. Source, patch,
+  asset, toolchain, build, and installed-wheel qualification identities remain
+  explicit; catalog profiles are candidates, not release or speedup claims.
+- Retain initial local M1 Max installed-wheel qualification and same-precision scaling
+  evidence in `benchmarks/m1_max_qualification.json`: 151 mandatory cases and
+  the Poisson example pass. A width-256 Poisson PINN records a 1.64× median
+  training-update speedup with unchanged accuracy gates; tested iterative,
+  spectral, sparse, neighbor, and MACE workloads remain CPU-favored. The wider
+  PINN's failed agreement checks remain explicit nonclaims.
+- Optimize admitted Metal ordinary reductions, singleton scatter windows,
+  bounded pure indexed regions, and staged float32 weighted O(3) contractions.
+  Parallel ordinary reduction trees may change rounding; explicitly ordered
+  and compensated scientific event sequences remain unchanged.
+- Preserve full-width fill-gather bounds in Metal's platform-specific JAX
+  lowering, including scatter cotangents. Fix MLX multi-output kernel signatures
+  with input metadata and retain ordered callback tokens through native cases.
+- Retain optimized M1 Max evidence in `benchmarks/m1_max_optimization.json`:
+  293 installed-wheel cases pass; long ordinary sums and streamed MACE improve,
+  and the width-256 PINN records a 2.34× median-update advantage over CPU.
+  CPU-favored cases, measured regressions, and failed width-1024 agreement remain
+  explicit rather than becoming blanket acceleration claims.
+- Add explicit construction dtype to `Linear`, `MLP`, and `HyperRectangle`.
+  Float32 construction preserves wide integer support under x64-on execution;
+  omitted dtype retains existing initialization and geometry defaults.
+- Add explicit dynamic coefficient dtype to native and imported symmetric
+  contraction bases, propagated from MACE compute precision. Float32 bases have
+  distinct representation fingerprints and separately recorded storage-rounding
+  evidence; float64 remains the default. Host SVD/rank and O(3) certification
+  no longer allocate floating arrays on the selected JAX device.
+- Add opt-in measure/particle/atomistic mass accumulation dtype while preserving
+  float64 defaults. Copies, batching, optimization, and export retain the selected
+  precision; overflow remains a failed numerical contract.
+- Preserve float32 clocks for single-precision `DifferentialProblem` states and
+  saved array-valued differential histories. Other solution owners retain their
+  prior float64 normalization; interval validation uses the effective clock.
+- Add pure Metal environment assessment and explicit runtime observation through
+  `phydrax.backends`, with companion/JAX identity, asset-integrity, conflicting
+  plugin, and source-binding refusal evidence. Host-only inspection remains
+  device-inert; an unprobed successful assessment is not hardware qualification.
+- Defer backend and solver facade imports through canonical symbol owners so
+  metadata inspection and first temporal use do not initialize unrelated
+  numerical providers or finite-element coefficients.
+- Defer the DEM barrier's zero-time array conversion until evaluation, removing
+  an unrelated float64 allocation during scientific module imports. Its
+  configured scalar precision and explicit array dtypes are unchanged.
+- Keep sparse failure-derivative links and Fourier phase construction in their
+  declared numerical precision, including strict real/complex promotion.
+- Prepare native SiLU normalization through host-only Hermite data, preserving
+  its float64 value without allocating float64 arrays on the selected device.
+- Normalize explicit casts of real literals and bounded, fully constant scalar
+  setup graphs before Metal device-type admission, without admitting runtime
+  float64 arithmetic. Preserve BF16 callback payloads and strided results, and
+  refuse unsupported element types without aborting the compiler process.
 - Admit compiled MACE coupling on B200 (compute capability 10.0), with real-device
   float32/float64 deterministic/compensated forward, all-operand and coefficient
   derivatives, second-order derivatives, compiler resource evidence, and

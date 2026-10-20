@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -140,8 +140,19 @@ class ParticleSetPlan(AbstractDiscretizationPlan):
             },
         )
 
-    def prepare(self, /, *, numeric_version: str = "0") -> ParticleDiscretization:
-        return ParticleDiscretization(self, numeric_version=numeric_version)
+    def prepare(
+        self,
+        /,
+        *,
+        numeric_version: str = "0",
+        measure_accumulation_dtype: DTypeLike = jnp.float64,
+    ) -> ParticleDiscretization:
+        """Prepare mass arithmetic with an explicit, default-float64 reduction."""
+        return ParticleDiscretization(
+            self,
+            numeric_version=numeric_version,
+            measure_accumulation_dtype=measure_accumulation_dtype,
+        )
 
 
 class ParticleDiscretization(AbstractPreparedDiscretization):
@@ -162,7 +173,15 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
     prepared_id: str = eqx.field(static=True)
 
     @checked
-    def __init__(self, plan: ParticleSetPlan, /, *, numeric_version: str = "0") -> None:
+    def __init__(
+        self,
+        plan: ParticleSetPlan,
+        /,
+        *,
+        numeric_version: str = "0",
+        measure_accumulation_dtype: DTypeLike = jnp.float64,
+    ) -> None:
+        accumulation = real_precision_dtype_name(measure_accumulation_dtype)
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
@@ -229,6 +248,7 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
             jnp.asarray(masses_host, dtype=plan.coordinate_dtype),
             active_mask=plan.active_mask,
             normalization="physical",
+            accumulation_dtype=accumulation,
         )
         preparation = PreparationReport(
             capabilities=plan.capabilities,
@@ -260,6 +280,11 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
                 "fields": [position_space.field_space_id, velocity_space.field_space_id],
                 "mass_measure": mass_measure.measure_id,
                 "numeric_version": version,
+                **(
+                    {"measure_accumulation_dtype": accumulation}
+                    if accumulation != "float64"
+                    else {}
+                ),
             }
         )
         self.plan = plan
@@ -298,7 +323,15 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
 
     @property
     def masses(self) -> Array:
-        return self.measures[0].weights
+        return self.mass_measure.weights
+
+    @property
+    def mass_measure(self) -> DiscreteMeasure:
+        """The owning material-mass measure, independent of tuple ordering."""
+        for measure in self.measures:
+            if measure.name == "material_mass":
+                return measure
+        raise KeyError("Particle discretization has no material_mass measure.")
 
     @property
     def position_space(self) -> DiscreteFieldSpace:

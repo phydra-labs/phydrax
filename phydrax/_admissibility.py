@@ -105,9 +105,14 @@ def guard_derivative_validity(
     dependency_leaves = tuple(
         leaf for leaf in jax.tree.leaves(dependencies) if eqx.is_inexact_array(leaf)
     )
+    # Match the first summand so mixed-precision promotion and reduction order
+    # stay unchanged. An empty dependency has no precision role.
+    dependency_dtype = (
+        jnp.finfo(dependency_leaves[0].dtype).dtype if dependency_leaves else jnp.float32
+    )
     dependency = sum(
         (jnp.sum(jnp.real(leaf)) for leaf in dependency_leaves),
-        start=jnp.asarray(0.0),
+        start=jnp.zeros((), dtype=dependency_dtype),
     )
     return jax.tree.map(
         lambda leaf: (

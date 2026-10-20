@@ -27,7 +27,7 @@ from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._model import register_artifact_value
-from ..._polynomial._orthogonal import standard_normal_hermite_rule_data
+from ..._polynomial._orthogonal import standard_normal_hermite_host_arrays
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
 from ..._validation import finite_real_scalar, positive_finite_float, positive_integer
@@ -61,9 +61,9 @@ def _float_dtype(dtype: DTypeLike, /) -> np.dtype:
 
 def normalized_silu_scale() -> float:
     """Return ``1 / sqrt(E[silu(z)**2])`` for standard-normal ``z`` by quadrature."""
-    rule = standard_normal_hermite_rule_data(_SILU_MOMENT_NODES, dtype=jnp.float64)
-    nodes = np.asarray(rule.nodes, dtype=np.float64)
-    weights = np.asarray(rule.weights, dtype=np.float64)
+    nodes, weights = standard_normal_hermite_host_arrays(
+        _SILU_MOMENT_NODES, dtype=np.float64
+    )
     silu = nodes / (1.0 + np.exp(-nodes))
     return float(1.0 / np.sqrt(np.sum(weights * silu * silu)))
 
@@ -163,15 +163,19 @@ class PolynomialCutoff(StrictModule, NonTrainableState):
 
     def __call__(self, distance: Array, /) -> Array:
         p = float(self.power)
-        ratio = distance / self.cutoff
+        cutoff = jnp.asarray(self.cutoff, dtype=distance.dtype)
+        ratio = distance / cutoff
         ratio_p = ratio**self.power
         envelope = (
-            1.0
-            - 0.5 * (p + 1.0) * (p + 2.0) * ratio_p
-            + p * (p + 2.0) * ratio_p * ratio
-            - 0.5 * p * (p + 1.0) * ratio_p * ratio * ratio
+            jnp.ones((), dtype=distance.dtype)
+            - jnp.asarray(0.5 * (p + 1.0) * (p + 2.0), dtype=distance.dtype) * ratio_p
+            + jnp.asarray(p * (p + 2.0), dtype=distance.dtype) * ratio_p * ratio
+            - jnp.asarray(0.5 * p * (p + 1.0), dtype=distance.dtype)
+            * ratio_p
+            * ratio
+            * ratio
         )
-        return jnp.where(distance < self.cutoff, envelope, jnp.zeros_like(envelope))
+        return jnp.where(distance < cutoff, envelope, jnp.zeros_like(envelope))
 
 
 @final
@@ -244,11 +248,15 @@ class AgnesiTransform(StrictModule, NonTrainableState):
     def __call__(
         self, distance: Array, sender_species: Array, receiver_species: Array, /
     ) -> Array:
-        r0 = 0.5 * (
+        r0 = jnp.asarray(0.5, dtype=self.covalent_radii.dtype) * (
             self.covalent_radii[sender_species] + self.covalent_radii[receiver_species]
         )
         ratio = distance / r0
-        return 1.0 / (1.0 + self.a * ratio**self.q / (1.0 + ratio ** (self.q - self.p)))
+        one = jnp.ones((), dtype=ratio.dtype)
+        a = jnp.asarray(self.a, dtype=ratio.dtype)
+        q = jnp.asarray(self.q, dtype=ratio.dtype)
+        exponent = jnp.asarray(self.q - self.p, dtype=ratio.dtype)
+        return one / (one + a * ratio**q / (one + ratio**exponent))
 
 
 @final
@@ -483,7 +491,8 @@ class RadialMLP(StrictModule, ParameterOwner):
         """Return the hidden state entering the final linear layer."""
         value = features
         for weight in self.weights[:-1]:
-            value = self.activation_scale * jax.nn.silu(self._layer(value, weight))
+            hidden = jax.nn.silu(self._layer(value, weight))
+            value = jnp.asarray(self.activation_scale, dtype=hidden.dtype) * hidden
         return value
 
     def project(self, embedding: Array, /) -> Array:

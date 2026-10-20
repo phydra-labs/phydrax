@@ -23,6 +23,19 @@ Wiener source: its coefficient, native noise shape, optional basis identity,
 mathematical structure (`additive`, `commutative`, or `general`), and coefficient
 representation.
 
+When every initial-state leaf is float32 or complex64, `DifferentialProblem`
+constructs float32 time bounds and validates save schedules in that clock
+precision. Other initial states retain the float64 clock. Bounds must remain
+finite and strictly ordered after conversion: intervals that collapse in the
+declared precision are refused. Array-valued `DifferentialSolution` histories
+retain float32 saved times rather than promoting them to float64. This does not
+change the clock contracts of DAE, jump, Lévy, memory, or rough solutions.
+
+For a fixed-step recurrence, explicitly pass
+`stepsize_controller=diffrax.ConstantStepSize()`. An embedded method such as
+Heun otherwise uses the backend's adaptive default controller; `dt0` alone does
+not request a fixed step or guarantee a particular step count.
+
 The default `representation="dense"` requires a coefficient with shape
 `state_shape + noise_shape`. `coefficient_matrix(time, state, args)` validates that
 contract and returns the canonical `(state_size, noise_size)` view.

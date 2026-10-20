@@ -293,6 +293,7 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
             periodic_axes=structure.periodic_axes,
             name=structure.name,
             coordinate_dtype=structure.positions.dtype,
+            mass_accumulation_dtype=structure.particles.mass_measure.total_mass.dtype,
         )
         return MolecularGeometryOptimizationResult(
             structure,

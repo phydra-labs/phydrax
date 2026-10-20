@@ -110,7 +110,11 @@ def linear_status_message(status: int | LinearSolveStatus, /) -> str:
 
 
 class LinearSolveDiagnostics(StrictModule):
-    """JAX-compatible evidence retained per operator batch or right-hand side."""
+    """JAX-compatible evidence retained per operator batch or right-hand side.
+
+    Python floating rank cutoffs use the residual precision; explicitly typed
+    cutoffs retain their own dtype without implicit cross-precision promotion.
+    """
 
     residual_norm: Array
     relative_residual: Array
@@ -159,7 +163,10 @@ class LinearSolveDiagnostics(StrictModule):
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.rank = jnp.asarray(rank, dtype=jnp.int32)
         self.condition_estimate = jnp.asarray(condition_estimate)
-        self.rank_cutoff = jnp.asarray(rank_cutoff)
+        self.rank_cutoff = jnp.asarray(
+            rank_cutoff,
+            dtype=self.residual_norm.dtype if type(rank_cutoff) is float else None,
+        )
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.compatibility_residual = jnp.asarray(compatibility_residual)
@@ -807,21 +814,27 @@ class LinearSolveCheckEvidence(StrictModule):
         residual = broadcast(true_residual_norm)
         rhs = broadcast(rhs_norm)
         threshold = broadcast(residual_threshold)
-        finite_ = broadcast(finite, bool)
+        finite_ = broadcast(finite, jnp.bool_)
         stability_bound = broadcast(stability_lower_bound)
-        converged_ = broadcast(converged, bool)
-        stability_ok_ = broadcast(stability_ok, bool)
+        converged_ = broadcast(converged, jnp.bool_)
+        stability_ok_ = broadcast(stability_ok, jnp.bool_)
+        stability_positive = stability_bound > jnp.zeros((), dtype=stability_bound.dtype)
         forward_available = (
             jnp.asarray(stability_checked)
             & stability_ok_
             & finite_
             & jnp.isfinite(residual)
             & jnp.isfinite(stability_bound)
-            & (stability_bound > 0.0)
+            & stability_positive
         )
         forward_bound = jnp.where(
             forward_available,
-            residual / jnp.where(stability_bound > 0.0, stability_bound, 1.0),
+            residual
+            / jnp.where(
+                stability_positive,
+                stability_bound,
+                jnp.ones((), dtype=stability_bound.dtype),
+            ),
             jnp.asarray(jnp.inf, dtype=residual.dtype),
         )
         forward_certified = forward_available & jnp.asarray(
@@ -829,8 +842,8 @@ class LinearSolveCheckEvidence(StrictModule):
         )
         compatibility = broadcast(compatibility_residual)
         gauge = broadcast(gauge_residual)
-        nullspace_ok_ = broadcast(nullspace_ok, bool)
-        primal_valid_ = broadcast(primal_valid, bool)
+        nullspace_ok_ = broadcast(nullspace_ok, jnp.bool_)
+        primal_valid_ = broadcast(primal_valid, jnp.bool_)
         status_ok = status_ == int(LinearSolveStatus.SUCCESS)
         residual_ok = (
             jnp.isfinite(residual)
@@ -838,7 +851,9 @@ class LinearSolveCheckEvidence(StrictModule):
             & jnp.isfinite(threshold)
             & (residual <= threshold)
         )
-        relative = jnp.where(rhs > 0.0, residual / rhs, residual)
+        relative = jnp.where(
+            rhs > jnp.zeros((), dtype=rhs.dtype), residual / rhs, residual
+        )
         valid = (
             finite_
             & status_ok

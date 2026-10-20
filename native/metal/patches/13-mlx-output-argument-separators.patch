@@ -1,0 +1,15 @@
+diff --git a/mlx/backend/common/metal_kernel.cpp b/mlx/backend/common/metal_kernel.cpp
+--- a/mlx/backend/common/metal_kernel.cpp
++++ b/mlx/backend/common/metal_kernel.cpp
+@@ -151,8 +151,9 @@
+     kernel_source += " [[buffer(";
+     kernel_source += std::to_string(index);
+     kernel_source += ")]]";
+-    if (index < inputs.size() + output_names.size() - 1 ||
+-        attributes.size() > 0) {
++    // Buffer indices also include optional input shape/stride/ndim arguments;
++    // only the output ordinal determines whether another output follows.
++    if (i + 1 < output_names.size() || attributes.size() > 0) {
+       kernel_source += ",\n";
+     } else {
+       kernel_source += ") {\n";

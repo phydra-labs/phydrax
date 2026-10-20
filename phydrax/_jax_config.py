@@ -99,6 +99,11 @@ def platforms() -> tuple[str, ...] | None:
     return tuple(value.split(","))
 
 
+def configuration_values() -> Mapping[str, object]:
+    """Observe upstream options without initializing devices or mutating policy."""
+    return dict(jax.config.values)
+
+
 def cpu_collectives_implementation() -> str | None:
     value = jax.config.jax_cpu_collectives_implementation
     if value is not None and not isinstance(value, str):
@@ -431,6 +436,7 @@ __all__ = [
     "RUNTIME_ENVIRONMENT_KEYS",
     "XLA_FLAGS_ENVIRONMENT",
     "backends_initialized",
+    "configuration_values",
     "cpu_collectives_implementation",
     "cpu_device_count",
     "default_device",

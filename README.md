@@ -643,6 +643,15 @@ supported CUDA major. Linux aarch64 has no companion yet. GPU-direct mpi4jax
 requires a matching user-provided build. See [Installation](docs/installation.md)
 for diagnostics, architecture coverage, and distributed deployment.
 
+On Apple Silicon, `pip install "phydrax[metal]"` selects the exact
+`phydrax-metal` wheel (when published for the matching release), with JAX/JAXlib
+0.12.0 and standard CPython 3.13. The candidate profile is single-device
+float32/complex64 with x64 enabled for exact 64-bit indices; float64/complex128
+are refused, not downcast. Select `JAX_PLATFORMS=mps` before numerical imports.
+Local builds and device probes are not complete scientific qualification or a
+blanket speedup claim. See [Apple GPU execution](docs/guides_metal_execution.md)
+for explicit dtype construction, diagnostics, qualification, and limitations.
+
 The base install includes native JAXPR structural tracing and deterministic
 coloring for sparse derivative plans. Compiled sparse Jacobian and Hessian plans
 integrate directly with `phydrax.linalg` and require no external tracing runtime.

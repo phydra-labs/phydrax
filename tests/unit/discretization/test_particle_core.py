@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -108,3 +111,63 @@ def test_particle_contracts() -> None:
     with pytest.raises(ValueError, match="cell_edge_list"):
         # ty: ignore[invalid-argument-type]
         phx.discretization.ParticleExecutionPolicy(realization="cell_ranges")
+
+
+def test_particle_mass_precision_preserves_default_and_prepared_identity() -> None:
+    plan = phx.discretization.ParticleSetPlan(
+        np.asarray([7, 11], dtype=np.int64),
+        np.asarray([2**24, 1], dtype=np.float32),
+        ambient_dimension=3,
+        coordinate_dtype=jnp.float32,
+    )
+    default = plan.prepare()
+    explicit_default = plan.prepare(measure_accumulation_dtype=jnp.float64)
+    selected = plan.prepare(measure_accumulation_dtype=jnp.float32)
+    direct = phx.discretization.ParticleDiscretization(
+        plan, measure_accumulation_dtype=jnp.float32
+    )
+
+    assert default.mass_measure.total_mass.dtype == jnp.float64
+    assert float(default.mass_measure.total_mass) == 2**24 + 1
+    assert selected.mass_measure.total_mass.dtype == jnp.float32
+    assert float(selected.mass_measure.total_mass) == 2**24
+    assert default.prepared_id == explicit_default.prepared_id
+    assert selected.prepared_id == direct.prepared_id
+    assert selected.prepared_id != default.prepared_id
+    assert selected.mass_measure.measure_id == default.mass_measure.measure_id
+    assert selected.plan_id == default.plan_id
+    assert selected.support.support_id == default.support.support_id
+    assert bool(selected.mass_measure.valid)
+    floating = [
+        leaf
+        for leaf in jax.tree.leaves(selected)
+        if hasattr(leaf, "dtype") and jnp.issubdtype(leaf.dtype, jnp.floating)
+    ]
+    assert floating
+    assert all(leaf.dtype == jnp.float32 for leaf in floating)
+
+
+@pytest.mark.parametrize("dtype", [jnp.int32, jnp.bool_, jnp.complex64])
+def test_particle_preparation_refuses_nonreal_mass_precision(dtype: Any) -> None:
+    plan = phx.discretization.ParticleSetPlan(
+        np.asarray([1], dtype=np.int64),
+        np.ones(1, dtype=np.float32),
+        ambient_dimension=3,
+        coordinate_dtype=jnp.float32,
+    )
+    with pytest.raises(ValueError, match="precision dtype|not real"):
+        plan.prepare(measure_accumulation_dtype=dtype)
+    with pytest.raises(ValueError, match="precision dtype|not real"):
+        phx.discretization.ParticleDiscretization(plan, measure_accumulation_dtype=dtype)
+
+
+def test_particle_preparation_refuses_overflow_in_selected_mass_precision() -> None:
+    plan = phx.discretization.ParticleSetPlan(
+        np.asarray([1, 2], dtype=np.int64),
+        np.full(2, np.finfo(np.float32).max, dtype=np.float32),
+        ambient_dimension=3,
+        coordinate_dtype=jnp.float32,
+    )
+    assert bool(plan.prepare().mass_measure.valid)
+    with pytest.raises(ValueError, match="total mass must be finite"):
+        plan.prepare(measure_accumulation_dtype=jnp.float32)

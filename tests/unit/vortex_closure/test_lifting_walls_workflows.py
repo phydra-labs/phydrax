@@ -3,6 +3,7 @@
 #
 
 
+import math
 from typing import Any
 
 import equinox as eqx
@@ -88,7 +89,7 @@ def test_lifting_walls_workflows_scenario_1() -> None:
         endpoint="clamp",
     )
     evaluation = polar.evaluate(0.0, 5.0e5, 0.2, 0.1)
-    stall = phx.solver.DynamicStallPlan(0.1, 0.1, jnp.deg2rad(12.0), 0.2)
+    stall = phx.solver.DynamicStallPlan(0.1, 0.1, math.radians(12.0), 0.2)
     stall_state = stall.initialize(jnp.asarray((0.0,)), jnp.asarray((0.0,)))
     stall_result = stall.step(
         stall_state,

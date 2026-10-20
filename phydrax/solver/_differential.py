@@ -14,11 +14,12 @@ import jax
 import jax.numpy as jnp
 import lineax as lx
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
+from .._dtype_names import canonical_dtype
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._iteration import IterationEvidence
@@ -252,6 +253,34 @@ def _problem_identifier(
     return f"differential-problem:{canonical_fingerprint(payload)}"
 
 
+_SINGLE_PRECISION_STATE = (jnp.dtype(jnp.float32), jnp.dtype(jnp.complex64))
+
+
+def _time_bound_dtype(initial_state: Any, /) -> DTypeLike:
+    """Real dtype of the time bounds: float32 for a single-precision state.
+
+    Diffrax promotes state against time, so a state whose every leaf is
+    float32/complex64 keeps float32 bounds rather than float64 device values;
+    every other state retains the float64 time contract.
+    """
+    leaves = jax.tree.leaves(initial_state)
+    single = bool(leaves) and all(
+        eqx.is_array_like(leaf) and jnp.result_type(leaf) in _SINGLE_PRECISION_STATE
+        for leaf in leaves
+    )
+    return jnp.float32 if single else jnp.float64
+
+
+def _solution_clock_dtype(times: Array, /) -> DTypeLike:
+    """Real clock dtype of saved times: float32 times stay float32.
+
+    Single-precision problems save float32 times; every other clock keeps the
+    float64 time contract.
+    """
+    single = canonical_dtype(times.dtype) == jnp.dtype(jnp.float32)
+    return jnp.float32 if single else jnp.float64
+
+
 class DifferentialProblem(StrictModule):
     """Finite-dimensional initial-value problem with named stochastic forcing."""
 
@@ -291,8 +320,9 @@ class DifferentialProblem(StrictModule):
     ) -> None:
         if not callable(drift):
             raise TypeError("DifferentialProblem drift must be callable.")
-        start = jnp.asarray(t0, dtype=jnp.float64)
-        end = jnp.asarray(t1, dtype=jnp.float64)
+        time_dtype = _time_bound_dtype(initial_state)
+        start = jnp.asarray(t0, dtype=time_dtype)
+        end = jnp.asarray(t1, dtype=time_dtype)
         if start.shape != () or end.shape != ():
             raise ValueError("DifferentialProblem t0 and t1 must be scalar.")
         start = eqx.error_if(
@@ -533,14 +563,16 @@ class DifferentialSolution(StrictModule):
         iteration_evidence: IterationEvidence | None = None,
     ) -> None:
         if eqx.is_array_like(states):
+            clock = jnp.asarray(times)
             arrays = validate_solution_arrays(
-                times,
+                clock,
                 states,
                 valid,
                 sample_shape=sample_shape,
                 state_shape=None,
                 time_layout="per_path",
                 owner="DifferentialSolution",
+                time_dtype=_solution_clock_dtype(clock),
             )
             samples = arrays.sample_shape
             times_array = arrays.times

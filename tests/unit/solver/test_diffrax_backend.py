@@ -1,4 +1,9 @@
+import os
+import subprocess
+import sys
+import textwrap
 import warnings
+from pathlib import Path
 from typing import Any
 
 import diffrax as dfx
@@ -65,6 +70,73 @@ def _realization(
         levy_area=levy_area,
         label=label,
     )
+
+
+def test_first_public_heun_use_inside_transform_preserves_float32() -> None:
+    root = Path(__file__).resolve().parents[3]
+    source = textwrap.dedent("""
+        import diffrax as dfx
+        import equinox as eqx
+        import jax
+        import jax.numpy as jnp
+        import numpy as np
+        import phydrax as phx
+
+        phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
+
+        def solve(rate):
+            problem = phx.solver.DifferentialProblem(
+                lambda time, state, args: -args * state,
+                jnp.asarray([1.0], dtype=jnp.float32),
+                t0=0.0,
+                t1=1.0,
+                args=rate,
+            )
+            precision = phx.solver.TemporalPrecisionPolicy(
+                coefficient_dtype="float32",
+                state_dtype="float32",
+                stage_dtype="float32",
+                accumulation_dtype="float32",
+                residual_dtype="float32",
+                decision_dtype="float32",
+                checkpoint_dtype="float32",
+                output_dtype="float32",
+            )
+            return phx.solver.solve_diffrax(
+                problem,
+                save_times=jnp.asarray([0.5, 1.0], dtype=jnp.float32),
+                solver=dfx.Heun(),
+                stepsize_controller=dfx.ConstantStepSize(),
+                dt0=0.125,
+                max_steps=16,
+                precision=precision,
+            ).states
+
+        rate = jnp.asarray(0.5, dtype=jnp.float32)
+        _, output, _ = eqx.filter_make_jaxpr(solve)(rate)
+        assert output.shape == (2, 1)
+        assert output.dtype == jnp.float32
+        states = jax.jit(solve)(rate)
+        factor = 1.0 - 0.125 * 0.5 + 0.5 * (0.125 * 0.5) ** 2
+        np.testing.assert_allclose(
+            np.asarray(states[:, 0]),
+            np.asarray([factor**4, factor**8], dtype=np.float32),
+            rtol=3e-6,
+            atol=0.0,
+        )
+        derivative = jax.grad(lambda value: solve(value)[-1, 0])(rate)
+        expected = 8 * factor**7 * (-0.125 + 0.125**2 * 0.5)
+        np.testing.assert_allclose(np.asarray(derivative), expected, rtol=3e-6)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_solve_diffrax_ode_is_accurate_differentiable_and_jittable() -> None:

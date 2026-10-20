@@ -127,11 +127,11 @@ INTEL_JAX_PROFILE = VendorExecutionProfile(
 )
 
 APPLE_METAL_PROFILE = VendorExecutionProfile(
-    "jax-metal",
-    "metal",
+    "phydrax-metal",
+    "mps",
     "apple",
     ("single_device",),
-    ("float16", "float32"),
+    ("float32", "complex64"),
     experimental=True,
 )
 

@@ -151,10 +151,12 @@ def test_atomistic_equivariance_report_permutes_every_atom_aligned_field() -> No
         jnp.asarray([[[-0.7, 0.2, 0.0], [0.4, -0.1, 0.0]]]),
         jnp.asarray([[1.0, 12.0]]),
         phx.atomistic.AtomisticScaleContract(phx.units.ANGSTROM, phx.units.ELECTRONVOLT),
+        mass_accumulation_dtype=jnp.float32,
     )
 
     def centered_score(value: Any, time: Any) -> Any:
         del time
+        assert value.particles[0].mass_measure.total_mass.dtype == jnp.float32
         mass = jnp.where(value.atom_mask, value.masses, 0.0)
         center = jnp.sum(mass[..., None] * value.positions, axis=1, keepdims=True)
         center = center / jnp.sum(mass, axis=1, keepdims=True)[..., None]

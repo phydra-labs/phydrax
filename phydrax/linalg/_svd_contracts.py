@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import final, Literal, TypeAlias
+from typing import final, Literal, NamedTuple, overload, TypeAlias
 
 import equinox as eqx
 import jax
@@ -624,6 +624,20 @@ class SVDRankEvidence(StrictModule):
     failure_probability: Array
 
 
+class HostSVDRankEvidence(NamedTuple):
+    """Exact-spectrum evidence for immutable preparation, never device state."""
+
+    lower_bound: np.ndarray
+    upper_bound: np.ndarray
+    threshold_lower: np.ndarray
+    threshold_upper: np.ndarray
+    available: np.ndarray
+    full_spectrum: bool
+    deterministic_exact: np.ndarray
+    certificate_kind: Literal["exact-spectrum"]
+    failure_probability: np.ndarray
+
+
 @final
 class SVDRangeEvidence(StrictModule):
     spectral_upper_bound: Array
@@ -710,19 +724,32 @@ class SVDSolveResult(StrictModule):
         return self.status == int(SVDSolveStatus.SUCCESS)
 
 
-def require_exact_svd_rank(evidence: SVDRankEvidence | SVDSolveResult, /) -> Array:
-    """Consume available deterministic global rank evidence, never core rank."""
+@overload
+def require_exact_svd_rank(evidence: SVDRankEvidence | SVDSolveResult, /) -> Array: ...
+
+
+@overload
+def require_exact_svd_rank(evidence: HostSVDRankEvidence, /) -> np.ndarray: ...
+
+
+def require_exact_svd_rank(
+    evidence: SVDRankEvidence | SVDSolveResult | HostSVDRankEvidence, /
+) -> Array | np.ndarray:
+    """Consume available deterministic global SVD evidence on its own substrate."""
     if isinstance(evidence, SVDSolveResult):
-        valid = jnp.asarray(True)
         rank = evidence.rank_evidence
-    elif isinstance(evidence, SVDRankEvidence):
-        rank, valid = evidence, jnp.asarray(True)
+    elif isinstance(evidence, (SVDRankEvidence, HostSVDRankEvidence)):
+        rank = evidence
     else:
         raise TypeError("Expected SVDRankEvidence or SVDSolveResult.")
-    valid = valid & rank.available & (rank.lower_bound == rank.upper_bound)
+    valid = rank.available & (rank.lower_bound == rank.upper_bound)
     valid = valid & rank.deterministic_exact & rank.full_spectrum
+    if isinstance(rank, HostSVDRankEvidence):
+        if not bool(np.all(valid)):
+            raise ValueError("Deterministic exact global SVD rank evidence is required.")
+        return rank.lower_bound
     return eqx.error_if(
         rank.lower_bound,
-        ~valid,
+        ~jnp.asarray(valid),
         "Deterministic exact global SVD rank evidence is required.",
     )

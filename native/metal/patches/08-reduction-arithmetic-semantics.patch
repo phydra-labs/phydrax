@@ -1,0 +1,1002 @@
+diff --git a/src/pjrt_plugin/ops/arithmetic.cc b/src/pjrt_plugin/ops/arithmetic.cc
+index c1283380b5d07d5466695987882feeb98dd4e667..139d8dae528745e81487308b428414b67e496a4b 100644
+--- a/src/pjrt_plugin/ops/arithmetic.cc
++++ b/src/pjrt_plugin/ops/arithmetic.cc
+@@ -1,5 +1,10 @@
+ // Arithmetic, bitwise, and comparison op handlers.
+ 
++#include <mlx/fast.h>
++
++#include <algorithm>
++#include <limits>
++
+ #include "pjrt_plugin/ops/handler_utils.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+ 
+@@ -42,56 +47,152 @@ bool HandleClamp(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::a
+     return true;
+ }
+ 
+-// Handler for stablehlo.remainder
+-bool HandleRemainder(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+-                     ExecContext& ctx) {
++// These scalar kernels use Metal safe math (MLX's default), never an MLX
++// floor-remainder correction or a cancellation-prone x - trunc(x/y)*y graph.
++// Flattening also keeps scalar kernel arguments pointer-valued.
++mlx::core::array ArithmeticKernel(const char* name, const std::string& source,
++                                 const std::vector<mlx::core::array>& inputs,
++                                 const std::vector<std::string>& names,
++                                 const mlx::core::Shape& shape, mlx::core::Dtype dtype) {
++    int64_t count = 1;
++    for (int dim : shape) {
++        if (dim < 0 || (dim && count > std::numeric_limits<int32_t>::max() / dim))
++            throw std::runtime_error("arithmetic kernel exceeds Metal dispatch capacity");
++        count *= dim;
++    }
++    if (!count)
++        return mlx::core::zeros(shape, dtype);
++    std::vector<mlx::core::array> flat;
++    for (const auto& input : inputs)
++        flat.push_back(mlx::core::reshape(mlx::core::broadcast_to(input, shape), {-1}));
++    auto kernel = mlx::core::fast::metal_kernel(name, names, {"result"}, source, "", true,
++                                                false, {});
++    return mlx::core::reshape(
++        kernel(flat, {{static_cast<int32_t>(count)}}, {dtype}, {static_cast<int>(count), 1, 1},
++               {static_cast<int>(std::min<int64_t>(count, 256)), 1, 1},
++               {{"T", dtype}}, std::nullopt, false, {})[0], shape);
++}
++
++bool HandleRemainder(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>&,
++                     ExecContext&) {
+     auto* a = RequireValue(values, op->getOperand(0), "stablehlo.remainder");
+     auto* b = RequireValue(values, op->getOperand(1), "stablehlo.remainder");
+-    if (!a || !b)
+-        return false;
+-
+-    // stablehlo.remainder is C-style fmod: a - trunc(a/b) * b
++    if (!a || !b) return false;
+     auto dtype = a->dtype();
+-    bool isUnsigned = (dtype == mlx::core::uint8 || dtype == mlx::core::uint16 ||
+-                       dtype == mlx::core::uint32 || dtype == mlx::core::uint64);
+-    bool isSigned = (dtype == mlx::core::int8 || dtype == mlx::core::int16 ||
+-                     dtype == mlx::core::int32 || dtype == mlx::core::int64);
+-
+-    mlx::core::array result(0);
+-    if (isUnsigned) {
+-        // For unsigned integers, Python-style remainder == C-style remainder
+-        result = mlx::core::remainder(*a, *b);
+-    } else if (isSigned) {
+-        // For signed integers, Python remainder (rounds toward -inf) needs correction
+-        // to C-style remainder (truncates toward zero)
+-        auto py_rem = mlx::core::remainder(*a, *b);
+-        // Scalar constant (not zeros_like): a Full node is not fusable by
+-        // mx::compile, so it would cost a kernel dispatch per evaluation.
+-        auto zero = mlx::core::array(0, a->dtype());
+-        auto diff_sign = mlx::core::not_equal(mlx::core::less(*a, zero), mlx::core::less(*b, zero));
+-        auto needs_fix = mlx::core::logical_and(mlx::core::not_equal(py_rem, zero), diff_sign);
+-        result = mlx::core::where(needs_fix, mlx::core::subtract(py_rem, *b), py_rem);
++    bool isUnsigned = dtype == mlx::core::uint8 || dtype == mlx::core::uint16 ||
++                      dtype == mlx::core::uint32 || dtype == mlx::core::uint64;
++    bool isSigned = dtype == mlx::core::int8 || dtype == mlx::core::int16 ||
++                    dtype == mlx::core::int32 || dtype == mlx::core::int64;
++    std::string source;
++    if (isSigned || isUnsigned) {
++        // Avoid division-by-zero and signed-min/-1 hardware overflow. Integer
++        // remainder remains integer arithmetic even for full-width uint64.
++        source = "uint i = thread_position_in_grid.x; T x = lhs[i], y = rhs[i];\n"
++                 "result[i] = y == T(0) ? x : ";
++        if (isSigned) source += "y == T(-1) ? T(0) : ";
++        source += "T(x % y);\n";
++    } else if (mlx::core::issubdtype(dtype, mlx::core::floating)) {
++        source = R"(
++            uint i = thread_position_in_grid.x;
++            uint ux = as_type<uint>(float(lhs[i]));
++            uint uy = as_type<uint>(float(rhs[i]));
++            uint sign = ux & 0x80000000u;
++            ux &= 0x7fffffffu;
++            uy &= 0x7fffffffu;
++            if (uy == 0u || ux >= 0x7f800000u || uy > 0x7f800000u) {
++                result[i] = T(as_type<float>(0x7fc00000u));
++            } else if (ux < uy) {
++                result[i] = lhs[i]; // Includes finite % infinity, preserving -0.
++            } else if (ux == uy) {
++                result[i] = T(as_type<float>(sign));
++            } else {
++                // Binary long division of FP32 significands. Unlike a quotient
++                // graph or approximate fmod intrinsic, this remains exact for
++                // extreme exponent ratios and subnormal operands/results.
++                int ex = int(ux >> 23), ey = int(uy >> 23);
++                if (ex == 0) {
++                    ex = 1;
++                    while (ux < 0x800000u) { ux <<= 1; --ex; }
++                } else {
++                    ux = (ux & 0x7fffffu) | 0x800000u;
++                }
++                if (ey == 0) {
++                    ey = 1;
++                    while (uy < 0x800000u) { uy <<= 1; --ey; }
++                } else {
++                    uy = (uy & 0x7fffffu) | 0x800000u;
++                }
++                // At most 276 iterations for two finite nonzero FP32 inputs.
++                for (; ex > ey; --ex) {
++                    if (ux >= uy) ux -= uy;
++                    ux <<= 1;
++                }
++                if (ux >= uy) ux -= uy;
++                if (ux != 0u) {
++                    while (ux < 0x800000u) { ux <<= 1; --ex; }
++                    if (ex > 0) ux = (ux - 0x800000u) | (uint(ex) << 23);
++                    else ux >>= uint(1 - ex);
++                }
++                result[i] = T(as_type<float>(ux | sign));
++            }
++        )";
+     } else {
+-        // For float types, trunc(x) = sign(x) * floor(abs(x))
+-        auto quotient = mlx::core::divide(*a, *b);
+-        auto truncated = mlx::core::multiply(mlx::core::sign(quotient),
+-                                             mlx::core::floor(mlx::core::abs(quotient)));
+-        result = mlx::core::subtract(*a, mlx::core::multiply(truncated, *b));
++        throw std::runtime_error("stablehlo.remainder requires real floating or integer dtype");
+     }
+-    values.emplace(ToKey(op->getResult(0)), std::move(result));
++    auto shape = GetResultShape(op, "stablehlo.remainder");
++    if (!shape) return false;
++    values.emplace(ToKey(op->getResult(0)), ArithmeticKernel(
++        isSigned ? "phydrax_rem_signed" : isUnsigned ? "phydrax_rem_unsigned" : "phydrax_fmod",
++        source, {*a, *b}, {"lhs", "rhs"}, *shape, dtype));
+     return true;
+ }
+ 
+-// Handler for stablehlo.cbrt (cube root = sign(x) * |x|^(1/3))
+-bool HandleCbrt(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+-                ExecContext& ctx) {
++bool HandleCbrt(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>&,
++                ExecContext&) {
+     auto* x = RequireValue(values, op->getOperand(0), "stablehlo.cbrt");
+-    if (!x)
+-        return false;
+-    auto third = mlx::core::array(1.0F / 3.0F, x->dtype());
+-    auto result =
+-        mlx::core::multiply(mlx::core::sign(*x), mlx::core::power(mlx::core::abs(*x), third));
+-    values.emplace(ToKey(op->getResult(0)), std::move(result));
++    if (!x) return false;
++    if (!mlx::core::issubdtype(x->dtype(), mlx::core::floating))
++        throw std::runtime_error("stablehlo.cbrt requires real floating dtype");
++    // Reduce to m in [0.5, 4), then solve y^3=m with Newton iterations.
++    // Scaling by exact powers of two avoids overflow/underflow in y*y and
++    // includes subnormals. This is not pow(x, a rounded 1/3).
++    static const char* source = R"(
++        uint i = thread_position_in_grid.x;
++        float x = float(input[i]);
++        uint bits = as_type<uint>(x);
++        uint magnitude = bits & 0x7fffffffu;
++        if (magnitude == 0u || magnitude >= 0x7f800000u) {
++            result[i] = T(x);
++        } else {
++            // Bitwise normalization also admits subnormals on M1 without
++            // depending on the shader's denormal arithmetic mode.
++            int biased = int(magnitude >> 23);
++            int exponent = biased - 126;
++            uint fraction = magnitude & 0x7fffffu;
++            if (biased == 0) {
++                int highest = 31 - int(clz(fraction));
++                fraction = (fraction << (23 - highest)) & 0x7fffffu;
++                exponent = highest - 148;
++            }
++            float m = as_type<float>(fraction | 0x3f000000u);
++            int q = exponent / 3;
++            int r = exponent - 3 * q;
++            if (r < 0) { r += 3; --q; }
++            m = ldexp(m, r);
++            float y = 0.75f + 0.25f * m;
++            for (int step = 0; step < 5; ++step)
++                y = (2.0f * y + m / (y * y)) * 0.33333333333333333333f;
++            // Recover the square's rounding error before correcting the cube
++            // residual. All coefficients are explicitly FP32 on M1.
++            float square = y * y;
++            float square_error = fma(y, y, -square);
++            float residual = fma(-square, y, m) - square_error * y;
++            y = y + residual / (3.0f * square);
++            result[i] = T(copysign(ldexp(y, q), x));
++        }
++    )";
++    values.emplace(ToKey(op->getResult(0)), ArithmeticKernel(
++        "phydrax_cbrt", source, {*x}, {"input"}, x->shape(), x->dtype()));
+     return true;
+ }
+ 
+@@ -519,13 +620,22 @@ bool HandleSign(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::ar
+     auto* x = RequireValue(values, op->getOperand(0), "stablehlo.sign");
+     if (!x)
+         return false;
+-    auto result = mlx::core::sign(*x);
+     auto dtype = x->dtype();
+-    bool isFloat = (dtype == mlx::core::float16 || dtype == mlx::core::bfloat16 ||
+-                    dtype == mlx::core::float32 || dtype == mlx::core::complex64);
+-    if (isFloat) {
+-        result = mlx::core::where(mlx::core::isnan(*x), *x, result);
++    if (mlx::core::issubdtype(dtype, mlx::core::floating)) {
++        static const char* source = R"(
++            uint i = thread_position_in_grid.x;
++            uint bits = as_type<uint>(float(input[i]));
++            uint magnitude = bits & 0x7fffffffu;
++            result[i] = magnitude == 0u || magnitude > 0x7f800000u ?
++                input[i] : T(as_type<float>((bits & 0x80000000u) | 0x3f800000u));
++        )";
++        values.emplace(ToKey(op->getResult(0)), ArithmeticKernel(
++            "phydrax_sign", source, {*x}, {"input"}, x->shape(), dtype));
++        return true;
+     }
++    auto result = mlx::core::sign(*x);
++    if (dtype == mlx::core::complex64)
++        result = mlx::core::where(mlx::core::isnan(*x), *x, result);
+     values.emplace(ToKey(op->getResult(0)), std::move(result));
+     return true;
+ }
+diff --git a/src/pjrt_plugin/ops/reduction.cc b/src/pjrt_plugin/ops/reduction.cc
+index 3b3a53044b86d0c97cbe69b59706852b3638228d..520a82dd52b2ec17824d704d052a335a7dc58b1c 100644
+--- a/src/pjrt_plugin/ops/reduction.cc
++++ b/src/pjrt_plugin/ops/reduction.cc
+@@ -1,7 +1,11 @@
+ // Reduction op handlers (reduce, reduce_window, select_and_scatter).
+ 
++#include <mlx/fast.h>
++
+ #include <algorithm>
++#include <functional>
+ #include <limits>
++#include <sstream>
+ #include <tuple>
+ 
+ #include "pjrt_plugin/ops/handler_utils.h"
+@@ -11,450 +15,335 @@ namespace jax_mps {
+ 
+ namespace {
+ 
+-// Helper to detect reduction type by analyzing the body region
++// Only admit the actual binary reducer, including its operand/return wiring.
+ enum class ReduceType { Sum, Max, Min, Prod, And, Or, Unknown };
+ 
+ ReduceType DetectReduceType(mlir::Region& body) {
+-    if (body.empty())
++    if (!body.hasOneBlock())
+         return ReduceType::Unknown;
+-
+-    // Only match bodies with exactly one "real" op (plus the return).
+-    // Multi-op bodies (e.g., logaddexp: max + sub + exp + log1p + add + select)
+-    // must not be misidentified as a simple reduction.
+     auto& block = body.front();
+-    int realOpCount = 0;
+-    ReduceType detected = ReduceType::Unknown;
+-    for (auto& op : block.getOperations()) {
+-        auto opName = op.getName().getStringRef();
+-        if (opName == "stablehlo.return")
+-            continue;
+-        ++realOpCount;
+-        if (realOpCount > 1)
+-            return ReduceType::Unknown;
+-        if (opName == "stablehlo.add")
+-            detected = ReduceType::Sum;
+-        else if (opName == "stablehlo.maximum")
+-            detected = ReduceType::Max;
+-        else if (opName == "stablehlo.minimum")
+-            detected = ReduceType::Min;
+-        else if (opName == "stablehlo.multiply")
+-            detected = ReduceType::Prod;
+-        else if (opName == "stablehlo.and")
+-            detected = ReduceType::And;
+-        else if (opName == "stablehlo.or")
+-            detected = ReduceType::Or;
+-    }
+-    return detected;
++    if (block.getNumArguments() != 2 || block.getOperations().size() != 2)
++        return ReduceType::Unknown;
++    auto& binary = block.front();
++    auto& ret = block.back();
++    if (binary.getNumOperands() != 2 || binary.getNumResults() != 1 ||
++        ret.getName().getStringRef() != "stablehlo.return" || ret.getNumOperands() != 1 ||
++        ret.getOperand(0) != binary.getResult(0) ||
++        !((binary.getOperand(0) == block.getArgument(0) &&
++           binary.getOperand(1) == block.getArgument(1)) ||
++          (binary.getOperand(1) == block.getArgument(0) &&
++           binary.getOperand(0) == block.getArgument(1))))
++        return ReduceType::Unknown;
++    auto name = binary.getName().getStringRef();
++    if (name == "stablehlo.add") return ReduceType::Sum;
++    if (name == "stablehlo.maximum") return ReduceType::Max;
++    if (name == "stablehlo.minimum") return ReduceType::Min;
++    if (name == "stablehlo.multiply") return ReduceType::Prod;
++    if (name == "stablehlo.and") return ReduceType::And;
++    if (name == "stablehlo.or") return ReduceType::Or;
++    return ReduceType::Unknown;
+ }
+ 
+-// Detect argmax/argmin pattern in a 2-input reduce body.
+-// Returns 1 for argmax, -1 for argmin, 0 for neither.
+-int DetectArgReducePattern(mlir::Region& body) {
+-    if (body.empty())
+-        return 0;
+-
+-    auto& block = body.front();
+-    if (block.getNumArguments() != 4)
+-        return 0;
+-
+-    for (auto& op : block.getOperations()) {
+-        if (auto cmpOp = mlir::dyn_cast<mlir::stablehlo::CompareOp>(op)) {
+-            auto lhsArg = mlir::dyn_cast<mlir::BlockArgument>(cmpOp.getLhs());
+-            auto rhsArg = mlir::dyn_cast<mlir::BlockArgument>(cmpOp.getRhs());
+-            if (!lhsArg || !rhsArg)
+-                continue;
+-            // Block args for 2-input reduce are interleaved: (val0, idx0, val1, idx1)
+-            // So comparing values means args 0 vs 2
+-            if (lhsArg.getArgNumber() == 0 && rhsArg.getArgNumber() == 2) {
+-                auto dir = cmpOp.getComparisonDirection();
+-                if (dir == mlir::stablehlo::ComparisonDirection::GT ||
+-                    dir == mlir::stablehlo::ComparisonDirection::GE)
+-                    return 1;  // argmax
+-                if (dir == mlir::stablehlo::ComparisonDirection::LT ||
+-                    dir == mlir::stablehlo::ComparisonDirection::LE)
+-                    return -1;  // argmin
+-            }
+-        }
+-    }
+-    return 0;
++// Safe math preserves the declared fold order and NaN/zero rules. Explicit
++// compensated scientific loops remain their own operations, not reducer policy.
++// One thread owns one output; long axes are serial with O(output) workspace.
++const char* kReductionHeader = R"(
++template <typename T> T hlo_max(T a, T b) { return a > b ? a : b; }
++template <typename T> T hlo_min(T a, T b) { return a < b ? a : b; }
++template <> float hlo_max(float a, float b) {
++    if (isnan(a)) return a;
++    if (isnan(b)) return b;
++    if (a == 0.0f && b == 0.0f)
++        return as_type<float>(as_type<uint>(a) & as_type<uint>(b));
++    return a > b ? a : b;
+ }
+-
+-// Handler for stablehlo.reduce
+-bool HandleReduce(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>& outputs,
+-                  ExecContext& ctx) {
+-    auto reduceOp = CastOp<mlir::stablehlo::ReduceOp>(op, "stablehlo.reduce");
+-    if (!reduceOp)
+-        return false;
+-
+-    auto axes = ToIntVec(reduceOp.getDimensions());
+-    auto& body = reduceOp.getBody();
+-    size_t numInputs = reduceOp.getInputs().size();
+-
+-    // Special case: argmax/argmin pattern (2 inputs: values + indices)
+-    if (numInputs == 2) {
+-        int argDir = DetectArgReducePattern(body);
+-        if (argDir != 0) {
+-            auto* input = RequireValue(values, reduceOp.getInputs()[0], "stablehlo.reduce");
+-            if (!input)
+-                return false;
+-
+-            if (axes.size() == 1) {
+-                auto idx = (argDir > 0) ? mlx::core::argmax(*input, axes[0], /*keepdims=*/false)
+-                                        : mlx::core::argmin(*input, axes[0], /*keepdims=*/false);
+-                auto val =
+-                    (argDir > 0) ? mlx::core::max(*input, axes) : mlx::core::min(*input, axes);
+-
+-                values.emplace(ToKey(op->getResult(0)), std::move(val));
+-                values.emplace(ToKey(op->getResult(1)), mlx::core::astype(idx, mlx::core::int32));
+-                return true;
+-            }
+-        }
+-    }
+-
+-    ReduceType reduceType = DetectReduceType(body);
+-
+-    for (size_t i = 0; i < numInputs; ++i) {
+-        auto* input = RequireValue(values, reduceOp.getInputs()[i], "stablehlo.reduce");
+-        if (!input)
+-            return false;
+-
+-        std::optional<mlx::core::array> result;
+-        switch (reduceType) {
+-            case ReduceType::Sum:
+-                result = mlx::core::sum(*input, axes);
+-                break;
+-            case ReduceType::Max:
+-                result = mlx::core::max(*input, axes);
+-                break;
+-            case ReduceType::Min:
+-                result = mlx::core::min(*input, axes);
+-                break;
+-            case ReduceType::Prod:
+-                result = mlx::core::prod(*input, axes);
+-                break;
+-            case ReduceType::And:
+-                if (input->dtype() != mlx::core::bool_) {
+-                    MPS_LOG_ERROR(
+-                        "stablehlo.reduce: bitwise And reduction not supported for non-bool "
+-                        "types\n");
+-                    return false;
+-                }
+-                result = mlx::core::all(*input, axes);
+-                break;
+-            case ReduceType::Or:
+-                if (input->dtype() != mlx::core::bool_) {
+-                    MPS_LOG_ERROR(
+-                        "stablehlo.reduce: bitwise Or reduction not supported for non-bool "
+-                        "types\n");
+-                    return false;
+-                }
+-                result = mlx::core::any(*input, axes);
+-                break;
+-            default:
+-                MPS_LOG_ERROR("stablehlo.reduce: unsupported reduction type\n");
+-                return false;
+-        }
+-
+-        values.emplace(ToKey(op->getResult(i)), std::move(*result));
+-    }
+-
+-    return true;
++template <> float hlo_min(float a, float b) {
++    if (isnan(a)) return a;
++    if (isnan(b)) return b;
++    if (a == 0.0f && b == 0.0f)
++        return as_type<float>(as_type<uint>(a) | as_type<uint>(b));
++    return a < b ? a : b;
+ }
+-
+-// Handler for stablehlo.reduce_window (cumulative ops and pooling)
+-bool HandleReduceWindow(mlir::Operation* op, ValueMap& values,
+-                        std::vector<mlx::core::array>& outputs, ExecContext& ctx) {
+-    auto rwOp = CastOp<mlir::stablehlo::ReduceWindowOp>(op, "stablehlo.reduce_window");
+-    if (!rwOp)
+-        return false;
+-
+-    if (rwOp.getInputs().size() != 1 || rwOp.getInitValues().size() != 1 ||
+-        rwOp->getNumResults() != 1) {
+-        MPS_LOG_ERROR("stablehlo.reduce_window: only single-input reduce_window is supported\n");
+-        return false;
++template <> half hlo_max(half a, half b) { return half(hlo_max(float(a), float(b))); }
++template <> half hlo_min(half a, half b) { return half(hlo_min(float(a), float(b))); }
++)";
++
++std::string Combine(ReduceType type, const std::string& a, const std::string& b) {
++    switch (type) {
++        case ReduceType::Sum: return "(" + a + " + " + b + ")";
++        case ReduceType::Prod: return "(" + a + " * " + b + ")";
++        case ReduceType::Max: return "hlo_max(" + a + ", " + b + ")";
++        case ReduceType::Min: return "hlo_min(" + a + ", " + b + ")";
++        case ReduceType::And: return "(" + a + " & " + b + ")";
++        case ReduceType::Or: return "(" + a + " | " + b + ")";
++        default: throw std::runtime_error("unsupported StableHLO reducer body");
+     }
++}
+ 
+-    auto* input = RequireValue(values, rwOp.getInputs()[0], "stablehlo.reduce_window");
+-    if (!input)
+-        return false;
+-
+-    auto inputType = mlir::dyn_cast<mlir::RankedTensorType>(rwOp.getInputs()[0].getType());
+-    if (!inputType) {
+-        MPS_LOG_ERROR("stablehlo.reduce_window: unranked input\n");
+-        return false;
+-    }
+-    auto inputShape = inputType.getShape();
+-    auto rank = static_cast<int64_t>(inputShape.size());
+-
+-    // Handle scalar (0-dimensional) inputs: reduce_window on a scalar is identity.
+-    if (rank == 0) {
+-        values.emplace(ToKey(op->getResult(0)), *input);
+-        return true;
+-    }
+-
+-    auto windowDims = rwOp.getWindowDimensions();
+-    auto stridesOpt = rwOp.getWindowStrides();
+-    auto baseDilOpt = rwOp.getBaseDilations();
+-    auto winDilOpt = rwOp.getWindowDilations();
+-    auto paddingAttr = rwOp.getPaddingAttr();
+-
+-    std::vector<int64_t> strides(rank, 1);
+-    std::vector<int64_t> winDil(rank, 1);
+-    std::vector<int64_t> padLow(rank, 0);
+-    std::vector<int64_t> padHigh(rank, 0);
+-
+-    if (stridesOpt) {
+-        auto s = *stridesOpt;
+-        for (int64_t i = 0; i < rank; i++)
+-            strides[i] = s[i];
+-    }
+-    if (winDilOpt) {
+-        auto d = *winDilOpt;
+-        for (int64_t i = 0; i < rank; i++)
+-            winDil[i] = d[i];
++int64_t ShapeSize(const mlx::core::Shape& shape) {
++    int64_t size = 1;
++    for (int dim : shape) {
++        if (dim < 0 || (dim && size > std::numeric_limits<int32_t>::max() / dim))
++            throw std::runtime_error("reduction shape exceeds Metal dispatch capacity");
++        size *= dim;
+     }
+-    if (paddingAttr) {
+-        auto vals = paddingAttr.getValues<int64_t>();
+-        for (int64_t i = 0; i < rank; i++) {
+-            padLow[i] = vals[{static_cast<uint64_t>(i), 0}];
+-            padHigh[i] = vals[{static_cast<uint64_t>(i), 1}];
+-        }
+-    }
+-
+-    auto allOnes = [](const auto& opt) {
+-        if (!opt)
+-            return true;
+-        return std::all_of(opt->begin(), opt->end(), [](auto v) { return v == 1; });
+-    };
+-
+-    bool allStridesOne = allOnes(stridesOpt);
+-    bool allBaseDilOne = allOnes(baseDilOpt);
+-    bool allWinDilOne = allOnes(winDilOpt);
++    return size;
++}
+ 
+-    ReduceType reduceType = DetectReduceType(rwOp.getBody());
++std::vector<mlx::core::array> ReductionKernel(
++    const std::string& source, const std::vector<mlx::core::array>& inputs,
++    const std::vector<std::string>& names, const std::vector<std::string>& outputNames,
++    const mlx::core::Shape& shape, const std::vector<mlx::core::Dtype>& dtypes,
++    std::vector<std::pair<std::string, mlx::core::fast::TemplateArg>> templates) {
++    int count = static_cast<int>(ShapeSize(shape));
++    std::vector<mlx::core::Shape> shapes(dtypes.size(), mlx::core::Shape{count});
++    auto kernel = mlx::core::fast::metal_kernel(
++        "phydrax_reduce_" + std::to_string(std::hash<std::string>{}(source)), names,
++        outputNames, source, kReductionHeader, true, false, {});
++    auto result = kernel(inputs, shapes, dtypes, {count, 1, 1}, {std::min(count, 256), 1, 1},
++                         std::move(templates), std::nullopt, false, {});
++    for (auto& output : result)
++        output = mlx::core::reshape(output, shape);
++    return result;
++}
+ 
+-    // ---------- Tier 1: Cumulative pattern ----------
+-    if (allStridesOne && allBaseDilOne && allWinDilOne) {
+-        int64_t cumAxis = -1;
+-        bool isCumulative = true;
+-        for (int64_t i = 0; i < rank; i++) {
+-            if (windowDims[i] == 1)
+-                continue;
+-            if (windowDims[i] == inputShape[i] && cumAxis == -1) {
+-                cumAxis = i;
+-            } else {
+-                isCumulative = false;
+-                break;
+-            }
++// Lower a two-input scalar body verbatim instead of guessing argmax from one
++// comparison. This preserves its NaN policy, supplied index values, tie selects,
++// initial pair, and declared signed/unsigned index width. Unknown bodies fail.
++std::string PairReducer(mlir::Region& body) {
++    if (!body.hasOneBlock() || body.front().getNumArguments() != 4)
++        throw std::runtime_error("unsupported paired reduction body");
++    auto& block = body.front();
++    std::unordered_map<void*, std::string> expr;
++    const char* args[] = {"a", "ai", "b", "bi"};
++    for (int i = 0; i < 4; ++i)
++        expr.emplace(ToKey(block.getArgument(i)), args[i]);
++    std::ostringstream code;
++    int number = 0;
++    for (auto& operation : block) {
++        auto operand = [&](unsigned i) { return expr.at(ToKey(operation.getOperand(i))); };
++        auto name = operation.getName().getStringRef();
++        if (name == "stablehlo.return") {
++            if (operation.getNumOperands() != 2)
++                throw std::runtime_error("paired reduction must return two scalars");
++            code << "T next_a = " << operand(0) << "; I next_i = " << operand(1)
++                 << "; a = next_a; ai = next_i;\n";
++            return code.str();
+         }
+-
+-        if (isCumulative && cumAxis >= 0) {
+-            int64_t axisSize = inputShape[cumAxis];
+-            bool reverse = false;
+-            bool inclusive = true;
+-
+-            if (padLow[cumAxis] == axisSize - 1 && padHigh[cumAxis] == 0) {
+-                reverse = false;
+-                inclusive = true;
+-            } else if (padLow[cumAxis] == 0 && padHigh[cumAxis] == axisSize - 1) {
+-                reverse = true;
+-                inclusive = true;
+-            } else if (padLow[cumAxis] == axisSize && padHigh[cumAxis] == -1) {
+-                reverse = false;
+-                inclusive = false;
+-            } else if (padLow[cumAxis] == -1 && padHigh[cumAxis] == axisSize) {
+-                reverse = true;
+-                inclusive = false;
+-            } else {
+-                MPS_LOG_ERROR("stablehlo.reduce_window: unsupported cumulative padding pattern\n");
+-                return false;
++        if (operation.getNumResults() != 1)
++            throw std::runtime_error("unsupported paired reduction operation");
++        std::string value;
++        if (auto cmp = mlir::dyn_cast<mlir::stablehlo::CompareOp>(operation)) {
++            if (cmp.getCompareType() &&
++                *cmp.getCompareType() == mlir::stablehlo::ComparisonType::TOTALORDER)
++                throw std::runtime_error("TOTALORDER paired reduction is unsupported");
++            using D = mlir::stablehlo::ComparisonDirection;
++            std::string symbol;
++            switch (cmp.getComparisonDirection()) {
++                case D::EQ: symbol = "=="; break;
++                case D::NE: symbol = "!="; break;
++                case D::GE: symbol = ">="; break;
++                case D::GT: symbol = ">"; break;
++                case D::LE: symbol = "<="; break;
++                case D::LT: symbol = "<"; break;
+             }
+-
+-            for (int64_t i = 0; i < rank; i++) {
+-                if (i == cumAxis)
+-                    continue;
+-                if (padLow[i] != 0 || padHigh[i] != 0) {
+-                    MPS_LOG_ERROR(
+-                        "stablehlo.reduce_window: non-zero padding on non-cumulative axis\n");
+-                    return false;
+-                }
+-            }
+-
+-            auto axis = static_cast<int>(cumAxis);
+-            std::optional<mlx::core::array> result;
+-            switch (reduceType) {
+-                case ReduceType::Sum:
+-                    result = mlx::core::cumsum(*input, axis, reverse, inclusive);
+-                    break;
+-                case ReduceType::Prod:
+-                    result = mlx::core::cumprod(*input, axis, reverse, inclusive);
+-                    break;
+-                case ReduceType::Max:
+-                    result = mlx::core::cummax(*input, axis, reverse, inclusive);
+-                    break;
+-                case ReduceType::Min:
+-                    result = mlx::core::cummin(*input, axis, reverse, inclusive);
+-                    break;
+-                default:
+-                    MPS_LOG_ERROR("stablehlo.reduce_window: unsupported cumulative reduce type\n");
+-                    return false;
+-            }
+-
+-            values.emplace(ToKey(op->getResult(0)), std::move(*result));
+-            return true;
++            value = "(" + operand(0) + symbol + operand(1) + ")";
++        } else if (name == "stablehlo.select") {
++            value = "(" + operand(0) + " ? " + operand(1) + " : " + operand(2) + ")";
++        } else if (name == "stablehlo.or" || name == "stablehlo.and" ||
++                   name == "stablehlo.minimum" || name == "stablehlo.maximum") {
++            auto type = name == "stablehlo.or" ? ReduceType::Or :
++                        name == "stablehlo.and" ? ReduceType::And :
++                        name == "stablehlo.minimum" ? ReduceType::Min : ReduceType::Max;
++            value = Combine(type, operand(0), operand(1));
++        } else if (name == "stablehlo.not") {
++            auto resultType = mlir::cast<mlir::RankedTensorType>(operation.getResult(0).getType());
++            value = std::string(resultType.getElementType().isInteger(1) ? "(!" : "(~") +
++                    operand(0) + ")";
++        } else {
++            throw std::runtime_error("unsupported paired reduction operation: " + name.str());
+         }
++        auto var = "v" + std::to_string(number++);
++        auto resultType = mlir::cast<mlir::RankedTensorType>(operation.getResult(0).getType());
++        auto valueType = mlir::cast<mlir::RankedTensorType>(block.getArgument(0).getType());
++        auto indexType = mlir::cast<mlir::RankedTensorType>(block.getArgument(1).getType());
++        auto element = resultType.getElementType();
++        std::string scalarType;
++        if (element.isInteger(1)) scalarType = "bool";
++        else if (element == valueType.getElementType()) scalarType = "T";
++        else if (element == indexType.getElementType()) scalarType = "I";
++        else throw std::runtime_error("unsupported paired reduction scalar type");
++        code << scalarType << " " << var << " = " << value << ";\n";
++        expr.emplace(ToKey(operation.getResult(0)), var);
+     }
++    throw std::runtime_error("paired reduction has no return");
++}
+ 
+-    // ---------- Tier 2: Pooling pattern ----------
+-    if (reduceType != ReduceType::Max && reduceType != ReduceType::Sum &&
+-        reduceType != ReduceType::Min && reduceType != ReduceType::Prod) {
+-        MPS_LOG_ERROR("stablehlo.reduce_window: pooling supports max/sum/min/prod only\n");
+-        return false;
+-    }
+-
+-    // Base dilation: StableHLO dilates the *input* by inserting (base_dil - 1)
+-    // holes between elements along each axis BEFORE padding and windowing, with
+-    // the holes filled by the init value -- which is exactly what we do here, so
+-    // the fill is faithful to the spec for any init. For the identity inits that
+-    // pooling uses (0/-inf/+inf/1 for sum/max/min/prod) the holes are inert;
+-    // like the rest of this pooling tier, a non-identity init is not relied on
+-    // (and prod's init=1 is checked explicitly above). Materialize the dilated
+-    // base via a strided slice_update, then the rest of the pooling path treats
+-    // it like an ordinary (base_dil == 1) input.
+-    mlx::core::array base = *input;
+-    // allBaseDilOne is true whenever baseDilOpt is empty, so reaching here with
+-    // !allBaseDilOne guarantees a value; the explicit check keeps clang-tidy's
+-    // optional-access analysis happy.
+-    if (!allBaseDilOne && baseDilOpt) {
+-        auto* init = RequireValue(values, rwOp.getInitValues()[0], "stablehlo.reduce_window");
+-        if (!init)
+-            return false;
+-
+-        std::vector<int64_t> baseDil(rank, 1);
+-        auto bd = *baseDilOpt;
+-        for (int64_t i = 0; i < rank; i++)
+-            baseDil[i] = bd[i];
+-
+-        mlx::core::Shape dilShape(rank);
+-        mlx::core::Shape startIdx(rank, 0);
+-        mlx::core::Shape stopIdx(rank);
+-        mlx::core::Shape strideIdx(rank);
+-        for (int64_t i = 0; i < rank; i++) {
+-            // Runtime shape so dynamically-shaped operands stay correct.
+-            int dim = input->shape(static_cast<int>(i));
+-            dilShape[i] = (dim - 1) * static_cast<int>(baseDil[i]) + 1;
+-            stopIdx[i] = dilShape[i];
+-            strideIdx[i] = static_cast<int>(baseDil[i]);
+-        }
+-
+-        mlx::core::array dilated = mlx::core::full(dilShape, *init, input->dtype());
+-        base = mlx::core::slice_update(dilated, *input, startIdx, stopIdx, strideIdx);
++// Decode output/reduction coordinates without allocating index tensors.
++std::string ReductionOffsets(const mlx::core::Shape& shape, const std::vector<int>& axes,
++                             int64_t& reducedSize, mlx::core::Shape& outputShape) {
++    std::vector<int64_t> strides(shape.size(), 1);
++    for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i)
++        strides[i] = strides[i + 1] * shape[i + 1];
++    reducedSize = 1;
++    for (int axis : axes) reducedSize *= shape[axis];
++    for (size_t i = 0; i < shape.size(); ++i)
++        if (std::find(axes.begin(), axes.end(), i) == axes.end())
++            outputShape.push_back(shape[i]);
++    std::ostringstream code;
++    code << "ulong base = 0, q = thread_position_in_grid.x;\n";
++    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
++        if (std::find(axes.begin(), axes.end(), i) != axes.end()) continue;
++        code << "base += (q % " << std::max(shape[i], 1) << "ul) * " << strides[i]
++             << "ul; q /= " << std::max(shape[i], 1) << "ul;\n";
+     }
+-
+-    // For Prod, the StableHLO reduction semantics include the init value as a
+-    // factor in every window (and as the value of any padded slots when the
+-    // window crosses the padding region). The handler emits a plain
+-    // `prod(windowed)` and uses the init only as the pad value, so the result
+-    // is correct exactly when init is the multiplicative identity (1). Reject
+-    // non-identity init rather than silently dropping the factor.
+-    if (reduceType == ReduceType::Prod) {
+-        bool initIsOne = false;
+-        // Compile-time fast path: the init is a stablehlo.constant.
+-        if (auto initConst = rwOp.getInitValues()[0].getDefiningOp<mlir::stablehlo::ConstantOp>()) {
+-            if (auto attr = mlir::dyn_cast<mlir::DenseElementsAttr>(initConst.getValue())) {
+-                if (attr.isSplat()) {
+-                    if (mlir::isa<mlir::FloatType>(attr.getElementType())) {
+-                        initIsOne = attr.getSplatValue<llvm::APFloat>().convertToDouble() == 1.0;
+-                    } else if (mlir::isa<mlir::IntegerType>(attr.getElementType())) {
+-                        initIsOne = attr.getSplatValue<llvm::APInt>().getSExtValue() == 1;
+-                    }
+-                }
+-            }
+-        } else if (auto* initArr =
+-                       RequireValue(values, rwOp.getInitValues()[0], "stablehlo.reduce_window")) {
+-            // Eager mode threads the init as a function argument; check the
+-            // runtime mlx::core::array against scalar 1. eval() is necessary
+-            // because the value may still be lazy, but the init array is
+-            // 0-dim so the sync is trivial.
+-            auto cmp =
+-                mlx::core::all(mlx::core::equal(*initArr, mlx::core::ones({}, initArr->dtype())));
+-            cmp.eval();
+-            initIsOne = cmp.item<bool>();
+-        }
+-        if (!initIsOne) {
+-            MPS_LOG_ERROR(
+-                "stablehlo.reduce_window: prod requires init=1 (multiplicative "
+-                "identity); non-identity init is not supported\n");
+-            return false;
+-        }
++    code << "for (ulong r = 0; r < " << reducedSize << "ul; ++r) {\n"
++         << "ulong offset = base, k = r;\n";
++    for (auto it = axes.rbegin(); it != axes.rend(); ++it) {
++        int i = *it;
++        code << "offset += (k % " << std::max(shape[i], 1) << "ul) * " << strides[i]
++             << "ul; k /= " << std::max(shape[i], 1) << "ul;\n";
+     }
++    return code.str();
++}
+ 
+-    // Pad the (possibly base-dilated) input if needed.
+-    mlx::core::array padded = base;
+-    bool needsPad = false;
+-    for (int64_t i = 0; i < rank; i++) {
+-        if (padLow[i] != 0 || padHigh[i] != 0) {
+-            needsPad = true;
+-            break;
++bool HandleReduce(mlir::Operation* op, ValueMap& values, std::vector<mlx::core::array>&,
++                  ExecContext&) {
++    auto reduce = CastOp<mlir::stablehlo::ReduceOp>(op, "stablehlo.reduce");
++    if (!reduce) return false;
++    size_t count = reduce.getInputs().size();
++    if (count != 1 && count != 2)
++        throw std::runtime_error("stablehlo.reduce supports one binary or two paired inputs");
++    auto axes = ToIntVec(reduce.getDimensions());
++    std::sort(axes.begin(), axes.end());
++    auto* input = RequireValue(values, reduce.getInputs()[0], "stablehlo.reduce");
++    auto* init = RequireValue(values, reduce.getInitValues()[0], "stablehlo.reduce");
++    if (!input || !init) return false;
++    ShapeSize(input->shape());
++    mlx::core::Shape outputShape;
++    int64_t reducedSize;
++    auto offsets = ReductionOffsets(input->shape(), axes, reducedSize, outputShape);
++    if (count == 2) {
++        auto body = PairReducer(reduce.getBody());
++        auto* indices = RequireValue(values, reduce.getInputs()[1], "stablehlo.reduce");
++        auto* initialIndex = RequireValue(values, reduce.getInitValues()[1], "stablehlo.reduce");
++        if (!indices || !initialIndex) return false;
++        auto type = mlir::cast<mlir::RankedTensorType>(op->getResult(1).getType());
++        auto indexDtype = MlirTypeToMlxDtype(type.getElementType());
++        if (input->dtype() == mlx::core::complex64)
++            throw std::runtime_error("complex paired reduction is unsupported");
++        if (!ShapeSize(outputShape) || !reducedSize) {
++            values.emplace(ToKey(op->getResult(0)), mlx::core::full(outputShape, *init, input->dtype()));
++            values.emplace(ToKey(op->getResult(1)), mlx::core::full(outputShape, *initialIndex, indexDtype));
++            return true;
+         }
++        auto source = "T a = initial[0]; I ai = initial_index[0];\n" + offsets +
++                      "T b = input[offset]; I bi = indices[offset];\n" + body +
++                      "}\nvalue[thread_position_in_grid.x] = a;\n"
++                      "index[thread_position_in_grid.x] = ai;\n";
++        auto result = ReductionKernel(source,
++            {mlx::core::reshape(*input, {-1}), mlx::core::reshape(*indices, {-1}),
++             mlx::core::reshape(*init, {1}), mlx::core::reshape(*initialIndex, {1})},
++            {"input", "indices", "initial", "initial_index"}, {"value", "index"},
++            outputShape, {input->dtype(), indexDtype}, {{"T", input->dtype()}, {"I", indexDtype}});
++        values.emplace(ToKey(op->getResult(0)), std::move(result[0]));
++        values.emplace(ToKey(op->getResult(1)), std::move(result[1]));
++        return true;
+     }
+-    if (needsPad) {
+-        auto* init = RequireValue(values, rwOp.getInitValues()[0], "stablehlo.reduce_window");
+-        if (!init)
+-            return false;
+-
+-        std::vector<std::pair<int, int>> padWidth(rank);
+-        for (int64_t i = 0; i < rank; i++) {
+-            padWidth[i] = {static_cast<int>(padLow[i]), static_cast<int>(padHigh[i])};
+-        }
+-        padded = mlx::core::pad(base, padWidth, *init);
++    auto type = DetectReduceType(reduce.getBody());
++    if (type == ReduceType::Unknown)
++        throw std::runtime_error("unsupported stablehlo.reduce body/wiring");
++    if (!ShapeSize(outputShape) || !reducedSize) {
++        values.emplace(ToKey(op->getResult(0)), mlx::core::full(outputShape, *init, input->dtype()));
++        return true;
+     }
+-
+-    auto paddedShape = padded.shape();
+-    std::vector<int> outShape(rank);
+-    for (int64_t i = 0; i < rank; i++) {
+-        int64_t effWin = (windowDims[i] - 1) * winDil[i] + 1;
+-        outShape[i] = static_cast<int>((paddedShape[i] - effWin) / strides[i] + 1);
++    if (input->dtype() == mlx::core::complex64) {
++        if (type != ReduceType::Sum && type != ReduceType::Prod)
++            throw std::runtime_error("complex reduce supports sum/product only");
++        auto result = axes.empty() ? *input :
++            type == ReduceType::Sum ? mlx::core::sum(*input, axes) : mlx::core::prod(*input, axes);
++        values.emplace(ToKey(op->getResult(0)), type == ReduceType::Sum ?
++            mlx::core::add(*init, result) : mlx::core::multiply(*init, result));
++        return true;
+     }
++    auto source = std::string("T a = initial[0];\n") + offsets +
++        "a = " + Combine(type, "a", "input[offset]") + ";\n" +
++        "}\nresult[thread_position_in_grid.x] = a;\n";
++    auto result = ReductionKernel(source,
++        {mlx::core::reshape(*input, {-1}), mlx::core::reshape(*init, {1})},
++        {"input", "initial"}, {"result"}, outputShape, {input->dtype()}, {{"T", input->dtype()}});
++    values.emplace(ToKey(op->getResult(0)), std::move(result[0]));
++    return true;
++}
+ 
+-    mlx::core::Shape viewShape;
+-    for (int64_t i = 0; i < rank; i++)
+-        viewShape.push_back(outShape[i]);
+-    for (int64_t i = 0; i < rank; i++)
+-        viewShape.push_back(static_cast<int32_t>(windowDims[i]));
+-
+-    std::vector<int64_t> elemStrides(rank);
+-    elemStrides[rank - 1] = 1;
+-    for (int64_t i = rank - 2; i >= 0; i--) {
+-        elemStrides[i] = elemStrides[i + 1] * paddedShape[i + 1];
++bool HandleReduceWindow(mlir::Operation* op, ValueMap& values,
++                        std::vector<mlx::core::array>&, ExecContext&) {
++    auto rw = CastOp<mlir::stablehlo::ReduceWindowOp>(op, "stablehlo.reduce_window");
++    if (!rw) return false;
++    if (rw.getInputs().size() != 1 || rw.getInitValues().size() != 1 || op->getNumResults() != 1)
++        throw std::runtime_error("reduce_window requires one binary reducer");
++    auto type = DetectReduceType(rw.getBody());
++    if (type == ReduceType::Unknown)
++        throw std::runtime_error("unsupported stablehlo.reduce_window body/wiring");
++    auto* input = RequireValue(values, rw.getInputs()[0], "stablehlo.reduce_window");
++    auto* init = RequireValue(values, rw.getInitValues()[0], "stablehlo.reduce_window");
++    if (!input || !init) return false;
++    if (input->dtype() == mlx::core::complex64)
++        throw std::runtime_error("complex reduce_window is unsupported");
++    auto shape = GetResultShape(op, "stablehlo.reduce_window");
++    if (!shape) return false;
++    ShapeSize(input->shape());
++    if (!ShapeSize(*shape)) {
++        values.emplace(ToKey(op->getResult(0)), mlx::core::full(*shape, *init, input->dtype()));
++        return true;
+     }
+-
+-    mlx::core::Strides viewStrides;
+-    for (int64_t i = 0; i < rank; i++) {
+-        viewStrides.push_back(strides[i] * elemStrides[i]);
++    int rank = input->ndim();
++    auto window = rw.getWindowDimensions();
++    std::vector<int64_t> stride(rank, 1), baseDil(rank, 1), winDil(rank, 1), low(rank, 0);
++    if (auto attr = rw.getWindowStrides())
++        std::copy(attr->begin(), attr->end(), stride.begin());
++    if (auto attr = rw.getBaseDilations())
++        std::copy(attr->begin(), attr->end(), baseDil.begin());
++    if (auto attr = rw.getWindowDilations())
++        std::copy(attr->begin(), attr->end(), winDil.begin());
++    if (auto attr = rw.getPaddingAttr()) {
++        auto padding = attr.getValues<int64_t>();
++        for (int i = 0; i < rank; ++i)
++            low[i] = padding[{static_cast<uint64_t>(i), 0}];
+     }
+-    for (int64_t i = 0; i < rank; i++) {
+-        viewStrides.push_back(winDil[i] * elemStrides[i]);
++    int64_t windowSize = 1;
++    for (int64_t dim : window) {
++        if (dim <= 0 || windowSize > std::numeric_limits<int64_t>::max() / dim)
++            throw std::runtime_error("reduce_window window exceeds shader loop capacity");
++        windowSize *= dim;
+     }
+-
+-    auto windowed = mlx::core::as_strided(padded, viewShape, viewStrides, 0);
+-
+-    std::vector<int> reduceAxes;
+-    for (int64_t i = rank; i < 2 * rank; i++) {
+-        reduceAxes.push_back(static_cast<int>(i));
++    std::ostringstream code;
++    code << "T a = initial[0]; ulong q = thread_position_in_grid.x;\n";
++    for (int i = rank - 1; i >= 0; --i)
++        code << "long o" << i << " = q % " << (*shape)[i] << "ul; q /= "
++             << (*shape)[i] << "ul;\n";
++    code << "for (ulong w = 0; w < " << windowSize << "ul; ++w) {\n"
++         << "ulong k = w, offset = 0; bool valid = true;\n";
++    int64_t inputStride = 1;
++    for (int i = rank - 1; i >= 0; --i) {
++        code << "long p" << i << " = o" << i << " * " << stride[i] << "l - ("
++             << low[i] << "l) + long(k % " << window[i] << "ul) * " << winDil[i]
++             << "l; k /= " << window[i] << "ul;\n"
++             << "valid = valid && p" << i << " >= 0 && p" << i << " % " << baseDil[i]
++             << "l == 0 && p" << i << " / " << baseDil[i] << "l < " << input->shape(i)
++             << "l;\noffset += ulong(p" << i << " / " << baseDil[i] << "l) * "
++             << inputStride << "ul;\n";
++        inputStride *= input->shape(i);
+     }
+-
+-    mlx::core::array result = [&]() {
+-        if (reduceType == ReduceType::Max)
+-            return mlx::core::max(windowed, reduceAxes);
+-        if (reduceType == ReduceType::Min)
+-            return mlx::core::min(windowed, reduceAxes);
+-        if (reduceType == ReduceType::Prod)
+-            return mlx::core::prod(windowed, reduceAxes);
+-        return mlx::core::sum(windowed, reduceAxes);
+-    }();
+-
+-    values.emplace(ToKey(op->getResult(0)), std::move(result));
++    code << "T b = valid ? input[offset] : initial[0];\n"
++         << "a = " << Combine(type, "a", "b") << ";\n"
++         << "}\nresult[thread_position_in_grid.x] = a;\n";
++    // A zero-sized input is never read: every dilated/padded window lane fails
++    // the bounds predicate, while still contributing the specified init value.
++    auto result = ReductionKernel(code.str(),
++        {mlx::core::reshape(*input, {-1}), mlx::core::reshape(*init, {1})},
++        {"input", "initial"}, {"result"}, *shape, {input->dtype()}, {{"T", input->dtype()}});
++    values.emplace(ToKey(op->getResult(0)), std::move(result[0]));
+     return true;
+ }
+ 

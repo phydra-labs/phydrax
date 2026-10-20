@@ -238,7 +238,7 @@ def test_functional_decomposition_advanced_scenario_2() -> None:
     result = phx.solver.dense_local_curvature_step(solver, subspace)
 
     assert result.accepted
-    assert abs(float(result.functions["u"].func.value)) < 1.0e-4
+    assert abs(float(result.functions["u"].func())) < 1.0e-4
     assert result.approximation == "exact-local-dense-hessian"
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinates = jnp.linspace(0.0, 1.0, 9)
@@ -604,6 +604,8 @@ def test_aitken_relaxes_complete_sweep(sweep: Any) -> None:
             rtol=1e-12,
             atol=1e-12,
         )
+        assert result.state.previous_increment is not None
+        assert result.state.omega is not None
         np.testing.assert_allclose(result.state.previous_increment, increment)
         assert float(result.state.omega) == pytest.approx(omega)
         assert result.state.completed_sweeps == step + 1
@@ -677,6 +679,7 @@ def test_aitken_refuses_heterogeneous_trace_quantities() -> None:
     partial = phx.solver.solve_functional_decomposition(
         prepared, optax.sgd(0.1), max_sweeps=1
     )
+    assert partial.state.trace_state is not None
     exchange = partial.state.trace_state.exchanges[1]
     incompatible = phx.solver.TraceExchangeState(
         pairing_id=exchange.pairing_id,

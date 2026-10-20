@@ -2343,7 +2343,10 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             & near_reduction.successful
             & finite
         )
-        link = _input_link((structure.positions, strengths))
+        link = _input_link(
+            (structure.positions, strengths),
+            (gradient.dtype,) if potential is None else (gradient.dtype, potential.dtype),
+        )
         gradient = _poison(gradient, successful, link)
         if potential is not None:
             potential = _poison(potential, successful, link)

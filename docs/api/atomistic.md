@@ -21,6 +21,13 @@ Every MACE route is an unreleased candidate.
 
 ## Structures, units, systems, and topology
 
+`AtomicStructure` and `AtomisticBatch` accept `mass_accumulation_dtype`, defaulting
+to float64 independently of coordinate storage. Select float32 explicitly for
+an all-float32 Metal workflow. Batches also accept one accumulation dtype per case
+so heterogeneous CPU structures retain their choices. This controls prepared
+mass arithmetic, not the physical definition of the weights; copies, position
+updates, and structure-to-batch conversion preserve it.
+
 ::: phydrax.atomistic.AtomisticScaleContract
 
 ::: phydrax.atomistic.AtomisticUnitSystem
@@ -172,6 +179,14 @@ derivatives only; Hessians and force/stress training use the exact radial networ
 A `SymmetricContractionBasis` origin is `"native-coupling"` or `"imported-source"`.
 The trainable contraction keeps the original weights `W`, and merged coefficients are
 fixed data bound to one `W` revision.
+
+Basis construction, native generation, and source-tensor import accept `dtype`
+(float64 by default); native plans propagate it to their bases. MACE selects its
+compute dtype. Stored coefficients are dynamic arrays, and their actual dtype
+and rounded values determine identity. Native certification remains host
+float64. The requested `equivariance_tolerance`, measured
+`equivariance_residual`, and derived `equivariance_roundoff_bound` remain separate;
+restoration rechecks all three rather than trusting recorded labels.
 
 ::: phydrax.nn.atomistic.SymmetricContractionBasis
 

@@ -13,6 +13,7 @@ from phydrax.nn.operator.representations import (
     o3_real_coupling,
     O3IrrepBlock,
     O3IrrepLayout,
+    O3Parity,
     O3Representation,
 )
 from phydrax.special import real_harmonic_basis, RealCartesianHarmonics
@@ -174,6 +175,63 @@ def test_layout_transform_matches_its_packed_representation_matrix() -> None:
     )
     with pytest.raises(ValueError, match="orthogonal"):
         layout.transform(values[0], 2.0 * jnp.eye(3))
+
+
+@pytest.mark.parametrize("improper", [False, True], ids=["rotation", "reflection"])
+def test_host_layout_action_matches_runtime_float64_packing(improper: bool) -> None:
+    frame, _ = np.linalg.qr(np.random.default_rng(47).normal(size=(3, 3)))
+    if np.linalg.det(frame) < 0:
+        frame = -frame
+    if improper:
+        frame = -frame
+    layout = _layout()
+    host = layout.host_representation_matrix(frame)
+    expected = layout.representation_matrix(jnp.asarray(frame, dtype=jnp.float64))
+    assert isinstance(host, np.ndarray)
+    assert host.dtype == np.dtype(np.float64)
+    assert not host.flags.writeable
+    np.testing.assert_allclose(host, expected, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(host @ host.T, np.eye(layout.packed_size), atol=1e-12)
+
+
+@pytest.mark.parametrize("degree", [0, 1, 2, 3, 4, 6])
+@pytest.mark.parametrize("parity", [-1, 1])
+def test_host_irrep_actions_preserve_composition_and_inversion(
+    degree: int, parity: O3Parity
+) -> None:
+    layout = O3IrrepLayout((O3IrrepBlock("block", degree, parity, multiplicity=2),))
+    first, _ = np.linalg.qr(np.random.default_rng(48).normal(size=(3, 3)))
+    second, _ = np.linalg.qr(np.random.default_rng(49).normal(size=(3, 3)))
+    combined = layout.host_representation_matrix(second @ first)
+    np.testing.assert_allclose(
+        combined,
+        layout.host_representation_matrix(second)
+        @ layout.host_representation_matrix(first),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        layout.host_representation_matrix(-np.eye(3)),
+        parity * np.eye(layout.packed_size),
+        atol=1e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    ("frame", "error", "message"),
+    [
+        (np.eye(4), ValueError, r"\(3, 3\)"),
+        (2.0 * np.eye(3), ValueError, "orthogonal"),
+        (np.full((3, 3), np.nan), ValueError, "orthogonal"),
+        (np.eye(3, dtype=np.complex128), TypeError, "real numeric"),
+        (np.eye(3).tolist(), TypeError, "NumPy"),
+    ],
+)
+def test_host_frame_preparation_refuses_invalid_frames(
+    frame: Any, error: type[Exception], message: str
+) -> None:
+    with pytest.raises(error, match=message):
+        _layout().host_representation_matrix(frame)
 
 
 def _sympy_real_coupling(left: int, right: int, output: int) -> np.ndarray:

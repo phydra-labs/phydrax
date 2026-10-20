@@ -547,7 +547,9 @@ def _edge_displacement(
             if vectors.shape[1] == 0
             else cell.minimum_image_with_vectors(raw, vectors[0])
         )
-    return jnp.where(topology.candidate_mask[:, None], raw, 0.0)
+    return jnp.where(
+        topology.candidate_mask[:, None], raw, jnp.zeros((), dtype=raw.dtype)
+    )
 
 
 def case_energy_totals(
@@ -723,8 +725,9 @@ def bind_atomistic_graph(
     squared = jnp.sum(displacement * displacement, axis=-1)
     tiny = jnp.asarray(jnp.finfo(coordinate.dtype).tiny, dtype=coordinate.dtype)
     positive = jnp.sqrt(jnp.maximum(squared, tiny))
-    distance = jnp.where(squared > 0.0, positive, 0.0)
-    safe = jnp.where(distance > 0.0, distance, 1.0)
+    zero = jnp.zeros((), dtype=coordinate.dtype)
+    distance = jnp.where(squared > zero, positive, zero)
+    safe = jnp.where(distance > zero, distance, jnp.ones((), dtype=coordinate.dtype))
     direction = displacement / safe[:, None]
     edge_mask = topology.candidate_mask & (
         distance < jnp.asarray(cutoff_value, coordinate.dtype)

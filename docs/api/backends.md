@@ -2,14 +2,60 @@
 
 `phydrax.backends` is the explicit boundary between Phydrax problem contracts and
 optional solver runtimes. Importing `phydrax` does not require MPAX, PETSc, SLEPc,
-PyAMGCL, CUDA, or AmgX. A provider is imported only when its availability or
-preparation function is called.
+PyAMGCL, CUDA, or AmgX. Backend symbols load from their canonical owners on
+first access; importing the facade does not initialize a JAX device.
 
 External providers are never candidates of the native automatic linear policy.
 Selecting one is an explicit user decision; an unavailable provider raises
 `BackendUnavailableError` with the backend, capability, requirement, and import or
 linker evidence. No external path silently materializes a matrix-free operator,
 changes provider, or falls back to a native solve.
+
+## Apple Metal environment
+
+`metal_environment(initialize_backend=False)` inspects installed distribution,
+entry-point, native-asset, source/build, JAX/JAXlib, and operating-system evidence
+without loading the plugin or initializing devices. `assess_metal_environment(facts)`
+is the pure equivalent for supplied immutable `MetalEnvironmentFacts`.
+
+```python
+from phydrax import config
+from phydrax.backends import metal_environment
+
+report = metal_environment(initialize_backend=False)
+print(report.successful, report.facts.device_probed)
+for issue in report.issues:
+    print(issue.code, issue.severity, issue.message)
+```
+
+`successful` means the checks represented by those facts succeeded. It is not a
+hardware or scientific qualification claim. The default explicit inspection,
+`metal_environment()`, additionally probes MPS unless an explicit runtime
+selection excludes it or installation assessment already failed.
+
+Metal issues remain separate from the CUDA-specific
+`BackendAvailability.environment_issues`. A matching `phydrax-metal` companion
+must identify its exact `mps` runtime, source, assets, and JAX/JAXlib pair.
+Explicit MPS selection through `config.RuntimeConfig` refuses a known-invalid
+installation before applying settings. Competing Apple plugins are refused,
+not selected by discovery order.
+
+The Apple candidate profile is single-device float32/complex64 numerical
+execution with exact 64-bit integer addressing. It does not authorize float64,
+complex128, CUDA providers, Pallas Metal kernels, or distributed execution.
+Keep x64 enabled for integer addresses and construct numerical arrays explicitly
+in the scientifically admitted precision; x64 enablement alone is not a request
+to execute float64 arithmetic.
+
+::: phydrax.backends.MetalEnvironmentFacts
+
+::: phydrax.backends.MetalEnvironmentIssue
+
+::: phydrax.backends.MetalEnvironmentReport
+
+::: phydrax.backends.metal_environment
+
+::: phydrax.backends.assess_metal_environment
 
 ## Common inspection and transfer contract
 
@@ -221,7 +267,7 @@ Vendor profiles are admission envelopes rather than blanket qualification:
 | `AMD_JAX_PROFILE` | ROCm | single-device, multi-device, multi-host |
 | `TPU_JAX_PROFILE` | TPU | single-device, multi-device, multi-host |
 | `INTEL_JAX_PROFILE` | XPU | experimental single/multi-device |
-| `APPLE_METAL_PROFILE` | Metal | experimental single-device, float16/float32 |
+| `APPLE_METAL_PROFILE` | MPS (`phydrax-metal`) | experimental single-device, float32/complex64 |
 
 Mixed vendors execute as separate workflow stages with explicit transfer.
 Phydrax does not claim one heterogeneous global JAX mesh.
