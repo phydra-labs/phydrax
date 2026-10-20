@@ -22,6 +22,7 @@ from jax import core as jax_public_core
 from jax.extend import core as jax_core
 
 from ._fingerprint import canonical_fingerprint, canonical_json
+from ._jax_program import stock_high_operation
 from ._strict import StrictModule
 from ._trainable import _global_reads, _hidden_arrays
 
@@ -188,9 +189,12 @@ class _CompilerPayload:
                 }
             )
         from jax._src.callback import pure_callback_p
+        from jax._src.hijax import call_hi_primitive_p
         from jax._src.lax.control_flow.conditionals import platform_index_p
 
         self.primitives[pure_callback_p] = "jax.pure_callback"
+        # Admitted only with an exact stock operation payload; see program().
+        self.primitives[call_hi_primitive_p] = "jax._src.hijax.call_hi_primitive_p"
         from equinox.internal import unvmap_all_p, unvmap_any_p, unvmap_max_p
 
         self.primitives.update(
@@ -761,6 +765,19 @@ class _CompilerPayload:
                 declaration_id = _compiler_fingerprint(declaration)
                 self.rules.setdefault(declaration_id, declaration)
                 params["jvp_rule"] = {"declaration_id": declaration_id}
+            elif (operation := stock_high_operation(equation)) is not None:
+                # Stock operation objects are identified by their exact
+                # operation, static parameters and input/output type trees.
+                # Any other high-level payload was rejected above.
+                stock = equation.params["_prim"]
+                params = {
+                    "_prim": {
+                        "operation": f"jax.numpy.{operation}",
+                        "input_types": stock.in_avals,
+                        "output_types": stock.out_aval,
+                        "parameters": stock.params,
+                    }
+                }
             equations.append(
                 [
                     primitive_reference,

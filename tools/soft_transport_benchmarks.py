@@ -14,6 +14,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 
 import phydrax as phx
 from benchmarks._runtime import (
@@ -150,7 +151,7 @@ def _smoke_cases() -> list[_Case]:
     ]
 
 
-def _workload(name: str, size: int, dtype: jnp.dtype, seed: int) -> _Workload:
+def _workload(name: str, size: int, dtype: DTypeLike, seed: int) -> _Workload:
     index = jnp.arange(size, dtype=dtype)
     phase = jnp.asarray(1.61803398875, dtype=dtype) * index
     base = jnp.sin(phase) + jnp.asarray(0.1, dtype=dtype) * jnp.cos(0.37 * phase)

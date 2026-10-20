@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -96,7 +96,7 @@ class BoundaryRelation(StrictModule):
         return self.s11.shape[-1]
 
 
-def identity_boundary_relation(size: int, dtype: jnp.dtype, /) -> BoundaryRelation:
+def identity_boundary_relation(size: int, dtype: DTypeLike, /) -> BoundaryRelation:
     identity = jnp.eye(int(size), dtype=dtype)
     zero = jnp.zeros_like(identity)
     diagnostics = BoundaryRelationDiagnostics(

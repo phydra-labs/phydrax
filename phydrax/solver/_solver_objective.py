@@ -586,12 +586,15 @@ class AbstractSolverObjective(StrictModule):
             )
         return result.loss, result.accepted, None
 
-    def _case(self, component: Any, case: Any, /) -> tuple[Array, tuple[Array, Any]]:
-        """`(loss, (status, aux))` of one case.
+    def _case(self, component: Any, case: Any, /) -> tuple[Array, Any]:
+        """`(record, aux)` of one case, `record = (loss, accepted, iterations)`.
 
-        `status` holds `(accepted, iterations)` in the loss dtype: outputs of the
-        failure gate must be inexact, so integer and Boolean evidence crosses it
-        as exact small floats and is recovered in `_evaluate_cases`.
+        The record is in the loss dtype: outputs of the failure gate must be
+        inexact, so integer and Boolean evidence crosses it as exact small floats
+        and is recovered in `_evaluate_cases`. Loss and status form one array so
+        that, under `vmap` over cases, a case-independent loss is batched with
+        its case-dependent acceptance: the gate selects each case's derivative
+        and therefore needs each case's own cotangent.
         """
         result = self.measure(self.bind(self.solve.value, component), case)
         loss, accepted, iterations = self._case_loss(result)
@@ -606,7 +609,8 @@ class AbstractSolverObjective(StrictModule):
                 else iterations.astype(loss.dtype),
             )
         )
-        return loss, (jax.lax.stop_gradient(status), jax.lax.stop_gradient(result.aux))
+        record = jnp.concatenate((loss[None], jax.lax.stop_gradient(status)))
+        return record, jax.lax.stop_gradient(result.aux)
 
     def _evaluate_cases(
         self, component: Any, /
@@ -618,12 +622,13 @@ class AbstractSolverObjective(StrictModule):
 
         cases = self.cases.value
         if cases is None:
-            loss, (status, aux) = one(None)
+            record, aux = one(None)
         elif self.case_batch_size is None:
-            loss, (status, aux) = jax.vmap(one)(cases)
+            record, aux = jax.vmap(one)(cases)
         else:
-            loss, (status, aux) = jax.lax.map(one, cases, batch_size=self.case_batch_size)
-        status = jax.lax.stop_gradient(status)
+            record, aux = jax.lax.map(one, cases, batch_size=self.case_batch_size)
+        loss = record[..., 0]
+        status = jax.lax.stop_gradient(record[..., 1:])
         accepted = status[..., 0] > 0
         iterations = (
             status[..., 1].astype(jnp.int32)
@@ -730,12 +735,12 @@ def _gated_case_fwd(
     del perturbed
     lane = resolve_array_roles(component).filter_spec(ArrayRole.PARAMETER)
     parameters, rest = eqx.partition(component, lane)
-    loss, pullback, aux = jax.vjp(
+    record, pullback, aux = jax.vjp(
         lambda values: objective._case(eqx.combine(values, rest), case),
         parameters,
         has_aux=True,
     )
-    return (loss, aux), (pullback, aux[0][0] > 0)
+    return (record, aux), (pullback, record[1] > 0)
 
 
 @_gated_case.def_bwd
@@ -913,7 +918,7 @@ class RolloutObjective(AbstractSolverObjective):
         )
         self.checkpointed = checkpointed
 
-    def _case(self, component: Any, case: Any, /) -> tuple[Array, tuple[Array, Any]]:
+    def _case(self, component: Any, case: Any, /) -> tuple[Array, Any]:
         if not self.checkpointed:
             return AbstractSolverObjective._case(self, component, case)
         # The objective is an explicit argument, so the rematerialized case

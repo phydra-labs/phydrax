@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
+from jax.typing import DTypeLike
 
 from .._strict import StrictModule
 from ..typing import parse, PRNGKey
@@ -317,7 +318,7 @@ class WienerRealization(StrictModule):
         ends: Array,
         /,
         *,
-        dtype: jnp.dtype | type = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> Array:
         """Evaluate reproducible Brownian increments on matching interval arrays.
 

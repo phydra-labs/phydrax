@@ -39,6 +39,8 @@ from ._elementwise import (
     _prop_clamp,
     _prop_convert_element_type,
     _prop_integer_pow,
+    _prop_polynomial,
+    _prop_sign,
     _prop_sub,
     _prop_ternary_elementwise,
     _prop_unary_elementwise,
@@ -64,6 +66,7 @@ from ._sort import _prop_sort
 from ._split import _prop_split
 from ._squeeze import _prop_squeeze
 from ._stack import _prop_stack
+from ._stock_high import _prop_stock_high
 from ._tile import _prop_tile
 from ._top_k import _prop_top_k
 from ._transpose import _prop_transpose
@@ -152,7 +155,12 @@ def _prop_dispatch(
     state_consts: StateConsts,
     state_bounds: StateBounds,
 ) -> None:
-    """Propagate dependencies through a single equation."""
+    """Propagate dependencies through a single equation.
+
+    Keep this exhaustive scientific dispatch explicit despite its branch count:
+    substantial propagation rules live in their owning handlers, and the final
+    refusal must remain auditable rather than hidden in an open registry.
+    """
     match eqn.primitive.name:
         case "argmax" | "argmin":
             _prop_argmax(eqn, state_indices, state_bounds)
@@ -164,7 +172,6 @@ def _prop_dispatch(
             "floor"  # ∂⌊x⌋/∂x = 0
             | "ceil"  # ∂⌈x⌉/∂x = 0
             | "round"  # ∂round(x)/∂x = 0
-            | "sign"  # ∂sign(x)/∂x = 0
             | "is_finite"
             | "clz"
             | "population_count"
@@ -176,6 +183,8 @@ def _prop_dispatch(
             _prop_zero_derivative(eqn, state_indices)
         case "reduce_and" | "reduce_or" | "reduce_xor":
             _prop_bitwise_reduce(eqn, state_indices, state_consts)
+        case "sign":
+            _prop_sign(eqn, state_indices)
         case "clamp":
             _prop_clamp(eqn, state_indices)
         case "eq" | "ne" | "lt_to" | "le_to":
@@ -275,6 +284,10 @@ def _prop_dispatch(
             _prop_unary_elementwise(eqn, state_indices)
         case "regularized_incomplete_beta":
             _prop_ternary_elementwise(eqn, state_indices)
+        case "polynomial":
+            _prop_polynomial(eqn, state_indices)
+        case "call_hi_primitive":
+            _prop_stock_high(eqn, state_indices, state_consts, state_bounds)
         case "reduce_sum" | "reduce_max" | "reduce_min" | "reduce_prod":
             _prop_reduce(eqn, state_indices)
         case (

@@ -13,6 +13,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -416,7 +417,7 @@ class BlockAMRResourcePlan(StrictModule, NonTrainableState):
         /,
         *,
         physical_component_count: int,
-        dtype: np.dtype | type,
+        dtype: DTypeLike,
         entity_capacity: BlockHierarchyCapacityPlan | None = None,
         additional_host_bytes: int = 0,
         additional_device_bytes: int = 0,

@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -132,7 +132,7 @@ def _canonical_target_value(
     name: str,
     case_axis: int | None,
     horizon_axis: int,
-    dtype: type | None = None,
+    dtype: DTypeLike | None = None,
 ) -> Array | None:
     if value is None:
         return None

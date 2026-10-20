@@ -1263,7 +1263,7 @@ def _invalid_chain_indices(tree: PyTree[Any], num_chains: int, /) -> tuple[int, 
         if array.ndim == 0 or array.shape[0] != num_chains:
             return tuple(range(num_chains))
         valid = valid & jnp.all(jnp.isfinite(array).reshape((num_chains, -1)), axis=1)
-    return tuple(jnp.argwhere(~valid).reshape(-1))
+    return tuple(int(index) for index in jnp.argwhere(~valid).reshape(-1))
 
 
 def _empty_sample_tree(position: PyTree[Any], chains: int, /) -> PyTree[Array]:

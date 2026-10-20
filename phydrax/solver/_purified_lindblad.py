@@ -34,7 +34,9 @@ class LocalKrausChannel(StrictModule):
         self.channel_id = str(channel_id)
 
     def completeness_residual(self) -> Array:
-        total = sum(jnp.conj(operator.T) @ operator for operator in self.kraus)
+        total = jnp.asarray(
+            sum(jnp.conj(operator.T) @ operator for operator in self.kraus)
+        )
         return jnp.max(jnp.abs(total - jnp.eye(total.shape[0], dtype=total.dtype)))
 
 

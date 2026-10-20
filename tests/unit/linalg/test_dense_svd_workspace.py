@@ -99,6 +99,21 @@ def test_economy_svd_derivative_matches_independent_difference(
     np.testing.assert_allclose(actual, expected, rtol=1e-7, atol=1e-9)
 
 
+def test_hermitian_economy_svd_of_a_singular_matrix_keeps_unitary_factors() -> None:
+    # Indefinite with an exactly zero eigenvalue: the zero singular value has
+    # no eigenvalue sign to transfer onto its right vector.
+    rotation = np.asarray([[1.0, 1j, 0.0], [1j, 1.0, 0.0], [0.0, 0.0, np.sqrt(2.0)]])
+    rotation = rotation / np.sqrt(2.0)
+    matrix = (rotation * np.asarray([2.0, -1.0, 0.0])) @ rotation.conj().T
+    left, values, right = economy_svd(jnp.asarray(matrix), hermitian=True)
+
+    np.testing.assert_allclose(values, [2.0, 1.0, 0.0], atol=1e-15)
+    np.testing.assert_allclose((left * values) @ right, matrix, atol=1e-15)
+    identity = np.eye(3)
+    np.testing.assert_allclose(left.conj().T @ left, identity, atol=1e-15)
+    np.testing.assert_allclose(right @ right.conj().T, identity, atol=1e-15)
+
+
 @pytest.mark.parametrize(
     "shape",
     ((1, 1000), (1000, 1), (3, 12), (12, 3), (3, 5)),

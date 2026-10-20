@@ -264,7 +264,9 @@ def test_virtual_element_scenario_2() -> None:
         field = phx.discretization.VirtualElementFieldSpec("v", element)
         space = phx.discretization.VirtualElementPlan(mesh, field).prepare()
         projection = space.default_runtime.projections[0]
-        exponents = [tuple(row) for row in projection.basis.exponents]
+        exponents = [
+            tuple(int(value) for value in row) for row in projection.basis.exponents
+        ]
         x_index = exponents.index((1, 0))
         y_index = exponents.index((0, 1))
         polynomial_count = projection.basis.feature_count
@@ -404,7 +406,7 @@ def test_virtual_element_scenario_3() -> None:
     space = _two_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
-    exponents = [tuple(row) for row in projection.basis.exponents]
+    exponents = [tuple(int(value) for value in row) for row in projection.basis.exponents]
     coefficients = jnp.zeros(
         (geometry.centroids.shape[0], projection.basis.feature_count)
     )

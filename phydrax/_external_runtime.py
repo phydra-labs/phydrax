@@ -1920,7 +1920,9 @@ def _host_transport_input(
                 raise TypeError(
                     f"DLPack transport requires input {spec.name!r} to export __dlpack__."
                 )
-            array = np.from_dlpack(value)
+            # Borrow the producer's host buffer; a producer that cannot share
+            # one (for example a device-resident array) is refused, not copied.
+            array = np.from_dlpack(value, copy=False)
         case _:
             raise ValueError(f"Unknown host transport {transport!r}.")
     return spec.check(array, "Host inference input")
@@ -1936,9 +1938,11 @@ def _host_transport_output(
             return jnp.array(host, copy=True)
         case "dlpack":
             host = _require_finite(
-                spec.check(np.from_dlpack(value), role), role, spec.name
+                spec.check(np.from_dlpack(value, copy=False), role), role, spec.name
             )
-            return jnp.from_dlpack(host)
+            # Alias the runtime's host buffer; JAX refuses (rather than copies)
+            # a buffer it cannot adopt, such as one not 64-byte aligned.
+            return jnp.from_dlpack(host, copy=False)
         case _:
             raise ValueError(f"Unknown host transport {transport!r}.")
 
@@ -1959,8 +1963,11 @@ class HostInferenceAdapter:
     concrete JAX arrays: they carry no derivative relation to the inputs.
 
     `transport="copy"` copies across the host boundary. `transport="dlpack"`
-    exchanges buffers without copying through DLPack: inputs must export
-    `__dlpack__` and outputs alias the buffers the runtime returned.
+    exchanges host buffers without copying through DLPack: inputs must export
+    `__dlpack__` and outputs alias the buffers the runtime returned. A buffer
+    that cannot be shared without a copy (device-resident, or not 64-byte
+    aligned) is refused, never copied. 64-bit output dtypes require x64 to be
+    enabled; otherwise the call is refused before the runtime runs.
 
     The adapter is host-only (`capabilities.tier == "host-inference"`): `jit`,
     `vmap`, `grad`, `jvp`, and `vjp` are refused before the runtime is invoked.
@@ -2007,6 +2014,14 @@ class HostInferenceAdapter:
                 f"Host inference expects {len(self.input_schema)} inputs; "
                 f"got {len(inputs)}."
             )
+        # With x64 disabled JAX canonicalizes 64-bit dtypes on import, casting
+        # (and copying) even under `copy=False`; refuse before the runtime runs.
+        for spec in self.output_schema:
+            if jax.dtypes.canonicalize_dtype(spec.dtype) != np.dtype(spec.dtype):
+                raise TypeError(
+                    f"Host inference output {spec.name!r} declares dtype "
+                    f"{spec.dtype}, which JAX represents only with x64 enabled."
+                )
         host = tuple(
             _host_transport_input(value, spec, self.transport)
             for value, spec in zip(inputs, self.input_schema, strict=True)

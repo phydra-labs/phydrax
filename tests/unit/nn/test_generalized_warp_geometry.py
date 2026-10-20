@@ -224,13 +224,15 @@ def test_generalized_warp_geometry_scenario_2() -> None:
     density = jnp.ones((size,))
     displacement = (0.05 * jnp.sin(jnp.pi * x))[..., None]
 
-    remapped, diagnostics = phx.nn.layers.conservative_remap(
+    result = phx.nn.layers.conservative_remap(
         density,
         displacement,
         boundary=("periodic",),
         axis_nodes=(x,),
         return_diagnostics=True,
     )
+    assert isinstance(result, tuple)
+    remapped, diagnostics = result
 
     assert jnp.all(diagnostics.determinant > 0.0)
     assert not jnp.allclose(remapped, density)

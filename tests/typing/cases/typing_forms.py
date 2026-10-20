@@ -65,3 +65,12 @@ host_single: pt.HostFloat64[ComponentDim] = np.zeros(3, dtype=np.float32)  # ty:
 masses(jnp.zeros(2), "2", ("a", "b"), jax.random.key(0), np.zeros(2))  # ty: ignore[invalid-argument-type]
 pt.as_array("1.0", pt.Float64[ComponentDim], "text")  # ty: ignore[invalid-argument-type]
 pt.as_array({"a": 1.0}, pt.Float64[ComponentDim], "mapping")  # ty: ignore[invalid-argument-type]
+
+
+def dtype_specifications(indices: jax.Array) -> None:
+    from phydrax.graph import degree
+
+    assert_type(degree(indices, dtype=jnp.float32), jax.Array)
+    assert_type(degree(indices, dtype=np.float64), jax.Array)
+    assert_type(degree(indices, dtype=np.dtype("int32")), jax.Array)
+    assert_type(degree(indices, dtype="float32"), jax.Array)

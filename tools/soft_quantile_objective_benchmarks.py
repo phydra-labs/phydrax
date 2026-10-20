@@ -16,6 +16,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+from jax.typing import DTypeLike
 
 import phydrax as phx
 from benchmarks._runtime import synchronize
@@ -69,7 +70,7 @@ def _validate(arguments: argparse.Namespace) -> None:
         raise ValueError("steps must be positive.")
 
 
-def _heavy_tailed_problem(size: int, dtype: jnp.dtype) -> _Problem:
+def _heavy_tailed_problem(size: int, dtype: DTypeLike) -> _Problem:
     coordinate = jnp.linspace(-1.0, 1.0, size, dtype=dtype)
     design = jnp.stack(
         (
@@ -109,7 +110,7 @@ def _heavy_tailed_problem(size: int, dtype: jnp.dtype) -> _Problem:
     )
 
 
-def _pde_problem(size: int, dtype: jnp.dtype) -> _Problem:
+def _pde_problem(size: int, dtype: DTypeLike) -> _Problem:
     coordinate = jnp.linspace(0.0, 1.0, size + 2, dtype=dtype)[1:-1]
     mode = jnp.arange(1, 9, dtype=dtype)
     basis = jnp.sin(jnp.pi * coordinate[:, None] * mode[None, :])
@@ -144,7 +145,7 @@ def _pde_problem(size: int, dtype: jnp.dtype) -> _Problem:
     )
 
 
-def _ensemble_problem(size: int, dtype: jnp.dtype) -> _Problem:
+def _ensemble_problem(size: int, dtype: DTypeLike) -> _Problem:
     case_count = max(4, size // 4)
     member_count = 4
     coordinate = jnp.linspace(-1.0, 1.0, case_count, dtype=dtype)
@@ -184,7 +185,7 @@ def _ensemble_problem(size: int, dtype: jnp.dtype) -> _Problem:
     )
 
 
-def _problems(size: int, dtype: jnp.dtype) -> tuple[_Problem, ...]:
+def _problems(size: int, dtype: DTypeLike) -> tuple[_Problem, ...]:
     return (
         _heavy_tailed_problem(size, dtype),
         _pde_problem(size, dtype),

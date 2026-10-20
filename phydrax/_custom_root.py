@@ -38,9 +38,10 @@ def custom_root(
     ``f`` carry derivatives, ``dx = -(D_x f)^{-1} D_p f dp`` with the inverse
     applied by ``tangent_solve``, and derivatives of ``initial_guess``, of values
     closed over by ``solve`` or ``tangent_solve``, and of auxiliary outputs are
-    zero. The rule is a custom JVP, so ``jax.linearize`` of a vmapped root works
-    (JAX's hijax ``custom_root`` batches into a ``VmapOf`` without a
-    linearization rule).
+    zero. The custom JVP keeps residual, solve and tangent-solve captures
+    explicit for Phydrax's compiler identity and structural analysis. Upstream
+    HiJax roots require separate admission of those hidden program contracts;
+    retaining this implementation avoids an opaque root boundary.
 
     Symbolically inactive residual parameters are not differentiated. Undefined
     active parameter actions remain undefined; no tangent magnitude is clipped.

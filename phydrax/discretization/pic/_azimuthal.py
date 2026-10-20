@@ -33,10 +33,12 @@ import math
 from typing import NamedTuple
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, lax
 
+from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._strict import StrictModule
@@ -190,9 +192,44 @@ class AzimuthalTransferPlan(StrictModule, NonTrainableState):
 class _Routes(NamedTuple):
     relation: RowRelation
     weights: Array
+    axis_slopes: Array
     mirrored: Array
     angle: Array
+    on_axis: Array
+    axis_tangent: Array
     support: Array
+
+
+_AXIS_DERIVATIVE = (
+    "An exactly on-axis particle has first position derivatives only for angular "
+    "orders |p| <= 1."
+)
+
+
+@jax.custom_jvp
+def _first_order_on_axis(position: Array, on_axis: Array, /) -> Array:
+    """Identity whose first derivative is exact and whose nested derivatives
+    are invalid on the rows of on-axis particles."""
+    del on_axis
+    return position
+
+
+@_first_order_on_axis.defjvp
+def _first_order_on_axis_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
+    position, on_axis = primals
+    # The axis route below is exact to first order only (the surrogate radius
+    # and the transverse carrier have no curvature), so the tangent coefficient
+    # is a unit whose own derivative is poisoned on the axis rows: every nested
+    # derivative through an on-axis particle is NaN rather than a silent zero.
+    coefficient = guard_derivative_validity(
+        jnp.ones_like(position),
+        ~on_axis[:, None],
+        dependencies=position,
+        message=_AXIS_DERIVATIVE,
+    )
+    return _first_order_on_axis(position, on_axis), coefficient * tangents[0]
 
 
 class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
@@ -240,12 +277,17 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
         grid = self.plan.grid
         order = self.plan.shape_order
         width = order + 1
+        # θ is undefined on the axis and the radius is not differentiable there;
+        # the on-axis first derivative is carried by `axis_tangent` instead.
+        on_axis = jnp.hypot(position[:, 0], position[:, 1]) == 0.0
+        position = _first_order_on_axis(position, on_axis)
         x, y, z = position[:, 0], position[:, 1], position[:, 2]
-        radius = jnp.hypot(x, y)
-        on_axis = radius == 0.0
-        safe = jnp.where(on_axis, 1.0, radius)
-        # e^{-iθ}; an on-axis particle takes θ = 0 (every p ≠ 0 weight vanishes there).
-        angle = jnp.where(on_axis, 1.0 + 0.0j, (x - 1j * y) / safe)
+        safe_x = jnp.where(on_axis, 1.0, x)
+        safe_y = jnp.where(on_axis, 0.0, y)
+        safe = jnp.hypot(safe_x, safe_y)
+        radius = jnp.where(on_axis, 0.0, safe)
+        # e^{-iθ}; an on-axis particle takes θ = 0.
+        angle = jnp.where(on_axis, 1.0 + 0.0j, (safe_x - 1j * safe_y) / safe)
         u = radius / grid.radial_spacing - 0.5
         v = (z - grid.lower) / grid.axial_spacing
         first_u = jnp.floor(u - 0.5 * (order - 1)).astype(jnp.int32)
@@ -253,9 +295,9 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
         offsets = jnp.arange(width, dtype=jnp.int32)
         radial_nodes = first_u[:, None] + offsets[None, :]
         axial_nodes = first_v[:, None] + offsets[None, :]
-        radial_weight = _basis_and_derivative(
+        radial_weight, radial_slope = _basis_and_derivative(
             order, u[:, None] - radial_nodes.astype(u.dtype)
-        )[0]
+        )
         axial_weight = _basis_and_derivative(
             order, v[:, None] - axial_nodes.astype(v.dtype)
         )[0]
@@ -274,6 +316,14 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
         weights = (radial_weight[:, :, None] * axial_weight[:, None, :]).reshape(
             (position.shape[0], width * width)
         )
+        axis_slopes = (radial_slope[:, :, None] * axial_weight[:, None, :]).reshape(
+            (position.shape[0], width * width)
+        ) / grid.radial_spacing
+        # Zero-valued carrier of the on-axis transverse displacement (dx, dy).
+        planar = position[:, :2]
+        axis_tangent = jnp.where(
+            on_axis[:, None], planar - lax.stop_gradient(planar), 0.0
+        )
         mirrored_routes = jnp.broadcast_to(
             mirrored[:, :, None], (position.shape[0], width, width)
         ).reshape((position.shape[0], width * width))
@@ -282,12 +332,29 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
             source_size=grid.radial_count * grid.axial_count,
             valid=jnp.broadcast_to(support[:, None], indices.shape),
         )
-        return _Routes(relation, weights, mirrored_routes, angle, support)
+        return _Routes(
+            relation,
+            weights,
+            axis_slopes,
+            mirrored_routes,
+            angle,
+            on_axis,
+            axis_tangent,
+            support,
+        )
 
-    def _order_factors(
-        self, routes: _Routes, offsets: tuple[int, ...], /
-    ) -> tuple[Array, Array]:
-        """``e^{−ipθ}`` per particle ``[N, M+1, C]`` and route parity ``[N, W, M+1, C]``."""
+    def _route_factors(self, routes: _Routes, offsets: tuple[int, ...], /) -> Array:
+        """Route factors ``w (−1)^{p·mirrored} e^{−ipθ}`` ``[N, W, M+1, C]``.
+
+        Folded on the axis, the factor of order ``p`` is ``A(r) e^{−ipθ}`` with
+        ``A`` of parity ``(−1)^p`` in the signed radius. Orders ``|p| ≤ 1`` are
+        C¹ in Cartesian ``(x, y)``: their exact first derivative is none for
+        ``p = 0`` (``A'(0) = 0``) and ``A'(0)(dx ∓ i dy)`` for ``p = ±1``
+        (``A(r)e^{∓iθ} → A'(0)(x ∓ iy)``). Higher orders are not differentiable
+        on the axis (even ``p`` is discontinuous, odd ``p`` has the
+        direction-dependent derivative ``A'(0)e^{−ipφ}``), so their transverse
+        derivative there is invalidated rather than assigned.
+        """
         modes = self.plan.grid.mode_count
         orders = np.arange(modes)[:, None] + np.asarray(offsets)[None, :]
         powers = jnp.stack(
@@ -299,12 +366,32 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
             jnp.conj(routes.angle)[:, None, None],
             powers[:, np.abs(orders)],
         )
+        dx, dy = routes.axis_tangent[:, 0], routes.axis_tangent[:, 1]
+        axis_phase = jnp.where(
+            jnp.asarray(np.abs(orders) == 1),
+            dx[:, None, None] - 1j * np.sign(orders) * dy[:, None, None],
+            0.0,
+        )
         parity = jnp.where(
             routes.mirrored[:, :, None, None],
             jnp.asarray((-1.0) ** orders),
             1.0,
         )
-        return phase, parity
+        factors = parity * (
+            routes.weights[:, :, None, None] * phase[:, None]
+            + routes.axis_slopes[:, :, None, None] * axis_phase[:, None]
+        )
+        if np.all(np.abs(orders) <= 1):
+            return factors
+        undefined = guard_derivative_validity(
+            dx + dy, ~routes.on_axis, message=_AXIS_DERIVATIVE
+        )
+        return (
+            factors
+            + jnp.where(jnp.asarray(np.abs(orders) > 1), undefined[:, None, None], 0.0)[
+                :, None
+            ]
+        )
 
     def _require(self, position: Array, active: Array, /) -> None:
         if position.shape != (self.capacity, 3) or active.shape != (self.capacity,):
@@ -330,14 +417,10 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
             raise ValueError("amplitude must be capacity-by-channel.")
         grid = self.plan.grid
         routes = self._routes(position, active)
-        phase, parity = self._order_factors(routes, offsets)
+        factors = self._route_factors(routes, offsets)
         weight = np.where(np.arange(grid.mode_count) == 0, 1.0, 2.0)[None, :, None]
-        content = jnp.where(active[:, None, None], amplitude[:, None, :], 0.0) * (
-            weight * phase
-        )
-        payload = (
-            routes.weights[:, :, None, None] * parity * content[:, None, :, :]
-        ).astype(jnp.complex128)
+        content = jnp.where(active[:, None, None], amplitude[:, None, :], 0.0) * weight
+        payload = (factors * content[:, None, :, :]).astype(jnp.complex128)
         # Deposition is the transpose of the particle-row gather: routes reduce
         # onto grid nodes in stable particle-identity order.
         execution = RelationExecutionPlan().prepare(
@@ -376,17 +459,15 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
         if values.shape != expected:
             raise ValueError(f"Gathered values must have shape {expected}.")
         routes = self._routes(position, active)
-        phase, parity = self._order_factors(routes, offsets)
+        factors = self._route_factors(routes, offsets)
         flat = jnp.moveaxis(values, 0, 2).reshape(
             (grid.radial_count * grid.axial_count, grid.mode_count, len(offsets))
         )
         patches = gather_routes(routes.relation, flat)
         valid = routes.relation.valid[:, :, None, None]
-        interpolated = jnp.sum(
-            jnp.where(valid, routes.weights[:, :, None, None] * parity * patches, 0.0),
-            axis=1,
+        synthesis = jnp.sum(
+            jnp.where(valid, jnp.conj(factors) * patches, 0.0), axis=(1, 2)
         )
-        synthesis = jnp.sum(interpolated * jnp.conj(phase), axis=1)
         return jnp.where(routes.support[:, None], synthesis, 0.0), routes.support
 
 

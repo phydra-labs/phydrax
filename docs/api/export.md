@@ -139,8 +139,12 @@ runner that receives one host NumPy array per `ExternalTensorSpec` in
 `input_schema` and returns one array per `output_schema` entry. Shapes and
 dtypes must match exactly (nothing is cast), outputs must be finite, and results
 are detached concrete JAX arrays. `transport="copy"` copies across the host
-boundary; `transport="dlpack"` exchanges buffers without copying (inputs must
-export `__dlpack__`, outputs alias the runtime's buffers). `binding` is the
+boundary; `transport="dlpack"` exchanges host buffers without copying (inputs
+must export `__dlpack__`, outputs alias the runtime's buffers). A buffer that
+cannot be shared without a copy, such as a device-resident input or an output
+not aligned to 64 bytes, is refused rather than copied. 64-bit output dtypes
+require `enable_x64`; with x64 disabled the call is refused before the runtime
+runs instead of silently narrowing. `binding` is the
 `ArtifactBindingIdentity` of the loaded model.
 
 Install `phydrax[onnx-inference]` for the ONNX Runtime loader. `load_onnx`
@@ -278,8 +282,9 @@ routes, and returned values are NaN unless the status is `SUCCESS`.
 
 Runtime geometry failures (non-finite coordinates, singular or deformed cells, image
 certificate or capacity overflow) are reported through the traced status, never through
-host callbacks. Before export the parent refuses any host callback, any Equinox guard
-whose predicate depends on a runtime input, and host-runtime custom calls (such as
+host callbacks. Before export the parent refuses any host callback, opaque
+high-level operation whose program cannot be inspected, Equinox guard whose
+predicate depends on a runtime input, and host-runtime custom calls (such as
 LAPACK) that IREE cannot compile. Remaining guards depend only on frozen data and are
 proven inactive by a raise-mode evaluation; tracing then runs in a pinned isolated
 worker with `EQX_ON_ERROR=nan` (failure policy `"equinox-nan-status"`), whose

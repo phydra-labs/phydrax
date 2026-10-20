@@ -526,6 +526,10 @@ class AbstractPreparedPICFieldSolver(StrictModule):
                 True,
             )
         )
+        if electric_gradient is not None and magnetic_gradient is not None:
+            finite &= jnp.all(
+                jnp.isfinite(electric_gradient) & jnp.isfinite(magnetic_gradient)
+            )
         return PICFieldSample(
             electric,
             magnetic,

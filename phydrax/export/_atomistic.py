@@ -78,6 +78,7 @@ from .._external_runtime import (
 )
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._jax_config import x64_enabled
+from .._jax_program import is_opaque_high_operation
 from .._model import model_structure_recipe, register_artifact_value
 from .._model._component import ExecutionCapabilities
 from .._model._structure import model_from_array_recipe, pack_model_array_tree
@@ -679,7 +680,7 @@ def _frozen_evaluation(
 
 @dataclass(frozen=True, slots=True)
 class _GuardSite:
-    kind: Literal["guard", "host-callback"]
+    kind: Literal["guard", "host-callback", "opaque-operation"]
     dynamic: bool
     location: str
 
@@ -724,8 +725,10 @@ def _input_dependence(
     Equinox raise-mode guards appear as a ``cond`` whose error branch calls a
     host callback directly; the guard is dynamic exactly when its branch index
     depends on a runtime input. Control-flow carries reach a fixed point;
-    unknown higher-order primitives are treated conservatively. ``sites`` is
-    ``None`` during fixed-point iterations.
+    unknown higher-order primitives are treated conservatively, and an opaque
+    high-level operation, which may hide callbacks or guards in its operation
+    object, is recorded as its own site. ``sites`` is ``None`` during
+    fixed-point iterations.
     """
 
     dependent = {
@@ -740,7 +743,11 @@ def _input_dependence(
         count = len(eqn.outvars)
         name = eqn.primitive.name
         subs = _sub_jaxprs(eqn)
-        if _is_callback(eqn):
+        if is_opaque_high_operation(eqn):
+            if sites is not None:
+                sites.append(_GuardSite("opaque-operation", any(inputs), _location(eqn)))
+            outputs = [any(inputs)] * count
+        elif _is_callback(eqn):
             if sites is not None:
                 sites.append(_GuardSite("host-callback", any(inputs), _location(eqn)))
             outputs = [any(inputs)] * count
@@ -832,14 +839,14 @@ def _require_status_complete(
     refused = [
         site
         for site in _runtime_guard_sites(forward, inputs)
-        if site.kind == "host-callback" or site.dynamic
+        if site.kind != "guard" or site.dynamic
     ]
     if refused:
         locations = "; ".join(f"{site.kind} at {site.location}" for site in refused[:8])
         raise AtomisticExportRefusal(
             "Frozen export requires every runtime-input failure to be a traced "
-            "status; the program keeps host callbacks or input-dependent guards: "
-            f"{locations}."
+            "status; the program keeps host callbacks, opaque high-level "
+            f"operations, or input-dependent guards: {locations}."
         )
 
 

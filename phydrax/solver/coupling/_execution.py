@@ -48,6 +48,7 @@ from ..._execution_resources import ExecutionGroupSpec
 from ..._execution_runtime import bind_execution_group
 from ..._execution_workset import ExecutionWorksetPlan, PreparedExecutionWorksets
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._jax_program import lowered_expansion, stock_high_operation
 from ..._strict import StrictModule
 from ..._validation import canonical_identifier, positive_integer
 from ...linalg import AbstractLinearOperator, AbstractVectorSpace, BlockLinearOperator
@@ -286,9 +287,18 @@ def _aval_bytes(value: jex_core.Var, /) -> int:
 
 
 def _traced_bytes(jaxpr: jex_core.Jaxpr, /) -> int:
-    """Bytes of every intermediate value of a traced program (no buffer reuse)."""
+    """Bytes of every intermediate value of a traced program (no buffer reuse).
+
+    Operations whose lowering hides work (stock high-level operations,
+    ``polynomial``'s coefficient stack and scan) count their executed
+    expansion; opaque high-level operations are refused.
+    """
     total = 0
     for equation in jaxpr.eqns:
+        expansion = lowered_expansion(equation)
+        if expansion is not None:
+            total += _traced_bytes(expansion.jaxpr)
+            continue
         total += sum(_aval_bytes(value) for value in equation.outvars)
         total += sum(
             _traced_bytes(inner) for inner in jex_core.jaxprs_in_params(equation.params)
@@ -414,9 +424,14 @@ def _callable_token(value: object, depth: int = 0, /) -> Hashable:
 
 
 def _host_callables(jaxpr: jex_core.Jaxpr, /) -> tuple[Hashable, ...]:
-    """Tokens of every host callback a program calls, in program order."""
+    """Tokens of every host callback a program calls, in program order.
+
+    Stock high-level operations call none; an opaque one could hide a
+    callback in its operation object and is refused.
+    """
     tokens: list[Hashable] = []
     for equation in jaxpr.eqns:
+        stock_high_operation(equation)
         name = equation.primitive.name
         if name in _HOST_CALLBACKS:
             tokens.append((name, _callable_token(equation.params["callback"])))
@@ -426,14 +441,19 @@ def _host_callables(jaxpr: jex_core.Jaxpr, /) -> tuple[Hashable, ...]:
 
 
 def _contains(jaxpr: jex_core.Jaxpr, names: frozenset[str], /) -> bool:
-    return any(
-        equation.primitive.name in names
-        or any(
+    """Whether a program binds a named primitive at any depth.
+
+    Stock high-level operations are standard-rule primitives; an opaque one
+    could hide custom rules in its operation object and is refused.
+    """
+    for equation in jaxpr.eqns:
+        stock_high_operation(equation)
+        if equation.primitive.name in names or any(
             _contains(inner, names)
             for inner in jex_core.jaxprs_in_params(equation.params)
-        )
-        for equation in jaxpr.eqns
-    )
+        ):
+            return True
+    return False
 
 
 def _derivative_program(

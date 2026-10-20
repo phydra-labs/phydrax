@@ -403,6 +403,31 @@ def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit() -> No
     assert compressed_state.plan_id == prepared_optimizer.plan.plan_id
 
 
+def test_precision_rewrite_accepts_literal_operands_and_refuses_stock_operations() -> (
+    None
+):
+    policy = PrecisionRewritePolicy(
+        (PrecisionRewriteRule("dot_general", "float32", "float32"),)
+    )
+    left, right = jnp.ones((4, 3)), jnp.ones((3, 2))
+    scaled = lambda a, b: (2.0 * a) @ b
+    rewrite = prepare_precision_rewrite(scaled, (left, right), policy)
+    rewritten = execute_precision_rewrite(rewrite, left, right)
+    assert jnp.array_equal(rewritten, scaled(left, right))
+
+    # Ordinary NumPy operations outside the finite supported set stay refused,
+    # never silently passed through.
+    values = jnp.linspace(0.5, 3.0, 4, dtype=jnp.float32)
+    for operation in (
+        lambda x: jnp.ldexp(x, 2),
+        lambda x: jnp.frexp(x)[0],
+        lambda x: jnp.searchsorted(x, x),
+        lambda x: jnp.polyval(x, x),
+    ):
+        with pytest.raises(ValueError, match="Unsupported precision equation"):
+            prepare_precision_rewrite(operation, (values,), policy)
+
+
 def test_coordinate_tree_and_full_complex_training_checkpoint_round_trip(
     tmp_path: Any,
 ) -> None:

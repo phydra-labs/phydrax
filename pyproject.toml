@@ -40,7 +40,7 @@ dependencies = [
     "cadquery-ocp-novtk>=8.0.1.0.0,<9",
     "diffrax>=0.7.2,<0.8",
     "equinox>=0.13.8,<0.14",
-    "jax>=0.11.2,<0.12",
+    "jax>=0.12.0,<0.13",
     "jaxtyping>=0.3.11,<0.4",
     "lineax>=0.1.1,<0.2",
     "loguru>=0.7.3,<0.8",
@@ -91,7 +91,7 @@ commercial = [
   "cryptography>=50.0.1,<51",
 ]
 cuda13 = [
-  "jax[cuda13]>=0.11.2,<0.12; sys_platform == 'linux'",
+  "jax[cuda13]>=0.12.0,<0.13; sys_platform == 'linux'",
   "phydrax-cuda-major==13.*",
   "phydrax-cuda13==0.2.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -313,7 +313,7 @@ fixable = ["F401", "F841", "I001", "RUF100"]
 "jax.scipy.sparse.linalg".msg = "Use phydrax.linalg iterative solvers and status evidence."
 "equinox.Module".msg = "Use phydrax._strict.StrictModule for Phydrax-owned modules."
 "jax.experimental.hijax".msg = "HiJAX is experimental; package code must not depend on it."
-"jax.lax.custom_root".msg = "Use phydrax._custom_root.custom_root; the HiJAX custom_root cannot be linearized under vmap."
+"jax.lax.custom_root".msg = "Use phydrax._custom_root.custom_root to preserve explicit capture, derivative, and compiler identity contracts."
 "jaxtyping.Array".msg = "Import Array from jax."
 "jaxtyping.ArrayLike".msg = "Import ArrayLike from jax.typing."
 "jaxtyping.Key".msg = "Use phydrax.typing.PRNGKey for typed PRNG keys."

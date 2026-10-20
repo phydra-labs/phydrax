@@ -11,7 +11,12 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.export._atomistic import _contract, _runtime_guard_sites
+from phydrax.export._atomistic import (
+    _contract,
+    _require_status_complete,
+    _runtime_guard_sites,
+    AtomisticExportRefusal,
+)
 from tests._support.mace_deployment import electronvolt_units, provider_plan, tiny_mace
 
 
@@ -285,3 +290,34 @@ def test_guard_audit_separates_frozen_constant_guards_from_runtime_guards() -> N
     sites = _runtime_guard_sites(program, (jnp.ones(3),))
     assert [site.kind for site in sites] == ["guard", "guard"]
     assert [site.dynamic for site in sites] == [False, True]
+
+
+def test_guard_audit_refuses_operations_that_hide_their_program() -> None:
+    from jax._src import core
+    from jax.experimental.hijax import HiPrim
+
+    class Clamped(HiPrim):
+        """A user operation whose lowering, here a host callback, is hidden."""
+
+        def __init__(self, aval: Any) -> None:
+            self.in_avals = (aval,)
+            self.out_aval = aval
+            self.params = {}
+            super().__init__()
+
+        def expand(self, *args: Any) -> Any:
+            (x,) = args
+            return jax.pure_callback(np.abs, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+
+    values = (jnp.linspace(-1.0, 1.0, 4),)
+    # Stock NumPy operations lower to ordinary programs and keep no hidden sites.
+    stock = lambda x: jnp.ldexp(x, 1) + jnp.searchsorted(x, x) + jnp.frexp(x)[0]
+    assert _runtime_guard_sites(stock, values) == ()
+    _require_status_complete(stock, values)
+
+    hidden = lambda x: Clamped(core.typeof(x))(x)
+    assert [site.kind for site in _runtime_guard_sites(hidden, values)] == [
+        "opaque-operation"
+    ]
+    with pytest.raises(AtomisticExportRefusal, match="opaque high-level"):
+        _require_status_complete(hidden, values)

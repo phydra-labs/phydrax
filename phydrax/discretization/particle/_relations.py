@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -148,7 +148,7 @@ def make_pair_relation_events(
     right: ArrayLike | Sequence[int] = (),
     relation_kind: ArrayLike | Sequence[int] = (),
     parameters: ArrayLike | None = None,
-    dtype: np.dtype | type = jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> PairRelationEventBatch:
     """Pad host event data into one canonical fixed-capacity event batch.
 
