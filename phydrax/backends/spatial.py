@@ -14,6 +14,7 @@ import numpy as np
 from jax import Array
 
 from .._execution_device import device_platform
+from .._jax_config import default_device_selection
 from ..sparse._execution import KeyGroupAccumulation
 from ..sparse._streamed import StreamedFragment
 from ..typing import parse
@@ -43,7 +44,29 @@ PALLAS_SPATIAL_CAPABILITIES = BackendCapabilities(
     distribution=BackendDistributionCapabilities(
         array_model="global",
         scopes=("single_device",),
-        platforms=("cpu_interpret", "cuda", "tpu"),
+        platforms=("cpu_interpret", "cuda"),
+        transformations=("jit", "jvp", "vjp"),
+        communicator_model="jax",
+    ),
+)
+
+
+PALLAS_TPU_SPATIAL_CAPABILITIES = BackendCapabilities(
+    backend="pallas-spatial-tpu",
+    problem_kinds=(
+        "spatial.distance_squared",
+        "spatial.morton_knn_leaf",
+        "spatial.morton_radius_leaf",
+    ),
+    execution="device",
+    host_only=False,
+    supports_matrix_free=True,
+    supports_assembled=False,
+    coordinate_dtypes=("float32",),
+    distribution=BackendDistributionCapabilities(
+        array_model="global",
+        scopes=("single_device",),
+        platforms=("tpu",),
         transformations=("jit", "jvp", "vjp"),
         communicator_model="jax",
     ),
@@ -51,22 +74,31 @@ PALLAS_SPATIAL_CAPABILITIES = BackendCapabilities(
 
 
 def pallas_spatial_availability(*, interpret: bool = False) -> BackendAvailability:
-    """Return whether the built-in Pallas spatial kernel can execute here."""
-    platforms = tuple(device_platform(device) for device in jax.devices())
-    available = bool(interpret) or any(
-        platform in ("cuda", "tpu") for platform in platforms
-    )
+    """Inspect implemented kernels on the selected runtime, not all Pallas targets.
+
+    TPU supports float32 distance/Morton leaves, not the compiled particle-FMM
+    fragment route. Inspect ``capabilities`` before admitting an operation.
+    """
+    selection = default_device_selection()
+    device = selection if isinstance(selection, jax.Device) else jax.devices(selection)[0]
+    platform = device_platform(device)
+    tpu = not interpret and platform == "tpu"
+    capabilities = PALLAS_TPU_SPATIAL_CAPABILITIES if tpu else PALLAS_SPATIAL_CAPABILITIES
+    available = bool(interpret) or platform in ("cuda", "tpu")
     reason = (
         "Pallas interpret mode is explicitly enabled"
         if interpret
-        else "a Pallas GPU or TPU device is available"
+        else "TPU float32 distance/Morton leaves are available; particle FMM is unsupported"
+        if tpu
+        else "a Pallas CUDA device is selected"
         if available
-        else "Pallas compilation requires CUDA/TPU; use interpret mode on CPU"
+        else "Pallas spatial compilation requires CUDA or TPU distance leaves; "
+        "use explicit interpret mode on CPU"
     )
     return BackendAvailability(
-        capabilities=PALLAS_SPATIAL_CAPABILITIES,
+        capabilities=capabilities,
         available=available,
-        requirement="JAX Pallas on CUDA/TPU, or explicit CPU interpret mode",
+        requirement="JAX Pallas CUDA, TPU float32 distance leaves, or explicit interpret mode",
         reason=reason,
         versions=(("jax", jax.__version__),),
     )
@@ -263,9 +295,12 @@ def spatial_squared_norm(
     size = int(block_size)
     if size < 1:
         raise ValueError("block_size must be positive.")
-    pallas_spatial_availability(interpret=pallas_interpret).require(
-        "spatial.distance_squared"
-    )
+    availability = pallas_spatial_availability(interpret=pallas_interpret)
+    availability.require("spatial.distance_squared")
+    if values.dtype.name not in availability.capabilities.coordinate_dtypes:
+        raise ValueError(
+            f"{availability.backend} does not support coordinate dtype {values.dtype.name!r}."
+        )
     return _pallas_squared_norm(values, size, bool(pallas_interpret))
 
 
@@ -393,15 +428,16 @@ def spatial_leaf_pair_fragment(
         case "jax":
             execute = reference_leaf_pair_fragment
         case "pallas":
-            platforms = tuple(device_platform(device) for device in jax.devices())
-            if not pallas_interpret and "cuda" not in platforms:
+            availability = pallas_spatial_availability(interpret=pallas_interpret)
+            if not pallas_interpret and (
+                availability.capabilities is PALLAS_TPU_SPATIAL_CAPABILITIES
+                or not availability.available
+            ):
                 raise ValueError(
                     "Pallas leaf fragments require CUDA or explicit CPU interpret mode; "
                     "TPU and HIP are unsupported."
                 )
-            pallas_spatial_availability(interpret=pallas_interpret).require(
-                "particle_fmm.p2p"
-            )
+            availability.require("particle_fmm.p2p")
             if not receiver_count or not leaf_size or not x.shape[0]:
                 return seed
             return pallas_leaf_pair_fragment(
@@ -424,6 +460,7 @@ def spatial_leaf_pair_fragment(
 
 __all__ = [
     "PALLAS_SPATIAL_CAPABILITIES",
+    "PALLAS_TPU_SPATIAL_CAPABILITIES",
     "pallas_spatial_availability",
     "spatial_pair_acceleration",
     "spatial_leaf_pair_fragment",

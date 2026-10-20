@@ -62,7 +62,9 @@ def test_whole_fmm_position_and_mass_gradients_track_direct_force(
 ) -> None:
     if execution_backend == "pallas":
         availability = pallas_spatial_availability(interpret=pallas_interpret)
-        if not availability.available:
+        if not availability.available or not availability.capabilities.supports(
+            "particle_fmm.p2p"
+        ):
             pytest.skip(availability.reason)
     positions, masses, weights, tree_plan, fmm = _fixture(
         execution_backend, pallas_interpret, dtype

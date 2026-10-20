@@ -49,6 +49,14 @@ and applied patch is hash-verified. The build uses locked sources instead of
 unbounded dependency fetches from CMake. Shared downloads are immutable;
 intermediate build directories must have one integration owner.
 
+The full-width gather-fill lowering has one canonical source,
+`phydrax/_jax_indexing.py`. The build includes that source in `source_id` and
+packages a byte-identical private `phydrax_metal/_jax_indexing.py`, whose hash
+is included in the mandatory assets and `build_id`. The standalone plugin does
+not import or depend on the Phydrax core package at runtime. Build from the
+complete repository checkout; a copied `native/metal` directory alone is not
+the source closure. Companions without the bound helper asset are refused.
+
 ```sh
 python tools/build_metal_wheels.py \
   --python /absolute/path/to/python3.13 \

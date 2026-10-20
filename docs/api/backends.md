@@ -57,6 +57,86 @@ to execute float64 arithmetic.
 
 ::: phydrax.backends.assess_metal_environment
 
+## Upstream oneAPI and TPU environments
+
+`phydrax[oneapi]` and `phydrax[tpu]` use upstream JAX runtimes, not Phydrax-owned
+native companions. The experimental oneAPI stack uses JAX 0.12.0 with JAXlib
+0.11.2 and `jax-oneapi-plugin[with-oneapi]` 0.11.2. This mixed frontend/runtime
+pair is **not Intel's documented matched release**. Intel's compute GPU driver
+is an external prerequisite. The TPU stack uses JAX/JAXlib 0.12.0 and upstream
+`libtpu` 0.0.50; Cloud TPU provisioning is outside the package's scope.
+Both installation envelopes require native Linux x86_64, not macOS, Windows,
+or ARM. TPU's selected wheel requires glibc 2.31 or newer.
+
+`collect_oneapi_environment()` and `collect_tpu_environment()` collect host
+facts without calling `jax.devices()` or loading a provider client.
+`assess_oneapi_environment(facts)` and `assess_tpu_environment(facts)` are pure
+assessments. `oneapi_environment(initialize_backend=False)` and
+`tpu_environment(initialize_backend=False)` combine host collection and
+assessment by default; request `initialize_backend=True` explicitly to probe
+the runtime. Existing JAX import/startup side effects are not covered by the
+no-client-initialization guarantee.
+
+Reports expose immutable `facts` and `issues`, including canonical installed
+version pairs, selected platforms, probe state, and observed runtime/device
+facts when probed. `successful` means the represented assessment has no errors,
+not that hardware or scientific qualification passed. An unprobed assessment
+cannot establish device availability. CPU execution is never accepted as Intel
+or TPU evidence. Upstream distribution, file, and runtime identities remain
+upstream identities: no Phydrax native source/build ID is synthesized for them.
+
+```python
+from phydrax.backends import oneapi_environment, tpu_environment
+
+for inspect in (oneapi_environment, tpu_environment):
+    report = inspect()  # Host inspection only.
+    print(report.successful, report.facts.device_probed)
+    for issue in report.issues:
+        print(issue.code, issue.severity, issue.message)
+```
+
+The evidence-free candidate catalogs contain bounded, single-device float32
+MLP/PDE differentiation and parameter updates, exact wide integer addressing,
+compiled control flow and callback errors, iterative linear solving, and real
+Fourier resampling. They are **not release authorization**. Neither the
+installation metadata nor software-only tests qualify an Intel GPU or TPU;
+hardware qualification remains pending until the installed-wheel qualifier
+passes every exact required case on the selected real runtime, without skips.
+The support coordinate `execution_device_count=1` names the one selected local
+device exercised by the qualifier, not the host's visible topology. Other
+visible devices may be recorded but are not thereby qualified.
+
+Keep x64 enabled for exact integer addressing, while selecting numerical dtypes
+explicitly. x64 enablement is not evidence of native FP64 arithmetic. The Intel
+candidate makes no float64/complex, multi-device, multi-host, MPI, CUDA-provider,
+or Pallas-kernel qualification claim. TPU's candidate is float32 with
+`matmul_precision="highest"`: on TPU this is six BF16 passes, **not native IEEE
+float32 matrix multiplication**. TPU float64, emulated float64, and complex
+coordinates are not qualified by these profiles. Native TPU meshes and JAX
+collectives remain separate admission mechanisms; these single-device candidate
+profiles do not qualify distributed execution.
+
+::: phydrax.backends.oneapi_environment
+
+::: phydrax.backends.assess_oneapi_environment
+
+::: phydrax.backends.tpu_environment
+
+::: phydrax.backends.assess_tpu_environment
+
+## Spatial Pallas capability boundaries
+
+`PALLAS_SPATIAL_CAPABILITIES` describes the CUDA/explicit-interpreter aggregate,
+including float32/float64 distance leaves and the particle-FMM fragment route.
+`PALLAS_TPU_SPATIAL_CAPABILITIES` retains implemented **float32 distance and
+Morton neighbor/radius leaves only**. It does not declare TPU float64 or compiled
+particle FMM: the bounded particle-FMM fragment kernel uses the CUDA-only route.
+`pallas_spatial_availability()` returns the capabilities for the selected
+runtime, so inspect `availability.capabilities` and require the specific
+operation rather than treating any available Pallas device as supporting the
+whole aggregate. Unsupported routes refuse rather than executing on CPU.
+CPU interpreter tests establish semantics only, not accelerator qualification.
+
 ## Common inspection and transfer contract
 
 Every backend publishes immutable `BackendCapabilities` and returns
@@ -265,8 +345,8 @@ Vendor profiles are admission envelopes rather than blanket qualification:
 | --- | --- | --- |
 | `NVIDIA_JAX_PROFILE` | CUDA | single-device, multi-device, multi-host |
 | `AMD_JAX_PROFILE` | ROCm | single-device, multi-device, multi-host |
-| `TPU_JAX_PROFILE` | TPU | single-device, multi-device, multi-host |
-| `INTEL_JAX_PROFILE` | XPU | experimental single/multi-device |
+| `TPU_JAX_PROFILE` | TPU | float32/bfloat16 admission on the upstream stable runtime; single-device, multi-device, multi-host; Phydrax qualification remains candidate |
+| `INTEL_JAX_PROFILE` | oneAPI (`jax-oneapi`) | experimental single-device float32; no MPI or multi-host |
 | `APPLE_METAL_PROFILE` | MPS (`phydrax-metal`) | experimental single-device, float32/complex64 |
 
 Mixed vendors execute as separate workflow stages with explicit transfer.

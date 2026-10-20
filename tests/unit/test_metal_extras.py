@@ -16,6 +16,7 @@ from tools.check_cuda_extras import wheel_metadata
 
 LIBRARY = b"\xcf\xfa\xed\xfe pjrt plugin"
 METALLIB = b"MTLB metal library"
+INDEXING_HELPER = b'"""Private standalone indexing helper fixture."""\n'
 CORE_REQUIREMENTS = (
     "jax>=0.12.0,<0.13",
     'phydrax-metal==0.2.2; extra == "metal"',
@@ -87,6 +88,7 @@ def _manifest(**overrides: object) -> dict[str, object]:
         "assets": {
             "lib/libpjrt_plugin_mps.dylib": hashlib.sha256(LIBRARY).hexdigest(),
             "lib/mlx.metallib": hashlib.sha256(METALLIB).hexdigest(),
+            "_jax_indexing.py": hashlib.sha256(INDEXING_HELPER).hexdigest(),
         },
         "sources": {
             "lock_sha256": "a" * 64,
@@ -117,6 +119,7 @@ def _companion_wheel(
     entry_points: str = "[jax_plugins]\nmps = phydrax_metal.plugin\n",
     purelib: str = "false",
     library: bytes = LIBRARY,
+    indexing_helper: bytes = INDEXING_HELPER,
     tamper_record: bool = False,
 ) -> Path:
     info = f"phydrax_metal-{version}.dist-info"
@@ -129,6 +132,7 @@ def _companion_wheel(
         {
             "phydrax_metal/__init__.py": b"",
             "phydrax_metal/plugin.py": b"",
+            "phydrax_metal/_jax_indexing.py": indexing_helper,
             "phydrax_metal/build.json": json.dumps(
                 _manifest() if manifest is None else manifest
             ).encode(),
@@ -280,6 +284,21 @@ _DEFECTS: dict[str, tuple[dict[str, Any], str]] = {
     "library-not-hashed": (
         {"manifest": _manifest(library="lib/other.dylib")},
         "library is not",
+    ),
+    "indexing-helper-not-hashed": (
+        {
+            "manifest": _manifest(
+                assets={
+                    "lib/libpjrt_plugin_mps.dylib": hashlib.sha256(LIBRARY).hexdigest(),
+                    "lib/mlx.metallib": hashlib.sha256(METALLIB).hexdigest(),
+                }
+            )
+        },
+        "private indexing helper",
+    ),
+    "indexing-helper-bytes-differ": (
+        {"indexing_helper": b"changed helper"},
+        "differs from wheel bytes",
     ),
     "absolute-asset": (
         {

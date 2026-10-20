@@ -228,6 +228,10 @@ def build_record_errors(record: object, *, wheel_version: str) -> list[str]:
                 errors.append(f"Manifest asset {relative!r} lacks a sha256 digest")
         if record["library"] not in assets:
             errors.append("Manifest library is not one of its hashed assets")
+        if "_jax_indexing.py" not in assets:
+            errors.append(
+                "Manifest private indexing helper is not one of its hashed assets"
+            )
     sources = record["sources"]
     if (
         not isinstance(sources, dict)

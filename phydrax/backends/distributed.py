@@ -29,7 +29,7 @@ from ._types import (
 JAX_NATIVE_DISTRIBUTION = BackendDistributionCapabilities(
     array_model="global",
     scopes=("single_device", "multi_device", "multi_host"),
-    platforms=("cpu", "cuda", "rocm", "tpu", "plugin"),
+    platforms=("cpu", "cuda", "rocm", "tpu"),
     collectives=(
         "sum",
         "mean",
@@ -114,15 +114,15 @@ TPU_JAX_PROFILE = VendorExecutionProfile(
     "tpu",
     "google",
     ("single_device", "multi_device", "multi_host"),
-    ("float32", "bfloat16", "float64", "complex64", "complex128"),
+    ("float32", "bfloat16"),
 )
 
 INTEL_JAX_PROFILE = VendorExecutionProfile(
-    "jax-intel-gpu",
-    "xpu",
+    "jax-oneapi",
+    "oneapi",
     "intel",
-    ("single_device", "multi_device"),
-    ("float16", "bfloat16", "float32", "float64"),
+    ("single_device",),
+    ("float32",),
     experimental=True,
 )
 
@@ -178,7 +178,7 @@ MPI4JAX_CAPABILITIES = BackendCapabilities(
     distribution=BackendDistributionCapabilities(
         array_model="rank_local",
         scopes=("multi_process", "multi_host"),
-        platforms=("cpu", "cuda", "xpu"),
+        platforms=("cpu", "cuda"),
         collectives=(
             "sum",
             "mean",

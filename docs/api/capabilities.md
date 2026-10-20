@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `f4c82b6659823a126eb093568d0c4b0fb88ccd2716e0d5287c563ee02bc12f73`
+Catalog ID: `a376d99878359d3107325c86682fc74f228ad56a5fa1ec13cbc73e064cbf23ec`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 305 |
+| candidate | 307 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |
@@ -241,6 +241,8 @@ Catalog ID: `f4c82b6659823a126eb093568d0c4b0fb88ccd2716e0d5287c563ee02bc12f73`
 | `frequency.second-order-complex` | `phydrax.frequency` | candidate | implementation-qualified-candidate | 1 |
 | `functional-rg.fermionic-fermi-surface-patch` | `phydrax.applications` | candidate | candidate | 1 |
 | `fuzzy-space.two-particle-sphere` | `phydrax.applications.fuzzy_space` | candidate | candidate | 1 |
+| `google-tpu-execution` | `phydrax.backends` | candidate | unreleased-candidate | 1 |
+| `intel-oneapi-execution` | `phydrax.backends` | candidate | unreleased-candidate | 1 |
 | `interfacial-transport.adsorption` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
 | `interfacial-transport.bulk-surface` | `phydrax.interfacial_transport` | candidate | implementation-qualified-candidate | 1 |
 | `interfacial-transport.dynamic-wetting` | `phydrax.interfacial_transport` | candidate | candidate | 1 |

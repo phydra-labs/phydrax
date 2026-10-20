@@ -93,6 +93,8 @@ nav:
     - Getting started: "index.md"
     - Installation: "installation.md"
     - Apple GPU execution: "guides_metal_execution.md"
+    - Intel GPU execution: "guides_oneapi_execution.md"
+    - TPU execution: "guides_tpu_execution.md"
     - All of Phydrax: "all-of-phydrax.md"
     - Cookbook:
         - Overview: "cookbook/index.md"

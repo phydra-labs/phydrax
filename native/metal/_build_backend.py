@@ -6,7 +6,8 @@
 
 The native plugin is built and audited by ``tools/build_metal_wheels.py``, which
 calls :func:`build_wheel` with ``config_settings={"staging": DIR}``. ``DIR`` holds
-``phydrax_metal/build.json``, the native assets it hashes, and ``licenses/``.
+``phydrax_metal/build.json``, its hashed native assets and private indexing helper,
+and ``licenses/``. The helper must match its canonical core source byte for byte.
 This backend never compiles, downloads or installs anything, and it refuses
 sdists, editable installs, and wheels without a verified staging tree.
 """
@@ -153,20 +154,29 @@ def _verified_manifest(
             f"pyproject.toml dependencies {dependencies} are not {sorted(expected)}"
         )
     assets = record.get("assets")
-    if not isinstance(assets, dict) or record.get("library") not in assets:
-        raise StagingError("build.json does not identify the library among its assets")
+    if (
+        not isinstance(assets, dict)
+        or record.get("library") not in assets
+        or "_jax_indexing.py" not in assets
+    ):
+        raise StagingError(
+            "build.json does not identify the library and private indexing helper "
+            "among its assets"
+        )
     staged = {
         path.relative_to(package).as_posix()
-        for path in (package / "lib").rglob("*")
+        for path in [*(package / "lib").rglob("*"), package / "_jax_indexing.py"]
         if path.is_file()
     }
     if staged != set(assets):
-        raise StagingError(
-            f"staged native files {sorted(staged)} differ from build.json assets"
-        )
+        raise StagingError(f"staged files {sorted(staged)} differ from build.json assets")
     for relative, digest in assets.items():
         if _sha256(package / relative) != digest:
             raise StagingError(f"{relative} does not match build.json")
+    if _sha256(package / "_jax_indexing.py") != _sha256(
+        ROOT.parents[1] / "phydrax" / "_jax_indexing.py"
+    ):
+        raise StagingError("Staged indexing helper differs from the canonical source.")
     return record
 
 

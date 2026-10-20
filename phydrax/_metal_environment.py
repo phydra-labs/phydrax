@@ -299,8 +299,15 @@ def _build_facts(facts: MetalEnvironmentFacts, /) -> MetalEnvironmentFacts:
     if record["version"] != dict(facts.versions)["phydrax-metal"]:
         raise ValueError("Metal build manifest and distribution versions disagree.")
     assets = record.get("assets")
-    if not isinstance(assets, dict) or record["library"] not in assets:
-        raise ValueError("Metal build manifest must identify the library in its assets.")
+    if (
+        not isinstance(assets, dict)
+        or record["library"] not in assets
+        or "_jax_indexing.py" not in assets
+    ):
+        raise ValueError(
+            "Metal build manifest must identify the library and private indexing "
+            "helper in its assets."
+        )
     for relative, expected in assets.items():
         if not isinstance(relative, str) or not isinstance(expected, str):
             raise TypeError("Metal asset paths and hashes must be text.")

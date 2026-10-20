@@ -7,9 +7,11 @@ base install uses CPU JAX:
 pip install phydrax
 ```
 
-The checkout lockfile selects matching JAX and JAXlib 0.12.0 releases. On
-x86-64, upstream wheels require AVX2 and FMA (Intel Haswell or newer).
-The NumPy and SciPy requirements already exceed JAX 0.12's minimums.
+The default checkout stack selects matching JAX and JAXlib 0.12.0 releases.
+The explicitly selected oneAPI extra instead pins the experimental
+JAX 0.12.0 / JAXlib 0.11.2 combination described below. On x86-64, upstream
+wheels require AVX2 and FMA (Intel Haswell or newer). The NumPy and SciPy
+requirements already exceed JAX 0.12's minimums.
 
 GPU and MPI qualification is specific to the recorded software and hardware
 stack. The JAX/JAXlib 0.11.2 results below remain historical evidence, not
@@ -81,6 +83,48 @@ The catalog's Metal profiles remain candidates. Follow the
 [Apple GPU execution guide](guides_metal_execution.md) for the scientific scope,
 installed-wheel evidence, performance methodology, and unsupported operations.
 CUDA providers and Pallas CUDA kernels are not included in the Metal companion.
+
+## Intel GPUs and Cloud TPUs
+
+```bash
+pip install "phydrax[oneapi]"  # Linux x86-64; Intel GPU driver required
+pip install "phydrax[tpu]"     # Linux x86-64 TPU VM; glibc >= 2.31
+```
+
+These extras use upstream binaries, not Phydrax-owned Intel or TPU companions.
+The provider requirement is unconditional: unsupported hosts must fail
+resolution instead of silently receiving an empty accelerator extra.
+
+| Extra | Exact selected stack | Boundary |
+| --- | --- | --- |
+| `oneapi` | JAX 0.12.0, JAXlib 0.11.2, oneAPI plugin/PJRT 0.11.2 | JAX's minimum-JAXlib combination; not Intel's documented all-0.11.2 release |
+| `tpu` | JAX/JAXlib 0.12.0, libtpu 0.0.50 | Upstream TPU runtime; requires actual TPU hardware |
+
+The oneAPI plugin installs its pinned user-space SDK through `with-oneapi`.
+The Intel GPU compute driver remains a system prerequisite. Its JAXlib pin
+conflicts with CUDA13, Metal, and TPU: use a separate environment rather than
+relaxing metadata or bypassing version checks. Native Windows, WSL, macOS, and
+Linux ARM are not supported Intel targets for this release.
+
+Select `JAX_PLATFORMS=oneapi` or `JAX_PLATFORMS=tpu` before numerical work.
+Host-only diagnostics are available through
+`phydrax.backends.oneapi_environment()` and `tpu_environment()`. Their default
+does not initialize devices. `initialize_backend=True` explicitly observes the
+selected runtime; a successful report is still not scientific qualification.
+
+Keep x64 enabled for exact indices and choose each numerical role's dtype
+explicitly. Neither the x64 flag nor a vendor name proves FP64 support. TPU's
+`highest` matmul policy uses multiple BF16 passes, not native IEEE float32
+matrix multiplication. For multi-host TPU execution, configure the existing
+`RuntimeBootstrap(autodetect=True)` on every process before device discovery.
+Installation does not provision cloud resources.
+
+Intel and TPU hardware qualification remains pending. Read the
+[Intel guide](guides_oneapi_execution.md) and [TPU guide](guides_tpu_execution.md)
+for precise support boundaries and the installed-artifact workflow.
+The [retained software evidence](data/accelerator_installation.json) distinguishes
+dependency resolution, CPU compatibility, refusal behavior, and the actual
+Metal shared-source regression from unperformed Intel/TPU execution.
 
 ## NVIDIA GPUs
 
