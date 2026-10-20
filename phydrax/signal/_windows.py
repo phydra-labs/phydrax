@@ -7,12 +7,12 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ._axis import _positive_int
 
 
-def _floating_dtype(dtype: jnp.dtype | None, /) -> jnp.dtype:
+def _floating_dtype(dtype: DTypeLike | None, /) -> jnp.dtype:
     resolved = jnp.asarray(0.0).dtype if dtype is None else jnp.dtype(dtype)
     if not jnp.issubdtype(resolved, jnp.floating):
         raise TypeError("Signal windows require a real floating dtype.")
@@ -39,7 +39,7 @@ def hann_window(
     /,
     *,
     periodic: bool = True,
-    dtype: jnp.dtype | None = None,
+    dtype: DTypeLike | None = None,
 ) -> Array:
     """Return a periodic or symmetric Hann window."""
     resolved_dtype = _floating_dtype(dtype)
@@ -54,7 +54,7 @@ def hamming_window(
     /,
     *,
     periodic: bool = True,
-    dtype: jnp.dtype | None = None,
+    dtype: DTypeLike | None = None,
 ) -> Array:
     """Return a periodic or symmetric Hamming window."""
     resolved_dtype = _floating_dtype(dtype)
@@ -69,7 +69,7 @@ def blackman_window(
     /,
     *,
     periodic: bool = True,
-    dtype: jnp.dtype | None = None,
+    dtype: DTypeLike | None = None,
 ) -> Array:
     """Return a periodic or symmetric Blackman window."""
     resolved_dtype = _floating_dtype(dtype)
@@ -86,7 +86,7 @@ def kaiser_window(
     /,
     *,
     periodic: bool = True,
-    dtype: jnp.dtype | None = None,
+    dtype: DTypeLike | None = None,
 ) -> Array:
     """Return a periodic or symmetric differentiable Kaiser window."""
     raw_beta = jnp.asarray(beta)
@@ -113,7 +113,7 @@ def tukey_window(
     /,
     *,
     periodic: bool = True,
-    dtype: jnp.dtype | None = None,
+    dtype: DTypeLike | None = None,
 ) -> Array:
     """Return a periodic or symmetric differentiable Tukey window."""
     raw_alpha = jnp.asarray(alpha)

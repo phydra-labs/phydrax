@@ -10,6 +10,7 @@ from math import isfinite, prod
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
+from jax.typing import DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -222,7 +223,7 @@ class OrnsteinUhlenbeckRealization(StrictModule):
         correlation_time: Array,
         /,
         *,
-        dtype: jnp.dtype | type = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> Array:
         """Return exact unit-stationary OU transition innovations.
 

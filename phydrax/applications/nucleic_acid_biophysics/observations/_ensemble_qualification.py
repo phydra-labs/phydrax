@@ -596,7 +596,12 @@ def group_posterior_predictive_log_scores(
             raise ValueError(
                 "Posterior draw width does not match the conditional mapping model."
             )
-        parameters = tuple(posterior_uncertainty.parameter_draws)
+        draw_scores = jnp.stack(
+            tuple(
+                model.per_profile_log_likelihood(draw)
+                for draw in posterior_uncertainty.parameter_draws
+            )
+        )
     else:
         calibration_mask = batch.profile_mask_for_cases(calibration.case_ids)
         problem = model.posterior_problem(fit_profile_mask=calibration_mask)
@@ -606,12 +611,12 @@ def group_posterior_predictive_log_scores(
             raise ValueError(
                 "Posterior draw width does not match the finite ensemble model."
             )
-        parameters = tuple(
-            unravel(draw) for draw in posterior_uncertainty.parameter_draws
+        draw_scores = jnp.stack(
+            tuple(
+                model.per_profile_log_likelihood(unravel(draw))
+                for draw in posterior_uncertainty.parameter_draws
+            )
         )
-    draw_scores = jnp.stack(
-        tuple(model.per_profile_log_likelihood(value) for value in parameters)
-    )
     return _group_resolved_profile_log_scores(
         batch,
         campaign,

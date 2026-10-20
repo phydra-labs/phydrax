@@ -9,7 +9,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -66,7 +66,7 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
         input_shape: Sequence[int],
         /,
         *,
-        dtype: jnp.dtype,
+        dtype: DTypeLike,
     ) -> FIRFilterState:
         """Return zero history for arrays with ``input_shape``."""
         shape = tuple(input_shape)

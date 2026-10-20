@@ -1,3 +1,4 @@
+from math import prod
 from typing import Any
 
 import jax
@@ -107,7 +108,7 @@ def _lge_plan(
 ) -> Any:
     shape = (2, 2, 2)
     if motion is None:
-        motion = np.eye(np.prod(shape))
+        motion = np.eye(prod(shape))
     return LGEObservationPlan(
         shape,
         _spatial_affine(),

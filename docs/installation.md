@@ -1,10 +1,19 @@
 # Installation
 
-Requires Python 3.12. The base install uses CPU JAX:
+Requires Python 3.12 and JAX 0.12. The base install uses CPU JAX:
 
 ```bash
 pip install phydrax
 ```
+
+The checkout lockfile selects matching JAX and JAXlib 0.12.0 releases. On
+x86-64, upstream wheels require AVX2 and FMA (Intel Haswell or newer).
+The NumPy and SciPy requirements already exceed JAX 0.12's minimums.
+
+GPU and MPI qualification is specific to the recorded software and hardware
+stack. The JAX/JAXlib 0.11.2 results below remain historical evidence, not
+qualification of 0.12. Rebuild native companions and the site-specific mpi4jax
+bridge against the target environment before qualifying a deployment.
 
 ## NVIDIA GPUs
 

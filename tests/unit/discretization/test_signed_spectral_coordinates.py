@@ -3,6 +3,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
 import phydrax as phx
 from phydrax.discretization.spectral import LatticeHarmonicPlan
@@ -12,7 +13,7 @@ from phydrax.discretization.spectral._signed_coordinates import (
 
 
 def _signed_coordinates(
-    *, coefficient_dtype: type[np.complex64] | type[np.complex128] = jnp.complex128
+    *, coefficient_dtype: DTypeLike = jnp.complex128
 ) -> SignedHermitianSpectralCoordinates:
     return SignedHermitianSpectralCoordinates(
         (6,),

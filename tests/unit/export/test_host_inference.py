@@ -3,6 +3,7 @@
 #
 
 
+import gc
 import hashlib
 from typing import Any
 
@@ -12,6 +13,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.interchange import ExternalTensorSpec
 
 
@@ -56,20 +58,57 @@ def test_host_inference_refuses_schema_mismatches_before_the_runtime() -> None:
         _adapter(lambda values: [values[0], values[0]])(jnp.ones(3))
 
 
-def test_host_inference_transports_return_equal_detached_values() -> None:
+def _host_buffer(values: Any, misalignment: int) -> Any:
+    # A read-only producer buffer `misalignment` bytes past a 64-byte boundary.
+    raw = np.empty(values.nbytes + 128, dtype=np.uint8)
+    start = -raw.ctypes.data % 64 + misalignment
+    array = raw[start : start + values.nbytes].view(values.dtype)
+    array[...] = values
+    array.setflags(write=False)
+    return array
+
+
+def test_host_inference_dlpack_aliases_read_only_buffers_and_copy_detaches() -> None:
     x = jnp.asarray([1.0, -2.0, 3.0])
+    borrowed = []
+    produced = []
 
     def runner(values: Any) -> Any:
-        return [2.0 * values[0]]
+        (host,) = values
+        borrowed.append((host.ctypes.data, host.flags.writeable))
+        output = _host_buffer(2.0 * host, 0)
+        produced.append(output.ctypes.data)
+        return [output]
+
+    shared = _adapter(runner, transport="dlpack")(x)
+    assert borrowed == [(x.unsafe_buffer_pointer(), False)]
+    assert shared.unsafe_buffer_pointer() == produced[0]
+    # The runner dropped its producer reference; the result keeps the buffer alive.
+    gc.collect()
+    np.testing.assert_array_equal(shared, [2.0, -4.0, 6.0])
 
     copied = _adapter(runner)(x)
-    shared = _adapter(runner, transport="dlpack")(x)
-
     assert isinstance(copied, jax.Array) and isinstance(shared, jax.Array)
-    np.testing.assert_array_equal(copied, 2.0 * x)
-    np.testing.assert_array_equal(shared, copied)
+    assert copied.unsafe_buffer_pointer() != produced[1]
+    np.testing.assert_array_equal(copied, shared)
+
     with pytest.raises(TypeError, match="__dlpack__"):
         _adapter(runner, transport="dlpack")([1.0, 2.0, 3.0])
+    misaligned = _adapter(lambda values: [_host_buffer(values[0], 8)], transport="dlpack")
+    with pytest.raises(ValueError, match="copy"):
+        misaligned(x)
+
+
+def test_host_inference_refuses_x64_outputs_with_x64_disabled() -> None:
+    calls = []
+    x = _host_buffer(np.asarray([1.0, -2.0, 3.0]), 0)
+    for transport in ("copy", "dlpack"):
+        with (
+            pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)),
+            pytest.raises(TypeError, match="x64"),
+        ):
+            _adapter(calls.append, transport=transport)(x)
+    assert calls == []
 
 
 def _affine_onnx_model(weight: Any, bias: Any, *, batch: Any) -> Any:

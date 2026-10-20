@@ -11,7 +11,7 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -301,7 +301,7 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
         input_shape: Sequence[int],
         /,
         *,
-        dtype: jnp.dtype,
+        dtype: DTypeLike,
     ) -> RationalResamplingState:
         """Return zero history for fixed-capacity chunks with ``input_shape``."""
         shape = tuple(input_shape)

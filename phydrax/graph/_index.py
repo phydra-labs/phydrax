@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 
 # Edge-index utilities build or summarize topology once (coalescing, degree
 # counts); they are one-off segment reductions, not repeated message passing
@@ -182,7 +183,7 @@ def degree(
     index: jnp.ndarray,
     *,
     num_nodes: int | None = None,
-    dtype: jnp.dtype = jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> jnp.ndarray:
     index = jnp.asarray(index, dtype=jnp.int32)
     n_nodes = maybe_num_nodes(jnp.stack([index, index], axis=0), num_nodes)
@@ -194,7 +195,7 @@ def in_degree(
     edge_index: jnp.ndarray,
     *,
     num_nodes: int | None = None,
-    dtype: jnp.dtype = jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> jnp.ndarray:
     edge_index = _validate_edge_index(edge_index)
     return degree(edge_index[1], num_nodes=num_nodes, dtype=dtype)
@@ -204,7 +205,7 @@ def out_degree(
     edge_index: jnp.ndarray,
     *,
     num_nodes: int | None = None,
-    dtype: jnp.dtype = jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> jnp.ndarray:
     edge_index = _validate_edge_index(edge_index)
     return degree(edge_index[0], num_nodes=num_nodes, dtype=dtype)

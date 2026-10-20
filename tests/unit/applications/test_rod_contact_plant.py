@@ -321,8 +321,8 @@ def test_rod_contact_plant_scenario_2() -> None:
         committed_velocity,
         result.evidence.free_step.candidate_state.reduced_state.coefficient_velocities
         + result.evidence.response.velocity_updates[0],
-        rtol=8.0 * np.finfo(np.float32).eps,
-        atol=8.0 * np.finfo(np.float32).eps,
+        rtol=float(8.0 * np.finfo(np.float32).eps),
+        atol=float(8.0 * np.finfo(np.float32).eps),
     )
     response = result.evidence.response
     history = result.accepted_state.payload.contact_state

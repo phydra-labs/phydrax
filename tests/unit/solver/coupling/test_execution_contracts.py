@@ -493,6 +493,86 @@ def test_members_with_different_host_callbacks_never_share_lanes() -> None:
     )
 
 
+_TABLE = np.linspace(0.0, float(_STRIPS), 512)
+
+
+def _lookup_source(method: str, /) -> _Source:
+    """Piecewise-constant source: the table cell of ``x`` by binary search."""
+
+    def source(points: Array, args: object) -> Array:
+        del args
+        index = jnp.searchsorted(_TABLE, points[..., 0], method=method)
+        return index.astype(points.dtype) / _TABLE.size
+
+    return source
+
+
+def test_stock_numpy_operations_share_lanes_and_estimate_their_executed_work() -> None:
+    estimates: dict[str, int] = {}
+    for method in ("scan", "compare_all"):
+        chain = _chain(sources=dict.fromkeys(range(_STRIPS), _lookup_source(method)))
+        lanes = chain.prepare(cpl.CoupledExecutionPolicy(lane_capacity=4))
+        reference = chain.prepare(None)
+        worksets = lanes.worksets
+        assert worksets is not None
+        assert tuple(group.members for group in worksets.components) == (
+            _ENDS,
+            _INTERIOR,
+        )
+        state = _state(reference, 5)
+        np.testing.assert_allclose(
+            lanes.row_space.flatten(lanes.residual(state)),
+            reference.row_space.flatten(reference.residual(state)),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        estimates[method] = worksets.components[1].estimate.traced_intermediate_bytes
+    # Both methods return the same indices; comparing every query with the
+    # whole table holds a query-by-table working set the binary search avoids.
+    assert estimates["compare_all"] > estimates["scan"]
+
+
+def test_operations_hiding_their_rules_are_refused_by_lane_preparation() -> None:
+    from jax._src import core
+    from jax.experimental.hijax import HiPrim, linearize_from_jvp, vjp_from_jvp
+
+    class Doubled(HiPrim):
+        """A user operation whose derivative and batching rules are Python code."""
+
+        def __init__(self, aval: core.ShapedArray) -> None:
+            self.in_avals = (aval,)
+            self.out_aval = aval
+            self.params = {}
+            super().__init__()
+
+        def expand(self, *args: Array) -> Array:
+            (x,) = args
+            return 2 * x
+
+        def jvp(
+            self, primals: tuple[Array], tangents: tuple[Array]
+        ) -> tuple[Array, Array]:
+            return self(*primals), 2 * tangents[0]
+
+        lin, linearized = linearize_from_jvp
+        vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+        def batch(
+            self, axis_data: object, args: tuple[Array], dims: tuple[int | None]
+        ) -> tuple[Array, int | None]:
+            del axis_data
+            return Doubled(core.typeof(args[0]))(args[0]), dims[0]
+
+    def source(points: Array, args: object) -> Array:
+        del args
+        values = points[..., 0]
+        return Doubled(core.typeof(values))(values)
+
+    chain = _chain(sources=dict.fromkeys(range(_STRIPS), source))
+    with pytest.raises(TypeError, match="high-level JAX operation"):
+        chain.prepare(cpl.CoupledExecutionPolicy(lane_capacity=4))
+
+
 def test_working_set_above_the_declared_bound_is_refused(chain: _Chain) -> None:
     with pytest.raises(ValueError, match="working-set bound"):
         chain.prepare(

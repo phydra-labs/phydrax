@@ -128,6 +128,15 @@ def test_physical_natural_and_constant_bridges_round_trip_without_hidden_c_or_hb
     )
 
 
+def test_constant_bridge_derivative_is_the_exact_constant_at_zero() -> None:
+    units = _units()
+    masses = jnp.asarray((0.0, -0.0, 5.0))
+
+    slopes = jax.vmap(jax.grad(units.mass_to_rest_energy))(masses)
+
+    np.testing.assert_array_equal(slopes, 9.0)
+
+
 def test_lorentz_scalar_and_mass_shell_are_invariant_in_E_cp_components() -> None:
     units = _units()
     mass = jnp.asarray(2.0)

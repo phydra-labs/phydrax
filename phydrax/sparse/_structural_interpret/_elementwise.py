@@ -2,6 +2,7 @@
 
 import numpy as np
 from jax._src.core import JaxprEqn
+from jax.core import ShapedArray
 
 from ._common import (
     _atom_const_val,
@@ -103,24 +104,11 @@ def _binary_elementwise(
         ]
         return
 
-    # General broadcast: map output coordinates to input coordinates
-    # respecting numpy-style broadcasting (size-1 dims read index 0).
-    # Example: mul of (16,16) * (16,1) → (16,16).
-    # out[p,d] depends on in1[p,d] and in2[p,0], not in2[d].
+    # General broadcast: out[p,d] of (16,16) * (16,1) depends on in1[p,d]
+    # and in2[p,0], not in2[d].
     out_shape = _atom_shape(eqn.outvars[0])
-    out_size = _numel(out_shape)
-    out_coords = np.indices(out_shape)
-    ndim = len(out_shape)
-
-    def _broadcast_flat(in_shape: tuple[int, ...]) -> np.ndarray:
-        # Left-pad with 1s to match output ndim (numpy broadcasting rule).
-        pad = ndim - len(in_shape)
-        padded = (1,) * pad + in_shape
-        coords = tuple(out_coords[d] if padded[d] > 1 else 0 for d in range(ndim))
-        return np.ravel_multi_index(coords, padded).ravel()
-
-    in1_flat = _broadcast_flat(in1_shape)
-    in2_flat = _broadcast_flat(in2_shape)
+    in1_flat = _broadcast_flat_map(in1_shape, out_shape)
+    in2_flat = _broadcast_flat_map(in2_shape, out_shape)
 
     state_indices[eqn.outvars[0]] = [
         _union_with_zero_derivs(
@@ -129,8 +117,23 @@ def _binary_elementwise(
             is_der1_zero_globally,
             is_der2_zero_globally,
         )
-        for i in range(out_size)
+        for i in range(_numel(out_shape))
     ]
+
+
+def _broadcast_flat_map(
+    in_shape: tuple[int, ...], out_shape: tuple[int, ...]
+) -> np.ndarray:
+    """Flat input position read by each output element under numpy broadcasting.
+
+    The input shape is left-padded with 1s to the output rank;
+    size-1 dimensions always read index 0.
+    """
+    ndim = len(out_shape)
+    padded = (1,) * (ndim - len(in_shape)) + in_shape
+    out_coords = np.indices(out_shape)
+    coords = tuple(out_coords[d] if padded[d] > 1 else 0 for d in range(ndim))
+    return np.broadcast_to(np.ravel_multi_index(coords, padded), out_shape).ravel()
 
 
 def _union_with_zero_derivs(
@@ -409,6 +412,43 @@ def _prop_unary_elementwise(eqn: JaxprEqn, state_indices: StateIndices) -> None:
     state_indices[eqn.outvars[0]] = _copy_index_sets(
         _index_sets(state_indices, eqn.invars[0])
     )
+
+
+def _prop_sign(eqn: JaxprEqn, state_indices: StateIndices) -> None:
+    """Sign is piecewise constant on reals but not on complex numbers.
+
+    Real ``sign(x)`` has ``∂/∂x = 0`` almost everywhere.
+    Complex ``sign(z) = z / |z|`` varies along the unit circle,
+    so ``sign(z)[i]`` depends on ``z[i]``.
+    """
+    aval = eqn.invars[0].aval
+    if not isinstance(aval, ShapedArray):
+        raise TypeError("Structural sign propagation requires a shaped array.")
+    if np.issubdtype(aval.dtype, np.complexfloating):
+        _prop_unary_elementwise(eqn, state_indices)
+    else:
+        _zero_derivative(eqn, state_indices)
+
+
+def _prop_polynomial(eqn: JaxprEqn, state_indices: StateIndices) -> None:
+    """Polynomial ``a₀ + x·(a₁ + x·(…))`` over broadcast operands.
+
+    Each output element depends on its broadcast element of ``x`` and of
+    every coefficient. No entry is pruned at sampled zeros:
+    ``∂p/∂a₀ = 1`` and the other partials vanish only at isolated points.
+
+    Jaxpr:
+        invars[0]: argument x
+        invars[1:]: coefficients (a₀, …, a_N), lowest degree first
+    """
+    out_shape = _atom_shape(eqn.outvars[0])
+    out_indices = _empty_index_sets(_numel(out_shape))
+    for invar in eqn.invars:
+        in_indices = _index_sets(state_indices, invar)
+        flat = _broadcast_flat_map(_atom_shape(invar), out_shape)
+        for i, j in enumerate(flat):
+            out_indices[i] |= in_indices[j]
+    state_indices[eqn.outvars[0]] = out_indices
 
 
 def _prop_convert_element_type(

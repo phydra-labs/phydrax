@@ -381,7 +381,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
     _kind_order: tuple[int, ...] = eqx.field(static=True)
     _edge_dof_order: tuple[int, ...] = eqx.field(static=True)
     _hinge_dof_indices: tuple[int, ...] = eqx.field(static=True)
-    _body_id_order: tuple[int, ...] = eqx.field(static=True)
+    _body_id_order: tuple[Array, ...] = eqx.field(static=True)
     _body_index_order: tuple[int, ...] = eqx.field(static=True)
 
     @checked

@@ -78,7 +78,9 @@ With `compiler="auto"` and no supplied structure, Phydrax analyzes the JAXPR
 computation graph, propagates global element dependencies, constructs a
 `SparsePattern(origin="structural")`, and colors it natively. Unsupported JAX
 primitives fail explicitly rather than silently assuming either dense or sparse
-structure.
+structure. JAX's stock high-level `jax.numpy` operations (`searchsorted`,
+`nonzero`, `ldexp`, `frexp`) are admitted by exact operation type with their
+mathematical derivative structure; any other high-level operation fails.
 
 ```python
 space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)

@@ -10,7 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax import ein
 
@@ -158,7 +158,7 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
         end: ArrayLike,
         /,
         *,
-        dtype: np.dtype | type = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> PhaseFieldNoiseEvidence:
         lower = jnp.asarray(start)
         upper = jnp.asarray(end, dtype=lower.dtype)

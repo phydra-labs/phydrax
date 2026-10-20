@@ -364,13 +364,13 @@ def test_state_precision_survives_mixed_parameter_precision_and_native_scan() ->
             np.testing.assert_allclose(
                 native.final_state.internal_energy,
                 final.internal_energy,
-                rtol=16 * jnp.finfo(dtype).eps,
+                rtol=float(16 * jnp.finfo(dtype).eps),
                 atol=0.0,
             )
             np.testing.assert_allclose(
                 native.final_state.slab.energy,
                 final.slab.energy,
-                rtol=16 * jnp.finfo(dtype).eps,
+                rtol=float(16 * jnp.finfo(dtype).eps),
                 atol=0.0,
             )
             scale = jnp.maximum(jnp.abs(initial.total_energy), 1.0)

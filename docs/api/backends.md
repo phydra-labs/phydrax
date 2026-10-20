@@ -835,7 +835,7 @@ ordinary-JAX streamed route remains the portable reference.
 
 | Target | Lowering | Admission |
 | --- | --- | --- |
-| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with compute capability 9.0 or newer. Other GPU clients, such as ROCm, and older devices are refused. |
+| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with an admitted compute capability: exactly 8.0, 9.0, 10.0, or 12.0. Other GPU clients, such as ROCm, and other architectures are refused. |
 | `"cpu_interpret"` | `"pallas_mosaic_gpu_interpret"` | Always available. The CPU Mosaic GPU interpreter executes the same kernel bodies for semantic reference verification. |
 
 HIP/ROCm and TPU are not implemented targets. `AtomisticKernelTarget(target)`

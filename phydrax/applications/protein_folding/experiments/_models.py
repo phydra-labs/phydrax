@@ -88,7 +88,7 @@ def thermal_unfolding_free_energy(
     parameters: ArrayLike,
     temperature: ArrayLike,
     denaturant: ArrayLike,
-    reference_temperature: float,
+    reference_temperature: ArrayLike,
 ) -> Array:
     """Constant-heat-capacity law with linear denaturant and thermal m-value.
 

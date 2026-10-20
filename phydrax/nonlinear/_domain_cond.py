@@ -31,19 +31,25 @@ _pure_cond.multiple_results = True
 _pure_cond.skip_canonicalization = True
 
 
-def _bind(call: core.ClosedJaxpr, arguments: Sequence[Any]) -> list[Any]:
+def _bind(call: core.Jaxpr, arguments: Sequence[Any]) -> list[Any]:
     # Keep the converted jaxpr's identity: JAX caches AD/partial evaluation by
     # this object. Rewrapping it would retrace every nested guard transform.
     closed = pe.convert_constvars_jaxpr(call)
     return _domain_call.bind(*call.consts, *arguments, call=closed)
 
 
-def _implementation(*arguments: Any, call: core.ClosedJaxpr) -> list[Any]:
+def _implementation(*arguments: Any, call: core.Jaxpr) -> list[Any]:
     return core.jaxpr_as_fun(call)(*arguments)
 
 
+def _lower_high_call(*arguments: Any, call: core.Jaxpr) -> list[Any]:
+    # AD and lane-safe batching have already run. Delegate high-value lowering
+    # and effect retention to the native call owner, not a primal-only rewrite.
+    return core.eval_jaxpr_p.to_lojax(*arguments, call_jaxpr=call)
+
+
 def _abstract(
-    *avals: core.AbstractValue, call: core.ClosedJaxpr
+    *avals: core.AbstractValue, call: core.Jaxpr
 ) -> tuple[list[core.AbstractValue], core.Effects]:
     del avals
     return call.out_avals, call.effects
@@ -53,7 +59,7 @@ def _sequential_batch(
     arguments: Sequence[Any],
     dimensions: Sequence[int | None],
     *,
-    call: core.ClosedJaxpr,
+    call: core.Jaxpr,
 ) -> tuple[list[Any], tuple[int | None, ...]]:
     input_mapped = tuple(axis is not None for axis in dimensions)
     known_call, mapped_call, output_mapped, residual_avals = (
@@ -118,7 +124,7 @@ def _batch(
     arguments: Sequence[Any],
     dimensions: Sequence[int | None],
     *,
-    call: core.ClosedJaxpr,
+    call: core.Jaxpr,
 ) -> tuple[list[Any], tuple[int | None, ...]]:
     if call.effects:
         return _sequential_batch(arguments, dimensions, call=call)
@@ -231,7 +237,7 @@ def _jvp(
     primals: Sequence[Any],
     tangents: Sequence[Any],
     *,
-    call: core.ClosedJaxpr,
+    call: core.Jaxpr,
 ) -> tuple[list[Any], list[Any]]:
     nonzero = tuple(not isinstance(value, ad_util.Zero) for value in tangents)
     if not any(nonzero):
@@ -257,7 +263,7 @@ def _linearize(
     is_vjp: bool,
     nonzero: Sequence[bool],
     *primals: Any,
-    call: core.ClosedJaxpr,
+    call: core.Jaxpr,
 ) -> tuple[list[Any], Sequence[bool], tuple[Any, ...], Any, Callable[..., list[Any]]]:
     # Use JAX's cached call linearization directly. Falling back through the
     # JVP rule re-enters legacy partial evaluation and hoists nested scans again.
@@ -302,7 +308,7 @@ def _linearize(
 
 
 def _partial_eval(
-    trace: pe.JaxprTrace, *tracers: pe.JaxprTracer, call: core.ClosedJaxpr
+    trace: pe.JaxprTrace, *tracers: pe.JaxprTracer, call: core.Jaxpr
 ) -> list[Any]:
     unknown = tuple(not tracer.pval.is_known() for tracer in tracers)
     known_call, linear_call, output_unknown, residual_avals = (
@@ -379,9 +385,7 @@ def _rematerialization_partial_eval(
     )
 
 
-def _transpose(
-    cotangents: Sequence[Any], *arguments: Any, call: core.ClosedJaxpr
-) -> list[Any]:
+def _transpose(cotangents: Sequence[Any], *arguments: Any, call: core.Jaxpr) -> list[Any]:
     linear = tuple(ad.is_undefined_primal(value) for value in arguments)
     zero = tuple(isinstance(value, ad_util.Zero) for value in cotangents)
     transposed, input_zero, output_tree = transpose_jaxpr(call, linear, zero)
@@ -405,14 +409,14 @@ def _transpose(
 
 
 def _dead_code_elimination(
-    used_outputs: list[bool], equation: core.JaxprEqn
+    used_outputs: list[bool], live_inputs: list[bool], equation: core.JaxprEqn
 ) -> tuple[list[bool], core.JaxprEqn | None]:
     # Delegate liveness and effect retention to JAX's closed-call owner. Only
     # its parameter spelling differs from this lane-local native primitive.
     parameters = dict(equation.params)
     parameters["call_jaxpr"] = parameters.pop("call")
     used_inputs, pruned = pe.dce_jaxpr_closed_call_rule(
-        used_outputs, equation.replace(params=parameters)
+        used_outputs, live_inputs, equation.replace(params=parameters)
     )
     if pruned is None:
         return used_inputs, None
@@ -423,6 +427,8 @@ def _dead_code_elimination(
 
 _domain_call.def_impl(_implementation)
 _domain_call.def_effectful_abstract_eval(_abstract)
+# JAX registers per-instance rules; its class-method annotation cannot express this.
+_domain_call.to_lojax = _lower_high_call  # ty: ignore[invalid-assignment]
 batching.fancy_primitive_batchers[_domain_call] = _batch
 ad.primitive_jvps[_domain_call] = _jvp
 ad.primitive_linearizations[_domain_call] = _linearize
@@ -440,6 +446,7 @@ mlir.register_lowering(
 # partial-evaluation, refusal callback, and lowering remains with its owner.
 _pure_cond.def_impl(_pure_cond_implementation)
 _pure_cond.def_effectful_abstract_eval(conditionals.cond_p.abstract_eval)
+_pure_cond.to_lojax = conditionals.cond_p.to_lojax  # ty: ignore[invalid-assignment]
 batching.fancy_primitive_batchers[_pure_cond] = _pure_cond_batch
 ad.primitive_jvps[_pure_cond] = ad.primitive_jvps[conditionals.cond_p]
 ad.primitive_linearizations[_pure_cond] = ad.primitive_linearizations[conditionals.cond_p]

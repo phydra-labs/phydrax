@@ -335,7 +335,7 @@ def test_power_float32_preserves_mixed_magnitude_coordinates() -> None:
     np.testing.assert_allclose(
         derivative.astype(jnp.float64),
         reference_derivative,
-        atol=jnp.finfo(jnp.float32).smallest_subnormal,
+        atol=float(jnp.finfo(jnp.float32).smallest_subnormal),
         rtol=5e-5,
     )
 

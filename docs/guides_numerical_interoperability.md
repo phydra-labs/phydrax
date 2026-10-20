@@ -2322,13 +2322,17 @@ for group in prepared.worksets.components:
   the whole bucket loop, because JAX's partial evaluation of a loop body
   differentiates nested custom rules through their primal functions at second
   order.
+  Stock high-level NumPy operations retain their declared derivative semantics.
+  Preparation refuses opaque high-level operations whose callback or derivative
+  programs cannot be inspected; equal printed names are not sufficient evidence.
 - **Bounded lanes.** Each group is one `PreparedExecutionWorksets` of the
   execution-workset substrate (its members are the items): `lane_capacity` lanes per
   bucket are vectorized and buckets run in sequence through `lax.map`, so one bucket
   is the live working set; padded lanes repeat a valid lane and are masked out.
   `LaneWorksetEstimate` reports the stacked lane data the workset retains, per-lane
   inputs/outputs, the traced intermediate bytes of one lane (no buffer reuse, an
-  upper estimate), and the bucket working set
+  upper estimate including stock high-level operation expansions and polynomial
+  coefficient stacks/scan bodies), and the bucket working set
   `lane_capacity * (lane data + inputs + outputs + intermediates)`. A group above
   `max_working_set_bytes` is refused at preparation, before its lanes are stacked or
   any batched program is traced.

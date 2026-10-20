@@ -88,3 +88,13 @@ def test_relativity_scales_scenario_1() -> None:
     assert float(scale.mass_to_geometric_time(jnp.asarray(3.0))) == pytest.approx(3.0)
     assert scale.temperature_unit.dimension.terms == (("temperature", 1, 1),)
     assert scale.entropy_unit == scale.boltzmann_constant_unit
+
+
+def test_exact_scale_factor_derivative_holds_at_zero() -> None:
+    scale = RelativityScaleContract.si()
+    factor = float(scale.gravitational_constant / scale.speed_of_light**2)
+    values = jnp.asarray([0.0, -0.0, 1.0e-300, 1.0])
+
+    slopes = jax.vmap(jax.grad(scale.mass_to_geometric_length))(values)
+
+    assert jnp.all(slopes == factor)

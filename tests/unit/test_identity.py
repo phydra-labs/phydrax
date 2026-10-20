@@ -282,6 +282,10 @@ def _program_identity(
     )
 
 
+def _apply(function: Any, value: Any, /) -> Any:
+    return function(value)
+
+
 def test_compiler_identity_tracks_program_semantics_not_variable_addresses() -> None:
     value = jnp.ones((2,), dtype=jnp.float64)
     baseline = _program_identity(lambda x: x + 2.0, value)
@@ -453,6 +457,69 @@ def test_compiler_identity_refuses_name_colliding_foreign_primitives() -> None:
     primitive.def_abstract_eval(lambda x: x)
     with pytest.raises(TypeError, match="Foreign compiler primitive"):
         _program_identity(lambda x: primitive.bind(x), jnp.asarray([1.0, 2.0]))
+
+
+def test_compiler_identity_names_stock_numpy_operations_and_refuses_foreign_ones() -> (
+    None
+):
+    from jax._src import core
+    from jax._src.numpy.ufuncs import Frexp
+    from jax.experimental.hijax import HiPrim
+
+    table = jnp.asarray([0.0, 1.0, 2.0, 4.0])
+    query = jnp.asarray([0.5, 1.5, 3.0])
+
+    def model(x: Any) -> Any:
+        mantissa, exponent = jnp.frexp(x)
+        index = jnp.searchsorted(table, x)
+        (support,) = jnp.nonzero(x > 1.0, size=2)
+        scaled = jnp.ldexp(mantissa, exponent) + index + support.sum()
+        return jnp.sum(scaled * jnp.polyval(table, x))
+
+    batch = jnp.stack((query, query + 1.0))
+    for transformed, value in (
+        (model, query),
+        (jax.grad(model), query),
+        (jax.vmap(model), batch),
+        (jax.hessian(model), query),
+        (lambda x: jax.jvp(model, (x,), (jnp.ones_like(x),)), query),
+    ):
+        # Identity follows the operations, not the tracing session's objects.
+        assert _program_identity(transformed, value) == _program_identity(
+            functools.partial(_apply, transformed), value
+        )
+
+    def search(**options: Any) -> Any:
+        return lambda x: jnp.searchsorted(table, x, **options)
+
+    baseline = _program_identity(search(), query)
+    assert _program_identity(search(side="right"), query) != baseline
+    assert _program_identity(search(method="sort"), query) != baseline
+    assert _program_identity(search(), query[:2]) != baseline
+    assert _program_identity(
+        lambda x: jnp.nonzero(x, size=2)[0], query
+    ) != _program_identity(lambda x: jnp.nonzero(x, size=3)[0], query)
+
+    class Doubled(HiPrim):
+        def __init__(self, aval: Any) -> None:
+            self.in_avals = (aval,)
+            self.out_aval = aval
+            self.params = {}
+            super().__init__()
+
+        def expand(self, *args: Any) -> Any:
+            (x,) = args
+            return 2 * x
+
+    class ForeignFrexp(Frexp):
+        pass
+
+    for foreign in (
+        lambda x: Doubled(core.typeof(x))(x),
+        lambda x: ForeignFrexp(core.typeof(x))(x)[0],
+    ):
+        with pytest.raises(TypeError, match="high-level JAX operation"):
+            _program_identity(foreign, query)
 
 
 def test_compiler_identity_preserves_bound_custom_derivative_selectors() -> None:

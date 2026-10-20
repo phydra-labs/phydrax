@@ -900,3 +900,133 @@ def test_structural_trace_handles_input_independent_allocation(size: int) -> Non
     expected = jax.jacfwd(allocated)(point, None)
     assert np.array_equal(_traced_pattern(plan, (3 + size, 3)), expected != 0)
     assert jnp.array_equal(plan.operator(point).as_dense(), expected)
+
+
+_STOCK_POINTS = (
+    jnp.asarray([0.3, 0.7, 1.1, 1.9], dtype=jnp.float64),
+    jnp.asarray([-0.4, 2.5, 0.0, 1.2], dtype=jnp.float64),
+    jnp.asarray([1.0, 0.0, -2.0, 0.5], dtype=jnp.float64),
+)
+_STOCK_GRID = jnp.linspace(0.0, 2.0, 5, dtype=jnp.float64)
+_DIAGONAL = np.eye(4, dtype=np.bool_)
+_ANTIDIAGONAL = _DIAGONAL[::-1]
+_MIRRORED = _DIAGONAL | _ANTIDIAGONAL
+
+
+def _nested_ldexp_polynomial(value: Any, _: Any) -> Any:
+    inner = jax.vmap(lambda a, b: jnp.polyval(jnp.stack([a, b]), jnp.ldexp(a, 2)))
+    outer = jax.jit(jax.vmap(inner))
+    return outer(value.reshape(2, 2), value[::-1].reshape(2, 2)).ravel()
+
+
+_STOCK_JACOBIANS: dict[str, tuple[Any, Any]] = {
+    "ldexp": (lambda v, _: jnp.ldexp(v, jnp.arange(4)), _DIAGONAL),
+    "frexp-mantissa": (lambda v, _: jnp.frexp(v)[0][::-1], _ANTIDIAGONAL),
+    "frexp-exponent": (lambda v, _: jnp.frexp(v)[1][::-1] * v, _DIAGONAL),
+    "searchsorted-static": (
+        lambda v, _: v[jnp.searchsorted(_STOCK_GRID, jnp.asarray([0.7, 1.2, 0.2, 1.4]))],
+        np.asarray([[0, 0, 1, 0], [0, 0, 0, 1], [0, 1, 0, 0], [0, 0, 0, 1]]),
+    ),
+    "searchsorted-interp": (
+        lambda v, _: jnp.interp(
+            jnp.asarray([0.25, 1.6, 2.2, 2.9]), jnp.linspace(0.0, 3.0, 4), v
+        ),
+        np.asarray([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1], [0, 0, 1, 1]]),
+    ),
+    "searchsorted-batched-bounds": (
+        lambda v, _: jax.vmap(
+            lambda row, query: jnp.append(row, 0.0)[jnp.searchsorted(row, query)]
+        )(v.reshape(2, 2), jnp.asarray([0.5, 1.5])),
+        np.asarray([[1, 1, 0, 0], [0, 0, 1, 1]]),
+    ),
+    "nonzero-static": (
+        lambda v, _: v[jnp.nonzero(jnp.asarray([False, True, False, True]), size=2)[0]],
+        np.asarray([[0, 1, 0, 0], [0, 0, 0, 1]]),
+    ),
+    "nonzero-bounds": (
+        lambda v, _: v[jnp.nonzero(v[:2] > 0.5, size=1)[0]],
+        np.asarray([[1, 1, 0, 0]]),
+    ),
+    "complex-sign": (lambda v, _: jnp.real(jnp.sign(v + 1j * v[::-1])), _MIRRORED),
+    "real-sign": (lambda v, _: jnp.sign(v) * v[::-1], _ANTIDIAGONAL),
+    "polynomial": (
+        lambda v, _: jnp.polyval(v[:2], v),
+        np.asarray([[1, 1, 0, 0], [1, 1, 0, 0], [1, 1, 1, 0], [1, 1, 0, 1]]),
+    ),
+    "polynomial-broadcast": (
+        lambda v, _: jax.lax.polynomial(
+            v[:2].reshape(2, 1), [v[2:3].reshape(1, 1), v[3:4].reshape(1, 1)]
+        ).ravel(),
+        np.asarray([[1, 0, 1, 1], [0, 1, 1, 1]]),
+    ),
+    "nested-batch-jit": (_nested_ldexp_polynomial, _MIRRORED),
+}
+
+
+@pytest.mark.parametrize("case", tuple(_STOCK_JACOBIANS))
+def test_structural_trace_stock_operations_match_analytic_jacobians(case: str) -> None:
+    function, expected = _STOCK_JACOBIANS[case]
+    expected = np.asarray(expected, dtype=np.bool_)
+    source = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((expected.shape[0],), dtype=jnp.float64)
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        function, _STOCK_POINTS[0], source=source, target=target, compiler="auto"
+    )
+    assert np.array_equal(_traced_pattern(plan, expected.shape), expected)
+    for point in _STOCK_POINTS:
+        jacobian = np.asarray(jax.jacfwd(function)(point, None))
+        assert not np.any((jacobian != 0) & ~expected), point
+        assert np.allclose(np.asarray(plan.operator(point).as_dense()), jacobian)
+
+
+_STOCK_HESSIANS: dict[str, tuple[Any, Any]] = {
+    "ldexp": (
+        lambda v, _: jnp.sum(jnp.ldexp(v, jnp.arange(4)) ** 2 * v[::-1]),
+        _MIRRORED,
+    ),
+    "frexp": (lambda v, _: jnp.sum(jnp.frexp(v)[0] * v**2), _DIAGONAL),
+    "polynomial": (
+        lambda v, _: jnp.sum(jnp.polyval(v[:2], v)),
+        np.asarray([[1, 1, 1, 1], [1, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]]),
+    ),
+    "complex-sign": (
+        lambda v, _: jnp.sum(jnp.real(jnp.sign(v + 1j * v[::-1]))),
+        _MIRRORED,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", tuple(_STOCK_HESSIANS))
+def test_structural_trace_stock_operations_match_analytic_hessians(case: str) -> None:
+    function, expected = _STOCK_HESSIANS[case]
+    expected = np.asarray(expected, dtype=np.bool_)
+    space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+
+    plan = phx.sparse.compile_sparse_hessian(
+        function, _STOCK_POINTS[0], space=space, compiler="auto"
+    )
+    assert np.array_equal(_traced_pattern(plan, (4, 4)), expected)
+    for point in _STOCK_POINTS:
+        hessian = np.asarray(jax.hessian(function)(point, None))
+        assert not np.any((hessian != 0) & ~expected), point
+        assert np.allclose(np.asarray(plan.operator(point).as_dense()), hessian)
+
+
+def test_structural_trace_rejects_unknown_high_level_operations() -> None:
+    from jax._src.core import typeof
+    from jax._src.numpy.ufuncs import Ldexp
+
+    class ForeignLdexp(Ldexp):
+        pass
+
+    space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+    exponents = jnp.arange(4)
+
+    def function(value: Any, _: Any) -> Any:
+        return ForeignLdexp(typeof(value), typeof(exponents))(value, exponents)
+
+    with pytest.raises(TypeError, match="high-level JAX operation .*ForeignLdexp"):
+        phx.sparse.compile_sparse_jacobian(
+            function, _STOCK_POINTS[0], source=space, target=space, compiler="auto"
+        )

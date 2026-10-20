@@ -284,9 +284,15 @@ def _rewrite_jaxpr(
     rules = _rule_map(policy)
     equations = []
     records: list[tuple[str, str]] = []
-    boundary_variables = frozenset(expression.outvars)
+    # JAX literals are unhashable atoms; only variables name values.
+    boundary_variables = frozenset(
+        variable for variable in expression.outvars if isinstance(variable, jax_core.Var)
+    )
     consumed_variables = frozenset(
-        variable for equation in expression.eqns for variable in equation.invars
+        variable
+        for equation in expression.eqns
+        for variable in equation.invars
+        if isinstance(variable, jax_core.Var)
     )
     for index, equation in enumerate(expression.eqns):
         equation_path = f"{path}/{index}:{equation.primitive.name}"

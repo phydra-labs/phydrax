@@ -664,7 +664,19 @@ of the folded shape `G_j`, so the leading regular behavior `r^{|p|}` of every an
 deposits exactly at every node. A uniform density deposits uniformly including the axis cell,
 which the plain volume `2π r_j Δr Δz` overestimates by `13/12` for the linear shape (Ruyten 1993;
 Verboncoeur 2001). Gathering uses the same folded shape and synthesizes `Σ_m F_m e^{ipθ}` at the
-particle angle. A step fails when an active particle's stencil leaves the radial grid.
+particle angle. A step fails when an active particle's stencil leaves the radial grid. An on-axis
+particle takes `θ = 0` for its primal value. Its first position derivative is exact for the
+angular orders `|p| ≤ 1`, which are continuously differentiable through the axis in Cartesian
+`(x, y)`. Higher orders are not generally differentiable there (even `p` can be discontinuous,
+and odd `p` can have a direction-dependent derivative), so their transverse derivative is NaN.
+Forward-mode derivatives
+of outputs that depend on such a particle are then NaN in every direction, because a zero
+transverse tangent cannot cancel an undefined coefficient; reverse-mode gradients keep the exact
+axial component and every other particle's gradient. Second and higher derivatives through an
+on-axis particle are NaN.
+A field sample requested with `derivative_order=1` reports `successful=False` when an active
+particle has nonfinite gradients; order-zero sampling retains its primal support contract.
+Inactive particles remain masked and do not invalidate the sample.
 
 The solver deposits the endpoint modal charges and the step-mean current `q v` at the path
 midpoint. Its Gauss charge is the spectral charge `ρ̂[m, k_⊥, k_z]`; the deposited velocity is the

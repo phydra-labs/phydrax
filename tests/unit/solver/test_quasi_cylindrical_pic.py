@@ -383,6 +383,76 @@ def test_near_axis_deposition_recovers_regular_modal_densities(
     np.testing.assert_allclose(ramp[:8], grid.radial_coordinates[:8], atol=3e-3)
 
 
+@pytest.mark.parametrize("shape_order", [1, 2, 3])
+def test_on_axis_gather_differentiates_only_where_the_axis_is_smooth(
+    shape_order: D.pic.PICShapeOrder,
+) -> None:
+    """On the axis, exact first derivatives for ``|p| ≤ 1``; undefined ones are NaN.
+
+    Channel ``o = −1`` carries ``γr`` (``p = −1``), ``α`` (``p = 0``), and ``βr``
+    (``p = 1``): the folded splines reproduce it exactly as
+    ``α + β(x + iy) + γ(x − iy)``, smooth through the axis. The ``o = 0`` channel
+    carries ``βr²`` at ``p = 2``, whose gather is not differentiable across the
+    axis: its transverse derivative is invalidated while its axial gradient
+    stays exact. Nested derivatives through an on-axis particle are invalidated.
+    """
+    grid = D.pic.QuasiCylindricalGrid(1.0, 8, 0.0, 1.0, 8, 3)
+    support = D.ParticleSetPlan(
+        jnp.arange(2), jnp.ones((2,)), ambient_dimension=3
+    ).prepare()
+    transfer = D.pic.AzimuthalTransferPlan(grid, shape_order=shape_order).prepare(support)
+    alpha, beta, gamma = 0.7 - 0.2j, 1.3 + 0.5j, -0.4 + 0.9j
+    r = np.broadcast_to(grid.radial_coordinates[:, None], (8, 8))
+    regular = np.stack((gamma * r, np.full(r.shape, alpha), beta * r))[..., None]
+    higher = np.stack((np.zeros(r.shape), np.zeros(r.shape), beta * r**2))[..., None]
+    active = jnp.ones((2,), dtype=jnp.bool_)
+    position = jnp.asarray([[0.0, 0.0, 0.53], [0.3, 0.1, 0.41]])
+
+    def synthesis(on_axis: Array, values: np.ndarray, offset: int) -> Array:
+        value, _ = transfer.gather(
+            position.at[0].set(on_axis), active, jnp.asarray(values), (offset,)
+        )
+        return jnp.stack((jnp.real(value[0, 0]), jnp.imag(value[0, 0])))
+
+    np.testing.assert_allclose(
+        synthesis(position[0], regular, -1), [alpha.real, alpha.imag], atol=1e-14
+    )
+    regular_synthesis = jax.jacfwd(lambda value: synthesis(value, regular, -1))
+    jacobian = np.asarray(regular_synthesis(position[0]))
+    expected = np.asarray([beta + gamma, 1j * (beta - gamma), 0.0])
+    np.testing.assert_allclose(jacobian[0], expected.real, atol=1e-12)
+    np.testing.assert_allclose(jacobian[1], expected.imag, atol=1e-12)
+    curvature = jax.hessian(lambda value: synthesis(value, regular, -1)[0])
+    assert np.all(np.isnan(curvature(position[0])))
+    assert np.all(np.isfinite(curvature(position[1])))
+
+    nonsmooth = jax.grad(lambda value: synthesis(value, higher, 0)[0])(position[0])
+    assert np.all(np.isnan(nonsmooth[:2]))
+    assert float(nonsmooth[2]) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_field_sample_reports_undefined_axis_gradients_as_unsuccessful() -> None:
+    grid = _grid(1.0, 8, 1.0, 8, 2)
+    _, transfers = _species(grid, np.ones(1, dtype=np.float64))
+    solver = sp.QuasiCylindricalMaxwellPlan(grid).prepare(transfers)
+    electric = jnp.zeros((2, 8, 8, 3), dtype=jnp.complex128)
+    electric = electric.at[1, :, :, 1].set(grid.radial_coordinates[:, None] ** 2)
+    field = solver.circular_field(electric, jnp.zeros_like(electric))
+    active = jnp.ones((1,), dtype=jnp.bool_)
+    position = jnp.asarray([[0.0, 0.0, 0.53]], dtype=jnp.float64)
+
+    primal = solver.gather(0, position, active, field)
+    differentiated = solver.gather(0, position, active, field, derivative_order=1)
+    assert bool(primal.successful)
+    assert not bool(differentiated.successful)
+    assert differentiated.electric_gradient is not None
+    assert bool(jnp.any(~jnp.isfinite(differentiated.electric_gradient)))
+    inactive = solver.gather(
+        0, position, jnp.zeros_like(active), field, derivative_order=1
+    )
+    assert bool(inactive.successful)
+
+
 # -- cross-solver and observation -------------------------------------------------
 
 

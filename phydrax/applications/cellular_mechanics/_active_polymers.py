@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -86,7 +86,7 @@ def _batch(
 
 
 def _empty(
-    relations: PreparedDynamicPairRelations, dtype: np.dtype | type
+    relations: PreparedDynamicPairRelations, dtype: DTypeLike
 ) -> PairRelationEventBatch:
     capacity = relations.event_capacity
     return _batch(
@@ -104,7 +104,7 @@ def _empty(
 
 def _one(
     relations: PreparedDynamicPairRelations,
-    dtype: np.dtype | type,
+    dtype: DTypeLike,
     *,
     event_id: ArrayLike,
     operation: PairRelationEventKind,
@@ -1601,7 +1601,7 @@ class PreparedMotorCrosslinkers(StrictModule, NonTrainableState):
 
     def initialize(
         self,
-        dtype: np.dtype | type = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         /,
         *,
         left: ArrayLike | None = None,
@@ -1960,7 +1960,7 @@ class PreparedFocalAdhesions(StrictModule, NonTrainableState):
 
     def initialize(
         self,
-        dtype: np.dtype | type = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         /,
         *,
         cell_endpoints: ArrayLike | None = None,

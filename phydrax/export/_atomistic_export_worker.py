@@ -76,11 +76,12 @@ def _export(root: Path, request_path: Path, output: Path, /) -> None:
     callbacks = [
         site
         for site in atomistic._runtime_guard_sites(forward, inputs)
-        if site.kind == "host-callback"
+        if site.kind != "guard"
     ]
     if callbacks:
         raise refusal(
-            "The frozen program keeps host callbacks under the nan policy: "
+            "The frozen program keeps host callbacks or opaque high-level "
+            "operations under the nan policy: "
             + "; ".join(site.location for site in callbacks[:8])
         )
     exported = save_iree(

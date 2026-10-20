@@ -93,6 +93,13 @@ def boundaries() -> None:
     assert_type(precision_dtype_name("float32"), ScalarPrecisionDType)
 
 
+def dtype_specifications(indices: jax.Array) -> None:
+    from phydrax.graph import degree
+
+    assert_type(degree(indices, dtype=jnp.float32), jax.Array)
+    assert_type(degree(indices, dtype=np.dtype("float64")), jax.Array)
+
+
 def constructors() -> None:
     catalog = ChemicalComponentCatalog(
         ("H2",), np.asarray((2.016,)), ("H",), np.asarray(((2,),))

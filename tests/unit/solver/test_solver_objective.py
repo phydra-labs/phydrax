@@ -310,6 +310,37 @@ def test_evaluate_differentiates_only_the_parameter_lane() -> None:
     assert float(gradient.gain) == pytest.approx(float(expected), rel=1e-12)
 
 
+@pytest.mark.parametrize("case_batch_size", [None, 2])
+def test_case_independent_loss_is_gated_by_each_case_acceptance(
+    case_batch_size: Any,
+) -> None:
+    def measure(owner: Any, case: Any) -> Any:
+        # The loss is shared by every case; only acceptance depends on the case.
+        return phx.solver.SolverCaseResult(
+            value=(owner.gain + owner.offset - 1.0) ** 2, accepted=case >= 0.0
+        )
+
+    objective = phx.solver.RolloutObjective(
+        None,
+        lambda solve, component: component,
+        measure,
+        objective_id="shared-gain",
+        cases=jnp.asarray([1.0, 4.0, -1.0]),
+        accepted_results="reduce-support",
+        case_batch_size=case_batch_size,
+    )
+    evaluation = objective.evaluate(_OffsetGain(2.0, 3.0))
+    gradient = jax.grad(lambda tree: objective.evaluate(tree).value)(
+        _OffsetGain(2.0, 3.0)
+    )
+
+    assert evaluation.accepted.tolist() == [True, True, False]
+    assert float(evaluation.value) == pytest.approx(16.0, rel=1e-12)
+    # Mean over the two accepted cases of d(gain + 2)²/dgain: each case once.
+    assert float(gradient.gain) == pytest.approx(8.0, rel=1e-12)
+    assert float(gradient.offset) == 0.0
+
+
 def test_algorithmic_work_loss_is_finite_at_exact_convergence_and_saturates() -> None:
     def loss(final: Any, dtype: Any) -> Any:
         return phx.solver.algorithmic_work_loss(

@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Breaking
+- Require JAX 0.12 and update the matched JAXlib/CUDA-plugin lock and native
+  companion build requirements. Upstream x86-64 wheels require AVX2/FMA.
+  Compiler-derived executable identities may change; reprepare affected
+  execution artifacts rather than relabeling their identities. Historical
+  JAX 0.11.2 GPU/MPI qualification does not qualify the new stack.
+- Enforce the existing no-copy DLPack contract: unshareable host buffers are
+  refused instead of copied. Host inference refuses declared output dtypes that
+  the active JAX precision configuration would silently narrow.
 - `SpectralTranspose` now takes `(source, target, topology)` and derives its
   redistribution from declared layouts. Remove explicit mesh/split/concatenation
   constructor arguments. The canonical pencil schedule uses one full-mesh
@@ -101,6 +109,24 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Admit stock JAX high-level NumPy operations in compiler identities and
+  structural sparse derivatives without discarding their custom derivative
+  semantics. Complex `sign` now retains its nonzero structural dependencies;
+  polynomial argument and coefficient dependencies remain broadcast-aware.
+- Include high-level operation and polynomial lowering work in coupled-lane
+  resource estimates, and refuse opaque high-level programs at lane/export
+  admission. Preserve precision rewriting with unhashable JAX literal operands.
+- Update domain-conditional dead-code elimination and high-level lowering to
+  JAX's current call protocol, preserving compiled batched derivatives.
+- Accept JAX scalar dtype constructors at dtype-specification boundaries
+  through `DTypeLike`, without changing stored dtypes or numerical defaults.
+- Preserve per-case acceptance gating for shared solver-objective losses under
+  vectorization, avoiding repeated shared cotangents without enabling a global
+  AD implementation switch.
+- Evaluate smooth first-order azimuthal PIC axis derivatives through their
+  Cartesian limits. Undefined higher-angular-order and nested on-axis
+  derivatives remain invalid rather than receiving an arbitrary finite value;
+  requested nonfinite field gradients invalidate the field sample.
 - Honor deterministic and compensated accumulation throughout Cartesian FMM
   P2M and the L2L/L2P ownership transposes. Ordered strength derivatives no
   longer use unordered duplicate-index GPU additions; B200 float32/float64
