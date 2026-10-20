@@ -98,6 +98,14 @@ cuda13 = [
 metal = [
   "phydrax-metal==0.2.2",
 ]
+oneapi = [
+  "jax==0.12.0",
+  "jaxlib==0.11.2",
+  "jax-oneapi-plugin[with-oneapi]==0.11.2",
+]
+tpu = [
+  "jax[tpu]==0.12.0",
+]
 fmi = [
   "fmpy>=0.3.32,<0.4",
 ]
@@ -258,6 +266,9 @@ conflicts = [
     {extra = "fmi"},
     {extra = "privacy-jax"},
   ],
+  [{extra = "oneapi"}, {extra = "cuda13"}],
+  [{extra = "oneapi"}, {extra = "metal"}],
+  [{extra = "oneapi"}, {extra = "tpu"}],
 ]
 
 [tool.uv.sources]

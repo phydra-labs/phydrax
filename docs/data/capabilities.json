@@ -1,5 +1,5 @@
 {
-  "catalog_id": "f4c82b6659823a126eb093568d0c4b0fb88ccd2716e0d5287c563ee02bc12f73",
+  "catalog_id": "a376d99878359d3107325c86682fc74f228ad56a5fa1ec13cbc73e064cbf23ec",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -12124,6 +12124,265 @@
         }
       ],
       "public_symbols": []
+    },
+    {
+      "capability": "google-tpu-execution",
+      "declaration_id": "54a2c5673655489f3d32bdfdeb689c0ab28eefae4c274916f306cbbcb8a6ed0c",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-device-scientific-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "highest-matmul-is-six-bfloat16-passes-not-native-ieee-float32",
+        "no-cuda-provider-or-pallas-particle-fmm-parity",
+        "no-emulated-float64-or-complex-coordinate-qualification",
+        "no-hardware-qualification-from-installation",
+        "no-implicit-cpu-numerical-fallback",
+        "no-multi-device-or-multi-host-qualification",
+        "no-native-float64-or-complex128",
+        "no-owned-native-companion",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.backends",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "google-tpu-execution.profile",
+          "profile_id": "52de2196233cd7677d48197423608d6396a456ee152f9df06b699796295aa390",
+          "provider": "jax-tpu",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-errors",
+            "derivative-reference",
+            "exact-integer-addressing",
+            "float32-explicit",
+            "forward-reference",
+            "installed-wheel",
+            "real-device",
+            "resource-evidence",
+            "upstream-runtime-identity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "matmul_precision": "highest",
+                "platform": "tpu",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "exact-integer-addressing",
+                "x64_enabled": true
+              },
+              "capability": "google-tpu-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "253b231f0e8169ec8d5ab43781646c4c201da2533a16b4728d64613cb5ce5be3"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "matmul_precision": "highest",
+                "platform": "tpu",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "iterative-linear",
+                "x64_enabled": true
+              },
+              "capability": "google-tpu-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "68ac3952714ed26e6961aac28000cdec04b20cdd02904af088fe5aeb7e8ad5c1"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "matmul_precision": "highest",
+                "platform": "tpu",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "real-fourier",
+                "x64_enabled": true
+              },
+              "capability": "google-tpu-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6a4c437f14bed271f8ea31cb0ad0ea0dbe21f04e9eca2b3bbed9d3a5ec28f964"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "matmul_precision": "highest",
+                "platform": "tpu",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "pde-mlp",
+                "x64_enabled": true
+              },
+              "capability": "google-tpu-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a2780bc5fef50794cfc5eeb84cc35aa1f1ae60c6c96bb6f11dc4adfe435c9e91"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "matmul_precision": "highest",
+                "platform": "tpu",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "compiled-control-flow",
+                "x64_enabled": true
+              },
+              "capability": "google-tpu-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cfa5d765357e61b16d37e8e1e4f35958c42ef1a7920a53905c9da7d3bf7b3433"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.backends.assess_tpu_environment",
+        "phydrax.backends.tpu_environment"
+      ]
+    },
+    {
+      "capability": "intel-oneapi-execution",
+      "declaration_id": "55b9b9ef70c8310201098f8c83ace3f8a55b50956072596b1c21d8b482049024",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-device-scientific-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "mixed-jax-jaxlib-stack-not-intel-matched-release",
+        "no-cuda-or-pallas-kernel-parity",
+        "no-float64-or-complex-coordinate-qualification",
+        "no-hardware-qualification-from-installation",
+        "no-implicit-cpu-numerical-fallback",
+        "no-multi-device-or-multi-host-qualification",
+        "no-oneapi-mpi-provider",
+        "no-owned-native-companion",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.backends",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "intel-oneapi-execution.profile",
+          "profile_id": "6c5088512473114bc97b46a53df3375f6b35b70342aa53758923abf82ae2c213",
+          "provider": "jax-oneapi",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-errors",
+            "derivative-reference",
+            "exact-integer-addressing",
+            "float32-explicit",
+            "forward-reference",
+            "installed-wheel",
+            "real-device",
+            "resource-evidence",
+            "upstream-runtime-identity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "oneapi",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "compiled-control-flow",
+                "x64_enabled": true
+              },
+              "capability": "intel-oneapi-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4e7d0ce9f56fedde50c95f71b5ac32ee92486641598861c1b9d94e283edb8b6f"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "oneapi",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "iterative-linear",
+                "x64_enabled": true
+              },
+              "capability": "intel-oneapi-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "53321297c520d95870103c5a597935e438a310b5fe665f1562fc1c246de0fd1d"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "oneapi",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "real-fourier",
+                "x64_enabled": true
+              },
+              "capability": "intel-oneapi-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7fedcf6c0c32ff090ae90a8efaa26b06198d4e592fd563e0194d212853f86861"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "oneapi",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "exact-integer-addressing",
+                "x64_enabled": true
+              },
+              "capability": "intel-oneapi-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9589e8ee9d972582826620df3284abe9887265dff093b44bc952ae05a0958a51"
+            },
+            {
+              "attributes": {
+                "execution_device_count": 1,
+                "integer_addressing": "exact-int64-uint64",
+                "platform": "oneapi",
+                "precision": "float32",
+                "process_count": 1,
+                "workload": "pde-mlp",
+                "x64_enabled": true
+              },
+              "capability": "intel-oneapi-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c5383cb07c1c0190e7fecabc00c500df4dcf1267352916f7185541f3c8df635e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.backends.assess_oneapi_environment",
+        "phydrax.backends.oneapi_environment"
+      ]
     },
     {
       "capability": "interfacial-transport.adsorption",

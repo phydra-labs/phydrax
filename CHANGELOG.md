@@ -53,6 +53,18 @@
   policy and plan identities.
 
 ### Added
+- Add upstream-backed `oneapi` and `tpu` extras, pure environment diagnostics,
+  explicit accelerator admission, candidate workload profiles, and installed
+  qualification tooling. oneAPI uses the experimental JAX 0.12.0 / JAXlib and
+  plugin 0.11.2 stack; TPU uses JAX/JAXlib 0.12.0 and libtpu 0.0.50. No Intel or
+  TPU hardware qualification or performance claim is implied.
+- Bind Intel identity to `oneapi`, remove unsupported Intel MPI claims, and
+  separate TPU float32 Pallas leaf support from CUDA-only FMM fragments.
+  Preserve existing x64 and `highest` defaults while documenting TPU's
+  backend-specific dot precision.
+- Share the full-width gather-fill correction across upstream accelerator
+  integration and the independently packaged Metal plugin, without replacing
+  JAX numerical callables or losing the high bits of scatter cotangent indices.
 - Add the wheel-only `metal` extra and pinned `phydrax-metal` companion for
   standard CPython 3.13, JAX/JAXlib 0.12.0, and Darwin arm64. The native runtime
   identifies as `mps`, preserves exact 64-bit indices with x64 enabled, and

@@ -21,6 +21,10 @@ archives. ``--python`` is only used to run the companion's PEP 517 backend.
 Dependency builds (LLVM/MLIR, MLX) are reused only when their recorded input key
 is identical. ``--dependencies-only`` stops after them; it never produces a
 wheel. Evidence is written to ``--output`` on success and on failure.
+
+The canonical ``phydrax/_jax_indexing.py`` is a build input and is packaged as
+``phydrax_metal/_jax_indexing.py`` with its own asset hash. The companion remains
+standalone and never installs files into the core distribution's module paths.
 """
 
 from __future__ import annotations
@@ -617,6 +621,7 @@ def source_identity(lock: Lock) -> tuple[str, dict[str, str]]:
         NATIVE / "cmake" / "sdy" / "CMakeLists.txt",
         NATIVE / "pyproject.toml",
         NATIVE / "_build_backend.py",
+        ROOT / "phydrax" / "_jax_indexing.py",
         Path(__file__),
         *sorted((NATIVE / "python").rglob("*.py")),
     ]
@@ -793,6 +798,8 @@ def manifest(
     source_id: str,
 ) -> dict[str, Json]:
     package = stage / "phydrax_metal"
+    indexing_source = ROOT / "phydrax" / "_jax_indexing.py"
+    shutil.copyfile(indexing_source, package / "_jax_indexing.py")
     pjrt = header_version(
         trees["xla"] / "xla" / "pjrt" / "c" / "pjrt_c_api.h",
         r"#define PJRT_API_MAJOR (\d+).*?#define PJRT_API_MINOR (\d+)",
@@ -803,7 +810,7 @@ def manifest(
     )
     assets = {
         path.relative_to(package).as_posix(): file_hash(path)
-        for path in sorted((package / "lib").rglob("*"))
+        for path in sorted([*(package / "lib").rglob("*"), package / "_jax_indexing.py"])
         if path.is_file()
     }
     record: dict[str, Json] = {

@@ -652,15 +652,28 @@ Local builds and device probes are not complete scientific qualification or a
 blanket speedup claim. See [Apple GPU execution](docs/guides_metal_execution.md)
 for explicit dtype construction, diagnostics, qualification, and limitations.
 
+On Linux x86-64, `phydrax[oneapi]` selects upstream Intel GPU support and
+`phydrax[tpu]` selects upstream JAX/libtpu. Both require standard CPython 3.13.
+The oneAPI extra pins JAX 0.12.0 with JAXlib/plugin/PJRT 0.11.2: this is an
+experimental mixed-frontend stack, not Intel's documented matched release.
+It requires a separate environment from the CUDA13, Metal, and TPU extras.
+TPU uses matching JAX/JAXlib 0.12.0 and libtpu 0.0.50. Explicitly select
+`JAX_PLATFORMS=oneapi` or `JAX_PLATFORMS=tpu`; package installation is not
+hardware qualification. Neither extra silently becomes CPU-only on this Mac.
+See [Intel GPU execution](docs/guides_oneapi_execution.md) and
+[TPU execution](docs/guides_tpu_execution.md) for driver, bootstrap, precision,
+and unqualified-hardware boundaries.
+
 The base install includes native JAXPR structural tracing and deterministic
 coloring for sparse derivative plans. Compiled sparse Jacobian and Hessian plans
 integrate directly with `phydrax.linalg` and require no external tracing runtime.
 
 Importing Phydrax enables 64-bit JAX types and, unless startup already selected
 a precision (for example through `JAX_DEFAULT_MATMUL_PRECISION`), sets the
-default matmul precision to `"highest"`, so float32 contractions use IEEE float32
-arithmetic instead of TF32 tensor cores on NVIDIA GPUs. Reduced-precision
-contractions remain available through explicit per-call precision,
+default matmul precision to `"highest"`. This means IEEE float32 rather than
+TF32 on NVIDIA, but multiple BF16 passes for float32 dot operations on TPU—not
+a universal native IEEE float32 guarantee. Reduced-precision contractions
+remain available through explicit per-call precision,
 `phydrax.config.NumericsConfig(matmul_precision=...)` contexts, or Phydrax
 precision policies.
 

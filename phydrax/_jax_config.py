@@ -78,12 +78,12 @@ def startup_x64(environment: Mapping[str, str], /) -> bool | None:
 
 
 def startup_matmul_precision(environment: Mapping[str, str], /) -> str | None:
-    """Default to IEEE float32 contractions without an explicit startup selection.
+    """Default to JAX's highest contraction precision without overriding a request.
 
-    JAX's backend default lowers float32 contractions to reduced-precision
-    tensor-core formats (TF32 on NVIDIA GPUs). A selection through the
-    environment or an earlier process setting is kept, so TF32 remains an
-    explicit opt-in.
+    The meaning is backend-specific: IEEE float32 on NVIDIA rather than TF32,
+    but multiple BF16 passes for float32 dot operations on TPU. This is not
+    a universal claim of native IEEE float32 hardware. Explicit environment
+    or earlier process settings remain authoritative.
     """
     if MATMUL_PRECISION_ENVIRONMENT in environment or matmul_precision() is not None:
         return None

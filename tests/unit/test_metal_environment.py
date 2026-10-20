@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
-from phydrax.backends import assess_metal_environment, MetalEnvironmentFacts
+from phydrax.backends import (
+    assess_metal_environment,
+    collect_metal_environment,
+    MetalEnvironmentFacts,
+)
 
 
 def _facts() -> MetalEnvironmentFacts:
@@ -146,3 +153,58 @@ def test_equivalent_macos_release_spellings_are_admitted() -> None:
         replace(_facts(), macos_version="14", minimum_macos="14.0")
     )
     assert report.successful
+
+
+@pytest.mark.parametrize("defect", ("none", "unhashed", "missing", "changed"))
+def test_host_collection_binds_the_private_indexing_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
+    """Synthetic installed metadata exercises host admission, not a device probe."""
+    package = tmp_path / "phydrax_metal"
+    (package / "lib").mkdir(parents=True)
+    library = b"inert host-metadata fixture"
+    helper = b'"""Inert host-metadata indexing fixture."""\n'
+    (package / "lib/libpjrt_plugin_mps.dylib").write_bytes(library)
+    if defect != "missing":
+        (package / "_jax_indexing.py").write_bytes(
+            b"changed helper" if defect == "changed" else helper
+        )
+    assets = {
+        "lib/libpjrt_plugin_mps.dylib": hashlib.sha256(library).hexdigest(),
+    }
+    if defect != "unhashed":
+        assets["_jax_indexing.py"] = hashlib.sha256(helper).hexdigest()
+    record = {
+        "version": "0.2.2",
+        "platform": "mps",
+        "jax_version": "0.12.0",
+        "jaxlib_version": "0.12.0",
+        "minimum_macos": "14.0",
+        "source_id": "b" * 64,
+        "library": "lib/libpjrt_plugin_mps.dylib",
+        "assets": assets,
+    }
+    record["build_id"] = hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    (package / "build.json").write_text(json.dumps(record))
+    distribution = tmp_path / "phydrax_metal-0.2.2.dist-info"
+    distribution.mkdir()
+    (distribution / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: phydrax-metal\nVersion: 0.2.2\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    facts = collect_metal_environment()
+    assert not facts.device_probed
+    if defect == "none":
+        assert facts.installation_error is None
+        assert facts.build_id == record["build_id"]
+    else:
+        assert facts.installation_error is not None
+        assert "_jax_indexing.py" in facts.installation_error or (
+            "private indexing helper" in facts.installation_error
+        )
+        assert any(
+            issue.code == "companion-invalid"
+            for issue in assess_metal_environment(facts).issues
+        )

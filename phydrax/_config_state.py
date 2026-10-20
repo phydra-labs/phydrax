@@ -106,6 +106,48 @@ def _merged(previous: RuntimeConfig, update: RuntimeConfig, /) -> RuntimeConfig:
     )
 
 
+def _admit_accelerators(platforms: tuple[str, ...] | None, /) -> None:
+    """Validate selected installations without discovering devices or applying effects."""
+    for platform in platforms or ():
+        match platform:
+            case "mps":
+                from ._metal_environment import (
+                    assess_metal_environment,
+                    collect_metal_environment,
+                )
+
+                issues = assess_metal_environment(collect_metal_environment()).issues
+                messages = tuple(
+                    issue.message for issue in issues if issue.severity == "error"
+                )
+            case "oneapi":
+                from ._oneapi_environment import (
+                    assess_oneapi_environment,
+                    collect_oneapi_environment,
+                )
+
+                oneapi_issues = assess_oneapi_environment(
+                    collect_oneapi_environment()
+                ).issues
+                messages = tuple(
+                    issue.message for issue in oneapi_issues if issue.severity == "error"
+                )
+            case "tpu":
+                from ._tpu_environment import (
+                    assess_tpu_environment,
+                    collect_tpu_environment,
+                )
+
+                tpu_issues = assess_tpu_environment(collect_tpu_environment()).issues
+                messages = tuple(
+                    issue.message for issue in tpu_issues if issue.severity == "error"
+                )
+            case _:
+                continue
+        if messages:
+            raise ConfigurationApplicationError("platforms", (), "; ".join(messages))
+
+
 def _admit(settings: RuntimeConfig, /) -> None:
     if settings.launch_environment is not None:
         raise ConfigurationApplicationError(
@@ -132,21 +174,7 @@ def _admit(settings: RuntimeConfig, /) -> None:
                 f"a JAX backend is already initialized with {effective!r}; "
                 f"{requested!r} binds only at backend initialization.",
             )
-    if settings.platforms is not None and "mps" in settings.platforms:
-        from ._metal_environment import (
-            assess_metal_environment,
-            collect_metal_environment,
-        )
-
-        report = assess_metal_environment(collect_metal_environment())
-        if not report.successful:
-            raise ConfigurationApplicationError(
-                "platforms",
-                (),
-                "; ".join(
-                    issue.message for issue in report.issues if issue.severity == "error"
-                ),
-            )
+    _admit_accelerators(settings.platforms)
     bootstrap = settings.bootstrap
     if bootstrap is not None and bootstrap.requests_distributed_initialization:
         if _jax_config.distributed_initialized():
@@ -362,6 +390,9 @@ def initialize_process() -> None:
         if settings.bootstrap is not None and _jax_config.distributed_initialized():
             settings = replace(settings, bootstrap=None)
         _configure_runtime(settings)
+        from ._jax_indexing import install_accelerator_lowerings
+
+        install_accelerator_lowerings()
         _STATE.started = True
 
 

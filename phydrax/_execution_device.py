@@ -10,7 +10,7 @@ import jax
 
 
 def device_platform(device: jax.Device, /) -> str:
-    """Distinguish CUDA and ROCm without treating generic ``gpu`` as NVIDIA.
+    """Identify CUDA, ROCm, and oneAPI from the loaded runtime.
 
     JAX's public GPU platform is generic on current releases. Its client
     platform/version describes the loaded runtime; device display names do not
@@ -20,11 +20,13 @@ def device_platform(device: jax.Device, /) -> str:
     if platform != "gpu":
         return platform
     client = device.client.platform.lower()
-    if client in ("cuda", "rocm"):
+    if client in ("cuda", "rocm", "oneapi"):
         return client
     runtime = device.client.platform_version.lower().split()
-    if runtime and runtime[0] in ("cuda", "rocm"):
+    if runtime and runtime[0] in ("cuda", "rocm", "oneapi"):
         return runtime[0]
+    if client == "sycl" or (runtime and runtime[0] == "sycl"):
+        return "oneapi"
     return platform
 
 
@@ -37,6 +39,8 @@ def device_vendor(device: jax.Device, /) -> str | None:
             return "amd"
         case "tpu":
             return "google"
+        case "oneapi":
+            return "intel"
         case "mps":
             runtime = device.client.platform_version.split()
             return "apple" if runtime and runtime[0] == "phydrax-metal" else None

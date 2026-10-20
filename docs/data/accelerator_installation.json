@@ -1,0 +1,3752 @@
+{
+  "base_commit": "7fbbadf75cdf990f8122bdeb448fb393c20979d2",
+  "branch": "accelerator-support",
+  "complexity": {
+    "baseline": "7fbbadf75cdf990f8122bdeb448fb393c20979d2",
+    "records": [
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 12,
+          "parameters": 1,
+          "physical_lines": 12,
+          "tokens": 106
+        },
+        "before": null,
+        "file": "examples/accelerator_scientific_execution.py",
+        "symbol": "poisson_steps.residual"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 23
+        },
+        "before": null,
+        "file": "examples/accelerator_scientific_execution.py",
+        "symbol": "poisson_steps.objective"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 4,
+          "parameters": 2,
+          "physical_lines": 4,
+          "tokens": 66
+        },
+        "before": null,
+        "file": "examples/accelerator_scientific_execution.py",
+        "symbol": "poisson_steps.step"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 6,
+          "nloc": 81,
+          "parameters": 1,
+          "physical_lines": 103,
+          "tokens": 601
+        },
+        "before": null,
+        "file": "examples/accelerator_scientific_execution.py",
+        "symbol": "poisson_steps"
+      },
+      {
+        "after": {
+          "cognitive": 12,
+          "cyclomatic": 21,
+          "nloc": 76,
+          "parameters": 0,
+          "physical_lines": 79,
+          "tokens": 473
+        },
+        "before": null,
+        "file": "examples/accelerator_scientific_execution.py",
+        "symbol": "main"
+      },
+      {
+        "after": {
+          "cognitive": 14,
+          "cyclomatic": 19,
+          "nloc": 48,
+          "parameters": 3,
+          "physical_lines": 48,
+          "tokens": 375
+        },
+        "before": {
+          "cognitive": 13,
+          "cyclomatic": 17,
+          "nloc": 39,
+          "parameters": 3,
+          "physical_lines": 39,
+          "tokens": 333
+        },
+        "file": "native/metal/_build_backend.py",
+        "symbol": "_verified_manifest"
+      },
+      {
+        "after": {
+          "cognitive": 14,
+          "cyclomatic": 14,
+          "nloc": 42,
+          "parameters": 1,
+          "physical_lines": 43,
+          "tokens": 303
+        },
+        "before": {
+          "cognitive": 14,
+          "cyclomatic": 13,
+          "nloc": 41,
+          "parameters": 1,
+          "physical_lines": 42,
+          "tokens": 298
+        },
+        "file": "native/metal/python/phydrax_metal/plugin.py",
+        "symbol": "_validate"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 3,
+          "nloc": 15,
+          "parameters": 0,
+          "physical_lines": 21,
+          "tokens": 100
+        },
+        "before": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 12,
+          "parameters": 0,
+          "physical_lines": 16,
+          "tokens": 102
+        },
+        "file": "native/metal/python/phydrax_metal/plugin.py",
+        "symbol": "_register_lowerings"
+      },
+      {
+        "after": {
+          "cognitive": 4,
+          "cyclomatic": 14,
+          "nloc": 36,
+          "parameters": 1,
+          "physical_lines": 40,
+          "tokens": 175
+        },
+        "before": null,
+        "file": "phydrax/_config_state.py",
+        "symbol": "_admit_accelerators"
+      },
+      {
+        "after": {
+          "cognitive": 11,
+          "cyclomatic": 10,
+          "nloc": 39,
+          "parameters": 1,
+          "physical_lines": 39,
+          "tokens": 179
+        },
+        "before": {
+          "cognitive": 15,
+          "cyclomatic": 15,
+          "nloc": 52,
+          "parameters": 1,
+          "physical_lines": 53,
+          "tokens": 241
+        },
+        "file": "phydrax/_config_state.py",
+        "symbol": "_admit"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 4,
+          "nloc": 11,
+          "parameters": 0,
+          "physical_lines": 16,
+          "tokens": 65
+        },
+        "before": {
+          "cognitive": 3,
+          "cyclomatic": 4,
+          "nloc": 9,
+          "parameters": 0,
+          "physical_lines": 13,
+          "tokens": 57
+        },
+        "file": "phydrax/_config_state.py",
+        "symbol": "initialize_process"
+      },
+      {
+        "after": {
+          "cognitive": 7,
+          "cyclomatic": 8,
+          "nloc": 13,
+          "parameters": 1,
+          "physical_lines": 19,
+          "tokens": 110
+        },
+        "before": {
+          "cognitive": 4,
+          "cyclomatic": 5,
+          "nloc": 11,
+          "parameters": 1,
+          "physical_lines": 17,
+          "tokens": 88
+        },
+        "file": "phydrax/_execution_device.py",
+        "symbol": "device_platform"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 9,
+          "nloc": 15,
+          "parameters": 1,
+          "physical_lines": 16,
+          "tokens": 74
+        },
+        "before": {
+          "cognitive": 2,
+          "cyclomatic": 8,
+          "nloc": 13,
+          "parameters": 1,
+          "physical_lines": 14,
+          "tokens": 69
+        },
+        "file": "phydrax/_execution_device.py",
+        "symbol": "device_vendor"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 4,
+          "parameters": 1,
+          "physical_lines": 11,
+          "tokens": 35
+        },
+        "before": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 4,
+          "parameters": 1,
+          "physical_lines": 11,
+          "tokens": 35
+        },
+        "file": "phydrax/_jax_config.py",
+        "symbol": "startup_matmul_precision"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 57,
+          "parameters": 8,
+          "physical_lines": 64,
+          "tokens": 360
+        },
+        "before": null,
+        "file": "phydrax/_jax_indexing.py",
+        "symbol": "_gather_fill_preserving_indices"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 14,
+          "parameters": 4,
+          "physical_lines": 17,
+          "tokens": 130
+        },
+        "before": null,
+        "file": "phydrax/_jax_indexing.py",
+        "symbol": "_gather_rule"
+      },
+      {
+        "after": {
+          "cognitive": 4,
+          "cyclomatic": 5,
+          "nloc": 12,
+          "parameters": 1,
+          "physical_lines": 19,
+          "tokens": 80
+        },
+        "before": null,
+        "file": "phydrax/_jax_indexing.py",
+        "symbol": "register_gather_lowering"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 5,
+          "parameters": 1,
+          "physical_lines": 7,
+          "tokens": 34
+        },
+        "before": null,
+        "file": "phydrax/_jax_indexing.py",
+        "symbol": "_register_discovered_oneapi"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 10,
+          "parameters": 0,
+          "physical_lines": 20,
+          "tokens": 38
+        },
+        "before": null,
+        "file": "phydrax/_jax_indexing.py",
+        "symbol": "install_accelerator_lowerings"
+      },
+      {
+        "after": {
+          "cognitive": 19,
+          "cyclomatic": 19,
+          "nloc": 60,
+          "parameters": 1,
+          "physical_lines": 60,
+          "tokens": 423
+        },
+        "before": {
+          "cognitive": 19,
+          "cyclomatic": 18,
+          "nloc": 53,
+          "parameters": 1,
+          "physical_lines": 53,
+          "tokens": 415
+        },
+        "file": "phydrax/_metal_environment.py",
+        "symbol": "_build_facts"
+      },
+      {
+        "after": {
+          "cognitive": 9,
+          "cyclomatic": 9,
+          "nloc": 20,
+          "parameters": 3,
+          "physical_lines": 20,
+          "tokens": 162
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "_pairs"
+      },
+      {
+        "after": {
+          "cognitive": 6,
+          "cyclomatic": 5,
+          "nloc": 13,
+          "parameters": 1,
+          "physical_lines": 13,
+          "tokens": 72
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "OneapiDeviceFacts.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 4,
+          "parameters": 1,
+          "physical_lines": 4,
+          "tokens": 35
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "OneapiEnvironmentIssue.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 42,
+          "cyclomatic": 38,
+          "nloc": 77,
+          "parameters": 1,
+          "physical_lines": 77,
+          "tokens": 500
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "OneapiEnvironmentFacts.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 5,
+          "nloc": 7,
+          "parameters": 1,
+          "physical_lines": 7,
+          "tokens": 56
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "OneapiEnvironmentReport.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 3,
+          "tokens": 24
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "OneapiEnvironmentReport.successful"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 4,
+          "nloc": 8,
+          "parameters": 1,
+          "physical_lines": 8,
+          "tokens": 74
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "_oneapi_device"
+      },
+      {
+        "after": {
+          "cognitive": 9,
+          "cyclomatic": 15,
+          "nloc": 43,
+          "parameters": 1,
+          "physical_lines": 43,
+          "tokens": 220
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "_host_issues"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 4,
+          "parameters": 3,
+          "physical_lines": 4,
+          "tokens": 32
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "assess_oneapi_environment.add"
+      },
+      {
+        "after": {
+          "cognitive": 23,
+          "cyclomatic": 20,
+          "nloc": 68,
+          "parameters": 1,
+          "physical_lines": 74,
+          "tokens": 325
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "assess_oneapi_environment"
+      },
+      {
+        "after": {
+          "cognitive": 14,
+          "cyclomatic": 13,
+          "nloc": 47,
+          "parameters": 0,
+          "physical_lines": 48,
+          "tokens": 323
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "collect_oneapi_environment"
+      },
+      {
+        "after": {
+          "cognitive": 8,
+          "cyclomatic": 10,
+          "nloc": 41,
+          "parameters": 1,
+          "physical_lines": 46,
+          "tokens": 233
+        },
+        "before": null,
+        "file": "phydrax/_oneapi_environment.py",
+        "symbol": "oneapi_environment"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 4,
+          "parameters": 1,
+          "physical_lines": 4,
+          "tokens": 35
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "TpuEnvironmentIssue.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 5,
+          "parameters": 2,
+          "physical_lines": 5,
+          "tokens": 43
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "_nonnegative"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 7,
+          "parameters": 1,
+          "physical_lines": 7,
+          "tokens": 55
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "TpuDeviceFacts.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 31,
+          "cyclomatic": 27,
+          "nloc": 66,
+          "parameters": 1,
+          "physical_lines": 66,
+          "tokens": 419
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "TpuEnvironmentFacts.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 10,
+          "cyclomatic": 18,
+          "nloc": 32,
+          "parameters": 1,
+          "physical_lines": 33,
+          "tokens": 195
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "TpuEnvironmentFacts._validate_observations"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 5,
+          "nloc": 7,
+          "parameters": 1,
+          "physical_lines": 7,
+          "tokens": 56
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "TpuEnvironmentReport.__post_init__"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 3,
+          "tokens": 24
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "TpuEnvironmentReport.successful"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 3,
+          "tokens": 10
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "TpuEnvironmentReport.hardware_qualified"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 14,
+          "nloc": 16,
+          "parameters": 1,
+          "physical_lines": 16,
+          "tokens": 135
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "_supported_abi"
+      },
+      {
+        "after": {
+          "cognitive": 12,
+          "cyclomatic": 23,
+          "nloc": 51,
+          "parameters": 2,
+          "physical_lines": 51,
+          "tokens": 251
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "_assess_runtime"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 4,
+          "parameters": 3,
+          "physical_lines": 4,
+          "tokens": 32
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "assess_tpu_environment.add"
+      },
+      {
+        "after": {
+          "cognitive": 13,
+          "cyclomatic": 14,
+          "nloc": 51,
+          "parameters": 1,
+          "physical_lines": 57,
+          "tokens": 221
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "assess_tpu_environment"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 1,
+          "physical_lines": 3,
+          "tokens": 34
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "_sha256"
+      },
+      {
+        "after": {
+          "cognitive": 7,
+          "cyclomatic": 10,
+          "nloc": 32,
+          "parameters": 1,
+          "physical_lines": 32,
+          "tokens": 208
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "_library_facts"
+      },
+      {
+        "after": {
+          "cognitive": 6,
+          "cyclomatic": 8,
+          "nloc": 45,
+          "parameters": 0,
+          "physical_lines": 50,
+          "tokens": 336
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "collect_tpu_environment"
+      },
+      {
+        "after": {
+          "cognitive": 8,
+          "cyclomatic": 6,
+          "nloc": 10,
+          "parameters": 1,
+          "physical_lines": 10,
+          "tokens": 119
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "_mapped_libtpu_paths"
+      },
+      {
+        "after": {
+          "cognitive": 8,
+          "cyclomatic": 10,
+          "nloc": 50,
+          "parameters": 1,
+          "physical_lines": 55,
+          "tokens": 288
+        },
+        "before": null,
+        "file": "phydrax/_tpu_environment.py",
+        "symbol": "tpu_environment"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 24,
+          "parameters": 0,
+          "physical_lines": 25,
+          "tokens": 78
+        },
+        "before": null,
+        "file": "phydrax/backends/_oneapi_profiles.py",
+        "symbol": "oneapi_candidate_profiles"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 27,
+          "parameters": 0,
+          "physical_lines": 27,
+          "tokens": 82
+        },
+        "before": null,
+        "file": "phydrax/backends/_oneapi_profiles.py",
+        "symbol": "oneapi_candidate_declarations"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 25,
+          "parameters": 0,
+          "physical_lines": 26,
+          "tokens": 82
+        },
+        "before": null,
+        "file": "phydrax/backends/_tpu_profiles.py",
+        "symbol": "tpu_candidate_profiles"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 27,
+          "parameters": 0,
+          "physical_lines": 27,
+          "tokens": 82
+        },
+        "before": null,
+        "file": "phydrax/backends/_tpu_profiles.py",
+        "symbol": "tpu_candidate_declarations"
+      },
+      {
+        "after": {
+          "cognitive": 10,
+          "cyclomatic": 8,
+          "nloc": 24,
+          "parameters": 1,
+          "physical_lines": 29,
+          "tokens": 127
+        },
+        "before": {
+          "cognitive": 4,
+          "cyclomatic": 6,
+          "nloc": 19,
+          "parameters": 1,
+          "physical_lines": 20,
+          "tokens": 98
+        },
+        "file": "phydrax/backends/spatial.py",
+        "symbol": "pallas_spatial_availability"
+      },
+      {
+        "after": {
+          "cognitive": 8,
+          "cyclomatic": 9,
+          "nloc": 29,
+          "parameters": 4,
+          "physical_lines": 30,
+          "tokens": 210
+        },
+        "before": {
+          "cognitive": 7,
+          "cyclomatic": 8,
+          "nloc": 26,
+          "parameters": 4,
+          "physical_lines": 27,
+          "tokens": 176
+        },
+        "file": "phydrax/backends/spatial.py",
+        "symbol": "spatial_squared_norm"
+      },
+      {
+        "after": {
+          "cognitive": 37,
+          "cyclomatic": 47,
+          "nloc": 95,
+          "parameters": 10,
+          "physical_lines": 108,
+          "tokens": 704
+        },
+        "before": {
+          "cognitive": 36,
+          "cyclomatic": 47,
+          "nloc": 94,
+          "parameters": 10,
+          "physical_lines": 107,
+          "tokens": 710
+        },
+        "file": "phydrax/backends/spatial.py",
+        "symbol": "spatial_leaf_pair_fragment"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 7,
+          "parameters": 0,
+          "physical_lines": 7,
+          "tokens": 31
+        },
+        "before": null,
+        "file": "tests/_support/accelerator_qualification.py",
+        "symbol": "selected_accelerator"
+      },
+      {
+        "after": {
+          "cognitive": 13,
+          "cyclomatic": 15,
+          "nloc": 41,
+          "parameters": 0,
+          "physical_lines": 43,
+          "tokens": 252
+        },
+        "before": null,
+        "file": "tests/_support/accelerator_qualification.py",
+        "symbol": "accelerator_device"
+      },
+      {
+        "after": {
+          "cognitive": 5,
+          "cyclomatic": 5,
+          "nloc": 26,
+          "parameters": 1,
+          "physical_lines": 27,
+          "tokens": 184
+        },
+        "before": null,
+        "file": "tests/_support/accelerator_qualification.py",
+        "symbol": "runtime_evidence"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 6,
+          "parameters": 2,
+          "physical_lines": 6,
+          "tokens": 42
+        },
+        "before": null,
+        "file": "tests/_support/accelerator_qualification.py",
+        "symbol": "record_execution"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 5,
+          "nloc": 10,
+          "parameters": 0,
+          "physical_lines": 12,
+          "tokens": 78
+        },
+        "before": null,
+        "file": "tests/_support/accelerator_qualification.py",
+        "symbol": "diagnostic_evidence"
+      },
+      {
+        "after": {
+          "cognitive": 32,
+          "cyclomatic": 16,
+          "nloc": 59,
+          "parameters": 2,
+          "physical_lines": 62,
+          "tokens": 437
+        },
+        "before": null,
+        "file": "tests/_support/accelerator_qualification.py",
+        "symbol": "installed_provenance"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 6,
+          "parameters": 0,
+          "physical_lines": 6,
+          "tokens": 40
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "execution_device"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 16,
+          "parameters": 1,
+          "physical_lines": 17,
+          "tokens": 128
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_mlp_pde_derivatives_and_update"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 27
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_polynomial_coordinate_gradient_and_hessian.polynomial"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 12,
+          "parameters": 1,
+          "physical_lines": 14,
+          "tokens": 149
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_polynomial_coordinate_gradient_and_hessian"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 1,
+          "physical_lines": 3,
+          "tokens": 52
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_wide_integer_sort_and_arithmetic.execute"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 19,
+          "parameters": 2,
+          "physical_lines": 23,
+          "tokens": 251
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_wide_integer_sort_and_arithmetic"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 5,
+          "parameters": 1,
+          "physical_lines": 5,
+          "tokens": 107
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_point_gather_scatter_full_width_addresses.execute"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 14,
+          "parameters": 1,
+          "physical_lines": 20,
+          "tokens": 150
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_point_gather_scatter_full_width_addresses"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 84
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "_starts"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 9,
+          "parameters": 2,
+          "physical_lines": 9,
+          "tokens": 54
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_full_width_window_gather.windows"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 20,
+          "parameters": 2,
+          "physical_lines": 30,
+          "tokens": 183
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_full_width_window_gather"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 11,
+          "parameters": 1,
+          "physical_lines": 11,
+          "tokens": 53
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_scatter_update_cotangent_drops_out_of_bounds.transpose.loss"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 2,
+          "physical_lines": 14,
+          "tokens": 31
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_scatter_update_cotangent_drops_out_of_bounds.transpose"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 3,
+          "nloc": 19,
+          "parameters": 2,
+          "physical_lines": 34,
+          "tokens": 142
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_scatter_update_cotangent_drops_out_of_bounds"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 20
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks.observe"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 2,
+          "physical_lines": 3,
+          "tokens": 62
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks.execute.body"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 30
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks.execute"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 17
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks.other_loops.condition"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 17
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks.other_loops.advance"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 2,
+          "physical_lines": 2,
+          "tokens": 30
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks.other_loops.accumulate"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 7,
+          "parameters": 1,
+          "physical_lines": 13,
+          "tokens": 71
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks.other_loops"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 17,
+          "parameters": 1,
+          "physical_lines": 40,
+          "tokens": 133
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_loops_and_ordered_callbacks"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 26
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_callback_failure.guarded"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 9,
+          "parameters": 1,
+          "physical_lines": 11,
+          "tokens": 80
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_compiled_callback_failure"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 74
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "linear_problem.action"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 24,
+          "parameters": 0,
+          "physical_lines": 32,
+          "tokens": 125
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "linear_problem"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 24
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_bounded_linear_solve.solve"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 25,
+          "parameters": 2,
+          "physical_lines": 29,
+          "tokens": 264
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_bounded_linear_solve"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 15,
+          "parameters": 2,
+          "physical_lines": 16,
+          "tokens": 139
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_linear_iteration_exhaustion"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 1,
+          "physical_lines": 2,
+          "tokens": 23
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_real_fourier_resampling.resample"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 14,
+          "parameters": 1,
+          "physical_lines": 18,
+          "tokens": 180
+        },
+        "before": null,
+        "file": "tests/integration/test_accelerator_scientific_execution.py",
+        "symbol": "test_real_fourier_resampling"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 5,
+          "parameters": 1,
+          "physical_lines": 5,
+          "tokens": 62
+        },
+        "before": null,
+        "file": "tests/integration/test_oneapi_import_contract.py",
+        "symbol": "test_default_diagnostics_are_device_inert"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 5,
+          "parameters": 0,
+          "physical_lines": 5,
+          "tokens": 40
+        },
+        "before": null,
+        "file": "tests/integration/test_oneapi_import_contract.py",
+        "symbol": "test_explicit_probe_never_overrides_cpu_selection"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 0,
+          "physical_lines": 3,
+          "tokens": 30
+        },
+        "before": null,
+        "file": "tests/integration/test_oneapi_import_contract.py",
+        "symbol": "test_explicit_oneapi_configuration_uses_only_host_admission"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 0,
+          "physical_lines": 3,
+          "tokens": 33
+        },
+        "before": null,
+        "file": "tests/integration/test_oneapi_import_contract.py",
+        "symbol": "test_oneapi_startup_admission_never_initializes_a_backend"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 5,
+          "parameters": 0,
+          "physical_lines": 5,
+          "tokens": 30
+        },
+        "before": null,
+        "file": "tests/integration/test_oneapi_import_contract.py",
+        "symbol": "test_invalid_probe_flag_refuses_without_changing_runtime"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 8,
+          "parameters": 0,
+          "physical_lines": 8,
+          "tokens": 35
+        },
+        "before": null,
+        "file": "tests/integration/test_oneapi_import_contract.py",
+        "symbol": "test_host_collection_preserves_real_sdk_override_values"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 5,
+          "parameters": 0,
+          "physical_lines": 5,
+          "tokens": 35
+        },
+        "before": null,
+        "file": "tests/integration/test_tpu_import_contract.py",
+        "symbol": "test_default_inspection_is_device_inert_in_a_fresh_process"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 0,
+          "physical_lines": 3,
+          "tokens": 37
+        },
+        "before": null,
+        "file": "tests/integration/test_tpu_import_contract.py",
+        "symbol": "test_probe_request_respects_an_explicit_cpu_runtime"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 11,
+          "parameters": 0,
+          "physical_lines": 11,
+          "tokens": 41
+        },
+        "before": null,
+        "file": "tests/integration/test_tpu_import_contract.py",
+        "symbol": "test_invalid_override_refuses_before_backend_discovery"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 9,
+          "parameters": 0,
+          "physical_lines": 9,
+          "tokens": 42
+        },
+        "before": null,
+        "file": "tests/integration/test_tpu_import_contract.py",
+        "symbol": "test_inspection_preserves_caller_owned_distributed_bootstrap_order"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 10,
+          "parameters": 1,
+          "physical_lines": 10,
+          "tokens": 52
+        },
+        "before": null,
+        "file": "tests/integration/test_tpu_import_contract.py",
+        "symbol": "test_explicit_tpu_admission_precedes_backend_initialization"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 8,
+          "parameters": 0,
+          "physical_lines": 9,
+          "tokens": 42
+        },
+        "before": null,
+        "file": "tests/integration/test_tpu_import_contract.py",
+        "symbol": "test_unrelated_real_override_is_identified_but_never_loaded"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 49,
+          "parameters": 1,
+          "physical_lines": 49,
+          "tokens": 385
+        },
+        "before": null,
+        "file": "tests/typing/cases/oneapi_environment.py",
+        "symbol": "consumer_contract"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 45,
+          "parameters": 1,
+          "physical_lines": 45,
+          "tokens": 413
+        },
+        "before": null,
+        "file": "tests/typing/cases/tpu_environment.py",
+        "symbol": "consumer_contract"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 13,
+          "parameters": 0,
+          "physical_lines": 13,
+          "tokens": 113
+        },
+        "before": null,
+        "file": "tests/unit/backends/test_accelerator_profiles.py",
+        "symbol": "test_intel_profile_uses_actual_upstream_platform_without_distributed_claims"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 62
+        },
+        "before": null,
+        "file": "tests/unit/backends/test_accelerator_profiles.py",
+        "symbol": "test_tpu_admission_does_not_claim_fp64_or_complex"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 5,
+          "nloc": 35,
+          "parameters": 4,
+          "physical_lines": 35,
+          "tokens": 242
+        },
+        "before": null,
+        "file": "tests/unit/backends/test_accelerator_profiles.py",
+        "symbol": "test_accelerator_candidates_carry_scope_without_fabricated_evidence"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 12,
+          "parameters": 0,
+          "physical_lines": 12,
+          "tokens": 69
+        },
+        "before": null,
+        "file": "tests/unit/backends/test_accelerator_profiles.py",
+        "symbol": "test_pallas_tpu_metadata_preserves_distance_leaves_without_fmm_or_fp64"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 8,
+          "parameters": 1,
+          "physical_lines": 8,
+          "tokens": 53
+        },
+        "before": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 43
+        },
+        "file": "tests/unit/backends/test_spatial_backend.py",
+        "symbol": "pallas_interpret"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 23,
+          "parameters": 0,
+          "physical_lines": 23,
+          "tokens": 322
+        },
+        "before": null,
+        "file": "tests/unit/backends/test_spatial_backend.py",
+        "symbol": "test_tpu_pallas_float32_distance_and_morton_leaves"
+      },
+      {
+        "after": {
+          "cognitive": 4,
+          "cyclomatic": 4,
+          "nloc": 21,
+          "parameters": 3,
+          "physical_lines": 38,
+          "tokens": 191
+        },
+        "before": {
+          "cognitive": 3,
+          "cyclomatic": 3,
+          "nloc": 19,
+          "parameters": 3,
+          "physical_lines": 36,
+          "tokens": 181
+        },
+        "file": "tests/unit/solver/test_cartesian_fmm_gradients.py",
+        "symbol": "test_whole_fmm_position_and_mass_gradients_track_direct_force"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 14,
+          "parameters": 0,
+          "physical_lines": 14,
+          "tokens": 57
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "_metadata"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 0,
+          "physical_lines": 2,
+          "tokens": 16
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_upstream_metadata_keeps_intent_on_every_platform"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 4,
+          "nloc": 9,
+          "parameters": 1,
+          "physical_lines": 9,
+          "tokens": 66
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_platform_marked_empty_extra_is_refused"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 6,
+          "parameters": 0,
+          "physical_lines": 6,
+          "tokens": 35
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_mixed_frontend_oneapi_stack_does_not_hide_jaxlib_conflict"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 4,
+          "parameters": 1,
+          "physical_lines": 4,
+          "tokens": 45
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_resolved_stack_requires_real_upstream_provider"
+      },
+      {
+        "after": {
+          "cognitive": 4,
+          "cyclomatic": 18,
+          "nloc": 18,
+          "parameters": 0,
+          "physical_lines": 18,
+          "tokens": 166
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_resolver_matrix_is_complete_and_unsupported_hosts_refuse"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 12,
+          "parameters": 4,
+          "physical_lines": 13,
+          "tokens": 120
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_refusal_requires_selected_provider_wheel_derivation"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 15,
+          "parameters": 1,
+          "physical_lines": 15,
+          "tokens": 92
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_refusal_requires_both_selected_extras_upstream_jaxlib_derivation"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 7,
+          "parameters": 0,
+          "physical_lines": 7,
+          "tokens": 52
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_explicit_jaxlib_constraint_is_not_a_metal_compatibility_claim"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 42
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_operational_failure_never_counts_even_with_provider_refusal_text"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 14,
+          "parameters": 0,
+          "physical_lines": 14,
+          "tokens": 63
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_unrelated_unsatisfiable_or_unpublished_metal_is_not_accelerator_proof"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 17,
+          "parameters": 1,
+          "physical_lines": 18,
+          "tokens": 100
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_extras.py",
+        "symbol": "test_tool_help_does_not_import_jax_or_provider"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 16,
+          "parameters": 1,
+          "physical_lines": 16,
+          "tokens": 79
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "_runtime"
+      },
+      {
+        "after": {
+          "cognitive": 6,
+          "cyclomatic": 5,
+          "nloc": 28,
+          "parameters": 5,
+          "physical_lines": 28,
+          "tokens": 150
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "_xml"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 5,
+          "parameters": 1,
+          "physical_lines": 5,
+          "tokens": 45
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_report_requires_exact_successful_case_set_and_runtime"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 4,
+          "parameters": 2,
+          "physical_lines": 4,
+          "tokens": 38
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_skipped_or_failed_cases_never_qualify"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 6,
+          "parameters": 2,
+          "physical_lines": 6,
+          "tokens": 41
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_missing_duplicate_or_extra_case_refuses"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 9,
+          "parameters": 1,
+          "physical_lines": 9,
+          "tokens": 95
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_missing_or_wrong_actual_placement_refuses"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 9,
+          "parameters": 1,
+          "physical_lines": 9,
+          "tokens": 78
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_cpu_another_gpu_and_absent_runtime_are_refused"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 8,
+          "parameters": 0,
+          "physical_lines": 8,
+          "tokens": 54
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_oneapi_generic_gpu_requires_upstream_oneapi_identity"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 2,
+          "parameters": 0,
+          "physical_lines": 2,
+          "tokens": 24
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_tpu_highest_is_explicit_and_not_inferred_from_x64"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 28,
+          "parameters": 2,
+          "physical_lines": 28,
+          "tokens": 111
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_environment_excludes_provider_overrides"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 6,
+          "parameters": 0,
+          "physical_lines": 6,
+          "tokens": 92
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_multi_device_host_qualifies_only_one_explicit_execution_device"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 10,
+          "parameters": 1,
+          "physical_lines": 10,
+          "tokens": 96
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_core_wheel_content_identity_changes_with_bytes"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 7,
+          "parameters": 0,
+          "physical_lines": 7,
+          "tokens": 70
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_failed_child_or_non_json_never_yields_runtime"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 4,
+          "nloc": 24,
+          "parameters": 0,
+          "physical_lines": 24,
+          "tokens": 178
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "_probe_payload"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 15,
+          "parameters": 1,
+          "physical_lines": 15,
+          "tokens": 103
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_large_authoritative_probe_sidecar_is_complete_and_hash_validated"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 13,
+          "parameters": 1,
+          "physical_lines": 13,
+          "tokens": 115
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_probe_schema_and_size_limits_refuse_instead_of_truncating"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 12,
+          "parameters": 1,
+          "physical_lines": 12,
+          "tokens": 109
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_process_logs_are_bounded_without_losing_retained_output"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 8,
+          "parameters": 1,
+          "physical_lines": 8,
+          "tokens": 55
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_process_timeout_is_not_a_success_or_hardware_refusal"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 15,
+          "parameters": 1,
+          "physical_lines": 15,
+          "tokens": 101
+        },
+        "before": null,
+        "file": "tests/unit/test_accelerator_wheel_qualification.py",
+        "symbol": "test_process_group_cleanup_terminates_descendants_after_parent_exits"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 16,
+          "parameters": 1,
+          "physical_lines": 16,
+          "tokens": 113
+        },
+        "before": null,
+        "file": "tests/unit/test_jax_indexing.py",
+        "symbol": "_run_contract"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 38,
+          "parameters": 0,
+          "physical_lines": 38,
+          "tokens": 10
+        },
+        "before": null,
+        "file": "tests/unit/test_jax_indexing.py",
+        "symbol": "test_explicit_registration_is_device_inert_and_preserves_jax_surface"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 56,
+          "parameters": 1,
+          "physical_lines": 56,
+          "tokens": 21
+        },
+        "before": null,
+        "file": "tests/unit/test_jax_indexing.py",
+        "symbol": "test_fill_gather_keeps_wide_bounds_complete_windows_and_batched_axes"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 38,
+          "parameters": 1,
+          "physical_lines": 38,
+          "tokens": 20
+        },
+        "before": null,
+        "file": "tests/unit/test_jax_indexing.py",
+        "symbol": "test_scatter_transpose_drops_wide_out_of_bounds_cotangents"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 42,
+          "parameters": 0,
+          "physical_lines": 42,
+          "tokens": 10
+        },
+        "before": null,
+        "file": "tests/unit/test_jax_indexing.py",
+        "symbol": "test_other_modes_extended_dtypes_and_empty_shapes_keep_jax_semantics"
+      },
+      {
+        "after": {
+          "cognitive": 5,
+          "cyclomatic": 5,
+          "nloc": 65,
+          "parameters": 2,
+          "physical_lines": 66,
+          "tokens": 396
+        },
+        "before": null,
+        "file": "tests/unit/test_metal_build_tools.py",
+        "symbol": "staged_wheel"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 36,
+          "parameters": 2,
+          "physical_lines": 36,
+          "tokens": 195
+        },
+        "before": null,
+        "file": "tests/unit/test_metal_build_tools.py",
+        "symbol": "test_companion_wheel_binds_and_imports_private_standalone_indexing"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 8,
+          "parameters": 2,
+          "physical_lines": 8,
+          "tokens": 77
+        },
+        "before": null,
+        "file": "tests/unit/test_metal_build_tools.py",
+        "symbol": "test_companion_packaging_refuses_changed_canonical_indexing"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 8,
+          "parameters": 2,
+          "physical_lines": 8,
+          "tokens": 75
+        },
+        "before": null,
+        "file": "tests/unit/test_metal_build_tools.py",
+        "symbol": "test_companion_packaging_refuses_changed_staged_indexing"
+      },
+      {
+        "after": {
+          "cognitive": 7,
+          "cyclomatic": 7,
+          "nloc": 51,
+          "parameters": 3,
+          "physical_lines": 52,
+          "tokens": 303
+        },
+        "before": null,
+        "file": "tests/unit/test_metal_environment.py",
+        "symbol": "test_host_collection_binds_the_private_indexing_asset"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 31,
+          "parameters": 1,
+          "physical_lines": 31,
+          "tokens": 232
+        },
+        "before": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 30,
+          "parameters": 1,
+          "physical_lines": 30,
+          "tokens": 219
+        },
+        "file": "tests/unit/test_metal_extras.py",
+        "symbol": "_manifest"
+      },
+      {
+        "after": {
+          "cognitive": 7,
+          "cyclomatic": 6,
+          "nloc": 45,
+          "parameters": 5,
+          "physical_lines": 45,
+          "tokens": 281
+        },
+        "before": {
+          "cognitive": 7,
+          "cyclomatic": 6,
+          "nloc": 43,
+          "parameters": 5,
+          "physical_lines": 43,
+          "tokens": 271
+        },
+        "file": "tests/unit/test_metal_extras.py",
+        "symbol": "_companion_wheel"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 37,
+          "parameters": 0,
+          "physical_lines": 37,
+          "tokens": 198
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "_facts"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 2,
+          "nloc": 9,
+          "parameters": 3,
+          "physical_lines": 9,
+          "tokens": 61
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "_version"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 9,
+          "parameters": 3,
+          "physical_lines": 9,
+          "tokens": 45
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "_device"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 9,
+          "parameters": 0,
+          "physical_lines": 9,
+          "tokens": 79
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_installation_assessment_is_not_hardware_qualification"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 5,
+          "parameters": 1,
+          "physical_lines": 5,
+          "tokens": 42
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_unsupported_hosts_refuse"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 4,
+          "parameters": 3,
+          "physical_lines": 4,
+          "tokens": 54
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_version_contract_is_exact"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 5,
+          "parameters": 1,
+          "physical_lines": 5,
+          "tokens": 47
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_competing_accelerator_distributions_refuse"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 6,
+          "parameters": 0,
+          "physical_lines": 6,
+          "tokens": 58
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_cpu_selection_is_preserved_without_claiming_a_broken_driver"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 16,
+          "parameters": 0,
+          "physical_lines": 16,
+          "tokens": 92
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_sdk_and_loader_overrides_are_reported_not_resolved_from_metadata"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 19,
+          "parameters": 4,
+          "physical_lines": 19,
+          "tokens": 92
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_runtime_identity_policy_requires_provider_evidence"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 8,
+          "parameters": 0,
+          "physical_lines": 8,
+          "tokens": 64
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_probe_errors_and_empty_device_sets_are_not_successful"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 11,
+          "parameters": 0,
+          "physical_lines": 11,
+          "tokens": 67
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_every_observed_device_must_have_oneapi_identity"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 10,
+          "parameters": 0,
+          "physical_lines": 10,
+          "tokens": 54
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_runtime_summary_cannot_disagree_with_observation"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 15,
+          "parameters": 0,
+          "physical_lines": 15,
+          "tokens": 167
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_canonical_distribution_identity_and_unique_keys"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 7,
+          "parameters": 0,
+          "physical_lines": 7,
+          "tokens": 57
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_unknown_host_requirements_are_not_invented"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 8,
+          "parameters": 1,
+          "physical_lines": 8,
+          "tokens": 48
+        },
+        "before": null,
+        "file": "tests/unit/test_oneapi_environment.py",
+        "symbol": "test_missing_host_evidence_refuses_admission"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 20,
+          "parameters": 0,
+          "physical_lines": 21,
+          "tokens": 108
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "_facts"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 14,
+          "parameters": 0,
+          "physical_lines": 14,
+          "tokens": 71
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "_observed"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 11,
+          "parameters": 0,
+          "physical_lines": 11,
+          "tokens": 89
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_host_success_is_not_hardware_qualification"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 7,
+          "parameters": 2,
+          "physical_lines": 7,
+          "tokens": 50
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_host_and_provider_refusals"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 8,
+          "parameters": 0,
+          "physical_lines": 8,
+          "tokens": 70
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_explicit_cpu_selection_does_not_rewrite_the_requested_platform"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 9,
+          "parameters": 0,
+          "physical_lines": 9,
+          "tokens": 63
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_cpu_observed_under_explicit_tpu_request_is_a_failure"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 36
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_observed_runtime_requires_attributed_library_and_consistent_topology"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 17,
+          "parameters": 0,
+          "physical_lines": 17,
+          "tokens": 97
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_local_and_global_counts_remain_distinct_for_multiple_processes"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 16,
+          "parameters": 2,
+          "physical_lines": 16,
+          "tokens": 90
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_effective_numerics_are_evidence_not_fp64_or_ieee_claims"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 9,
+          "parameters": 0,
+          "physical_lines": 9,
+          "tokens": 89
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_versions_and_mapped_files_are_canonical"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 11,
+          "parameters": 0,
+          "physical_lines": 11,
+          "tokens": 107
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_invalid_record_construction_is_refused"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 2,
+          "nloc": 5,
+          "parameters": 1,
+          "physical_lines": 5,
+          "tokens": 57
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_standard_gil_cpython_313_patch_releases_are_admitted"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 0,
+          "physical_lines": 3,
+          "tokens": 28
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_free_threaded_build_fact_must_be_boolean"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 6,
+          "parameters": 2,
+          "physical_lines": 6,
+          "tokens": 39
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_runtime_observations_cannot_be_marked_unprobed"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 15,
+          "parameters": 2,
+          "physical_lines": 15,
+          "tokens": 73
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_unprobed_facts_can_observe_existing_host_lifecycle_state"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 0,
+          "physical_lines": 3,
+          "tokens": 28
+        },
+        "before": null,
+        "file": "tests/unit/test_tpu_environment.py",
+        "symbol": "test_wsl_observation_flag_must_be_boolean"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 78
+        },
+        "before": null,
+        "file": "tools/_accelerator_process.py",
+        "symbol": "_log_evidence"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 3,
+          "nloc": 43,
+          "parameters": 4,
+          "physical_lines": 49,
+          "tokens": 259
+        },
+        "before": null,
+        "file": "tools/_accelerator_process.py",
+        "symbol": "run"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 9,
+          "parameters": 3,
+          "physical_lines": 10,
+          "tokens": 77
+        },
+        "before": null,
+        "file": "tools/_accelerator_process.py",
+        "symbol": "write_json_evidence"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 4,
+          "nloc": 11,
+          "parameters": 2,
+          "physical_lines": 11,
+          "tokens": 101
+        },
+        "before": null,
+        "file": "tools/_accelerator_process.py",
+        "symbol": "read_json_evidence"
+      },
+      {
+        "after": {
+          "cognitive": 7,
+          "cyclomatic": 6,
+          "nloc": 21,
+          "parameters": 1,
+          "physical_lines": 21,
+          "tokens": 164
+        },
+        "before": {
+          "cognitive": 7,
+          "cyclomatic": 6,
+          "nloc": 20,
+          "parameters": 1,
+          "physical_lines": 20,
+          "tokens": 158
+        },
+        "file": "tools/build_metal_wheels.py",
+        "symbol": "source_identity"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 5,
+          "nloc": 57,
+          "parameters": 8,
+          "physical_lines": 57,
+          "tokens": 356
+        },
+        "before": {
+          "cognitive": 0,
+          "cyclomatic": 5,
+          "nloc": 55,
+          "parameters": 8,
+          "physical_lines": 55,
+          "tokens": 332
+        },
+        "file": "tools/build_metal_wheels.py",
+        "symbol": "manifest"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 12,
+          "parameters": 1,
+          "physical_lines": 12,
+          "tokens": 67
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "Accelerator.distributions"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 3,
+          "nloc": 7,
+          "parameters": 1,
+          "physical_lines": 7,
+          "tokens": 33
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "Accelerator.requirement"
+      },
+      {
+        "after": {
+          "cognitive": 7,
+          "cyclomatic": 5,
+          "nloc": 51,
+          "parameters": 0,
+          "physical_lines": 51,
+          "tokens": 197
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "resolution_matrix"
+      },
+      {
+        "after": {
+          "cognitive": 18,
+          "cyclomatic": 20,
+          "nloc": 60,
+          "parameters": 1,
+          "physical_lines": 61,
+          "tokens": 352
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "metadata_errors"
+      },
+      {
+        "after": {
+          "cognitive": 3,
+          "cyclomatic": 5,
+          "nloc": 15,
+          "parameters": 2,
+          "physical_lines": 15,
+          "tokens": 96
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "resolution_errors"
+      },
+      {
+        "after": {
+          "cognitive": 16,
+          "cyclomatic": 21,
+          "nloc": 90,
+          "parameters": 2,
+          "physical_lines": 96,
+          "tokens": 394
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "refusal_errors"
+      },
+      {
+        "after": {
+          "cognitive": 0,
+          "cyclomatic": 1,
+          "nloc": 3,
+          "parameters": 1,
+          "physical_lines": 3,
+          "tokens": 32
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "sha256"
+      },
+      {
+        "after": {
+          "cognitive": 19,
+          "cyclomatic": 15,
+          "nloc": 75,
+          "parameters": 0,
+          "physical_lines": 75,
+          "tokens": 573
+        },
+        "before": null,
+        "file": "tools/check_accelerator_extras.py",
+        "symbol": "main"
+      },
+      {
+        "after": {
+          "cognitive": 36,
+          "cyclomatic": 38,
+          "nloc": 80,
+          "parameters": 2,
+          "physical_lines": 81,
+          "tokens": 596
+        },
+        "before": {
+          "cognitive": 34,
+          "cyclomatic": 37,
+          "nloc": 76,
+          "parameters": 2,
+          "physical_lines": 77,
+          "tokens": 584
+        },
+        "file": "tools/check_metal_extras.py",
+        "symbol": "build_record_errors"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 8,
+          "parameters": 2,
+          "physical_lines": 8,
+          "tokens": 33
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "host_errors"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 15,
+          "parameters": 2,
+          "physical_lines": 15,
+          "tokens": 113
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "clean_environment"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 7,
+          "parameters": 1,
+          "physical_lines": 8,
+          "tokens": 72
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "wheel_files"
+      },
+      {
+        "after": {
+          "cognitive": 18,
+          "cyclomatic": 25,
+          "nloc": 58,
+          "parameters": 2,
+          "physical_lines": 58,
+          "tokens": 361
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "runtime_errors"
+      },
+      {
+        "after": {
+          "cognitive": 20,
+          "cyclomatic": 17,
+          "nloc": 53,
+          "parameters": 2,
+          "physical_lines": 54,
+          "tokens": 355
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "case_report_errors"
+      },
+      {
+        "after": {
+          "cognitive": 5,
+          "cyclomatic": 6,
+          "nloc": 11,
+          "parameters": 1,
+          "physical_lines": 11,
+          "tokens": 91
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "last_json"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 4,
+          "nloc": 6,
+          "parameters": 1,
+          "physical_lines": 6,
+          "tokens": 36
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "_sha256_text"
+      },
+      {
+        "after": {
+          "cognitive": 6,
+          "cyclomatic": 11,
+          "nloc": 22,
+          "parameters": 1,
+          "physical_lines": 22,
+          "tokens": 146
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "_distribution_record_valid"
+      },
+      {
+        "after": {
+          "cognitive": 15,
+          "cyclomatic": 21,
+          "nloc": 51,
+          "parameters": 2,
+          "physical_lines": 52,
+          "tokens": 302
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "probe_record"
+      },
+      {
+        "after": {
+          "cognitive": 2,
+          "cyclomatic": 3,
+          "nloc": 14,
+          "parameters": 1,
+          "physical_lines": 14,
+          "tokens": 82
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "_copy_harness"
+      },
+      {
+        "after": {
+          "cognitive": 24,
+          "cyclomatic": 29,
+          "nloc": 169,
+          "parameters": 1,
+          "physical_lines": 171,
+          "tokens": 1001
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "qualify"
+      },
+      {
+        "after": {
+          "cognitive": 1,
+          "cyclomatic": 2,
+          "nloc": 19,
+          "parameters": 0,
+          "physical_lines": 19,
+          "tokens": 189
+        },
+        "before": null,
+        "file": "tools/qualify_accelerator_wheels.py",
+        "symbol": "main"
+      }
+    ],
+    "tools": [
+      "lizard 1.24.1",
+      "cognitive-complexity 1.3.0"
+    ]
+  },
+  "complexity_rationale": "The existing spatial_leaf_pair_fragment scientific dispatcher retains its cyclomatic complexity47; only an operation-specific capability request changed. No numerical formula or operation ordering was refactored. New TPU observation validation was separated by lifecycle invariant.",
+  "core_wheel": {
+    "path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/final-core-wheel/phydrax-0.2.2-py3-none-any.whl",
+    "sha256": "22946b4be2b5dfa2bc62426051d1644d0a94983ed686cb23b6abea535cc4e47f"
+  },
+  "cpu_compatibility": {
+    "command": [
+      "/private/tmp/phydrax-accelerator-minlib/bin/python",
+      "-I",
+      "-c",
+      "import json,sys\nfrom pathlib import Path\nimport phydrax\nfrom phydrax import _jax_config\nfrom phydrax.backends import oneapi_environment,tpu_environment\nbefore=_jax_config.backends_initialized()\none=oneapi_environment();tpu=tpu_environment()\nif before or _jax_config.backends_initialized(): raise RuntimeError(\"Host diagnostics initialized devices\")\nif not Path(phydrax.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()):raise RuntimeError(\"Not installed core\")\nsys.path.insert(0,sys.argv[1])\nfrom examples.accelerator_scientific_execution import poisson_steps\nvalues,arrays=poisson_steps(steps=4)\nimport jax,jaxlib,numpy as np\nif not all(a.dtype==np.float32 and all(d.platform==\"cpu\" for d in a.devices()) for a in arrays):raise RuntimeError(\"CPU dtype/placement contract failed\")\nif not values['final_loss']<values['initial_loss']:raise RuntimeError('Update failed')\nnp.testing.assert_allclose(values['directional_derivative'],values['finite_difference_derivative'],rtol=0.03,atol=0.02)\nprint(json.dumps({'jax':jax.__version__,'jaxlib':jaxlib.__version__,'backend':jax.default_backend(),'values':values,'hardware_qualified':False,'device_inert_diagnostics':True}))\n",
+      "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support"
+    ],
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "{\"jax\": \"0.12.0\", \"jaxlib\": \"0.11.2\", \"backend\": \"cpu\", \"values\": {\"initial_loss\": 147.69728088378906, \"final_loss\": 147.1162109375, \"gradient_norm\": 20.834020614624023, \"update_norm\": 0.040789682418107986, \"directional_derivative\": 20.889972686767578, \"finite_difference_derivative\": 20.8892822265625}, \"hardware_qualified\": false, \"device_inert_diagnostics\": true}\n",
+    "wheel_sha256": "22946b4be2b5dfa2bc62426051d1644d0a94983ed686cb23b6abea535cc4e47f"
+  },
+  "hardware_qualification": {
+    "oneapi": false,
+    "reason": "Intel GPU and TPU hardware unavailable; no accelerator execution or performance claim.",
+    "tpu": false
+  },
+  "hardware_refusals": {
+    "oneapi": {
+      "accelerator": "oneapi",
+      "errors": [
+        "Qualification requires native Linux x86_64 with the selected accelerator; emulation and CPU fallback are forbidden"
+      ],
+      "hardware_qualified": false,
+      "stages": {},
+      "successful": false,
+      "wheel": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/core-wheels/phydrax-0.2.2-py3-none-any.whl",
+      "wheel_sha256": "0a51e86e0b8a9ccaf32726f5a6f6acd457d150d6e7223307aa5eca018ae6c063"
+    },
+    "tpu": {
+      "accelerator": "tpu",
+      "errors": [
+        "Qualification requires native Linux x86_64 with the selected accelerator; emulation and CPU fallback are forbidden"
+      ],
+      "hardware_qualified": false,
+      "stages": {},
+      "successful": false,
+      "wheel": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/core-wheels/phydrax-0.2.2-py3-none-any.whl",
+      "wheel_sha256": "0a51e86e0b8a9ccaf32726f5a6f6acd457d150d6e7223307aa5eca018ae6c063"
+    }
+  },
+  "kind": "upstream-accelerator-software-evidence",
+  "metal_shared_source_cutover": {
+    "binary_audit": null,
+    "build_id": "3752390ceda04bc9fd88e412a105dd3802bbb1ed40da7e9999e70fcb459302c8",
+    "build_status": "passed",
+    "dependency_reuse": "Byte-identical APFS-relocated installed LLVM/MLX prefixes; original source/toolchain and complete prefix inventories checked. No old dependency stamps or old native source ID relabeled. Raw inventories retained in .tmp/accelerator-support/metal-build.json.",
+    "native_inputs": {
+      "native/metal/CMakeLists.txt": "ad2ea1dcd0f16dee1f3ffc550982a189d126dedc9a63411949a1276b062190d3",
+      "native/metal/_build_backend.py": "775898958edf28001899c7ffe5ca3b5075995868c61e8eb60021ae4e09c15489",
+      "native/metal/cmake/sdy/CMakeLists.txt": "ace7ce37e9989eb49a0f4ce7aefaa4b656b5fb451f686d4494ecdf67674129a7",
+      "native/metal/patches/01-current-jax-abi-identity-shardy.patch": "deef70d4f424a02e1aff89b98ab3370114b341b9417d6d44c21c8b11b9f1a9cb",
+      "native/metal/patches/02-refuse-float64-complex128.patch": "7efe8a0321a122890c15adc45e8a467538250c20732ce34d7cfa0e940bd5a2ba",
+      "native/metal/patches/03-host-callbacks-effects.patch": "901a34412b4d85a94d303cd6e13c19bff63d78b1fb34c07a8feeef6b858bcc65",
+      "native/metal/patches/04-exact-integer-dot-gpu-triangular-solve.patch": "fefe1cfc7f99f23116261471accf570e97661e06af94f2fea527d670e38f8275",
+      "native/metal/patches/05-refuse-oversized-allocations.patch": "972f5241e9395cbc9b98ab9b7194a489cf335a4bab4646f2299f0cba3ae671af",
+      "native/metal/patches/06-mlx-disable-tf32.patch": "cbb10387d781bd43a1e55cbc9bb185902ecdd5ed5ac31328d24df9445506b720",
+      "native/metal/patches/07-index-sort-semantics.patch": "1186b35af011e3af17754cbc6caefbb6dbd67b12c6b04a576911949a162f72ab",
+      "native/metal/patches/08-reduction-arithmetic-semantics.patch": "8948ab17f7428ba5f2c433afb68c4d912b0d16eec13bc86af410959058aa1bde",
+      "native/metal/patches/09-buffer-lifecycle-metadata.patch": "eddd3db2b015f2d4b77b6526ad60e7c69b226852cc811c3d0c67feb9a0e5eef0",
+      "native/metal/patches/10-mlx-fixed-runtime-policy.patch": "8e3b505028209f0b79d5993b4f4231583aee903019aae0c79230f1dfd6d05ae2",
+      "native/metal/patches/11-fixed-runtime-policy.patch": "0b9a22e692141e461e8d79fe3bfc741a0474712672b3b45ab04c2bbf4ff862b0",
+      "native/metal/patches/12-bounded-numerical-execution.patch": "340bd28a7a14cccdfe7db2937ab585ac8fedf12877fd4d9305545969444e0df8",
+      "native/metal/patches/13-mlx-output-argument-separators.patch": "9546277d0b81d3083dbbbc52adf38539e32ef977b5684c9c655a664735fdb5e6",
+      "native/metal/pyproject.toml": "0147341c611698d072f7d32156b40c29333bb441762b50ed32f66a1a2ce27b06",
+      "native/metal/python/phydrax_metal/__init__.py": "1437670fa8e3aa7f1c963bfcc81508ef5bd1c7ddeb6a36aa72053b0857198c15",
+      "native/metal/python/phydrax_metal/plugin.py": "9525783251b238ba9d6f9dc835027cb5c955a1307a9da71517db9b48c4b99f40",
+      "native/metal/sources.lock.json": "bcd69c4b88e1e06b20d0a9e75d4455234bb0e423bd672151dc467e8ff662f753",
+      "phydrax/_jax_indexing.py": "3a81047e3275e802fa27bfda1b677b577a0e0b75848f4bbd767c73adafbbbc7d",
+      "tools/build_metal_wheels.py": "3ef65a57e48e4f0c26e7fe59b71a6328239862adf31118cd507008c0a67588e3"
+    },
+    "regression": {
+      "command": "env JAX_PLATFORMS=mps JAX_ENABLE_X64=1 PYTHONNOUSERSITE=1 /private/tmp/phydrax-accelerator-metal-54199ce5/bin/python -I -m pytest --rootdir /private/tmp/phydrax-accelerator-metal-54199ce5/suite --confcutdir /private/tmp/phydrax-accelerator-metal-54199ce5/suite --import-mode=importlib -o addopts= -q tests/integration/test_metal_index_primitives.py tests/integration/test_metal_import_contract.py",
+      "duration_seconds": 21.62,
+      "passed": 63
+    },
+    "smoke": {
+      "command": [
+        "/private/tmp/phydrax-accelerator-metal-54199ce5/bin/python",
+        "-I",
+        "-c",
+        "import sys,json\nfrom pathlib import Path\nimport jax\nimport jax.numpy as jnp\nimport numpy as np\nif \"phydrax\" in sys.modules: raise RuntimeError(\"Core imported before standalone plugin probe\")\n@jax.jit\ndef gradient(indices: jax.Array) -> jax.Array:\n    dims=jax.lax.ScatterDimensionNumbers(update_window_dims=(0,),inserted_window_dims=(),scatter_dims_to_operand_dims=(0,))\n    return jax.grad(lambda update:jnp.sum(jax.lax.scatter_add(jnp.zeros(5,dtype=jnp.float32),indices,update,dims,unique_indices=True,mode=\"drop\")))(jnp.ones(2,dtype=jnp.float32))\nresult=gradient(jnp.asarray([2**32],dtype=jnp.int64));result.block_until_ready()\nnp.testing.assert_array_equal(np.asarray(result),np.zeros(2,dtype=np.float32))\nstandalone=\"phydrax\" not in sys.modules\nimport phydrax\nfrom phydrax.backends import metal_environment\nreport=metal_environment()\nif not report.successful or not report.facts.device_probed:raise RuntimeError(str(report.issues))\nif not Path(phydrax.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()):raise RuntimeError(\"Checkout imported\")\nprint(json.dumps({\"standalone_no_core_import\":standalone,\"gradient\":np.asarray(result).tolist(),\"platform\":jax.default_backend(),\"runtime\":jax.devices()[0].client.platform_version,\"source_id\":report.facts.source_id,\"core\":phydrax.__file__}))\n"
+      ],
+      "returncode": 0,
+      "stderr": "Platform 'mps' is experimental and not all JAX functionality may be correctly supported!\n",
+      "stdout": "{\"standalone_no_core_import\": true, \"gradient\": [0.0, 0.0], \"platform\": \"mps\", \"runtime\": \"phydrax-metal 0.2.2 54199ce5ff82fa93a642c1131aa390f22f9395093160c393820c13385ed909ac\", \"source_id\": \"54199ce5ff82fa93a642c1131aa390f22f9395093160c393820c13385ed909ac\", \"core\": \"/private/tmp/phydrax-accelerator-metal-54199ce5/lib/python3.13/site-packages/phydrax/__init__.py\"}\n"
+    },
+    "source_id": "54199ce5ff82fa93a642c1131aa390f22f9395093160c393820c13385ed909ac",
+    "wheel": {
+      "path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/metal-wheels/phydrax_metal-0.2.2-py3-none-macosx_14_0_arm64.whl",
+      "sha256": "8ab706a2cbc5d60b3bdb5a36f9a3d7a92f4b8f89083530215baf7c0498d10b9e"
+    }
+  },
+  "resolution": {
+    "explicit_jaxlib_conflict": {
+      "command": [
+        "uv",
+        "pip",
+        "compile",
+        "--python-version",
+        "3.13",
+        "--python-platform",
+        "x86_64-manylinux_2_31",
+        "--no-header",
+        "--no-annotate",
+        "-"
+      ],
+      "requirements": "phydrax[oneapi] @ file:///Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/final-core-wheel/phydrax-0.2.2-py3-none-any.whl\njaxlib==0.12.0\n",
+      "returncode": 1,
+      "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because only phydrax[oneapi]==0.2.2 is available and\n      phydrax[oneapi]==0.2.2 depends on jaxlib==0.11.2, we can conclude that\n      all versions of phydrax[oneapi] depend on jaxlib==0.11.2.\n      And because you require phydrax[oneapi] and jaxlib==0.12.0, we can\n      conclude that your requirements are unsatisfiable.\n",
+      "stdout": ""
+    },
+    "final_core_metadata_byte_identical": true,
+    "initial": {
+      "cases": [
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/oneapi-linux.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 0,
+            "stderr": "Resolved 49 packages in 608ms\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-lacxktlk.stderr",
+            "stderr_sha256": "c3cbcd06b0234179975e0187907edd291e39e25e93d7c3121a5c7b09f18ffefd",
+            "stdout": "absl-py==2.5.1\nblackjax==1.7.1\ncadquery-ocp-novtk==8.0.1.1.0\ncadquery-ocp-proxy==8.0.1.1.0\ndiffrax==0.7.2\ndpcpp-cpp-rt==2025.1.1\nequinox==0.13.8\nh5py==3.16.0\nimpi-rt==2021.15.0\nintel-cmplr-lib-rt==2025.1.1\nintel-cmplr-lib-ur==2025.1.1\nintel-cmplr-lic-rt==2025.1.1\nintel-opencl-rt==2025.1.1\nintel-openmp==2025.1.1\nintel-pti==0.12.0\nintel-sycl-rt==2025.1.1\njax==0.12.0\njax-oneapi-pjrt==0.11.2\njax-oneapi-plugin==0.11.2\njaxlib==0.11.2\njaxtyping==0.3.11\nlineax==0.1.1\nloguru==0.7.3\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nmkl==2025.1.0\nml-dtypes==0.6.0\nmpmath==1.4.1\nnumpy==2.5.4\nonemkl-sycl-blas==2025.1.0\nonemkl-sycl-dft==2025.1.0\nonemkl-sycl-lapack==2025.1.0\nonemkl-sycl-rng==2025.1.0\nonemkl-sycl-sparse==2025.1.0\nopt-einsum==3.4.0\noptax==0.2.8\noptimistix==0.1.0\nphydrax @ file:///Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/core-wheels/phydrax-0.2.2-py3-none-any.whl\npygments==2.21.0\npyyaml==6.0.3\nrich==15.0.0\ns2fft==1.5.0\nscipy==1.18.1\ntbb==2022.1.0\ntcmlib==1.3.0\ntyping-extensions==4.16.0\numf==0.10.0\nwadler-lindig==0.1.7\n",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-hsza7vaf.stdout",
+            "stdout_sha256": "3e88a06b55cd06344dff3e3d12c893462362b17dac96d41ff4e4d96edfd33573",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": true,
+          "name": "oneapi-linux",
+          "platform": "x86_64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {
+            "absl-py": "2.5.1",
+            "blackjax": "1.7.1",
+            "cadquery-ocp-novtk": "8.0.1.1.0",
+            "cadquery-ocp-proxy": "8.0.1.1.0",
+            "diffrax": "0.7.2",
+            "dpcpp-cpp-rt": "2025.1.1",
+            "equinox": "0.13.8",
+            "h5py": "3.16.0",
+            "impi-rt": "2021.15.0",
+            "intel-cmplr-lib-rt": "2025.1.1",
+            "intel-cmplr-lib-ur": "2025.1.1",
+            "intel-cmplr-lic-rt": "2025.1.1",
+            "intel-opencl-rt": "2025.1.1",
+            "intel-openmp": "2025.1.1",
+            "intel-pti": "0.12.0",
+            "intel-sycl-rt": "2025.1.1",
+            "jax": "0.12.0",
+            "jax-oneapi-pjrt": "0.11.2",
+            "jax-oneapi-plugin": "0.11.2",
+            "jaxlib": "0.11.2",
+            "jaxtyping": "0.3.11",
+            "lineax": "0.1.1",
+            "loguru": "0.7.3",
+            "markdown-it-py": "4.2.0",
+            "mdurl": "0.1.2",
+            "meshio": "5.3.5",
+            "mkl": "2025.1.0",
+            "ml-dtypes": "0.6.0",
+            "mpmath": "1.4.1",
+            "numpy": "2.5.4",
+            "onemkl-sycl-blas": "2025.1.0",
+            "onemkl-sycl-dft": "2025.1.0",
+            "onemkl-sycl-lapack": "2025.1.0",
+            "onemkl-sycl-rng": "2025.1.0",
+            "onemkl-sycl-sparse": "2025.1.0",
+            "opt-einsum": "3.4.0",
+            "optax": "0.2.8",
+            "optimistix": "0.1.0",
+            "pygments": "2.21.0",
+            "pyyaml": "6.0.3",
+            "rich": "15.0.0",
+            "s2fft": "1.5.0",
+            "scipy": "1.18.1",
+            "tbb": "2022.1.0",
+            "tcmlib": "1.3.0",
+            "typing-extensions": "4.16.0",
+            "umf": "0.10.0",
+            "wadler-lindig": "0.1.7"
+          },
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "aarch64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/oneapi-arm.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because jax-oneapi-plugin[with-oneapi]==0.11.2\n      has no wheels with a matching platform tag (e.g.,\n      `manylinux_2_31_aarch64`) and phydrax[oneapi]==0.2.2 depends\n      on jax-oneapi-plugin[with-oneapi]==0.11.2, we can conclude that\n      phydrax[oneapi]==0.2.2 cannot be used.\n      And because only phydrax[oneapi]==0.2.2 is available and you\n      require phydrax[oneapi], we can conclude that your requirements are\n      unsatisfiable.\n\n      hint: Wheels are available for `jax-oneapi-plugin` (v0.11.2) on the\n      following platform: `manylinux_2_27_x86_64`\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-qydedbc_.stderr",
+            "stderr_sha256": "6c926c1ac2928bc2e2d9eb944537840efa0e7c3027eb0caecc84e4209cf40787",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-444np_2g.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "oneapi-arm",
+          "platform": "aarch64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "aarch64-apple-darwin",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/oneapi-mac.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because jax-oneapi-plugin[with-oneapi]==0.11.2\n      has no wheels with a matching platform tag (e.g.,\n      `macosx_13_0_arm64`) and phydrax[oneapi]==0.2.2 depends on\n      jax-oneapi-plugin[with-oneapi]==0.11.2, we can conclude that\n      phydrax[oneapi]==0.2.2 cannot be used.\n      And because only phydrax[oneapi]==0.2.2 is available and you\n      require phydrax[oneapi], we can conclude that your requirements are\n      unsatisfiable.\n\n      hint: Wheels are available for `jax-oneapi-plugin` (v0.11.2) on the\n      following platform: `manylinux_2_27_x86_64`\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-e7d51cyi.stderr",
+            "stderr_sha256": "5e015060834f1172b73adf02c1267cb5f4f00a9666fba90b6e627be492d26796",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-i63617yk.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "oneapi-mac",
+          "platform": "aarch64-apple-darwin",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-pc-windows-msvc",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/oneapi-windows.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because jax-oneapi-plugin[with-oneapi]==0.11.2 has no wheels with a\n      matching platform tag (e.g., `win_amd64`) and phydrax[oneapi]==0.2.2\n      depends on jax-oneapi-plugin[with-oneapi]==0.11.2, we can conclude that\n      phydrax[oneapi]==0.2.2 cannot be used.\n      And because only phydrax[oneapi]==0.2.2 is available and you\n      require phydrax[oneapi], we can conclude that your requirements are\n      unsatisfiable.\n\n      hint: Wheels are available for `jax-oneapi-plugin` (v0.11.2) on the\n      following platform: `manylinux_2_27_x86_64`\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-33hj9z5l.stderr",
+            "stderr_sha256": "f48ff65e88bdbf2f9758f4a1b004f39959f96308597ee25d701a8893fc68c880",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-230vg3af.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "oneapi-windows",
+          "platform": "x86_64-pc-windows-msvc",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/tpu-linux.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 0,
+            "stderr": "Resolved 35 packages in 215ms\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-f9abz7pm.stderr",
+            "stderr_sha256": "eb32aafe105bed0c3964a7bb395b57aa8facc992f530a4ac9b2eea1d073e5c07",
+            "stdout": "absl-py==2.5.1\nblackjax==1.7.1\ncadquery-ocp-novtk==8.0.1.1.0\ncadquery-ocp-proxy==8.0.1.1.0\ncertifi==2026.10.19\ncharset-normalizer==3.5.2\ndiffrax==0.7.2\nequinox==0.13.8\nh5py==3.16.0\nidna==3.20\njax==0.12.0\njaxlib==0.12.0\njaxtyping==0.3.11\nlibtpu==0.0.50\nlineax==0.1.1\nloguru==0.7.3\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nml-dtypes==0.6.0\nmpmath==1.4.1\nnumpy==2.5.4\nopt-einsum==3.4.0\noptax==0.2.8\noptimistix==0.1.0\nphydrax @ file:///Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/core-wheels/phydrax-0.2.2-py3-none-any.whl\npygments==2.21.0\npyyaml==6.0.3\nrequests==2.34.2\nrich==15.0.0\ns2fft==1.5.0\nscipy==1.18.1\ntyping-extensions==4.16.0\nurllib3==2.8.0\nwadler-lindig==0.1.7\n",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-ohg2rqoq.stdout",
+            "stdout_sha256": "3fc888cd9d8f4da339971672d8584f2328f81c3008401a8ae4e03ab29c09e36e",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": true,
+          "name": "tpu-linux",
+          "platform": "x86_64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {
+            "absl-py": "2.5.1",
+            "blackjax": "1.7.1",
+            "cadquery-ocp-novtk": "8.0.1.1.0",
+            "cadquery-ocp-proxy": "8.0.1.1.0",
+            "certifi": "2026.10.19",
+            "charset-normalizer": "3.5.2",
+            "diffrax": "0.7.2",
+            "equinox": "0.13.8",
+            "h5py": "3.16.0",
+            "idna": "3.20",
+            "jax": "0.12.0",
+            "jaxlib": "0.12.0",
+            "jaxtyping": "0.3.11",
+            "libtpu": "0.0.50",
+            "lineax": "0.1.1",
+            "loguru": "0.7.3",
+            "markdown-it-py": "4.2.0",
+            "mdurl": "0.1.2",
+            "meshio": "5.3.5",
+            "ml-dtypes": "0.6.0",
+            "mpmath": "1.4.1",
+            "numpy": "2.5.4",
+            "opt-einsum": "3.4.0",
+            "optax": "0.2.8",
+            "optimistix": "0.1.0",
+            "pygments": "2.21.0",
+            "pyyaml": "6.0.3",
+            "requests": "2.34.2",
+            "rich": "15.0.0",
+            "s2fft": "1.5.0",
+            "scipy": "1.18.1",
+            "typing-extensions": "4.16.0",
+            "urllib3": "2.8.0",
+            "wadler-lindig": "0.1.7"
+          },
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "aarch64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/tpu-arm.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because libtpu==0.0.50 has no wheels with a matching platform tag (e.g.,\n      `manylinux_2_31_aarch64`) and only the following versions of libtpu\n      are available:\n          libtpu<0.0.50.dev0\n          libtpu==0.0.50\n      we can conclude that libtpu>=0.0.50.dev0 cannot be used.\n      And because jax[tpu]==0.12.0 depends on libtpu>=0.0.50.dev0 and\n      phydrax[tpu]==0.2.2 depends on jax[tpu]==0.12.0, we can conclude that\n      phydrax[tpu]==0.2.2 cannot be used.\n      And because only phydrax[tpu]==0.2.2 is available and you require\n      phydrax[tpu], we can conclude that your requirements are unsatisfiable.\n\n      hint: Wheels are available for `libtpu` (v0.0.50) on the following\n      platform: `manylinux_2_31_x86_64`\n\n      hint: `libtpu` was requested with a pre-release marker (e.g., all of:\n          libtpu>=0.0.50.dev0,<0.0.50\n          libtpu>0.0.50,<0.0.51.dev0\n      ), but pre-releases weren't enabled (try: `--prerelease=allow`)\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-r5_sr1cl.stderr",
+            "stderr_sha256": "4735ef19ac999ed9f2257510d378d6b5b82fa8bc5d357ae70580d4fcf85c691c",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-d7lsuc5z.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "tpu-arm",
+          "platform": "aarch64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "aarch64-apple-darwin",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/tpu-mac.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because libtpu==0.0.50 has no wheels with a matching platform tag\n      (e.g., `macosx_13_0_arm64`) and only the following versions of libtpu\n      are available:\n          libtpu<0.0.50.dev0\n          libtpu==0.0.50\n      we can conclude that libtpu>=0.0.50.dev0 cannot be used.\n      And because jax[tpu]==0.12.0 depends on libtpu>=0.0.50.dev0 and\n      phydrax[tpu]==0.2.2 depends on jax[tpu]==0.12.0, we can conclude that\n      phydrax[tpu]==0.2.2 cannot be used.\n      And because only phydrax[tpu]==0.2.2 is available and you require\n      phydrax[tpu], we can conclude that your requirements are unsatisfiable.\n\n      hint: Wheels are available for `libtpu` (v0.0.50) on the following\n      platform: `manylinux_2_31_x86_64`\n\n      hint: `libtpu` was requested with a pre-release marker (e.g., all of:\n          libtpu>=0.0.50.dev0,<0.0.50\n          libtpu>0.0.50,<0.0.51.dev0\n      ), but pre-releases weren't enabled (try: `--prerelease=allow`)\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-hgpjoq28.stderr",
+            "stderr_sha256": "b613e377de3c2b28bb634e3010e0e820bb5281835dc21dbd52a907206fb75de8",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-sj8q5afy.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "tpu-mac",
+          "platform": "aarch64-apple-darwin",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-pc-windows-msvc",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/tpu-windows.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because libtpu==0.0.50 has no wheels with a matching platform tag (e.g.,\n      `win_amd64`) and only the following versions of libtpu are available:\n          libtpu<0.0.50.dev0\n          libtpu==0.0.50\n      we can conclude that libtpu>=0.0.50.dev0 cannot be used.\n      And because jax[tpu]==0.12.0 depends on libtpu>=0.0.50.dev0 and\n      phydrax[tpu]==0.2.2 depends on jax[tpu]==0.12.0, we can conclude that\n      phydrax[tpu]==0.2.2 cannot be used.\n      And because only phydrax[tpu]==0.2.2 is available and you require\n      phydrax[tpu], we can conclude that your requirements are unsatisfiable.\n\n      hint: Wheels are available for `libtpu` (v0.0.50) on the following\n      platform: `manylinux_2_31_x86_64`\n\n      hint: `libtpu` was requested with a pre-release marker (e.g., all of:\n          libtpu>=0.0.50.dev0,<0.0.50\n          libtpu>0.0.50,<0.0.51.dev0\n      ), but pre-releases weren't enabled (try: `--prerelease=allow`)\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-rtpb73qj.stderr",
+            "stderr_sha256": "f99317c8761eea947543e0e86f1ae61a8f363391cb3f6778beadf131d130ed1d",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-tsq752pi.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "tpu-windows",
+          "platform": "x86_64-pc-windows-msvc",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/base-cpu.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 0,
+            "stderr": "Resolved 29 packages in 6ms\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-2a6dadtw.stderr",
+            "stderr_sha256": "597998fc72aa5582d64e34e7a6a5b0aa0d5ac755a592655dd634c17f1f126eb3",
+            "stdout": "absl-py==2.5.1\nblackjax==1.7.1\ncadquery-ocp-novtk==8.0.1.1.0\ncadquery-ocp-proxy==8.0.1.1.0\ndiffrax==0.7.2\nequinox==0.13.8\nh5py==3.16.0\njax==0.12.0\njaxlib==0.12.0\njaxtyping==0.3.11\nlineax==0.1.1\nloguru==0.7.3\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nml-dtypes==0.6.0\nmpmath==1.4.1\nnumpy==2.5.4\nopt-einsum==3.4.0\noptax==0.2.8\noptimistix==0.1.0\nphydrax @ file:///Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/core-wheels/phydrax-0.2.2-py3-none-any.whl\npygments==2.21.0\npyyaml==6.0.3\nrich==15.0.0\ns2fft==1.5.0\nscipy==1.18.1\ntyping-extensions==4.16.0\nwadler-lindig==0.1.7\n",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-mjpxx8k5.stdout",
+            "stdout_sha256": "496996e4f34aea47c25e642de652de0f5729ec427cee129240fe852ecb17aec4",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": true,
+          "name": "base-cpu",
+          "platform": "x86_64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {
+            "absl-py": "2.5.1",
+            "blackjax": "1.7.1",
+            "cadquery-ocp-novtk": "8.0.1.1.0",
+            "cadquery-ocp-proxy": "8.0.1.1.0",
+            "diffrax": "0.7.2",
+            "equinox": "0.13.8",
+            "h5py": "3.16.0",
+            "jax": "0.12.0",
+            "jaxlib": "0.12.0",
+            "jaxtyping": "0.3.11",
+            "lineax": "0.1.1",
+            "loguru": "0.7.3",
+            "markdown-it-py": "4.2.0",
+            "mdurl": "0.1.2",
+            "meshio": "5.3.5",
+            "ml-dtypes": "0.6.0",
+            "mpmath": "1.4.1",
+            "numpy": "2.5.4",
+            "opt-einsum": "3.4.0",
+            "optax": "0.2.8",
+            "optimistix": "0.1.0",
+            "pygments": "2.21.0",
+            "pyyaml": "6.0.3",
+            "rich": "15.0.0",
+            "s2fft": "1.5.0",
+            "scipy": "1.18.1",
+            "typing-extensions": "4.16.0",
+            "wadler-lindig": "0.1.7"
+          },
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-manylinux_2_28",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/tpu-old-glibc.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because libtpu==0.0.50 has no wheels with a matching platform tag (e.g.,\n      `manylinux_2_28_x86_64`) and only the following versions of libtpu are\n      available:\n          libtpu<0.0.50.dev0\n          libtpu==0.0.50\n      we can conclude that libtpu>=0.0.50.dev0 cannot be used.\n      And because jax[tpu]==0.12.0 depends on libtpu>=0.0.50.dev0 and\n      phydrax[tpu]==0.2.2 depends on jax[tpu]==0.12.0, we can conclude that\n      phydrax[tpu]==0.2.2 cannot be used.\n      And because only phydrax[tpu]==0.2.2 is available and you require\n      phydrax[tpu], we can conclude that your requirements are unsatisfiable.\n\n      hint: Wheels are available for `libtpu` (v0.0.50) on the following\n      platform: `manylinux_2_31_x86_64`\n\n      hint: `libtpu` was requested with a pre-release marker (e.g., all of:\n          libtpu>=0.0.50.dev0,<0.0.50\n          libtpu>0.0.50,<0.0.51.dev0\n      ), but pre-releases weren't enabled (try: `--prerelease=allow`)\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-3rc5bh9a.stderr",
+            "stderr_sha256": "f29731d9a71d53fefc3898a388cb5ff9accb3364034bf541a60f817c35b38d74",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-3sm_ktq_.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "tpu-old-glibc",
+          "platform": "x86_64-manylinux_2_28",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/oneapi-conflicts-tpu.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because jax[tpu]==0.12.0 depends on jaxlib==0.12.0 and\n      phydrax[tpu]==0.2.2 depends on jax[tpu]==0.12.0, we can conclude that\n      phydrax[tpu]==0.2.2 depends on jaxlib==0.12.0.\n      And because phydrax[oneapi]==0.2.2 depends on jaxlib==0.11.2, we\n      can conclude that phydrax[oneapi]==0.2.2 and phydrax[tpu]==0.2.2 are\n      incompatible.\n      And because only phydrax[oneapi]==0.2.2 is available and only\n      phydrax[tpu]==0.2.2 is available, we can conclude that all versions of\n      phydrax[oneapi] and all versions of phydrax[tpu] are incompatible.\n      And because you require phydrax[oneapi] and phydrax[tpu], we can\n      conclude that your requirements are unsatisfiable.\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-3lnz_oq_.stderr",
+            "stderr_sha256": "6d1f26c55b8fcbcd7c16099443efe94615a596c304095ae1c9c0066b9c012d1c",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-h03xexrs.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "oneapi-conflicts-tpu",
+          "platform": "x86_64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/oneapi-conflicts-metal.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because phydrax-metal was not found in the package registry and\n      phydrax[metal]==0.2.2 depends on phydrax-metal==0.2.2, we can conclude\n      that phydrax[metal]==0.2.2 cannot be used.\n      And because only phydrax[metal]==0.2.2 is available and you\n      require phydrax[metal], we can conclude that your requirements are\n      unsatisfiable.\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-paqjuyfy.stderr",
+            "stderr_sha256": "47f22a85ce1e1a726097e3c2a4ff5036643c5d243eb87eaa871c15ea5d906626",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-rd11dc4v.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "oneapi-conflicts-metal",
+          "platform": "x86_64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        },
+        {
+          "command": {
+            "command": [
+              "uv",
+              "pip",
+              "compile",
+              "--python-version",
+              "3.13",
+              "--python-platform",
+              "x86_64-manylinux_2_31",
+              "--no-header",
+              "--no-annotate",
+              "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/oneapi-conflicts-cuda13.in"
+            ],
+            "cwd": ".tmp/accelerator-support/resolver",
+            "returncode": 1,
+            "stderr": "  \u00d7 No solution found when resolving dependencies:\n  \u2570\u2500\u25b6 Because only jax[cuda13]<=0.12.0 is available and jax[cuda13]==0.12.0\n      depends on jaxlib==0.12.0, we can conclude that jax[cuda13]>=0.12.0\n      depends on jaxlib==0.12.0.\n      And because phydrax[cuda13]==0.2.2 depends on jax[cuda13]>=0.12.0 and\n      phydrax[oneapi]==0.2.2 depends on jaxlib==0.11.2, we can conclude that\n      phydrax[cuda13]==0.2.2 and phydrax[oneapi]==0.2.2 are incompatible.\n      And because only phydrax[oneapi]==0.2.2 is available and only\n      phydrax[cuda13]==0.2.2 is available, we can conclude that all versions\n      of phydrax[cuda13] and all versions of phydrax[oneapi] are incompatible.\n      And because you require phydrax[oneapi] and phydrax[cuda13], we can\n      conclude that your requirements are unsatisfiable.\n",
+            "stderr_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-l8u5k4vb.stderr",
+            "stderr_sha256": "8eebb1d788c2f7de2c5eb7782d01681f5afdf57058899bd889adc99fb2bb42f4",
+            "stdout": "",
+            "stdout_path": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/resolver/command-fcqizt4b.stdout",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false
+          },
+          "errors": [],
+          "expected": false,
+          "name": "oneapi-conflicts-cuda13",
+          "platform": "x86_64-manylinux_2_31",
+          "python": "3.13",
+          "resolved": {},
+          "successful": true
+        }
+      ],
+      "metadata_errors": [],
+      "successful": true,
+      "wheel": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.tmp/accelerator-support/core-wheels/phydrax-0.2.2-py3-none-any.whl",
+      "wheel_sha256": "0a51e86e0b8a9ccaf32726f5a6f6acd457d150d6e7223307aa5eca018ae6c063"
+    },
+    "metal_conflict": {
+      "actual_metal_wheel_sha256": "8ab706a2cbc5d60b3bdb5a36f9a3d7a92f4b8f89083530215baf7c0498d10b9e",
+      "oneapi_required_jaxlib": "0.11.2",
+      "reason": "The actual Metal wheel requires JAXlib0.12.0; exact library constraints are disjoint.",
+      "requires_dist": [
+        "jax==0.12.0",
+        "jaxlib==0.12.0"
+      ]
+    },
+    "retired_case": "The initial oneapi-conflicts-metal result was only an unpublished-provider refusal, not version-conflict evidence; it is not accepted in the final matrix.",
+    "validated_cases": {
+      "cases": [
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "oneapi-linux"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "oneapi-arm"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "oneapi-mac"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "oneapi-windows"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "tpu-linux"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "tpu-arm"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "tpu-mac"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "tpu-windows"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "base-cpu"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "tpu-old-glibc"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "oneapi-conflicts-tpu"
+        },
+        {
+          "errors": [],
+          "evidence": "retained-command",
+          "name": "oneapi-conflicts-cuda13"
+        },
+        {
+          "errors": [
+            "Missing oneAPI JAXlib 0.11.2 versus explicit JAXlib 0.12.0 derivation"
+          ],
+          "evidence": "new-explicit-constraint-command",
+          "name": "oneapi-conflicts-jaxlib-0.12.0"
+        }
+      ],
+      "successful": false
+    }
+  },
+  "verification": {
+    "earlier_focused_matrix": {
+      "passed": 210,
+      "scope": "oneAPI/TPU metadata/imports, shared indexing and configuration; later TPU review changes covered by final software matrix."
+    },
+    "final_consistency": {
+      "checks": [
+        "Ruff changed-source checks",
+        "focused final example typing",
+        "capability consistency",
+        "public API manifest consistency",
+        "selector audit: zero findings",
+        "checked-signature audit"
+      ],
+      "duration_seconds": 99.73,
+      "status": "passed"
+    },
+    "installed_typing": {
+      "command": [
+        "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/accelerator-support/.venv313/bin/ty",
+        "check",
+        "--python",
+        "/private/tmp/phydrax-accelerator-minlib/bin/python",
+        "--python-version",
+        "3.13",
+        "--error",
+        "unused-ignore-comment",
+        "/private/tmp/phydrax-accelerator-public-types/oneapi_environment.py",
+        "/private/tmp/phydrax-accelerator-public-types/tpu_environment.py"
+      ],
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "All checks passed!\n"
+    },
+    "metal_environment": {
+      "duration_seconds": 1.13,
+      "passed": 22
+    },
+    "reviews": "All four evidence-backed findings fixed and independently re-reviewed: provider-specific resolver refusal, exact exhaustion status, WSL TPU refusal, and unprobed-observation consistency.",
+    "scoped_timeout": {
+      "command_scope": "An initial broader matrix also included whole Cartesian FMM numerical gradient cases.",
+      "result": "900-second command deadline, no failure assertion reported; not counted as a passing run.",
+      "selection": "Only capability admission changed, not those numerical kernels. The final changed-surface matrix excludes unaffected whole-FMM numerical campaigns and retains spatial backend/derivative/refusal consumers."
+    },
+    "software_matrix": {
+      "duration_seconds": 60.18,
+      "junit_sha256": "51b9b3fc1589a1cd96b57d0cdfa94a638cc178966356eed7e52d4c160c931c5e",
+      "passed": 231,
+      "scope": "Resolver/evidence/build contracts, provider/capability admission, TPU facts/import lifecycle; optional hardware cases skipped in this CPU invocation and are not accelerator passes.",
+      "skipped": 44
+    },
+    "temporary_scaffolding": "Removed the temporary native-prefix build recipe and complexity script/inputs after recording results; wheels, immutable cache provenance, raw reports and installed smoke environments remain available.",
+    "typing": {
+      "command": "env RAYON_NUM_THREADS=2 .venv313/bin/python tools/check_typing.py check",
+      "duration_seconds": 107.46,
+      "later_example_owner_import": "Focused ty/Ruff rechecked after changing jax.default_device to its canonical Phydrax owner.",
+      "status": "passed"
+    }
+  }
+}

@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._execution_device import device_platform
 from phydrax.backends import (
     pallas_spatial_availability,
     spatial_pair_acceleration,
@@ -28,9 +29,36 @@ from phydrax.discretization.spatial import (
 def pallas_interpret(request: pytest.FixtureRequest) -> bool:
     interpret = bool(request.param)
     availability = pallas_spatial_availability(interpret=interpret)
-    if not availability.available:
+    if not availability.available or not availability.capabilities.supports(
+        "particle_fmm.p2p"
+    ):
         pytest.skip(availability.reason)
     return interpret
+
+
+def test_tpu_pallas_float32_distance_and_morton_leaves() -> None:
+    if device_platform(jax.devices()[0]) != "tpu":
+        pytest.skip("Requires a real TPU runtime.")
+    availability = pallas_spatial_availability()
+    availability.require("spatial.distance_squared")
+    relative = jnp.asarray(
+        np.arange(128 * 2, dtype=np.float32).reshape((128, 2)) / np.float32(100)
+    )
+    norm = jax.jit(lambda value: spatial_squared_norm(value, backend="pallas"))
+    np.testing.assert_allclose(norm(relative), jnp.sum(relative * relative, axis=-1))
+    np.testing.assert_allclose(
+        jax.grad(lambda value: jnp.sum(norm(value)))(relative), 2 * relative
+    )
+    points = jnp.asarray([[0.1], [0.3], [0.6], [0.9]], dtype=jnp.float32)
+    targets = jnp.asarray([[0.2], [0.8]], dtype=jnp.float32)
+    sources = MortonSourcePlan(MortonAddressPlan((0.0,), (1.0,), 16), 4).prepare(points)
+    reference = MortonNeighborQueryPlan(sources.source_plan, 2, 2).query(sources, targets)
+    accelerated = MortonNeighborQueryPlan(
+        sources.source_plan, 2, 2, distance_backend="pallas"
+    ).query(sources, targets)
+    assert bool(accelerated.evidence.successful)
+    np.testing.assert_array_equal(accelerated.source_indices, reference.source_indices)
+    np.testing.assert_array_equal(accelerated.valid, reference.valid)
 
 
 def test_spatial_backend_scenario_1(pallas_interpret: bool) -> None:
@@ -285,7 +313,8 @@ def test_pallas_spatial_3d_padding_and_consumers(
 
 
 @pytest.mark.skipif(
-    not pallas_spatial_availability().available,
+    not pallas_spatial_availability().available
+    or not pallas_spatial_availability().capabilities.supports("particle_fmm.p2p"),
     reason=pallas_spatial_availability().reason,
 )
 @pytest.mark.parametrize("dtype", ("float32", "float64"))

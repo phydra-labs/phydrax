@@ -9,7 +9,7 @@ requires standard-GIL CPython 3.13, validates the package-local build
 (``build.json``: exact JAX/JAXlib pair, asset hashes, platform), refuses
 competing ``mps``/``metal`` plugins, registers the
 package-local PJRT library, installs the native host-callback bridge, and
-registers ``mps`` lowering rules for JAX's host-callback primitives.
+registers ``mps`` lowering rules for JAX's host-callback and gather primitives.
 
 There is no library search outside this package, no global JAX callable
 replacement, no Shardy or other configuration change, and no CPU fallback.
@@ -30,7 +30,7 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, TYPE_CHECKING
 
 import ml_dtypes
 import numpy as np
@@ -153,19 +153,20 @@ def _validate(record: dict[str, Any]) -> Path:
     library = record.get("library")
     if (
         not isinstance(assets, dict)
+        or "_jax_indexing.py" not in assets
         or not isinstance(library, str)
         or library not in assets
     ):
-        raise PluginError(f"{DISTRIBUTION} manifest does not identify its library")
+        raise PluginError(
+            f"{DISTRIBUTION} manifest does not identify its library and indexing helper"
+        )
     for relative, expected in assets.items():
         path = (_PACKAGE / relative).resolve()
         if not path.is_relative_to(_PACKAGE) or not path.is_file():
-            raise PluginError(f"{DISTRIBUTION} native asset {relative} is missing")
+            raise PluginError(f"{DISTRIBUTION} asset {relative} is missing")
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if digest != expected:
-            raise PluginError(
-                f"{DISTRIBUTION} native asset {relative} does not match its build"
-            )
+            raise PluginError(f"{DISTRIBUTION} asset {relative} does not match its build")
     return _PACKAGE / library
 
 
@@ -399,97 +400,17 @@ def _debug_print_rule(
     )
 
 
-def _gather_fill_preserving_indices(
-    operand: Any,
-    indices: Any,
-    *,
-    dimension_numbers: Any,
-    slice_sizes: Sequence[Any],
-    unique_indices: bool,
-    indices_are_sorted: bool,
-    fill_value: Any,
-    output_shape: Sequence[Any],
-) -> Any:
-    """Mask whole windows before any address-width conversion."""
-    from jax._src.lax import lax, slicing
-
-    # JAX 0.12's generic fill lowering narrows indices to a shape-selected
-    # signed dtype before checking bounds. Small operands consequently admit
-    # e.g. int64(2**32) as zero, including in scatter's reverse-mode gather.
-    # Widen comparisons without changing signedness; the native gather owns
-    # clamping and the eventual int32 address conversion.
-    unsigned = np.issubdtype(indices.dtype, np.unsignedinteger)
-    index_dtype = np.dtype(np.uint64 if unsigned else np.int64)
-    wide_indices = lax.convert_element_type(indices, index_dtype)
-    mapped_dims = np.asarray(dimension_numbers.start_index_map, dtype=np.int32)
-    operand_dims = lax.convert_element_type(lax.shape_as_value(operand.shape), np.int64)
-    window_dims = lax.convert_element_type(lax.shape_as_value(slice_sizes), np.int64)
-    upper_bound = operand_dims[mapped_dims] - window_dims[mapped_dims]
-    num_batch_dims = len(indices.shape) - 1
-    batch_axes = tuple(range(num_batch_dims))
-    upper = lax.expand_dims(
-        lax.convert_element_type(upper_bound, index_dtype), batch_axes
-    )
-    nonempty_bound = lax.expand_dims(lax.ge(upper_bound, np.int64(0)), batch_axes)
-    mask = lax.bitwise_and(
-        nonempty_bound,
-        lax.bitwise_and(
-            lax.ge(wide_indices, index_dtype.type(0)),
-            lax.le(wide_indices, upper),
-        ),
-    )
-    mask = lax.reduce_and(mask, [num_batch_dims])
-    gathered = slicing.gather(
-        operand,
-        indices,
-        dimension_numbers,
-        slice_sizes,
-        unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted,
-        mode=slicing.GatherScatterMode.PROMISE_IN_BOUNDS,
-    )
-    batch_dims_in_output = [
-        axis
-        for axis in range(len(output_shape))
-        if axis not in dimension_numbers.offset_dims
-    ]
-    return lax.select(
-        lax.broadcast_in_dim(
-            mask,
-            output_shape,
-            batch_dims_in_output,
-            out_sharding=gathered.aval.sharding,
-        ),
-        gathered,
-        lax.full_like(gathered, fill_value=fill_value),
-    )
-
-
-def _gather_rule(ctx: Any, operand: Any, indices: Any, **params: Any) -> Sequence[Any]:
-    from jax._src import dtypes
-    from jax._src.interpreters import mlir
-    from jax._src.lax import slicing
-
-    (aval_out,) = ctx.avals_out
-    if params["mode"] != slicing.GatherScatterMode.FILL_OR_DROP or dtypes.issubdtype(
-        aval_out.dtype, dtypes.extended
-    ):
-        # Keep canonical clip/promise, empty-shape, opaque-dtype and dynamic
-        # shape handling. The native backend's dtype admission is unchanged.
-        return slicing._gather_lower(ctx, operand, indices, **params)
-    fill_params = dict(params)
-    del fill_params["mode"]
-    return mlir.lower_fun(_gather_fill_preserving_indices, multiple_results=False)(
-        ctx, operand, indices, **fill_params, output_shape=aval_out.shape
-    )
-
-
 def _register_lowerings() -> None:
     from jax._src import callback as jax_callback, debugging
     from jax._src.interpreters import mlir
-    from jax._src.lax import slicing
 
-    mlir.register_lowering(slicing.gather_p, _gather_rule, platform=PLATFORM)
+    if TYPE_CHECKING:
+        from phydrax._jax_indexing import register_gather_lowering
+    else:
+        # The wheel packages this exact canonical source under its private owner.
+        from ._jax_indexing import register_gather_lowering
+
+    register_gather_lowering(PLATFORM)
 
     # Platform-specific rules only; CPU/GPU lowerings and every public JAX
     # callable stay untouched. Not cacheable: each lowering owns its callable.
