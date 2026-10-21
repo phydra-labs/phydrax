@@ -57,6 +57,8 @@
   policy and plan identities.
 
 ### Added
+- Add `phydrax[cpu]`, requesting `jax[cpu]>=0.12.0,<0.13` while preserving the
+  base installation's JAX dependency and existing runtime backend selection.
 - Add upstream-backed `oneapi` and `tpu` extras, pure environment diagnostics,
   explicit accelerator admission, candidate workload profiles, and installed
   qualification tooling. oneAPI uses the experimental JAX 0.12.0 / JAXlib and
