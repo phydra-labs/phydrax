@@ -629,12 +629,16 @@ solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 
 Requires Python 3.13.
 
-The base install uses CPU JAX. Choose one CUDA extra for NVIDIA GPUs on Linux:
+Select CPU dependencies explicitly, or choose CUDA 13 for NVIDIA GPUs on Linux:
 
 ```bash
-pip install phydrax             # CPU
+pip install "phydrax[cpu]"      # Requests jax[cpu]
 pip install "phydrax[cuda13]"    # Driver reports CUDA >= 13.0 (R580+)
 ```
+
+Plain `pip install phydrax` retains its base JAX dependency. The `cpu` extra
+does not remove accelerator plugins or force CPU execution; select
+`JAX_PLATFORMS=cpu` before numerical imports when required.
 
 The CUDA 13 extra installs JAX's CUDA plugin, NVIDIA wheels, and a metadata
 marker recording installed CUDA intent. On Linux x86-64 and aarch64 it also

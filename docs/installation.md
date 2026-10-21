@@ -1,11 +1,16 @@
 # Installation
 
-Requires Python 3.13 (the standard GIL-enabled CPython build) and JAX 0.12. The
-base install uses CPU JAX:
+Requires Python 3.13 (the standard GIL-enabled CPython build) and JAX 0.12. Select
+CPU dependencies explicitly with:
 
 ```bash
-pip install phydrax
+pip install "phydrax[cpu]"
 ```
+
+The `cpu` extra requests `jax[cpu]>=0.12.0,<0.13`. Plain `pip install phydrax`
+continues to install the base JAX dependency, which also supports CPU execution.
+Neither command removes existing accelerator plugins or forces CPU execution;
+set `JAX_PLATFORMS=cpu` before numerical imports to select CPU at runtime.
 
 The default checkout stack selects matching JAX and JAXlib 0.12.0 releases.
 The explicitly selected oneAPI extra instead pins the experimental
