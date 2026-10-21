@@ -1,0 +1,182 @@
+{
+  "sdk_version": "10.1.0",
+  "scope": "Availability audit of pinned binary archives; not redistribution approval or a legal certification. Supplemental source notices are independently pinned in license_sources.json.",
+  "source_manifest": {
+    "path": "_rocm_sdk_core/share/therock/therock_manifest.json",
+    "sha256": "1dbf234cdf4d590b7ebd417975108b460d4aea0fe8aa5f5766d09f3b75e87a4a",
+    "therock_commit": "b324869fb3116353ac7eec5e6926aa3d452ac987",
+    "submodules": [
+      {
+        "submodule_name": "half",
+        "submodule_path": "base/half",
+        "submodule_url": "https://github.com/ROCm/half.git",
+        "pin_sha": "207ee58595a64b5c4a70df221f1e6e704b807811",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocm-cmake",
+        "submodule_path": "base/rocm-cmake",
+        "submodule_url": "https://github.com/ROCm/rocm-cmake.git",
+        "pin_sha": "10155d7272ea1bf79f6b5a9dbc339657af1aa372",
+        "patches": []
+      },
+      {
+        "submodule_name": "llvm-project",
+        "submodule_path": "compiler/amd-llvm",
+        "submodule_url": "https://github.com/ROCm/llvm-project.git",
+        "pin_sha": "d6f6cb691863e9258034ab48c1dfce21689d5606",
+        "patches": []
+      },
+      {
+        "submodule_name": "HIPIFY",
+        "submodule_path": "compiler/hipify",
+        "submodule_url": "https://github.com/ROCm/HIPIFY.git",
+        "pin_sha": "0e051929fe80ccc0af6dc194ddb990aa82eec97d",
+        "patches": []
+      },
+      {
+        "submodule_name": "spirv-llvm-translator",
+        "submodule_path": "compiler/spirv-llvm-translator",
+        "submodule_url": "https://github.com/ROCm/SPIRV-LLVM-Translator.git",
+        "pin_sha": "4fd57e737272d1a9077a7ff874961bbc82af2024",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocgdb",
+        "submodule_path": "debug-tools/rocgdb/source",
+        "submodule_url": "https://github.com/ROCm/rocgdb.git",
+        "pin_sha": "7e541ef6fe7d5ad8172cf227656103f22f975226",
+        "patches": []
+      },
+      {
+        "submodule_name": "libhipcxx",
+        "submodule_path": "math-libs/libhipcxx",
+        "submodule_url": "https://github.com/ROCm/libhipcxx.git",
+        "pin_sha": "4b8124417170bfb869d7ab84f380479cec15d04a",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocm-docs",
+        "submodule_path": "rocm-docs",
+        "submodule_url": "https://github.com/ROCm/rocm-docs.git",
+        "pin_sha": "0682a17b3aabea3e447c969c8e28ab5f199a0e3c",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocm-libraries",
+        "submodule_path": "rocm-libraries",
+        "submodule_url": "https://github.com/ROCm/rocm-libraries",
+        "pin_sha": "39d8d60365d2272a5366f76ccb3bfba24b219eaf",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocm-systems",
+        "submodule_path": "rocm-systems",
+        "submodule_url": "https://github.com/ROCm/rocm-systems.git",
+        "pin_sha": "7da43026e4f2ef7600433c38c820732f7a205d22",
+        "patches": []
+      },
+      {
+        "submodule_name": "amd-mesa",
+        "submodule_path": "third-party/sysdeps/common/mesa-fork",
+        "submodule_url": "https://github.com/ROCm/mesa-fork.git",
+        "pin_sha": "29299f8d651b9e1c9ce5f7256b3cdcd492c6f4f3",
+        "patches": []
+      }
+    ]
+  },
+  "components": {
+    "core": {
+      "upstream": {
+        "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-core/rocm_sdk_core-10.1.0-py3-none-linux_x86_64.whl",
+        "sha256": "a1a2433334ac61a526c6bae2f58f6bbc9b525f5a9e008e76a1a48d07f64f0703",
+        "size": 419364838
+      },
+      "available_notices": [
+        {
+          "path": "_rocm_sdk_core/share/amd_smi/amdsmi/LICENSE",
+          "sha256": "f040ca2bd0926b3389c451e722d9b1418ad58c02e90deded878ac98e392cd0bf"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/amd_comgr/LICENSE.txt",
+          "sha256": "6ad4983498652cb8c73c70a705a0d9175c5e3ff5db93c799d8e09557a04af140"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/hipcc/LICENSE.txt",
+          "sha256": "0c421a032ba7b3ce6cc1fa0282b5d33d4a2d646404c07b90b3b2c1bd073286d6"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/hsa-amd-aqlprofile/LICENSE.md",
+          "sha256": "b185aaa652b0bf066c37a0d6314ce4bf4521e4a3c9bf46edd2f6a777ac522223"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/rocminfo/License.txt",
+          "sha256": "cf5d3123797c393397bdb5b0e727b77301f2f622028b2ea580b29d825d24e8e2"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/rocprofiler-register/LICENSE.md",
+          "sha256": "b185aaa652b0bf066c37a0d6314ce4bf4521e4a3c9bf46edd2f6a777ac522223"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/rocr/LICENSE.md",
+          "sha256": "dac0a5360f50972cceaed16767bc9e94642aa497d558a74471e842f7192c7403"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/roctracer/LICENSE.md",
+          "sha256": "b185aaa652b0bf066c37a0d6314ce4bf4521e4a3c9bf46edd2f6a777ac522223"
+        },
+        {
+          "path": "_rocm_sdk_core/share/doc/roctracer-asan/LICENSE.md",
+          "sha256": "b185aaa652b0bf066c37a0d6314ce4bf4521e4a3c9bf46edd2f6a777ac522223"
+        }
+      ],
+      "archive_contains_license_notices": true,
+      "payload_bytes": 1479108783
+    },
+    "libraries": {
+      "upstream": {
+        "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-libraries/rocm_sdk_libraries-10.1.0-py3-none-linux_x86_64.whl",
+        "sha256": "ffb36d5e1d97e96c191052a10c39a1a7a4ddb4da4a88d3166ab4bf7bfdb94cf6",
+        "size": 260814462
+      },
+      "available_notices": [],
+      "archive_contains_license_notices": false,
+      "payload_bytes": 1694254229
+    },
+    "device_gfx1250": {
+      "upstream": {
+        "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-device-gfx1250/rocm_sdk_device_gfx1250-10.1.0-py3-none-linux_x86_64.whl",
+        "sha256": "b02475a33e0d40089a393f07d9b0d4d6006225a7feb4907cb2d4969a255b80eb",
+        "size": 512389860
+      },
+      "available_notices": [],
+      "archive_contains_license_notices": false,
+      "payload_bytes": 1321885857,
+      "source_provenance_limit": "The wheel requires rocm-sdk-libraries==10.1.0 but embeds no independent source manifest. Supplemental source associations use the locked core SDK 10.1.0 manifest and existing component path patterns, not an independently attested device build revision."
+    },
+    "device_gfx942": {
+      "upstream": {
+        "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-device-gfx942/rocm_sdk_device_gfx942-10.1.0-py3-none-linux_x86_64.whl",
+        "sha256": "b755b4f472384eabbcc7603edd1d81c1164d220fb64d7e96bae5f44736418461",
+        "size": 1832820487
+      },
+      "available_notices": [],
+      "archive_contains_license_notices": false,
+      "payload_bytes": 2521014586
+    },
+    "device_gfx950": {
+      "upstream": {
+        "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-device-gfx950/rocm_sdk_device_gfx950-10.1.0-py3-none-linux_x86_64.whl",
+        "sha256": "3009a3cc877beff557b29282e20f379588666861807b78137c5484c40c14b020",
+        "size": 703085527
+      },
+      "available_notices": [],
+      "archive_contains_license_notices": false,
+      "payload_bytes": 1146704959
+    }
+  },
+  "publication_prerequisites": [
+    "Review all upstream license obligations, including GPL debugger and LGPL system dependencies; source pointers alone are not a legal-compliance determination.",
+    "Obtain PyPI project file-size quota increases for payload wheels above the default limit; no publication is performed by this builder."
+  ]
+}

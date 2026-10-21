@@ -1,0 +1,66 @@
+[options]
+unmatched_exclude = [
+  "lib/rocm_sysdeps/share/locale/**",
+  "lib/rocm_sysdeps/share/man/**",
+]
+
+# bzip2
+[components.dev."third-party/sysdeps/linux/bzip2/build/stage"]
+# Include the executables in the dev package since some sub-projects
+# require them.
+include = [
+  "**/bin/*"
+]
+[components.lib."third-party/sysdeps/linux/bzip2/build/stage"]
+
+# elfutils
+[components.lib."third-party/sysdeps/linux/elfutils/build/stage"]
+[components.dev."third-party/sysdeps/linux/elfutils/build/stage"]
+
+# libbacktrace
+# Required by amd-dbgapi library.
+[components.lib."third-party/sysdeps/linux/libbacktrace/build/stage"]
+[components.dev."third-party/sysdeps/linux/libbacktrace/build/stage"]
+
+# libcap
+[components.lib."third-party/sysdeps/linux/libcap/build/stage"]
+[components.dev."third-party/sysdeps/linux/libcap/build/stage"]
+
+# libdrm
+[components.lib."third-party/sysdeps/linux/libdrm/build/stage"]
+include = [
+  "**/share/**",
+]
+[components.dev."third-party/sysdeps/linux/libdrm/build/stage"]
+
+# libiberty
+[components.lib."third-party/sysdeps/linux/libiberty/build/stage"]
+[components.dev."third-party/sysdeps/linux/libiberty/build/stage"]
+
+# liblzma
+[components.lib."third-party/sysdeps/linux/liblzma/build/stage"]
+[components.dev."third-party/sysdeps/linux/liblzma/build/stage"]
+
+# libmnl
+[components.lib."third-party/sysdeps/linux/libmnl/build/stage"]
+[components.dev."third-party/sysdeps/linux/libmnl/build/stage"]
+
+# libnl
+[components.lib."third-party/sysdeps/linux/libnl/build/stage"]
+[components.dev."third-party/sysdeps/linux/libnl/build/stage"]
+
+# numactl
+[components.lib."third-party/sysdeps/linux/numactl/build/stage"]
+[components.dev."third-party/sysdeps/linux/numactl/build/stage"]
+
+# sqlite3
+[components.lib."third-party/sysdeps/linux/sqlite3/build/stage"]
+[components.dev."third-party/sysdeps/linux/sqlite3/build/stage"]
+
+# zlib
+[components.lib."third-party/sysdeps/linux/zlib/build/stage"]
+[components.dev."third-party/sysdeps/linux/zlib/build/stage"]
+
+# zstd
+[components.lib."third-party/sysdeps/linux/zstd/build/stage"]
+[components.dev."third-party/sysdeps/linux/zstd/build/stage"]

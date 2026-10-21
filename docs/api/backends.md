@@ -124,6 +124,56 @@ profiles do not qualify distributed execution.
 
 ::: phydrax.backends.assess_tpu_environment
 
+## AMD ROCm runtime
+
+`phydrax[rocm10]` selects the matched JAX/JAXlib/AMD plugin/PJRT stack and
+packaged ROCm 10.1.0 userspace, including `gfx942`, `gfx950`, and `gfx1250`
+device payloads for MI300/MI350 and published MI400/CDNA 5 targets. Model names
+are not an admission allowlist; MI400 coverage remains provisional and untested
+on MI400 hardware. The bundle loader selects native libraries and compiler resources
+without manual library-path setup. A compatible AMD kernel driver and device
+permissions remain external prerequisites.
+
+```python
+from phydrax.backends import rocm_environment
+
+report = rocm_environment()  # Host facts only.
+for issue in report.issues:
+    print(issue.code, issue.severity, issue.message)
+observed = rocm_environment(initialize_backend=True)
+```
+
+`collect_rocm_environment()` reads installation metadata, the bundle manifest,
+and relevant overrides without discovering devices.
+`assess_rocm_environment(facts)` is pure. Incomplete or mismatched components,
+missing architecture payloads, conflicting installations, and unsafe native
+bindings fail admission. Configuration preflight remains device-inert.
+
+The opt-in probe preserves the exception chain on failure and requires the
+loaded client to identify ROCm. A generic `gpu` platform, an AMD-looking display
+name, CPU results, or installed plugin metadata alone is not runtime identity.
+Existing explicit platform selection is preserved. `successful` reports only
+represented checks; it is not hardware or release qualification.
+
+Pure JAX routes do not authorize CUDA-only cuDSS, AmgX, QUDA, mpi4jax, compiled
+Pallas MACE, or compiled particle-FMM routes. Raw serialized `gpu` platform values
+remain unchanged; `accelerator_vendor="amd"` is the resource discriminator.
+Packed HIP versions such as `rocm 71626385` do not identify the SDK release.
+The bundle's verified component identity and raw client version are retained
+separately.
+
+::: phydrax.backends.RocmDeviceFacts
+
+::: phydrax.backends.RocmEnvironmentFacts
+
+::: phydrax.backends.RocmEnvironmentIssue
+
+::: phydrax.backends.RocmEnvironmentReport
+
+::: phydrax.backends.rocm_environment
+
+::: phydrax.backends.assess_rocm_environment
+
 ## Spatial Pallas capability boundaries
 
 `PALLAS_SPATIAL_CAPABILITIES` describes the CUDA/explicit-interpreter aggregate,

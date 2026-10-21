@@ -1,0 +1,68 @@
+{
+  "sdk_version": "10.1.0",
+  "requires_python": ">=3.13,<3.14",
+  "architectures": [
+    "gfx1250",
+    "gfx942",
+    "gfx950"
+  ],
+  "components": {
+    "core": {
+      "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-core/rocm_sdk_core-10.1.0-py3-none-linux_x86_64.whl",
+      "filename": "rocm_sdk_core-10.1.0-py3-none-linux_x86_64.whl",
+      "sha256": "a1a2433334ac61a526c6bae2f58f6bbc9b525f5a9e008e76a1a48d07f64f0703",
+      "size": 419364838
+    },
+    "libraries": {
+      "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-libraries/rocm_sdk_libraries-10.1.0-py3-none-linux_x86_64.whl",
+      "filename": "rocm_sdk_libraries-10.1.0-py3-none-linux_x86_64.whl",
+      "sha256": "ffb36d5e1d97e96c191052a10c39a1a7a4ddb4da4a88d3166ab4bf7bfdb94cf6",
+      "size": 260814462
+    },
+    "device_gfx1250": {
+      "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-device-gfx1250/rocm_sdk_device_gfx1250-10.1.0-py3-none-linux_x86_64.whl",
+      "filename": "rocm_sdk_device_gfx1250-10.1.0-py3-none-linux_x86_64.whl",
+      "sha256": "b02475a33e0d40089a393f07d9b0d4d6006225a7feb4907cb2d4969a255b80eb",
+      "size": 512389860
+    },
+    "device_gfx942": {
+      "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-device-gfx942/rocm_sdk_device_gfx942-10.1.0-py3-none-linux_x86_64.whl",
+      "filename": "rocm_sdk_device_gfx942-10.1.0-py3-none-linux_x86_64.whl",
+      "sha256": "b755b4f472384eabbcc7603edd1d81c1164d220fb64d7e96bae5f44736418461",
+      "size": 1832820487
+    },
+    "device_gfx950": {
+      "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-device-gfx950/rocm_sdk_device_gfx950-10.1.0-py3-none-linux_x86_64.whl",
+      "filename": "rocm_sdk_device_gfx950-10.1.0-py3-none-linux_x86_64.whl",
+      "sha256": "3009a3cc877beff557b29282e20f379588666861807b78137c5484c40c14b020",
+      "size": 703085527
+    }
+  },
+  "plugins": [
+    {
+      "url": "https://files.pythonhosted.org/packages/65/75/8b56c9b05b29c99fca854cd455ea7039f597ffd63a8d94916f5216c95118/jax_rocm10_plugin-0.12.0-cp313-cp313-manylinux_2_27_x86_64.whl",
+      "filename": "jax_rocm10_plugin-0.12.0-cp313-cp313-manylinux_2_27_x86_64.whl",
+      "sha256": "0619ba7ca20f95afdee8122bf245cfba2e1a30eff7bf54854b885d4aca61b3fe",
+      "size": 4526747
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/88/10/94784713d83226ace0153e7564ceea780269d5db7ca257cbe0759a95f215/jax_rocm10_pjrt-0.12.0-py3-none-manylinux_2_27_x86_64.whl",
+      "filename": "jax_rocm10_pjrt-0.12.0-py3-none-manylinux_2_27_x86_64.whl",
+      "sha256": "45ee7b471b71a582ce165dd63069b10d1d8923d849b61b6fa8783f1d13294edb",
+      "size": 133727472
+    }
+  ],
+  "runtime_roots": [
+    "libamdhip64.so.7",
+    "libamd_comgr.so.3",
+    "libhiprtc.so.7",
+    "libhipblas.so.3",
+    "libhipsolver.so.1",
+    "libhipsparse.so.4",
+    "libhiprand.so.1",
+    "librocblas.so.5",
+    "libMIOpen.so.1",
+    "librccl.so.1",
+    "librocm_kpack.so.0"
+  ]
+}

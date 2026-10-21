@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `a376d99878359d3107325c86682fc74f228ad56a5fa1ec13cbc73e064cbf23ec`
+Catalog ID: `233166542263ae582306c826697b1a0d4c191b939594f7af849a8d8874fe85c0`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 307 |
+| candidate | 308 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |
@@ -31,6 +31,7 @@ Catalog ID: `a376d99878359d3107325c86682fc74f228ad56a5fa1ec13cbc73e064cbf23ec`
 | `accelerator.wake-impedance` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
 | `acoustics.bubbly-medium` | `phydrax.acoustics` | candidate | candidate | 1 |
 | `acoustics.vibroacoustic` | `phydrax.acoustics` | candidate | implementation-qualified-candidate | 1 |
+| `amd-rocm-execution` | `phydrax.backends` | candidate | unreleased-candidate | 1 |
 | `apple-metal-execution` | `phydrax.backends` | candidate | unreleased-candidate | 1 |
 | `application.accelerator` | `phydrax.applications.accelerator` | research | application-research | 0 |
 | `application.additive-manufacturing` | `phydrax.applications.additive_manufacturing` | research | application-research | 0 |

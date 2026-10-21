@@ -23,7 +23,9 @@ import jaxlib
 import numpy as np
 
 from phydrax import config as pxconfig
+from phydrax._execution_device import device_platform, device_vendor
 from phydrax._fingerprint import canonical_fingerprint
+from phydrax._jax_indexing_frontend import frontend_index_patch_identity
 
 
 _T = TypeVar("_T")
@@ -48,6 +50,21 @@ _PERFORMANCE_ENVIRONMENT_KEYS = (
     "XLA_PYTHON_CLIENT_PREALLOCATE",
     "XLA_PYTHON_CLIENT_MEM_FRACTION",
     "JAX_COMPILATION_CACHE_DIR",
+    "CUDA_VISIBLE_DEVICES",
+    "ROCR_VISIBLE_DEVICES",
+    "HIP_VISIBLE_DEVICES",
+    "GPU_DEVICE_ORDINAL",
+    "ROCM_PATH",
+    "HIP_PATH",
+    "LLVM_PATH",
+    "HIP_DEVICE_LIB_PATH",
+    "LD_LIBRARY_PATH",
+    "HSA_OVERRIDE_GFX_VERSION",
+    "HSA_ENABLE_SDMA",
+    "NCCL_DEBUG",
+    "NCCL_SOCKET_IFNAME",
+    "NCCL_IB_DISABLE",
+    "PHYDRAX_LOCAL_DEVICE_IDS",
 )
 _SOURCE_BUILD_DIRECTORIES = ("phydrax", "native")
 _SOURCE_BUILD_FILES = ("pyproject.toml", "uv.lock")
@@ -232,18 +249,41 @@ class CompilerEvidence:
 class DeviceEnvironment:
     platform: str
     kind: str
+    normalized_platform: str
+    vendor: str | None
+    runtime_version: str
+    process_index: int
+    device_id: int
+    local_hardware_id: int | None
 
     def __post_init__(self) -> None:
         if not self.platform or not self.kind:
             raise ValueError("Device platform and kind must be non-empty.")
 
-    def to_dict(self) -> dict[str, str]:
-        return {"platform": self.platform, "kind": self.kind}
+    def to_dict(self) -> dict[str, str | int | None]:
+        return {
+            "platform": self.platform,
+            "kind": self.kind,
+            "normalized_platform": self.normalized_platform,
+            "vendor": self.vendor,
+            "runtime_version": self.runtime_version,
+            "process_index": self.process_index,
+            "device_id": self.device_id,
+            "local_hardware_id": self.local_hardware_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeEnvironment:
-    """Comparison-relevant software, hardware, and execution configuration."""
+    """Comparison-relevant software, hardware, and execution configuration.
+
+    Device platforms retain JAX's raw spelling alongside normalized vendor/runtime
+    evidence. Local hardware IDs are unavailable for remote processes. Installed
+    ROCm package provenance does not imply which shared libraries were loaded;
+    the client runtime version and library-search environment remain separate.
+    These fields intentionally participate in the campaign environment identity,
+    never in execution resource inventory identities.
+    """
 
     python_version: str
     phydrax_version: str
@@ -260,6 +300,8 @@ class RuntimeEnvironment:
     devices: tuple[DeviceEnvironment, ...]
     performance_environment: tuple[tuple[str, str | None], ...]
     package_fingerprint: str
+    rocm_packages: tuple[tuple[str, str], ...]
+    frontend_index_patch: tuple[tuple[str, str], ...] | None
     fingerprint: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -275,6 +317,12 @@ class RuntimeEnvironment:
             "jaxlib_version": self.jaxlib_version,
             "default_float_dtype": self.default_float_dtype,
             "package_fingerprint": self.package_fingerprint,
+            "rocm_packages": dict(self.rocm_packages),
+            "frontend_index_patch": (
+                None
+                if self.frontend_index_patch is None
+                else dict(self.frontend_index_patch)
+            ),
             "jax": {
                 "version": self.jax_version,
                 "backend": self.backend,
@@ -673,10 +721,21 @@ def capture_environment() -> RuntimeEnvironment:
     devices = tuple(
         sorted(
             (
-                DeviceEnvironment(device.platform, device.device_kind)
+                DeviceEnvironment(
+                    device.platform,
+                    device.device_kind,
+                    device_platform(device),
+                    device_vendor(device),
+                    device.client.platform_version,
+                    device.process_index,
+                    device.id,
+                    device.local_hardware_id
+                    if device.process_index == jax.process_index()
+                    else None,
+                )
                 for device in jax.devices()
             ),
-            key=lambda device: (device.platform, device.kind),
+            key=lambda device: (device.process_index, device.device_id),
         )
     )
     performance_environment = tuple(
@@ -685,9 +744,28 @@ def capture_environment() -> RuntimeEnvironment:
     python_version = platform.python_version()
     phydrax_version = importlib.metadata.version("phydrax")
     package_fingerprint = installed_package_fingerprint()
+    # SDK distribution families and the HIP client's packed runtime version are
+    # separate provenance: ROCm 10 wheels can report a HIP 7 runtime version.
+    rocm_packages = tuple(
+        sorted(
+            (
+                _PACKAGE_SEPARATOR.sub("-", distribution.metadata["Name"]).lower(),
+                distribution.version,
+            )
+            for distribution in importlib.metadata.distributions()
+            if distribution.metadata["Name"]
+            and _PACKAGE_SEPARATOR.sub("-", distribution.metadata["Name"])
+            .lower()
+            .startswith(("jax-rocm", "rocm", "phydrax-rocm"))
+        )
+    )
     backend = jax.default_backend()
     x64_enabled = bool(pxconfig.x64_enabled())
     default_float_dtype = str(jax.dtypes.canonicalize_dtype(np.float64))
+    patch_identity = frontend_index_patch_identity()
+    frontend_index_patch = (
+        None if patch_identity is None else tuple(sorted(patch_identity.items()))
+    )
     evidence = {
         "python_version": python_version,
         "phydrax_version": phydrax_version,
@@ -699,6 +777,8 @@ def capture_environment() -> RuntimeEnvironment:
         "jaxlib_version": jaxlib.__version__,
         "default_float_dtype": default_float_dtype,
         "package_fingerprint": package_fingerprint,
+        "rocm_packages": dict(rocm_packages),
+        "frontend_index_patch": patch_identity,
         "jax": {
             "version": jax.__version__,
             "backend": backend,
@@ -723,6 +803,8 @@ def capture_environment() -> RuntimeEnvironment:
         devices=devices,
         performance_environment=performance_environment,
         package_fingerprint=package_fingerprint,
+        rocm_packages=rocm_packages,
+        frontend_index_patch=frontend_index_patch,
         fingerprint=canonical_fingerprint(evidence),
     )
 

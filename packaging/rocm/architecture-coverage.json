@@ -1,0 +1,93 @@
+{
+  "sdk_version": "10.1.0",
+  "architectures": ["gfx1250", "gfx942", "gfx950"],
+  "scope": "Source-archive and vendor-document evidence only; not a Phydrax hardware qualification or publication approval. Model names are examples, not runtime allowlists. Other models sharing an admitted architecture are not excluded by name.",
+  "sources": {
+    "sdk_target_mapping": {
+      "url": "https://raw.githubusercontent.com/ROCm/TheRock/b324869fb3116353ac7eec5e6926aa3d452ac987/cmake/therock_amdgpu_targets.cmake",
+      "revision": "b324869fb3116353ac7eec5e6926aa3d452ac987",
+      "sha256": "641cf53b8fa207703179de5a42e1ac1039934411a3fb85811fc657356f094be6"
+    },
+    "vendor_development_readiness": {
+      "url": "https://raw.githubusercontent.com/ROCm/TheRock/a5f5ad0c079de9b2417585cbb0869af474c26b09/SUPPORTED_GPUS.md",
+      "revision": "a5f5ad0c079de9b2417585cbb0869af474c26b09",
+      "sha256": "750422c9e88092f582bad87b578a6f499f3b3a3915454aee2cadacda04e8eefd",
+      "scope": "Later vendor development-status snapshot, not the SDK build source revision. A blank Release Ready cell is recorded as false. Vendor sanity testing is not Phydrax hardware testing."
+    },
+    "rocm_10_1_compatibility_matrix": {
+      "url": "https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html",
+      "retrieved_on": "2026-10-21",
+      "content_type": "text/markdown; charset=utf-8",
+      "request_accept": "text/markdown",
+      "sha256": "a038b61dbbaa47438bf1fec6e480477a035ba043789a5f4e100e25a1050da2db",
+      "scope": "Content-hashed mutable official ROCm 10.1.0 matrix; supplies MI325X and MI350P examples in addition to the SDK target mapping."
+    }
+  },
+  "targets": {
+    "gfx1250": {
+      "family": "CDNA5",
+      "known_model_examples": ["MI450", "MI450X", "MI455X"],
+      "model_mapping_source": "sdk_target_mapping",
+      "component": "device_gfx1250",
+      "vendor_build_passing": true,
+      "vendor_sanity_tested": true,
+      "vendor_release_ready": false,
+      "vendor_readiness_source": "vendor_development_readiness",
+      "phydrax_hardware_validation": "not tested",
+      "source_archive": {
+        "url": "https://stable.repo.amd.com/rocm/whl-next/rocm-sdk-device-gfx1250/rocm_sdk_device_gfx1250-10.1.0-py3-none-linux_x86_64.whl",
+        "sha256": "b02475a33e0d40089a393f07d9b0d4d6006225a7feb4907cb2d4969a255b80eb",
+        "size": 512389860,
+        "payload_namespace": "_rocm_sdk_libraries",
+        "payload_entry_count": 1018,
+        "payload_bytes": 1321885857,
+        "original_notice_paths": [],
+        "shared_initializer": "_rocm_sdk_libraries/__init__.py",
+        "shared_initializer_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "kpack_paths": [
+          "_rocm_sdk_libraries/.kpack/blas_lib_gfx1250.kpack",
+          "_rocm_sdk_libraries/.kpack/fft_lib_gfx1250.kpack",
+          "_rocm_sdk_libraries/.kpack/miopen_lib_gfx1250.kpack",
+          "_rocm_sdk_libraries/.kpack/rand_lib_gfx1250.kpack",
+          "_rocm_sdk_libraries/.kpack/rccl_lib_gfx1250.kpack",
+          "_rocm_sdk_libraries/.kpack/solver_lib_gfx1250.kpack",
+          "_rocm_sdk_libraries/.kpack/sparse_lib_gfx1250.kpack"
+        ],
+        "architecture_asset_roots": [
+          "_rocm_sdk_libraries/lib/hipblaslt/library/gfx1250/",
+          "_rocm_sdk_libraries/lib/hipsparselt/library/gfx1250/",
+          "_rocm_sdk_libraries/lib/rocblas/library/gfx1250/",
+          "_rocm_sdk_libraries/share/rocjitsu/translations/gfx1250-b0-a0/"
+        ],
+        "architecture_native_library": "_rocm_sdk_libraries/lib/libMIOpenCKGroupedConv_gfx1250.so",
+        "rocjitsu_translation_entries": 170,
+        "source_provenance_limit": "Requires rocm-sdk-libraries==10.1.0; no independent source manifest is embedded. Supplemental notices reuse the locked core SDK source associations, including existing rocjitsu license evidence, without claiming independent attestation of device build revisions."
+      }
+    },
+    "gfx942": {
+      "family": "CDNA3",
+      "known_model_examples": ["MI300A", "MI300X", "MI325X"],
+      "model_mapping_source": "rocm_10_1_compatibility_matrix",
+      "component": "device_gfx942",
+      "vendor_build_passing": true,
+      "vendor_sanity_tested": true,
+      "vendor_release_ready": true,
+      "vendor_readiness_source": "vendor_development_readiness",
+      "phydrax_hardware_validation": "Not asserted by this source inventory; consult candidate-specific hardware qualification reports."
+    },
+    "gfx950": {
+      "family": "CDNA4",
+      "known_model_examples": ["MI350P", "MI350X", "MI355X"],
+      "model_mapping_source": "rocm_10_1_compatibility_matrix",
+      "component": "device_gfx950",
+      "vendor_build_passing": true,
+      "vendor_sanity_tested": true,
+      "vendor_release_ready": true,
+      "vendor_readiness_source": "vendor_development_readiness",
+      "phydrax_hardware_validation": "not tested"
+    }
+  },
+  "unmapped_future_models": {
+    "scope": "No individual LLVM target mapping is asserted for MI430X or MI440 models. An MI400-series marketing name alone is not evidence of an ISA mapping or hardware readiness."
+  }
+}

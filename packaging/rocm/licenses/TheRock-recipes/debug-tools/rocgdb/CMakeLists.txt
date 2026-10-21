@@ -1,0 +1,810 @@
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# This is a CMake wrapper to build rocgdb from within TheRock. Since GDB's
+# build system is autotools-based, we need the wrapper to call the right
+# functions and provide the proper include and library paths.
+#
+# We also take care of cycling through the available Python versions and
+# building gdb against each of those.
+
+# Available defines to be used when building rocgdb:
+#
+# BUILD_TESTING
+#
+# Enable integrity tests and installation of ROCgdb's testsuite files.
+# Usually ON by default in cmake, unless set otherwise.
+#
+# If set to ON, adds a number of ROCgdb build integrity tests that will
+# validate the expected files exist. It also triggers the installation of
+# the ROCgdb testsuite files. If set to OFF, no build integrity tests will
+# be included and no testsuite files will be installed.
+#
+#
+# PATCHELF
+#
+# Contains the path to the patchelf utility. This must be passed so
+# post-install RPATH patching can take place.
+#
+#
+# ROCGDB_SOURCE_DIR
+#
+# Specifies the location of the ROCgdb sources. Used by TheRock to build
+# ROCgdb from an alternative source location.
+#
+#
+# ROCM_VERSION
+#
+# Specifies the ROCM version we are building for. If empty or non-existent
+# we default to "ROCm development".
+#
+#
+# SHARED_PYTHON_EXECUTABLES
+#
+# A semicolon-separated list of paths to Python executables that support
+# linking against a shared libpython. If empty or non-existent only a
+# Pythonless rocgdb (rocgdb-pynone) will be built. Otherwise one rocgdb
+# will be built for each of the Python entries on the list, as long as
+# each entry supports linking against libpython.
+#
+# Example: SHARED_PYTHON_EXECUTABLES="/opt/python-shared/cp310-cp310/bin/python3"
+
+
+cmake_minimum_required(VERSION 3.25)
+project(rocgdb C CXX)
+
+include(ExternalProject)
+include(ProcessorCount)
+
+# Function to find a library package and extract its install prefix.
+# Uses find_package() which respects CMAKE_PREFIX_PATH and TheRock's
+# dependency provider system.
+#
+# Usage:
+#   find_library_prefix(<package_name> <target_name> <output_var>)
+#
+# Example:
+#   find_library_prefix(gmp gmp::gmp GMP_PREFIX)
+#
+function(find_library_prefix package_name target_name output_var)
+  find_package(${package_name} REQUIRED)
+
+  if(TARGET ${target_name})
+    # Extract the library location from the imported target
+    get_target_property(_lib_location ${target_name} IMPORTED_LOCATION)
+    if(_lib_location)
+      # Get the directory containing the library (e.g., .../lib)
+      cmake_path(GET _lib_location PARENT_PATH _lib_dir)
+      # Get the install prefix (e.g., .../lib -> ...)
+      cmake_path(GET _lib_dir PARENT_PATH _prefix)
+      set(${output_var} "${_prefix}" PARENT_SCOPE)
+      message(STATUS "Found ${package_name} at prefix: ${_prefix}")
+    else()
+      message(FATAL_ERROR "Found ${package_name} target but could not extract location")
+    endif()
+  else()
+    message(FATAL_ERROR "Required package ${package_name} not found.")
+  endif()
+endfunction()
+
+# By default install the ROCgdb testsuite files.
+option(ENABLE_TESTS "Enable installation of ROCgdb testsuite files" OFF)
+
+# Upstream build mode: skips AMD-specific files not yet in upstream master
+# (NOTICES.txt, roccoremerge program/manpage).
+option(ROCGDB_UPSTREAM_BUILD "Building from upstream master (skips AMD-specific files)" OFF)
+
+# When the rocgdb source tree does not carry .github/scripts/test_rocgdb.py
+# (e.g. an upstream branch), fetch it from ROCm/ROCgdb amd-staging at configure
+# time so that it can be installed into tests/rocgdb for TheRock CI to invoke.
+option(ROCGDB_DOWNLOAD_CI_SCRIPT "Download test_rocgdb.py from amd-staging if missing in source tree" OFF)
+
+# Find standard build tools.
+find_program(MAKE_EXECUTABLE NAMES make REQUIRED)
+
+ProcessorCount(PAR_JOBS)
+
+# Configure build type flags.
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Standard flags are handled by CMAKE_C_FLAGS, CMAKE_C_FLAGS_DEBUG, etc.
+# Initialize with base flags and build-type-specific flags.
+set(CUSTOM_C_FLAGS "${CMAKE_C_FLAGS}")
+set(CUSTOM_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+
+# Append build-type-specific flags.
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type_upper)
+if(_build_type_upper)
+  string(APPEND CUSTOM_C_FLAGS " ${CMAKE_C_FLAGS_${_build_type_upper}}")
+  string(APPEND CUSTOM_CXX_FLAGS " ${CMAKE_CXX_FLAGS_${_build_type_upper}}")
+endif()
+
+# Set custom flags for Debug builds.
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+  string(APPEND CUSTOM_C_FLAGS " -O0 -g3")
+  string(APPEND CUSTOM_CXX_FLAGS " -O0 -g3")
+endif()
+
+# Harden against stack clash attacks (not supported on all platforms).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  string(APPEND CUSTOM_C_FLAGS " -fstack-clash-protection")
+  string(APPEND CUSTOM_CXX_FLAGS " -fstack-clash-protection")
+endif()
+
+# Compiler commands to chain to autotools.
+set(CUSTOM_CC "${CMAKE_C_COMPILER}")
+if(CMAKE_C_COMPILER_LAUNCHER)
+  string(PREPEND CUSTOM_CC "${CMAKE_C_COMPILER_LAUNCHER} ")
+endif()
+set(CUSTOM_CXX "${CMAKE_CXX_COMPILER}")
+if(CMAKE_CXX_COMPILER_LAUNCHER)
+  string(PREPEND CUSTOM_CXX "${CMAKE_CXX_COMPILER_LAUNCHER} ")
+endif()
+
+message(STATUS "Build type set to: ${CMAKE_BUILD_TYPE}")
+
+# amd-dbgapi is always a required dependency for ROCgdb
+find_package(amd-dbgapi REQUIRED CONFIG)
+
+# Fetch the install prefixes for the library and executables rocgdb
+# depends on. When THEROCK_BUNDLE_SYSDEPS is OFF, these are left empty and
+# GDB's configure script discovers the libraries via pkg-config instead.
+set(NCURSES_RPATH "")
+set(NCURSES_INCLUDE "")
+if(THEROCK_BUNDLE_SYSDEPS)
+  find_library_prefix(gmp gmp::gmp GMP_PREFIX)
+  find_library_prefix(mpfr mpfr::mpfr MPFR_PREFIX)
+  find_library_prefix(expat expat::expat EXPAT_PREFIX)
+  find_library_prefix(ncurses ncurses::ncurses NCURSES_PREFIX)
+
+  # We need to explicitly pass ncurses' include path and set the rpath for
+  # the library. The reason we need to explicitly pass rpath is because gdb's
+  # configure assumes ncurses is always picked up from the default system
+  # location, or that the library is always within reach.
+  #
+  # Since we're building our own ncurses and it is in a non-standard location,
+  # the rpath assures the configure tests properly locate the library.
+  # Extract include and lib directories from the ncurses imported target.
+  if(TARGET ncurses::ncurses)
+    get_target_property(_ncurses_includes ncurses::ncurses INTERFACE_INCLUDE_DIRECTORIES)
+    get_target_property(_ncurses_location ncurses::ncurses IMPORTED_LOCATION)
+    if(_ncurses_includes)
+      set(NCURSES_INCLUDE "-I${_ncurses_includes}")
+    endif()
+    if(_ncurses_location)
+      cmake_path(GET _ncurses_location PARENT_PATH _ncurses_lib_dir)
+      set(NCURSES_RPATH "-Wl,-rpath,${_ncurses_lib_dir}")
+    endif()
+  endif()
+
+  # Adjust the compilation flags with the bundled ncurses include path.
+  if(NCURSES_INCLUDE)
+    set(CUSTOM_C_FLAGS "${CUSTOM_C_FLAGS} ${NCURSES_INCLUDE}")
+    set(CUSTOM_CXX_FLAGS "${CUSTOM_CXX_FLAGS} ${NCURSES_INCLUDE}")
+  endif()
+endif()
+
+# Add RPATH entries for sanitizer runtime libraries if needed.
+# THEROCK_PRIVATE_BUILD_RPATH_DIRS contains absolute paths to directories
+# needed during build/configure (e.g., clang sanitizer runtime).
+set(SANITIZER_RPATH "")
+if(DEFINED THEROCK_PRIVATE_BUILD_RPATH_DIRS AND NOT "${THEROCK_PRIVATE_BUILD_RPATH_DIRS}" STREQUAL "")
+  foreach(build_rpath_dir ${THEROCK_PRIVATE_BUILD_RPATH_DIRS})
+    string(APPEND SANITIZER_RPATH "-Wl,-rpath,${build_rpath_dir} ")
+  endforeach()
+  string(STRIP "${SANITIZER_RPATH}" SANITIZER_RPATH)
+  message(STATUS "Adding sanitizer RPATH for configure/build: ${SANITIZER_RPATH}")
+endif()
+
+# Adjust LDFLAGS. NCURSES_RPATH and SANITIZER_RPATH are empty when not using bundled sysdeps or sanitizers.
+set(LDFLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${NCURSES_RPATH} ${SANITIZER_RPATH} -Wl,--enable-new-dtags")
+
+# Replace all semicolons (the CMake separator) with colons (the ENV separator).
+# We need this to pass it on to rocgdb's configure.
+string(REPLACE ";" ":" PKG_CONFIG_PATH_ENV_VAR "${THEROCK_PKG_CONFIG_DIRS}")
+
+# Set conditional configure flags for bundled sysdep prefixes. When using system
+# libraries, these are left empty so autotools discovers them via pkg-config.
+set(ROCGDB_EXPAT_FLAG "")
+set(ROCGDB_GMP_FLAG "")
+set(ROCGDB_MPFR_FLAG "")
+if(THEROCK_BUNDLE_SYSDEPS)
+  set(ROCGDB_EXPAT_FLAG "--with-expat-prefix=${EXPAT_PREFIX}")
+  set(ROCGDB_GMP_FLAG "--with-gmp=${GMP_PREFIX}")
+  set(ROCGDB_MPFR_FLAG "--with-mpfr=${MPFR_PREFIX}")
+endif()
+
+# Build RPATH segments from THEROCK_PRIVATE_INSTALL_RPATH_DIRS if defined.
+# These paths are relative to <root>, but need to be relative to <root>/bin.
+# If not defined, fall back to hardcoded sysdeps path for backward compatibility.
+set(ROCGDB_EXTRA_RPATH_SEGMENTS "")
+if(DEFINED THEROCK_PRIVATE_INSTALL_RPATH_DIRS AND NOT "${THEROCK_PRIVATE_INSTALL_RPATH_DIRS}" STREQUAL "")
+  foreach(rpath_dir ${THEROCK_PRIVATE_INSTALL_RPATH_DIRS})
+    # Convert path from <root>-relative to <root>/bin-relative by prepending ../
+    string(APPEND ROCGDB_EXTRA_RPATH_SEGMENTS ":\\\$ORIGIN/../${rpath_dir}")
+  endforeach()
+  message(STATUS "RPATH segments from THEROCK_PRIVATE_INSTALL_RPATH_DIRS: ${ROCGDB_EXTRA_RPATH_SEGMENTS}")
+elseif(THEROCK_BUNDLE_SYSDEPS)
+  # Fallback for older builds without THEROCK_PRIVATE_INSTALL_RPATH_DIRS
+  set(ROCGDB_EXTRA_RPATH_SEGMENTS ":\\\$ORIGIN/../lib/rocm_sysdeps/lib")
+endif()
+
+# Set some global variables for the configure/build.
+set(ROCGDB_BUG_URL "https://github.com/ROCm-Developer-Tools/ROCgdb/issues")
+set(ROCGDB_SEPARATE_DEBUG_INFO_DIR "\\\${prefix}/lib/debug:/usr/lib/debug")
+set(ROCGDB_DATA_DIR "\\\${prefix}/share/rocgdb")
+set(ROCGDB_TARGETS "x86_64-linux-gnu,amdgcn-amd-amdhsa")
+
+# If the version is not set, set it to a generic value.
+if (NOT ROCM_VERSION)
+  set(ROCM_BUILD_ID "ROCm development")
+else()
+  set(ROCM_BUILD_ID "ROCm-${ROCM_VERSION}")
+endif()
+
+# List to accumulate all unique build targets.
+set(ALL_ROCGDB_TARGETS)
+
+# Adds a rocgdb build target for a python variant with explicit additional configure flags.
+# The special minor_version "none" indicates that the build is without python support.
+#
+# For variants with minor_version other than "none", libpython_dir must contain
+# the path to the shared libpython rocgdb should link against.
+macro(add_python_variant minor_version configure_flags libpython_dir)
+  # Set the name transformation for the rocgdb executable and rocgcore script.
+  set(ROCGDB_PROGRAM_TRANSFORM_STR "s/^rocgdb$/rocgdb-py${minor_version}/")
+
+  # Define a unique name for the build directory.
+  set(ROCGDB_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/rocgdb-build-py${minor_version}")
+  # Define a unique name for the intermediate install directory.
+  set(ROCGDB_INTERMEDIATE_INSTALL_DIR "${ROCGDB_BUILD_DIR}-install")
+  set(ROCGDB_TARGET_NAME "rocgdb-py${minor_version}")
+
+  # If we have a valid libpython_dir, adjust the LDFLAGS for this build
+  # variant and add an extra RPATH entry for post-install patching.
+  #
+  # Skip this for system library directories (under /usr, excluding /usr/local).
+  # The linker already searches these by default, and explicitly adding them
+  # via -L pulls in unrelated system static archives (e.g. libiberty.a from
+  # libiberty-dev) that conflict with GDB's bundled copies. GDB's configure
+  # finds system libpython on its own via --with-python without needing -L.
+  # Non-system libpython (custom builds, /opt, /usr/local, etc.) still needs
+  # the explicit flags since those paths are not in the default search order.
+  # See https://github.com/ROCm/TheRock/issues/4223
+  set(ALL_LDFLAGS ${LDFLAGS})
+  set(LIBPYTHON_RPATH "")
+  if(NOT "${libpython_dir}" STREQUAL "")
+    set(_usr_prefix "/usr")
+    set(_usr_local_prefix "/usr/local")
+    cmake_path(IS_PREFIX _usr_prefix "${libpython_dir}" NORMALIZE _is_under_usr)
+    cmake_path(IS_PREFIX _usr_local_prefix "${libpython_dir}" NORMALIZE _is_under_usr_local)
+    if(_is_under_usr AND NOT _is_under_usr_local)
+      message(STATUS "-> Skipping extra LDFLAGS for system libpython dir: ${libpython_dir}")
+    else()
+      set(LIBPYTHON_LDFLAGS "-L${libpython_dir} -Wl,-rpath,${libpython_dir}")
+      string(APPEND ALL_LDFLAGS " ${LIBPYTHON_LDFLAGS}")
+      set(LIBPYTHON_RPATH ":${libpython_dir}")
+
+      message(STATUS "-> Extra LDFLAGS: ${LIBPYTHON_LDFLAGS}")
+      message(STATUS "-> Extra RPATH: ${LIBPYTHON_RPATH}")
+    endif()
+  endif()
+
+  # These directories are adjusted here so we don't have to escape
+  # ${prefix} and make it survive across multiple expansions from shells
+  # cmake and libtool.
+  set(ROCGDB_HTML_DIR "${ROCGDB_INTERMEDIATE_INSTALL_DIR}/share/html")
+  set(ROCGDB_PDF_DIR "${ROCGDB_INTERMEDIATE_INSTALL_DIR}/share/doc")
+  set(ROCGDB_INFO_DIR "${ROCGDB_INTERMEDIATE_INSTALL_DIR}/share/info/rocgdb")
+
+  # Build AMD-specific install commands (conditionally included).
+  set(AMD_SPECIFIC_INSTALL_COMMANDS "")
+  if(NOT ROCGDB_UPSTREAM_BUILD)
+    list(APPEND AMD_SPECIFIC_INSTALL_COMMANDS
+      COMMAND ${CMAKE_COMMAND} -E copy ${ROCGDB_SOURCE_DIR}/gdb/NOTICES.txt ${ROCGDB_INTERMEDIATE_INSTALL_DIR}/share/doc/
+    )
+  endif()
+
+  add_custom_target("${ROCGDB_TARGET_NAME}"
+    ALL
+    VERBATIM
+    COMMENT "rocgdb (python ${CURRENT_PYTHON_EXECUTABLE})"
+    # Create the build directory
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${ROCGDB_BUILD_DIR}"
+
+    # Configure
+    COMMAND
+      ${CMAKE_COMMAND} -E chdir "${ROCGDB_BUILD_DIR}"
+      ${CMAKE_COMMAND} -E env
+        "CC=${CUSTOM_CC}"
+        "CXX=${CUSTOM_CXX}"
+        "PKG_CONFIG_PATH=${PKG_CONFIG_PATH_ENV_VAR}"
+        "CFLAGS=${CUSTOM_C_FLAGS}"
+        "CXXFLAGS=${CUSTOM_CXX_FLAGS}"
+        "LDFLAGS=${ALL_LDFLAGS}"
+      --
+      # The actual configure command.
+      ${ROCGDB_SOURCE_DIR}/configure
+        "--prefix=${ROCGDB_INTERMEDIATE_INSTALL_DIR}"
+        --program-prefix=roc
+        "--program-transform-name=${ROCGDB_PROGRAM_TRANSFORM_STR}"
+
+        --enable-64-bit-bfd
+        "--enable-targets=${ROCGDB_TARGETS}"
+        --enable-tui
+
+        "--htmldir=${ROCGDB_HTML_DIR}"
+        "--pdfdir=${ROCGDB_PDF_DIR}"
+        "--infodir=${ROCGDB_INFO_DIR}"
+
+        --with-amd-dbgapi
+        "--with-bugurl=${ROCGDB_BUG_URL}"
+        ${ROCGDB_EXPAT_FLAG}
+        "--with-gdb-datadir=${ROCGDB_DATA_DIR}"
+        ${ROCGDB_GMP_FLAG}
+        --with-lzma
+        ${ROCGDB_MPFR_FLAG}
+        "--with-pkgversion=${ROCM_BUILD_ID}"
+        "--with-separate-debug-dir=${ROCGDB_SEPARATE_DEBUG_INFO_DIR}"
+        --with-system-zlib
+        --with-zstd
+
+        --disable-gas
+        --disable-gdbserver
+        --disable-gdbtk
+        --disable-gprofng
+        --disable-ld
+        --disable-shared
+        --disable-sim
+
+        --without-babeltrace
+        --without-debuginfod
+        --without-guile
+        --without-intel-pt
+        --without-libunwind-ia64
+        --without-xxhash
+        ${configure_flags}
+
+    # Build
+    COMMAND
+      ${CMAKE_COMMAND} -E chdir "${ROCGDB_BUILD_DIR}"
+      ${MAKE_EXECUTABLE} -s -j "${PAR_JOBS}"
+    # Install gdb.
+    COMMAND
+      ${CMAKE_COMMAND} -E chdir "${ROCGDB_BUILD_DIR}"
+      ${MAKE_EXECUTABLE} -s -C gdb install
+    # Install gdb docs.
+    COMMAND
+      ${CMAKE_COMMAND} -E chdir "${ROCGDB_BUILD_DIR}"
+      ${MAKE_EXECUTABLE} -s -C gdb install-html
+    # Install binutils for coremerge and coremerge manpage.
+    COMMAND
+      ${CMAKE_COMMAND} -E chdir "${ROCGDB_BUILD_DIR}"
+      ${MAKE_EXECUTABLE} -s -C binutils install
+    # Create doc directory and add AMD-specific files (NOTICES.txt) if not building upstream.
+    COMMAND
+      ${CMAKE_COMMAND} -E make_directory ${ROCGDB_INTERMEDIATE_INSTALL_DIR}/share/doc
+    ${AMD_SPECIFIC_INSTALL_COMMANDS}
+
+    # Rename rocgcore to rocgcore-py<python version>.
+    COMMAND
+      ${CMAKE_COMMAND} -E rename ${ROCGDB_INTERMEDIATE_INSTALL_DIR}/bin/rocgcore ${ROCGDB_INTERMEDIATE_INSTALL_DIR}/bin/rocgcore-py${minor_version}
+  )
+
+  list(APPEND ALL_ROCGDB_TARGETS ${ROCGDB_TARGET_NAME})
+
+  # We only want to install a subset of the files, so we list them here,
+  # relative to their intermediate install prefixes.
+  # For instance, we don't want to include any binutils files other than
+  # roccoremerge.
+
+  # Misc directories.
+  set(ROCGDB_MISC_DIRS_TO_INSTALL
+    "include"
+    "share/doc"
+    "share/man/man5"
+    "share/rocgdb"
+  )
+
+  # Executable files.
+  set(ROCGDB_EXEC_FILES_TO_INSTALL
+    "bin/rocgcore-py${minor_version}"
+    "bin/rocgdb-py${minor_version}"
+  )
+
+  # Misc files.
+  set(ROCGDB_MISC_FILES_TO_INSTALL
+    "share/info/rocgdb/annotate.info"
+    "share/info/rocgdb/gdb.info"
+    "share/man/man1/rocgdb.1"
+    "share/man/man1/rocgcore.1"
+    "share/man/man1/rocgdb-add-index.1"
+  )
+
+  # AMD-specific files not yet in upstream master.
+  if(NOT ROCGDB_UPSTREAM_BUILD)
+    list(APPEND ROCGDB_EXEC_FILES_TO_INSTALL "bin/roccoremerge")
+    list(APPEND ROCGDB_MISC_FILES_TO_INSTALL "share/man/man1/roccoremerge.1")
+  endif()
+
+  # Register the final installation step for this variant's files.
+  # This basically moves the variant files from the intermediate install
+  # prefix to the final installation location.
+  foreach(rocgdb_dir ${ROCGDB_MISC_DIRS_TO_INSTALL})
+    # The last "/" is important, as we want to copy the contents from the
+    # listed directory into another directory, and not the directory itself.
+    install(DIRECTORY ${ROCGDB_INTERMEDIATE_INSTALL_DIR}/${rocgdb_dir}/
+            DESTINATION "${rocgdb_dir}"
+            USE_SOURCE_PERMISSIONS
+            COMPONENT rocgdb)
+  endforeach()
+
+  foreach(rocgdb_file ${ROCGDB_EXEC_FILES_TO_INSTALL})
+    install(PROGRAMS ${ROCGDB_INTERMEDIATE_INSTALL_DIR}/${rocgdb_file}
+            DESTINATION bin
+            COMPONENT rocgdb)
+  endforeach()
+
+  foreach(rocgdb_file ${ROCGDB_MISC_FILES_TO_INSTALL})
+    # Get the directory part of the file.
+    get_filename_component(file_dir ${rocgdb_file} DIRECTORY)
+
+    install(FILES ${ROCGDB_INTERMEDIATE_INSTALL_DIR}/${rocgdb_file}
+      DESTINATION ${file_dir}
+      COMPONENT rocgdb)
+  endforeach()
+
+  # Register RPATH patching for this rocgdb variant.
+  message(STATUS "Registering fixup of ${CMAKE_INSTALL_PREFIX}/bin/rocgdb-py${minor_version}")
+  install(CODE "execute_process(
+      COMMAND \"${PATCHELF}\" --set-rpath \"\$ORIGIN${ROCGDB_EXTRA_RPATH_SEGMENTS}${LIBPYTHON_RPATH}\"
+      \"${CMAKE_INSTALL_PREFIX}/bin/rocgdb-py${minor_version}\"
+      COMMAND_ERROR_IS_FATAL ANY
+    )"
+  COMPONENT rocgdb)
+
+  if(BUILD_TESTING)
+    # Track for build validation.
+    list(APPEND ROCGDB_BUILD_INTEGRITY_FILES "bin/rocgdb-py${minor_version}")
+    list(APPEND ROCGDB_BUILD_INTEGRITY_FILES "bin/rocgcore-py${minor_version}")
+  endif()
+endmacro()
+
+# Determine python versions either from the explicit list of dist python executables
+# or from the global Python3_EXECUTABLE.
+if(SHARED_PYTHON_EXECUTABLES)
+  message(STATUS "Available python-shared: ${SHARED_PYTHON_EXECUTABLES}")
+  # Build once for each shared-built python executables we were told to use.
+  # Note that the build will fail if libpython is not available in any of these.
+  foreach(CURRENT_PYTHON_EXECUTABLE ${SHARED_PYTHON_EXECUTABLES})
+    # Query each dist python interpreter for version information.
+    execute_process(
+      COMMAND "${CURRENT_PYTHON_EXECUTABLE}" -c "import sys; v=sys.version_info; print(f'{v.major}.{v.minor};{v.major}.{v.minor}.{v.micro}')"
+      OUTPUT_VARIABLE _python_versions
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+    list(GET _python_versions 0 CURRENT_PYTHON_VERSION)
+    list(GET _python_versions 1 CURRENT_PYTHON_FULL_VERSION)
+    message(STATUS "Building rocgdb for python ${CURRENT_PYTHON_EXECUTABLE}: Minor=${CURRENT_PYTHON_VERSION}, Full=${CURRENT_PYTHON_FULL_VERSION}")
+    message(STATUS "-> Found Python ${CURRENT_PYTHON_FULL_VERSION} at ${CURRENT_PYTHON_EXECUTABLE}")
+
+    # For each Python that supports linking against a shared libpython we
+    # fetch the library directory so we can pass a linker flag to rocgdb's
+    # configure.
+    execute_process(
+      COMMAND "${CURRENT_PYTHON_EXECUTABLE}" -c "import sysconfig; libdir=sysconfig.get_config_var('LIBDIR'); print(f'{libdir}')"
+      OUTPUT_VARIABLE _libpython_dir
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+
+    # Sanity check that we managed to get the libpython path. Otherwise skip
+    # this particular build.
+    if(_libpython_dir)
+      message(STATUS "-> Found libpython path ${_libpython_dir}")
+
+      # Add build instructions for this python-specific rocgdb.
+      add_python_variant("${CURRENT_PYTHON_VERSION}" "--with-python=${CURRENT_PYTHON_EXECUTABLE}" "${_libpython_dir}")
+    else()
+      message(STATUS "Failed to extract libpython directory for ${CURRENT_PYTHON_EXECUTABLE}: Skipping")
+    endif()
+  endforeach()
+endif()
+
+# We always build a rocgdb without python support as fallback.
+message(STATUS "Building rocgdb without python support")
+add_python_variant("none" "--disable-python" "")
+
+# Add a single custom target in the main project that depends
+# on building ALL rocgdb variants.
+add_custom_target(build_all_rocgdb ALL DEPENDS ${ALL_ROCGDB_TARGETS})
+
+################################
+# ROCgdb script generation step.
+################################
+
+# Since we potentially have multiple versions of python, and each rocgdb
+# executable links against a specific version of libpython, we have a
+# convenience script that automatically detects the version and fires up
+# the most appropriate rocgdb executable. This makes the python selection
+# process transparent to the end user.
+set(ROCGDB_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/rocgdb")
+
+# Install the generated script.
+install(PROGRAMS ${ROCGDB_SCRIPT}
+        DESTINATION bin
+        COMPONENT rocgdb)
+
+if(BUILD_TESTING)
+  # Track for build validation.
+  list(APPEND ROCGDB_BUILD_INTEGRITY_FILES "bin/rocgdb")
+endif()
+
+##################################
+# ROCgdb executable patching step.
+##################################
+
+# Now add targets for each executable we want to patch post-build.
+# These will run after the rocgdb build finishes, and will add the
+# appropriate RUNPATH entries so the executables can locate their
+# required libraries even if they move around.
+
+# List of all the files in bin we need to patch in RUNPATH's.
+# This excludes rocgdb executables as we patch those separately.
+set(ROCGDB_EXECS_TO_PATCH)
+
+# roccoremerge is only present in ROCm's branch (not yet in upstream master).
+if(NOT ROCGDB_UPSTREAM_BUILD)
+  list(APPEND ROCGDB_EXECS_TO_PATCH "bin/roccoremerge")
+endif()
+
+foreach(rocgdb_exec_filename ${ROCGDB_EXECS_TO_PATCH})
+  set(rocgdb_exec_file "${CMAKE_INSTALL_PREFIX}/${rocgdb_exec_filename}")
+  message(STATUS "Registering fixup of ${rocgdb_exec_file}")
+
+  # Patch in the RUNPATH.
+  install(CODE "execute_process(
+      COMMAND \"${PATCHELF}\" --set-rpath \"\$ORIGIN${ROCGDB_EXTRA_RPATH_SEGMENTS}\"
+      \"${rocgdb_exec_file}\"
+      COMMAND_ERROR_IS_FATAL ANY
+  )"
+  COMPONENT rocgdb)
+endforeach()
+
+##################################################
+# Build integrity and testsuite installation step.
+##################################################
+
+if(BUILD_TESTING)
+  enable_testing()
+
+  list(APPEND ROCGDB_BUILD_INTEGRITY_FILES ${ROCGDB_EXECS_TO_PATCH})
+
+  # List of all the other files we expect to be in the installation.
+  set(ROCGDB_EXPECTED_FILES
+    "include/gdb/jit-reader.h"
+    "share/info/rocgdb/gdb.info"
+    "share/info/rocgdb/annotate.info"
+    "share/rocgdb/python/gdb/ptwrite.py"
+    "share/rocgdb/python/gdb/__init__.py"
+    "share/rocgdb/python/gdb/missing_objfile.py"
+    "share/rocgdb/python/gdb/xmethod.py"
+    "share/rocgdb/python/gdb/missing_debug.py"
+    "share/rocgdb/python/gdb/frames.py"
+    "share/rocgdb/python/gdb/FrameIterator.py"
+    "share/rocgdb/python/gdb/prompt.py"
+    "share/rocgdb/python/gdb/printing.py"
+    "share/rocgdb/python/gdb/missing_files.py"
+    "share/rocgdb/python/gdb/disassembler.py"
+    "share/rocgdb/python/gdb/styling.py"
+    "share/rocgdb/python/gdb/function/caller_is.py"
+    "share/rocgdb/python/gdb/function/__init__.py"
+    "share/rocgdb/python/gdb/function/as_string.py"
+    "share/rocgdb/python/gdb/function/rocm_get_scaled_float.py"
+    "share/rocgdb/python/gdb/function/strfns.py"
+    "share/rocgdb/python/gdb/FrameDecorator.py"
+    "share/rocgdb/python/gdb/types.py"
+    "share/rocgdb/python/gdb/printer/__init__.py"
+    "share/rocgdb/python/gdb/printer/rocm_ocp_mx.py"
+    "share/rocgdb/python/gdb/unwinder.py"
+    "share/rocgdb/python/gdb/dap/varref.py"
+    "share/rocgdb/python/gdb/dap/locations.py"
+    "share/rocgdb/python/gdb/dap/threads.py"
+    "share/rocgdb/python/gdb/dap/next.py"
+    "share/rocgdb/python/gdb/dap/events.py"
+    "share/rocgdb/python/gdb/dap/__init__.py"
+    "share/rocgdb/python/gdb/dap/launch.py"
+    "share/rocgdb/python/gdb/dap/sources.py"
+    "share/rocgdb/python/gdb/dap/bt.py"
+    "share/rocgdb/python/gdb/dap/state.py"
+    "share/rocgdb/python/gdb/dap/typecheck.py"
+    "share/rocgdb/python/gdb/dap/globalvars.py"
+    "share/rocgdb/python/gdb/dap/server.py"
+    "share/rocgdb/python/gdb/dap/evaluate.py"
+    "share/rocgdb/python/gdb/dap/scopes.py"
+    "share/rocgdb/python/gdb/dap/frames.py"
+    "share/rocgdb/python/gdb/dap/startup.py"
+    "share/rocgdb/python/gdb/dap/disassemble.py"
+    "share/rocgdb/python/gdb/dap/pause.py"
+    "share/rocgdb/python/gdb/dap/memory.py"
+    "share/rocgdb/python/gdb/dap/completions.py"
+    "share/rocgdb/python/gdb/dap/breakpoint.py"
+    "share/rocgdb/python/gdb/dap/modules.py"
+    "share/rocgdb/python/gdb/dap/io.py"
+    "share/rocgdb/python/gdb/command/__init__.py"
+    "share/rocgdb/python/gdb/command/pretty_printers.py"
+    "share/rocgdb/python/gdb/command/frame_filters.py"
+    "share/rocgdb/python/gdb/command/prompt.py"
+    "share/rocgdb/python/gdb/command/unwinders.py"
+    "share/rocgdb/python/gdb/command/xmethods.py"
+    "share/rocgdb/python/gdb/command/type_printers.py"
+    "share/rocgdb/python/gdb/command/explore.py"
+    "share/rocgdb/python/gdb/command/missing_files.py"
+    "share/rocgdb/syscalls/mips-n64-linux.xml"
+    "share/rocgdb/syscalls/loongarch-linux.xml"
+    "share/rocgdb/syscalls/amd64-linux.xml"
+    "share/rocgdb/syscalls/mips-n32-linux.xml"
+    "share/rocgdb/syscalls/ppc-linux.xml"
+    "share/rocgdb/syscalls/riscv-linux.xml"
+    "share/rocgdb/syscalls/sparc-linux.xml"
+    "share/rocgdb/syscalls/mips-o32-linux.xml"
+    "share/rocgdb/syscalls/aarch64-linux.xml"
+    "share/rocgdb/syscalls/ppc64-linux.xml"
+    "share/rocgdb/syscalls/netbsd.xml"
+    "share/rocgdb/syscalls/sparc64-linux.xml"
+    "share/rocgdb/syscalls/arm-linux.xml"
+    "share/rocgdb/syscalls/s390-linux.xml"
+    "share/rocgdb/syscalls/s390x-linux.xml"
+    "share/rocgdb/syscalls/i386-linux.xml"
+    "share/rocgdb/syscalls/freebsd.xml"
+    "share/rocgdb/syscalls/gdb-syscalls.dtd"
+    "share/rocgdb/system-gdbinit/elinos.py"
+    "share/rocgdb/system-gdbinit/wrs-linux.py"
+    "share/man/man5/rocgdbinit.5"
+    "share/man/man1/rocgdb-add-index.1"
+    "share/man/man1/rocgcore.1"
+    "share/man/man1/rocgdb.1"
+  )
+
+  # AMD-specific files not yet in upstream master.
+  if(NOT ROCGDB_UPSTREAM_BUILD)
+    list(APPEND ROCGDB_EXPECTED_FILES
+      "share/doc/NOTICES.txt"
+      "share/man/man1/roccoremerge.1"
+    )
+  endif()
+
+  list(APPEND ROCGDB_BUILD_INTEGRITY_FILES ${ROCGDB_EXPECTED_FILES})
+
+  # Add build integrity tests to check if we have the files we want.
+  message(STATUS "BUILD_TESTING set. Adding rocgdb installation integrity tests.")
+  foreach(rocgdb_file ${ROCGDB_BUILD_INTEGRITY_FILES})
+    add_test(
+      NAME rocgdb_install_validation_${CMAKE_INSTALL_PREFIX}/${rocgdb_file}
+      COMMAND ${CMAKE_COMMAND} -E env
+        sh -c "test -f ${CMAKE_INSTALL_PREFIX}/${rocgdb_file}"
+    )
+  endforeach()
+
+  # Also install the required testsuite files so we can run tests later on.
+  #
+  # rocgdb's testsuite does not prebuild executables, so it needs to run on
+  # the target machine.
+
+  # Non-executable testsuite files.
+  set(ROCGDB_TESTSUITE_FILES
+    "config.guess"
+    "config.sub"
+    "contrib/dg-extract-results.py"
+    "gdb/disable-implicit-rules.mk"
+    "gdb/silent-rules.mk"
+    "include/dwarf2.def"
+    "include/dwarf2.h"
+  )
+
+  # Executable testsuite files.
+  set(ROCGDB_EXECUTABLE_TESTSUITE_FILES
+    "contrib/dg-extract-results.sh"
+    "install-sh"
+  )
+
+  foreach(rocgdb_file ${ROCGDB_TESTSUITE_FILES})
+    # Get the directory part of the file.
+    get_filename_component(file_dir ${rocgdb_file} DIRECTORY)
+
+    install(FILES ${ROCGDB_SOURCE_DIR}/${rocgdb_file}
+      DESTINATION tests/rocgdb/${file_dir}
+      COMPONENT tests)
+  endforeach()
+
+  foreach(rocgdb_file ${ROCGDB_EXECUTABLE_TESTSUITE_FILES})
+    # Get the directory part of the file.
+    get_filename_component(file_dir ${rocgdb_file} DIRECTORY)
+
+    install(PROGRAMS ${ROCGDB_SOURCE_DIR}/${rocgdb_file}
+      DESTINATION tests/rocgdb/${file_dir}
+      COMPONENT tests)
+  endforeach()
+
+  # Testsuite directories.
+  set(ROCGDB_TESTSUITE_DIRS
+    "gdb/contrib"
+    "gdb/features"
+    "gdb/testsuite"
+  )
+
+  foreach(rocgdb_testsuite_dir ${ROCGDB_TESTSUITE_DIRS})
+    install(DIRECTORY ${ROCGDB_SOURCE_DIR}/${rocgdb_testsuite_dir}
+      DESTINATION tests/rocgdb/gdb
+      COMPONENT tests
+      USE_SOURCE_PERMISSIONS)
+  endforeach()
+
+  # Install the CI wrapper script that invokes the rocgdb testsuite. This is
+  # used by TheRock CI. If the script is not in the source tree and
+  # ROCGDB_DOWNLOAD_CI_SCRIPT is enabled, fetch it from amd-staging.
+  set(TEST_ROCGDB_SCRIPT "${ROCGDB_SOURCE_DIR}/.github/scripts/test_rocgdb.py")
+  if(NOT EXISTS "${TEST_ROCGDB_SCRIPT}")
+    if(ROCGDB_DOWNLOAD_CI_SCRIPT)
+      set(TEST_ROCGDB_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/test_rocgdb.py")
+      # The source of truth for the CI script is the one in amd-staging.
+      set(TEST_ROCGDB_URL "https://raw.githubusercontent.com/ROCm/ROCgdb/amd-staging/.github/scripts/test_rocgdb.py")
+
+      # Use curl rather than file(DOWNLOAD): file(DOWNLOAD)'s STATUS is the
+      # libcurl transfer code, so HTTP 404/500 responses are reported as
+      # success and the error-page body is written to disk. curl --fail
+      # returns non-zero on HTTP >= 400, and verifies TLS by default.
+      find_program(CURL_EXECUTABLE curl REQUIRED)
+      set(download_success FALSE)
+      foreach(attempt RANGE 1 3)
+        message(STATUS "Attempting to download test_rocgdb.py (attempt ${attempt}/3)")
+        execute_process(
+          COMMAND "${CURL_EXECUTABLE}"
+            --fail --silent --show-error --location
+            --max-time 60
+            --output "${TEST_ROCGDB_SCRIPT}"
+            "${TEST_ROCGDB_URL}"
+          RESULT_VARIABLE curl_result
+          ERROR_VARIABLE  curl_error
+        )
+        if(curl_result EQUAL 0)
+          set(download_success TRUE)
+          message(STATUS "Successfully downloaded test_rocgdb.py to ${TEST_ROCGDB_SCRIPT}")
+          break()
+        else()
+          message(WARNING "Download attempt ${attempt} failed: ${curl_error}")
+          file(REMOVE "${TEST_ROCGDB_SCRIPT}")
+        endif()
+      endforeach()
+
+      if(NOT download_success)
+        message(FATAL_ERROR "Failed to download test_rocgdb.py after 3 attempts")
+      endif()
+    else()
+      message(FATAL_ERROR "test_rocgdb.py not found at ${TEST_ROCGDB_SCRIPT} and ROCGDB_DOWNLOAD_CI_SCRIPT is OFF. Re-configure with -DTHEROCK_ROCGDB_DOWNLOAD_CI_SCRIPT=ON to fetch it from amd-staging.")
+    endif()
+  endif()
+
+  install(
+    PROGRAMS ${TEST_ROCGDB_SCRIPT}
+    DESTINATION tests/rocgdb
+    COMPONENT tests
+  )
+
+  # Install the optional xfails ignore list, if present in the sources.
+  if(EXISTS "${ROCGDB_SOURCE_DIR}/.github/scripts/rocgdb_ignore_list.json")
+    install(
+      FILES ${ROCGDB_SOURCE_DIR}/.github/scripts/rocgdb_ignore_list.json
+      DESTINATION tests/rocgdb
+      COMPONENT tests
+    )
+  else()
+    message(WARNING "rocgdb tests: xfails ignore list not found at "
+      "${ROCGDB_SOURCE_DIR}/.github/scripts/rocgdb_ignore_list.json; skipping installation.")
+  endif()
+else()
+  message(STATUS "rocgdb tests: BUILD_TESTING not set. Skipping installation integrity tests.")
+endif()

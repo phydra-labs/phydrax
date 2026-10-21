@@ -5,8 +5,9 @@
 """Platform-scoped JAX indexing correctness rules, without backend discovery.
 
 JAX 0.12 narrows fill-gather indices before checking bounds. The same lowering
-is used by scatter transposes. Register this correction explicitly for a
-platform; importing this module neither imports JAX nor changes its callables.
+is used by scatter transposes; ROCm also narrows native scatter addresses.
+Register corrections explicitly for a platform; importing this module neither
+imports JAX nor changes its callables.
 The Metal wheel packages a private, byte-identical copy so plugin discovery
 never needs to import the Phydrax core package.
 """
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 
 
 _registered_platforms: set[str] = set()
+_scatter_registered_platforms: set[str] = set()
 _registration_lock = Lock()
 _installation_lock = Lock()
 _accelerator_callback_installed = False
@@ -136,6 +138,120 @@ def register_gather_lowering(platform: str) -> None:
         _registered_platforms.add(platform)
 
 
+def _scatter_drop_preserving_indices(
+    operand: Array, indices: Array, updates: Array, *, dnums: Any
+) -> Array:
+    """Replace invalid whole-window addresses before native index narrowing."""
+    from jax._src.lax import lax
+
+    window_sizes = []
+    position = 0
+    for axis in range(operand.ndim):
+        if axis in dnums.inserted_window_dims or axis in dnums.operand_batching_dims:
+            window_sizes.append(1)
+        else:
+            window_sizes.append(updates.shape[dnums.update_window_dims[position]])
+            position += 1
+    mapped = dnums.scatter_dims_to_operand_dims
+    upper_bound = lax.convert_element_type(
+        lax.shape_as_value(tuple(operand.shape[i] - window_sizes[i] for i in mapped)),
+        np.int64,
+    )
+    unsigned = np.issubdtype(indices.dtype, np.unsignedinteger)
+    wide_dtype = np.dtype(np.uint64 if unsigned else np.int64)
+    wide = lax.convert_element_type(indices, wide_dtype)
+    vector_axis = indices.ndim - 1
+    upper = lax.broadcast_in_dim(
+        lax.convert_element_type(upper_bound, wide_dtype), indices.shape, (vector_axis,)
+    )
+    nonempty = lax.broadcast_in_dim(
+        lax.ge(upper_bound, np.int64(0)), indices.shape, (vector_axis,)
+    )
+    valid = lax.reduce_and(
+        nonempty & (wide >= wide_dtype.type(0)) & (wide <= upper), (vector_axis,)
+    )
+    valid = lax.broadcast_in_dim(valid, indices.shape, tuple(range(vector_axis)))
+    # The positive operand extent is out of bounds even for windows. A -1
+    # sentinel could partially overlap the operand on native scatter backends.
+    sentinel = lax.convert_element_type(
+        lax.shape_as_value(tuple(operand.shape[i] for i in mapped)), indices.dtype
+    )
+    sentinel = lax.broadcast_in_dim(sentinel, indices.shape, (vector_axis,))
+    return lax.select(valid, indices, sentinel)
+
+
+def _scatter_rule(
+    ctx: Any,
+    operand: Any,
+    indices: Any,
+    updates: Any,
+    *,
+    native_lowering: Any,
+    **params: Any,
+) -> Sequence[Any]:
+    from jax._src.lax import slicing
+    from jax.interpreters import mlir
+
+    if (
+        params["mode"] == slicing.GatherScatterMode.FILL_OR_DROP
+        and ctx.avals_in[1].dtype.itemsize == 8
+    ):
+        (indices,) = mlir.lower_fun(
+            _scatter_drop_preserving_indices, multiple_results=False
+        )(
+            ctx.replace(avals_out=[ctx.avals_in[1]]),
+            operand,
+            indices,
+            updates,
+            dnums=params["dimension_numbers"],
+        )
+        # Replacing an invalid address may change its position in sorted order.
+        params = dict(params, indices_are_sorted=False)
+    return native_lowering(ctx, operand, indices, updates, **params)
+
+
+def register_scatter_lowering(platform: str) -> None:
+    """Register full-width drop-scatter bounds without changing JAX callables."""
+    if not isinstance(platform, str):
+        raise TypeError("platform must be a string")
+    if not platform or platform != platform.strip():
+        raise ValueError("platform must be a non-empty canonical platform name")
+    with _registration_lock:
+        if platform in _scatter_registered_platforms:
+            return
+        from functools import partial
+
+        from jax import lax
+        from jax._src.lax import slicing
+        from jax.interpreters import mlir
+
+        for primitive in (
+            lax.scatter_p,
+            lax.scatter_add_p,
+            lax.scatter_sub_p,
+            lax.scatter_mul_p,
+            lax.scatter_min_p,
+            lax.scatter_max_p,
+        ):
+            native = slicing._scatter_lower
+            if platform == "rocm" and primitive in (lax.scatter_add_p, lax.scatter_sub_p):
+                # Preserve JAX's complex128 GPU split-real atomic lowering.
+                from jax._src.lib.mlir.dialects import hlo
+
+                native = partial(
+                    slicing._scatter_addsub_lower_gpu,
+                    reduce_op=hlo.AddOp
+                    if primitive is lax.scatter_add_p
+                    else hlo.SubtractOp,
+                )
+            mlir.register_lowering(
+                primitive,
+                partial(_scatter_rule, native_lowering=native),
+                platform=platform,
+            )
+        _scatter_registered_platforms.add(platform)
+
+
 def _register_discovered_oneapi(*, c_api: Any = None) -> None:
     """Install only after upstream discovery has made the platform known."""
     del c_api
@@ -146,7 +262,7 @@ def _register_discovered_oneapi(*, c_api: Any = None) -> None:
 
 
 def install_accelerator_lowerings() -> None:
-    """Install TPU rules and defer oneAPI rules until upstream plugin discovery.
+    """Install TPU/ROCm rules and defer oneAPI until upstream plugin discovery.
 
     JAX 0.12 exposes platform lowerings publicly, but its discovery-completion
     hook is owned by ``xla_bridge``. The callback runs after provider registration
@@ -155,6 +271,8 @@ def install_accelerator_lowerings() -> None:
     """
     global _accelerator_callback_installed
     register_gather_lowering("tpu")
+    register_gather_lowering("rocm")
+    register_scatter_lowering("rocm")
     with _installation_lock:
         if _accelerator_callback_installed:
             return

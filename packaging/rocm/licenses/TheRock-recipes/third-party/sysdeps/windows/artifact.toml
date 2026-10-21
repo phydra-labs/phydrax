@@ -1,0 +1,20 @@
+# bzip2
+[components.dev."third-party/sysdeps/windows/bzip2/build/stage"]
+# Include the executables in the dev package since some sub-projects
+# require them.
+include = [
+  "**/bin/*.exe"
+]
+[components.lib."third-party/sysdeps/windows/bzip2/build/stage"]
+
+# sqlite3
+[components.lib."third-party/sysdeps/windows/sqlite3/build/stage"]
+[components.dev."third-party/sysdeps/windows/sqlite3/build/stage"]
+
+# zlib
+[components.lib."third-party/sysdeps/windows/zlib/build/stage"]
+[components.dev."third-party/sysdeps/windows/zlib/build/stage"]
+
+# zstd
+[components.lib."third-party/sysdeps/windows/zstd/build/stage"]
+[components.dev."third-party/sysdeps/windows/zstd/build/stage"]

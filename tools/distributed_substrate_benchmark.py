@@ -2,7 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Smoke-test synchronized execution-substrate bootstrap, reductions, and PCG."""
+"""Smoke-test native JAX bootstrap, collectives, and PCG without MPI.
+
+Four-GPU process ownership campaigns use ``--local-processes`` and
+``--devices-per-process`` as 1x4, 2x2, or 4x1, not spectral mesh shapes.
+For AMD hardware proof also require ``--expected-vendor amd``,
+``--expected-global-devices 4``, and the corresponding
+``--expected-local-devices``. A compatible ROCm runtime must be provisioned
+before launch; this tool never substitutes CPU evidence for requested hardware.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +28,9 @@ import jax.numpy as jnp
 import numpy as np
 from jax.experimental import multihost_utils
 
+from benchmarks._runtime import capture_environment
 from phydrax import config as pxconfig
+from phydrax._execution_device import device_vendor
 from phydrax.execution import (
     DistributionMode,
     ExecutionCandidate,
@@ -54,10 +64,53 @@ def _time(operation: Any, iterations: int) -> tuple[object, float]:
     return value, elapsed / iterations
 
 
-def run(size: int, iterations: int) -> dict[str, object]:
+def _validate_runtime(
+    devices: Sequence[jax.Device],
+    local_devices: Sequence[jax.Device],
+    *,
+    expected_vendor: str | None,
+    expected_global_devices: int | None,
+    expected_local_devices: int | None,
+) -> None:
+    for name, expected, observed in (
+        ("global", expected_global_devices, len(devices)),
+        ("local", expected_local_devices, len(local_devices)),
+    ):
+        if expected is not None:
+            if expected <= 0:
+                raise ValueError(f"expected {name} device count must be positive")
+            if observed != expected:
+                raise RuntimeError(
+                    f"expected {name} device count {expected}, observed {observed}"
+                )
+    if expected_vendor is not None:
+        if not expected_vendor.strip():
+            raise ValueError("expected vendor must be non-empty")
+        vendors = tuple(device_vendor(device) for device in devices)
+        if not vendors or any(vendor != expected_vendor for vendor in vendors):
+            raise RuntimeError(
+                f"expected accelerator vendor {expected_vendor!r}, observed {vendors}"
+            )
+
+
+def run(
+    size: int,
+    iterations: int,
+    *,
+    expected_vendor: str | None = None,
+    expected_global_devices: int | None = None,
+    expected_local_devices: int | None = None,
+) -> dict[str, object]:
     if size <= 0 or iterations <= 0:
         raise ValueError("size and iterations must be positive")
     info = runtime_info()
+    _validate_runtime(
+        jax.devices(),
+        jax.local_devices(),
+        expected_vendor=expected_vendor,
+        expected_global_devices=expected_global_devices,
+        expected_local_devices=expected_local_devices,
+    )
     runtime = ExecutionRuntime.current()
     device_count = runtime.root_group.spec.device_count
     group_token = np.frombuffer(
@@ -88,6 +141,7 @@ def run(size: int, iterations: int) -> dict[str, object]:
         ),
         host_count=1,
         process_count=info.process_count,
+        accelerator_vendor=expected_vendor,
     )
     admitted = resolve_execution_plan(
         ExecutionPolicy(DistributionMode.AUTO, resources=request),
@@ -141,6 +195,7 @@ def run(size: int, iterations: int) -> dict[str, object]:
     solution_error = jnp.max(jnp.where(mask, jnp.abs(result.value - values), 0.0))
     jax.block_until_ready(solution_error)
     return {
+        "environment": capture_environment().to_dict(),
         "runtime": {
             "process_count": info.process_count,
             "process_index": info.process_index,
@@ -190,7 +245,7 @@ def run(size: int, iterations: int) -> dict[str, object]:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--size", type=int, default=1 << 18)
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--local-processes", type=int, default=1)
@@ -200,10 +255,23 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=1,
         help="Disjoint GPUs per local worker; forced CPU device counts are unchanged.",
     )
+    parser.add_argument("--expected-vendor")
+    parser.add_argument("--expected-global-devices", type=int)
+    parser.add_argument("--expected-local-devices", type=int)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     if arguments.local_processes <= 0 or arguments.devices_per_process <= 0:
         parser.error("local-processes and devices-per-process must be positive")
+    expectations: list[str] = []
+    for option, value in (
+        ("--expected-vendor", arguments.expected_vendor),
+        ("--expected-global-devices", arguments.expected_global_devices),
+        ("--expected-local-devices", arguments.expected_local_devices),
+    ):
+        if value is not None:
+            if isinstance(value, int) and value <= 0:
+                parser.error(f"{option} must be positive")
+            expectations.extend((option, str(value)))
     if arguments.local_processes > 1 and not arguments.worker:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
@@ -225,6 +293,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "--devices-per-process",
                 str(arguments.devices_per_process),
                 "--worker",
+                *expectations,
             ),
             LocalProcessLaunchPlan(
                 arguments.local_processes,
@@ -244,7 +313,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise RuntimeError(
                 f"local worker GPU ownership differs: expected={expected}, actual={actual}"
             )
-    result = run(arguments.size, arguments.iterations)
+    result = run(
+        arguments.size,
+        arguments.iterations,
+        expected_vendor=arguments.expected_vendor,
+        expected_global_devices=arguments.expected_global_devices,
+        expected_local_devices=arguments.expected_local_devices,
+    )
     if jax.process_index() == 0:
         print(json.dumps(result, allow_nan=False, sort_keys=True))
 

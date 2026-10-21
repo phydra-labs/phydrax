@@ -336,3 +336,55 @@ def test_process_x64_request_inside_a_matching_scope_takes_effect() -> None:
         """,
         extra_environment={"JAX_ENABLE_X64": "0"},
     )
+
+
+@pytest.mark.parametrize("valid", [False, True], ids=["refused", "admitted"])
+def test_rocm_preflight_is_device_inert_and_precedes_all_effects(valid: bool) -> None:
+    _child(f"""
+        import jax
+        from phydrax import config
+        from phydrax import _rocm_environment as rocm
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("Preflight discovered a device")
+
+        jax.devices = forbidden
+        jax.local_devices = forbidden
+        facts = rocm.RocmEnvironmentFacts(
+            host_platform="linux",
+            host_machine="x86_64",
+            python_implementation="CPython",
+            python_version=(3, 13, 0),
+            selected_major=10,
+            bundle_manifest="/owned/phydrax_rocm_runtime/runtime.json",
+            bundle_version="10.1.0",
+            bundle_architectures=("gfx942", "gfx950"),
+            versions=(
+                ("jax", "0.12.0"), ("jaxlib", "0.12.0"),
+                ("jax-rocm10-plugin", "0.12.0"),
+                ("jax-rocm10-pjrt", {"0.12.0" if valid else "0.11.2"!r}),
+                *((name, "10.1.0") for name in rocm.DISTRIBUTIONS),
+            ),
+        )
+        rocm.collect_rocm_environment = lambda: facts
+        before = config.snapshot()
+        request = config.RuntimeConfig(
+            platforms=("rocm",), enable_x64=not before.enable_x64
+        )
+        if {valid!r}:
+            config.configure(request)
+            after = config.snapshot()
+            assert after.platforms == ("rocm",)
+            assert after.enable_x64 is not before.enable_x64
+            assert not after.backends_initialized
+        else:
+            try:
+                config.configure(request)
+            except config.ConfigurationApplicationError as error:
+                assert error.setting == "platforms"
+                assert error.applied == ()
+                assert "jax-rocm10-pjrt" in str(error)
+            else:
+                raise AssertionError("Invalid ROCm pair was admitted")
+            assert config.snapshot() == before
+    """)

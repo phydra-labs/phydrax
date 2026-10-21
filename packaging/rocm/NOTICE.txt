@@ -1,0 +1,39 @@
+Phydrax-owned ROCm10 binary packaging
+
+These distributions repackage AMD ROCm SDK 10.1.0 Linux x86_64 wheel
+payloads. AMD and the respective upstream authors retain all third-party
+copyright and license interests. The Phydrax distribution names identify
+packaging ownership, not authorship or relicensing of ROCm, LLVM, math
+libraries, debugger, system dependencies, or GPU code objects.
+
+Payload bytes, executable permissions, relative binary paths, embedded
+notices, documentation, and source manifests are preserved. Identical empty
+namespace initializers shared by upstream wheels have one canonical owner;
+upstream-provenance.json records this ownership-only deduplication. Original
+upstream dist-info is preserved under this distribution's dist-info/upstream.
+The replacement METADATA, WHEEL, RECORD, immutable payload inventory, and
+loader manifest are Phydrax packaging metadata.
+The included PHYDRAX-LICENSE.txt applies to Phydrax-authored packaging and
+loader code only; it does not replace or restrict upstream license grants.
+
+sources.lock.json identifies exact upstream archive URLs and SHA256 hashes.
+phydrax-payload.json identifies every owned original payload file and mode.
+The core payload contains share/therock/therock_manifest.json with the build
+commit, source repository commits, patches, and flags. Supplemental licenses
+and source references are preserved in the licenses tree and
+license_sources.json. source-notice-audit.json records which notices were
+actually available in upstream binary archives; absence of a notice in an
+archive does not imply absence of a license obligation.
+
+The bundle includes components with different licenses, including GPL
+(debugger) and LGPL (system dependencies). Source-code availability and
+other applicable distribution obligations require release-operator review.
+This inventory is not legal advice, a redistribution approval, a claim of
+source-offer sufficiency, or certification of publication compliance.
+
+Only prebuilt wheels are supplied. Installation performs no source build,
+SDK download, AMD-index lookup, or operating-system SDK modification.
+Kernel driver compatibility, device permissions, and host C/C++ ABI support
+remain prerequisites. No PyPI publication is performed or authorized by the
+build command. Large payload wheels require appropriate PyPI file-size
+quotas before publication; a local wheelhouse is not a published release.

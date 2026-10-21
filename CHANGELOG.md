@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Breaking
+- Install an explicitly fingerprinted, source-guarded correction for premature
+  narrowing of wide indexing addresses, without tightening the JAX version range.
+  Import Phydrax before JAX numerical tracing/backend initialization; unknown or
+  conflicting frontend implementations are refused. Compiler-bound artifacts
+  and qualification evidence must be reprepared with the patch identity.
+  ROCm gather/scatter lowerings also preserve wide bounds. The shared indexing
+  source changes Metal companion build identities; rebuild rather than relabel
+  existing companion artifacts.
 - Require the lockstep CUDA companion on Linux aarch64 as well as x86-64.
   CUDA intent without a JAX plugin is now an error on both supported Linux
   architectures. A missing ARM companion wheel no longer yields a JAX-only
@@ -57,6 +65,24 @@
   policy and plan identities.
 
 ### Added
+- Add the `rocm10` extra for standard CPython 3.13 and matched
+  JAX/JAXlib/AMD plugin 0.12.0, with packaged ROCm 10.1.0 userspace and
+  `gfx942`, `gfx950`, and `gfx1250` payloads targeting the MI300/MI350 families
+  and published MI400/CDNA 5 architecture. MI400 coverage is provisional, not
+  blanket SKU or hardware qualification. Native library and compiler
+  setup is automatic; a compatible AMD kernel driver remains a prerequisite.
+  Add device-inert environment assessment, explicit runtime observation,
+  configuration admission, and per-device installed-wheel qualification.
+- Record normalized accelerator identity, ROCm package provenance, and runtime
+  overrides in benchmark evidence. Benchmark environment identities change;
+  serialized resource inventories and their identities remain unchanged.
+  Distributed substrate smoke runs can require exact vendor and device counts.
+- Retain the original external-SDK ROCm 10.1.0 four-MI300X evidence:
+  20 scientific cases and the advertised example pass on each device;
+  17 workflow scenarios cover process layouts, spectral, native-JAX MACE,
+  reduced PIC, and native-JAX FMM capacity sweeps, with five physical
+  restart/refusal cases. These records preserve their original source and
+  installation identities, not bundled-runtime or MI350X qualification.
 - Add `phydrax[cpu]`, requesting `jax[cpu]>=0.12.0,<0.13` while preserving the
   base installation's JAX dependency and existing runtime backend selection.
 - Add upstream-backed `oneapi` and `tpu` extras, pure environment diagnostics,

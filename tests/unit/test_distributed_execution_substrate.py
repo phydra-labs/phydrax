@@ -10,7 +10,8 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -22,6 +23,7 @@ from jax.typing import DTypeLike
 import phydrax.lifecycle._distributed_checkpoint as checkpoint_module
 from phydrax import config as pxconfig
 from phydrax._data_plane import IndexEpochPlan
+from phydrax._execution_device import device_vendor
 from phydrax.backends import APPLE_METAL_PROFILE
 from phydrax.discretization._distributed_field import (
     DistributedHaloPlan,
@@ -78,6 +80,7 @@ from phydrax.linalg import (
     solve_distributed_minres,
     solve_distributed_pcg,
 )
+from tools import distributed_substrate_benchmark as substrate
 
 
 def test_distributed_execution_substrate_scenario_1() -> None:
@@ -797,6 +800,53 @@ def test_local_launch_rank_projection_retains_disjoint_device_ids() -> None:
 
 
 @pytest.mark.parametrize(
+    ("platform", "runtime", "global_count", "local_count", "error"),
+    [
+        ("gpu", "rocm 71460850", 4, 2, None),
+        ("gpu", "rocm 71626385", 4, 2, None),
+        ("cpu", "cpu", 4, 2, "expected accelerator vendor"),
+        ("gpu", "CUDA 13000", 4, 2, "expected accelerator vendor"),
+        ("gpu", "", 4, 2, "expected accelerator vendor"),
+        ("gpu", "rocm 71460850", 3, 2, "expected global device count"),
+        ("gpu", "rocm 71460850", 4, 1, "expected local device count"),
+    ],
+)
+def test_substrate_hardware_expectations_fail_closed(
+    platform: str,
+    runtime: str,
+    global_count: int,
+    local_count: int,
+    error: str | None,
+) -> None:
+    device = cast(
+        jax.Device,
+        SimpleNamespace(
+            platform=platform,
+            client=SimpleNamespace(platform=platform, platform_version=runtime),
+        ),
+    )
+    devices = (device,) * global_count
+    local_devices = devices[:local_count]
+    if error is None:
+        substrate._validate_runtime(
+            devices,
+            local_devices,
+            expected_vendor="amd",
+            expected_global_devices=4,
+            expected_local_devices=2,
+        )
+    else:
+        with pytest.raises(RuntimeError, match=error):
+            substrate._validate_runtime(
+                devices,
+                local_devices,
+                expected_vendor="amd",
+                expected_global_devices=4,
+                expected_local_devices=2,
+            )
+
+
+@pytest.mark.parametrize(
     ("platform", "process_count", "devices_per_process"),
     [
         (platform, processes, devices)
@@ -840,10 +890,17 @@ def test_local_substrate_launcher_preserves_device_ownership(
     ):
         pytest.skip(f"requires {process_count * devices_per_process} visible GPUs")
     root = Path(__file__).parents[2]
+    vendor = device_vendor(jax.local_devices()[0]) if platform == "gpu" else None
     environment = pxconfig.environment(
         pxconfig.RuntimeConfig(
-            platforms=("cpu",) if platform == "cpu" else ("cuda",),
-            cpu_device_count=devices_per_process,
+            platforms=(
+                ("cpu",)
+                if platform == "cpu"
+                else ("rocm",)
+                if device_vendor(jax.local_devices()[0]) == "amd"
+                else ("cuda",)
+            ),
+            cpu_device_count=devices_per_process if platform == "cpu" else None,
             cpu_collectives_implementation="gloo",
         )
     )
@@ -854,7 +911,12 @@ def test_local_substrate_launcher_preserves_device_ownership(
         OPENBLAS_NUM_THREADS="1",
     )
     if platform == "gpu" and process_count == 1:
-        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        visibility_key = (
+            "ROCR_VISIBLE_DEVICES"
+            if device_vendor(jax.local_devices()[0]) == "amd"
+            else "CUDA_VISIBLE_DEVICES"
+        )
+        visible = os.environ.get(visibility_key)
         selected = (
             visible.split(",")[:devices_per_process]
             if visible is not None
@@ -863,7 +925,7 @@ def test_local_substrate_launcher_preserves_device_ownership(
                 for device in jax.local_devices()[:devices_per_process]
             ]
         )
-        environment["CUDA_VISIBLE_DEVICES"] = ",".join(selected)
+        environment[visibility_key] = ",".join(selected)
     completed = subprocess.run(
         [
             sys.executable,
@@ -877,6 +939,11 @@ def test_local_substrate_launcher_preserves_device_ownership(
             "17",
             "--iterations",
             "1",
+            "--expected-global-devices",
+            str(process_count * devices_per_process),
+            "--expected-local-devices",
+            str(devices_per_process),
+            *(["--expected-vendor", vendor] if vendor is not None else []),
         ],
         cwd=root,
         env=environment,
@@ -903,6 +970,14 @@ def test_local_substrate_launcher_preserves_device_ownership(
             for rank in range(process_count)
         ]
     )
+    device_evidence = report["environment"]["jax"]["devices"]
+    assert len(device_evidence) == process_count * local_count
+    assert all("runtime_version" in device for device in device_evidence)
+    if platform == "gpu":
+        assert all(
+            device["vendor"] == device_vendor(jax.local_devices()[0])
+            for device in device_evidence
+        )
     assert report["problem"]["group_identity_consistent"]
     assert report["problem"]["logical_size"] == 17
     total_devices = process_count * local_count
@@ -1055,8 +1130,14 @@ def test_five_rank_replicated_checkpoint_publication(
     root = Path(__file__).parents[2]
     environment = pxconfig.environment(
         pxconfig.RuntimeConfig(
-            platforms=("cpu",) if platform == "cpu" else ("cuda",),
-            cpu_device_count=1,
+            platforms=(
+                ("cpu",)
+                if platform == "cpu"
+                else ("rocm",)
+                if device_vendor(jax.local_devices()[0]) == "amd"
+                else ("cuda",)
+            ),
+            cpu_device_count=1 if platform == "cpu" else None,
             cpu_collectives_implementation="gloo",
         )
     )

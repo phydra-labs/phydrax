@@ -132,6 +132,16 @@ def _admit_accelerators(platforms: tuple[str, ...] | None, /) -> None:
                 messages = tuple(
                     issue.message for issue in oneapi_issues if issue.severity == "error"
                 )
+            case "rocm":
+                from ._rocm_environment import (
+                    assess_rocm_environment,
+                    collect_rocm_environment,
+                )
+
+                rocm_issues = assess_rocm_environment(collect_rocm_environment()).issues
+                messages = tuple(
+                    issue.message for issue in rocm_issues if issue.severity == "error"
+                )
             case "tpu":
                 from ._tpu_environment import (
                     assess_tpu_environment,
@@ -386,6 +396,9 @@ def initialize_process() -> None:
     with _LOCK:
         if _STATE.started:
             return
+        from ._jax_indexing_frontend import install_frontend_index_patch
+
+        install_frontend_index_patch()
         settings = startup_runtime(os.environ)
         if settings.bootstrap is not None and _jax_config.distributed_initialized():
             settings = replace(settings, bootstrap=None)

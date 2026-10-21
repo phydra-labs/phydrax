@@ -18,6 +18,17 @@ JAX 0.12.0 / JAXlib 0.11.2 combination described below. On x86-64, upstream
 wheels require AVX2 and FMA (Intel Haswell or newer). The NumPy and SciPy
 requirements already exceed JAX 0.12's minimums.
 
+Phydrax installs a source-guarded correction for the premature narrowing of wide
+indexing addresses observed in JAX 0.12.0, without an additional version pin.
+Compatibility is checked against the audited upstream implementation, not its
+release number. Import Phydrax
+before initializing a JAX backend or tracing numerical functions, and restart
+the process after changing either package. The correction preserves public JAX
+callables and delegates indexing layout to the original private frontend;
+unknown upstream source or a conflicting patch is refused. Its identity is
+recorded in installed-wheel and benchmark evidence. Reprepare compiler-bound
+artifacts rather than reusing evidence from an unpatched frontend.
+
 GPU and MPI qualification is specific to the recorded software and hardware
 stack. The JAX/JAXlib 0.11.2 results below remain historical evidence, not
 qualification of 0.12. Rebuild native companions and the site-specific mpi4jax
@@ -130,6 +141,107 @@ for precise support boundaries and the installed-artifact workflow.
 The [retained software evidence](data/accelerator_installation.json) distinguishes
 dependency resolution, CPU compatibility, refusal behavior, and the actual
 Metal shared-source regression from unperformed Intel/TPU execution.
+
+## AMD GPUs
+
+On native Linux x86-64 with standard CPython 3.13:
+
+```bash
+pip install "phydrax[rocm10]"
+```
+
+This extra selects JAX/JAXlib and the matching AMD plugin/PJRT 0.12.0 stack
+plus the packaged ROCm 10.1.0 userspace runtime. Its `gfx942`, `gfx950`, and
+`gfx1250` payloads target the MI300/MI350 families and the published MI400/CDNA 5
+architecture, rather than a two-model allowlist. Installation does not detect the
+GPU or require a separate architecture-specific command.
+A compatible AMD kernel driver, supported OS, and device permissions remain
+system prerequisites. The unconditional runtime requirements refuse unsupported
+wheel platforms rather than silently producing a CPU-only accelerator install.
+
+The runtime comprises `phydrax-rocm-runtime`, `phydrax-rocm-core`,
+`phydrax-rocm-libraries`, `phydrax-rocm-device-gfx1250`,
+`phydrax-rocm-device-gfx942`, and `phydrax-rocm-device-gfx950`.
+The component versions identify the upstream SDK release. Payload provenance and
+Phydrax packaging identity remain distinct.
+The loader binds the packaged native dependency closure and compiler resources
+automatically; users do not set `LD_LIBRARY_PATH`, `ROCM_PATH`, or `LLVM_PATH`.
+Foreign already-loaded runtimes and overlapping SDK distributions are refused,
+not silently mixed with the selected bundle.
+
+[AMD's GPU specifications](https://rocm.docs.amd.com/en/latest/reference/gpu-specs.html)
+map MI300A, MI300X, and MI325X to `gfx942`, and MI350P, MI350X, and MI355X to
+`gfx950`. The release-pinned
+[AMD target definitions](https://github.com/ROCm/TheRock/blob/b324869fb3116353ac7eec5e6926aa3d452ac987/cmake/therock_amdgpu_targets.cmake)
+map MI450, MI450X, and MI455X to `gfx1250`. These are documented examples,
+not an exhaustive model-name gate.
+
+MI400 support is provisional: AMD's
+[readiness table](https://github.com/ROCm/TheRock/blob/main/SUPPORTED_GPUS.md)
+marks CDNA 5 build-passing and sanity-tested, not release-ready. Published
+`gfx1250` assets are included, but unpublished targets and individual future
+SKUs are not inferred from a marketing family name. AMD lists MI430X availability
+in 2027; no separate compiler-target mapping or Phydrax hardware qualification
+is asserted for that model. Physical testing here covers MI300X only.
+
+These release commands require the runtime wheels to be published. Local builds
+do not imply PyPI publication. Build the core and runtime wheelhouse locally:
+
+```bash
+python tools/build_rocm_wheels.py --download \
+  --sources .tmp/rocm-upstream --wheelhouse .tmp/rocm-wheelhouse
+uv build --wheel --out-dir .tmp/rocm-wheelhouse
+uv pip install --find-links .tmp/rocm-wheelhouse "phydrax[rocm10]"
+```
+
+The runtime builder uses pinned upstream URLs and SHA256 identities. Normal
+installation uses ordinary wheel dependencies, not AMD indexes, source builds,
+or downloads triggered at import time. Large payload wheels require appropriate
+publication quotas. Source notices and redistribution obligations must be
+reviewed before publication; numerical qualification is not legal authorization.
+
+The runtime platform is `rocm`, not the extra's name. For host callbacks,
+including compiled error reporting, use `JAX_PLATFORMS=rocm,cpu`. CPU registration
+supports those callbacks; qualification requires numerical results on the
+explicitly selected AMD device and refuses CPU substitution. Keep x64 enabled
+and choose scientific dtypes at their owners; there is no automatic downcast.
+
+`phydrax.backends.rocm_environment()` inspects installation evidence without
+initializing devices. Set `initialize_backend=True` for explicit runtime
+observation. The raw HIP runtime version is retained separately from SDK release
+identity: ROCm 10.1.0 can report `rocm 71626385`.
+
+Native JAX numerical workflows and `JaxCollectiveProvider` share the existing
+execution substrate. For one host, start with one process managing the selected
+devices. Two processes with two devices and four processes with one device are
+separate process layouts, not scientific mesh shapes. Use
+`accelerator_vendor="amd"` for resource admission: inventory platforms preserve
+JAX's raw `"gpu"` representation and existing identity. Every distributed rank
+must enter collective inventory discovery in the same sequence.
+
+```bash
+python -m tools.distributed_substrate_benchmark \
+  --local-processes 2 --devices-per-process 2 \
+  --expected-vendor amd --expected-global-devices 4 --expected-local-devices 2
+```
+
+The CUDA companions, compiled CUDA MACE/FMM kernels, and CUDA-aware mpi4jax
+route are not AMD capabilities. Use native-JAX scientific routes explicitly.
+Candidate AMD profiles do not authorize release, imply multi-host qualification,
+or promise speedup.
+
+The retained external-SDK MI300X records in
+`benchmarks/mi300x_rocm10_installed.json` and `benchmarks/mi300x_workflows.json`
+document their original installation and runtime identities. They are not
+relabeled as proof of bundled installation.
+
+`benchmarks/mi300x_rocm10_bundled.json` records a fresh installed-wheel run with
+all three architecture payloads and no manual SDK paths: all 20 scientific cases
+and the advertised example pass separately on each of four MI300X devices.
+`packaging/rocm/architecture-coverage.json` records the pinned vendor mapping and
+payload evidence for the wider families. Non-MI300X payload coverage is not
+hardware qualification. Runtime wheels remain unpublished; source-license review
+and package-index large-file quotas are separate publication prerequisites.
 
 ## NVIDIA GPUs
 

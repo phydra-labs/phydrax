@@ -343,3 +343,153 @@ def test_real_fourier_resampling(record_property: Callable[[str, object], None])
         output, np.cos(2 * np.pi * np.arange(13) / 13), atol=3e-5, rtol=3e-5
     )
     np.testing.assert_allclose(derivative, np.full(8, 13 / 8), atol=3e-5, rtol=3e-5)
+
+
+@pytest.fixture
+def rocm_precision_problem(
+    kind: str,
+) -> tuple[Any, jax.Array, np.ndarray, np.ndarray]:
+    """A small HPD system with a non-real operator in the complex case."""
+    if os.environ.get("PHYDRAX_ACCELERATOR") != "rocm10":
+        pytest.skip("Bounded ROCm precision contract")
+    import phydrax as phx
+
+    dtype = np.dtype(kind)
+    matrix = (4 * np.eye(8) - np.eye(8, k=1) - np.eye(8, k=-1)).astype(dtype)
+    rhs = np.arange(1, 9, dtype=np.float64).astype(dtype)
+    if kind == "complex128":
+        phases = np.exp(0.3j * np.arange(8))
+        matrix = phases[:, None] * matrix * phases.conj()[None, :]
+        rhs = rhs + 1j * rhs[::-1]
+    operator = phx.linalg.DenseLinearOperator(
+        jnp.asarray(matrix),
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+            },
+        ),
+    )
+    return phx.linalg.LinearSystem(operator), jnp.asarray(rhs), matrix, rhs
+
+
+@pytest.mark.parametrize("kind", ("float64", "complex128"))
+def test_rocm_native_linear_precision(
+    record_property: Callable[[str, object], None],
+    kind: str,
+    rocm_precision_problem: tuple[Any, jax.Array, np.ndarray, np.ndarray],
+) -> None:
+    import phydrax as phx
+
+    la = phx.linalg
+    problem, rhs, matrix, host_rhs = rocm_precision_problem
+    policy = la.LinearSolvePolicy(
+        la.PCG(),
+        tolerance=la.TolerancePolicy(relative=1e-12, absolute=1e-14, max_steps=32),
+        differentiation=la.DifferentiationPolicy("mathematical"),
+        derivative_solve=la.LinearDerivativeSolvePolicy(
+            relative_tolerance=1e-12, absolute_tolerance=1e-14, maximum_steps=32
+        ),
+        failure=la.FailurePolicy("status"),
+    )
+
+    def solve(target: jax.Array) -> Any:
+        return la.solve(problem, target, policy=policy)
+
+    direction_host = np.linspace(-0.7, 0.9, 8).astype(np.dtype(kind))
+    if kind == "complex128":
+        direction_host = direction_host + 0.4j * direction_host[::-1]
+    direction = jnp.asarray(direction_host)
+    result = eqx.filter_jit(solve)(rhs)
+    _, tangent = eqx.filter_jit(
+        lambda target, vector: jax.jvp(
+            lambda value: solve(value).value, (target,), (vector,)
+        )
+    )(rhs, direction)
+    record_execution(
+        record_property,
+        rhs,
+        result.value,
+        result.status,
+        result.diagnostics.residual_norm,
+        result.derivative_valid,
+        tangent,
+    )
+    assert rhs.dtype == result.value.dtype == tangent.dtype == np.dtype(kind)
+    assert result.diagnostics.residual_norm.dtype == jnp.float64
+    assert int(result.status) == int(la.LinearSolveStatus.SUCCESS)
+    assert bool(result.derivative_valid)
+    np.testing.assert_allclose(
+        result.value, np.linalg.solve(matrix, host_rhs), rtol=2e-11, atol=2e-12
+    )
+    np.testing.assert_allclose(
+        tangent, np.linalg.solve(matrix, direction_host), rtol=2e-11, atol=2e-12
+    )
+    assert np.linalg.norm(matrix @ np.asarray(result.value) - host_rhs) <= (
+        2e-12 * np.linalg.norm(host_rhs)
+    )
+
+
+@pytest.mark.parametrize("kind", ("float64", "complex128"))
+def test_rocm_linear_precision_exhaustion(
+    record_property: Callable[[str, object], None],
+    kind: str,
+    rocm_precision_problem: tuple[Any, jax.Array, np.ndarray, np.ndarray],
+) -> None:
+    import phydrax as phx
+
+    la = phx.linalg
+    problem, rhs, matrix, host_rhs = rocm_precision_problem
+    policy = la.LinearSolvePolicy(
+        la.PCG(),
+        tolerance=la.TolerancePolicy(relative=1e-12, absolute=0.0, max_steps=1),
+        differentiation=la.DifferentiationPolicy("none"),
+        failure=la.FailurePolicy("status"),
+    )
+    failed = eqx.filter_jit(lambda target: la.solve(problem, target, policy=policy))(rhs)
+    record_execution(
+        record_property, failed.value, failed.status, failed.diagnostics.residual_norm
+    )
+    assert failed.value.dtype == np.dtype(kind)
+    assert int(failed.status) == int(la.LinearSolveStatus.MAXIMUM_STEPS_REACHED)
+    assert np.linalg.norm(matrix @ np.asarray(failed.value) - host_rhs) > (
+        1e-12 * np.linalg.norm(host_rhs)
+    )
+
+
+@pytest.mark.parametrize("kind", ("float64", "complex128"))
+def test_rocm_fourier_precision(
+    record_property: Callable[[str, object], None], kind: str
+) -> None:
+    if os.environ.get("PHYDRAX_ACCELERATOR") != "rocm10":
+        pytest.skip("Bounded ROCm precision contract")
+    from phydrax.signal import fourier_resample
+
+    def samples(size: int) -> np.ndarray:
+        angle = 2 * np.pi * np.arange(size) / size
+        values = np.cos(angle) + 0.25 * np.sin(2 * angle)
+        if kind == "complex128":
+            values = values + 0.6j * np.sin(3 * angle)
+        return values.astype(np.dtype(kind))
+
+    # Analytic band-limited modes give an oracle independent of FFT code.
+    source = jnp.asarray(samples(16))
+    direction = jnp.asarray(2 * samples(16)[::-1])
+
+    @jax.jit
+    def resample(values: jax.Array) -> jax.Array:
+        return fourier_resample(values, (23,))
+
+    output, tangent = jax.jit(
+        lambda values, vector: jax.jvp(resample, (values,), (vector,))
+    )(source, direction)
+    angle = 2 * np.pi * (15 / 16 - np.arange(23) / 23)
+    expected_tangent = 2 * (np.cos(angle) + 0.25 * np.sin(2 * angle))
+    if kind == "complex128":
+        expected_tangent = expected_tangent + 1.2j * np.sin(3 * angle)
+    record_execution(record_property, source, output, tangent)
+    assert source.dtype == output.dtype == tangent.dtype == np.dtype(kind)
+    np.testing.assert_allclose(output, samples(23), rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(tangent, expected_tangent, rtol=2e-12, atol=2e-12)
