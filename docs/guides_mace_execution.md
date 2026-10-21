@@ -395,8 +395,8 @@ the existing explicit `cuda` or `cpu_interpret` target. There is no Pallas
 coupling. The kernels are written once for Pallas Mosaic GPU with 128-lane
 warpgroup channel tiles:
 
-- `"cuda"` admits NVIDIA devices with compute capability 8.0, 9.0, 10.0, 12.0, or 12.1,
-  not every architecture above a numeric minimum (8.6, 8.9, and 10.3 remain refused).
+- `"cuda"` admits NVIDIA devices with compute capability 8.0, 9.0, 10.0, 10.3, 12.0, or 12.1,
+  not every architecture above a numeric minimum (8.6 and 8.9 remain refused).
   `pallas_atomistic_availability("cuda")` identifies CUDA from the runtime,
   including JAX clients labeled `"gpu"`, and refuses other devices with a
   reason. The Lane kernels use no Hopper-only WGMMA or TMA instructions.
@@ -428,8 +428,17 @@ warpgroup channel tiles:
   order two, coefficient gradients, compiler resource evidence, and fragment-budget
   and third-order refusal. A separate changed-input compiled smoke agreed with
   the dense reference in both precisions. This is single-device B200 evidence,
-  not admission of B300 (10.3), cross-device bitwise replay, or distributed
+  not qualification of B300, cross-device bitwise replay, or distributed
   accelerated MACE.
+- B300 SXM6 AC (10.3), driver 595.91.07, Python 3.13.15, JAX/JAXlib and CUDA
+  plugin 0.12.0, and CUDA runtime 13.4 passed the compiled float32/float64
+  deterministic/compensated matrix. This includes operand and coefficient
+  derivatives through order two, compiler resource evidence, and fragment-budget
+  and third-order refusals. The direct compiled forward smoke also agrees with
+  native JAX in both precisions. These are single-device correctness results,
+  not a general acceleration or cross-device bitwise-continuation claim.
+  See [B300 deployment](installation.md#single-b300-deployment-profile) for the
+  native companion, bounded model benchmarks, and retained qualification record.
 - RTX 5090 (12.0) was exercised with JAX/JAXlib 0.11.2 and the CUDA 13 plugin.
   Forward and operand derivatives agree with native JAX at float32 tolerances
   `rtol=atol=2e-5` (reverse mode `rtol=2e-4`); float64 forward agrees at

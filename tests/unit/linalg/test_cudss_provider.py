@@ -4,8 +4,12 @@
 
 import json
 import os
+import shutil
+import subprocess
+import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 from typing import Any
 
@@ -345,6 +349,165 @@ def _partition(prepared: la.PreparedLinearSolve) -> tuple[int, int, int]:
     assert len(partitions) == 1
     entry = partitions[0]
     return entry.live, entry.capacity, entry.rebuilds
+
+
+@pytest.mark.cuda_native
+def test_cudss_failed_refactor_rebuilds_original_preparation(tmp_path: Path) -> None:
+    _require_cudss()
+    if sys.platform != "linux":
+        pytest.skip("cuDSS failure interposition requires the Linux dynamic loader")
+    compiler = shutil.which("cc")
+    if compiler is None:
+        pytest.skip("cuDSS failure interposition requires a native C compiler")
+    source = tmp_path / "failed_refactor.c"
+    interposer = tmp_path / "failed_refactor.so"
+    # Execute the actual cuDSS refactor before reporting a one-shot failure:
+    # the old memo really contains changed factors, not a mocked solver result.
+    source.write_text(
+        """
+        #define _GNU_SOURCE
+        #include <dlfcn.h>
+        #include <stdatomic.h>
+        #include <stdlib.h>
+
+        typedef int (*execute_fn)(void *, int, const void *, void *,
+                                  const void *, void *, const void *);
+        static _Atomic int armed = 0;
+        static _Atomic int injected = 0;
+        void phx_test_cudss_arm(void) { atomic_store(&armed, 1); }
+        int phx_test_cudss_injected(void) { return atomic_load(&injected); }
+
+        int cudssExecute(void *handle, int phase, const void *config, void *data,
+                         const void *matrix, void *solution, const void *rhs) {
+          // Resolve the wheel's own definition, including RTLD_LOCAL loads.
+          void *library = dlopen(getenv("PHYDRAX_TEST_CUDSS_LIBRARY"),
+                                 RTLD_NOW | RTLD_NOLOAD);
+          if (!library) abort();
+          execute_fn real_execute = (execute_fn)dlsym(library, "cudssExecute");
+          if (!real_execute) abort();
+          int status = real_execute(handle, phase, config, data, matrix, solution, rhs);
+          dlclose(library);
+          if (status == 0 && phase == (1 << 3) && atomic_exchange(&armed, 0)) {
+            atomic_fetch_add(&injected, 1);
+            return 5;  // CUDSS_STATUS_EXECUTION_FAILED
+          }
+          return status;
+        }
+        """,
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [
+            compiler,
+            "-shared",
+            "-fPIC",
+            "-std=c11",
+            str(source),
+            "-ldl",
+            "-o",
+            str(interposer),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    environment = {
+        **os.environ,
+        "LD_PRELOAD": os.pathsep.join(
+            item for item in (str(interposer), os.environ.get("LD_PRELOAD")) if item
+        ),
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+    }
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import ctypes
+import os
+import runpy
+import sys
+from pathlib import Path
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import numpy as np
+import phydrax as phx
+from phydrax._cuda_native import load_cuda_component
+
+helpers = runpy.run_path(sys.argv[1])
+component = load_cuda_component("cudss")
+os.environ["PHYDRAX_TEST_CUDSS_LIBRARY"] = next(
+    path for path in component.preloaded if Path(path).name.startswith("libcudss.so.")
+)
+controls = ctypes.CDLL(None)
+controls.phx_test_cudss_arm.argtypes = []
+controls.phx_test_cudss_arm.restype = None
+controls.phx_test_cudss_injected.argtypes = []
+controls.phx_test_cudss_injected.restype = ctypes.c_int
+la = phx.linalg
+matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=jnp.float32)
+rhs = jnp.asarray([1.0, -2.0], dtype=jnp.float32)
+original = helpers["_prepare"](matrix, 1)
+current = None
+solve = eqx.filter_jit(la.solve)
+
+@eqx.filter_jit
+def refresh(
+    current: la.PreparedLinearSolve, values: jax.Array
+) -> la.PreparedLinearSolve:
+    changed = eqx.tree_at(
+        lambda item: item.operator.coefficients, original.problem, values.reshape(-1)
+    )
+    return la.refresh(current, changed)
+
+try:
+    expected = np.linalg.solve(np.asarray(matrix), np.asarray(rhs))
+    np.testing.assert_allclose(solve(original, rhs).value, expected, rtol=1e-6)
+    controls.phx_test_cudss_arm()
+    try:
+        current = refresh(original, matrix * 2)
+        jax.block_until_ready(current)
+    except RuntimeError as error:
+        current = None
+        assert "cuDSS failure" in str(error), str(error)
+    else:
+        raise AssertionError("Failed cuDSS refactor did not reach the public caller")
+    try:
+        jax.effects_barrier()
+    except RuntimeError as error:
+        assert "cuDSS failure" in str(error), str(error)
+    assert controls.phx_test_cudss_injected() == 1
+    for rebuilds in (1, 2):
+        recovered = solve(original, rhs)
+        np.testing.assert_allclose(recovered.value, expected, rtol=1e-6)
+        assert bool(recovered.successful)
+        assert int(recovered.provenance.native_rebuilds) == 1
+        assert helpers["_partition"](original) == (1, 1, rebuilds)
+    current = refresh(original, matrix * 2)
+    result = solve(current, rhs)
+    np.testing.assert_allclose(result.value, expected / 2, rtol=1e-6)
+    assert bool(result.successful)
+    assert helpers["_partition"](current) == (1, 1, 3)
+finally:
+    la.release(original)
+    if current is not None:
+        la.release(current)
+""",
+            str(Path(__file__).resolve()),
+        ],
+        cwd=(
+            Path.cwd()
+            if "PHYDRAX_CUDA_QUALIFICATION_GPUS" in environment
+            else Path(__file__).resolve().parents[3]
+        ),
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 @pytest.mark.cuda_native

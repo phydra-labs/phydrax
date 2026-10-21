@@ -330,6 +330,62 @@ def test_amgx_refresh_is_independent_and_old_coefficients_rebuild(
 
 
 @pytest.mark.cuda_native
+@pytest.mark.parametrize("traced", [False, True], ids=("eager", "traced"))
+def test_amgx_failed_resetup_rebuilds_original_preparation(
+    native_amgx: None, traced: bool
+) -> None:
+    problem, matrix, rhs = _poisson_problem(
+        operator_id=f"amgx-failed-resetup-{'traced' if traced else 'eager'}"
+    )
+    policy = amg.AmgXPolicy(
+        {
+            "config_version": 2,
+            "solver": {
+                "solver": "DENSE_LU_SOLVER",
+                "max_iters": 1,
+                "monitor_residual": 1,
+                "norm": "L2",
+            },
+        },
+        hierarchy_cache_capacity=1,
+    )
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem, policy))
+    refresh = eqx.filter_jit(amg.refresh_amgx) if traced else amg.refresh_amgx
+    try:
+        _assert_dense_parity(amg.solve_amgx(prepared, rhs), matrix, rhs)
+        before = _amgx_partition(prepared).rebuilds
+        # Keep the CSR pattern intact: cuSolver's dense LU detects a zero pivot
+        # during numeric resetup, after the resident matrix has been overwritten.
+        singular = eqx.tree_at(
+            lambda item: item.operator.coefficients,
+            problem,
+            jnp.zeros_like(problem.operator.coefficients),
+        )
+        with pytest.raises(jax.errors.JaxRuntimeError, match="AmgX:"):
+            refresh(prepared, singular).native_id.block_until_ready()
+        # JAX separately retains the failed side effect until its public barrier.
+        with pytest.raises(jax.errors.JaxRuntimeError, match="AmgX:"):
+            jax.effects_barrier()
+        live_after_failure = _amgx_live_count(prepared)
+        assert _amgx_partition(prepared).rebuilds == before
+        recovered = amg.solve_amgx(prepared, rhs)
+        _assert_dense_parity(recovered, matrix, rhs)
+        assert live_after_failure == 0
+        assert recovered.diagnostics.native_rebuilds is not None
+        assert int(recovered.diagnostics.native_rebuilds) == 1
+        resources = _amgx_partition(prepared)
+        assert resources.rebuilds == before + 1
+        assert resources.capacity == 1
+        assert resources.live == 1
+    finally:
+        # A read-only solve rebuild does not resurrect the old immutable ID.
+        # Evict its anonymous memo so this test can release every live hierarchy.
+        cleanup = amg.prepare_amgx(problem, prepared.plan)
+        amg.release_amgx(cleanup)
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
 def test_amgx_nonconvergence_preserves_per_rhs_provider_failure(
     native_amgx: None,
 ) -> None:

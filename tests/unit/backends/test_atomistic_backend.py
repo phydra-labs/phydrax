@@ -118,7 +118,7 @@ def test_precision_and_accumulation_are_distinct_admitted_identities() -> None:
         ((12, 0), True),
         ((8, 9), False),
         ((10, 0), True),
-        ((10, 3), False),
+        ((10, 3), True),
         ((12, 1), True),
         ((13, 0), False),
     ],

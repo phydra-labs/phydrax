@@ -539,6 +539,9 @@ Each plan has a separate bounded native factor-cache partition; the positive
 is rebuilt from call operands, so release or eviction does not invalidate a
 prepared value. Solve provenance reports exact int32 `native_rebuilds`.
 Use `cuda_native_resources()` to inspect live entries, capacities, and rebuilds.
+Failed resident numeric refresh retires the affected memo before releasing its
+operation lock. The error reaches the caller, and the original preparation's
+next solve rebuilds from its original operands rather than reusing partial factors.
 
 cuDSS reports positive and negative LDLᵀ inertia, but does not claim reliable
 zero inertia. Accordingly, the current nonconvex structured IPM rejects cuDSS as
@@ -841,6 +844,9 @@ Evicted state is also rebuilt from complete operands. Diagnostics expose per-RHS
 independent residual verification remains JAX-side. `release_amgx` is idempotent
 and optional: it retires entries early without invalidating preparations. A
 subsequent solve rebuilds state and records that work in `native_rebuilds`.
+If coefficient replacement or resetup fails, native work is drained and the
+affected memo is retired before the error returns. The original preparation
+remains reconstructible; failed resetup never becomes a usable partial hierarchy.
 AmgX initialization/finalization is reference counted inside the companion.
 The owned exit handler releases native state and finalizes loaded components.
 
@@ -961,7 +967,7 @@ ordinary-JAX streamed route remains the portable reference.
 
 | Target | Lowering | Admission |
 | --- | --- | --- |
-| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with an admitted compute capability: exactly 8.0, 9.0, 10.0, 12.0, or 12.1. Other GPU clients, such as ROCm, and other architectures are refused. |
+| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with an admitted compute capability: exactly 8.0, 9.0, 10.0, 10.3, 12.0, or 12.1. Other GPU clients, such as ROCm, and other architectures are refused. |
 | `"cpu_interpret"` | `"pallas_mosaic_gpu_interpret"` | Always available. The CPU Mosaic GPU interpreter executes the same kernel bodies for semantic reference verification. |
 
 HIP/ROCm and TPU are not implemented targets. `AtomisticKernelTarget(target)`

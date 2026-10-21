@@ -348,7 +348,7 @@ uv pip install --python .venv/bin/python --no-sources \
 
 Native-JAX MACE and the explicitly selected Pallas MACE route are distinct.
 B200 is admitted for compiled MACE with float32/float64 forward and derivative
-evidence; B300 (10.3) remains refused. The exercised native-JAX workflows also
+evidence specific to that recorded stack. The exercised native-JAX workflows also
 cover ordered sparse adjoints, one-device spectral transforms, PIC evolution
 and restart, dense linear algebra, and compiled FMM forward/derivative parity.
 Ordered FMM strength adjoints also replay bitwise within the same compiled
@@ -362,6 +362,71 @@ scopes are retained in
 [`b200_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/b200_qualification.json).
 Single-device evidence does not qualify peer transfers, multi-GPU collectives,
 multi-host execution, or network RDMA.
+
+## Single-B300 deployment profile
+
+The single NVIDIA B300 SXM6 AC profile uses Linux x86-64, compute capability
+10.3, driver 595.91.07, CPython 3.13.15, JAX/JAXlib and CUDA plugin 0.12.0,
+and wheel-provided CUDA runtime 13.4.92. A fresh environment avoids the host's
+Python 3.12/CUDA 12 packages. Select one GPU and retain CPU reference support:
+
+```bash
+env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda,cpu \
+  JAX_ENABLE_X64=1 XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  .venv/bin/python -m tools.distributed_substrate_benchmark \
+  --size 17 --iterations 1
+```
+
+No NCCL or UCX workaround is selected. The substrate smoke passes weighted
+reduction, resource admission, and the PCG reference solve on one physical GPU.
+This does not exercise peer transfers or multi-GPU communication.
+
+The local companion uses `--architectures 103-real` and contains inspected sm103
+AmgX/QUDA device code. cuDSS kernels belong to the separately installed NVIDIA
+provider. The artifact is `manylinux_2_39_x86_64`, not a full release-target or
+manylinux_2_28 qualification. Keep the audited artifact when installing locally:
+
+```bash
+uv pip install --python .venv/bin/python --no-sources \
+  --find-links dist/cuda13-sm103 -e ".[cuda13]"
+```
+
+Installed-wheel qualification passes all required provider and teardown coverage
+on GPU 0, including hostile-library-path diagnostics. Its 116 passing tests have
+11 explicit skips: three require a second GPU and eight require unrelated
+optional GPT/Qlat providers. Failed cuDSS refactorization and AmgX resetup now
+retire partial native state; original preparations rebuild their original
+coefficients rather than reusing corrupted factors or hierarchies.
+
+Compiled MACE admits B300 with float32/float64 deterministic/compensated forward,
+operand/coefficient derivatives through order two, and resource/order refusals.
+Compiled FMM, ordered sparse adjoints, native-JAX MACE periodic derivatives and
+fresh-process restart, PIC workflow, and selected dense linear algebra also pass.
+FMM's Pallas near-field primal retains its native-JAX derivative rule and the
+upstream Triton deprecation warning. Exact fresh-process MACE replay uses its
+explicit fixed compiler profile, not an automatic deployment default.
+
+The uncontended campaign passes both-precision spectral gates, single-device
+reduced PIC physics checks, FMM phase checks at 32/64 particles, and 80 MACE
+route/transform agreement checks. Representative float64 warmed medians use three
+samples; preparation, lowering, compilation, and memory are recorded separately:
+
+| Workload | Reference route | Reference median (ms) | Accelerated median (ms) |
+| --- | --- | ---: | ---: |
+| Prepared order-three FMM, 64 particles | Native JAX | 8.406 | 6.891 |
+| MACE coupling energy/forces, 16 nodes | Dense native JAX | 0.154 | 4.107 |
+| One-interaction MACE energy/forces, 8 atoms | Exact trainable model | 92.884 | 91.757 |
+
+The model comparison uses the trainable accelerated route, not frozen inference.
+These bounded measurements expose the tiny dense-coupling advantage and do not
+establish a general speedup or large-model scaling result.
+
+[`b300_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/b300_qualification.json)
+retains source/artifact identities, failure reproductions, numerical gates, and
+phase-separated bounded benchmarks. Single-device evidence does not establish
+general acceleration, multi-GPU/MPI execution, network RDMA, multi-host scaling,
+or cross-device bitwise continuation. No wheel publication is implied.
 
 ## Multi-GPU and multi-node execution
 
