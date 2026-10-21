@@ -160,10 +160,22 @@ ffi::Error Refresh(cudaStream_t stream, I32 previous, I32 offsets, I32 columns, 
     const bool reusable = entry && entry->n == n && entry->nnz == values.element_count() &&
         entry->config_text == config && entry->offsets == copy_indices(offsets) && entry->columns == copy_indices(columns);
     if (reusable) {
-      amgx_check(AMGX_matrix_replace_coefficients(entry->matrix, entry->n, entry->nnz, values.typed_data(), nullptr));
-      amgx_check(AMGX_solver_resetup(entry->solver, entry->matrix));
-      output_int(id, registry().rekey(device, partition, capacity, old_id, entry));
-      output_int(rebuilt, 0);
+      try {
+        amgx_check(AMGX_matrix_replace_coefficients(entry->matrix, entry->n, entry->nnz, values.typed_data(), nullptr));
+        amgx_check(AMGX_solver_resetup(entry->solver, entry->matrix));
+        output_int(id, registry().rekey(device, partition, capacity, old_id, entry));
+        output_int(rebuilt, 0);
+      } catch (const std::exception& error) {
+        // A failed in-place resetup cannot remain resident under the immutable
+        // old ID. Drain provider work before destroying its hierarchy or
+        // returning ownership of the refresh's coefficient buffers to XLA.
+        const auto completion = cudaDeviceSynchronize();
+        registry().erase(device, partition, old_id);
+        if (completion != cudaSuccess)
+          throw std::runtime_error(std::string(error.what()) +
+              "; CUDA error completing failed AmgX refresh: " + cudaGetErrorString(completion));
+        throw;
+      }
     } else {
       entry = setup(device, offsets, columns, values, config);
       output_int(id, registry().insert(device, partition, capacity, entry));

@@ -143,8 +143,17 @@
 - Admit compiled MACE coupling on B200 (compute capability 10.0), with real-device
   float32/float64 deterministic/compensated forward, all-operand and coefficient
   derivatives, second-order derivatives, compiler resource evidence, and
-  resource/derivative-order refusal coverage. B300 (10.3) remains unqualified
-  and refused; native-JAX execution and existing precision policies are unchanged.
+  resource/derivative-order refusal coverage; native-JAX execution and existing
+  precision policies are unchanged.
+- Admit B300 compute capability 10.3 for compiled MACE coupling on Python 3.13
+  and JAX 0.12 after real-device float32/float64 deterministic/compensated
+  forward, operand/coefficient derivative, second-order, compiler-resource,
+  and resource/derivative-order refusal qualification. Preserve the explicit
+  architecture set, GB10 admission, and scientific precision policies.
+  Retain single-device sm103 installed-wheel qualification, scientific/restart
+  checks, and phase-separated bounded benchmarks in
+  `benchmarks/b300_qualification.json`; no general acceleration or multi-GPU
+  qualification is implied.
 - The `cuda13` installation extra with JAX's CUDA plugin, NVIDIA wheels, an
   installed-intent CUDA-major marker, and the lockstep wheel-only
   `phydrax-cuda13` companion on Linux x86-64 and aarch64, including cuDSS, AmgX, and QUDA.
@@ -204,6 +213,11 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Retire partially mutated cuDSS factors and AmgX hierarchies after failed
+  numeric refresh, preserving original immutable preparations and partition
+  rebuild evidence. Drain queued native work before returning failed-call
+  buffer ownership. Real AmgX zero-pivot and controlled post-refactor cuDSS
+  failure regressions cover recovery without masking the original error.
 - Keep configuration-test subprocesses on CPU instead of clearing the parent's
   platform selection and implicitly reserving GPU memory in parallel workers.
   The bootstrap partial-commit scenario explicitly retains its unset-platform

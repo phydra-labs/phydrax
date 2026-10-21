@@ -188,9 +188,13 @@ static ffi::Error repoint(FactorEntry* e, cudaStream_t stream,
 static ffi::Error execute(FactorEntry* e, cudaStream_t stream, cudssPhase_t phase) {
   const auto status = cudssExecute(e->handle, phase, e->config, e->data,
                                    e->A, e->x_dummy, e->b_dummy);
-  // Even a failed phase can have enqueued work; preserve teardown ordering.
-  CUDA_CHECK(cudaEventRecord(e->done, stream));
+  // Failed phases may enqueue work and outlive this lease through waiting readers.
+  const auto completion = cudaEventRecord(e->done, stream);
+  if (status != CUDSS_STATUS_SUCCESS || completion != cudaSuccess)
+    cudaStreamSynchronize(stream);
+  // Keep the provider error when completion recording also fails.
   CUDSS_CHECK(status);
+  CUDA_CHECK(completion);
   return ffi::Error::Success();
 }
 
@@ -267,14 +271,24 @@ static ffi::Error numeric(cudaStream_t stream, ffi::Buffer<ffi::S32> token,
   if (auto err = begin_phase<T>(stream, token, options, &lease); err.failure()) return err;
   auto& e = lease.entry;
   const bool rebuilt = !e;
+  auto& r = registry();
   if (rebuilt) {
     if (auto err = create_entry(stream, values, offsets, columns, fingerprint,
                                 1, lease.device, options, &e); err.failure()) return err;
-  } else if (auto err = repoint(e.get(), stream, offsets, columns, fingerprint, values); err.failure()) return err;
+  } else if (auto err = repoint(e.get(), stream, offsets, columns, fingerprint, values); err.failure()) {
+    e->factorized = false;
+    r.erase(lease.device, partition, lease.id);
+    return err;
+  }
   const auto phase = Refactorize && e->factorized ? CUDSS_PHASE_REFACTORIZATION : CUDSS_PHASE_FACTORIZATION;
-  if (auto err = execute(e.get(), stream, phase); err.failure()) return err;
+  e->factorized = false;
+  if (auto err = execute(e.get(), stream, phase); err.failure()) {
+    // Retire the old immutable name before releasing operation_mu. Readers
+    // already waiting on this entry will recheck the registry and rebuild.
+    if (!rebuilt) r.erase(lease.device, partition, lease.id);
+    return err;
+  }
   e->factorized = true;
-  auto& r = registry();
   const auto id = rebuilt ? r.insert(lease.device, partition, capacity, e)
                           : r.rekey(lease.device, partition, capacity, lease.id, e);
   if (rebuilt) r.count_rebuild(lease.device, partition);

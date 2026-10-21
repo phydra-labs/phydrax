@@ -59,6 +59,8 @@ benchmarks/*
 !benchmarks/rtx_pro_6000_qualification.json
 # DGX Spark ARM companion and single-GB10 scientific qualification.
 !benchmarks/spark_qualification.json
+# Single-B300 CUDA artifacts, scientific qualification, and recovery evidence.
+!benchmarks/b300_qualification.json
 # Apple GPU primitive/scientific drivers and retained build/performance evidence.
 !benchmarks/metal_execution_scaling.py
 !benchmarks/m1_max_qualification.json

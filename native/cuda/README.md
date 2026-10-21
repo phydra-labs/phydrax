@@ -110,6 +110,14 @@ teardown with `--required-gpus 1`; the inspected local wheel is sm100-only
 `manylinux_2_39`, not a full release-architecture artifact. See
 `benchmarks/b200_qualification.json` for exact artifact and runtime evidence.
 
+B300 has compute capability 10.3. Its locally qualified x86-64 companion uses
+`--architectures 103-real`, inspected sm103 AmgX/QUDA SASS, and
+`--required-gpus 1` installed-wheel qualification on Python 3.13/JAX 0.12.
+The `manylinux_2_39_x86_64` artifact does not claim full release architecture
+or manylinux_2_28 coverage. Generic sm100 cubin compatibility alone is not
+scientific qualification; retain the actual build and runtime evidence in
+`benchmarks/b300_qualification.json`.
+
 ## A100 hardware qualification
 
 For an A100-only artifact, select `--architectures 80-real` explicitly, not
@@ -171,6 +179,14 @@ ID; the original preparation's ID does not change. Releasing that stale ID does
 not release the anonymous reconstructed memo. Such entries remain bounded by
 their device/plan cache capacity and are reclaimed by eviction or the explicit
 component-wide release-all/shutdown sequence before process exit.
+
+Failed cuDSS numeric refresh and AmgX coefficient resetup retire the affected
+resident memo without discarding partition rebuild counters. The original
+immutable preparation rebuilds from its original operands on its next solve;
+provider errors remain visible. cuDSS retains its per-entry operation lock
+through retirement, while AmgX retains its serialized provider-call boundary.
+Failure-path synchronization completes queued native work before returning
+buffer ownership. Severe CUDA failures do not imply a recoverable device.
 
 
 ## Publishing order

@@ -105,6 +105,19 @@ template <class Entry> class Registry final : public RegistryBase {
     std::lock_guard<std::mutex> lock(mutex_);
     return store_locked(device, partition, capacity, old_id, std::move(entry), retired);
   }
+  // Failed mutation retires only its memo, retaining partition work evidence.
+  void erase(int32_t device, int64_t partition, int32_t id) {
+    std::shared_ptr<Entry> retired;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto part = partitions_.find({device, partition});
+    if (part == partitions_.end()) return;
+    auto found = part->second.entries.find(id);
+    if (found == part->second.entries.end()) return;
+    retired = std::move(found->second.entry);
+    part->second.lru.erase(found->second.lru);
+    part->second.entries.erase(found);
+    live_ids_.erase(id);
+  }
   void count_rebuild(int32_t device, int64_t partition) {
     std::lock_guard<std::mutex> lock(mutex_);
     ++partitions_[{device, partition}].rebuilds;
