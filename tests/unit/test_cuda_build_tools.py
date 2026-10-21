@@ -44,6 +44,8 @@ def test_cuda13_resolution_accepts_math_library_version12(
         ("jax-cuda12-plugin", "0.11.2", "Expected CUDA 13 JAX plugin"),
         ("nvidia-cuda-runtime-cu12", "12.9.79", "Foreign CUDA 12 distribution"),
         ("nvidia-cuda-runtime", "12.9.79", "Expected CUDA 13 runtime version"),
+        ("cutensor-cu12", "2.8.1", "Foreign CUDA 12 distribution"),
+        ("cutensornet-cu12", "2.14.0", "Foreign CUDA 12 distribution"),
     ],
 )
 def test_cuda13_resolution_refuses_foreign_runtime(
@@ -85,6 +87,31 @@ def test_linux_resolution_requires_lockstep_native_companion(
             linux_resolution, f"{architecture}-manylinux_2_28", "0.2.2"
         )
     )
+
+
+@pytest.mark.parametrize(
+    ("distribution", "release"),
+    [
+        ("cutensor-cu13", "2.8.1"),
+        ("cutensornet-cu13", "2.14.0"),
+        ("phydrax-cuest", "0.2.2"),
+    ],
+)
+def test_optional_cuda_runtime_resolution_keeps_its_declared_major(
+    linux_resolution: dict[str, str], distribution: str, release: str
+) -> None:
+    linux_resolution[distribution] = release
+    assert (
+        extras.resolution_errors(linux_resolution, "x86_64-manylinux_2_28", "0.2.2") == []
+    )
+
+
+def test_optional_runtime_release_must_match_its_companion(
+    linux_resolution: dict[str, str],
+) -> None:
+    linux_resolution["phydrax-cuest"] = "0.2.1"
+    errors = extras.resolution_errors(linux_resolution, "x86_64-manylinux_2_28", "0.2.2")
+    assert any("phydrax-cuest==0.2.2" in error for error in errors)
 
 
 def test_build_cli_rejects_removed_major_selector(tmp_path: Path) -> None:

@@ -22,6 +22,7 @@ from ....operators.quantum.gaussian import (
     electron_repulsion_tensor,
     FactorizedERITensor,
     kinetic_matrix,
+    molecular_integral_definition_id,
     nuclear_attraction_matrix,
     nuclear_repulsion_energy,
     PreparedGaussianBasis,
@@ -124,6 +125,8 @@ class CorrelatedOrbitalPartition(StrictModule, NonTrainableState):
 
 
 class MolecularOrbitalIntegralStore(StrictModule, NonTrainableState):
+    """MO integrals retaining the source AO Hamiltonian's integral definition."""
+
     one_body: Array
     two_body: Array | None
     factorized: FactorizedERITensor | None
@@ -133,6 +136,7 @@ class MolecularOrbitalIntegralStore(StrictModule, NonTrainableState):
     reference_energy: Array
     partition: CorrelatedOrbitalPartition
     source_basis_id: str = eqx.field(static=True)
+    integral_definition_id: str = eqx.field(static=True)
     store_id: str = eqx.field(static=True)
 
     def __init__(
@@ -146,6 +150,7 @@ class MolecularOrbitalIntegralStore(StrictModule, NonTrainableState):
         source_basis_id: str,
         /,
         *,
+        integral_definition_id: str,
         two_body: ArrayLike | None = None,
         factorized: FactorizedERITensor | None = None,
     ) -> None:
@@ -155,6 +160,9 @@ class MolecularOrbitalIntegralStore(StrictModule, NonTrainableState):
         nuclear = jnp.asarray(nuclear_repulsion, dtype=one.real.dtype).reshape(())
         reference = jnp.asarray(reference_energy, dtype=one.real.dtype).reshape(())
         source = str(source_basis_id).strip()
+        definition = str(integral_definition_id).strip()
+        if not definition:
+            raise ValueError("MO integral_definition_id must be non-empty.")
         two = None if two_body is None else jnp.asarray(two_body, dtype=one.dtype)
         if (two is None) == (factorized is None):
             raise ValueError(
@@ -183,10 +191,12 @@ class MolecularOrbitalIntegralStore(StrictModule, NonTrainableState):
         self.reference_energy = reference
         self.partition = partition
         self.source_basis_id = source
+        self.integral_definition_id = definition
         self.store_id = canonical_fingerprint(
             {
                 "kind": "molecular-orbital-integral-store",
                 "source_basis": source,
+                "integral_definition": definition,
                 "partition": partition.partition_id,
                 "factorized": None if factorized is None else factorized.tensor_id,
                 "arrays": array_tree_fingerprint(
@@ -239,8 +249,20 @@ class MolecularIntegralTransformationPlan(StrictModule, NonTrainableState):
         *,
         factorized_ao: FactorizedERITensor | None = None,
     ) -> MolecularOrbitalIntegralStore:
+        """Transform only the same AO integral definition that produced ``state``.
+
+        Omitting ``factorized_ao`` selects exact dense AO integrals. Supplying it
+        requires a state produced with that same factorized tensor; neither route
+        substitutes a different integral definition for a nonexact HF state.
+        """
         if state.coefficients.shape[1] != partition.orbital_count:
             raise ValueError("Mean-field state and correlated partition do not align.")
+        definition = molecular_integral_definition_id(basis, factorized_ao)
+        if state.integral_definition_id != definition:
+            raise ValueError(
+                "Correlation integrals must match the mean-field state's integral "
+                "definition."
+            )
         coordinate = jnp.asarray(positions)
         charges = jnp.asarray(nuclear_charges, dtype=coordinate.dtype)
         core_ao = kinetic_matrix(basis, coordinate) + nuclear_attraction_matrix(
@@ -269,6 +291,7 @@ class MolecularIntegralTransformationPlan(StrictModule, NonTrainableState):
                 state.total_energy,
                 partition,
                 basis.prepared_id,
+                integral_definition_id=definition,
                 two_body=two,
             )
         transformed_factors = contract(
@@ -291,6 +314,7 @@ class MolecularIntegralTransformationPlan(StrictModule, NonTrainableState):
             state.total_energy,
             partition,
             basis.prepared_id,
+            integral_definition_id=definition,
             factorized=factorized_mo,
         )
 

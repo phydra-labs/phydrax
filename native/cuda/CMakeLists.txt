@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.28)
-set(PHX_CUDA_COMPONENTS "cudss;amgx;quda" CACHE STRING "Companion components")
+set(PHX_CUDA_COMPONENTS "cudss;amgx;quda;cutensor;cutensornet;cuest" CACHE STRING "Companion components")
 foreach(component IN LISTS PHX_CUDA_COMPONENTS)
-  if(NOT component MATCHES "^(cudss|amgx|quda)$")
+  if(NOT component MATCHES "^(cudss|amgx|quda|cutensor|cutensornet|cuest|collective|cudecomp|cudss_mgmn)$")
     message(FATAL_ERROR "Unknown CUDA component: ${component}")
   endif()
 endforeach()
+if(("cudecomp" IN_LIST PHX_CUDA_COMPONENTS OR "cudss_mgmn" IN_LIST PHX_CUDA_COMPONENTS)
+   AND NOT "collective" IN_LIST PHX_CUDA_COMPONENTS)
+  message(FATAL_ERROR "Site collective providers require the collective component in the same build")
+endif()
 set(PHX_CUDA_ARCHITECTURES "80-real;86-real;89-real;90-real;100-real;120-real;120-virtual"
   CACHE STRING "CUDA architectures; native for development")
 set(CMAKE_CUDA_ARCHITECTURES "${PHX_CUDA_ARCHITECTURES}")
@@ -27,6 +31,28 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 find_package(CUDAToolkit REQUIRED GLOBAL)
 find_package(Python REQUIRED COMPONENTS Interpreter)
+if("cutensor" IN_LIST PHX_CUDA_COMPONENTS OR "cutensornet" IN_LIST PHX_CUDA_COMPONENTS
+   OR "cudecomp" IN_LIST PHX_CUDA_COMPONENTS)
+  find_path(PHX_CUTENSOR_INCLUDE_DIR cutensor.h
+    PATHS "${PHX_CUDA_TOOLKIT}/include" NO_DEFAULT_PATH REQUIRED)
+  find_library(PHX_CUTENSOR_LIBRARY NAMES cutensor
+    PATHS "${PHX_CUDA_TOOLKIT}/lib" NO_DEFAULT_PATH REQUIRED)
+  add_library(CUDA::cutensor SHARED IMPORTED GLOBAL)
+  set_target_properties(CUDA::cutensor PROPERTIES
+    IMPORTED_LOCATION "${PHX_CUTENSOR_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${PHX_CUTENSOR_INCLUDE_DIR}")
+endif()
+if("cutensornet" IN_LIST PHX_CUDA_COMPONENTS)
+  find_path(PHX_CUTENSORNET_INCLUDE_DIR cutensornet.h
+    PATHS "${PHX_CUDA_TOOLKIT}/include" NO_DEFAULT_PATH REQUIRED)
+  find_library(PHX_CUTENSORNET_LIBRARY NAMES cutensornet
+    PATHS "${PHX_CUDA_TOOLKIT}/lib" NO_DEFAULT_PATH REQUIRED)
+  add_library(CUDA::cutensornet SHARED IMPORTED GLOBAL)
+  set_target_properties(CUDA::cutensornet PROPERTIES
+    IMPORTED_LOCATION "${PHX_CUTENSORNET_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${PHX_CUTENSORNET_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES CUDA::cutensor)
+endif()
 execute_process(COMMAND "${Python_EXECUTABLE}" -c "import jax.ffi; print(jax.ffi.include_dir())"
   OUTPUT_VARIABLE _phx_ffi_include OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
 add_library(phx_cuda_ffi INTERFACE)
@@ -67,8 +93,13 @@ endif()
 file(WRITE "${CMAKE_BINARY_DIR}/phx_cuda_build.json"
   "{\n\"build_hash\":\"${PHX_CUDA_BUILD_HASH}\",\n\"toolkit_wheels\":${_phx_wheels},\n\"patch_hashes\":${_phx_patch_json},\n\"upstream_pins\":${_phx_upstream}\n}\n")
 include(PhxCudaComponent)
+if("collective" IN_LIST PHX_CUDA_COMPONENTS)
+  add_subdirectory("src/collective")
+endif()
 foreach(component IN LISTS PHX_CUDA_COMPONENTS)
-  add_subdirectory("src/${component}")
+  if(NOT component STREQUAL "collective")
+    add_subdirectory("src/${component}")
+  endif()
 endforeach()
 # License texts live at the repository root, not under a companion's project.
 if(DEFINED SKBUILD_METADATA_DIR)

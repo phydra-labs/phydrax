@@ -215,7 +215,8 @@ reports its component, device, partition key, live entries, declared capacity,
 and counted rebuilds. Native state is released by the owned process-exit handler.
 
 cuDSS and AmgX memo partitions are device-local. AmgX also owns its cuBLAS and
-cuSPARSE handles per device; switching devices does not recreate those handles.
+cuSPARSE handles, memory pools, allocation bookkeeping, and thread streams per
+device; switching devices does not borrow another GPU's allocations.
 Provider calls remain serialized and do not constitute a distributed solve.
 Releasing a live preparation retires its named memo. Reusing a released or
 evicted immutable preparation rebuilds under a fresh native ID without changing
@@ -520,6 +521,70 @@ constraint-dual values with their canonical signs.
 
 ::: phydrax.backends.CVXPY_CAPABILITIES
 
+## Optional prepared tensor CUDA execution
+
+`phydrax[cuda13,cutensor]` and `phydrax[cuda13,cutensornet]` add explicitly
+selected implementations beneath `phydrax.tensor_network`. Neither intercepts
+ordinary `ein.contract`, matrix multiplication, or native symmetry-sector
+execution. See the [prepared tensor contract](tensor_network.md).
+
+`ContractionExecutionPolicy` selects the executor independently of an imported
+path or `ContractionPathPlanner`. The latter performs bounded, shape-only
+cuTensorNet planning, while its returned path still passes native schedule and
+resource admission. Numerical arrays remain dynamic; current values are rebound
+for every call. Descriptor reuse is not numerical-result caching.
+
+The admitted numerical surface covers real/complex 32-/64-bit values, explicit
+computation/accumulation precision, and native-owned derivative actions through
+order two. Unsupported transformations, precision, layout, or resource requests
+refuse explicitly. Vendor workspace/cache budgets count external device storage;
+opaque vendor host descriptor bytes remain unknown.
+
+Native host slice placement/checkpoint reduction remains separate from pure
+device-local numerical execution. It is not differentiable orchestration and
+does not silently enable vendor MPI or hidden slicing. Candidate declarations
+are not hardware or release qualification.
+
+## Optional cuEST molecular integrals
+
+`phydrax[cuda13,cuest]` supplies a small companion wrapper and the separate
+optional `phydrax-cuest` C-runtime wheel. Native Gaussian, molecular SCF,
+convergence, units, result evidence, and PES owners remain authoritative.
+The selected profile is nonperiodic all-electron real-FP64 integer DF-RHF with
+analytic first nuclear forces—not exact ERIs, a vendor SCF engine, arbitrary
+autodiff, or analytic Hessians.
+
+The integral definition includes the actual orbital/auxiliary basis, fitting,
+screening, and precision choices. Explicit bound geometry is reused through SCF
+and associated force work; changing coordinates or a prepared recipe requires
+the owning rebind/restore path. A density-factor fast path must certify the
+actual current density, including damping, rather than substituting the newest
+orbitals. Same-definition energy/Pulay/force and stationary checks are retained.
+See [molecular electronic structure](../guides_computational_chemistry.md) and
+the [typed production workflow](../guides_production_computational_chemistry.md).
+
+## Site cuDecomp transposes
+
+`cudecomp_availability` discovers the explicitly supplied site component.
+`CudecompBackend` does not create an independent MPI world or imply actual
+hardware qualification. The numerical owner is the distributed spectral
+substrate: regular divisible three-dimensional slabs, one GPU per rank on one
+host, explicit complex64/complex128, exact source/target layout validation, and
+bounded known scratch.
+
+Local JAX FFTs, normalization, mathematical adjoints, and native scientific
+owners remain unchanged. Canonical pencil layouts, local guarded transforms,
+unsupported dimensions, batching, and rematerialization refuse explicit
+cuDecomp selection instead of falling back or replacing the native pencil
+schedule. Payload packing and opaque resident bytes are reported separately.
+See [execution ownership](execution.md#supervised-site-mpi-and-ordered-vendor-collectives).
+
+::: phydrax.backends.CudecompBackend
+
+::: phydrax.backends.cudecomp_availability
+
+::: phydrax.backends.CUDECOMP_CAPABILITIES
+
 ## cuDSS (native)
 
 The Linux x86-64 and aarch64 CUDA 13 companion provides cuDSS through
@@ -527,14 +592,14 @@ The Linux x86-64 and aarch64 CUDA 13 companion provides cuDSS through
 `SparseLDLT(provider="cudss", factor_cache_capacity=8)` explicitly.
 Importing Phydrax does not load the companion or initialize CUDA.
 
-The provider accepts sorted canonical 32-bit CSR structure and real float32 or
-float64 symmetric systems. It supports shared-pattern numeric value batches,
-retains symbolic analysis across `phydrax.linalg.refresh`, reuses factors for
-multiple right-hand sides, and supports optional `phydrax.linalg.release` to
-retire memo entries early.
-Refinement and original-coordinate residual certification remain JAX-side.
+The local provider accepts sorted canonical 32-bit CSR structure and real
+float32/float64 symmetric systems, including shared-pattern numeric value
+batches. It retains symbolic analysis across `phydrax.linalg.refresh`, reuses
+factors for true multiple RHS, and supports `phydrax.linalg.release` to retire
+memo entries early. Refinement and original-coordinate residual certification
+remain native Phydrax operations.
 
-Each plan has a separate bounded native factor-cache partition; the positive
+Each local/MG plan has a separate bounded native factor-cache partition; the positive
 `factor_cache_capacity` participates in policy and plan identity. Evicted state
 is rebuilt from call operands, so release or eviction does not invalidate a
 prepared value. Solve provenance reports exact int32 `native_rebuilds`.
@@ -543,10 +608,62 @@ Failed resident numeric refresh retires the affected memo before releasing its
 operation lock. The error reaches the caller, and the original preparation's
 next solve rebuilds from its original operands rather than reusing partial factors.
 
-cuDSS reports positive and negative LDLᵀ inertia, but does not claim reliable
-zero inertia. Accordingly, the current nonconvex structured IPM rejects cuDSS as
-its KKT provider until that capability is certified. No unavailable or
+`SparseLDLT.execution` is a `CudssExecutionPolicy`:
+
+| Mode | Ownership and admission |
+| --- | --- |
+| `local` | Existing device-local CSR and value-batch lifecycle |
+| `mg` | Explicit ordered 2/4/8-GPU group in one process; one full CSR/RHS on the first initiating device, vendor-owned peer streams/scratch, one group solve, no distributed input or matrix batching |
+| `mgmn` | Explicit unpadded rank-local CSR, one GPU per process on the same host, exact site-linked GPU-aware MPI/shim provenance and authenticated live collective lease; separate `collective` and `cudss_mgmn` DSOs, not universal companion-wheel components |
+
+The current coupled supervisor authenticates same-host descendants; vendor
+MGMN potential is not an admitted multi-host Phydrax execution profile.
+
+`cudss_availability(execution_mode=...)` and
+`sparse_provider_capabilities("cudss", execution_mode=...)` distinguish artifact
+availability and mode capabilities. Neither allocates a group nor certifies
+transport. MG refuses capture and conflicting live vendor reservations.
+MGMN requires the lease owner's explicit invocation boundary: dynamic live
+tickets, actual transformed all-rank schedule agreement, effect/token ordering,
+stream completion, and explicit collective retirement. Numerical invocation
+takes only an explicitly staged host-only `CollectiveProgram`; its owned graph
+supplies the schedule and the exact associated executable. Invocation does not
+retrace or execute arbitrary Python callbacks. User-code staging belongs to the
+named preparation boundary. A side-effect flag or process-local registry
+integer alone is not this contract. Site MPI is not bundled, and
+`CUDSS_COMM_LIB`/arbitrary loader search paths are not accepted communication
+library provenance.
+
+The pinned NVIDIA CUDA 13
+[cuDSS 0.8.0 redistribution index](https://developer.download.nvidia.com/compute/cudss/redist/redistrib_0.8.0.json)
+supplies `src/cudss_commlayer_openmpi.cu` in its 0.8.0.10 archive.
+`native/cuda/src/cudss_mgmn/commlayer/CMakeLists.txt` builds that unmodified,
+SHA256-pinned source against an explicit GPU-aware site OpenMPI prefix and the
+wheel-owned CUDA 13 toolchain. Both host and device communicators use MPI; the
+site recipe records source/interface/MPI hashes and build identity. It neither
+copies vendor source into the repository nor accepts a prebuilt shim merely
+because its SONAME is compatible.
+
+`memory_mode="hybrid"` remains the existing vendor hybrid-memory choice.
+`CudssMemoryPolicy(hybrid_device_limit_bytes=...)` applies a checked
+factorization/solve device limit after analysis; it does not bound analysis,
+host factors, pinned pages, or other live states. Certified all-phase bounds
+and host-limit requests are refused. `diagnostics.external_memory` retains
+per-calling-device vendor estimates, with unknown host aggregation rather than
+an inferred sum or RSS-derived bound. `provider_estimate` evidence cannot
+satisfy a certified memory envelope.
+
+Local cuDSS retains its partial positive/negative inertia report without
+claiming reliable zero inertia. MG/MGMN inertia is unknown: the documented
+diagonal-query reorderings are not supported in those modes. Consequently no
+mode gains structured-IPM admission from multi-GPU execution. No unavailable or
 insufficient-inertia execution falls back to another provider.
+
+See the [linear-solve ownership contract](linalg.md#cudss-memory-and-execution-ownership)
+and NVIDIA's pinned cuDSS 0.8
+[advanced features](https://docs.nvidia.com/cuda/cudss/0.8.0/advanced_features.html),
+[memory/data queries](https://docs.nvidia.com/cuda/cudss/0.8.0/types.html), and
+[execution/distribution functions](https://docs.nvidia.com/cuda/cudss/0.8.0/functions.html).
 
 ::: phydrax.backends.CudssBackend
 

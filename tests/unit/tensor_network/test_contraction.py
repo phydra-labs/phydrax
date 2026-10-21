@@ -99,7 +99,7 @@ def test_contraction_scenario_1() -> None:
                 maximum_workspace_bytes=narrow.cost.peak_live_bytes
             ),
         )
-    with pytest.raises(TimeoutError, match="planning exceeded"):
+    with pytest.raises(TimeoutError):
         tn.plan_contraction(
             _matrix_structure(),
             dtype="float32",

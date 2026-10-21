@@ -4,6 +4,7 @@
 
 """Bounded inputs and truthful hardware contracts of distributed drivers."""
 
+import json
 from types import SimpleNamespace
 
 import jax
@@ -14,6 +15,7 @@ from jax.sharding import PartitionSpec
 
 from benchmarks import distributed_mace_scaling as mace, distributed_spectral as spectral
 from phydrax._execution_runtime import ExecutionRuntime
+from phydrax.linalg.krylov import KrylovBreakdownStatus
 
 
 def test_spectral_input_block_matches_global_formula() -> None:
@@ -82,7 +84,7 @@ def test_mace_rejects_empty_campaign() -> None:
         mace._row("fixed-total", 1, 0, 1, "devices", 1)
 
 
-@pytest.mark.parametrize("owners", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("owners", [1, 2, 3, 4, 5, 8])
 def test_mace_device_subset_executes_owner_collective(owners: int) -> None:
     if jax.process_count() != 1:
         pytest.skip("The MACE benchmark requires single-process host ingress.")
@@ -118,3 +120,115 @@ def test_mace_device_subset_refuses_insufficient_devices() -> None:
     cell, _, _ = mace._structure(16, seed=16)
     with pytest.raises(ValueError, match="require at least .* visible devices"):
         mace._plan(mace._model(1), cell, jax.device_count() + 1, 16, "devices")
+
+
+@pytest.mark.parametrize(
+    ("component", "metric", "value"),
+    [
+        ("weighted_mean", "absolute_error", float("nan")),
+        ("weighted_mean", "absolute_error", float("inf")),
+        ("weighted_mean", "absolute_error", 1e-3),
+        ("distributed_pcg", "maximum_solution_error", float("nan")),
+        ("distributed_pcg", "maximum_solution_error", 1e-3),
+        ("distributed_pcg", "converged", False),
+        ("distributed_pcg", "breakdown", int(KrylovBreakdownStatus.NEAR_BREAKDOWN)),
+        ("distributed_pcg", "breakdown", int(KrylovBreakdownStatus.NONFINITE_ACTION)),
+        ("distributed_pcg", "breakdown", int(KrylovBreakdownStatus.STAGNATION)),
+    ],
+)
+def test_substrate_scientific_failures_cannot_pass(
+    component: str, metric: str, value: float | bool | int
+) -> None:
+    from tools.distributed_substrate_benchmark import qualification_errors
+
+    record: dict[str, dict[str, float | int | bool]] = {
+        "problem": {"group_identity_consistent": True},
+        "weighted_mean": {
+            "absolute_error": 0.0,
+            "seconds": 0.01,
+            "observed": 0.5,
+            "expected": 0.5,
+        },
+        "distributed_pcg": {
+            "maximum_solution_error": 0.0,
+            "seconds": 0.01,
+            "converged": True,
+            "breakdown": int(KrylovBreakdownStatus.HAPPY),
+            "residual_norm": 0.0,
+            "residual_absolute_tolerance": 1e-12,
+        },
+    }
+    record[component][metric] = value
+    assert qualification_errors(record)
+
+
+def test_rank_terminal_record_accepts_bootstrap_logs_without_discarding_the_result() -> (
+    None
+):
+    from tools.distributed_substrate_benchmark import _terminal_record, RANK_RESULT_PREFIX
+
+    expected = {"runtime": {"process_index": 2}, "passed": True, "errors": []}
+    stdout = (
+        b"[bootstrap] joining requested process set\n"
+        + RANK_RESULT_PREFIX
+        + json.dumps(expected).encode("utf-8")
+        + b"\n"
+    )
+    assert _terminal_record(stdout) == expected
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_missing_or_duplicate_rank_terminal_records_cannot_pass(count: int) -> None:
+    from tools.distributed_substrate_benchmark import _terminal_record, RANK_RESULT_PREFIX
+
+    terminal = RANK_RESULT_PREFIX + b'{"passed":true}\n'
+    with pytest.raises(ValueError, match="exactly one terminal"):
+        _terminal_record(b"[bootstrap] joined\n" + terminal * count)
+
+
+@pytest.mark.parametrize("failure_mode", ("supervisor-failure", "unknown-exit"))
+def test_successful_rank_records_cannot_hide_failed_process_supervision(
+    failure_mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from phydrax.execution import LocalProcessLaunchError, LocalProcessResult
+    from tools import distributed_substrate_benchmark as benchmark
+
+    results = tuple(
+        LocalProcessResult(
+            rank,
+            None if failure_mode == "unknown-exit" and rank == 1 else 0,
+            benchmark.RANK_RESULT_PREFIX
+            + json.dumps(
+                {
+                    "runtime": {
+                        "process_index": rank,
+                        "execution_group_id": "same-owned-group",
+                    },
+                    "passed": True,
+                    "errors": [],
+                }
+            ).encode()
+            + b"\n",
+            b"",
+            False,
+        )
+        for rank in range(2)
+    )
+
+    def launch(*_args: object, **_kwargs: object) -> tuple[LocalProcessResult, ...]:
+        if failure_mode == "supervisor-failure":
+            raise LocalProcessLaunchError(results, reason="supervision evidence lost")
+        return results
+
+    monkeypatch.setattr(benchmark, "launch_local_processes", launch)
+    with pytest.raises(SystemExit) as failure:
+        benchmark.main(["--local-processes", "2"])
+    assert failure.value.code == 1
+    record = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert record["passed"] is False
+    if failure_mode == "unknown-exit":
+        assert record["rank_outputs"][1]["returncode"] is None
+    else:
+        assert any("supervision evidence lost" in error for error in record["errors"])

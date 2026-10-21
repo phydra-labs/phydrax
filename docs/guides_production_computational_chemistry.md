@@ -14,11 +14,16 @@ production registry.
 
 ## Identity and lifecycle
 
-Every model, task, numerical policy, prepared provider, result, checkpoint,
-partition, and campaign is content addressed. `ChemistryResultCodec` maps result
-families without weakening their field/unit contracts. `ChemistryRunEnvelope`
-and `ProductionChemistryArchivePlan` retain payload digests, semantic kind,
-scientific plan identity, environment, and lifecycle state.
+Scientific model, task, numerical policy, prepared provider, result, checkpoint,
+partition, and campaign identities are content addressed. A cuEST prepared
+definition binds the actual dynamic basis/policy/layout contents, not just
+cached labels; changing those contents requires preparation again and invalidates
+older cuEST identity/evidence. Runtime handles, object IDs, and weak-reference
+guards are ephemeral staleness machinery, never portable scientific identities.
+`ChemistryResultCodec` maps result families without weakening field/unit
+contracts. `ChemistryRunEnvelope` and `ProductionChemistryArchivePlan` retain
+payload digests, semantic kind, scientific plan identity, environment, and
+lifecycle state.
 
 A calculation request uses a concrete method plan and one typed task. Numerical
 choices are stored in `ElectronicNumericalPlan`, never in the physical method
@@ -53,6 +58,59 @@ The native paths retain the evidence needed to reject plausible silent failures:
   Wilson-link unitarity, acoustic-sum-rule residual, and quasiparticle/BSE
   residuals.
 
+### Optional cuEST evidence is definition-specific
+
+`MolecularHartreeFockPlan` selects its integral owner through
+`integrals=MolecularIntegralPlan(source)` from
+`phydrax.operators.quantum.gaussian`. Omitting the source retains native exact
+dense ERIs; prepared native direct J/K and fixed factorized tensors remain
+explicit alternatives. cuEST is an opt-in DF source, not automatic acceleration
+and not an exact-ERI label. Its auxiliary basis, Coulomb metric cutoff,
+absolute/relative conditioning, QR/matrix-power choice, screening, native FP64
+mode, density-factorization tolerance, and workspace/cache budgets are explicit
+numerical coordinates. No measured auxiliary metric rank is exposed.
+
+The admitted cuEST route is nonperiodic all-electron integer RHF, with uniform
+orbital shell representation and spherical auxiliary shells. Prepared
+normalization, native/vendor AO ordering, Cartesian component scales, and units
+are part of the contract. J and K use the actual damped density. Candidate
+occupied factors must reconstruct it and certify the PSD lower bound; native
+actual-density factorization reports its own evidence rather than replacing D
+with a newer orbital density.
+
+Energy and contracted analytic first nuclear forces share the same DF
+definition. The force result includes one-electron, two-electron, Pulay, and
+nuclear terms. Success additionally gates reconstructed-density consistency,
+commutator and restricted orbital-stationarity residuals. This is not arbitrary
+AD, basis differentiation, analytic Hessians, CPHF/CPKS, orbital-Hessian
+stability, or correlation/response computed under an exact replacement
+Hamiltonian. Unsupported cross-definition requests fail closed.
+
+`MolecularRHFProvider` connects native exact or cuEST RHF to typed energy/force
+calculations and PES consumers. Use the provider's exact `numerical` plan; a
+generic DF selector does not identify its recipe. The provider is serial and
+host-orchestrated, with no batching, AD, Hessian, periodic, or embedding-context
+claim. Low-level bound geometries are ephemeral, with dynamic reconstructible
+recipes: bind explicitly, refresh changed geometry, restore same-content
+restored arrays, and use the owning runtime release operation to clear native
+memos. Release/eviction permits reconstruction; it does not bless stale recipes.
+Workspace budgets cover wrapper-owned resources, not total process memory.
+
+Rank-deficient DIIS is supported by the native constrained minimum-norm SVD
+solve, not diagonal jitter or a disabled acceleration phase.
+`SCFDIISEvidence` retains coefficients, affine-constraint residual/tolerance,
+original error scale, and native status/rank/cutoff/normal-residual evidence.
+Force and DIIS admission remain numerical evidence, not release evidence.
+
+See [the computational-chemistry guide](guides_computational_chemistry.md) for
+the exact bind/refresh/restore contracts and
+[the complete typed recipe](cookbook/production_computational_chemistry.md).
+Optional installation is `pip install 'phydrax[cuda13,cuest]'`; consult
+[installation](installation.md) for the distinction between runtime wheels and
+the required PhydraX native extension. This surface is candidate only: it makes
+no GPU-performance, hardware-wide qualification, or release-promotion claim.
+
+
 ## Fixed native boundaries
 
 The general molecular Gaussian engine is dense or factorized and explicitly
@@ -61,10 +119,12 @@ calculation. Native SAD/SAP, unsupported SCF accelerators, PCM/COSMO surface
 solves, arbitrary selected-CI/DMRG algorithms, correlated transition properties,
 and ROA tensors require declared providers.
 
-Molecular HF supports RHF/UHF/ROHF/GHF. Molecular KS supports RKS/UKS and the
-native functional compositions documented by `DensityFunctionalPlan`; a name
-whose components are unavailable is rejected. CPHF/CPKS and nuclear Hessians use
-implicit stationary-density response rather than unrolled SCF differentiation.
+Native exact molecular HF supports RHF/UHF/ROHF/GHF. Molecular KS supports
+RKS/UKS and the native functional compositions documented by
+`DensityFunctionalPlan`; a name whose components are unavailable is rejected.
+Exact-native CPHF/CPKS and nuclear Hessians use implicit stationary-density
+response rather than unrolled SCF differentiation. These capabilities do not
+extend the optional cuEST first-force or other nonexact integral contracts.
 
 Native correlated work is deliberately bounded to RMP2 and determinant/CAS
 spaces that fit declared capacities. The coupled-cluster contract is provider

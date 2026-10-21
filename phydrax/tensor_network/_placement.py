@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.core import Tracer
+from jax.sharding import Mesh
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
@@ -23,6 +24,8 @@ from ._contraction import PreparedContraction
 from ._slicing import (
     execute_slice_assignment,
     mixed_radix_assignments,
+    prepare_sliced_contraction,
+    PreparedSlicedContraction,
     SlicedContractionPlan,
 )
 
@@ -194,12 +197,10 @@ def plan_slice_placement(
     per_device = ceil(slice_plan.slice_count / mesh.device_count)
     padded = per_device * mesh.device_count
     storage_itemsize = precision_itemsize(slice_plan.original.dtype)
-    output_probe = slice_plan.original.precision.output(
-        slice_plan.original.precision.contraction(
-            jnp.empty((), dtype=slice_plan.original.dtype)
-        )
+    _, accumulation_dtype = slice_plan.original.precision.resolve_contraction(
+        slice_plan.original.dtype
     )
-    output_itemsize = precision_itemsize(str(output_probe.dtype))
+    output_itemsize = precision_itemsize(accumulation_dtype)
     output_elements = slice_plan.original.structure.output_elements
     operand_bytes = slice_plan.original.cost.operand_elements * storage_itemsize
     assignment_local_bytes = per_device * len(slice_plan.labels) * 4
@@ -211,7 +212,9 @@ def plan_slice_placement(
     )
     assignment_bytes = padded * len(slice_plan.labels) * 4
     result_bytes = padded * output_elements * output_itemsize
-    transfer_bytes = assignment_bytes + result_bytes
+    transfer_bytes = (
+        assignment_bytes + result_bytes + mesh.device_count * (operand_bytes + 4)
+    )
     if local_peak > resources_.maximum_local_bytes:
         raise MemoryError("Placement exceeds maximum_local_bytes.")
     if transfer_bytes > resources_.maximum_transfer_bytes:
@@ -282,7 +285,7 @@ def _failure_result(
     transfer = TransferEvidence(
         placement.transfer_bytes,
         int(completed_bytes),
-        f"NamedSharding(PartitionSpec({placement.mesh.axis_name!r}, None))",
+        "device-local residual executors with explicit operand replication",
         "host-device-ordinal",
         placement.mesh.device_ids,
     )
@@ -312,12 +315,21 @@ def _failure_result(
     return DistributedContractionResult(None, evidence)
 
 
+@eqx.filter_jit
+def _execute_local_slices(
+    binding: PreparedSlicedContraction, assignments: Array, /
+) -> Array:
+    return jax.vmap(lambda assignment: execute_slice_assignment(binding, assignment))(
+        assignments
+    )
+
+
 def execute_distributed_slices(
     prepared: PreparedContraction,
     placement: SlicePlacementPlan,
     /,
 ) -> DistributedContractionResult:
-    """Shard independent slices and reduce results in global mixed-radix order."""
+    """Host-only placement/gather with device-local kernels and global ordinal reduction."""
 
     if not isinstance(prepared, PreparedContraction) or not isinstance(
         placement, SlicePlacementPlan
@@ -326,41 +338,68 @@ def execute_distributed_slices(
     plan = placement.slice_plan
     if prepared.plan.plan_id != plan.original.plan_id:
         raise ValueError("Prepared contraction belongs to another placement.")
+    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(prepared)):
+        raise TypeError(
+            "Distributed slice placement/gather is host-only and cannot be transformed."
+        )
+    binding = prepare_sliced_contraction(prepared, plan)
+    external = (
+        binding.executor.external_cache_bound_bytes + binding.executor.normalization_bytes
+    )
+    if placement.local_peak_bytes + external > placement.resources.maximum_local_bytes:
+        raise MemoryError(
+            "Residual executor external memory exceeds maximum_local_bytes."
+        )
+    if binding.executor.policy.provider != "native":
+        from .._execution_device import device_platform
+
+        if any(device_platform(device) != "cuda" for device in placement.mesh.devices):
+            raise ValueError("CUDA residual executors require an all-CUDA placement.")
     assignments = mixed_radix_assignments(
         plan.dimensions,
         maximum_assignments=plan.resources.maximum_slices,
     )
-    padding = placement.replay.padded_slice_count - plan.slice_count
-    if padding:
-        assignments = jnp.concatenate(
-            (
-                assignments,
-                jnp.zeros((padding, len(plan.labels)), dtype=assignments.dtype),
-            ),
-            axis=0,
-        )
-    sharding = NamedSharding(
-        placement.mesh.mesh,
-        PartitionSpec(placement.mesh.axis_name, None),
-    )
     completed_bytes = 0
+    pending: list[Array] = []
     try:
-        sharded_assignments = jax.device_put(assignments, sharding)
-        completed_bytes += assignments.size * assignments.dtype.itemsize
-        sharded_results = jax.vmap(
-            lambda assignment: execute_slice_assignment(prepared, plan, assignment)
-        )(sharded_assignments)
-        host_results = np.asarray(jax.device_get(sharded_results))
-        completed_bytes += host_results.nbytes
-    except (RuntimeError, ValueError) as error:
+        # Do not execute padded lanes or idle devices. All operands are explicitly
+        # replicated to each active device; independent kernels enqueue before
+        # host gathering. This is not vendor distributed execution or a collective.
+        for device, step in zip(
+            placement.mesh.devices, placement.replay.steps, strict=True
+        ):
+            if step.stop <= step.start:
+                continue
+            local = jax.device_put(binding, device)
+            completed_bytes += sum(value.nbytes for value in prepared.operands) + 4
+            for start in range(step.start, step.stop, plan.batch_size):
+                stop = min(start + plan.batch_size, step.stop)
+                local_assignments = jax.device_put(assignments[start:stop], device)
+                completed_bytes += local_assignments.nbytes
+                pending.append(_execute_local_slices(local, local_assignments))
+        host_blocks = []
+        for result in pending:
+            block = np.asarray(jax.device_get(result))
+            completed_bytes += block.nbytes
+            host_blocks.append(block)
+        host_results = np.concatenate(host_blocks, axis=0)
+    except (RuntimeError, ValueError, MemoryError) as error:
+        failures = [f"{type(error).__name__}:{error}"]
+        # Drain every already-submitted local result, including on another
+        # device, before publishing a failed host aggregate.
+        for result in pending:
+            try:
+                result.block_until_ready()
+            except RuntimeError as drain_error:
+                failures.append(f"{type(drain_error).__name__}:{drain_error}")
         return _failure_result(
             prepared,
             placement,
-            f"distributed-io:{type(error).__name__}",
+            "distributed-io:" + "; ".join(failures),
             completed_bytes,
         )
 
-    host_results = host_results[: plan.slice_count]
+    # Blocks were submitted and gathered in monotonically increasing ordinal order.
     if not np.all(np.isfinite(host_results)):
         return _failure_result(
             prepared,
@@ -368,9 +407,15 @@ def execute_distributed_slices(
             "non-finite-slice-result",
             completed_bytes,
         )
-    aggregate = jnp.zeros(host_results.shape[1:], dtype=sharded_results.dtype)
+    _, accumulation_dtype = plan.original.precision.resolve_contraction(
+        plan.original.dtype
+    )
+    aggregate = jnp.zeros(host_results.shape[1:], dtype=accumulation_dtype)
     for ordinal in range(plan.slice_count):
-        aggregate = aggregate + jnp.asarray(host_results[ordinal])
+        aggregate = aggregate + jnp.asarray(
+            host_results[ordinal], dtype=accumulation_dtype
+        )
+    aggregate = plan.original.precision.output(aggregate)
     finite = jnp.all(jnp.isfinite(aggregate))
     if not bool(np.asarray(finite)):
         return _failure_result(
@@ -382,7 +427,7 @@ def execute_distributed_slices(
     transfer = TransferEvidence(
         placement.transfer_bytes,
         completed_bytes,
-        f"NamedSharding(PartitionSpec({placement.mesh.axis_name!r}, None))",
+        "device-local residual executors with explicit operand replication",
         "host-device-ordinal",
         placement.mesh.device_ids,
     )
@@ -394,6 +439,7 @@ def execute_distributed_slices(
             "numeric_version": int(prepared.numeric_version),
             "placement": placement.plan_id,
             "schedule": placement.replay.schedule_id,
+            "execution": binding.executor.lowering_id,
         }
     )
     evidence = DistributedExecutionEvidence(

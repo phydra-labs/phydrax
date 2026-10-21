@@ -1,9 +1,11 @@
 # Phydrax CUDA companion
 
 `phydrax-cuda13` is the lockstep, wheel-only CUDA 13 companion.
-It contains separate lazily loaded cuDSS, AmgX, and QUDA libraries using the
-public JAX FFI C ABI. NVIDIA libraries are runtime dependencies supplied by
-NVIDIA wheels, not copied into the companion. The CUDA runtime is shared.
+It contains separate lazily loaded cuDSS, AmgX, QUDA, cuTENSOR, cuTensorNet,
+and cuEST wrapper libraries using the public JAX FFI C ABI. Optional vendor
+runtimes are not new mandatory core dependencies. NVIDIA runtime libraries come
+from their owning wheels; the cuEST C runtime has a separate optional
+`phydrax-cuest` wheel. The CUDA runtime is shared.
 
 ## Build
 
@@ -37,8 +39,10 @@ env -u LD_LIBRARY_PATH -u CUDA_HOME -u CUDA_PATH -u CUDA_ROOT \
 /path/to/build-env/bin/cmake --build /path/to/build-tree -j2
 ```
 
-Set `PHX_CUDA_COMPONENTS` to a semicolon-separated subset of `cudss;amgx;quda`;
-an empty selection configures only the common substrate. A component's
+Set `PHX_CUDA_COMPONENTS` to a semicolon-separated subset of
+`cudss;amgx;quda;cutensor;cutensornet;cuest`; an empty selection configures only
+the common substrate. `collective`, `cudss_mgmn`, and `cudecomp` are explicit
+site components and are excluded from portable release defaults. A component's
 `src/<name>/CMakeLists.txt` calls
 `phx_cuda_add_component(<name> SOURCES <files> LINK_LIBRARIES <targets>
 HANDLERS <symbols>)`. It defines `component_registry()`, `component_shutdown()`,
@@ -52,11 +56,14 @@ JAX/CUDA exit teardown. Registry IDs remain unique within a component library,
 and callers retain `shared_ptr` ownership across eviction.
 
 Development overrides `PHYDRAX_CUDA_CUDSS_LIBRARY`,
-`PHYDRAX_CUDA_AMGX_LIBRARY`, and `PHYDRAX_CUDA_QUDA_LIBRARY` may name built
-component libraries. Installed RUNPATHs are computed from NVIDIA RECORDs and
-are relative to `$ORIGIN`; the Python loader additionally preloads the matching
-NVIDIA dependency closure by absolute path, protecting against other-major
-libraries on `LD_LIBRARY_PATH`.
+`PHYDRAX_CUDA_AMGX_LIBRARY`, `PHYDRAX_CUDA_QUDA_LIBRARY`,
+`PHYDRAX_CUDA_CUTENSOR_LIBRARY`, `PHYDRAX_CUDA_CUTENSORNET_LIBRARY`, and
+`PHYDRAX_CUDA_CUEST_LIBRARY` may name built component libraries. Installed
+portable RUNPATHs are computed from owning wheel RECORDs and are relative to
+`$ORIGIN`; the Python loader additionally preloads the matching NVIDIA
+dependency closure by absolute path, protecting against other-major libraries
+on `LD_LIBRARY_PATH`. cuTENSOR/cuTensorNet distribution names need not start
+with `nvidia-`; their CUDA-major suffix and RECORD ownership remain authoritative.
 
 Build and inspect a wheel without build isolation:
 
@@ -118,6 +125,57 @@ or manylinux_2_28 coverage. Generic sm100 cubin compatibility alone is not
 scientific qualification; retain the actual build and runtime evidence in
 `benchmarks/b300_qualification.json`.
 
+## Optional numerical runtimes and site components
+
+Build headers for cuTENSOR and cuTensorNet are pinned in
+`native/cuda13/pyproject.toml`; their runtime wheels are opt-in through the main
+package extras. Their wrappers contain host code, not independent device kernels:
+absence of wrapper SASS is not inspection or qualification of the vendor binary.
+Preserve explicit computation precision, descriptor/workspace bounds, the exact
+imported path, and version/build evidence.
+
+`native/cuest_runtime` builds the optional platform wheel `phydrax-cuest`.
+It redistributes the checksum-verified cuEST C library and the complete NVIDIA
+license, including third-party notices; it does not ship the vendor SDK headers.
+The small core companion wrapper links that C ABI but does not duplicate the
+runtime into every core CUDA installation. Build the optional runtime wheel with
+`uv build --wheel native/cuest_runtime` and include it in the consumer wheelhouse.
+
+Site MPI integration is deliberately separate:
+
+| Component | Required explicit build inputs |
+| --- | --- |
+| `collective` | `PHX_SITE_MPI_ROOT`, exact MPI library/header identities and runtime CUDA-buffer support |
+| `cudss_mgmn` | The shared `collective` target and `PHX_CUDSS_COMM_LAYER`, `PHX_CUDSS_COMM_SHA256`, `PHX_CUDSS_COMM_BUILD_IDENTITY` |
+| `cudecomp` | The shared `collective` target and `PHX_CUDECOMP_ROOT` |
+
+Build all selected site components together so they share one live registry and
+source identity. Do not compile an independent copy of the communicator registry
+into each provider. Runtime overrides are `PHYDRAX_CUDA_COLLECTIVE_LIBRARY`,
+`PHYDRAX_CUDA_CUDSS_MGMN_LIBRARY`, and `PHYDRAX_CUDA_CUDECOMP_LIBRARY`.
+The MPI transport profile is same-host, one GPU per rank, with the actual
+CUDA-aware Open MPI instance already initialized by the owning bootstrap.
+
+The standalone recipe in `src/cudss_mgmn/commlayer` compiles the checksum-pinned,
+unmodified NVIDIA Open MPI communication source against the chosen site MPI and
+wheel-owned CUDA toolkit. Its JSON build record and the actual resulting shared
+object hash supply the parent component's three communication inputs. This shim
+uses MPI communicators for both host and device operations; an arbitrary NCCL
+shim with a matching filename is not interchangeable.
+
+The native collective bridge owns communicator creation, ordered call tickets,
+supervision, and coordinated retirement. It has no fake FFI handlers or local
+memo registry. Site-provider resources are retired through their collective
+lease, not process-local LRU eviction or a Python atexit callback. Compiled
+programs must be staged and admitted before `lease.invoke`; arbitrary callbacks
+and unattached compiled executables are not accepted.
+
+Device scratch/cache limits, vendor memory estimates, opaque resident bytes,
+compiler estimates, and observed memory samples are distinct. A finite vendor
+estimate cannot certify an allocation bound. In particular, cuDSS's hybrid
+device limit is not a full analysis/host-memory bound.
+
+
 ## A100 hardware qualification
 
 For an A100-only artifact, select `--architectures 80-real` explicitly, not
@@ -168,10 +226,12 @@ pre-SM90 active-mask warp-election branch, while H100 executes the SM90 branch;
 hardware evidence remains architecture-specific. Do not run performance
 measurements concurrently with builds or correctness checks.
 
-The pinned AmgX patch owns cuBLAS and cuSPARSE handles per CUDA device, instead
-of reusing the first device's process-global handles. Provider calls remain
-serialized, handles survive device switches, and resource teardown destroys
-each handle with its owning device selected.
+The pinned AmgX patches own cuBLAS/cuSPARSE handles and the complete memory
+manager (device pools, allocation bookkeeping, and thread streams) per CUDA
+device. No device reuses the first GPU's pool addresses. Provider calls remain
+serialized; resources survive device switches and are destroyed with their
+owning device selected. Empty manager metadata remains retained so static
+destruction never invokes CUDA cleanup.
 
 Releasing a live preparation frees its named memo only. Reading an evicted or
 released immutable preparation reconstructs a bounded memo under a fresh native

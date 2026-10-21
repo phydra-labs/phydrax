@@ -28,7 +28,17 @@ TransferGuard: TypeAlias = Literal[
     "allow", "log", "disallow", "log_explicit", "disallow_explicit"
 ]
 LibrarySetting: TypeAlias = Literal[
-    "meshcore", "metis", "cuda_cudss", "cuda_amgx", "cuda_quda"
+    "meshcore",
+    "metis",
+    "cuda_cudss",
+    "cuda_amgx",
+    "cuda_quda",
+    "cuda_cutensor",
+    "cuda_cutensornet",
+    "cuda_cuest",
+    "cuda_collective",
+    "cuda_cudecomp",
+    "cuda_cudss_mgmn",
 ]
 WorkerSetting: TypeAlias = Literal["mmg", "omega_h", "tioga", "vorocrust"]
 EnvironmentMerge: TypeAlias = Literal["override", "defaults"]

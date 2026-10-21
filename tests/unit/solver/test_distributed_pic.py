@@ -4,10 +4,10 @@
 
 """Distributed PIC and PIC restart.
 
-Multi-device tests need forced host devices and run in a dedicated invocation,
-with at least five devices for prime-count and 4↔5 restart coverage:
-``JAX_NUM_CPU_DEVICES=5 pytest
-tests/unit/solver/test_distributed_pic.py`` (``=8`` also covers 2×2×2).
+Multi-device tests admit physical accelerators or explicitly configured CPU
+devices. Eight devices cover slabs, 2×4/4×2 spectral pencils, and the separate
+2×2×2 cochain case. Forced-CPU runs are functional evidence only:
+``JAX_NUM_CPU_DEVICES=8 pytest tests/unit/solver/test_distributed_pic.py``.
 """
 
 from __future__ import annotations
@@ -317,8 +317,30 @@ def _reduced_runs(
 
 @pytest.mark.parametrize(
     ("shape", "periodic"),
-    [((4,), True), ((4,), False), ((2, 2), True), ((2, 2), False)],
-    ids=["slab-periodic", "slab-walled", "blocks-periodic", "blocks-walled"],
+    [
+        ((4,), True),
+        ((4,), False),
+        ((2, 2), True),
+        ((2, 2), False),
+        ((8,), True),
+        ((8,), False),
+        ((2, 4), True),
+        ((2, 4), False),
+        ((4, 2), True),
+        ((4, 2), False),
+    ],
+    ids=[
+        "slab-periodic",
+        "slab-walled",
+        "blocks-periodic",
+        "blocks-walled",
+        "slab8-periodic",
+        "slab8-walled",
+        "2x4-periodic",
+        "2x4-walled",
+        "4x2-periodic",
+        "4x2-walled",
+    ],
 )
 def test_halo_accumulation_and_guard_exchange_match_global_cells(
     shape: tuple[int, ...], periodic: bool
@@ -402,6 +424,7 @@ _ROUTES = [
     ("reduced", (4,)),
     ("reduced", (3,)),
     ("reduced", (5,)),
+    ("reduced", (8,)),
     ("cochain", (4,)),
     ("cochain", (3,)),
     ("cochain", (5,)),
@@ -411,10 +434,16 @@ _ROUTES = [
     ("spectral-global-fft", (3,)),
     ("spectral-global-fft", (5,)),
     ("spectral-global-fft", (2, 2)),
+    ("spectral-global-fft", (8,)),
+    ("spectral-global-fft", (2, 4)),
+    ("spectral-global-fft", (4, 2)),
     ("spectral-local-guarded", (4,)),
     ("spectral-local-guarded", (3,)),
     ("spectral-local-guarded", (5,)),
     ("spectral-local-guarded", (2, 2)),
+    ("spectral-local-guarded", (8,)),
+    ("spectral-local-guarded", (2, 4)),
+    ("spectral-local-guarded", (4, 2)),
 ]
 
 
@@ -433,7 +462,7 @@ def test_distributed_run_matches_single_device_run(
     match route:
         case "reduced":
             capacity = 32 * parts if prime else 128
-            base = _reduced_base(8 * parts if prime else 32)
+            base = _reduced_base(8 * parts if prime or parts == 8 else 32)
             species = _reduced_species(capacity)
             dimension, lengths, steps = 1, (1.0,), 12
             reference_base = base
@@ -450,10 +479,22 @@ def test_distributed_run_matches_single_device_run(
             lengths = tuple(0.125 * n for n in counts)
             reference_base = base
         case _:
-            capacity = 16 * parts if prime else 32
-            counts = (4 * parts, 4 * parts, 4) if prime else (16, 16, 4)
+            capacity = 16 * parts if prime or parts == 8 else 32
+            counts = (
+                (4 * parts, 4 * parts, 8 if parts == 8 else 4)
+                if prime or parts == 8
+                else (16, 16, 4)
+            )
             decomposition = route.removeprefix("spectral-")
-            subdomains = (parts, 1, 1) if prime else (4, 2, 1)
+            if len(shape) not in (1, 2):
+                raise ValueError(
+                    "Spectral PIC qualification requires slab or pencil device axes."
+                )
+            subdomains = (
+                (shape[0], shape[1] if len(shape) == 2 else 1, 1)
+                if prime or parts == 8
+                else (4, 2, 1)
+            )
             base, species = _spectral_base(
                 capacity, mesh, decomposition, subdomains=subdomains, counts=counts
             )
@@ -602,7 +643,7 @@ def test_diagonal_migration_crosses_a_block_corner_in_one_packet() -> None:
     assert len(moved) == 1 and moved[0] >= 12
 
 
-@pytest.mark.parametrize("parts", [3, 4, 5])
+@pytest.mark.parametrize("parts", [3, 4, 5, 8])
 def test_migration_overflow_rejects_the_whole_step(parts: int) -> None:
     capacity = 32 * parts
     _, run, dt = _reduced_runs((parts,), count=8 * parts, capacity=capacity)
@@ -673,7 +714,7 @@ def test_size_one_mesh_axes_are_refused() -> None:
         phx.solver.distribute_pic_field_solver(base, _mesh((2, 1)))
 
 
-@pytest.mark.parametrize("parts", [3, 4, 5])
+@pytest.mark.parametrize("parts", [3, 4, 5, 8])
 def test_guard_narrower_than_the_transfer_footprint_is_refused(parts: int) -> None:
     base, species = _reduced_base(8 * parts), _reduced_species(32 * parts)
     solver = phx.solver.distribute_pic_field_solver(
@@ -1102,7 +1143,7 @@ def test_reduced_deposit_preserves_failure_and_inactive_payload_semantics(
         np.testing.assert_array_equal(result, expected)
 
 
-@pytest.mark.parametrize("parts", [3, 4, 5])
+@pytest.mark.parametrize("parts", [3, 4, 5, 8])
 def test_same_topology_restart_continues_bitwise(tmp_path: Path, parts: int) -> None:
     capacity = 32 * parts
     _, run, dt = _reduced_runs((parts,), count=8 * parts, capacity=capacity)
@@ -1140,15 +1181,15 @@ def test_same_topology_restart_continues_bitwise(tmp_path: Path, parts: int) -> 
 
 @pytest.mark.parametrize(
     ("source_parts", "target_parts"),
-    [(4, 2), (4, 5), (5, 4)],
-    ids=["4-to-2", "4-to-5", "5-to-4"],
+    [(4, 2), (4, 5), (5, 4), (4, 8), (8, 4)],
+    ids=["4-to-2", "4-to-5", "5-to-4", "4-to-8", "8-to-4"],
 )
 def test_repartition_restart_is_a_tolerance_restart(
     tmp_path: Path, source_parts: int, target_parts: int
 ) -> None:
     common = math.lcm(source_parts, target_parts)
-    capacity = 128 if common == 4 else 160
-    count = 32 if common == 4 else 40
+    capacity = max(128, 8 * common)
+    count = max(32, 2 * common)
     reference, run, dt = _reduced_runs((source_parts,), count=count, capacity=capacity)
     _mesh((target_parts,))
     state = _initial(run, capacity, 1, (1.0,), dt)
@@ -1184,6 +1225,50 @@ def test_repartition_restart_is_a_tolerance_restart(
     )
     with pytest.raises(ValueError, match="not admitted"):
         strict.restore(repository, checkpoint)
+
+
+@pytest.mark.parametrize(
+    "shape", [(8,), (2, 4), (4, 2)], ids=["slab8", "pencil2x4", "pencil4x2"]
+)
+@pytest.mark.parametrize("decomposition", ["global-fft", "local-guarded"])
+def test_eight_owner_spectral_restart_continues_bitwise(
+    tmp_path: Path, shape: tuple[int, ...], decomposition: str
+) -> None:
+    mesh = _mesh(shape)
+    counts = (32, 32, 8)
+    capacity = 128
+    if len(shape) not in (1, 2):
+        raise ValueError(
+            "Spectral PIC restart qualification requires slab or pencil device axes."
+        )
+    subdomains = (shape[0], shape[1] if len(shape) == 2 else 1, 1)
+    base, species = _spectral_base(
+        capacity, mesh, decomposition, subdomains=subdomains, counts=counts
+    )
+    tolerance = {"constraint_tolerance": 1e-2} if decomposition == "local-guarded" else {}
+    run = _distributed(base, species, mesh, **tolerance)
+    dt = 0.4 * float(base.stable_step)
+    state = _initial(run, capacity, 3, tuple(0.125 * n for n in counts), dt)
+    advance = eqx.filter_jit(lambda value: run.step_detailed(value, dt))
+    initial = advance(state)
+    assert bool(initial.successful), int(initial.rejection_reason)
+    state = initial.accepted_state
+    plan = phx.solver.PICRestartPlan(run)
+    repository = _repository(tmp_path)
+    checkpoint = _publish(plan, state, repository, "pic-spectral-eight")
+    restored = plan.restore(repository, checkpoint)
+    assert restored.restart_class == "bitwise"
+    assert restored.source.plan_id == run.plan_id
+    assert restored.source.numerical_id == run.numerical_id
+    assert restored.source.topology_id == run.topology_id
+    _assert_bitwise(restored.state, state)
+    continued, resumed = state, restored.state
+    for _ in range(3):
+        continued_step, resumed_step = advance(continued), advance(resumed)
+        assert bool(continued_step.successful), int(continued_step.rejection_reason)
+        assert bool(resumed_step.successful), int(resumed_step.rejection_reason)
+        continued, resumed = continued_step.accepted_state, resumed_step.accepted_state
+        _assert_bitwise(resumed, continued)
 
 
 def test_block_decomposition_restarts_on_slabs(tmp_path: Path) -> None:

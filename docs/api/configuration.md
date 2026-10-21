@@ -71,14 +71,25 @@ explicit trusted type without reading the environment or filling defaults.
 ::: phydrax.config.ProviderConfig
 
 `ProviderConfig.library_paths` accepts `LibrarySetting` keys `meshcore`, `metis`,
-`cuda_cudss`, `cuda_amgx`, and `cuda_quda`. CUDA library overrides are intended
-for development builds and must be configured before the component's first use:
+and the CUDA component settings below. CUDA overrides are intended for explicit
+development or site builds and must be configured before first component use:
 
 | Library setting | Environment variable |
 | --- | --- |
 | `cuda_cudss` | `PHYDRAX_CUDA_CUDSS_LIBRARY` |
 | `cuda_amgx` | `PHYDRAX_CUDA_AMGX_LIBRARY` |
 | `cuda_quda` | `PHYDRAX_CUDA_QUDA_LIBRARY` |
+| `cuda_cutensor` | `PHYDRAX_CUDA_CUTENSOR_LIBRARY` |
+| `cuda_cutensornet` | `PHYDRAX_CUDA_CUTENSORNET_LIBRARY` |
+| `cuda_cuest` | `PHYDRAX_CUDA_CUEST_LIBRARY` |
+| `cuda_collective` | `PHYDRAX_CUDA_COLLECTIVE_LIBRARY` |
+| `cuda_cudss_mgmn` | `PHYDRAX_CUDA_CUDSS_MGMN_LIBRARY` |
+| `cuda_cudecomp` | `PHYDRAX_CUDA_CUDECOMP_LIBRARY` |
+
+The last three are site-bound MPI artifacts, not universal portable companion
+components. An override does not bypass version, component, handler, dependency,
+or site-MPI identity checks. Collective resources retain explicit lease-owned
+lifetime rather than local memo eviction or implicit exit-time collectives.
 
 Each value points to the built `libphydrax_cuda_<component>.so`. Overrides retain
 release-version, CUDA-major, component, and handler checks; they do not override

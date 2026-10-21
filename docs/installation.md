@@ -184,6 +184,93 @@ without loading others. Its `components` record identities; `partitions` report
 `component`, `device`, `partition`, `live`, `capacity`, and `rebuilds`. cuDSS and
 AmgX keep bounded per-plan native memos; eviction rebuilds from call operands.
 
+### Optional numerical CUDA libraries
+
+The CUDA extra keeps the core cuDSS, AmgX, and QUDA dependency closure. Additional
+implementations are selected explicitly; installing a library never changes a
+native execution default:
+
+| Installation | Native owner and scope |
+| --- | --- |
+| `phydrax[cuda13,cutensor]` | Device-local prepared tensor contractions |
+| `phydrax[cuda13,cutensornet]` | Fixed-path prepared contractions and separately requested shape-only path search |
+| `phydrax[cuda13,cuest]` | Nonperiodic, all-electron, real-FP64 density-fitted RHF and analytic first nuclear forces |
+
+The small tensor/cuEST wrapper libraries belong to the lockstep CUDA companion.
+cuTENSOR and cuTensorNet runtimes come from their separately pinned CUDA13 wheels.
+The cuEST C runtime is a separate optional `phydrax-cuest==0.2.2` wheel built from
+the checksum-pinned NVIDIA redistributable, with its license and provenance.
+The vendor Python bindings alone do not provide this C-runtime contract.
+An unpublished local runtime wheel must be supplied through the same wheelhouse;
+building it does not publish it.
+
+```sh
+uv sync --extra cuda13 --extra cutensor --extra cutensornet --extra cuest
+```
+
+See [tensor execution](guides_tensor_platform.md) and
+[molecular electronic structure](guides_computational_chemistry.md) for explicit
+preparation and selection. Ordinary `phydrax.ein.contract`, matrix multiplication,
+native tensor symmetry routes, and native spectral pencils remain unchanged.
+Missing libraries, unsupported transformations, and insufficient resource bounds
+are refusals, not implicit CPU or native-provider fallbacks.
+
+The `collective`, `cudss_mgmn`, and `cudecomp` components are separate **site-bound**
+builds, not universal MPI wheels. They require one checksum-identified,
+CUDA-aware Open MPI stack, the matching communication shim, and supervised
+same-host processes. MPI availability alone does not establish device-buffer
+integrity, multi-host support, RDMA, or zero host copies.
+
+For local development, `PHYDRAX_CUDA_CUTENSOR_LIBRARY`,
+`PHYDRAX_CUDA_CUTENSORNET_LIBRARY`, and `PHYDRAX_CUDA_CUEST_LIBRARY` select
+wrapper artifacts through the same strict loader. Site builds use
+`PHYDRAX_CUDA_COLLECTIVE_LIBRARY`, `PHYDRAX_CUDA_CUDSS_MGMN_LIBRARY`, and
+`PHYDRAX_CUDA_CUDECOMP_LIBRARY`. None bypasses dependency, release, component,
+handler, or site-identity validation.
+
+Installed-wheel qualification accepts `--libraries cutensor cutensornet cuest`.
+It runs each selected local mathematical profile on every requested physical GPU,
+requires all declared precision/scenario coverage, and tests actual hostile
+library paths. Tensor slice placement is a separate, explicitly host-orchestrated
+profile. Required skips, missing cases, duplicate evidence, failed numerical
+results, and timeouts prevent a successful qualification.
+
+### Eight-A40 host admission
+
+A40 is compute capability 8.6. Use an inspected `86-real` developer artifact or
+a release artifact containing compatible inspected device code. The installed
+driver and the library's own architecture constraints remain separate checks.
+
+The initial eight-A40 observation failed: outgoing transfers from physical GPUs
+1 and 2 corrupted contents in both CUDA and JAX despite correct source-local
+readback. GPU1 subsequently reported a reset requirement and disappeared from
+CUDA enumeration. Those failed observations are retained.
+
+A later read-only discovery again found all eight devices. All 1,008 directed
+CUDA/JAX copy observations then passed, followed by the complete
+1×1/1×2/1×4/1×8/2×4/4×2/8×1 physical execution matrix. Same-host cuDSS MG/MGMN
+and cuDecomp also passed on two, four, and eight GPUs. The agent made no driver,
+PCIe, IOMMU, ACS, reboot, or GPU-reset changes; the cause of the host's recovery
+was not established. `benchmarks/a40_qualification.json` separates this hardware
+history, installed-provider qualification, and bounded performance observations.
+
+Those passing snapshots do **not** establish current general peer safety.
+Subsequent cuTENSOR host-slicing checks lost GPU1's complete contribution.
+A Phydrax/vendor-free JAX program then reproduced incorrect peer and forced-copy
+GPU0-to-GPU1 transfers at five sizes, while explicit host transport passed.
+The underlying driver/JAX/hardware cause remains unproved. At the user's request,
+debugging stopped with the peer-dependent route **unqualified**; no host-staging
+cutover, silent fallback, or host-setting change was added.
+
+Do not turn a successful one-device workflow or independent host-staged work into
+an eight-device collective claim. Run the explicit physical campaign in
+`tools.qualify_cuda_execution` before using a host for coupled GPU execution, and
+preserve failed evidence rather than narrowing the requested device set silently.
+Historical H100/H200 evidence used a different JAX stack; single-B300 evidence
+does not qualify this A40 topology. Compiled Pallas MACE still refuses sm86;
+native-JAX execution is a separate route, not an accelerated fallback.
+
+
 ## Inspect the environment
 
 ```python

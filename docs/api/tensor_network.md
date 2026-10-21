@@ -29,9 +29,42 @@ precision, approximation, resource, physicality, persistence, and maturity contr
 
 ::: phydrax.tensor_network.ContractionPlan
 
+::: phydrax.tensor_network.ContractionExecutionPolicy
+
+::: phydrax.tensor_network.ContractionPathPlanner
+
+::: phydrax.tensor_network.prepare_contraction
+
+::: phydrax.tensor_network.refresh_contraction
+
+::: phydrax.tensor_network.execute_contraction
+
 ::: phydrax.tensor_network.SlicedContractionPlan
 
+::: phydrax.tensor_network.PreparedSlicedContraction
+
+::: phydrax.tensor_network.prepare_sliced_contraction
+
+::: phydrax.tensor_network.execute_sliced_contraction
+
 ::: phydrax.tensor_network.SlicePlacementPlan
+
+An execution policy selects a device-local implementation without changing
+`phydrax.ein.contract`. Imported paths, bounded shape-only cuTensorNet planning,
+and numeric execution are separate choices. Installing optional libraries never
+changes the native default.
+
+Prepared slice bindings retain dynamic operands and one admitted residual
+executor. Native host checkpoint/placement orchestration is not a JAX transform:
+differentiate the admitted local numerical contractions, not an opaque host
+checkpoint workflow. Native symmetry-sector contractions and TRG/HOTRG are not
+silently densified or redirected to a CUDA provider.
+
+External device workspace/cache limits and opaque vendor host storage have
+different evidence. Unknown host bytes are not zero. Reprepare after an execution
+representation change; a native pointer or lease ticket is never durable
+scientific identity.
+
 
 ## Thermodynamic tensor renormalization
 

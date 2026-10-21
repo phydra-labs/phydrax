@@ -48,12 +48,14 @@ from ._mean_field import (
     SCFAccelerationPlan,
     SCFConvergenceEvidence,
     SCFConvergencePlan,
+    SCFDIISEvidence,
     SCFStabilityPlan,
     SCFStabilityResult,
     UnrestrictedMeanFieldState,
 )
 from ._molecular_hf import MolecularGradientResult, MolecularHartreeFockPlan
 from ._molecular_ks import MolecularKohnShamPlan
+from ._molecular_provider import MolecularRHFProvider, PreparedMolecularRHFCalculation
 from ._response import (
     MeanFieldHessianResult,
     MeanFieldResponsePlan,
@@ -123,6 +125,8 @@ __all__ = [
     "MeanFieldState",
     "MolecularGradientResult",
     "MolecularHartreeFockPlan",
+    "MolecularRHFProvider",
+    "PreparedMolecularRHFCalculation",
     "MolecularDFTGridPlan",
     "MolecularGridEvaluation",
     "MolecularKohnShamPlan",
@@ -143,6 +147,7 @@ __all__ = [
     "SCFAccelerationPlan",
     "SCFConvergenceEvidence",
     "SCFConvergencePlan",
+    "SCFDIISEvidence",
     "SCFState",
     "SCFStabilityPlan",
     "SCFStabilityResult",

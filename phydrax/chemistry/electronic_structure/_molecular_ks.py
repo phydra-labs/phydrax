@@ -24,6 +24,7 @@ from ...operators.quantum.gaussian import (
     ao_values,
     electron_repulsion_tensor,
     kinetic_matrix,
+    molecular_integral_definition_id,
     nuclear_attraction_matrix,
     nuclear_repulsion_energy,
     overlap_matrix,
@@ -48,6 +49,7 @@ from ._mean_field import (
     SCFAccelerationPlan,
     SCFConvergenceEvidence,
     SCFConvergencePlan,
+    SCFDIISEvidence,
     UnrestrictedMeanFieldState,
 )
 from ._molecular_hf import (
@@ -334,6 +336,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             density = jnp.zeros_like(density)
         previous_energy = jnp.asarray(jnp.inf, dtype=core.real.dtype)
         fock_history: list[Array] = []
+        diis_evidence: SCFDIISEvidence | None = None
         error_history: list[Array] = []
         energy_residual = density_residual = commutator_residual = jnp.asarray(
             jnp.inf, dtype=core.real.dtype
@@ -361,7 +364,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
                 and iteration >= self.acceleration.diis_start
                 and len(fock_history) >= 2
             ):
-                diagonal_fock = _diis_extrapolate(
+                diagonal_fock, diis_evidence = _diis_extrapolate(
                     fock_history, error_history, self.acceleration.diis_space
                 )
             diagonal_fock = _level_shift_fock(
@@ -436,6 +439,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             jnp.asarray(True),
             finite,
             self.convergence.plan_id,
+            diis=diis_evidence,
         )
         free = electronic + nuclear - self.occupations.smearing_energy * entropy
         return RestrictedMeanFieldState(
@@ -451,6 +455,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             free,
             evidence,
             mean_field_owner_id(self.plan_id, coordinate),
+            integral_definition_id=molecular_integral_definition_id(self.basis),
         )
 
     def _solve_unrestricted(
@@ -499,6 +504,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         finite = jnp.asarray(True)
         completed = 0
         fock_history: list[Array] = []
+        diis_evidence: SCFDIISEvidence | None = None
         error_history: list[Array] = []
         for iteration in range(self.convergence.maximum_iterations):
             total_density = alpha + beta
@@ -524,7 +530,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
                 and iteration >= self.acceleration.diis_start
                 and len(fock_history) >= 2
             ):
-                extrapolated = _diis_extrapolate(
+                extrapolated, diis_evidence = _diis_extrapolate(
                     fock_history, error_history, self.acceleration.diis_space
                 )
                 count = core.shape[0]
@@ -651,6 +657,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             jnp.asarray(True),
             finite,
             self.convergence.plan_id,
+            diis=diis_evidence,
         )
         entropy = alpha_entropy + beta_entropy
         free = electronic + nuclear - self.occupations.smearing_energy * entropy
@@ -672,6 +679,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             free,
             evidence,
             mean_field_owner_id(self.plan_id, coordinate),
+            integral_definition_id=molecular_integral_definition_id(self.basis),
         )
 
     def analytic_gradient_atomic_units(
@@ -683,6 +691,8 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         coordinate = jnp.asarray(positions)
         if state.owner_id != mean_field_owner_id(self.plan_id, coordinate):
             raise ValueError("Gradient state belongs to another KS plan or geometry.")
+        if state.integral_definition_id != molecular_integral_definition_id(self.basis):
+            raise ValueError("Gradient state has another integral definition.")
         if isinstance(state, RestrictedMeanFieldState):
             alpha = beta = 0.5 * state.density
             energy_weighted = contract(

@@ -18,8 +18,8 @@ wheel is required on both architectures. No system CUDA toolkit or
 The former multi-major implementation plan and its obsolete packaging,
 publication, and switching recipes are superseded by this contract. Current
 instructions live in [Installation](../installation.md),
-[Native build and qualification](../../native/cuda/README.md), and
-[Marker publication](../../packaging/cuda-major/README.md).
+[Native build and qualification](https://github.com/phydra-labs/phydrax/blob/dev/native/cuda/README.md), and
+[Marker publication](https://github.com/phydra-labs/phydrax/blob/dev/packaging/cuda-major/README.md).
 
 ## Native ownership and release gates
 

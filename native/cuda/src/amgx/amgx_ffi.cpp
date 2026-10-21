@@ -38,8 +38,8 @@ struct Resources {
   AMGX_config_handle config = nullptr;
   AMGX_resources_handle handle = nullptr;
 };
-// Resources destruction frees process-global pools: retain every device resource
-// until ALL hierarchies have been released, then destroy them during shutdown.
+// Resources destruction frees that device's pools and library handles. Retain
+// each resource until all hierarchies are released, then destroy it on its owner.
 std::map<int, Resources>& resources() { static auto* value = new std::map<int, Resources>; return *value; }
 AMGX_resources_handle acquire_resources(int device) {
   if (!initialized) { amgx_check(AMGX_initialize()); initialized = true; }

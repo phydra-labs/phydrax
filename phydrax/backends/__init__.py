@@ -124,6 +124,11 @@ if TYPE_CHECKING:
         prepare_clarabel as prepare_clarabel,
         PreparedClarabel as PreparedClarabel,
     )
+    from .cudecomp import (
+        cudecomp_availability as cudecomp_availability,
+        CUDECOMP_CAPABILITIES as CUDECOMP_CAPABILITIES,
+        CudecompBackend as CudecompBackend,
+    )
     from .cudss import (
         cudss_availability as cudss_availability,
         CUDSS_CAPABILITIES as CUDSS_CAPABILITIES,
@@ -311,6 +316,7 @@ _EXPORTS = {
     "BackendTransferEvidence": "._types",
     "BackendUnavailableError": "._types",
     "CLARABEL_CAPABILITIES": ".clarabel",
+    "CUDECOMP_CAPABILITIES": ".cudecomp",
     "CUDSS_CAPABILITIES": ".cudss",
     "CVXPY_CAPABILITIES": ".cvxpy",
     "ClarabelBackend": ".clarabel",
@@ -322,6 +328,7 @@ _EXPORTS = {
     "CudaIssueSeverity": ".._cuda_environment",
     "CudaNativePartition": ".._cuda_native",
     "CudaNativeResources": ".._cuda_native",
+    "CudecompBackend": ".cudecomp",
     "CudssBackend": ".cudss",
     "HOMOTOPY_CONTINUATION_CAPABILITIES": ".homotopy_continuation",
     "HOMOTOPY_CONTINUATION_PROTOCOL": ".homotopy_continuation",
@@ -443,6 +450,7 @@ _EXPORTS = {
     "create_lattice_provider": ".lattice",
     "cuda_environment": ".._cuda_environment",
     "cuda_native_resources": ".._cuda_native",
+    "cudecomp_availability": ".cudecomp",
     "cudss_availability": ".cudss",
     "cvxpy_availability": ".cvxpy",
     "decode_homotopy_geometry_result": ".homotopy_geometry",

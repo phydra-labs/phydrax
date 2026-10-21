@@ -25,8 +25,8 @@ from ..._cuda_native import load_cuda_component, release_cuda_entries
 from ..._strict import StrictModule
 
 
-type Config = tuple[int, int, int, int, int, int]
-type Analyze = Callable[[Array, Array, Array], Array]
+type Config = tuple[int, int, int, int, int, int, int, int, tuple[int, ...]]
+type Analyze = Callable[[Array, Array, Array], tuple[Array, Array]]
 type Numeric = Callable[[Array, Array, Array, Array], tuple[Array, Array]]
 type Solve = Callable[[Array, Array, Array, Array, Array], tuple[Array, Array]]
 type Diagonal = Callable[[Array, Array, Array, Array], tuple[Array, Array]]
@@ -41,6 +41,7 @@ class CudssToken(StrictModule):
     offsets: Array
     columns: Array
     native_rebuilds: Array
+    analysis_memory_words: Array
     phase: Literal["analyzed", "factorized"] = eqx.field(static=True)
     dtype: np.dtype = eqx.field(static=True)
     n: int = eqx.field(static=True)
@@ -57,15 +58,26 @@ def _suffix(dtype: np.dtype, /) -> str:
     raise ValueError(f"cuDSS supports real float32/float64, not {dtype}.")
 
 
-def _attributes(config: Config, /) -> dict[str, np.int64]:
-    return {
+def _attributes(config: Config, /) -> dict[str, np.int64 | np.ndarray]:
+    attributes: dict[str, np.int64 | np.ndarray] = {
         key: np.int64(value)
         for key, value in zip(
-            ("partition", "capacity", "mtype", "mview", "reordering", "memory"),
-            config,
+            (
+                "partition",
+                "capacity",
+                "mtype",
+                "mview",
+                "reordering",
+                "memory",
+                "hybrid_device_limit",
+                "group",
+            ),
+            config[:8],
             strict=True,
         )
     }
+    attributes["devices"] = np.asarray(config[8], dtype=np.int64)
+    return attributes
 
 
 def _structure_fingerprint(offsets: Array, columns: Array, /) -> Array:
@@ -92,6 +104,15 @@ def _structure_fingerprint(offsets: Array, columns: Array, /) -> Array:
 def _expand_structure(
     offsets: Array, columns: Array, batch_size: int, /
 ) -> tuple[Array, Array, Array]:
+    if (
+        batch_size < 1
+        or max(
+            (offsets.shape[-1] - 1) * batch_size,
+            columns.shape[-1] * batch_size,
+        )
+        > np.iinfo(np.int32).max
+    ):
+        raise ValueError("cuDSS expanded CSR dimensions overflow int32.")
     offsets = offsets.astype(jnp.int32)
     columns = columns.astype(jnp.int32)
     if batch_size == 1:
@@ -145,19 +166,23 @@ def _count_spec() -> jax.ShapeDtypeStruct:
 @lru_cache(maxsize=None)
 def _make_analyze(config: Config) -> Analyze:
     @custom_vmap
-    def analyze_id(values: Array, offsets: Array, columns: Array) -> Array:
+    def analyze_id(values: Array, offsets: Array, columns: Array) -> tuple[Array, Array]:
         expanded_offsets, expanded_columns, fingerprint = _expand_structure(
             offsets, columns, 1
         )
-        return _call(
+        token_id, memory = _call(
             "analyze",
             values.dtype,
-            (_count_spec(),),
+            (
+                _count_spec(),
+                jax.ShapeDtypeStruct((max(len(config[8]), 1), 6, 2), jnp.uint32),
+            ),
             (values, expanded_offsets, expanded_columns, fingerprint),
             config,
             effect=True,
             batch=1,
-        )[0]
+        )
+        return token_id, memory
 
     @analyze_id.def_vmap
     def rule(
@@ -166,15 +191,20 @@ def _make_analyze(config: Config) -> Analyze:
         values: Array,
         offsets: Array,
         columns: Array,
-    ) -> tuple[Array, bool]:
+    ) -> tuple[tuple[Array, Array], tuple[bool, bool]]:
+        if config[8]:
+            raise ValueError("cuDSS MG refuses matrix-batch vmap; use multiple RHS.")
         values = (
             values
             if batched[0]
             else jnp.broadcast_to(values, (axis_size,) + values.shape)
         )
         offsets, columns, _ = _expand_structure(offsets, columns, axis_size)
-        token_id = analyze_id(values.reshape(-1), offsets, columns)
-        return jnp.broadcast_to(token_id, (axis_size,) + token_id.shape), True
+        token_id, memory = analyze_id(values.reshape(-1), offsets, columns)
+        return (
+            jnp.broadcast_to(token_id, (axis_size,) + token_id.shape),
+            jnp.broadcast_to(memory, (axis_size,) + memory.shape),
+        ), (True, True)
 
     return analyze_id
 
@@ -207,6 +237,8 @@ def _make_numeric(refactor: bool, config: Config) -> Numeric:
         columns: Array,
         values: Array,
     ) -> tuple[tuple[Array, Array], tuple[bool, bool]]:
+        if config[8]:
+            raise ValueError("cuDSS MG refuses matrix-batch vmap; use multiple RHS.")
         if not batched[0]:
             raise ValueError(
                 f"cuDSS vmap({operation}) with an unbatched token and batched values "
@@ -255,6 +287,8 @@ def _make_solve(config: Config) -> Solve:
         values: Array,
         rhs: Array,
     ) -> tuple[tuple[Array, Array], tuple[bool, bool]]:
+        if config[8] and batched[0]:
+            raise ValueError("cuDSS MG refuses matrix-batch vmap; use multiple RHS.")
         rhs = rhs if batched[4] else jnp.broadcast_to(rhs, (axis_size,) + rhs.shape)
         if not batched[0]:
             if batched[3] or batched[1] or batched[2]:
@@ -311,6 +345,8 @@ def _make_diagonal(config: Config) -> Diagonal:
         columns: Array,
         values: Array,
     ) -> tuple[tuple[Array, Array], tuple[bool, bool]]:
+        if config[8]:
+            raise ValueError("cuDSS MG refuses matrix-batch vmap.")
         if not batched[0]:
             raise ValueError(
                 "cuDSS diagonal requires a batched token when values or pattern are batched."
@@ -341,17 +377,18 @@ def _make_analyze_ad(config: Config) -> Callable[[Array, Array, Array], CudssTok
             expanded_offsets, expanded_columns, _ = _expand_structure(
                 offsets, columns, batch_size
             )
-            token_id = _make_analyze(config)(
+            token_id, memory = _make_analyze(config)(
                 values.reshape(-1), expanded_offsets, expanded_columns
             )
         else:
-            token_id = _make_analyze(config)(values, offsets, columns)
+            token_id, memory = _make_analyze(config)(values, offsets, columns)
         return CudssToken(
             token_id,
             values,
             offsets,
             columns,
             jnp.zeros_like(token_id),
+            memory,
             "analyzed",
             values.dtype,
             n,
@@ -372,6 +409,9 @@ def _make_analyze_ad(config: Config) -> Callable[[Array, Array, Array], CudssTok
             offsets=np.zeros(token.offsets.shape, jax.dtypes.float0),
             columns=np.zeros(token.columns.shape, jax.dtypes.float0),
             native_rebuilds=np.zeros(token.native_rebuilds.shape, jax.dtypes.float0),
+            analysis_memory_words=np.zeros(
+                token.analysis_memory_words.shape, jax.dtypes.float0
+            ),
         )
         return token, tangent
 
@@ -388,7 +428,12 @@ def analyze(
     capacity: int,
     reordering: str,
     memory: str,
+    hybrid_device_limit: int | None = None,
+    group: int = 0,
+    devices: tuple[int, ...] = (),
 ) -> CudssToken:
+    if devices and values.ndim != 1:
+        raise ValueError("cuDSS MG refuses matrix batches; use multiple RHS.")
     load_cuda_component("cudss")
     _suffix(values.dtype)
     config = (
@@ -398,6 +443,9 @@ def analyze(
         0,
         {"default": 0, "amd": 3, "nested_dissection": 4}[reordering],
         {"device": 0, "hybrid": 1}[memory],
+        0 if hybrid_device_limit is None else hybrid_device_limit,
+        group,
+        devices,
     )
     return _make_analyze_ad(config)(
         values, offsets.astype(jnp.int32), columns.astype(jnp.int32)
@@ -537,6 +585,8 @@ def solve(
 
 def diagonal(token: CudssToken, /) -> tuple[Array, Array]:
     _require_factorized(token, "diagonal")
+    if token.config[8]:
+        raise ValueError("cuDSS MG does not expose a qualified diagonal query.")
     token = lax.stop_gradient(token)
     batch_size = _batch_of(token)
     diagonal_id = _make_diagonal(token.config)

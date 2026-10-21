@@ -12,16 +12,18 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax.core import Tracer
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
 from .._strict import StrictModule
 from ._contraction import (
     ContractionPlan,
-    execute_schedule,
     plan_contraction,
     PreparedContraction,
 )
+from ._contraction_provider import ContractionExecutor
+from ._cutensor import execute_executor, prepare_executor
 from ._topology import ContractionOperand, ContractionStructure
 
 
@@ -105,6 +107,42 @@ class SlicedContractionPlan(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
+class PreparedSlicedContraction(StrictModule):
+    """Dynamic original arrays and one admitted residual executor recipe."""
+
+    original: PreparedContraction
+    plan: SlicedContractionPlan
+    executor: ContractionExecutor
+    binding_id: str = eqx.field(static=True)
+
+
+def prepare_sliced_contraction(
+    prepared: PreparedContraction, plan: SlicedContractionPlan, /
+) -> PreparedSlicedContraction:
+    if not isinstance(prepared, PreparedContraction) or not isinstance(
+        plan, SlicedContractionPlan
+    ):
+        raise TypeError("prepared and plan must be prepared/sliced contractions.")
+    if prepared.plan.plan_id != plan.original.plan_id:
+        raise ValueError("Prepared contraction belongs to another sliced plan.")
+    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(prepared)):
+        raise TypeError("Sliced executor preparation is a host-only phase.")
+    executor = prepare_executor(plan.residual, prepared.executor.policy)
+    return PreparedSlicedContraction(
+        prepared,
+        plan,
+        executor,
+        canonical_fingerprint(
+            {
+                "kind": "prepared-sliced-contraction",
+                "prepared": prepared.prepared_id,
+                "plan": plan.plan_id,
+                "execution": executor.lowering_id,
+            }
+        ),
+    )
+
+
 class SliceExecutionEvidence(StrictModule):
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -124,6 +162,7 @@ class SliceExecutionEvidence(StrictModule):
     exact: Array
     claim: str = eqx.field(static=True)
     numeric_version: Array
+    execution_id: str = eqx.field(static=True)
 
 
 class SliceCheckpoint(StrictModule):
@@ -136,6 +175,7 @@ class SliceCheckpoint(StrictModule):
     numeric_version: Array
     range: SliceRange
     checkpoint_id: str = eqx.field(static=True)
+    execution_id: str = eqx.field(static=True)
 
 
 class SlicedContractionResult(StrictModule):
@@ -265,7 +305,7 @@ def plan_sliced_contraction(
         precision=plan.precision,
         resources=plan.resources,
         planner=plan.planner,
-        optimizer=plan.optimizer,
+        path=plan.path,
         dtype=plan.dtype,
     )
     peak_batch_elements = (
@@ -275,11 +315,9 @@ def plan_sliced_contraction(
     )
     if peak_batch_elements > resources_.maximum_batch_elements:
         raise MemoryError("Sliced contraction exceeds maximum_batch_elements.")
-    output_probe = plan.precision.output(
-        plan.precision.contraction(jnp.empty((), dtype=plan.dtype))
-    )
+    _, accumulation_dtype = plan.precision.resolve_contraction(plan.dtype)
     checkpoint_bytes = plan.structure.output_elements * precision_itemsize(
-        str(output_probe.dtype)
+        accumulation_dtype
     )
     if checkpoint_bytes > resources_.maximum_checkpoint_bytes:
         raise MemoryError("Slice checkpoint exceeds maximum_checkpoint_bytes.")
@@ -332,18 +370,15 @@ def _slice_operands(
 
 
 def execute_slice_assignment(
-    prepared: PreparedContraction,
-    plan: SlicedContractionPlan,
+    prepared: PreparedSlicedContraction,
     assignment: Array,
     /,
 ) -> Array:
-    if prepared.plan.plan_id != plan.original.plan_id:
-        raise ValueError("Prepared contraction belongs to another sliced plan.")
-    operands = _slice_operands(prepared, plan, assignment)
+    """Pure local accumulation-dtype kernel; output casting belongs to the final sum."""
+    plan = prepared.plan
+    operands = _slice_operands(prepared.original, plan, assignment)
     converted = plan.residual.precision.contraction(operands)
-    return plan.residual.precision.output(
-        execute_schedule(plan.residual.schedule, converted)
-    )
+    return execute_executor(plan.residual, prepared.executor, converted)
 
 
 def _scaled_add(
@@ -361,8 +396,11 @@ def _scaled_add(
 
 
 def _checkpoint(
-    prepared: PreparedContraction,
     plan: SlicedContractionPlan,
+    prepared_id: str,
+    operand_id: str,
+    numeric_version: Array,
+    execution_id: str,
     range_: SliceRange,
     scaled_sum: Array,
     log_scale: Array,
@@ -375,9 +413,10 @@ def _checkpoint(
         {
             "kind": "slice-checkpoint",
             "plan": plan.plan_id,
-            "prepared": prepared.prepared_id,
-            "operands": prepared.operand_id,
-            "numeric_version": int(prepared.numeric_version),
+            "prepared": prepared_id,
+            "operands": operand_id,
+            "numeric_version": int(numeric_version),
+            "execution": execution_id,
             "range": range_.range_id,
         }
     )
@@ -386,17 +425,17 @@ def _checkpoint(
         log_scale,
         finite,
         plan.plan_id,
-        prepared.prepared_id,
-        prepared.operand_id,
-        prepared.numeric_version,
+        prepared_id,
+        operand_id,
+        numeric_version,
         range_,
         checkpoint_id,
+        execution_id,
     )
 
 
 def execute_sliced_contraction(
-    prepared: PreparedContraction,
-    plan: SlicedContractionPlan,
+    binding: PreparedSlicedContraction,
     /,
     *,
     slice_range: SliceRange | None = None,
@@ -405,12 +444,13 @@ def execute_sliced_contraction(
 ) -> SlicedContractionResult:
     """Execute an exact full or checkpoint range; partial ranges are not accepted aggregates."""
 
-    if not isinstance(prepared, PreparedContraction) or not isinstance(
-        plan, SlicedContractionPlan
-    ):
-        raise TypeError("prepared and plan have invalid types.")
-    if prepared.plan.plan_id != plan.original.plan_id:
-        raise ValueError("Prepared contraction belongs to another sliced plan.")
+    if not isinstance(binding, PreparedSlicedContraction):
+        raise TypeError("binding must be PreparedSlicedContraction.")
+    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(binding)):
+        raise TypeError(
+            "Slice checkpoint construction is host-only; transform execute_slice_assignment instead."
+        )
+    prepared, plan = binding.original, binding.plan
     if mode not in ("serial", "batched"):
         raise ValueError("mode must be 'serial' or 'batched'.")
     range_ = (
@@ -424,7 +464,10 @@ def execute_sliced_contraction(
         plan.original.structure.dimension(label)
         for label in plan.original.structure.outputs
     )
-    scaled_sum = jnp.zeros(output_shape, dtype=prepared.operands[0].dtype)
+    _, accumulation_dtype = plan.original.precision.resolve_contraction(
+        plan.original.dtype
+    )
+    scaled_sum = jnp.zeros(output_shape, dtype=accumulation_dtype)
     log_scale = jnp.asarray(-jnp.inf, dtype=jnp.real(scaled_sum).dtype)
 
     if mode == "serial":
@@ -435,7 +478,7 @@ def execute_sliced_contraction(
             maximum_assignments=plan.resources.maximum_slices,
         )
         for offset in range(range_.stop - range_.start):
-            value = execute_slice_assignment(prepared, plan, assignments[offset])
+            value = execute_slice_assignment(binding, assignments[offset])
             if logarithmic_scaling:
                 scaled_sum, log_scale = _scaled_add(scaled_sum, log_scale, value)
             else:
@@ -452,7 +495,7 @@ def execute_sliced_contraction(
                 maximum_assignments=plan.batch_size,
             )
             block = jax.vmap(
-                lambda assignment: execute_slice_assignment(prepared, plan, assignment)
+                lambda assignment: execute_slice_assignment(binding, assignment)
             )(assignments)
             for offset in range(stop - start):
                 if logarithmic_scaling:
@@ -464,10 +507,20 @@ def execute_sliced_contraction(
         if not logarithmic_scaling:
             log_scale = jnp.asarray(0.0, dtype=jnp.real(scaled_sum).dtype)
 
-    checkpoint = _checkpoint(prepared, plan, range_, scaled_sum, log_scale)
+    checkpoint = _checkpoint(
+        plan,
+        prepared.prepared_id,
+        prepared.operand_id,
+        prepared.numeric_version,
+        binding.executor.lowering_id,
+        range_,
+        scaled_sum,
+        log_scale,
+    )
     value = jnp.where(
         jnp.isfinite(log_scale), scaled_sum * jnp.exp(log_scale), scaled_sum
     )
+    value = plan.original.precision.output(value)
     complete = jnp.asarray(range_.start == 0 and range_.stop == plan.slice_count)
     finite = checkpoint.finite & jnp.all(jnp.isfinite(value))
     accepted = complete & finite
@@ -478,6 +531,7 @@ def execute_sliced_contraction(
             "prepared": prepared.prepared_id,
             "operands": prepared.operand_id,
             "numeric_version": int(prepared.numeric_version),
+            "execution": binding.executor.lowering_id,
             "range": range_.range_id,
             "mode": mode,
             "logarithmic_scaling": bool(logarithmic_scaling),
@@ -503,6 +557,7 @@ def execute_sliced_contraction(
         accepted,
         "exact only when the complete admitted slice range is finite",
         prepared.numeric_version,
+        binding.executor.lowering_id,
     )
     return SlicedContractionResult(value, checkpoint, evidence)
 
@@ -513,17 +568,21 @@ def merge_slice_checkpoints(
     /,
 ) -> SlicedContractionResult:
     checkpoints_ = tuple(checkpoints)
+    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(checkpoints_)):
+        raise TypeError("Slice checkpoint merge is host-only and cannot be transformed.")
     if not checkpoints_:
         raise ValueError("At least one slice checkpoint is required.")
     expected = 0
     prepared_id = checkpoints_[0].prepared_id
     operand_id = checkpoints_[0].operand_id
     numeric_version = checkpoints_[0].numeric_version
+    execution_id = checkpoints_[0].execution_id
     for checkpoint in checkpoints_:
         if (
             checkpoint.plan_id != plan.plan_id
             or checkpoint.prepared_id != prepared_id
             or checkpoint.operand_id != operand_id
+            or checkpoint.execution_id != execution_id
             or not bool(jnp.array_equal(checkpoint.numeric_version, numeric_version))
             or checkpoint.range.start != expected
         ):
@@ -546,15 +605,18 @@ def merge_slice_checkpoints(
         scaled = scaled * old_factor + checkpoint.scaled_sum * checkpoint_factor
         scale = new_scale
     merged_range = SliceRange(0, plan.slice_count, plan.slice_count)
-    representative = PreparedContraction(
-        plan.original,
-        (),
-        numeric_version,
+    merged = _checkpoint(
+        plan,
         prepared_id,
         operand_id,
+        numeric_version,
+        execution_id,
+        merged_range,
+        scaled,
+        scale,
     )
-    merged = _checkpoint(representative, plan, merged_range, scaled, scale)
     value = jnp.where(jnp.isfinite(scale), scaled * jnp.exp(scale), scaled)
+    value = plan.original.precision.output(value)
     finite = jnp.all(
         jnp.stack(tuple(checkpoint.finite for checkpoint in checkpoints_))
     ) & jnp.all(jnp.isfinite(value))
@@ -587,6 +649,7 @@ def merge_slice_checkpoints(
         finite,
         "exact exhaustive checkpoint merge when every range is finite",
         numeric_version,
+        execution_id,
     )
     return SlicedContractionResult(value, merged, evidence)
 
@@ -596,6 +659,7 @@ __all__ = [
     "SliceExecutionEvidence",
     "SliceRange",
     "SlicedContractionPlan",
+    "PreparedSlicedContraction",
     "SlicedContractionResult",
     "SlicingResourcePolicy",
     "checkpoint_slice_ranges",
@@ -604,4 +668,5 @@ __all__ = [
     "merge_slice_checkpoints",
     "mixed_radix_assignments",
     "plan_sliced_contraction",
+    "prepare_sliced_contraction",
 ]

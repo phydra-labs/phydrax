@@ -43,7 +43,17 @@ from .logging import emit
 from .typing import parse
 
 
-type CudaNativeComponentName = Literal["cudss", "amgx", "quda"]
+type CudaNativeComponentName = Literal[
+    "cudss",
+    "amgx",
+    "quda",
+    "cutensor",
+    "cutensornet",
+    "cuest",
+    "collective",
+    "cudecomp",
+    "cudss_mgmn",
+]
 
 # This table owns target identity; Python callers use these same native names.
 CUDA_NATIVE_HANDLERS: dict[CudaNativeComponentName, tuple[str, ...]] = {
@@ -61,12 +71,45 @@ CUDA_NATIVE_HANDLERS: dict[CudaNativeComponentName, tuple[str, ...]] = {
         for operation in ("gauge_action", "gauge_force", "wilson_dslash")
         for dtype in ("c64", "c128")
     ),
+    "cutensor": ("phydrax_cutensor_contract",),
+    "cutensornet": ("phydrax_cutensornet_contract",),
+    "cuest": (
+        "phydrax_cuest_bind_geometry",
+        "phydrax_cuest_one_electron",
+        "phydrax_cuest_jk",
+        "phydrax_cuest_gradient",
+    ),
+    "collective": (),
+    "cudecomp": ("phydrax_cudecomp_transpose_c64", "phydrax_cudecomp_transpose_c128"),
+    "cudss_mgmn": tuple(
+        f"phydrax_cudss_mgmn_{operation}_{dtype}"
+        for operation in (
+            "analyze",
+            "factorize",
+            "refactorize",
+            "solve",
+            "norm",
+            "exchange",
+        )
+        for dtype in ("f32", "f64")
+    )
+    + tuple(f"phydrax_cudss_mgmn_reduce_{dtype}" for dtype in ("f32", "f64", "i32"))
+    + ("phydrax_cudss_mgmn_release",),
 }
 _SETTINGS: dict[CudaNativeComponentName, LibrarySetting] = {
     "cudss": "cuda_cudss",
     "amgx": "cuda_amgx",
     "quda": "cuda_quda",
+    "cutensor": "cuda_cutensor",
+    "cutensornet": "cuda_cutensornet",
+    "cuest": "cuda_cuest",
+    "collective": "cuda_collective",
+    "cudecomp": "cuda_cudecomp",
+    "cudss_mgmn": "cuda_cudss_mgmn",
 }
+_GROUP_OWNED_COMPONENTS: frozenset[CudaNativeComponentName] = frozenset(
+    ("collective", "cudecomp", "cudss_mgmn")
+)
 # Explicit family -> wheel names; math-library versions do not encode toolkit major.
 _NVIDIA_DISTRIBUTIONS = {
     "cudart": "nvidia-cuda-runtime",
@@ -83,19 +126,25 @@ _NVIDIA_DISTRIBUTIONS = {
     "nccl": "nvidia-nccl-cu13",
     "nvshmem_host": "nvidia-nvshmem-cu13",
     "cudss": "nvidia-cudss-cu13",
+    "cutensor": "cutensor-cu13",
+    "cutensornet": "cutensornet-cu13",
+    "cuest": "phydrax-cuest",
 }
 _CUDA_SONAME = re.compile(
-    r"lib(cudart|cublasLt|cublas|cusparse|cusolver|cufft|curand|nvJitLink|nvrtc|cupti|cudnn[^/]*|nccl|nvshmem_host|cudss)\.so(?:\.\d+)*\Z"
+    r"lib(cudart|cublasLt|cublas|cusparse|cusolver|cufft|curand|nvJitLink|nvrtc|cupti|cudnn[^/]*|nccl|nvshmem_host|cudss|cutensor|cutensornet|cuest)\.so(?:\.\d+)*\Z"
 )
 _I32 = ctypes.c_int32
 _I64 = ctypes.c_int64
 _P = ctypes.c_void_p
-_SIGNATURES: dict[str, tuple[Any, tuple[Any, ...]]] = {
+_IDENTITY_SIGNATURES: dict[str, tuple[Any, tuple[Any, ...]]] = {
     "phx_cuda_version": (ctypes.c_char_p, ()),
     "phx_cuda_build_hash": (ctypes.c_char_p, ()),
     "phx_cuda_component": (ctypes.c_char_p, ()),
-    "phx_cuda_last_error": (ctypes.c_char_p, ()),
     "phx_cuda_major": (_I32, ()),
+}
+_SIGNATURES: dict[str, tuple[Any, tuple[Any, ...]]] = {
+    **_IDENTITY_SIGNATURES,
+    "phx_cuda_last_error": (ctypes.c_char_p, ()),
     "phx_cuda_handler_count": (_I32, ()),
     "phx_cuda_handler_name": (ctypes.c_char_p, (_I32,)),
     "phx_cuda_handler": (_P, (_I32,)),
@@ -104,6 +153,76 @@ _SIGNATURES: dict[str, tuple[Any, tuple[Any, ...]]] = {
     "phx_cuda_release": (_I32, (_I64, _P, _I64, _P)),
     "phx_cuda_release_all": (_I32, (_P,)),
     "phx_cuda_shutdown": (_I32, ()),
+}
+_COMPONENT_SIGNATURES: dict[
+    CudaNativeComponentName, dict[str, tuple[Any, tuple[Any, ...]]]
+] = {
+    "cutensornet": {
+        "phydrax_cutensornet_plan": (
+            _I32,
+            (ctypes.c_char_p, _I64, _I64, _I64, _P, _I64, _P, _P, _I64),
+        ),
+    },
+    "collective": {
+        **{
+            f"phx_collective_{symbol}": (ctypes.c_char_p, ())
+            for symbol in (
+                "last_error",
+                "build_identity",
+                "mpi_library",
+                "mpi_sha256",
+                "mpi_header_sha256",
+                "mpi_library_version",
+            )
+        },
+        "phx_collective_validate_mpi_symbol": (_I32, (_P,)),
+        "phx_collective_create": (
+            _I32,
+            (
+                _I64,
+                _I32,
+                _P,
+                _P,
+                _I32,
+                _I32,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_double,
+                _P,
+            ),
+        ),
+        "phx_collective_validate": (_I32, (_I64,)),
+        "phx_collective_agree_program": (_I32, (_I64, ctypes.c_char_p)),
+        "phx_collective_begin": (
+            _I32,
+            (_I64, ctypes.c_char_p, _I32, ctypes.c_char_p, _P),
+        ),
+        "phx_collective_end": (_I32, (_I64, _I64)),
+        "phx_collective_fail": (_I32, (_I64, ctypes.c_char_p)),
+        "phx_collective_retire": (_I32, (_I64,)),
+    },
+    "cudecomp": {
+        "phx_cuda_cudecomp_build_identity": (ctypes.c_char_p, ()),
+        "phx_cuda_cudecomp_prepare": (
+            _I32,
+            (
+                _I64,
+                _I64,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                _P,
+                _I32,
+                _I32,
+                _I64,
+                _P,
+            ),
+        ),
+    },
+    "cudss_mgmn": {
+        f"phx_cuda_cudss_mgmn_communication_{symbol}": (ctypes.c_char_p, ())
+        for symbol in ("library_path", "library_sha256", "build_identity")
+    },
 }
 
 
@@ -319,7 +438,9 @@ def _bind(
     preloaded: tuple[str, ...],
 ) -> tuple[CudaNativeComponent, dict[str, Any], tuple[tuple[str, int], ...]]:
     functions: dict[str, Any] = {}
-    for symbol, (restype, argtypes) in _SIGNATURES.items():
+    base_signatures = _IDENTITY_SIGNATURES if name == "collective" else _SIGNATURES
+    signatures = base_signatures | _COMPONENT_SIGNATURES.get(name, {})
+    for symbol, (restype, argtypes) in signatures.items():
         try:
             function = library[symbol]
         except AttributeError as error:
@@ -361,7 +482,7 @@ def _bind(
             f"Companion {path} has invalid identity (component {component!r}, build hash {build_hash!r}); expected {name}. {_reinstall()}",
             str(path),
         )
-    count = functions["phx_cuda_handler_count"]()
+    count = 0 if name == "collective" else functions["phx_cuda_handler_count"]()
     handlers: list[tuple[str, int]] = []
     if count == len(CUDA_NATIVE_HANDLERS[name]):
         for index in range(count):
@@ -412,6 +533,8 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
     with _LOCK:
         if name in _LOADED:
             return _LOADED[name].identity
+        if name in _GROUP_OWNED_COMPONENTS and name != "collective":
+            load_cuda_component("collective")
         facts = _cuda_facts()
         path = _library_location(name, library_input(_SETTINGS[name]))
         try:
@@ -425,15 +548,41 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
                 str(path),
             ) from error
         identity, functions, handlers = _bind(library, path, name, preloaded)
+        if name in _GROUP_OWNED_COMPONENTS and name != "collective":
+            bridge = _LOADED["collective"].identity
+            if identity.build_hash != bridge.build_hash:
+                raise _refuse(
+                    "companion-invalid",
+                    f"Site component {name} and collective bridge have different source builds.",
+                    identity.path,
+                    bridge.path,
+                )
         for target, pointer in handlers:
             jax.ffi.register_ffi_target(
                 target, jax.ffi.pycapsule(ctypes.c_void_p(pointer)), platform="CUDA"
             )
         _LOADED[name] = _Loaded(identity, library, functions, dependencies)
-        if not _EXIT_REGISTERED:
+        if name not in _GROUP_OWNED_COMPONENTS and not _EXIT_REGISTERED:
             atexit.register(_shutdown)
             _EXIT_REGISTERED = True
         return identity
+
+
+def cuda_component_function(name: CudaNativeComponentName, symbol: str, /) -> Any:
+    """Return an admitted host ABI function from the canonical loaded component."""
+    name = parse(name, CudaNativeComponentName, "name")
+    admitted = (
+        symbol in _COMPONENT_SIGNATURES.get(name, {})
+        or symbol in _IDENTITY_SIGNATURES
+        or (name != "collective" and symbol == "phx_cuda_last_error")
+    )
+    if not admitted:
+        raise ValueError(
+            f"CUDA component {name!r} does not expose host function {symbol!r}."
+        )
+    with _LOCK:
+        load_cuda_component(name)
+        return _LOADED[name].functions[symbol]
 
 
 def cuda_component_status(
@@ -491,6 +640,11 @@ def release_cuda_entries(
     name: CudaNativeComponentName, partition: int, ids: tuple[int, ...] | Array, /
 ) -> int:
     """Eagerly release host IDs; traced releases must use the component FFI target."""
+    name = parse(name, CudaNativeComponentName, "name")
+    if name in _GROUP_OWNED_COMPONENTS:
+        raise ValueError(
+            f"CUDA {name} resources must be retired through their collective lease."
+        )
     if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves((partition, ids))):
         raise TypeError(
             f"Eager CUDA release cannot accept traced inputs; use the traced phydrax_{name}_release FFI target."
@@ -519,11 +673,35 @@ def release_cuda_entries(
         return released.value
 
 
+def release_cuda_component(name: CudaNativeComponentName, /) -> int:
+    """Drain and release one loaded local component's reconstructible memos."""
+    name = parse(name, CudaNativeComponentName, "name")
+    if name in _GROUP_OWNED_COMPONENTS:
+        raise ValueError(
+            f"CUDA {name} resources must be retired through their collective lease."
+        )
+    with _LOCK:
+        loaded = _LOADED.get(name)
+        if loaded is None:
+            return 0
+        jax.effects_barrier()
+        _synchronize_devices()
+        released = _I64()
+        _check_status(
+            loaded,
+            loaded.functions["phx_cuda_release_all"](ctypes.byref(released)),
+            "release all",
+        )
+        return released.value
+
+
 def cuda_native_resources() -> CudaNativeResources:
     """Inspect loaded components only; never discover or load another component."""
     partitions: list[CudaNativePartition] = []
     with _LOCK:
         for name, loaded in sorted(_LOADED.items()):
+            if name in _GROUP_OWNED_COMPONENTS:
+                continue
             count = loaded.functions["phx_cuda_registry_partitions"]()
             _check_status(loaded, min(count, 0), "registry partitions")
             for index in range(count):
@@ -612,6 +790,8 @@ def _shutdown() -> None:
                     operation=operation.__name__,
                 )
         for loaded in _LOADED.values():
+            if loaded.identity.name in _GROUP_OWNED_COMPONENTS:
+                continue
             for symbol in ("phx_cuda_release_all", "phx_cuda_shutdown"):
                 try:
                     function = loaded.functions[symbol]
