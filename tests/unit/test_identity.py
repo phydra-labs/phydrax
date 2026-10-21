@@ -682,3 +682,33 @@ def test_compiler_identity_retains_declared_derivative_refusal_without_executing
     assert float(first(*inputs)) == 21.0
     with pytest.raises(RuntimeError):
         jax.jvp(first, inputs, tuple(jnp.ones_like(value) for value in inputs))
+
+
+def test_frontend_full_width_indices_retain_actual_compiler_identity() -> None:
+    def scatter(values: Array, addresses: Array) -> Array:
+        return values.at[addresses].set(1.0, mode="drop")
+
+    def narrowed_scatter(values: Array, addresses: Array) -> Array:
+        return values.at[addresses.astype(jnp.int32)].set(1.0, mode="drop")
+
+    inputs = (
+        jax.ShapeDtypeStruct((4,), jnp.float64),
+        jax.ShapeDtypeStruct((2,), jnp.int64),
+    )
+    wide = jax.make_jaxpr(scatter)(*inputs)
+    narrow = jax.make_jaxpr(narrowed_scatter)(*inputs)
+    assert execution_metadata_payload(wide) != execution_metadata_payload(narrow)
+    values = jnp.zeros(4, dtype=jnp.float64)
+    addresses = jnp.asarray([0, 2**32 + 1], dtype=jnp.int64)
+    assert jax.jit(scatter)(values, addresses).tolist() == [1.0, 0.0, 0.0, 0.0]
+    assert jax.jit(narrowed_scatter)(values, addresses).tolist() == [1.0, 1.0, 0.0, 0.0]
+
+
+def test_arbitrary_wrapped_callable_stays_opaque_after_frontend_patch() -> None:
+    @functools.wraps(_square)
+    def wrapper(value: Any) -> Any:
+        return _square(value) + 1.0
+
+    assert wrapper.__wrapped__ is _square
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        callable_payload(wrapper)

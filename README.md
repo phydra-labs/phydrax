@@ -656,6 +656,18 @@ Local builds and device probes are not complete scientific qualification or a
 blanket speedup claim. See [Apple GPU execution](docs/guides_metal_execution.md)
 for explicit dtype construction, diagnostics, qualification, and limitations.
 
+On Linux x86-64, `phydrax[rocm10]` selects matched upstream JAX/JAXlib/AMD
+plugin 0.12.0 and the packaged ROCm 10.1.0 runtime for standard CPython 3.13.
+The runtime includes `gfx942`, `gfx950`, and `gfx1250` payloads for the
+MI300/MI350 families and published MI400/CDNA 5 targets, and sets up libraries
+and compiler tools automatically. MI400 coverage is provisional, not a blanket
+qualification of every announced SKU. A compatible AMD kernel
+driver remains a system prerequisite. Select `JAX_PLATFORMS=rocm,cpu` for
+workflows with host callbacks; numerical execution stays on the selected GPU.
+Native JAX execution and collectives share Phydrax's existing substrates;
+CUDA-only native providers and compiled MACE/FMM kernels remain unavailable.
+See [AMD installation and qualification](docs/installation.md#amd-gpus).
+
 On Linux x86-64, `phydrax[oneapi]` selects upstream Intel GPU support and
 `phydrax[tpu]` selects upstream JAX/libtpu. Both require standard CPython 3.13.
 The oneAPI extra pins JAX 0.12.0 with JAXlib/plugin/PJRT 0.11.2: this is an

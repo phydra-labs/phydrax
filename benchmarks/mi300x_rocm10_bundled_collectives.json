@@ -1,0 +1,386 @@
+{
+  "installation": "bundled ROCm 10.1.0; manual SDK variables removed",
+  "layouts": {
+    "2x2": {
+      "distributed_pcg": {
+        "converged": true,
+        "iterations": 1,
+        "maximum_solution_error": 0.0,
+        "seconds": 0.27641305220022333
+      },
+      "environment": {
+        "default_float_dtype": "float64",
+        "fingerprint": "b628b18774b6a2aa658bda1441633d9861ecb892995014591cb40272a4bef147",
+        "frontend_index_patch": {
+          "algorithm": "point-index-bounds-before-shape-width-narrowing",
+          "jax_version": "0.12.0",
+          "patch_source_sha256": "7720c322d9352683da63d98d8c42896bf641ff8d32b72703310cc4162accb148",
+          "upstream_dynamic_slice_sha256": "7c04da9f492fc428b55462343482b64bbe2293a8e8fdd64ee973e8a9f6225030",
+          "upstream_function_sha256": "3c3135e9a98d915edace7506c4c8fe536518c1f54f75f1e5cee2f0c45edf51d2",
+          "upstream_source_sha256": "85ed8552ad648cdae8d0e70b280381adad87a7ee5424e0f6287e076091caa6bc"
+        },
+        "jax": {
+          "backend": "gpu",
+          "devices": [
+            {
+              "device_id": 0,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": 0,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 0,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            },
+            {
+              "device_id": 1,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": 1,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 0,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            },
+            {
+              "device_id": 2,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": null,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 1,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            },
+            {
+              "device_id": 3,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": null,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 1,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            }
+          ],
+          "version": "0.12.0",
+          "x64_enabled": true
+        },
+        "jaxlib_version": "0.12.0",
+        "logical_cpus": 192,
+        "machine": "x86_64",
+        "numpy_version": "2.5.4",
+        "package_fingerprint": "dd24ea5df8508564acf98766dfc838c1e8ad7ddec0b9d18be765d104755dd455",
+        "performance_environment": {
+          "CUDA_VISIBLE_DEVICES": null,
+          "GPU_DEVICE_ORDINAL": null,
+          "HIP_DEVICE_LIB_PATH": "/tmp/phydrax-rocm10-bundled-full/venv/lib/python3.13/site-packages/_rocm_sdk_core/lib/llvm/amdgcn/bitcode",
+          "HIP_PATH": null,
+          "HIP_VISIBLE_DEVICES": null,
+          "HSA_ENABLE_SDMA": null,
+          "HSA_OVERRIDE_GFX_VERSION": null,
+          "JAX_COMPILATION_CACHE_DIR": null,
+          "JAX_PLATFORMS": "rocm,cpu",
+          "JAX_PLATFORM_NAME": null,
+          "LD_LIBRARY_PATH": null,
+          "LLVM_PATH": "/tmp/phydrax-rocm10-bundled-full/venv/lib/python3.13/site-packages/_rocm_sdk_core/lib/llvm",
+          "MKL_NUM_THREADS": null,
+          "NCCL_DEBUG": null,
+          "NCCL_IB_DISABLE": null,
+          "NCCL_LAUNCH_ORDER_IMPLICIT": null,
+          "NCCL_LAUNCH_RACE_FATAL": null,
+          "NCCL_NVLS_ENABLE": null,
+          "NCCL_P2P_DISABLE": null,
+          "NCCL_SOCKET_IFNAME": null,
+          "NPROC": null,
+          "OMP_NUM_THREADS": "1",
+          "OPENBLAS_NUM_THREADS": "1",
+          "PHYDRAX_LOCAL_DEVICE_IDS": "0,1",
+          "ROCM_PATH": "/tmp/phydrax-rocm10-bundled-full/venv/lib/python3.13/site-packages/_rocm_sdk_core",
+          "ROCR_VISIBLE_DEVICES": null,
+          "UCX_MEMTYPE_CACHE": null,
+          "VECLIB_MAXIMUM_THREADS": null,
+          "XLA_FLAGS": null,
+          "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+          "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+        },
+        "phydrax_version": "0.2.2",
+        "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+        "processor": "x86_64",
+        "python_version": "3.13.16",
+        "rocm_packages": {
+          "jax-rocm10-pjrt": "0.12.0",
+          "jax-rocm10-plugin": "0.12.0",
+          "phydrax-rocm-core": "10.1.0",
+          "phydrax-rocm-device-gfx1250": "10.1.0",
+          "phydrax-rocm-device-gfx942": "10.1.0",
+          "phydrax-rocm-device-gfx950": "10.1.0",
+          "phydrax-rocm-libraries": "10.1.0",
+          "phydrax-rocm-runtime": "10.1.0"
+        }
+      },
+      "problem": {
+        "group_identity_consistent": true,
+        "iterations": 5,
+        "logical_size": 4096,
+        "padded_size": 4096,
+        "qualification": "bootstrap-and-collective-smoke"
+      },
+      "resource_admission": {
+        "admitted": true,
+        "execution_plan_id": "ca78879a48bcf97b4c1938b18a75961bee51be56b69f190c9f553030099a763c",
+        "group_id": "2d4ebf7e12a4bc62138812fde417840c7c58b94078be1466b0ed6d52d810ddad",
+        "memory_envelope": "declared",
+        "request": {
+          "accelerator_count": 4,
+          "accelerator_platform": null,
+          "accelerator_vendor": "amd",
+          "cpu_cores": 1,
+          "exclusive": true,
+          "host_count": 1,
+          "memory_bytes": 524288,
+          "minimum_accelerator_memory_bytes": null,
+          "process_count": 2
+        }
+      },
+      "runtime": {
+        "execution_group_id": "2d4ebf7e12a4bc62138812fde417840c7c58b94078be1466b0ed6d52d810ddad",
+        "global_device_count": 4,
+        "inventory_id": "b454f5ca397ba7adc6febd2a27b9c6d23c08aa12285d90af692111187ad0155b",
+        "local_device_count": 2,
+        "local_hardware_ids_by_process": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ]
+        ],
+        "nccl_launch_order_implicit": null,
+        "nccl_launch_race_fatal": null,
+        "nccl_nvls_enable": null,
+        "nccl_p2p_disable": null,
+        "platforms": [
+          "gpu"
+        ],
+        "process_count": 2,
+        "process_host_ids": [
+          [
+            0,
+            "linux-boot-9b33e357-2095-49fb-babe-618bf989f376"
+          ],
+          [
+            1,
+            "linux-boot-9b33e357-2095-49fb-babe-618bf989f376"
+          ]
+        ],
+        "process_index": 0
+      },
+      "weighted_mean": {
+        "absolute_error": 0.0,
+        "expected": 0.5,
+        "observed": 0.5,
+        "seconds": 0.004776430199854076
+      }
+    },
+    "4x1": {
+      "distributed_pcg": {
+        "converged": true,
+        "iterations": 1,
+        "maximum_solution_error": 0.0,
+        "seconds": 0.19301375520008152
+      },
+      "environment": {
+        "default_float_dtype": "float64",
+        "fingerprint": "fed1718ef16e4646fc178faa6d6b3395ff9024f35fd6ac7c5735a2bfa9fe1a98",
+        "frontend_index_patch": {
+          "algorithm": "point-index-bounds-before-shape-width-narrowing",
+          "jax_version": "0.12.0",
+          "patch_source_sha256": "7720c322d9352683da63d98d8c42896bf641ff8d32b72703310cc4162accb148",
+          "upstream_dynamic_slice_sha256": "7c04da9f492fc428b55462343482b64bbe2293a8e8fdd64ee973e8a9f6225030",
+          "upstream_function_sha256": "3c3135e9a98d915edace7506c4c8fe536518c1f54f75f1e5cee2f0c45edf51d2",
+          "upstream_source_sha256": "85ed8552ad648cdae8d0e70b280381adad87a7ee5424e0f6287e076091caa6bc"
+        },
+        "jax": {
+          "backend": "gpu",
+          "devices": [
+            {
+              "device_id": 0,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": 0,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 0,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            },
+            {
+              "device_id": 1,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": null,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 1,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            },
+            {
+              "device_id": 2,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": null,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 2,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            },
+            {
+              "device_id": 3,
+              "kind": "AMD Instinct MI300X",
+              "local_hardware_id": null,
+              "normalized_platform": "rocm",
+              "platform": "gpu",
+              "process_index": 3,
+              "runtime_version": "rocm 71626385",
+              "vendor": "amd"
+            }
+          ],
+          "version": "0.12.0",
+          "x64_enabled": true
+        },
+        "jaxlib_version": "0.12.0",
+        "logical_cpus": 192,
+        "machine": "x86_64",
+        "numpy_version": "2.5.4",
+        "package_fingerprint": "dd24ea5df8508564acf98766dfc838c1e8ad7ddec0b9d18be765d104755dd455",
+        "performance_environment": {
+          "CUDA_VISIBLE_DEVICES": null,
+          "GPU_DEVICE_ORDINAL": null,
+          "HIP_DEVICE_LIB_PATH": "/tmp/phydrax-rocm10-bundled-full/venv/lib/python3.13/site-packages/_rocm_sdk_core/lib/llvm/amdgcn/bitcode",
+          "HIP_PATH": null,
+          "HIP_VISIBLE_DEVICES": null,
+          "HSA_ENABLE_SDMA": null,
+          "HSA_OVERRIDE_GFX_VERSION": null,
+          "JAX_COMPILATION_CACHE_DIR": null,
+          "JAX_PLATFORMS": "rocm,cpu",
+          "JAX_PLATFORM_NAME": null,
+          "LD_LIBRARY_PATH": null,
+          "LLVM_PATH": "/tmp/phydrax-rocm10-bundled-full/venv/lib/python3.13/site-packages/_rocm_sdk_core/lib/llvm",
+          "MKL_NUM_THREADS": null,
+          "NCCL_DEBUG": null,
+          "NCCL_IB_DISABLE": null,
+          "NCCL_LAUNCH_ORDER_IMPLICIT": null,
+          "NCCL_LAUNCH_RACE_FATAL": null,
+          "NCCL_NVLS_ENABLE": null,
+          "NCCL_P2P_DISABLE": null,
+          "NCCL_SOCKET_IFNAME": null,
+          "NPROC": null,
+          "OMP_NUM_THREADS": "1",
+          "OPENBLAS_NUM_THREADS": "1",
+          "PHYDRAX_LOCAL_DEVICE_IDS": "0",
+          "ROCM_PATH": "/tmp/phydrax-rocm10-bundled-full/venv/lib/python3.13/site-packages/_rocm_sdk_core",
+          "ROCR_VISIBLE_DEVICES": null,
+          "UCX_MEMTYPE_CACHE": null,
+          "VECLIB_MAXIMUM_THREADS": null,
+          "XLA_FLAGS": null,
+          "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+          "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+        },
+        "phydrax_version": "0.2.2",
+        "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+        "processor": "x86_64",
+        "python_version": "3.13.16",
+        "rocm_packages": {
+          "jax-rocm10-pjrt": "0.12.0",
+          "jax-rocm10-plugin": "0.12.0",
+          "phydrax-rocm-core": "10.1.0",
+          "phydrax-rocm-device-gfx1250": "10.1.0",
+          "phydrax-rocm-device-gfx942": "10.1.0",
+          "phydrax-rocm-device-gfx950": "10.1.0",
+          "phydrax-rocm-libraries": "10.1.0",
+          "phydrax-rocm-runtime": "10.1.0"
+        }
+      },
+      "problem": {
+        "group_identity_consistent": true,
+        "iterations": 5,
+        "logical_size": 4096,
+        "padded_size": 4096,
+        "qualification": "bootstrap-and-collective-smoke"
+      },
+      "resource_admission": {
+        "admitted": true,
+        "execution_plan_id": "e5572e0c1fe5b8bfe31129e191c390ac6bce791b9abcfbabe7afe18d00f78dfe",
+        "group_id": "6895ea0346b9c504458ee1317a339e3b529262b7de93ebb4c0dddf3ca9fc38e2",
+        "memory_envelope": "declared",
+        "request": {
+          "accelerator_count": 4,
+          "accelerator_platform": null,
+          "accelerator_vendor": "amd",
+          "cpu_cores": 1,
+          "exclusive": true,
+          "host_count": 1,
+          "memory_bytes": 524288,
+          "minimum_accelerator_memory_bytes": null,
+          "process_count": 4
+        }
+      },
+      "runtime": {
+        "execution_group_id": "6895ea0346b9c504458ee1317a339e3b529262b7de93ebb4c0dddf3ca9fc38e2",
+        "global_device_count": 4,
+        "inventory_id": "e52c5750c7b81108ad342b2f5bc9277b2d83a2984e813db8650c6b63acc1b45e",
+        "local_device_count": 1,
+        "local_hardware_ids_by_process": [
+          [
+            0
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ],
+        "nccl_launch_order_implicit": null,
+        "nccl_launch_race_fatal": null,
+        "nccl_nvls_enable": null,
+        "nccl_p2p_disable": null,
+        "platforms": [
+          "gpu"
+        ],
+        "process_count": 4,
+        "process_host_ids": [
+          [
+            0,
+            "linux-boot-9b33e357-2095-49fb-babe-618bf989f376"
+          ],
+          [
+            1,
+            "linux-boot-9b33e357-2095-49fb-babe-618bf989f376"
+          ],
+          [
+            2,
+            "linux-boot-9b33e357-2095-49fb-babe-618bf989f376"
+          ],
+          [
+            3,
+            "linux-boot-9b33e357-2095-49fb-babe-618bf989f376"
+          ]
+        ],
+        "process_index": 0
+      },
+      "weighted_mean": {
+        "absolute_error": 0.0,
+        "expected": 0.5,
+        "observed": 0.5,
+        "seconds": 0.002854051999747753
+      }
+    }
+  },
+  "successful": true
+}

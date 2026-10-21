@@ -46,6 +46,17 @@ if TYPE_CHECKING:
         OneapiIssueCode as OneapiIssueCode,
         OneapiIssueSeverity as OneapiIssueSeverity,
     )
+    from .._rocm_environment import (
+        assess_rocm_environment as assess_rocm_environment,
+        collect_rocm_environment as collect_rocm_environment,
+        rocm_environment as rocm_environment,
+        RocmDeviceFacts as RocmDeviceFacts,
+        RocmEnvironmentFacts as RocmEnvironmentFacts,
+        RocmEnvironmentIssue as RocmEnvironmentIssue,
+        RocmEnvironmentReport as RocmEnvironmentReport,
+        RocmIssueCode as RocmIssueCode,
+        RocmIssueSeverity as RocmIssueSeverity,
+    )
     from .._tpu_environment import (
         assess_tpu_environment as assess_tpu_environment,
         collect_tpu_environment as collect_tpu_environment,
@@ -282,6 +293,15 @@ if TYPE_CHECKING:
 
 
 _EXPORTS = {
+    "RocmDeviceFacts": ".._rocm_environment",
+    "RocmEnvironmentFacts": ".._rocm_environment",
+    "RocmEnvironmentIssue": ".._rocm_environment",
+    "RocmEnvironmentReport": ".._rocm_environment",
+    "RocmIssueCode": ".._rocm_environment",
+    "RocmIssueSeverity": ".._rocm_environment",
+    "assess_rocm_environment": ".._rocm_environment",
+    "collect_rocm_environment": ".._rocm_environment",
+    "rocm_environment": ".._rocm_environment",
     "AMD_JAX_PROFILE": ".distributed",
     "AMGBackendName": ".amg",
     "AMGProvenance": ".amg",

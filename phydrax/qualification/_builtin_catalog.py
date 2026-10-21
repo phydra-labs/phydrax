@@ -29,6 +29,7 @@ _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
     ("phydrax.backends._metal_profiles", "metal_candidate_profiles"),
     ("phydrax.backends._oneapi_profiles", "oneapi_candidate_profiles"),
+    ("phydrax.backends._rocm_profiles", "rocm_candidate_profiles"),
     ("phydrax.backends._tpu_profiles", "tpu_candidate_profiles"),
     (
         "phydrax.discretization.spectral._qualification",
@@ -209,6 +210,7 @@ _PROFILE_PROVIDERS = (
 _CANDIDATE_DECLARATION_PROVIDERS = (
     ("phydrax.backends._metal_profiles", "metal_candidate_declarations"),
     ("phydrax.backends._oneapi_profiles", "oneapi_candidate_declarations"),
+    ("phydrax.backends._rocm_profiles", "rocm_candidate_declarations"),
     ("phydrax.backends._tpu_profiles", "tpu_candidate_declarations"),
     (
         "phydrax.discretization.spectral._qualification",

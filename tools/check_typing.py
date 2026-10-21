@@ -44,6 +44,7 @@ FIRST_PARTY = (
     "native/meshcore/python",
     "native/cuda13",
     "native/metal",
+    "packaging/rocm/python",
 )
 ANNOTATION_RULES = "ANN001,ANN002,ANN003,ANN201,ANN202,ANN204,ANN205,ANN206"
 _CHECKER_COMMENT = re.compile(r"#\s*(?:(?:type|pyright|mypy|pytype)\s*:|pyre-)")
@@ -249,12 +250,18 @@ def _git_lines(root: Path, arguments: Iterable[str], /) -> tuple[str, ...]:
 
 
 def first_party_python_files(root: Path, /) -> tuple[str, ...]:
-    """Return tracked and unignored untracked Python files of the repository."""
+    """Return first-party Python, excluding byte-exact upstream license recipes."""
     tracked = _git_lines(root, ("ls-files", "--", "*.py"))
     untracked = _git_lines(
         root, ("ls-files", "--others", "--exclude-standard", "--", "*.py")
     )
-    return tuple(sorted({*tracked, *untracked}))
+    return tuple(
+        sorted(
+            file
+            for file in {*tracked, *untracked}
+            if not file.startswith("packaging/rocm/licenses/")
+        )
+    )
 
 
 def checker_comment_errors(root: Path, /) -> tuple[str, ...]:

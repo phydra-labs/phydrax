@@ -106,6 +106,12 @@ oneapi = [
   "jaxlib==0.11.2",
   "jax-oneapi-plugin[with-oneapi]==0.11.2",
 ]
+rocm10 = [
+  "jax==0.12.0",
+  "jaxlib==0.12.0",
+  "jax-rocm10-plugin==0.12.0",
+  "phydrax-rocm-runtime==10.1.0",
+]
 tpu = [
   "jax[tpu]==0.12.0",
 ]
@@ -272,6 +278,7 @@ conflicts = [
   [{extra = "oneapi"}, {extra = "cuda13"}],
   [{extra = "oneapi"}, {extra = "metal"}],
   [{extra = "oneapi"}, {extra = "tpu"}],
+  [{extra = "oneapi"}, {extra = "rocm10"}],
 ]
 
 [tool.uv.sources]
@@ -287,7 +294,7 @@ phydrax-cuda13 = { SKBUILD_CMAKE_DEFINE = "PHX_CUDA_ARCHITECTURES=native" }
 
 [tool.ruff]
 line-length = 90
-exclude = [".*"]
+exclude = [".*", "packaging/rocm/licenses"]
 
 [tool.ruff.lint]
 # ANN0/ANN2 require every first-party function, method, and nested helper to
@@ -392,6 +399,7 @@ include = [
   "native/meshcore/python",
   "native/cuda13",
   "native/metal",
+  "packaging/rocm/python",
 ]
 
 [tool.ty.analysis]

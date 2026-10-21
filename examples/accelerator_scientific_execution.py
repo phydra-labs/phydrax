@@ -1,11 +1,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Train a float32 Phydrax Poisson PINN on an explicitly selected accelerator.
 
-Install phydrax[oneapi] on a supported Intel GPU Linux host or phydrax[tpu]
-on a provisioned Linux TPU worker. Run with --accelerator oneapi or tpu.
+Install phydrax[oneapi], phydrax[tpu], or phydrax[rocm10]
+on supported Linux hardware. ROCm10 includes its userspace and both GPU architectures.
+Pass the matching --accelerator selector and an explicit --device-id (default 0).
 TPU multi-host launcher discovery is opt-in with --tpu-autodetect; this example
 qualifies one selected local device in one process, not every visible device.
 Other devices remain visible and are not claimed as qualified. No CPU fallback.
+ROCm initializes CPU for JAX host callbacks, not for scientific array execution.
 TPU highest matmul precision uses six BF16 passes, not native IEEE FP32.
 oneAPI uses an experimental mixed JAX/JAXlib release stack.
 """
@@ -124,7 +126,10 @@ def poisson_steps(*, steps: int = 20) -> tuple[dict[str, float], tuple[Any, ...]
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--accelerator", required=True, choices=("oneapi", "tpu"))
+    parser.add_argument(
+        "--accelerator", required=True, choices=("oneapi", "tpu", "rocm10")
+    )
+    parser.add_argument("--device-id", type=int, default=0)
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--tpu-autodetect", action="store_true")
     args = parser.parse_args()
@@ -132,35 +137,47 @@ def main() -> int:
 
     if args.tpu_autodetect and args.accelerator != "tpu":
         parser.error("--tpu-autodetect requires --accelerator tpu")
+    if args.device_id < 0:
+        parser.error("--device-id must be nonnegative")
+    is_rocm = args.accelerator == "rocm10"
+    runtime_platform = "rocm" if is_rocm else args.accelerator
     bootstrap = (
         phx.config.RuntimeBootstrap(autodetect=True) if args.tpu_autodetect else None
     )
     phx.config.configure(
         phx.config.RuntimeConfig(
-            platforms=(args.accelerator,), enable_x64=True, bootstrap=bootstrap
+            platforms=("rocm", "cpu") if is_rocm else (runtime_platform,),
+            enable_x64=True,
+            bootstrap=bootstrap,
         )
     )
     import jax
     import numpy as np
 
     from phydrax._jax_config import default_device
-    from phydrax.backends import oneapi_environment, tpu_environment
+    from phydrax._jax_indexing_frontend import frontend_index_patch_identity
+    from phydrax.backends import oneapi_environment, rocm_environment, tpu_environment
 
     match args.accelerator:
         case "oneapi":
             report = oneapi_environment(initialize_backend=True)
         case "tpu":
             report = tpu_environment(initialize_backend=True)
+        case "rocm10":
+            report = rocm_environment(initialize_backend=True)
         case _:
             raise ValueError("Unsupported accelerator")
     if not report.successful or not report.facts.device_probed:
         raise RuntimeError(f"Selected accelerator is unavailable: {report.issues}")
-    devices = jax.local_devices(backend=args.accelerator)
+    devices = jax.local_devices(backend=runtime_platform)
     if not devices or jax.process_count() != 1:
         raise RuntimeError(
             "This example requires one process with an actual local selected device"
         )
-    device = devices[0]
+    matching = [device for device in devices if device.id == args.device_id]
+    if len(matching) != 1:
+        raise RuntimeError(f"Device ID {args.device_id} is not a unique local device")
+    device = matching[0]
     with default_device(device):
         values, arrays = poisson_steps(steps=args.steps)
     placed = all(
@@ -191,8 +208,9 @@ def main() -> int:
                 "device_kind": device.device_kind,
                 "qualified_device_id": device.id,
                 "execution_device_count": 1,
-                "global_device_count": jax.device_count(args.accelerator),
-                "local_device_count": jax.local_device_count(args.accelerator),
+                "global_device_count": jax.device_count(runtime_platform),
+                "local_device_count": jax.local_device_count(runtime_platform),
+                "frontend_index_patch": frontend_index_patch_identity(),
                 "results_on_device": placed,
                 "steps": args.steps,
                 "values": values,

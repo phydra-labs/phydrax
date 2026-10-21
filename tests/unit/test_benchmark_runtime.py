@@ -10,12 +10,15 @@ import math
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from benchmarks import _runtime as benchmark_runtime
 from benchmarks._runtime import (
     benchmark_driver_fingerprint,
     BenchmarkIdentity,
@@ -251,6 +254,90 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -
 
 
 @pytest.mark.parametrize(
+    "field",
+    (
+        "algorithm",
+        "jax_version",
+        "upstream_source_sha256",
+        "upstream_function_sha256",
+        "upstream_dynamic_slice_sha256",
+        "patch_source_sha256",
+    ),
+)
+def test_frontend_patch_changes_environment_identity(
+    monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    identity = {
+        "algorithm": "parser-input-not-compiler-evidence",
+        "jax_version": "0.12.0",
+        "upstream_source_sha256": "1" * 64,
+        "upstream_function_sha256": "2" * 64,
+        "upstream_dynamic_slice_sha256": "5" * 64,
+        "patch_source_sha256": "3" * 64,
+    }
+    monkeypatch.setattr(benchmark_runtime, "frontend_index_patch_identity", lambda: None)
+    unpatched = capture_environment()
+    monkeypatch.setattr(
+        benchmark_runtime, "frontend_index_patch_identity", lambda: dict(identity)
+    )
+    patched = capture_environment()
+    assert unpatched.to_dict()["frontend_index_patch"] is None
+    assert patched.to_dict()["frontend_index_patch"] == identity
+    assert patched.fingerprint != unpatched.fingerprint
+    identity[field] = "changed-parser-input"
+    changed = capture_environment()
+    assert changed.fingerprint != patched.fingerprint
+    assert changed.package_fingerprint == patched.package_fingerprint
+    assert patched.to_dict()["frontend_index_patch"][field] != identity[field]
+
+
+def test_environment_retains_raw_and_normalized_amd_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_version = "rocm 71626385"
+    device = SimpleNamespace(
+        platform="gpu",
+        device_kind="AMD Instinct MI300X",
+        process_index=0,
+        id=3,
+        local_hardware_id=3,
+        client=SimpleNamespace(platform="gpu", platform_version=runtime_version),
+    )
+    monkeypatch.setattr(jax, "devices", lambda: [device])
+    monkeypatch.setattr(jax, "process_index", lambda: 0)
+    packages = {
+        "jax-rocm10-plugin": "0.12.0",
+        "jax-rocm10-pjrt": "0.12.0",
+        "phydrax-rocm-runtime": "10.1.0",
+        "phydrax-rocm-core": "10.1.0",
+        "phydrax-rocm-libraries": "10.1.0",
+        "phydrax-rocm-device-gfx942": "10.1.0",
+        "phydrax-rocm-device-gfx950": "10.1.0",
+    }
+    monkeypatch.setattr(
+        importlib.metadata,
+        "distributions",
+        lambda: tuple(_Distribution(name, version) for name, version in packages.items()),
+    )
+    environment = capture_environment().to_dict()
+    assert environment["jax"]["devices"] == [
+        {
+            "platform": "gpu",
+            "kind": "AMD Instinct MI300X",
+            "normalized_platform": "rocm",
+            "vendor": "amd",
+            "runtime_version": runtime_version,
+            "process_index": 0,
+            "device_id": 3,
+            "local_hardware_id": 3,
+        }
+    ]
+    assert environment["rocm_packages"] == packages
+    fingerprint = environment.pop("fingerprint")
+    assert canonical_fingerprint(environment) == fingerprint
+
+
+@pytest.mark.parametrize(
     ("name", "first", "second"),
     [
         ("NPROC", "3", "4"),
@@ -259,6 +346,13 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -
         ("NCCL_LAUNCH_ORDER_IMPLICIT", "0", "1"),
         ("NCCL_LAUNCH_RACE_FATAL", "0", "1"),
         ("UCX_MEMTYPE_CACHE", "n", "y"),
+        ("ROCR_VISIBLE_DEVICES", "0,1", "2,3"),
+        ("HIP_VISIBLE_DEVICES", "0", "1"),
+        ("GPU_DEVICE_ORDINAL", "0", "1"),
+        ("LD_LIBRARY_PATH", "/opt/rocm/lib", "/isolated/rocm/lib"),
+        ("ROCM_PATH", "/opt/rocm", "/isolated/rocm"),
+        ("HSA_OVERRIDE_GFX_VERSION", "9.4.2", "9.4.3"),
+        ("PHYDRAX_LOCAL_DEVICE_IDS", "0,1", "2,3"),
     ],
     ids=[
         "cpu-workers",
@@ -267,6 +361,13 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -
         "communicator-order",
         "launch-race-detection",
         "ucx-memory-type-cache",
+        "rocm-visibility",
+        "hip-visibility",
+        "gpu-ordinal",
+        "runtime-library-path",
+        "rocm-path",
+        "gfx-override",
+        "local-ownership",
     ],
 )
 def test_performance_configuration_changes_environment_identity(

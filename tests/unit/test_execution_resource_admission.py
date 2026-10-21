@@ -58,6 +58,36 @@ def _resolve(
     )
 
 
+def test_amd_selection_preserves_generic_gpu_inventory_identity() -> None:
+    inventory = ResourceInventory(
+        1,
+        0,
+        (DeviceResource(0, 0, 0, "gpu", "AMD Instinct MI300X", vendor="amd"),),
+    )
+    original = inventory.to_payload()
+    identity = inventory.inventory_id
+    request = ResourceRequest(1, 4_096, accelerator_count=1, accelerator_vendor="amd")
+    plan = _resolve(inventory, _candidate(inventory), request)
+    assert plan.group is not None
+    assert plan.group.device_keys == ((0, 0),)
+    assert inventory.to_payload() == original
+    assert inventory.inventory_id == identity
+    assert inventory.devices[0].platform == "gpu"
+    assert ResourceRequest.from_payload(request.to_payload()).accelerator_vendor == "amd"
+    with pytest.raises(ExecutionAdmissionError):
+        _resolve(
+            inventory,
+            _candidate(inventory),
+            ResourceRequest(1, 4_096, accelerator_count=1, accelerator_vendor="nvidia"),
+        )
+    with pytest.raises(ExecutionAdmissionError):
+        _resolve(
+            inventory,
+            _candidate(inventory),
+            ResourceRequest(1, 4_096, accelerator_count=1, accelerator_platform="rocm"),
+        )
+
+
 def test_execution_resource_admission_scenario_1() -> None:
     inventory = ResourceInventory(
         1,

@@ -19,6 +19,16 @@ spec = importlib.util.spec_from_file_location("_indexing_under_test", sys.argv[1
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 """
+_INSTALL_FRONTEND = """
+from pathlib import Path
+
+frontend_spec = importlib.util.spec_from_file_location(
+    "_frontend_under_test", Path(sys.argv[1]).with_name("_jax_indexing_frontend.py")
+)
+frontend = importlib.util.module_from_spec(frontend_spec)
+frontend_spec.loader.exec_module(frontend)
+frontend.install_frontend_index_patch()
+"""
 
 
 def _run_contract(source: str) -> None:
@@ -63,6 +73,8 @@ options = dict(jax.config.values)
 assert not xla_bridge.backends_are_initialized()
 module.register_gather_lowering("cpu")
 module.register_gather_lowering("cpu")
+module.register_scatter_lowering("cpu")
+module.register_scatter_lowering("cpu")
 module.register_gather_lowering("tpu")
 providers = {name for name in sys.modules if name.startswith("jax_plugins.")}
 module.register_gather_lowering("tpu")
@@ -220,4 +232,166 @@ def empty(a: jax.Array, i: jax.Array) -> jax.Array:
 actual = empty(np.empty(0, np.float32), np.asarray([[0], [2**32]], np.int64))
 assert actual.shape == (2, 0)
 assert actual.dtype == np.float32
+""")
+
+
+@pytest.mark.parametrize("index_kind", ["int64", "uint64"])
+def test_scatter_forward_preserves_full_width_bounds_for_all_reducers(
+    index_kind: str,
+) -> None:
+    _run_contract(
+        f"index_kind = {index_kind!r}\n"
+        + _INSTALL_FRONTEND
+        + """
+import jax
+import jax.numpy as jnp
+import numpy as np
+from jax import lax
+
+module.register_scatter_lowering("cpu")
+limits = np.iinfo(np.dtype(index_kind))
+operations = (
+    (lax.scatter, lambda old, new: new),
+    (lax.scatter_add, np.add),
+    (lax.scatter_sub, np.subtract),
+    (lax.scatter_mul, np.multiply),
+    (lax.scatter_min, np.minimum),
+    (lax.scatter_max, np.maximum),
+)
+dimensions = lax.ScatterDimensionNumbers(
+    update_window_dims=(0,), inserted_window_dims=(), scatter_dims_to_operand_dims=(0,)
+)
+starts = (limits.min, 0, 1, 3, 4, 6, 2**32 + 1, limits.max)
+if index_kind == "int64":
+    starts += (-1, -(2**32) + 1)
+for kind in ("int64", "float64", "complex128"):
+    values = np.arange(1, 7).astype(kind)
+    if kind == "complex128":
+        values += 1j * values[::-1]
+    for size in (1, 3):
+        updates = np.arange(3, size + 3).astype(kind)
+        for operation, reference in operations:
+            if kind == "complex128" and operation in (lax.scatter_min, lax.scatter_max):
+                continue
+
+            @jax.jit
+            def execute(a: jax.Array, i: jax.Array, u: jax.Array) -> jax.Array:
+                return operation(a, i, u, dimensions, mode="drop", unique_indices=True)
+
+            for start in starts:
+                expected = values.copy()
+                if 0 <= int(start) <= len(values) - size:
+                    region = slice(int(start), int(start) + size)
+                    expected[region] = reference(expected[region], updates)
+                actual = execute(values, np.asarray([start], index_kind), updates)
+                assert actual.dtype == values.dtype
+                np.testing.assert_array_equal(actual, expected)
+
+@jax.jit
+def point_set(a: jax.Array, i: jax.Array, u: jax.Array) -> jax.Array:
+    return a.at[i].set(u, mode="drop")
+
+np.testing.assert_array_equal(
+    point_set(np.zeros(4, np.int64), np.asarray([0, 2**32 + 1, 2], index_kind),
+              np.asarray([7, 11, 13], np.int64)),
+    [7, 0, 13, 0],
+)
+"""
+    )
+
+
+@pytest.mark.parametrize("index_kind", ["int64", "uint64"])
+def test_scatter_drop_bounds_include_batch_axes_and_complete_windows(
+    index_kind: str,
+) -> None:
+    _run_contract(
+        f"index_kind = {index_kind!r}\n"
+        + """
+import jax
+import numpy as np
+from jax import lax
+
+module.register_scatter_lowering("cpu")
+dimensions = lax.ScatterDimensionNumbers(
+    update_window_dims=(2, 3), inserted_window_dims=(),
+    scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0,),
+    scatter_indices_batching_dims=(0,),
+)
+indices = np.asarray([[[0], [3], [2**32 + 1]], [[4], [1], [np.iinfo(index_kind).max]]],
+                     index_kind)
+values = np.arange(40, dtype=np.float64).reshape(2, 4, 5)
+updates = np.arange(24, dtype=np.float64).reshape(2, 3, 2, 2) + 50
+for operation, reference in (
+    (lax.scatter, lambda old, new: new), (lax.scatter_add, np.add),
+    (lax.scatter_sub, np.subtract), (lax.scatter_mul, np.multiply),
+    (lax.scatter_min, np.minimum), (lax.scatter_max, np.maximum),
+):
+    @jax.jit
+    def execute(a: jax.Array, i: jax.Array, u: jax.Array) -> jax.Array:
+        return operation(a, i, u, dimensions, mode="drop")
+
+    expected = values.copy()
+    for batch in range(2):
+        for window in range(3):
+            start = int(indices[batch, window, 0])
+            if 0 <= start <= 3:
+                region = (batch, slice(0, 2), slice(start, start + 2))
+                expected[region] = reference(expected[region], updates[batch, window])
+    np.testing.assert_array_equal(execute(values, indices, updates), expected)
+
+dimensions = lax.ScatterDimensionNumbers(
+    update_window_dims=(), inserted_window_dims=(0, 1),
+    scatter_dims_to_operand_dims=(0, 1),
+)
+
+@jax.jit
+def multidimensional(a: jax.Array, i: jax.Array, u: jax.Array) -> jax.Array:
+    return lax.scatter_add(a, i, u, dimensions, mode="drop")
+
+indices = np.asarray([[0, 0], [2**32 + 1, 1], [1, 2**32 + 1]], index_kind)
+np.testing.assert_array_equal(
+    multidimensional(np.zeros((2, 2), np.float64), indices, np.asarray([3, 5, 7], np.float64)),
+    [[3, 0], [0, 0]],
+)
+"""
+    )
+
+
+def test_scatter_other_modes_empty_windows_and_vmap_keep_semantics() -> None:
+    _run_contract("""
+import jax
+import numpy as np
+from jax import lax
+
+module.register_scatter_lowering("cpu")
+dimensions = lax.ScatterDimensionNumbers(
+    update_window_dims=(0,), inserted_window_dims=(), scatter_dims_to_operand_dims=(0,)
+)
+for mode in ("clip", "promise_in_bounds"):
+    @jax.jit
+    def execute(a: jax.Array, i: jax.Array, u: jax.Array) -> jax.Array:
+        return lax.scatter_add(a, i, u, dimensions, mode=mode)
+
+    start = 2**32 + 1 if mode == "clip" else 2
+    np.testing.assert_array_equal(
+        execute(np.ones(4, np.float64), np.asarray([start], np.int64),
+                np.asarray([2, 3], np.float64)),
+        [1, 1, 3, 4],
+    )
+
+@jax.jit
+def drop(a: jax.Array, i: jax.Array, u: jax.Array) -> jax.Array:
+    return lax.scatter_add(a, i, u, dimensions, mode="drop")
+
+np.testing.assert_array_equal(
+    drop(np.ones(4, np.float64), np.asarray([2**32], np.int64), np.empty(0, np.float64)),
+    np.ones(4, np.float64),
+)
+np.testing.assert_array_equal(
+    jax.jit(jax.vmap(drop))(
+        np.ones((2, 4), np.float64), np.asarray([[1], [2**32 + 1]], np.int64),
+        np.asarray([[2, 3], [5, 7]], np.float64),
+    ),
+    [[1, 3, 4, 1], [1, 1, 1, 1]],
+)
 """)
