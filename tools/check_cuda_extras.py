@@ -47,6 +47,7 @@ NVIDIA_FAMILIES = (
     "nccl",
     "nvshmem",
     "cudss",
+    "cuest",
     "cuda-cccl",
     "cuda-crt",
     "cuda-nvcc",
@@ -77,6 +78,12 @@ NVIDIA_MAJORS = {
         for major in (12, 13)
     },
     **dict.fromkeys(UNSUFFIXED_CUDA13, 13),
+    **{
+        f"{family}-cu{major}": major
+        for family in ("cutensor", "cutensornet")
+        for major in (12, 13)
+    },
+    "phydrax-cuest": 13,
 }
 
 
@@ -177,15 +184,23 @@ def metadata_errors(metadata: Message) -> list[str]:
     if "cuda13" not in extras:
         errors.append("Missing cuda13 extra")
     requirements = metadata.get_all("Requires-Dist", [])
-    # Intent is recorded on every platform, even where GPU wheels are unavailable.
-    expected = "phydrax-cuda-major==13.*;extra=='cuda13'"
-    matching = [
+    # CUDA intent is platform-independent for both the complete CUDA stack and
+    # the separately selectable cuEST runtime. The latter also depends on the
+    # marker transitively; keeping the direct requirement makes standalone
+    # resolver intent explicit and lets universal local locks resolve it.
+    expected = {
+        "phydrax-cuda-major==13.*;extra=='cuda13'",
+        "phydrax-cuda-major==13.*;extra=='cuest'",
+    }
+    matching = {
         _normalized(requirement)
         for requirement in requirements
         if requirement.lower().startswith("phydrax-cuda-major")
-    ]
-    if matching != [expected]:
-        errors.append(f"Expected unconditional CUDA 13 marker requirement: {matching}")
+    }
+    if matching != expected:
+        errors.append(
+            f"Expected CUDA 13 marker requirements {sorted(expected)}: {sorted(matching)}"
+        )
     companion = [
         _normalized(requirement)
         for requirement in requirements
@@ -216,7 +231,11 @@ def resolution_errors(resolved: dict[str, str], platform: str, version: str) -> 
     if resolved.get("phydrax-cuda-major", "").split(".")[0] != "13":
         errors.append("Missing or incorrect CUDA 13 marker")
     nvidia = {
-        name: version for name, version in resolved.items() if name.startswith("nvidia-")
+        name: version
+        for name, version in resolved.items()
+        if name.startswith("nvidia-")
+        or name == "phydrax-cuest"
+        or re.fullmatch(r"(?:cutensor|cutensornet)-cu\d+", name)
     }
     plugins = [
         name for name in resolved if re.fullmatch(r"jax-cuda\d+-(plugin|pjrt)", name)
@@ -239,6 +258,10 @@ def resolution_errors(resolved: dict[str, str], platform: str, version: str) -> 
     elif companions:
         errors.append(
             f"Companion resolved off supported Linux architectures: {companions}"
+        )
+    if "phydrax-cuest" in resolved and resolved["phydrax-cuest"] != version:
+        errors.append(
+            f"Expected phydrax-cuest=={version}, resolved {resolved['phydrax-cuest']}"
         )
     if set(plugins) != {"jax-cuda13-plugin", "jax-cuda13-pjrt"}:
         errors.append(f"Expected CUDA 13 JAX plugin and PJRT, resolved {plugins}")

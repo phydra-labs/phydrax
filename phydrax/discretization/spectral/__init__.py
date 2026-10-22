@@ -59,6 +59,7 @@ from ._constraints import (
     SpectralTraceTerm,
 )
 from ._coordinates import HermitianSpectralCoordinates
+from ._cudecomp import CudecompTransposeEvidence
 from ._cylindrical_hankel import (
     CylindricalHankelEvidence,
     CylindricalHankelPlan,
@@ -97,6 +98,7 @@ from ._distributed import (
     SpectralResourceError,
     SpectralResourceReport,
     SpectralTranspose,
+    SpectralTransposeProvider,
 )
 from ._distributed_les import (
     DistributedPeriodicLESParityEvidence,
@@ -393,6 +395,8 @@ __all__ = [
     "SpectralResourceError",
     "SpectralResourceReport",
     "SpectralTranspose",
+    "SpectralTransposeProvider",
+    "CudecompTransposeEvidence",
     "DistributedPeriodicLESParityEvidence",
     "DistributedPeriodicLESPlan",
     "DistributedPeriodicLESPreparationEvidence",

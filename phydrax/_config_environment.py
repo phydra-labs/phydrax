@@ -43,6 +43,12 @@ LIBRARY_ENVIRONMENT: Final[Mapping[LibrarySetting, str]] = MappingProxyType(
         "cuda_cudss": "PHYDRAX_CUDA_CUDSS_LIBRARY",
         "cuda_amgx": "PHYDRAX_CUDA_AMGX_LIBRARY",
         "cuda_quda": "PHYDRAX_CUDA_QUDA_LIBRARY",
+        "cuda_cutensor": "PHYDRAX_CUDA_CUTENSOR_LIBRARY",
+        "cuda_cutensornet": "PHYDRAX_CUDA_CUTENSORNET_LIBRARY",
+        "cuda_cuest": "PHYDRAX_CUDA_CUEST_LIBRARY",
+        "cuda_collective": "PHYDRAX_CUDA_COLLECTIVE_LIBRARY",
+        "cuda_cudecomp": "PHYDRAX_CUDA_CUDECOMP_LIBRARY",
+        "cuda_cudss_mgmn": "PHYDRAX_CUDA_CUDSS_MGMN_LIBRARY",
     }
 )
 WORKER_ENVIRONMENT: Final[Mapping[WorkerSetting, str]] = MappingProxyType(

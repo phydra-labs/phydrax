@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import socket
 import sys
 import time
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -39,7 +41,9 @@ from phydrax.execution import (
     ExecutionRuntime,
     global_weighted_mean,
     launch_local_processes,
+    LocalProcessLaunchError,
     LocalProcessLaunchPlan,
+    LocalProcessResult,
     resolve_execution_plan,
     ResourceRequest,
     runtime_info,
@@ -51,6 +55,71 @@ from phydrax.linalg import (
     DistributedPairing,
     solve_distributed_pcg,
 )
+from phydrax.linalg.krylov import KrylovBreakdownStatus
+from tools._accelerator_process import write_json_evidence
+
+
+RANK_RESULT_PREFIX = b"SUBSTRATE_RESULT "
+
+
+def _terminal_record(stdout: bytes) -> dict[str, Any]:
+    records = [
+        line[len(RANK_RESULT_PREFIX) :]
+        for line in stdout.splitlines()
+        if line.startswith(RANK_RESULT_PREFIX)
+    ]
+    if len(records) != 1:
+        raise ValueError("each rank must emit exactly one terminal result")
+    record = json.loads(records[0])
+    if not isinstance(record, dict):
+        raise ValueError("rank record must be an object")
+    return record
+
+
+def qualification_errors(record: dict[str, Any]) -> list[str]:
+    """Scientific success is independent of whether an executable returned."""
+    errors = []
+    for name, metric, tolerance in (
+        ("weighted_mean", "absolute_error", 1.0e-12),
+        ("distributed_pcg", "maximum_solution_error", 1.0e-12),
+    ):
+        value = record[name][metric]
+        seconds = record[name]["seconds"]
+        if not math.isfinite(value) or value > tolerance or value < 0:
+            errors.append(f"{name}.{metric} exceeds finite tolerance {tolerance}")
+        if not math.isfinite(seconds) or seconds < 0:
+            errors.append(f"{name}.seconds must be finite and nonnegative")
+    if record["distributed_pcg"]["converged"] is not True:
+        errors.append("distributed_pcg did not converge")
+    pcg = record["distributed_pcg"]
+    if (
+        type(pcg["breakdown"]) is not int
+        or pcg["breakdown"]
+        not in (int(KrylovBreakdownStatus.NONE), int(KrylovBreakdownStatus.HAPPY))
+        or not math.isfinite(pcg["residual_norm"])
+        or not math.isfinite(pcg["residual_absolute_tolerance"])
+        or pcg["residual_absolute_tolerance"] < 0
+        or not 0 <= pcg["residual_norm"] <= pcg["residual_absolute_tolerance"]
+    ):
+        errors.append("distributed_pcg residual or breakdown gate failed")
+    if not all(
+        math.isfinite(record["weighted_mean"][key]) for key in ("observed", "expected")
+    ):
+        errors.append("weighted_mean values must be finite")
+    if record["problem"]["group_identity_consistent"] is not True:
+        errors.append("execution-group identity differs across ranks")
+    return errors
+
+
+def _json_safe(value: Any) -> Any:
+    """Keep failed numerical evidence serializable without nonstandard JSON."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def _time(operation: Any, iterations: int) -> tuple[object, float]:
@@ -157,7 +226,8 @@ def run(
         precision_policy_id="substrate-smoke-float64",
         solver_policy_id="substrate-smoke-diagonal-pcg",
     )
-    assert admitted.group is not None
+    if admitted.group is None:
+        raise RuntimeError("resource admission omitted the execution group")
     host = np.linspace(0.0, 1.0, padded_size, dtype=np.float64)
     valid = np.arange(padded_size) < size
     values = shard_array_axis(host, runtime.root_group)
@@ -239,9 +309,152 @@ def run(
             "iterations": int(np.asarray(result.iterations)),
             # ty: ignore[unresolved-attribute]
             "converged": bool(np.asarray(result.converged)),
+            # ty: ignore[unresolved-attribute]
+            "breakdown": int(np.asarray(result.breakdown)),
+            # ty: ignore[unresolved-attribute]
+            "residual_norm": float(np.asarray(result.residual_norm)),
+            "residual_absolute_tolerance": 1e-12 * float(np.linalg.norm(2 * host[:size])),
             "maximum_solution_error": float(np.asarray(solution_error)),
         },
     }
+
+
+def _launch_ranks(
+    arguments: argparse.Namespace,
+) -> tuple[tuple[LocalProcessResult, ...], str | None]:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    command = [
+        sys.executable,
+        "-m",
+        "tools.distributed_substrate_benchmark",
+        "--size",
+        str(arguments.size),
+        "--iterations",
+        str(arguments.iterations),
+        "--local-processes",
+        str(arguments.local_processes),
+        "--devices-per-process",
+        str(arguments.devices_per_process),
+        "--worker",
+    ]
+    if arguments.required_gpus is not None:
+        command.extend(("--required-gpus", str(arguments.required_gpus)))
+    for option, value in (
+        ("--expected-vendor", arguments.expected_vendor),
+        ("--expected-global-devices", arguments.expected_global_devices),
+        ("--expected-local-devices", arguments.expected_local_devices),
+    ):
+        if value is not None:
+            command.extend((option, str(value)))
+    try:
+        results = launch_local_processes(
+            command,
+            LocalProcessLaunchPlan(
+                arguments.local_processes,
+                f"127.0.0.1:{port}",
+                devices_per_process=arguments.devices_per_process,
+            ),
+            environment=pxconfig.environment(
+                pxconfig.RuntimeConfig(cpu_collectives_implementation="gloo")
+            ),
+        )
+    except LocalProcessLaunchError as error:
+        return error.results, str(error)
+    return results, None
+
+
+def _rank_record(
+    results: Sequence[LocalProcessResult],
+    process_count: int,
+    launch_error: str | None,
+) -> tuple[dict[str, Any], list[str]]:
+    ranks = []
+    group_ids = []
+    errors = [] if launch_error is None else [launch_error]
+    if sorted(result.process_id for result in results) != list(range(process_count)):
+        errors.append("supervised rank identities differ from requested topology")
+    for result in results:
+        try:
+            rank = _terminal_record(result.stdout)
+            runtime = rank["runtime"]
+            if (
+                type(runtime["process_index"]) is not int
+                or runtime["process_index"] != result.process_id
+            ):
+                errors.append(f"rank {result.process_id} identity differs")
+            if runtime["process_count"] != process_count:
+                errors.append(f"rank {result.process_id} process count differs")
+            group_id = runtime["execution_group_id"]
+            if not isinstance(group_id, str) or not group_id:
+                raise ValueError("execution group identity must be nonempty")
+            group_ids.append(group_id)
+            ranks.append(rank)
+            if rank["passed"] is not True or rank["errors"] != []:
+                errors.append(f"rank {result.process_id} scientific gate failed")
+            errors.extend(
+                f"rank {result.process_id}: {error}"
+                for error in qualification_errors(rank)
+            )
+        except (ValueError, KeyError, TypeError, OverflowError) as error:
+            errors.append(f"rank {result.process_id} terminal record: {error}")
+        if result.returncode != 0:
+            errors.append(f"rank {result.process_id} exited {result.returncode}")
+        if result.output_truncated:
+            errors.append(f"rank {result.process_id} output was truncated")
+    if len(ranks) != process_count:
+        errors.append("missing terminal ranks")
+    if len(set(group_ids)) != 1:
+        errors.append("terminal rank groups differ")
+    record = dict(ranks[0]) if ranks else {}
+    record.update(ranks=ranks, passed=not errors, errors=errors)
+    record["rank_outputs"] = [
+        {
+            "rank": result.process_id,
+            "returncode": result.returncode,
+            "stdout": result.stdout.decode("utf-8", errors="replace"),
+            "stderr": result.stderr.decode("utf-8", errors="replace"),
+            "output_truncated": result.output_truncated,
+        }
+        for result in results
+    ]
+    return record, errors
+
+
+def _local_record(
+    arguments: argparse.Namespace,
+) -> tuple[dict[str, Any], list[str]]:
+    record = run(
+        arguments.size,
+        arguments.iterations,
+        expected_vendor=arguments.expected_vendor,
+        expected_global_devices=arguments.expected_global_devices,
+        expected_local_devices=arguments.expected_local_devices,
+    )
+    errors = qualification_errors(record)
+    if jax.process_count() != arguments.local_processes:
+        errors.append("observed process count differs from requested topology")
+    if jax.local_device_count() != arguments.devices_per_process:
+        errors.append("observed local devices differ from requested topology")
+    if arguments.required_gpus is not None:
+        from tests._support.cuda_execution_worker import cuda_runtime, ownership
+
+        if any(device_vendor(device) != "nvidia" for device in jax.devices()):
+            errors.append("physical CUDA qualification requires NVIDIA devices")
+        else:
+            record["ownership"] = ownership(cuda_runtime())
+        if jax.device_count() != arguments.required_gpus:
+            errors.append("observed GPUs differ from required-gpus")
+    terminal = np.asarray(
+        multihost_utils.process_allgather(
+            np.asarray(not errors, dtype=np.bool_), tiled=False
+        )
+    )
+    if not np.all(terminal):
+        errors.append("not every rank reached a successful scientific terminal state")
+    record.update(passed=not errors, errors=errors)
+    return record, errors
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -258,11 +471,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--expected-vendor")
     parser.add_argument("--expected-global-devices", type=int)
     parser.add_argument("--expected-local-devices", type=int)
+    parser.add_argument(
+        "--required-gpus",
+        type=int,
+        help="Require NVIDIA CUDA GPU count and physical ownership evidence.",
+    )
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     if arguments.local_processes <= 0 or arguments.devices_per_process <= 0:
         parser.error("local-processes and devices-per-process must be positive")
-    expectations: list[str] = []
     for option, value in (
         ("--expected-vendor", arguments.expected_vendor),
         ("--expected-global-devices", arguments.expected_global_devices),
@@ -271,57 +489,45 @@ def main(argv: Sequence[str] | None = None) -> None:
         if value is not None:
             if isinstance(value, int) and value <= 0:
                 parser.error(f"{option} must be positive")
-            expectations.extend((option, str(value)))
+            if isinstance(value, str) and not value.strip():
+                parser.error(f"{option} must be non-empty")
+    if arguments.required_gpus is not None and (
+        arguments.required_gpus <= 0
+        or arguments.required_gpus
+        != arguments.local_processes * arguments.devices_per_process
+    ):
+        parser.error("required-gpus must equal the requested process/device product")
+    if arguments.required_gpus is not None and arguments.expected_vendor not in (
+        None,
+        "nvidia",
+    ):
+        parser.error(
+            "required-gpus requires expected-vendor nvidia, not AMD qualification"
+        )
     if arguments.local_processes > 1 and not arguments.worker:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
-        environment = pxconfig.environment(
-            pxconfig.RuntimeConfig(cpu_collectives_implementation="gloo")
-        )
-        results = launch_local_processes(
-            (
-                sys.executable,
-                "-m",
-                "tools.distributed_substrate_benchmark",
-                "--size",
-                str(arguments.size),
-                "--iterations",
-                str(arguments.iterations),
-                "--local-processes",
-                str(arguments.local_processes),
-                "--devices-per-process",
-                str(arguments.devices_per_process),
-                "--worker",
-                *expectations,
-            ),
-            LocalProcessLaunchPlan(
-                arguments.local_processes,
-                f"127.0.0.1:{port}",
-                devices_per_process=arguments.devices_per_process,
-            ),
-            environment=environment,
-        )
-        print(results[0].stdout.decode("utf-8").strip())
-        return
-    local_devices = jax.local_devices()
-    if arguments.worker and any(device.platform == "gpu" for device in local_devices):
-        start = jax.process_index() * arguments.devices_per_process
-        expected = list(range(start, start + arguments.devices_per_process))
-        actual = [device.local_hardware_id for device in local_devices]
-        if actual != expected:
-            raise RuntimeError(
-                f"local worker GPU ownership differs: expected={expected}, actual={actual}"
-            )
-    result = run(
-        arguments.size,
-        arguments.iterations,
-        expected_vendor=arguments.expected_vendor,
-        expected_global_devices=arguments.expected_global_devices,
-        expected_local_devices=arguments.expected_local_devices,
+        results, launch_error = _launch_ranks(arguments)
+        record, errors = _rank_record(results, arguments.local_processes, launch_error)
+    else:
+        local_devices = jax.local_devices()
+        if arguments.worker and any(device.platform == "gpu" for device in local_devices):
+            start = jax.process_index() * arguments.devices_per_process
+            expected = list(range(start, start + arguments.devices_per_process))
+            actual = [device.local_hardware_id for device in local_devices]
+            if actual != expected:
+                raise RuntimeError(
+                    f"local worker GPU ownership differs: expected={expected}, actual={actual}"
+                )
+        record, errors = _local_record(arguments)
+    safe_record = _json_safe(record)
+    if arguments.output is not None and not arguments.worker:
+        write_json_evidence(arguments.output, safe_record)
+    encoded = json.dumps(safe_record, allow_nan=False, sort_keys=True)
+    print(
+        (RANK_RESULT_PREFIX.decode("ascii") if arguments.worker else "") + encoded,
+        flush=True,
     )
-    if jax.process_index() == 0:
-        print(json.dumps(result, allow_nan=False, sort_keys=True))
+    if errors:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

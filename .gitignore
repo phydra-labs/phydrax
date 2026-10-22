@@ -5,6 +5,7 @@
 !native/meshcore/**/CMakeLists.txt
 !native/cuda/**/CMakeLists.txt
 !native/metal/**/CMakeLists.txt
+!native/cuest_runtime/**/CMakeLists.txt
 !LICENSES/METAL-*.txt
 !LICENSES/BEMPP-CL-MIT.txt
 !LICENSES/FMMAX-MIT.txt
@@ -33,6 +34,8 @@
 .venv313
 .venv-rocm*/
 .tmp
+/command-*.stdout
+/command-*.stderr
 .notes
 .prompts
 .testmon*
@@ -62,6 +65,24 @@ benchmarks/*
 !benchmarks/spark_qualification.json
 # Single-B300 CUDA artifacts, scientific qualification, and recovery evidence.
 !benchmarks/b300_qualification.json
+# Explicit CUDA-library drivers and observed A40 qualification evidence.
+!benchmarks/cuda_tensor_contraction.py
+!benchmarks/cudss_execution.py
+!benchmarks/cuest_molecular.py
+!benchmarks/_cuest_kernels.py
+!benchmarks/cuest_molecular_campaign.py
+!benchmarks/a40_qualification.json
+# Eight-A100 physical, installed-provider, and integrated qualification evidence.
+!benchmarks/a100_cuda_execution.json
+!benchmarks/a100_cuda_wheels.json
+!benchmarks/a100_qualification.json
+!benchmarks/a100_tensor_16.json
+!benchmarks/a100_tensor_32.json
+!benchmarks/a100_pic_cubic.json
+!benchmarks/a100_mace_scaling.json
+!benchmarks/a100_cuest_capacity.json
+!benchmarks/a100_cudss_execution.json
+!benchmarks/a100_cuda_mpi.json
 # Apple GPU primitive/scientific drivers and retained build/performance evidence.
 !benchmarks/metal_execution_scaling.py
 !benchmarks/m1_max_qualification.json

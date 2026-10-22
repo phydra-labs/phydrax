@@ -365,6 +365,84 @@ class _CudssProvider(AbstractLinearProvider):
         return release_cudss(state)
 
 
+class _CudssMGMNProvider(AbstractLinearProvider):
+    backends = ("cudss-mgmn",)
+    # The mathematical primitive owns collective derivatives. Wrapping it in
+    # the generic local root derivative would introduce a second solve route.
+    supports_implicit_differentiation = False
+
+    def analyze(self, problem: Any, plan: LinearSolvePlan, /) -> Any:
+        from ._cudss_mgmn import analyze_cudss_mgmn
+
+        return analyze_cudss_mgmn(problem, plan)
+
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> Any:
+        from ._cudss_mgmn import bind_cudss_mgmn
+
+        if preconditioner is not None:
+            raise ValueError("MGMN direct binding rejects preconditioning.")
+        return bind_cudss_mgmn(symbolic_state, problem, plan)
+
+    def refresh(
+        self,
+        symbolic_state: Any,
+        previous_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> Any:
+        from ._cudss_mgmn import refresh_cudss_mgmn
+
+        if preconditioner is not None:
+            raise ValueError("MGMN direct refresh rejects preconditioning.")
+        return refresh_cudss_mgmn(symbolic_state, previous_state, problem, plan)
+
+    def solve(
+        self,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> CudssBackendOutput:
+        from ._cudss_mgmn import solve_cudss_mgmn
+
+        del initial_guess, control, iteration, iteration_state
+        return solve_cudss_mgmn(state, rhs, plan)
+
+    def supports_transformed(self, state: Any, /) -> bool:
+        return True
+
+    def solve_transformed(
+        self, state: Any, rhs: Any, plan: LinearSolvePlan, /, *, adjoint: bool
+    ) -> CudssBackendOutput:
+        from ._cudss_mgmn import solve_cudss_mgmn
+
+        # Real symmetry reuses the factors, not the independent stored-value
+        # derivative orientation of the transpose/adjoint solve.
+        del adjoint
+        return solve_cudss_mgmn(state, rhs, plan, transpose=True)
+
+    def release(self, state: Any, /) -> bool | Array:
+        from ._cudss_mgmn import release_cudss_mgmn
+
+        return release_cudss_mgmn(state)
+
+
 class _NativeBlockKrylovProvider(AbstractLinearProvider):
     backends = ("native-block-krylov",)
     accepts_initial_guess = True
@@ -502,6 +580,7 @@ _PROVIDERS: tuple[AbstractLinearProvider, ...] = (
     _DenseProvider(),
     _SparseProvider(),
     _CudssProvider(),
+    _CudssMGMNProvider(),
     _NativeBlockKrylovProvider(),
     _NativeKrylovProvider(),
     _LineaxProvider(),

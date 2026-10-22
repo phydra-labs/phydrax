@@ -261,6 +261,20 @@ def chemistry_lifecycle(
         raise ValueError(
             "Electronic result does not match the calculation state, model, task, units, or particle support."
         )
+    # Molecular RHF emits this explicit owning-calculation provenance. Unlike
+    # unlabelled artifact membership, it cannot mistake a basis/SCF ID for the
+    # requested calculation's full numerical and precision definition.
+    rhf_bindings = tuple(
+        identifier
+        for identifier in header.artifact_ids
+        if identifier.startswith("molecular-rhf-calculation:")
+    )
+    if rhf_bindings and rhf_bindings != (
+        "molecular-rhf-calculation:" + calculation.calculation_id,
+    ):
+        raise ValueError(
+            "Molecular RHF result belongs to another calculation or numerical definition."
+        )
     capability = str(provider_capability_id).strip()
     if not capability:
         raise ValueError("provider_capability_id must be non-empty.")

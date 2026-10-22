@@ -203,7 +203,11 @@ class CompilationTiming:
 
 @dataclass(frozen=True, slots=True)
 class CompilerEvidence:
-    """Compiler-estimated operation and executable-memory evidence."""
+    """Compiler-estimated operations and executable memory, not vendor allocations.
+
+    External-provider workspace and resident state require separate provider
+    evidence; known XLA buffer sizes do not certify a total allocation bound.
+    """
 
     flops: int | None
     bytes_accessed: int | None
@@ -435,10 +439,39 @@ def compiler_evidence(
     *,
     source: str,
     unavailable_reason: str | None = None,
+    opaque_custom_calls: bool = False,
 ) -> CompilerEvidence:
-    """Normalize official compiler cost and memory estimates without heuristics."""
+    """Retain unknown costs without discarding independently known XLA memory.
+
+    ``opaque_custom_calls`` invalidates aggregate arithmetic and traffic totals,
+    including positive totals, but does not turn compiler buffer sizes into
+    estimates of external vendor workspace.
+    """
+    if opaque_custom_calls:
+        # Unknown per-call costs accumulate and can be masked by known work.
+        # Even a positive aggregate cannot certify opaque arithmetic or traffic.
+        reason = (
+            "Opaque custom-call arithmetic and traffic are absent from XLA cost totals"
+        )
+        unavailable_reason = (
+            f"{unavailable_reason}; {reason}" if unavailable_reason else reason
+        )
+        cost_analysis = None
     flops = _analysis_integer(cost_analysis, "flops")
     bytes_accessed = _analysis_integer(cost_analysis, "bytes accessed")
+    unknown_fields = tuple(
+        key
+        for key, value in (("flops", flops), ("bytes accessed", bytes_accessed))
+        if value is None and cost_analysis is not None and key in cost_analysis
+    )
+    if unknown_fields:
+        reason = (
+            "XLA HloCostAnalysis reports the -1 unknown custom-call cost sentinel for "
+            + ", ".join(unknown_fields)
+        )
+        unavailable_reason = (
+            f"{unavailable_reason}; {reason}" if unavailable_reason else reason
+        )
     if memory_analysis is None:
         argument_bytes = output_bytes = temporary_bytes = generated_code_bytes = None
     else:
@@ -813,6 +846,10 @@ def _analysis_integer(analysis: Mapping[str, float] | None, key: str, /) -> int 
     if analysis is None or key not in analysis:
         return None
     value = float(analysis[key])
+    # HandleCustomCall explicitly uses -1 for work it cannot model, not zero.
+    # https://github.com/openxla/xla/blob/main/xla/service/hlo_cost_analysis.cc
+    if value == -1.0:
+        return None
     if not math.isfinite(value) or value < 0.0:
         raise ValueError(
             f"Compiler analysis field {key!r} must be finite and nonnegative."

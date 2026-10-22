@@ -1,17 +1,35 @@
 #include "phx_cuda_common.hpp"
 #include <exception>
+#include <cstdio>
 #include <utility>
 namespace {
 thread_local std::string last_error;
+thread_local char cleanup_error[1024]{};
 template<class Function> int32_t guard(Function&& function) noexcept {
-  try { function(); last_error.clear(); return PHX_CUDA_SUCCESS; }
+  try {
+    last_error.clear();
+    cleanup_error[0] = '\0';
+    function();
+    // Destructors cannot throw; cleanup failures use this same error channel.
+    return last_error.empty() && !cleanup_error[0] ? PHX_CUDA_SUCCESS : PHX_CUDA_PROVIDER_ERROR;
+  }
   catch (const std::invalid_argument& error) { phx::cuda::set_last_error(error.what()); return PHX_CUDA_INVALID_ARGUMENT; }
   catch (const std::exception& error) { phx::cuda::set_last_error(error.what()); return PHX_CUDA_PROVIDER_ERROR; }
   catch (...) { phx::cuda::set_last_error("Unknown native CUDA failure"); return PHX_CUDA_PROVIDER_ERROR; }
 }
 }
 namespace phx::cuda {
-void set_last_error(const std::string& message) { last_error = message; }
+void set_last_error(const std::string& message) {
+  last_error = message;
+  cleanup_error[0] = '\0';
+}
+void set_cleanup_error(const char* operation, const char* detail) noexcept {
+  // Restoration and partition summaries must not replace the first failure.
+  if (cleanup_error[0]) return;
+  last_error.clear();
+  std::snprintf(cleanup_error, sizeof(cleanup_error), "%s%s%s",
+                operation, detail ? ": " : "", detail ? detail : "");
+}
 xla::ffi::Error ffi_error(const std::string& message) {
   set_last_error(message);
   return xla::ffi::Error::Internal(message);
@@ -28,7 +46,7 @@ int32_t current_device() {
 }
 }
 extern "C" {
-const char* phx_cuda_last_error() { return last_error.c_str(); }
+const char* phx_cuda_last_error() { return cleanup_error[0] ? cleanup_error : last_error.c_str(); }
 int32_t phx_cuda_registry_partitions() {
   int32_t count = -1;
   const auto status = guard([&] {
@@ -56,6 +74,14 @@ int32_t phx_cuda_release(int64_t partition, const int32_t* ids, int64_t count, i
     if (!released || count < 0 || (count > 0 && !ids)) throw std::invalid_argument("Invalid CUDA release arguments");
     auto* registry = component_registry();
     *released = registry ? registry->release(partition, ids, count) : 0;
+  });
+}
+int32_t phx_cuda_release_partition(int64_t partition, int64_t* released) {
+  return guard([&] {
+    if (partition <= 0 || !released)
+      throw std::invalid_argument("Invalid CUDA partition release arguments");
+    auto* registry = component_registry();
+    *released = registry ? registry->release_partition(partition) : 0;
   });
 }
 int32_t phx_cuda_release_all(int64_t* released) {

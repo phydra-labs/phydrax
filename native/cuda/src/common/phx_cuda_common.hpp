@@ -17,6 +17,8 @@
 namespace phx::cuda {
 using Status = phx_cuda_status;
 void set_last_error(const std::string& message);
+// Teardown diagnostics use bounded storage and cannot allocate or throw.
+void set_cleanup_error(const char* operation, const char* detail = nullptr) noexcept;
 xla::ffi::Error ffi_error(const std::string& message);
 xla::ffi::Error cuda_error(cudaError_t status, const char* operation);
 int32_t current_device();
@@ -31,6 +33,7 @@ class RegistryBase {
  public:
   virtual ~RegistryBase() = default;
   virtual int64_t release(int64_t partition, const int32_t* ids, int64_t count) = 0;
+  virtual int64_t release_partition(int64_t partition) = 0;
   virtual int64_t release_all() = 0;
   virtual std::vector<PartitionStats> stats() = 0;
 };
@@ -132,6 +135,18 @@ template <class Entry> class Registry final : public RegistryBase {
         if (item->second.entries.empty()) { item = partitions_.erase(item); continue; }
       }
       ++item;
+    }
+    return static_cast<int64_t>(retired.size());
+  }
+  int64_t release_partition(int64_t partition) override {
+    // Destruction drains vendor work outside the registry mutex. Keep counters:
+    // retirement invalidates memo hints, not the partition's execution evidence.
+    std::vector<std::shared_ptr<Entry>> retired;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& item : partitions_) {
+      if (item.first.second != partition) continue;
+      while (!item.second.lru.empty())
+        erase_locked(item.second, item.second.lru.back(), retired);
     }
     return static_cast<int64_t>(retired.size());
   }

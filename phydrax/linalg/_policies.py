@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 import math
+from pathlib import PurePath
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -14,8 +15,10 @@ from jax import Array, core as jax_core
 from jax.typing import DTypeLike
 
 from .._dtype_names import precision_dtype_name
+from .._execution_resources import ExecutionGroupSpec
 from .._model import register_artifact_value
 from .._strict import StrictModule
+from ..backends.cudss import CudssExecutionMode
 from ..typing import parse
 from ._assembly import SparseAssemblyPolicy
 from ._certificates import StabilityLowerBound
@@ -156,12 +159,134 @@ class SparseCholesky(AbstractLinearMethod):
         return "sparse-cholesky"
 
 
+class CudssMemoryPolicy(StrictModule):
+    """Explicit cuDSS memory admission, separate from ``memory_mode``.
+
+    ``hybrid_device_limit_bytes`` is the vendor's factorization/solve device
+    limit, applied after analysis. It is not an analysis or host-memory bound.
+    Certified all-phase bounds and host limits are refused: cuDSS 0.8 exposes
+    neither a host allocator hook nor a defensible all-phase upper bound.
+    """
+
+    hybrid_device_limit_bytes: int | None = eqx.field(static=True)
+    host_limit_bytes: int | None = eqx.field(static=True)
+    require_certified_bounds: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        hybrid_device_limit_bytes: int | None = None,
+        host_limit_bytes: int | None = None,
+        require_certified_bounds: bool = False,
+    ) -> None:
+        for name, value in (
+            ("hybrid_device_limit_bytes", hybrid_device_limit_bytes),
+            ("host_limit_bytes", host_limit_bytes),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise TypeError(f"{name} must be a positive integer or None.")
+            if value is not None and not 0 < value <= 2**63 - 1:
+                raise ValueError(f"{name} must be in [1, 2**63 - 1].")
+        if not isinstance(require_certified_bounds, bool):
+            raise TypeError("require_certified_bounds must be a bool.")
+        self.hybrid_device_limit_bytes = hybrid_device_limit_bytes
+        self.host_limit_bytes = host_limit_bytes
+        self.require_certified_bounds = require_certified_bounds
+
+
+class CudssExecutionPolicy(StrictModule):
+    """Local, full-input MG, or explicitly owned rank-local MGMN execution.
+
+    MG inputs and outputs reside on the first device. The reservation is for
+    vendor-owned allocations; it does not assert exclusive OS/GPU ownership.
+    """
+
+    mode: CudssExecutionMode = eqx.field(static=True)
+    group: ExecutionGroupSpec | None = eqx.field(static=True)
+    communication_library_path: str | None = eqx.field(static=True)
+    communication_library_sha256: str | None = eqx.field(static=True)
+    communication_build_identity: str | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mode: CudssExecutionMode = "local",
+        *,
+        group: ExecutionGroupSpec | None = None,
+        communication_library_path: str | None = None,
+        communication_library_sha256: str | None = None,
+        communication_build_identity: str | None = None,
+    ) -> None:
+        mode = parse(mode, CudssExecutionMode, "mode")
+        if group is not None and not isinstance(group, ExecutionGroupSpec):
+            raise TypeError("group must be an ExecutionGroupSpec.")
+        if mode == "local" and group is not None:
+            raise ValueError("Local cuDSS execution does not take an MG reservation.")
+        if mode == "mg":
+            if group is None:
+                raise ValueError("cuDSS MG requires an explicit execution group.")
+            if len(group.process_indices) != 1 or group.device_count not in (2, 4, 8):
+                raise ValueError(
+                    "cuDSS MG requires one process and an ordered 2, 4, or 8 GPU group."
+                )
+        communication = (
+            communication_library_path,
+            communication_library_sha256,
+            communication_build_identity,
+        )
+        if mode == "mgmn":
+            if group is None or len(group.process_indices) < 2:
+                raise ValueError("cuDSS MGMN requires an explicit multi-process group.")
+            if tuple(key[0] for key in group.device_keys) != group.process_indices:
+                raise ValueError(
+                    "cuDSS MGMN requires exactly one GPU per process in rank order."
+                )
+            if not (
+                isinstance(communication_library_path, str)
+                and isinstance(communication_library_sha256, str)
+                and isinstance(communication_build_identity, str)
+            ):
+                raise ValueError(
+                    "cuDSS MGMN requires exact site communication-library provenance."
+                )
+            if any(
+                not value or "\x00" in value
+                for value in (
+                    communication_library_path,
+                    communication_library_sha256,
+                    communication_build_identity,
+                )
+            ):
+                raise ValueError(
+                    "cuDSS MGMN requires exact site communication-library provenance."
+                )
+            if not PurePath(communication_library_path).is_absolute():
+                raise ValueError("cuDSS communication library path must be absolute.")
+            if len(communication_library_sha256) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in communication_library_sha256
+            ):
+                raise ValueError(
+                    "cuDSS communication library SHA256 must be lowercase hexadecimal."
+                )
+        elif any(value is not None for value in communication):
+            raise ValueError("A communication library is only valid for cuDSS MGMN.")
+        self.mode = mode
+        self.group = group
+        self.communication_library_path = communication_library_path
+        self.communication_library_sha256 = communication_library_sha256
+        self.communication_build_identity = communication_build_identity
+
+
 class SparseLDLT(AbstractLinearMethod):
     """Sparse symmetric-indefinite LDLᵀ through an explicit cuDSS provider."""
 
     provider: Literal["cudss"] = eqx.field(static=True)
     reordering: Literal["default", "nested_dissection", "amd"] = eqx.field(static=True)
     memory_mode: Literal["device", "hybrid"] = eqx.field(static=True)
+    memory_policy: CudssMemoryPolicy
+    execution: CudssExecutionPolicy
     refinement_steps: int = eqx.field(static=True)
     factor_cache_capacity: int = eqx.field(static=True)
 
@@ -171,6 +296,8 @@ class SparseLDLT(AbstractLinearMethod):
         provider: Literal["cudss"] = "cudss",
         reordering: Literal["default", "nested_dissection", "amd"] = "default",
         memory_mode: Literal["device", "hybrid"] = "device",
+        memory_policy: CudssMemoryPolicy | None = None,
+        execution: CudssExecutionPolicy | None = None,
         refinement_steps: int = 1,
         factor_cache_capacity: int = 8,
     ) -> None:
@@ -180,6 +307,27 @@ class SparseLDLT(AbstractLinearMethod):
             raise ValueError(f"Unknown sparse LDLT reordering {reordering!r}.")
         if memory_mode not in ("device", "hybrid"):
             raise ValueError(f"Unknown sparse LDLT memory mode {memory_mode!r}.")
+        memory_policy = CudssMemoryPolicy() if memory_policy is None else memory_policy
+        if not isinstance(memory_policy, CudssMemoryPolicy):
+            raise TypeError("memory_policy must be CudssMemoryPolicy.")
+        if (
+            memory_policy.require_certified_bounds
+            or memory_policy.host_limit_bytes is not None
+        ):
+            raise ValueError(
+                "cuDSS 0.8 cannot enforce certified all-phase host/device bounds; "
+                "its allocator hook is device-only and hybrid limits apply after analysis."
+            )
+        if (
+            memory_mode != "hybrid"
+            and memory_policy.hybrid_device_limit_bytes is not None
+        ):
+            raise ValueError("hybrid_device_limit_bytes requires memory_mode='hybrid'.")
+        execution = CudssExecutionPolicy() if execution is None else execution
+        if not isinstance(execution, CudssExecutionPolicy):
+            raise TypeError("execution must be CudssExecutionPolicy.")
+        if execution.mode in ("mg", "mgmn") and memory_mode != "device":
+            raise ValueError("cuDSS hybrid-plus-MG/MGMN execution is not qualified.")
         refinement = int(refinement_steps)
         if refinement < 0:
             raise ValueError("refinement_steps must be non-negative.")
@@ -192,6 +340,8 @@ class SparseLDLT(AbstractLinearMethod):
         self.provider = provider
         self.reordering = reordering
         self.memory_mode = memory_mode
+        self.memory_policy = memory_policy
+        self.execution = execution
         self.refinement_steps = refinement
         self.factor_cache_capacity = factor_cache_capacity
 
@@ -898,6 +1048,8 @@ __all__ = [
     "BlockGMRES",
     "ConjugateGradient",
     "Craig",
+    "CudssExecutionPolicy",
+    "CudssMemoryPolicy",
     "DenseCholesky",
     "DenseLU",
     "DenseQR",

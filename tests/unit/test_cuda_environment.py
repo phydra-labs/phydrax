@@ -15,6 +15,7 @@ from phydrax._cuda_environment import (
     _platform_version,
     assess_provider_dependencies,
     collect_cuda_environment,
+    competing_cuda_libraries,
     cuda_enabled,
     provider_dependency_closure,
 )
@@ -32,6 +33,7 @@ from phydrax.backends import (
     CudaIssueCode,
     MappedCudaLibrary,
 )
+from tests._support.elf import write_shared_object
 
 
 def _facts() -> CudaEnvironmentFacts:
@@ -551,3 +553,31 @@ def test_cuda_runtime_major_matches_plugin() -> None:
     assert report.facts.runtime_version is not None
     assert report.facts.plugin_majors == (13,)
     assert report.facts.runtime_version[0] == 13
+
+
+@pytest.mark.parametrize(
+    "challenge", ["absent", "same-file", "alternate", "wrong-soname"]
+)
+def test_hostile_cuda_challenge_requires_an_alternate_matching_soname(
+    tmp_path: Path, challenge: str
+) -> None:
+    soname = "libcusparse.so.12"
+    installed = write_shared_object(
+        tmp_path / "wheel" / "libcusparse.so.12.8", soname=soname
+    )
+    mapped = (MappedCudaLibrary(soname=installed.name, path=str(installed), major=13),)
+    directory = tmp_path / "challenge"
+    directory.mkdir()
+    candidate = directory / soname
+    if challenge == "same-file":
+        candidate.symlink_to(installed)
+    elif challenge == "alternate":
+        write_shared_object(candidate, soname=soname)
+    elif challenge == "wrong-soname":
+        write_shared_object(candidate, soname="libcusparse.so.99")
+    if challenge == "wrong-soname":
+        with pytest.raises(ValueError):
+            competing_cuda_libraries(str(directory), mapped)
+    else:
+        expected = ((soname, str(candidate)),) if challenge == "alternate" else ()
+        assert competing_cuda_libraries(str(directory), mapped) == expected

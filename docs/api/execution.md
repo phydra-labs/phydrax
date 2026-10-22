@@ -47,14 +47,112 @@ Use `devices_per_process=1` to assign one distinct local GPU to each worker.
 The local substrate benchmark exposes this as `--devices-per-process`, checks
 launched workers' actual GPU ownership, and admits its root group against an
 explicit declared resource request before numerical work. The local smoke
-matrix covers one process with four visible devices, two workers with two
-devices each (`--local-processes 2 --devices-per-process 2`), and four workers
-with one each (`4` and `1`). A single-process invocation uses all visible GPUs;
+matrix includes one/two/four/eight-device arrangements, including one process
+with eight devices, two workers with four each, four with two each, and eight
+with one each. A collected case is not hardware qualification. A single-process invocation uses all visible GPUs;
 select a subset with `CUDA_VISIBLE_DEVICES` before launch. Reports include the
 explicit `NCCL_NVLS_ENABLE` setting, physical-host ownership, inventory/group
 identity, resource admission, weighted mean error, and diagonal PCG
 convergence/error. This bounded smoke is not a
 solver-scaling qualification or a certified memory envelope.
+
+The launcher enforces an explicit whole-job `timeout_seconds` and bounded
+`max_output_bytes`, terminates its owned rank process groups on failure, and
+retains rank-ordered output/status evidence. MPI monitor loss can leave a failed
+rank's exit status unknown (`None`); it is never replaced by a fabricated signal
+code. Successful launches require complete zero exit statuses.
+
+## Supervised site MPI and ordered vendor collectives
+
+The optional cuDSS MGMN and cuDecomp profiles require an actual, explicitly
+selected, same-host CUDA-aware Open MPI world. Pass the absolute site executable
+and its arguments through `launch_local_processes(..., mpi_launcher=...)`;
+the launcher supplies the process count. The admitted profile uses one GPU per
+rank. Ordinary JAX/NCCL execution continues to use its existing bootstrap.
+
+Rank monitors and pre-exec bootstrap are standard-library-only: they must not
+import Phydrax/JAX and accidentally join an extra distributed process set.
+The actual worker obtains `require_local_process_supervision()`. Its live
+socket/peer credentials, process ancestry, rank group, and deadline establish
+trusted-local supervision; an environment boolean is not equivalent. This is
+not containment of a malicious process that deliberately escapes its session.
+
+`create_collective_lease` binds an already initialized `mpi4py.MPI.Comm`,
+an explicit JAX-process/MPI-rank map, an execution group, stable
+provider/configuration/preparation identifiers, and the live supervisor.
+Creation does not initialize another MPI world. The bridge verifies the exact
+site MPI library/header/build and the MPI instance behind the communicator,
+`MPI_THREAD_MULTIPLE`, runtime CUDA-buffer support, and one shared-memory MPI
+domain containing every participating rank. A split-domain communicator refuses
+before any vendor provider executes.
+
+The invocation protocol has distinct phases:
+
+1. Prepare vendor descriptors through the live lease's named host preparation
+   operation. This phase is collective and bounded.
+2. Use `prepare_collective_program` with explicit dynamic example arrays and the
+   lease specification. This is a host staging operation: tracing executes the
+   supplied Python body once. Captured numerical constants must instead become
+   dynamic arguments.
+3. The resulting `CollectiveProgram` owns both the admitted transformed schedule
+   and the executable lowered from that exact staged graph. Schedule agreement
+   precedes coupled compilation. Unknown placement, opaque compiled callbacks,
+   unsupported transform schedules, and unmatched activity are refused.
+4. `lease.invoke(program, *args)` binds fresh dynamic invocation metadata,
+   executes that owned program, waits for values/effects, and closes the ticket.
+   It neither discovers a schedule by running an arbitrary callback nor traces
+   the user function again.
+5. `lease.close()` collectively retires vendor attachments and communicators.
+   Stale compiled invocations and closed bindings refuse; retirement is not a
+   local LRU destructor or an interpreter-exit collective.
+
+Ordered site programs admit exactly **JAX/JAXlib 0.12.0** at the private dispatch
+boundary. Admission verifies the published upstream source and observed code,
+descriptor, executable-owner, token-input, token-output, and profiler-wrapper
+identities; a modified downstream build with the same version string refuses.
+That release's cached AOT C++ call path can omit ordered-effect runtime tokens.
+The sole execution owner therefore invokes the same exact compiled program
+through JAX's token-preserving Python call path. It does not substitute or
+recompile a graph, patch JAX globally, add fake arguments, or remove ordering.
+`CollectiveProgramProvenance` records the observed dispatch identity, and staging
+and invocation revalidate it before ticket admission. This host artifact is not
+a numerical PyTree field or a serialized live handle; MPI and hardware
+qualification remain separate.
+
+`lease.binding` is exact-local-device metadata for rank-local CSR execution.
+`binding_for(sharding)` explicitly admits replicated global metadata for the
+manual spectral route. Invocation preserves each binding's admitted placement.
+Live IDs/tickets are dynamic leaves, never scientific fingerprints or portable
+checkpoint fields.
+
+Rank-local and global arrays are different contracts. MGMN allows unequal owned
+CSR partitions without inventing global shape ownership from coincident
+dimensions. All ranks must enter compatible transformed collective schedules;
+materialized zero tangents do not justify rank-asymmetric symbolic omission of a
+collective. Fatal rank loss uses supervised coupled termination, not another
+ordinary blocking status collective.
+
+These site profiles do not claim multi-host, RDMA, arbitrary batching,
+rematerialization, or unrestricted asynchronous callback execution. Current
+eight-A40 peer integrity is blocked as described in
+[installation](../installation.md#eight-a40-host-admission).
+
+::: phydrax.execution.CollectiveLeaseSpec
+
+::: phydrax.execution.CollectiveBinding
+
+::: phydrax.execution.CollectiveProgram
+
+::: phydrax.execution.CollectiveProgramProvenance
+
+::: phydrax.execution.create_collective_lease
+
+::: phydrax.execution.prepare_collective_program
+
+::: phydrax.execution.LocalProcessSupervision
+
+::: phydrax.execution.require_local_process_supervision
+
 
 ::: phydrax.execution.RuntimeInfo
 
@@ -159,9 +257,13 @@ The allocator limit becomes `DeviceResource.memory_bytes` when exposed. A
 per-device) peak and reserve bytes with `memory_basis` `declared` or
 `compiler_analysis`, every placed host has measured available memory at least
 that footprint, and every placed accelerator has measured allocator headroom.
-Unknown evidence, a remote host without a sample, or a `sampled` basis refuses
-the plan instead of assuming free memory. The default `declared` envelope keeps
-checking ceilings against owner estimates only.
+Unknown evidence, a remote host without a sample, or a `sampled` or
+`provider_estimate` basis refuses the certified plan instead of assuming free
+memory. A finite vendor estimate is not an allocation bound. Preserve
+per-device estimates and unknown host/resident storage in the provider's own
+evidence; do not divide one group total into invented per-device measurements.
+The default `declared` envelope keeps checking ceilings against owner estimates
+only.
 
 Streamed sparse relations use the same distinction between declared and
 compiled memory. `phydrax.sparse.StreamedRelationResources` declares only the

@@ -18,10 +18,16 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
-from ...operators.quantum.gaussian import dipole_integrals
+from ...operators.quantum.gaussian import (
+    dipole_integrals,
+    molecular_integral_definition_id,
+)
 from ...typing import checked
 from ...units import BOHR, derived_unit, ELEMENTARY_CHARGE, HARTREE
-from ..electronic_structure._mean_field import RestrictedMeanFieldState
+from ..electronic_structure._mean_field import (
+    mean_field_owner_id,
+    RestrictedMeanFieldState,
+)
 from ..electronic_structure._molecular_ks import MolecularKohnShamPlan
 from ._rpa import RandomPhaseApproximationPlan
 from ._tda import ExcitedStateManifoldPlan, TammDancoffPlan
@@ -51,6 +57,12 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
             state.evidence.converged
         ):
             raise ValueError("TDDFT requires a converged restricted KS state.")
+        if state.owner_id != mean_field_owner_id(kohn_sham.plan_id, positions):
+            raise ValueError("TDDFT state belongs to another KS plan or geometry.")
+        if state.integral_definition_id != molecular_integral_definition_id(
+            kohn_sham.basis
+        ):
+            raise ValueError("TDDFT state requires the exact integral definition.")
         occupation_host = np.asarray(state.occupations)
         occupied_indices = tuple(np.flatnonzero(occupation_host > 1.0))
         virtual_indices = tuple(np.flatnonzero(occupation_host < 1.0e-12))

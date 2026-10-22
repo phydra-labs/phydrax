@@ -1,0 +1,832 @@
+{
+  "accepted": true,
+  "cases": [
+    {
+      "name": "native-path-native-executor",
+      "provider": "native",
+      "path_source": "greedy",
+      "path": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "path_provenance": "ae3a3e9d8c2a35cb3539f3d3dff78b26d34703a11ea05ddc44d53c6607168f84",
+      "plan_id": "973520a54fc2bddd599cbf82d8b53aa1df78c2ad096d4c8a8ebcbec92cc3dd68",
+      "execution_id": "d53d24adf7b48a9b02c5fba2abc4bb9689860099955db83cdc6655c3be84f3a4",
+      "build_identity": "native-jax",
+      "planning_included_here": false,
+      "case_end_to_end_seconds": 3.9493837639893172,
+      "case_end_to_end_scope": "preparation, all warm samples, derivatives, oracle checks, refresh, rebuild, and host slice campaign; excludes separately reported path planning",
+      "preparation_seconds": 0.016121784,
+      "tuning": "not requested; first execution includes vendor descriptor/plan reconstruction",
+      "lowering_seconds": 0.004842861,
+      "compilation_seconds": 0.263657011,
+      "first_seconds": 0.001084736,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.00019501,
+          0.000171995,
+          0.000161096,
+          0.000156497,
+          0.000171856
+        ],
+        "min_seconds": 0.000156497,
+        "median_seconds": 0.000171856,
+        "mean_seconds": 0.0001712908,
+        "std_seconds": 1.3313198434636208e-05,
+        "max_seconds": 0.00019501
+      },
+      "derivative_lowering_seconds": 0.050061285,
+      "derivative_compilation_seconds": 1.499951237,
+      "derivative_first_seconds": 0.002620458,
+      "derivative_warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.000336088,
+          0.000468128,
+          0.000453651,
+          0.000440626,
+          0.000440014
+        ],
+        "min_seconds": 0.000336088,
+        "median_seconds": 0.000440626,
+        "mean_seconds": 0.0004277014,
+        "std_seconds": 4.69453984778061e-05,
+        "max_seconds": 0.000468128
+      },
+      "refresh_seconds": 0.055296288,
+      "refreshed_execution_seconds": 0.000256466,
+      "release_rebuild_seconds": null,
+      "compiler": {
+        "flops": 24576,
+        "bytes_accessed": 18432,
+        "argument_bytes": 8192,
+        "output_bytes": 2048,
+        "temporary_bytes": 4096,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled",
+        "unavailable_reason": null,
+        "raw_cost_analysis": {
+          "flops": 24576.0,
+          "utilization1{}": 3.0,
+          "bytes accessed1{}": 6144.0,
+          "bytes accessed0{}": 6144.0,
+          "bytes accessed": 18432.0,
+          "utilization0{}": 3.0,
+          "bytes accessedout{}": 6144.0
+        }
+      },
+      "logical_retained_array_bytes": 8196,
+      "normalization_bound_bytes": 0,
+      "external_workspace_bound_bytes": 0,
+      "external_cache_bound_bytes": 0,
+      "opaque_vendor_host_bound_bytes": 0,
+      "observed_native_registry_entries": 0,
+      "slice": {
+        "labels": [
+          "b"
+        ],
+        "count": 16,
+        "residual_path": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "planning_seconds": 0.004734475,
+        "end_to_end_seconds": 1.887988783,
+        "external_workspace_bound_bytes_per_device": 0,
+        "external_cache_bound_bytes_per_device": 0,
+        "operand_replication_bound_bytes": 65536,
+        "transfer_completed_bytes": 98400,
+        "reduction": "host gather, global ordinal sum; transfer/reduction included in end-to-end, not independently timed",
+        "device_ids": [
+          "cuda:0",
+          "cuda:1",
+          "cuda:2",
+          "cuda:3",
+          "cuda:4",
+          "cuda:5",
+          "cuda:6",
+          "cuda:7"
+        ],
+        "host_differentiable": false
+      },
+      "accepted": true
+    },
+    {
+      "name": "native-path-cutensor-executor",
+      "provider": "cutensor",
+      "path_source": "greedy",
+      "path": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "path_provenance": "ae3a3e9d8c2a35cb3539f3d3dff78b26d34703a11ea05ddc44d53c6607168f84",
+      "plan_id": "973520a54fc2bddd599cbf82d8b53aa1df78c2ad096d4c8a8ebcbec92cc3dd68",
+      "execution_id": "034712c26bab6c562d1d534550b6279c33646515508ee3e13766a2dbbdda44e0",
+      "build_identity": "762837d7ca4a4bdb0611ad7e1c28b287170a0421d16ffd713c1c5097bfa876f9",
+      "planning_included_here": false,
+      "case_end_to_end_seconds": 3.0077363660093397,
+      "case_end_to_end_scope": "preparation, all warm samples, derivatives, oracle checks, refresh, rebuild, and host slice campaign; excludes separately reported path planning",
+      "preparation_seconds": 0.227101741,
+      "tuning": "not requested; first execution includes vendor descriptor/plan reconstruction",
+      "lowering_seconds": 0.00390341,
+      "compilation_seconds": 0.010574466,
+      "first_seconds": 0.285262249,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.000160455,
+          0.000166645,
+          0.00017897,
+          0.000169572,
+          0.00015788
+        ],
+        "min_seconds": 0.00015788,
+        "median_seconds": 0.000166645,
+        "mean_seconds": 0.0001667044,
+        "std_seconds": 7.424239182569486e-06,
+        "max_seconds": 0.00017897
+      },
+      "derivative_lowering_seconds": 0.019895287,
+      "derivative_compilation_seconds": 0.060517957,
+      "derivative_first_seconds": 0.017746183,
+      "derivative_warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.000693715,
+          0.000678255,
+          0.000674498,
+          0.000675831,
+          0.000663478
+        ],
+        "min_seconds": 0.000663478,
+        "median_seconds": 0.000675831,
+        "mean_seconds": 0.0006771554,
+        "std_seconds": 9.708929428108955e-06,
+        "max_seconds": 0.000693715
+      },
+      "refresh_seconds": 0.001737865,
+      "refreshed_execution_seconds": 0.00020577,
+      "release_rebuild_seconds": 0.006902946,
+      "compiler": {
+        "flops": null,
+        "bytes_accessed": null,
+        "argument_bytes": 8192,
+        "output_bytes": 2048,
+        "temporary_bytes": 4096,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled",
+        "unavailable_reason": "Opaque custom-call arithmetic and traffic are absent from XLA cost totals",
+        "raw_cost_analysis": {
+          "utilization1{}": 3.0,
+          "flops": -3.0,
+          "bytes accessed": -3.0,
+          "bytes accessed0{}": -3.0,
+          "bytes accessedout{}": -3.0,
+          "utilization0{}": 3.0,
+          "bytes accessed1{}": -3.0,
+          "optimal_seconds": -3.0
+        }
+      },
+      "logical_retained_array_bytes": 8196,
+      "normalization_bound_bytes": 8192,
+      "external_workspace_bound_bytes": 268435456,
+      "external_cache_bound_bytes": 1073741824,
+      "opaque_vendor_host_bound_bytes": null,
+      "observed_native_registry_entries": 27,
+      "slice": {
+        "labels": [
+          "b"
+        ],
+        "count": 16,
+        "residual_path": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "planning_seconds": 0.002372057,
+        "end_to_end_seconds": 2.192374816,
+        "external_workspace_bound_bytes_per_device": 268435456,
+        "external_cache_bound_bytes_per_device": 1073741824,
+        "operand_replication_bound_bytes": 65536,
+        "transfer_completed_bytes": 98400,
+        "reduction": "host gather, global ordinal sum; transfer/reduction included in end-to-end, not independently timed",
+        "device_ids": [
+          "cuda:0",
+          "cuda:1",
+          "cuda:2",
+          "cuda:3",
+          "cuda:4",
+          "cuda:5",
+          "cuda:6",
+          "cuda:7"
+        ],
+        "host_differentiable": false
+      },
+      "accepted": true
+    },
+    {
+      "name": "native-path-cutensornet-executor",
+      "provider": "cutensornet",
+      "path_source": "greedy",
+      "path": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "path_provenance": "ae3a3e9d8c2a35cb3539f3d3dff78b26d34703a11ea05ddc44d53c6607168f84",
+      "plan_id": "973520a54fc2bddd599cbf82d8b53aa1df78c2ad096d4c8a8ebcbec92cc3dd68",
+      "execution_id": "9bc0abb671a3043f336e10e2df89d9408a98ef5346319836f95d50e95b38a8fe",
+      "build_identity": "e7bd2d597123964e50a883bf569e1364ad81d9953608112ebf28ce97b0eadb51",
+      "planning_included_here": false,
+      "case_end_to_end_seconds": 1.2991217719973065,
+      "case_end_to_end_scope": "preparation, all warm samples, derivatives, oracle checks, refresh, rebuild, and host slice campaign; excludes separately reported path planning",
+      "preparation_seconds": 0.196488165,
+      "tuning": "not requested; first execution includes vendor descriptor/plan reconstruction",
+      "lowering_seconds": 0.002543201,
+      "compilation_seconds": 0.0119635,
+      "first_seconds": 0.004462139,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.000150435,
+          0.00015296,
+          0.000146388,
+          0.000144704,
+          0.000143612
+        ],
+        "min_seconds": 0.000143612,
+        "median_seconds": 0.000146388,
+        "mean_seconds": 0.00014761979999999999,
+        "std_seconds": 3.536234403995302e-06,
+        "max_seconds": 0.00015296
+      },
+      "derivative_lowering_seconds": 0.014850914,
+      "derivative_compilation_seconds": 0.064184879,
+      "derivative_first_seconds": 0.074655689,
+      "derivative_warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.001549207,
+          0.001541182,
+          0.001541192,
+          0.001502869,
+          0.001565487
+        ],
+        "min_seconds": 0.001502869,
+        "median_seconds": 0.001541192,
+        "mean_seconds": 0.0015399874000000002,
+        "std_seconds": 2.0571263321439435e-05,
+        "max_seconds": 0.001565487
+      },
+      "refresh_seconds": 0.001618959,
+      "refreshed_execution_seconds": 0.00016884,
+      "release_rebuild_seconds": 0.0037874,
+      "compiler": {
+        "flops": null,
+        "bytes_accessed": null,
+        "argument_bytes": 8192,
+        "output_bytes": 2048,
+        "temporary_bytes": 0,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled",
+        "unavailable_reason": "Opaque custom-call arithmetic and traffic are absent from XLA cost totals",
+        "raw_cost_analysis": {
+          "utilization1{}": 1.0,
+          "utilization0{}": 1.0,
+          "bytes accessed": -1.0,
+          "bytes accessed0{}": -1.0,
+          "flops": -1.0,
+          "bytes accessed3{}": -1.0,
+          "bytes accessedout{}": -1.0,
+          "utilization2{}": 1.0,
+          "bytes accessed2{}": -1.0,
+          "utilization3{}": 1.0,
+          "bytes accessed1{}": -1.0,
+          "optimal_seconds": -1.0
+        }
+      },
+      "logical_retained_array_bytes": 8196,
+      "normalization_bound_bytes": 8192,
+      "external_workspace_bound_bytes": 268435456,
+      "external_cache_bound_bytes": 1073741824,
+      "opaque_vendor_host_bound_bytes": null,
+      "observed_native_registry_entries": 9,
+      "slice": {
+        "labels": [
+          "b"
+        ],
+        "count": 16,
+        "residual_path": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "planning_seconds": 0.002373379,
+        "end_to_end_seconds": 0.731754771,
+        "external_workspace_bound_bytes_per_device": 268435456,
+        "external_cache_bound_bytes_per_device": 1073741824,
+        "operand_replication_bound_bytes": 65536,
+        "transfer_completed_bytes": 98400,
+        "reduction": "host gather, global ordinal sum; transfer/reduction included in end-to-end, not independently timed",
+        "device_ids": [
+          "cuda:0",
+          "cuda:1",
+          "cuda:2",
+          "cuda:3",
+          "cuda:4",
+          "cuda:5",
+          "cuda:6",
+          "cuda:7"
+        ],
+        "host_differentiable": false
+      },
+      "accepted": true
+    },
+    {
+      "name": "cutensornet-path-native-executor",
+      "provider": "native",
+      "path_source": "cutensornet",
+      "path": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "path_provenance": "0a0c318afc5c16bf463c6c8de28892e4e34aa1c3d7624f0843375eeac02b6eb0",
+      "plan_id": "e58662a094138759462d66f531c80340a34cd736b8f98f6fb8d6203deea0ca66",
+      "execution_id": "d53d24adf7b48a9b02c5fba2abc4bb9689860099955db83cdc6655c3be84f3a4",
+      "build_identity": "native-jax",
+      "planning_included_here": false,
+      "case_end_to_end_seconds": 1.5290394620096777,
+      "case_end_to_end_scope": "preparation, all warm samples, derivatives, oracle checks, refresh, rebuild, and host slice campaign; excludes separately reported path planning",
+      "preparation_seconds": 0.001563393,
+      "tuning": "not requested; first execution includes vendor descriptor/plan reconstruction",
+      "lowering_seconds": 0.005087604,
+      "compilation_seconds": 0.100461521,
+      "first_seconds": 0.000851334,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.000111201,
+          0.000115078,
+          0.00010534,
+          0.000106262,
+          0.000112183
+        ],
+        "min_seconds": 0.00010534,
+        "median_seconds": 0.000111201,
+        "mean_seconds": 0.00011001279999999999,
+        "std_seconds": 3.6791683516794936e-06,
+        "max_seconds": 0.000115078
+      },
+      "derivative_lowering_seconds": 0.022505565,
+      "derivative_compilation_seconds": 0.211895514,
+      "derivative_first_seconds": 0.003557965,
+      "derivative_warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.000285331,
+          0.000385711,
+          0.000373258,
+          0.000368258,
+          0.000359702
+        ],
+        "min_seconds": 0.000285331,
+        "median_seconds": 0.000368258,
+        "mean_seconds": 0.000354452,
+        "std_seconds": 3.5571537762655134e-05,
+        "max_seconds": 0.000385711
+      },
+      "refresh_seconds": 0.002527772,
+      "refreshed_execution_seconds": 0.000190621,
+      "release_rebuild_seconds": null,
+      "compiler": {
+        "flops": 24576,
+        "bytes_accessed": 18432,
+        "argument_bytes": 8192,
+        "output_bytes": 2048,
+        "temporary_bytes": 4096,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled",
+        "unavailable_reason": null,
+        "raw_cost_analysis": {
+          "flops": 24576.0,
+          "bytes accessed0{}": 6144.0,
+          "bytes accessed": 18432.0,
+          "bytes accessedout{}": 6144.0,
+          "utilization1{}": 3.0,
+          "utilization0{}": 3.0,
+          "bytes accessed1{}": 6144.0
+        }
+      },
+      "logical_retained_array_bytes": 8196,
+      "normalization_bound_bytes": 0,
+      "external_workspace_bound_bytes": 0,
+      "external_cache_bound_bytes": 0,
+      "opaque_vendor_host_bound_bytes": 0,
+      "observed_native_registry_entries": 0,
+      "slice": {
+        "labels": [
+          "b"
+        ],
+        "count": 16,
+        "residual_path": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "planning_seconds": 0.003490947,
+        "end_to_end_seconds": 1.159412208,
+        "external_workspace_bound_bytes_per_device": 0,
+        "external_cache_bound_bytes_per_device": 0,
+        "operand_replication_bound_bytes": 65536,
+        "transfer_completed_bytes": 98400,
+        "reduction": "host gather, global ordinal sum; transfer/reduction included in end-to-end, not independently timed",
+        "device_ids": [
+          "cuda:0",
+          "cuda:1",
+          "cuda:2",
+          "cuda:3",
+          "cuda:4",
+          "cuda:5",
+          "cuda:6",
+          "cuda:7"
+        ],
+        "host_differentiable": false
+      },
+      "accepted": true
+    },
+    {
+      "name": "cutensornet-path-cutensornet-executor",
+      "provider": "cutensornet",
+      "path_source": "cutensornet",
+      "path": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "path_provenance": "0a0c318afc5c16bf463c6c8de28892e4e34aa1c3d7624f0843375eeac02b6eb0",
+      "plan_id": "e58662a094138759462d66f531c80340a34cd736b8f98f6fb8d6203deea0ca66",
+      "execution_id": "1f06366a5634ee229f83ec2e39d2c92063a2de460228970ebe589b98e2879641",
+      "build_identity": "e7bd2d597123964e50a883bf569e1364ad81d9953608112ebf28ce97b0eadb51",
+      "planning_included_here": false,
+      "case_end_to_end_seconds": 1.1006324750051135,
+      "case_end_to_end_scope": "preparation, all warm samples, derivatives, oracle checks, refresh, rebuild, and host slice campaign; excludes separately reported path planning",
+      "preparation_seconds": 0.006913056,
+      "tuning": "not requested; first execution includes vendor descriptor/plan reconstruction",
+      "lowering_seconds": 0.004622624,
+      "compilation_seconds": 0.025698498,
+      "first_seconds": 0.014847698,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.000222732,
+          0.000212953,
+          0.000223343,
+          0.000201442,
+          0.000202924
+        ],
+        "min_seconds": 0.000201442,
+        "median_seconds": 0.000212953,
+        "mean_seconds": 0.0002126788,
+        "std_seconds": 9.341188091458178e-06,
+        "max_seconds": 0.000223343
+      },
+      "derivative_lowering_seconds": 0.027172873,
+      "derivative_compilation_seconds": 0.059426177,
+      "derivative_first_seconds": 0.035622231,
+      "derivative_warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.001314172,
+          0.00130268,
+          0.001301788,
+          0.001291999,
+          0.001280818
+        ],
+        "min_seconds": 0.001280818,
+        "median_seconds": 0.001301788,
+        "mean_seconds": 0.0012982914,
+        "std_seconds": 1.1212434911293787e-05,
+        "max_seconds": 0.001314172
+      },
+      "refresh_seconds": 0.001710673,
+      "refreshed_execution_seconds": 0.000175713,
+      "release_rebuild_seconds": 0.003549609,
+      "compiler": {
+        "flops": null,
+        "bytes_accessed": null,
+        "argument_bytes": 8192,
+        "output_bytes": 2048,
+        "temporary_bytes": 0,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled",
+        "unavailable_reason": "Opaque custom-call arithmetic and traffic are absent from XLA cost totals",
+        "raw_cost_analysis": {
+          "utilization3{}": 1.0,
+          "bytes accessedout{}": -1.0,
+          "flops": -1.0,
+          "bytes accessed3{}": -1.0,
+          "bytes accessed": -1.0,
+          "bytes accessed2{}": -1.0,
+          "bytes accessed0{}": -1.0,
+          "utilization0{}": 1.0,
+          "utilization1{}": 1.0,
+          "utilization2{}": 1.0,
+          "bytes accessed1{}": -1.0,
+          "optimal_seconds": -1.0
+        }
+      },
+      "logical_retained_array_bytes": 8196,
+      "normalization_bound_bytes": 8192,
+      "external_workspace_bound_bytes": 268435456,
+      "external_cache_bound_bytes": 1073741824,
+      "opaque_vendor_host_bound_bytes": null,
+      "observed_native_registry_entries": 9,
+      "slice": {
+        "labels": [
+          "b"
+        ],
+        "count": 16,
+        "residual_path": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "planning_seconds": 0.002367859,
+        "end_to_end_seconds": 0.720067655,
+        "external_workspace_bound_bytes_per_device": 268435456,
+        "external_cache_bound_bytes_per_device": 1073741824,
+        "operand_replication_bound_bytes": 65536,
+        "transfer_completed_bytes": 98400,
+        "reduction": "host gather, global ordinal sum; transfer/reduction included in end-to-end, not independently timed",
+        "device_ids": [
+          "cuda:0",
+          "cuda:1",
+          "cuda:2",
+          "cuda:3",
+          "cuda:4",
+          "cuda:5",
+          "cuda:6",
+          "cuda:7"
+        ],
+        "host_differentiable": false
+      },
+      "accepted": true
+    }
+  ],
+  "environment": {
+    "fingerprint": "a55f3a8eab04ef5730ffa58c1ad84a344ea656a8e3af2a9e8a59235f901afc68",
+    "python_version": "3.13.16",
+    "phydrax_version": "0.2.2",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "processor": "x86_64",
+    "logical_cpus": 128,
+    "numpy_version": "2.5.4",
+    "jaxlib_version": "0.12.0",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "9f605d67c503ca170c33e9279c52551b20b9a61f5185bcef9af5596ad7a99e94",
+    "rocm_packages": {},
+    "frontend_index_patch": {
+      "algorithm": "point-index-bounds-before-shape-width-narrowing",
+      "jax_version": "0.12.0",
+      "patch_source_sha256": "7720c322d9352683da63d98d8c42896bf641ff8d32b72703310cc4162accb148",
+      "upstream_dynamic_slice_sha256": "7c04da9f492fc428b55462343482b64bbe2293a8e8fdd64ee973e8a9f6225030",
+      "upstream_function_sha256": "3c3135e9a98d915edace7506c4c8fe536518c1f54f75f1e5cee2f0c45edf51d2",
+      "upstream_source_sha256": "85ed8552ad648cdae8d0e70b280381adad87a7ee5424e0f6287e076091caa6bc"
+    },
+    "jax": {
+      "version": "0.12.0",
+      "backend": "gpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 0,
+          "local_hardware_id": 0
+        },
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 1,
+          "local_hardware_id": 1
+        },
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 2,
+          "local_hardware_id": 2
+        },
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 3,
+          "local_hardware_id": 3
+        },
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 4,
+          "local_hardware_id": 4
+        },
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 5,
+          "local_hardware_id": 5
+        },
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 6,
+          "local_hardware_id": 6
+        },
+        {
+          "platform": "gpu",
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "normalized_platform": "cuda",
+          "vendor": "nvidia",
+          "runtime_version": "cuda 13040",
+          "process_index": 0,
+          "device_id": 7,
+          "local_hardware_id": 7
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "NPROC": null,
+      "NCCL_NVLS_ENABLE": null,
+      "NCCL_P2P_DISABLE": null,
+      "NCCL_LAUNCH_ORDER_IMPLICIT": null,
+      "NCCL_LAUNCH_RACE_FATAL": null,
+      "UCX_MEMTYPE_CACHE": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": "cuda",
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "CUDA_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+      "ROCR_VISIBLE_DEVICES": null,
+      "HIP_VISIBLE_DEVICES": null,
+      "GPU_DEVICE_ORDINAL": null,
+      "ROCM_PATH": null,
+      "HIP_PATH": null,
+      "LLVM_PATH": null,
+      "HIP_DEVICE_LIB_PATH": null,
+      "LD_LIBRARY_PATH": null,
+      "HSA_OVERRIDE_GFX_VERSION": null,
+      "HSA_ENABLE_SDMA": null,
+      "NCCL_DEBUG": null,
+      "NCCL_SOCKET_IFNAME": null,
+      "NCCL_IB_DISABLE": null,
+      "PHYDRAX_LOCAL_DEVICE_IDS": null
+    }
+  },
+  "identity": {
+    "fingerprint": "600b994b2d506feba160052bd7d2ee727bdf3d5091bbf6d4b43259c0882cfb43",
+    "source_build_fingerprint": "7abcca9fe5172bcc135791f3c67fcdb401173cd685996d3f97aa53c1d0589ce4",
+    "benchmark_driver_fingerprint": "f4250163416866aeace22b7c19ab489df0269259d26d799c94cd38ff90807c7a",
+    "evidence_schema": {
+      "fields": [
+        "accepted",
+        "cases",
+        "planning"
+      ],
+      "signature": "a49630e38ef1d983f5c2316f81e504ebbc630ebec044d8a5b6afcfd2ec3e978c"
+    }
+  },
+  "input_transfer_seconds": 0.004576395,
+  "planning": {
+    "native_seconds": 10.040383728,
+    "cutensornet_seconds": 10.536422018,
+    "paths_differ": false
+  }
+}

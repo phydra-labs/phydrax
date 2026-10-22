@@ -312,6 +312,8 @@ class DistributedMixedExecutionPlan(StrictModule):
         checkpoint_padding = (-checkpoint_unpadded) % checkpoint_alignment
         checkpoint_payload = checkpoint_unpadded + checkpoint_padding
         required = checkpoints * checkpoint_payload
+        if spectral.transpose_provider == "cudecomp":
+            spectral = spectral.prepare()
         self.mixed = mixed
         self.spectral = spectral
         self.execution = execution

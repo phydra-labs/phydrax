@@ -426,7 +426,7 @@ Acceptance is correct behavior and honest evidence, not an invented speedup thre
 - [h5py 3.16.0 release files](https://pypi.org/project/h5py/3.16.0/#files)
 - [Python-flint 0.9.0 support information](https://pypi.org/project/python-flint/0.9.0/)
 
-Local ownership/policy references: [typing guide](../guides_typing.md), [testing guide](../guides_testing.md), [existing runtime-contract identity protections](runtime-contracts.md), [CUDA installation/release contract](single-step-cuda-install.md), and [native CUDA build instructions](../../native/cuda/README.md).
+Local ownership/policy references: [typing guide](../guides_typing.md), [testing guide](../guides_testing.md), [existing runtime-contract identity protections](runtime-contracts.md), [CUDA installation/release contract](single-step-cuda-install.md), and [native CUDA build instructions](https://github.com/phydra-labs/phydrax/blob/dev/native/cuda/README.md).
 
 ## 13. Implementation record
 

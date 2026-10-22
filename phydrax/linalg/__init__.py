@@ -162,6 +162,7 @@ from ._distributed_line import (
     StructuredSolveResourceEstimate,
     StructuredSolveTopologyPlan,
 )
+from ._distributed_sparse import DistributedCSRLinearOperator, DistributedCSRStorage
 from ._empirical import EmpiricalGramLinearOperator
 from ._exponential_phi_combination import matrix_exponential_phi_combination_action
 from ._exponential_taylor import (
@@ -424,6 +425,8 @@ from ._policies import (
     BlockGMRES,
     ConjugateGradient,
     Craig,
+    CudssExecutionPolicy,
+    CudssMemoryPolicy,
     DenseCholesky,
     DenseLU,
     DenseQR,
@@ -573,6 +576,7 @@ from ._resilience import (
     solve_resilient,
 )
 from ._results import (
+    CudssMemoryEvidence,
     InitialGuessDiagnostics,
     linear_status_message,
     LinearIterationMetrics,
@@ -874,6 +878,9 @@ __all__ = [
     "ConstraintOperatorPlan",
     "CoordinateBlock",
     "Craig",
+    "CudssExecutionPolicy",
+    "CudssMemoryEvidence",
+    "CudssMemoryPolicy",
     "DecimalInterval",
     "DecimalLike",
     "DenseCholesky",
@@ -896,6 +903,8 @@ __all__ = [
     "DistributedAdditiveSchwarzPreconditioner",
     "DistributedBlockKrylovMethod",
     "DistributedCoordinateLayout",
+    "DistributedCSRLinearOperator",
+    "DistributedCSRStorage",
     "DistributedKrylovPolicy",
     "DistributedKrylovResult",
     "DistributedLineFactors",

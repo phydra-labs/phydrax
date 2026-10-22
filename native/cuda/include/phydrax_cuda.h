@@ -26,6 +26,7 @@ PHX_CUDA_EXPORT int32_t phx_cuda_registry_partition(int32_t index, int32_t* devi
   int64_t* partition, int64_t* live, int64_t* capacity, int64_t* rebuilds);
 PHX_CUDA_EXPORT int32_t phx_cuda_release(int64_t partition, const int32_t* ids,
   int64_t count, int64_t* released);
+PHX_CUDA_EXPORT int32_t phx_cuda_release_partition(int64_t partition, int64_t* released);
 PHX_CUDA_EXPORT int32_t phx_cuda_release_all(int64_t* released);
 PHX_CUDA_EXPORT int32_t phx_cuda_shutdown(void);
 #ifdef __cplusplus

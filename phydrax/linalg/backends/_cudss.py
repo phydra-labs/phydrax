@@ -11,13 +11,14 @@ from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array, lax
+from jax import Array, lax, process_index
 
 from ..._strict import StrictModule
 from .._plans import LinearSolvePlan
 from .._policies import SparseLDLT
-from .._results import LinearSolveStatus
+from .._results import CudssMemoryEvidence, LinearSolveStatus
 from .._sparse_contract import AbstractSparseLinearOperator, SparseStorage
+from ._cudss_mg import mg_device_indices, require_mg_placement
 
 
 @final
@@ -48,6 +49,7 @@ class CudssBackendOutput(StrictModule):
     condition_estimate: Array
     singular_values: Array | None
     native_rebuilds: Array
+    memory_evidence: CudssMemoryEvidence
 
 
 def _ffi() -> ModuleType:
@@ -100,6 +102,11 @@ def _factor_values(storage: SparseStorage, /) -> Array:
 
 
 def _inertia(token: Any, batch_shape: tuple[int, ...], /) -> tuple[Array, Array, Array]:
+    if token.config[8]:
+        # Vendor MG excludes the reorderings for which DATA_DIAG is documented.
+        # No distributed mode inherits local partial-inertia evidence.
+        unknown = jnp.full(batch_shape, -1, dtype=jnp.int32)
+        return unknown, unknown, unknown
     diagonal, _ = _ffi().diagonal(lax.stop_gradient(token))
     shaped = diagonal.reshape(batch_shape + (-1,))
     positive = jnp.sum(shaped >= 1e-13, axis=-1, dtype=jnp.int32)
@@ -114,6 +121,11 @@ def analyze_cudss(problem: Any, plan: LinearSolvePlan, /) -> CudssSymbolicState:
     if not isinstance(method, SparseLDLT):
         raise TypeError("cuDSS analysis requires SparseLDLT.")
     storage = _storage(problem)
+    require_mg_placement(
+        method.execution, storage.values, storage.indptr, storage.indices
+    )
+    devices = mg_device_indices(method.execution)
+    group = method.execution.group
     token = _ffi().analyze(
         _factor_values(storage),
         storage.indptr,
@@ -122,6 +134,9 @@ def analyze_cudss(problem: Any, plan: LinearSolvePlan, /) -> CudssSymbolicState:
         capacity=method.factor_cache_capacity,
         reordering=method.reordering,
         memory=method.memory_mode,
+        hybrid_device_limit=method.memory_policy.hybrid_device_limit_bytes,
+        group=0 if group is None else cuda_partition_key(group.group_id),
+        devices=devices,
     )
     return CudssSymbolicState(token, storage.batch_shape, problem.operator.operator_id)
 
@@ -184,6 +199,7 @@ def solve_cudss(
     method = plan.policy.method
     if not isinstance(method, SparseLDLT):
         raise TypeError("cuDSS solve requires SparseLDLT.")
+    require_mg_placement(method.execution, state.storage.values, rhs)
     canonical = (
         rhs.reshape((prod(state.batch_shape), rhs.shape[-2], rhs.shape[-1]))
         if state.batch_shape
@@ -213,6 +229,18 @@ def solve_cudss(
         condition_estimate=jnp.full(status.shape, jnp.nan, dtype=rhs.real.dtype),
         singular_values=None,
         native_rebuilds=jnp.asarray(rebuilt, dtype=jnp.int32).reshape(()),
+        memory_evidence=CudssMemoryEvidence(
+            state.token.analysis_memory_words,
+            device_indices=state.token.config[8],
+            process_index=process_index(),
+            group_device_count=max(len(state.token.config[8]), 1),
+            memory_mode=method.memory_mode,
+            group_id=(
+                None
+                if method.execution.group is None
+                else method.execution.group.group_id
+            ),
+        ),
     )
 
 

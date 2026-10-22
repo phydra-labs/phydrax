@@ -88,6 +88,56 @@ def _solve(
     return phx.linalg.solve(problem, rhs, policy=policy, rhs_layout=rhs_layout)
 
 
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("columns", [1, 3])
+def test_implicit_eigendirection_jvp_vjp_and_zero_cotangent(
+    compiled: bool, columns: int
+) -> None:
+    matrix = jnp.asarray(4.0 * np.eye(16) + np.full((16, 16), 0.05))
+    rhs = jnp.asarray(
+        (np.arange(16, dtype=np.float64) + 1)[:, None]
+        * np.arange(1, columns + 1, dtype=np.float64)[None, :]
+    )
+
+    def solution(value: jax.Array, right: jax.Array) -> jax.Array:
+        operator = phx.linalg.DenseLinearOperator(
+            value,
+            properties=phx.linalg.OperatorProperties(
+                self_adjoint=True, evidence={"self_adjoint": "asserted"}
+            ),
+        )
+        return phx.linalg.solve(
+            phx.linalg.LinearSystem(operator),
+            right,
+            rhs_layout=phx.linalg.RHSLayout((columns,)),
+        ).value
+
+    selected = jax.jit(solution) if compiled else solution
+    value, tangent = jax.jvp(
+        selected,
+        (matrix, rhs),
+        (jnp.zeros_like(matrix), jnp.ones_like(rhs)),
+    )
+    expected = np.linalg.solve(np.asarray(matrix), np.asarray(rhs))
+    expected_adjoint = np.linalg.solve(
+        np.asarray(matrix).T, np.ones_like(np.asarray(rhs))
+    )
+    np.testing.assert_allclose(value, expected, rtol=1e-11, atol=1e-13)
+    np.testing.assert_allclose(tangent, expected_adjoint, rtol=1e-11, atol=1e-13)
+    _, pullback = jax.vjp(selected, matrix, rhs)
+    for cotangent in (jnp.ones_like(value), jnp.zeros_like(value)):
+        matrix_gradient, rhs_gradient = pullback(cotangent)
+        adjoint = np.linalg.solve(np.asarray(matrix).T, np.asarray(cotangent))
+        assert np.all(np.isfinite(matrix_gradient))
+        assert np.all(np.isfinite(rhs_gradient))
+        np.testing.assert_allclose(rhs_gradient, adjoint, rtol=1e-11, atol=1e-13)
+        np.testing.assert_allclose(
+            matrix_gradient, -adjoint @ expected.T, rtol=1e-11, atol=1e-13
+        )
+        residual = np.asarray(cotangent) - np.asarray(matrix).T @ rhs_gradient
+        assert np.linalg.norm(residual) <= 1e-10 * np.linalg.norm(cotangent)
+
+
 def test_linear_solve_derivative_contract_scenario_1() -> None:
     for case in CASES:
         result = _solve(case.mode)

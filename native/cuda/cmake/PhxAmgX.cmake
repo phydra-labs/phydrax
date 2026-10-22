@@ -17,6 +17,7 @@ FetchContent_Declare(phx_amgx_source
         COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-dddi-only.patch"
         COMMAND "${PHX_PATCH_EXECUTABLE}" --binary -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-dddi-v-cycle.patch"
         COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-device-library-handles.patch"
+        COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-device-memory-manager.patch"
 )
 # Populate without upstream's shared library, examples, tests, MPI discovery,
 # install rules, or global compiler flags. These are all outside our C API build.

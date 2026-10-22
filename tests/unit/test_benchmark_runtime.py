@@ -107,6 +107,96 @@ def test_benchmark_runtime_scenario_1() -> None:
         CompilerEvidence(None, None, None, None, None, None, "xla-cost-analysis")
 
 
+@pytest.mark.parametrize(
+    "cost,expected_flops,expected_bytes",
+    (
+        ({"flops": -1.0, "bytes accessed": 123.0}, None, 123),
+        ({"flops": 12.0, "bytes accessed": -1.0}, 12, None),
+        ({"flops": -1.0, "bytes accessed": -1.0}, None, None),
+    ),
+)
+def test_compiler_custom_call_unknown_cost_is_none_with_reason_and_known_memory(
+    cost: dict[str, float], expected_flops: int | None, expected_bytes: int | None
+) -> None:
+    raw = cost.copy()
+    evidence = compiler_evidence(
+        cost,
+        _KnownCompilerMemory(),
+        source="xla-custom-call",
+        unavailable_reason="opaque external computation",
+    )
+    assert cost == raw
+    assert evidence.flops == expected_flops
+    assert evidence.bytes_accessed == expected_bytes
+    assert evidence.estimated_device_memory_bytes == 60
+    assert evidence.unavailable_reason is not None
+    assert "opaque external computation" in evidence.unavailable_reason
+    if expected_flops is None:
+        assert "flops" in evidence.unavailable_reason
+    if expected_bytes is None:
+        assert "bytes accessed" in evidence.unavailable_reason
+
+
+def test_compiler_known_zero_is_distinct_from_unknown_custom_call() -> None:
+    evidence = compiler_evidence(
+        {"flops": 0.0, "bytes accessed": 0.0},
+        _KnownCompilerMemory(),
+        source="xla-known-zero",
+    )
+    assert evidence.flops == 0
+    assert evidence.bytes_accessed == 0
+    assert evidence.unavailable_reason is None
+    unknown = compiler_evidence(
+        {"flops": -1.0, "bytes accessed": -1.0},
+        None,
+        source="xla-unknown",
+    )
+    assert unknown.flops is None and unknown.bytes_accessed is None
+    assert unknown.unavailable_reason is not None
+
+
+def test_missing_compiler_field_is_not_mislabeled_as_negative_sentinel() -> None:
+    evidence = compiler_evidence(
+        {"bytes accessed": 0.0},
+        _KnownCompilerMemory(),
+        source="xla-omitted",
+        unavailable_reason="Compiler omitted the FLOP estimate",
+    )
+    assert evidence.flops is None
+    assert evidence.bytes_accessed == 0
+    assert evidence.unavailable_reason == "Compiler omitted the FLOP estimate"
+
+
+@pytest.mark.parametrize("field", ("flops", "bytes accessed"))
+@pytest.mark.parametrize("invalid", (-2.0, -0.5, -1.0001, math.nan, math.inf, -math.inf))
+def test_other_negative_or_nonfinite_compiler_costs_remain_invalid(
+    field: str, invalid: float
+) -> None:
+    cost = {"flops": 0.0, "bytes accessed": 0.0}
+    cost[field] = invalid
+    with pytest.raises(ValueError):
+        compiler_evidence(cost, _KnownCompilerMemory(), source="xla-invalid")
+
+
+@pytest.mark.parametrize("aggregate", (-3.0, 0.0, 128.0))
+def test_opaque_custom_calls_never_report_partial_costs_as_totals(
+    aggregate: float,
+) -> None:
+    cost = {"flops": aggregate, "bytes accessed": aggregate}
+    evidence = compiler_evidence(
+        cost,
+        _KnownCompilerMemory(),
+        source="xla-mixed-custom-calls",
+        opaque_custom_calls=True,
+        unavailable_reason="unmodeled vendor kernels",
+    )
+    assert evidence.flops is None and evidence.bytes_accessed is None
+    assert evidence.estimated_device_memory_bytes == 60
+    assert evidence.unavailable_reason is not None
+    assert "unmodeled vendor kernels" in evidence.unavailable_reason
+    assert cost == {"flops": aggregate, "bytes accessed": aggregate}
+
+
 def test_measure_repeated_synchronizes_warmups_and_retains_every_sample() -> None:
     events = []
     counter = 0
@@ -215,6 +305,16 @@ class _NestedArrays:
 
 @dataclass(frozen=True)
 class _MemoryAnalysis:
+    argument_size_in_bytes: int = 10
+    output_size_in_bytes: int = 20
+    temp_size_in_bytes: int = 30
+    generated_code_size_in_bytes: int = 40
+
+
+@dataclass
+class _KnownCompilerMemory:
+    """Writable response attributes satisfy the owning compiler-memory protocol."""
+
     argument_size_in_bytes: int = 10
     output_size_in_bytes: int = 20
     temp_size_in_bytes: int = 30

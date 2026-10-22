@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import LinearSolveResult
 from ...typing import checked
 from .._model import ElectronicReferenceKind
 
@@ -280,6 +281,25 @@ class SCFStabilityResult(StrictModule):
     state_id: str = eqx.field(static=True)
 
 
+class SCFDIISEvidence(StrictModule):
+    """Minimum-norm affine DIIS coefficients and the native rank/status evidence."""
+
+    coefficients: Array
+    constraint_residual: Array
+    constraint_tolerance: Array
+    error_scale: Array
+    linear_solve: LinearSolveResult
+
+    @property
+    def successful(self) -> Array:
+        return (
+            self.linear_solve.successful
+            & jnp.all(jnp.isfinite(self.coefficients))
+            & jnp.isfinite(self.constraint_residual)
+            & (self.constraint_residual <= self.constraint_tolerance)
+        )
+
+
 class SCFConvergenceEvidence(StrictModule):
     energy_residual: Array
     density_residual: Array
@@ -291,10 +311,12 @@ class SCFConvergenceEvidence(StrictModule):
     stable: Array
     finite: Array
     plan_id: str = eqx.field(static=True)
+    diis: SCFDIISEvidence | None = None
 
     @property
     def successful(self) -> Array:
-        return self.converged & self.stable & self.finite
+        acceleration_ok = jnp.asarray(True) if self.diis is None else self.diis.successful
+        return self.converged & self.stable & self.finite & acceleration_ok
 
 
 def mean_field_owner_id(plan_id: str, positions: ArrayLike, /) -> str:
@@ -311,6 +333,8 @@ def mean_field_owner_id(plan_id: str, positions: ArrayLike, /) -> str:
 
 
 class RestrictedMeanFieldState(StrictModule, NonTrainableState):
+    """Restricted orbitals and density bound to an explicit AO integral definition."""
+
     density: Array
     coefficients: Array
     orbital_energies: Array
@@ -324,6 +348,7 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
     evidence: SCFConvergenceEvidence
     reference: ElectronicReferenceKind = eqx.field(static=True)
     owner_id: str = eqx.field(static=True)
+    integral_definition_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
     @checked
@@ -343,6 +368,7 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
         owner_id: str,
         /,
         *,
+        integral_definition_id: str,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
     ) -> None:
         density_ = jnp.asarray(density)
@@ -378,6 +404,9 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
         owner = str(owner_id).strip()
         if not owner:
             raise ValueError("Restricted mean-field owner_id must be non-empty.")
+        definition = str(integral_definition_id).strip()
+        if not definition:
+            raise ValueError("Mean-field integral_definition_id must be non-empty.")
         self.density = density_
         self.coefficients = coefficients_
         self.orbital_energies = energies
@@ -393,11 +422,13 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.reference = reference
         self.owner_id = owner
+        self.integral_definition_id = definition
         self.state_id = canonical_fingerprint(
             {
                 "kind": "restricted-mean-field-state",
                 "reference": reference.value,
                 "owner": owner,
+                "integral_definition": definition,
                 "evidence": evidence.plan_id,
                 "arrays": array_tree_fingerprint(
                     {
@@ -418,6 +449,8 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
 
 
 class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
+    """Spin-resolved mean-field state retaining its AO integral definition."""
+
     alpha_density: Array
     beta_density: Array
     alpha_coefficients: Array
@@ -436,6 +469,7 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
     evidence: SCFConvergenceEvidence
     reference: ElectronicReferenceKind = eqx.field(static=True)
     owner_id: str = eqx.field(static=True)
+    integral_definition_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
     @checked
@@ -460,6 +494,7 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
         owner_id: str,
         /,
         *,
+        integral_definition_id: str,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.UNRESTRICTED,
     ) -> None:
         alpha = jnp.asarray(alpha_density)
@@ -508,6 +543,9 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
         owner = str(owner_id).strip()
         if not owner:
             raise ValueError("Unrestricted mean-field owner_id must be non-empty.")
+        definition = str(integral_definition_id).strip()
+        if not definition:
+            raise ValueError("Mean-field integral_definition_id must be non-empty.")
         self.alpha_density, self.beta_density = alpha, beta
         self.alpha_coefficients = alpha_coefficients_
         self.beta_coefficients = beta_coefficients_
@@ -525,11 +563,13 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.reference = reference
         self.owner_id = owner
+        self.integral_definition_id = definition
         self.state_id = canonical_fingerprint(
             {
                 "kind": "unrestricted-mean-field-state",
                 "reference": reference.value,
                 "owner": owner,
+                "integral_definition": definition,
                 "evidence": evidence.plan_id,
                 "arrays": array_tree_fingerprint(
                     {
@@ -550,6 +590,8 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
 
 
 class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
+    """Spinor mean-field state retaining its AO integral definition."""
+
     density: Array
     coefficients: Array
     orbital_energies: Array
@@ -560,6 +602,7 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
     total_energy: Array
     evidence: SCFConvergenceEvidence
     owner_id: str = eqx.field(static=True)
+    integral_definition_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
     def __init__(
@@ -575,6 +618,8 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
         evidence: SCFConvergenceEvidence,
         owner_id: str,
         /,
+        *,
+        integral_definition_id: str,
     ) -> None:
         density_ = jnp.asarray(density)
         count = density_.shape[0] if density_.ndim == 2 else -1
@@ -602,6 +647,9 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
         owner = str(owner_id).strip()
         if not owner:
             raise ValueError("Generalized mean-field owner_id must be non-empty.")
+        definition = str(integral_definition_id).strip()
+        if not definition:
+            raise ValueError("Mean-field integral_definition_id must be non-empty.")
         self.density = density_
         self.coefficients = coefficients_
         self.orbital_energies = energies
@@ -614,10 +662,12 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
         self.total_energy = jnp.asarray(total_energy, dtype=energies.dtype).reshape(())
         self.evidence = evidence
         self.owner_id = owner
+        self.integral_definition_id = definition
         self.state_id = canonical_fingerprint(
             {
                 "kind": "generalized-mean-field-state",
                 "owner": owner,
+                "integral_definition": definition,
                 "evidence": evidence.plan_id,
                 "arrays": array_tree_fingerprint(
                     {

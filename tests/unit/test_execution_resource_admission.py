@@ -87,6 +87,38 @@ def test_amd_selection_preserves_generic_gpu_inventory_identity() -> None:
             ResourceRequest(1, 4_096, accelerator_count=1, accelerator_platform="rocm"),
         )
 
+@pytest.mark.parametrize("certified", [False, True], ids=["declared", "certified"])
+def test_provider_memory_estimates_do_not_certify_allocation_bounds(
+    certified: bool,
+) -> None:
+    inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
+    evidence = ExecutionResourceEvidence(
+        per_device_peak_bytes=256,
+        per_device_reserve_bytes=0,
+        per_host_peak_bytes=512,
+        per_host_reserve_bytes=0,
+        memory_basis="provider_estimate",
+    )
+    request = ResourceRequest(
+        1,
+        4096,
+        maximum_device_bytes=1024,
+        maximum_host_bytes=1024,
+        memory_envelope="certified" if certified else "declared",
+    )
+    candidate = _candidate(inventory, evidence=evidence)
+    if certified:
+        with pytest.raises(
+            ExecutionAdmissionError, match="provider estimate as an upper bound"
+        ):
+            _resolve(inventory, candidate, request)
+    else:
+        plan = _resolve(inventory, candidate, request)
+        assert plan.resource_evidence == evidence
+        restored = type(plan).from_payload(plan.to_payload())
+        assert restored.resource_evidence == evidence
+        assert restored.plan_fingerprint == plan.plan_fingerprint
+
 
 def test_execution_resource_admission_scenario_1() -> None:
     inventory = ResourceInventory(

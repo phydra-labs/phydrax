@@ -640,12 +640,25 @@ Plain `pip install phydrax` retains its base JAX dependency. The `cpu` extra
 does not remove accelerator plugins or force CPU execution; select
 `JAX_PLATFORMS=cpu` before numerical imports when required.
 
-The CUDA 13 extra installs JAX's CUDA plugin, NVIDIA wheels, and a metadata
-marker recording installed CUDA intent. On Linux x86-64 and aarch64 it also
-requires the matching `phydrax-cuda13` companion wheel with cuDSS, AmgX, and QUDA.
-CUDA 13 is the only supported CUDA major. GPU-direct mpi4jax requires a matching
-user-provided build. See [Installation](docs/installation.md)
-for diagnostics, architecture coverage, and distributed deployment.
+The CUDA 13 extra pins JAX/JAXlib and the CUDA plugin to 0.12.0, installs
+NVIDIA wheels, and records installed CUDA intent with a metadata marker. On
+Linux x86-64 and aarch64 it also requires the matching `phydrax-cuda13`
+companion wheel with cuDSS, AmgX, and QUDA. CUDA 13 is the only supported CUDA
+major. GPU-direct mpi4jax requires a matching user-provided build. See
+[Installation](docs/installation.md) for diagnostics, architecture coverage,
+and distributed deployment.
+
+Optional prepared tensor and molecular implementations are selected separately:
+`phydrax[cuda13,cutensor]`, `phydrax[cuda13,cutensornet]`, and
+`phydrax[cuda13,cuest]`. They retain native planning, scientific identity,
+precision, failure, and resource ownership; installation never switches native
+defaults. cuEST's C runtime is a separate optional wheel. Site-bound cuDSS MGMN
+and cuDecomp require explicit, supervised, CUDA-aware MPI artifacts rather than
+a universal MPI dependency. See the
+[CUDA library installation contract](docs/installation.md#optional-numerical-cuda-libraries).
+Device visibility and peer-access reports are not numerical qualification. The
+eight-A40 failure history and the current scoped eight-A100 transport, provider,
+site-MPI, and scientific qualification are recorded in the installation guide.
 
 On Apple Silicon, `pip install "phydrax[metal]"` selects the exact
 `phydrax-metal` wheel (when published for the matching release), with JAX/JAXlib

@@ -42,7 +42,8 @@ from pathlib import Path, PurePosixPath
 type Json = None | bool | int | float | str | Sequence[Json] | Mapping[str, Json]
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPONENTS = ("cudss", "amgx", "quda")
+COMPONENTS = ("cudss", "amgx", "quda", "cutensor", "cutensornet", "cuest")
+HOST_ONLY_COMPONENTS = frozenset(("cudss", "cutensor", "cutensornet", "cuest"))
 DRIVER_LIBRARIES = frozenset(("libcuda.so.1", "libnvidia-ml.so.1"))
 CLEAN_ENVIRONMENT = ("LD_LIBRARY_PATH", "CUDA_HOME", "CUDA_PATH", "CUDA_ROOT")
 RELEASE_ARCHITECTURES = (
@@ -139,7 +140,7 @@ def parse_configuration(argv: Sequence[str] | None = None) -> Configuration:
     parser.add_argument(
         "--components",
         default=";".join(COMPONENTS),
-        help="Semicolon- or comma-separated subset of cudss, amgx, quda.",
+        help="Semicolon- or comma-separated subset of " + ", ".join(COMPONENTS) + ".",
     )
     parser.add_argument(
         "--python",
@@ -180,7 +181,7 @@ def parse_configuration(argv: Sequence[str] | None = None) -> Configuration:
         parser.error("--architectures contains duplicate targets")
     selected = options.components.replace(",", ";").split(";")
     if not selected or any(entry not in COMPONENTS for entry in selected):
-        parser.error("--components must select cudss, amgx, and/or quda")
+        parser.error("--components must select from " + ", ".join(COMPONENTS))
     if len(set(selected)) != len(selected):
         parser.error("--components contains duplicates")
     if options.jobs < 1:
@@ -335,7 +336,11 @@ def inventory() -> NvidiaInventory:
         key=lambda item: item.metadata["Name"] or "",
     ):
         name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"] or "").lower()
-        if not (name.startswith("nvidia-") or name.startswith("cudss-")):
+        if not (
+            name.startswith("nvidia-")
+            or name == "phydrax-cuest"
+            or re.fullmatch(r"(?:cutensor|cutensornet)-cu\d+", name)
+        ):
             continue
         suffix = re.search(r"-cu(\d+)$", name)
         if suffix is not None and suffix.group(1) != "13":
@@ -563,7 +568,9 @@ def inspect_device_code(
     environment: Mapping[str, str],
     evidence: dict[str, Json],
 ) -> dict[str, Json]:
-    host_only_allowed = library.name == "libphydrax_cuda_cudss.so"
+    host_only_allowed = library.name in {
+        f"libphydrax_cuda_{component}.so" for component in HOST_ONLY_COMPONENTS
+    }
     no_code_diagnostic = f"cuobjdump info : File '{library}' does not contain device code"
     expected_failure = (255, no_code_diagnostic) if host_only_allowed else None
     sass = run(

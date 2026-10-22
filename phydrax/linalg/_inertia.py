@@ -149,6 +149,10 @@ def factorization_inertia(
 
         if not isinstance(state, CudssFactorState):
             raise ValueError("Prepared provider does not expose inertia evidence.")
+        if state.token.config[8]:
+            raise ValueError(
+                "cuDSS MG does not expose qualified provider inertia evidence."
+            )
         batch_shape = state.batch_shape
         unavailable = jnp.full(batch_shape, -1, dtype=jnp.int32)
         false = jnp.zeros(batch_shape, dtype=jnp.bool_)

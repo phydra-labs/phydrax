@@ -94,9 +94,21 @@ cpu = [
   "jax[cpu]>=0.12.0,<0.13",
 ]
 cuda13 = [
-  "jax[cuda13]>=0.12.0,<0.13; sys_platform == 'linux'",
+  "jax[cuda13]==0.12.0; sys_platform == 'linux'",
+  "jaxlib==0.12.0; sys_platform == 'linux'",
   "phydrax-cuda-major==13.*",
   "phydrax-cuda13==0.2.2; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+]
+cutensor = [
+  "cutensor-cu13==2.8.1; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+]
+cutensornet = [
+  "cutensor-cu13==2.8.1; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+  "cutensornet-cu13==2.14.0; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+]
+cuest = [
+  "phydrax-cuda-major==13.*",
+  "phydrax-cuest==0.2.2; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
 ]
 metal = [
   "phydrax-metal==0.2.2",
@@ -283,8 +295,9 @@ conflicts = [
 
 [tool.uv.sources]
 phydrax-meshcore = { path = "native/meshcore" }
-phydrax-cuda-major = { path = "packaging/cuda-major/13", extra = "cuda13" }
+phydrax-cuda-major = { path = "packaging/cuda-major/13" }
 phydrax-cuda13 = { path = "native/cuda13", extra = "cuda13" }
+phydrax-cuest = { path = "native/cuest_runtime", extra = "cuest" }
 phydrax-metal = { path = "native/metal", extra = "metal" }
 
 [tool.uv.extra-build-variables]
@@ -398,6 +411,7 @@ include = [
   "mkdocstrings_setup.py",
   "native/meshcore/python",
   "native/cuda13",
+  "native/cuest_runtime",
   "native/metal",
   "packaging/rocm/python",
 ]

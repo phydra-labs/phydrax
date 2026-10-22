@@ -170,6 +170,7 @@ class CASSCFPlan(StrictModule, NonTrainableState):
             store.reference_energy,
             store.partition,
             store.source_basis_id,
+            integral_definition_id=store.integral_definition_id,
             two_body=rotated_two,
         )
 
