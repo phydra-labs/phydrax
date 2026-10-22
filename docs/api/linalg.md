@@ -37,6 +37,42 @@ contract holds for this solve: implicit contracts require convergence (the same
 evidence that guards the returned value's derivative), unrolled contracts
 require finite arithmetic, and a stopped contract is never valid.
 
+## Explicit covariance condition targets
+
+`condition_target_covariance(matrix, ConditionTargetPolicy(target, bound=...))`
+is an opt-in model transformation, not a preconditioner or factorization retry.
+For the complete covariance C, form D = diag(diag(C)) and
+B = D⁻¹ᐟ² C D⁻¹ᐟ². The transformed covariance is C + ηD, where
+η = upper_bound(B) / (target − 1). `"gershgorin"` uses absolute row sums;
+`"trace"` uses the ideal PSD trace bound. Positive singletons remain unchanged.
+
+The native verifier checks numerical PSD and symmetry in normalized coordinates.
+Nonfinite data, indefinite matrices beyond tolerance, zero-diagonal normalization,
+and targets unresolved by the dtype are refused. Verification uses a dense
+eigendecomposition. Its diagnostic eigenvalues are stopped for differentiation;
+covariance normalization and η remain differentiable.
+
+`ConditionTargetResult.normalized_upper_bound` is the ideal PSD bound used for η.
+`normalized_condition_bound` additionally accounts for native eigenvalue tolerance
+in the lower bound and, for trace, the upper bound. It can exceed the requested
+ideal target near singularity. This evidence concerns diagonal-normalized
+coordinates only; it is not a raw-coordinate condition certificate.
+`applied_diagonal`, `normalization_scale`, `normalized_row_sums`, and
+`property_evidence` retain the transformation and verification evidence.
+
+::: phydrax.linalg.ConditionTargetPolicy
+
+::: phydrax.linalg.ConditionTargetResult
+
+::: phydrax.linalg.condition_target_covariance
+
+`PreparedFactorization.inverse_columns(indices, max_workspace_bytes=...)` solves
+selected identity columns without allocating a complete identity or inverse.
+It returns native `LinearSolveResult` evidence and refuses out-of-domain indices
+or insufficient selected-RHS workspace. The limit excludes retained factors and
+opaque backend scratch. All-column exact contractions still require cubic dense
+work; this API does not approximate the inverse.
+
 ## Apple GPU iterative execution
 
 The [Metal candidate profile](../guides_metal_execution.md) exercises native

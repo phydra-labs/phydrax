@@ -4,45 +4,14 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
 
 from phydrax.kernels import AbstractPositiveDefiniteKernel
-
-
-def exact_gp_cholesky(
-    observation_points: ArrayLike,
-    /,
-    *,
-    kernel: AbstractPositiveDefiniteKernel,
-    noise_scale: ArrayLike,
-    jitter: ArrayLike,
-) -> Array:
-    """Factor an exact scalar GP observation covariance."""
-    points = _as_kernel_inputs(
-        observation_points, kernel=kernel, name="observation_points"
-    )
-    diagonal = _observation_diagonal(
-        noise_scale,
-        jitter,
-        count=points.shape[0],
-    )
-    covariance = kernel.matrix(points, points)
-    return jnp.linalg.cholesky(covariance + jnp.diag(diagonal))
-
-
-def exact_gp_log_probability(residual: ArrayLike, cholesky: ArrayLike, /) -> Array:
-    """Evaluate a Gaussian log density from a reusable covariance factor."""
-    value = jnp.asarray(residual)
-    factor = jnp.asarray(cholesky)
-    whitened = jsp.linalg.solve_triangular(factor, value, lower=True)
-    return -0.5 * (
-        value.size * jnp.log(2.0 * jnp.pi)
-        + 2.0 * jnp.sum(jnp.log(jnp.diag(factor)))
-        + whitened @ whitened
-    )
+from phydrax.linalg import PreparedFactorization, RHSLayout
 
 
 def exact_gp_conditioner(
@@ -50,7 +19,7 @@ def exact_gp_conditioner(
     query_points: ArrayLike,
     /,
     *,
-    cholesky: ArrayLike,
+    factorization: PreparedFactorization,
     kernel: AbstractPositiveDefiniteKernel,
 ) -> tuple[Array, Array, Array]:
     """Precompute exact residual projection and latent query covariance."""
@@ -59,14 +28,14 @@ def exact_gp_conditioner(
     )
     query = _as_kernel_inputs(query_points, kernel=kernel, name="query_points")
     return exact_gp_conditioner_from_covariances(
-        cholesky,
+        factorization,
         kernel.matrix(query, points),
         kernel.matrix(query, query),
     )
 
 
 def exact_gp_conditioner_from_covariances(
-    cholesky: ArrayLike,
+    factorization: PreparedFactorization,
     cross_covariance: ArrayLike,
     query_covariance: ArrayLike,
     /,
@@ -74,9 +43,11 @@ def exact_gp_conditioner_from_covariances(
     """Condition from preassembled covariance blocks."""
     cross = jnp.asarray(cross_covariance)
     query = jnp.asarray(query_covariance)
-    projection = jsp.linalg.cho_solve(
-        (jnp.asarray(cholesky), True),
-        cross.T,
+    solved = factorization.solve(cross.T, rhs_layout=RHSLayout((cross.shape[0],)))
+    projection = eqx.error_if(
+        solved.value,
+        ~jnp.all(solved.successful),
+        "Exact GP conditioning covariance solve failed.",
     ).T
     covariance = query - projection @ cross.T
     covariance = 0.5 * (covariance + covariance.T)
@@ -84,20 +55,29 @@ def exact_gp_conditioner_from_covariances(
 
 
 def exact_gp_predict_diagonal_from_covariances(
-    cholesky: ArrayLike,
+    factorization: PreparedFactorization,
     cross_covariance: ArrayLike,
     prior_diagonal: ArrayLike,
     residual: ArrayLike,
     /,
 ) -> tuple[Array, Array]:
     """Predict a residual mean and latent variance without a dense query covariance."""
-    factor = jnp.asarray(cholesky)
     cross = jnp.asarray(cross_covariance)
     diagonal = jnp.asarray(prior_diagonal)
     value = jnp.asarray(residual)
-    alpha = jsp.linalg.cho_solve((factor, True), value)
+    alpha_solve = factorization.solve(value)
+    alpha = eqx.error_if(
+        alpha_solve.value,
+        ~jnp.all(alpha_solve.successful),
+        "Exact GP prediction residual solve failed.",
+    )
     mean = cross @ alpha
-    projection = jsp.linalg.cho_solve((factor, True), cross.T).T
+    solved = factorization.solve(cross.T, rhs_layout=RHSLayout((cross.shape[0],)))
+    projection = eqx.error_if(
+        solved.value,
+        ~jnp.all(solved.successful),
+        "Exact GP prediction covariance solve failed.",
+    ).T
     variance = diagonal - jnp.sum(cross * projection, axis=1)
     return mean, jnp.maximum(variance, 0.0)
 
@@ -322,10 +302,8 @@ def _as_kernel_inputs(
 
 
 __all__ = [
-    "exact_gp_cholesky",
     "exact_gp_conditioner",
     "exact_gp_conditioner_from_covariances",
-    "exact_gp_log_probability",
     "exact_gp_predict_diagonal_from_covariances",
     "fitc_factors",
     "fitc_factors_from_covariances",

@@ -24,7 +24,7 @@ from ..typing import checked
 from ._gp_actions import AbstractGaussianProcessActionPolicy
 from ._gp_computation_aware import GaussianProcessComputationPolicy
 from ._gp_computation_backend import _kernel_matrix_action
-from ._gp_likelihood import GaussianProcessLikelihoodState
+from ._gp_likelihood import _require_unconditioned_state, GaussianProcessLikelihoodState
 from ._minibatch_posterior import AbstractObservationFactor, LikelihoodBatch
 from ._sparse_variational_gp import (
     SparseVariationalGaussianProcessELBO,
@@ -61,6 +61,7 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         likelihood_samples: int = 8,
         computation: GaussianProcessComputationPolicy | None = None,
     ) -> None:
+        _require_unconditioned_state(state)
         points = jnp.asarray(observation_points)
         if points.ndim != state.kernel.input_ndim + 1 or points.shape[0] <= 0:
             raise ValueError("observation_points must match the kernel input rank.")

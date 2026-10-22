@@ -2278,11 +2278,21 @@ log_likelihood = factor.log_probability(residual)
 conditioned = conditioner.condition(residual)
 ```
 
-`ExactGaussianProcessFactor` retains a dense Cholesky factor.
+`ExactGaussianProcessFactor` retains a native prepared covariance factor and solve
+evidence, including the original dense covariance for diagnostics and derivatives.
 `SparseGaussianProcessFactor` retains FITC features, diagonal terms, and a small
 correction factor. `GaussianProcessConditioner` additionally precomputes the
 query/observation projection and conditional covariance, so a changed residual costs
 one matrix-vector product. `factor_storage_elements` exposes the retained storage.
+
+For the complementary workload, fixed residuals with changing query points, use
+`prepare_gaussian_process_mean(factor, residual, max_workspace_bytes=...)`.
+This produces a bounded, checkpointed mean-only predictor without retaining the
+dense factor. Exact, finite-feature, and FITC factors share this preparation API;
+reprepare when residuals or covariance parameters change. Query and preparation
+derivatives remain available through JAX transformations. See the
+[exact GP execution contract](api/uq/inference.md#gaussian-process-discrepancy)
+for resource scopes, native evidence, and optional condition-target regularization.
 
 If covariance parameters are inferred, construct the state from posterior leaves
 inside the likelihood term:

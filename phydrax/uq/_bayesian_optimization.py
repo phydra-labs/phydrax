@@ -24,6 +24,7 @@ from jaxtyping import PyTree
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..linalg import RHSLayout
 from ..optim import FiniteProductSpace
 from ..typing import checked
 from ._gp_kernel_fit import (
@@ -31,7 +32,8 @@ from ._gp_kernel_fit import (
     GaussianProcessKernelFitPolicy,
     GaussianProcessKernelFitResult,
 )
-from ._gp_likelihood import GaussianProcessLikelihoodState
+from ._gp_likelihood import _require_unconditioned_state, GaussianProcessLikelihoodState
+from ._gp_scalar import ExactGaussianProcessFactor
 
 
 BAYESIAN_OPTIMIZATION_INITIAL = 0
@@ -276,6 +278,8 @@ class GaussianProcessBayesianOptimization(StrictModule):
             not isinstance(state, GaussianProcessLikelihoodState) for state in constraints
         ):
             raise TypeError("constraint_surrogates must contain GP likelihood states.")
+        for surrogate in (objective_surrogate,) + constraints:
+            _require_unconditioned_state(surrogate)
         if any(
             state.noise_scale.ndim != 0 for state in (objective_surrogate,) + constraints
         ):
@@ -676,24 +680,40 @@ def _gp_posterior(
     state: GaussianProcessLikelihoodState,
     /,
 ) -> tuple[Array, Array, Array]:
+    _require_unconditioned_state(state)
     host_valid = np.asarray(jax.device_get(valid))
     points = train_points[host_valid]
     values = train_values[host_valid]
     noise = jnp.broadcast_to(state.noise_scale, (train_points.shape[0],))[host_valid]
-    covariance = state.kernel.matrix(points, points) + jnp.diag(
-        noise * noise + state.jitter
+    if points.shape[0] == 0:
+        prior = state.kernel.matrix(query_points, query_points)
+        return (
+            jnp.zeros((query_points.shape[0],), dtype=prior.dtype),
+            prior,
+            jnp.all(jnp.isfinite(prior)),
+        )
+    selected_state = GaussianProcessLikelihoodState(
+        kernel=state.kernel,
+        noise_scale=noise,
+        jitter=state.jitter,
+        execution=state.execution,
     )
-    cholesky = jnp.linalg.cholesky(covariance)
+    factor = ExactGaussianProcessFactor(points, state=selected_state)
     cross = state.kernel.matrix(query_points, points)
-    alpha = jsp.linalg.solve_triangular(cholesky, values, lower=True)
-    alpha = jsp.linalg.solve_triangular(cholesky.T, alpha, lower=False)
-    mean = cross @ alpha
-    whitened = jsp.linalg.solve_triangular(cholesky, cross.T, lower=True)
-    query_covariance = (
-        state.kernel.matrix(query_points, query_points) - whitened.T @ whitened
+    alpha = factor.factorization.solve(values)
+    projection = factor.factorization.solve(
+        cross.T, rhs_layout=RHSLayout((query_points.shape[0],))
+    )
+    mean = cross @ alpha.value
+    query_covariance = state.kernel.matrix(query_points, query_points) - (
+        cross @ projection.value
     )
     query_covariance = 0.5 * (query_covariance + query_covariance.T)
-    usable = jnp.all(jnp.isfinite(cholesky)) & jnp.all(jnp.isfinite(query_covariance))
+    usable = (
+        jnp.all(alpha.successful)
+        & jnp.all(projection.successful)
+        & jnp.all(jnp.isfinite(query_covariance))
+    )
     return mean, query_covariance, usable
 
 

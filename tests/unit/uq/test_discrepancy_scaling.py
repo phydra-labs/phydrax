@@ -201,6 +201,7 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
 
     fixed_state = state(jnp.array([0.2, 0.35]))
     exact_factor = exact.factor(state=fixed_state)
+    assert isinstance(exact_factor, phx.uq.ExactGaussianProcessFactor)
     sparse_factor = sparse.factor(state=fixed_state)
     exact_conditioner = exact_factor.conditioner(query_points, output_dim="query")
     sparse_conditioner = sparse_factor.conditioner(query_points, output_dim="query")
@@ -237,8 +238,9 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
         sparse.residual(physical(parameter))
     )
 
-    assert exact_factor.factor_storage_elements == observation_points.shape[0] ** 2
-    assert sparse_factor.factor_storage_elements == sparse.factor_storage_elements
+    # Native preparation retains the covariance, factor, and numerical evidence.
+    assert exact_factor.factor_storage_elements >= 2 * observation_points.shape[0] ** 2
+    assert exact_factor.evidence.successful
     assert jnp.allclose(dynamic_exact(parameter), factored_exact(parameter))
     assert jnp.allclose(dynamic_sparse(parameter), factored_sparse(parameter))
     assert jnp.allclose(

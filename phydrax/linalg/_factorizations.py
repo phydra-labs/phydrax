@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import prod
+from numbers import Integral
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -218,6 +219,65 @@ class PreparedFactorization(StrictModule):
         from ._runtime import solve_adjoint
 
         return solve_adjoint(self.prepared_solve, rhs, rhs_layout=rhs_layout)
+
+    def inverse_columns(
+        self,
+        indices: ArrayLike,
+        /,
+        *,
+        max_workspace_bytes: int,
+    ) -> LinearSolveResult:
+        """Solve selected inverse columns without constructing a dense identity.
+
+        The bound covers the selected identity columns and the native solve
+        workspace estimate. It excludes retained factors and opaque backend
+        scratch, and does not claim a compiler peak-memory guarantee.
+        """
+        if not isinstance(max_workspace_bytes, Integral) or isinstance(
+            max_workspace_bytes, bool
+        ):
+            raise TypeError("max_workspace_bytes must be an integer.")
+        if max_workspace_bytes < 1:
+            raise ValueError("max_workspace_bytes must be positive.")
+        if not self.capabilities.inverse_materialization:
+            raise ValueError("This factorization cannot solve inverse columns.")
+        if (
+            self.batch_shape
+            or not isinstance(self.operator.source, ArraySpace)
+            or not isinstance(self.operator.target, ArraySpace)
+        ):
+            raise ValueError("Inverse columns require an unbatched array operator.")
+        if self.operator.source.size != self.operator.target.size:
+            raise ValueError("Inverse columns require a square operator.")
+        columns = jnp.asarray(indices)
+        if columns.ndim != 1 or columns.size == 0:
+            raise ValueError("Inverse column indices must be a nonempty vector.")
+        if not jnp.issubdtype(columns.dtype, jnp.integer):
+            raise TypeError("Inverse column indices must have integer dtype.")
+        size = self.operator.source.size
+        # The native runtime uses the last candidate as its selected estimate.
+        estimate = self.prepared_solve.plan.candidates[-1]
+        itemsize = jnp.dtype(self.operator.target.dtype).itemsize
+        required = columns.size * (
+            size * itemsize
+            + estimate.solve_workspace_bytes_per_rhs
+            + estimate.preconditioner_apply_workspace_bytes_per_rhs
+        )
+        if max_workspace_bytes < required:
+            raise ValueError(
+                f"Inverse columns require {required} workspace bytes, exceeding "
+                f"the limit {max_workspace_bytes}."
+            )
+        columns = eqx.error_if(
+            columns,
+            jnp.any(columns < 0) | jnp.any(columns >= size),
+            "Inverse column indices are outside the operator domain.",
+        )
+        right = (jnp.arange(size)[:, None] == columns[None, :]).astype(
+            self.operator.target.dtype
+        )
+        right = right.reshape(self.operator.target.shape + (columns.size,))
+        return self.solve(right, rhs_layout=RHSLayout((columns.size,)))
 
     def materialize_inverse(self, /) -> MatrixInversionResult:
         if not self.capabilities.inverse_materialization:

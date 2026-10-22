@@ -12,7 +12,6 @@ from typing import Any, TypeVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
@@ -25,7 +24,7 @@ from ..optim import (
     OptimizationTermination,
 )
 from ..typing import checked
-from ._gp_backend import exact_gp_cholesky
+from ._gp_exact import exact_gp_log_marginal_likelihood
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._gp_multioutput import (
     MultiOutputGaussianProcessDiscrepancy,
@@ -281,17 +280,14 @@ def _negative_log_marginal_likelihood(
 ) -> Array:
     if not isinstance(state, GaussianProcessLikelihoodState):
         raise TypeError("Fitted state must be a GaussianProcessLikelihoodState.")
-    cholesky = exact_gp_cholesky(
+    return -exact_gp_log_marginal_likelihood(
         points,
-        kernel=state.kernel,
-        noise_scale=state.noise_scale,
-        jitter=state.jitter,
-    )
-    whitened = jsp.linalg.solve_triangular(cholesky, values, lower=True)
-    return (
-        0.5 * jnp.vdot(whitened, whitened).real
-        + jnp.sum(jnp.log(jnp.diag(cholesky)))
-        + 0.5 * values.shape[0] * jnp.log(2.0 * jnp.pi)
+        values,
+        state.kernel,
+        state.noise_scale,
+        state.jitter,
+        state.execution,
+        state.conditioning,
     )
 
 

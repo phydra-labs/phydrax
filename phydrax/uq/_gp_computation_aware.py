@@ -29,13 +29,12 @@ from ._gp_computation_backend import (
     _ProjectedGaussianProcessState,
 )
 from ._gp_condition import GaussianProcessCondition
-from ._gp_likelihood import GaussianProcessLikelihoodState
+from ._gp_likelihood import _require_unconditioned_state, GaussianProcessLikelihoodState
 from ._gp_scalar import (
     _as_design,
     _as_vector,
     _field_data,
     _query_output_dims,
-    _require_state,
     _validated_factor_points,
     _validated_observations,
 )
@@ -208,7 +207,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
         residual: ArrayLike | None = None,
     ) -> None:
         points = _validated_factor_points(observation_points)
-        _require_state(state)
+        _require_unconditioned_state(state)
         policy = (
             GaussianProcessComputationPolicy() if computation is None else computation
         )

@@ -13,12 +13,11 @@ from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.kernels import kernel_feature_rank, kernel_features
+from phydrax.linalg import ConditionTargetResult, LinearSolveResult, PreparedFactorization
 
 from .._strict import StrictModule
 from ._gp_backend import (
-    exact_gp_cholesky,
     exact_gp_conditioner,
-    exact_gp_log_probability,
     fitc_factors,
     low_rank_gp_conditioner,
     low_rank_gp_correction_cholesky,
@@ -26,14 +25,23 @@ from ._gp_backend import (
     sparse_gp_log_probability_from_factors,
 )
 from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
-from ._gp_likelihood import GaussianProcessLikelihoodState
+from ._gp_exact import (
+    exact_factor_storage,
+    exact_gp_factorization,
+    exact_gp_log_marginal_likelihood,
+    exact_gp_log_probability_from_factor,
+    require_exact_factor_storage,
+)
+from ._gp_likelihood import _require_unconditioned_state, GaussianProcessLikelihoodState
 
 
 class ExactGaussianProcessFactor(StrictModule):
     """Reusable exact covariance factor for one GP likelihood state."""
 
     observation_points: Array
-    cholesky: Array
+    factorization: PreparedFactorization
+    evidence: LinearSolveResult
+    regularization: ConditionTargetResult | None
     state: GaussianProcessLikelihoodState
 
     def __init__(
@@ -46,25 +54,43 @@ class ExactGaussianProcessFactor(StrictModule):
         points = _validated_factor_points(observation_points)
         _require_state(state)
         self.observation_points = points
-        self.cholesky = exact_gp_cholesky(
+        factorization, regularization = exact_gp_factorization(
             points,
             kernel=state.kernel,
             noise_scale=state.noise_scale,
             jitter=state.jitter,
+            execution=state.execution,
+            conditioning=state.conditioning,
         )
+        evidence = factorization.solve(jnp.ones((points.shape[0],), dtype=points.dtype))
+        require_exact_factor_storage(
+            factorization, evidence, regularization, state.execution
+        )
+        self.factorization = factorization
+        self.evidence = evidence
+        self.regularization = regularization
         self.state = state
 
     @property
     def factor_storage_elements(self) -> int:
-        """Number of elements in the dominant dense covariance factor."""
-        return self.cholesky.size
+        """Distinct native factor/evidence payloads, including matrix and factor."""
+        return exact_factor_storage(
+            self.factorization, self.evidence, self.regularization
+        )[0]
+
+    @property
+    def factor_storage_bytes(self) -> int:
+        """Byte count of the same native numerical payloads as element storage."""
+        return exact_factor_storage(
+            self.factorization, self.evidence, self.regularization
+        )[1]
 
     def log_probability(self, residual: ArrayLike, /) -> Array:
         """Evaluate a residual log density without refactorizing covariance."""
         values = _as_vector(residual, name="GP residual")
         if values.shape[0] != self.observation_points.shape[0]:
             raise ValueError("GP residual must align with factor observations.")
-        return exact_gp_log_probability(values, self.cholesky)
+        return exact_gp_log_probability_from_factor(values, self.factorization)
 
     def conditioner(
         self,
@@ -78,7 +104,7 @@ class ExactGaussianProcessFactor(StrictModule):
         projection, covariance, variance = exact_gp_conditioner(
             self.observation_points,
             query_data,
-            cholesky=self.cholesky,
+            factorization=self.factorization,
             kernel=self.state.kernel,
         )
         return GaussianProcessConditioner(
@@ -118,7 +144,7 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
         state: GaussianProcessLikelihoodState,
     ) -> None:
         points = _validated_factor_points(observation_points)
-        _require_state(state)
+        _require_unconditioned_state(state)
         if kernel_feature_rank(state.kernel) is None:
             raise TypeError(
                 "FiniteFeatureGaussianProcessFactor requires an exact finite-feature kernel representation."
@@ -214,7 +240,7 @@ class SparseGaussianProcessFactor(StrictModule):
         points = _validated_factor_points(observation_points)
         inducing = _validated_factor_points(inducing_points)
         _validate_inducing_design(points, inducing)
-        _require_state(state)
+        _require_unconditioned_state(state)
         factors = fitc_factors(
             points,
             inducing,
@@ -323,10 +349,14 @@ class ExactGaussianProcessDiscrepancy(StrictModule):
         *,
         state: GaussianProcessLikelihoodState,
     ) -> ExactGaussianProcessFactor | FiniteFeatureGaussianProcessFactor:
-        """Use exact weight space when feature rank is below observation count."""
+        """Use exact weight space unless full-covariance conditioning is requested."""
         _require_state(state)
         rank = kernel_feature_rank(state.kernel)
-        if rank is not None and rank < self.observation_points.shape[0]:
+        if (
+            state.conditioning is None
+            and rank is not None
+            and rank < self.observation_points.shape[0]
+        ):
             return FiniteFeatureGaussianProcessFactor(
                 self.observation_points,
                 state=state,
@@ -341,8 +371,24 @@ class ExactGaussianProcessDiscrepancy(StrictModule):
         state: GaussianProcessLikelihoodState,
     ) -> Array:
         """Marginalize latent discrepancy values under a Gaussian likelihood."""
-        factor = self.factor(state=state)
-        return factor.log_probability(self.residual(physical_mean))
+        _require_state(state)
+        residual = self.residual(physical_mean)
+        rank = kernel_feature_rank(state.kernel)
+        if (
+            state.conditioning is None
+            and rank is not None
+            and rank < self.observation_points.shape[0]
+        ):
+            return self.factor(state=state).log_probability(residual)
+        return exact_gp_log_marginal_likelihood(
+            self.observation_points,
+            residual,
+            state.kernel,
+            state.noise_scale,
+            state.jitter,
+            state.execution,
+            state.conditioning,
+        )
 
     def condition(
         self,
@@ -443,20 +489,7 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
         state: GaussianProcessLikelihoodState,
     ) -> Array:
         """Evaluate the matrix-free FITC marginal likelihood."""
-        _require_state(state)
-        factors = fitc_factors(
-            self.observation_points,
-            self.inducing_points,
-            kernel=state.kernel,
-            noise_scale=state.noise_scale,
-            jitter=state.jitter,
-        )
-        return sparse_gp_log_probability_from_factors(
-            self.residual(physical_mean),
-            factors[0],
-            factors[1],
-            factors[2],
-        )
+        return self.factor(state=state).log_probability(self.residual(physical_mean))
 
     def condition(
         self,
@@ -468,31 +501,10 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
         output_dim: str | None = "point",
     ) -> GaussianProcessCondition:
         """Condition the FITC latent discrepancy at query points."""
-        _require_state(state)
-        query_data = _field_data(query_points)
-        factors = fitc_factors(
-            self.observation_points,
-            self.inducing_points,
-            kernel=state.kernel,
-            noise_scale=state.noise_scale,
-            jitter=state.jitter,
-        )
-        projection, covariance, variance = sparse_gp_conditioner(
-            self.observation_points,
-            self.inducing_points,
-            query_data,
-            features=factors[0],
-            diagonal=factors[1],
-            correction_cholesky=factors[2],
-            inducing_cholesky=factors[3],
-            kernel=state.kernel,
-        )
-        return GaussianProcessCondition(
-            query_points=query_data,
-            mean=projection @ self.residual(physical_mean),
-            covariance=covariance,
-            variance=variance,
-            output_dims=_query_output_dims(query_points, output_dim=output_dim),
+        return self.factor(state=state).condition(
+            self.residual(physical_mean),
+            query_points,
+            output_dim=output_dim,
         )
 
 
@@ -558,9 +570,11 @@ def _validated_observations(
     values = _as_vector(_field_data(observations), name=name)
     if points.shape[0] != values.shape[0]:
         raise ValueError("GP observations must align with observation points.")
-    if not bool(jnp.all(jnp.isfinite(points))) or not bool(jnp.all(jnp.isfinite(values))):
-        raise ValueError("GP observations and points must be finite.")
-    return points, values
+    return eqx.error_if(
+        (points, values),
+        jnp.any(~jnp.isfinite(points)) | jnp.any(~jnp.isfinite(values)),
+        "GP observations and points must be finite.",
+    )
 
 
 def _observation_noise(noise_scale: ArrayLike, /, *, count: int) -> Array:

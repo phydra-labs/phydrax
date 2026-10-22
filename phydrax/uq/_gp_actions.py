@@ -29,7 +29,7 @@ from ..linalg import (
 from ..linalg._spaces import _coordinate_dtype
 from ..typing import parse, PRNGKey
 from ._gp_computation_backend import _GaussianProcessCovarianceOperator
-from ._gp_likelihood import GaussianProcessLikelihoodState
+from ._gp_likelihood import _require_unconditioned_state, GaussianProcessLikelihoodState
 
 
 GaussianProcessActionKind: TypeAlias = Literal[
@@ -266,7 +266,7 @@ class FixedGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         del residual
-        _require_state(state)
+        _require_unconditioned_state(state)
         points = jnp.asarray(observation_points)
         if self.operator.target.size != points.shape[0]:
             raise ValueError("Fixed GP actions must align with the observation design.")
@@ -326,7 +326,7 @@ class BlockSparseGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         del residual
-        _require_state(state)
+        _require_unconditioned_state(state)
         points = jnp.asarray(observation_points)
         observation_count = points.shape[0]
         if observation_count != self.values.shape[0]:
@@ -391,7 +391,7 @@ class PseudoInputGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         del residual
-        _require_state(state)
+        _require_unconditioned_state(state)
         observations = jnp.asarray(observation_points)
         pseudo_inputs = self.pseudo_inputs.astype(observations.dtype)
         expected_rank = state.kernel.input_ndim + 1
@@ -745,7 +745,7 @@ def _iterative_covariance(
     max_workspace_bytes: int,
     checkpoint: bool,
 ) -> tuple[Array, _GaussianProcessCovarianceOperator]:
-    _require_state(state)
+    _require_unconditioned_state(state)
     points = jnp.asarray(observation_points)
     expected_rank = state.kernel.input_ndim + 1
     if points.ndim != expected_rank or points.shape[0] <= 0:
@@ -861,11 +861,6 @@ def _action_storage(operator: AbstractLinearOperator, /) -> tuple[int, bool]:
     if isinstance(operator, AbstractSparseLinearOperator):
         return operator.sparse_storage().values.size, True
     raise TypeError("GP action storage is known only for dense and sparse operators.")
-
-
-def _require_state(state: GaussianProcessLikelihoodState, /) -> None:
-    if not isinstance(state, GaussianProcessLikelihoodState):
-        raise TypeError("state must be a GaussianProcessLikelihoodState.")
 
 
 __all__ = [

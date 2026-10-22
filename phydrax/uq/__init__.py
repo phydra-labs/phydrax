@@ -488,6 +488,7 @@ from ._gp_computation_variational import (
     ComputationAwareSparseVariationalGaussianProcessELBO,
 )
 from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
+from ._gp_exact import ExactGaussianProcessExecutionPolicy
 from ._gp_fidelity import (
     AutoregressiveFidelityKernel,
     fidelity_design,
@@ -529,6 +530,10 @@ from ._gp_multioutput import (
     MultiOutputGaussianProcessCondition,
     MultiOutputGaussianProcessDiscrepancy,
     MultiOutputGaussianProcessLikelihoodState,
+)
+from ._gp_prediction import (
+    GaussianProcessMeanPredictor,
+    prepare_gaussian_process_mean,
 )
 from ._gp_scalar import (
     ExactGaussianProcessDiscrepancy,
@@ -2036,6 +2041,7 @@ __all__ = [
     "AbstractMultiOutputKernel",
     "Coregionalization",
     "ExactGaussianProcessDiscrepancy",
+    "ExactGaussianProcessExecutionPolicy",
     "ExactGaussianProcessFactor",
     "FiniteFeatureGaussianProcessFactor",
     "BernoulliGaussianProcessLikelihood",
@@ -2055,6 +2061,8 @@ __all__ = [
     "GaussianProcessCondition",
     "GaussianProcessConditioner",
     "GaussianProcessLikelihoodState",
+    "GaussianProcessMeanPredictor",
+    "prepare_gaussian_process_mean",
     "IntrinsicCoregionalizationKernel",
     "LinearModelCoregionalizationKernel",
     "laplacian_functional",

@@ -237,7 +237,7 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
             for factor in factors:
                 storage = factor.factor
                 if isinstance(storage, ExactGaussianProcessFactor):
-                    geometry_finite = jnp.all(jnp.isfinite(storage.cholesky))
+                    geometry_finite = jnp.all(storage.evidence.successful)
                 elif isinstance(storage, FiniteFeatureGaussianProcessFactor):
                     geometry_finite = (
                         jnp.all(jnp.isfinite(storage.features))

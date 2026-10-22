@@ -1011,6 +1011,80 @@ to likelihood, factorization, and conditioning calls. Fixed states can be factor
 once; a state callback on `GaussianProcessMarginalLikelihood` keeps kernel and noise
 parameters differentiable posterior leaves.
 
+Exact scalar execution uses `ExactGaussianProcessExecutionPolicy` through
+`GaussianProcessLikelihoodState.execution`. Its defaults bound explicit
+kernel/score tiles to 64 MiB and retained native factor/evidence payloads to
+512 MiB. Dense covariance and factor preparation remain quadratic; opaque
+backend/compiler scratch and arbitrary kernel internals are not covered by the
+tile budget. Insufficient capacity refuses rather than selecting an approximation.
+The normalized model likelihood and kernel fitting use exact, checkpointed score
+contractions over bounded inverse-column solves. Residual-only differentiation
+does not compute covariance-score contractions. This is not a stochastic trace
+estimate or an action-projected ELBO.
+
+`ExactGaussianProcessFactor.factorization` is a native `PreparedFactorization`;
+`evidence` retains native solve status and diagnostics. The former raw `cholesky`
+field is removed. The factor retains the original covariance as well as its
+factor and evidence; `factor_storage_elements` and `factor_storage_bytes` account
+for those distinct numerical payloads, excluding the observation design and
+likelihood-state parameters. This changes exact-factor and likelihood-state
+PyTree/fingerprint representations: reprepare artifacts, not old tree templates.
+
+For a fixed residual and changing queries, prepare only the mean:
+
+```python
+factor = discrepancy.factor(state=state)
+predict_mean = phx.uq.prepare_gaussian_process_mean(
+    factor,
+    discrepancy.residual(physical_mean),
+    max_workspace_bytes=1024 * 1024,
+)
+latent_mean = predict_mean(query_points)
+```
+
+The result has no covariance or variance API. Exact prediction retains kernel,
+training points, coefficients, and solve status; finite-feature prediction retains
+feature coefficients; FITC prediction retains inducing points and coefficients.
+`retained_storage_bytes` includes kernel leaves and status. Query blocks are
+checkpointed, with workspace accounting for explicit kernel/features, query rows,
+and block means, not caller inputs, final outputs, or kernel-internal scratch.
+For JIT use `jax.jit(lambda predictor, points: predictor(points))` with the artifact
+as a dynamic argument, or Equinox filtered transformations. JAX JVPs and gradients
+differentiate preparation and query coordinates; build a new predictor whenever
+the residual or covariance changes. For fixed queries and changing residuals,
+continue to reuse `GaussianProcessConditioner`.
+
+`GaussianProcessLikelihoodState(conditioning=phx.linalg.ConditionTargetPolicy(
+1e6))` explicitly transforms the complete observation covariance, including
+noise and jitter. `factor.regularization` records the applied diagonal,
+normalization scales, ideal spectral bound, and tolerance-aware condition
+evidence. The target concerns diagonal-normalized coordinates, not the raw
+covariance. The numerical evidence may exceed the ideal target near singularity;
+inspect it rather than asserting a certified target from finite outputs.
+Native PSD verification performs an additional dense eigendecomposition.
+Scaling and nugget sensitivities are differentiated; Gershgorin ties and absolute
+values retain their piecewise derivative conventions. This is a model change,
+never an implicit repair. Conditioned finite-feature models use the dense exact
+route. Explicit finite-feature factors, FITC, action-projected, classification,
+and Bayesian-optimization routes refuse this unsupported policy.
+
+::: phydrax.uq.ExactGaussianProcessExecutionPolicy
+
+::: phydrax.uq.GaussianProcessMeanPredictor
+
+::: phydrax.uq.prepare_gaussian_process_mean
+
+The phase-separated reference comparison is
+`JAX_ENABLE_COMPILATION_CACHE=false python -m benchmarks.exact_gp_execution`.
+It includes the old conditioner with only its mean returned, permitting compiler
+dead-output elimination, and separately measures preparation, likelihood,
+hyperparameter gradients, changing-query means, and query gradients.
+
+The execution design follows the storage-lifetime and contracted-derivative ideas
+in [Marchildon, GpFlash (2026)](https://arxiv.org/abs/2610.16861).
+Phydrax uses its own kernels, differentiation, linear algebra, and evidence
+contracts; no external GP runtime or cache format is required.
+
 Computation-aware GP actions use exact covariance products for Lanczos, conjugate
 gradient, and Gauss–Seidel. `GaussianProcessComputationPolicy.max_workspace_bytes`
 defaults to 64 MiB. Kernel tiles contain
