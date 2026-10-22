@@ -553,6 +553,12 @@ from ._recycling import (
     RecyclingSubspace,
     RecyclingUpdateStatus,
 )
+from ._regularization import (
+    condition_target_covariance,
+    ConditionTargetBound,
+    ConditionTargetPolicy,
+    ConditionTargetResult,
+)
 from ._resilience import (
     DiagonalSystemTransform,
     EquilibrationMode,
@@ -866,6 +872,9 @@ __all__ = [
     "ComplexMapEvidence",
     "ComplexNilpotencyEvidence",
     "ComposedLinearOperator",
+    "ConditionTargetBound",
+    "ConditionTargetPolicy",
+    "ConditionTargetResult",
     "ConjugateGradient",
     "ConstraintFactorizationKind",
     "ConstraintMap",
@@ -1306,6 +1315,7 @@ __all__ = [
     "complexify_real_operator",
     "compose_constraint_maps",
     "compound_matrix",
+    "condition_target_covariance",
     "continuous_lyapunov_equation",
     "contract_block_scaled",
     "coordinate_operator",

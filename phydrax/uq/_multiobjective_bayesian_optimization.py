@@ -42,7 +42,7 @@ from ._bayesian_optimization import (
     BayesianOptimizationPoint,
 )
 from ._gp_computation_backend import _factorize_positive, _solve_columns, _solve_vector
-from ._gp_likelihood import GaussianProcessLikelihoodState
+from ._gp_likelihood import _require_unconditioned_state, GaussianProcessLikelihoodState
 from ._gp_multioutput import (
     MultiOutputDesign,
     MultiOutputGaussianProcessDiscrepancy,
@@ -243,6 +243,8 @@ class GaussianProcessMultiObjectiveBayesianOptimization(StrictModule):
             raise TypeError(
                 "constraint_surrogates must contain scalar GP likelihood states."
             )
+        for constraint in constraints:
+            _require_unconditioned_state(constraint)
         if any(
             state.noise_scale.ndim != 0 or state.kernel.input_ndim != 1
             for state in constraints
@@ -427,6 +429,8 @@ class _PreparedGP:
     def __init__(
         self, points: Array, values: Array, state: _SurrogateState, max_bytes: int
     ) -> None:
+        if isinstance(state, GaussianProcessLikelihoodState):
+            _require_unconditioned_state(state)
         # Kernel inputs pair with `multioutput` (MultiOutputDesign or dense points);
         # ty cannot correlate that flag with the state union, so kernels stay dynamic.
         self.state: Any = state

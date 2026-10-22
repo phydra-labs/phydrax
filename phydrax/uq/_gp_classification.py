@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from .._strict import StrictModule
 from ..kernels import FiniteFeatureKernel
 from ._covariance import _factor_and_solve_covariance_system
-from ._gp_likelihood import GaussianProcessLikelihoodState
+from ._gp_likelihood import _require_unconditioned_state, GaussianProcessLikelihoodState
 from ._gp_scalar import ExactGaussianProcessFactor, FiniteFeatureGaussianProcessFactor
 
 
@@ -154,8 +154,7 @@ def condition_bernoulli_gaussian_process(
         )
     if int(iterations) <= 0:
         raise ValueError("iterations must be positive.")
-    if not isinstance(state, GaussianProcessLikelihoodState):
-        raise TypeError("state must be a GaussianProcessLikelihoodState.")
+    _require_unconditioned_state(state)
     floor = jnp.asarray(curvature_floor, dtype=jnp.float64)
     if floor.ndim != 0 or bool(floor <= 0):
         raise ValueError("curvature_floor must be positive.")
@@ -225,6 +224,7 @@ def condition_bernoulli_gaussian_process(
         kernel=state.kernel,
         noise_scale=noise_scale,
         jitter=state.jitter,
+        execution=state.execution,
     )
     factor = (
         FiniteFeatureGaussianProcessFactor(points, state=approximate_state)

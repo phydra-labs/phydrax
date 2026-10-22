@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Breaking
+- Move exact scalar GP execution to native prepared factors and solve evidence.
+  `ExactGaussianProcessFactor.factorization` replaces its raw `cholesky` field;
+  retained storage includes covariance, factor, and evidence. Likelihood states
+  now carry exact execution and optional conditioning policies. These change
+  PyTree and fingerprint representations: reprepare existing artifacts.
+  Exact model-likelihood gradients use bounded, checkpointed score contractions;
+  `prepare_gaussian_process_mean` provides lean, bounded changing-query prediction
+  for exact, finite-feature, and FITC factors. Optional native condition-target
+  covariance regularization reports diagonal-normalized, tolerance-aware evidence
+  and is never silently applied to unsupported inference routes.
 - Install an explicitly fingerprinted, source-guarded correction for premature
   narrowing of wide indexing addresses, without tightening the JAX version range.
   Import Phydrax before JAX numerical tracing/backend initialization; unknown or

@@ -104,7 +104,7 @@ def run_benchmarks(
         observation_entities,
         state=state,
     )
-    jax.block_until_ready(dense_factor.cholesky)
+    jax.block_until_ready(dense_factor)
     dense_factor_seconds = time.perf_counter() - started
     residual = model.residual(jnp.zeros_like(observations))
     feature_log_probability = feature_factor.log_probability(residual)

@@ -206,7 +206,8 @@ def test_gp_classification_reuses_exact_and_finite_uq_factor_geometry() -> None:
     # ty: ignore[unresolved-attribute]
     exact_posterior = exact_model.posteriors[0]
     assert isinstance(exact_posterior.factor, ExactGaussianProcessFactor)
-    assert exact_posterior.factor.cholesky.shape == (x.shape[0], x.shape[0])
+    assert exact_posterior.factor.factorization.operator.source.size == x.shape[0]
+    assert exact_posterior.factor.evidence.successful
     # ty: ignore[unresolved-attribute]
     probability = exact_model.predict_proba(x[:3])
     assert probability.shape == (3, 2)
