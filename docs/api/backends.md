@@ -274,6 +274,18 @@ the preparation's token; releasing that stale token cannot retire the rebuilt
 entry. Reconstructed entries remain bounded by the device/plan cache capacity
 and are reclaimed by eviction or component shutdown.
 
+cuTENSOR and cuTensorNet teardown is likewise fail-closed. Device
+selection/restoration, stream drain, scratch release, and every vendor descriptor,
+plan, optimizer, network, and handle destruction status reach the component error
+channel. Unestablished cleanup poisons the owning budget and preserves its charge;
+repeated release or shutdown cannot relabel that partition clean.
+
+cuEST also selects the owning device and drains its stream before destroying
+parameters, plans, bases, workspaces, cuBLAS state, or the stream. If ownership
+or drainage cannot be established, it abandons every device-bound handle without
+calling a vendor destructor, preserves outstanding workspace charges, and
+poisons the partition so later admission cannot report clean reuse.
+
 ::: phydrax.backends.cuda_native_resources
 
 ---
@@ -646,13 +658,19 @@ The local provider accepts sorted canonical 32-bit CSR structure and real
 float32/float64 symmetric systems, including shared-pattern numeric value
 batches. It retains symbolic analysis across `phydrax.linalg.refresh`, reuses
 factors for true multiple RHS, and supports `phydrax.linalg.release` to retire
-memo entries early. Refinement and original-coordinate residual certification
+memo entries early. Ordinary device-local preparations retire only their owned
+IDs on the executing device, preserving same-plan factors on other devices.
+An MG preparation retires its complete host-owned partition because refresh and
+read reconstruction can create descendant IDs that never reach Python. This
+also releases the ordered device-group reservation before another overlapping
+group is admitted. Refinement and original-coordinate residual certification
 remain native Phydrax operations.
 
-Each local/MG plan has a separate bounded native factor-cache partition; the positive
-`factor_cache_capacity` participates in policy and plan identity. Evicted state
-is rebuilt from call operands, so release or eviction does not invalidate a
-prepared value. Solve provenance reports exact int32 `native_rebuilds`.
+Each local/MG plan has a separate bounded native factor-cache partition; the
+positive `factor_cache_capacity` participates in policy and plan identity.
+Evicted state is rebuilt from call operands, so release or eviction does not
+invalidate a prepared value. Solve provenance reports exact int32
+`native_rebuilds`.
 Use `cuda_native_resources()` to inspect live entries, capacities, and rebuilds.
 Failed resident numeric refresh retires the affected memo before releasing its
 operation lock. The error reaches the caller, and the original preparation's
@@ -666,8 +684,10 @@ next solve rebuilds from its original operands rather than reusing partial facto
 | `mg` | Explicit ordered 2/4/8-GPU group in one process; one full CSR/RHS on the first initiating device, vendor-owned peer streams/scratch, one group solve, no distributed input or matrix batching |
 | `mgmn` | Explicit unpadded rank-local CSR, one GPU per process on the same host, exact site-linked GPU-aware MPI/shim provenance and authenticated live collective lease; separate `collective` and `cudss_mgmn` DSOs, not universal companion-wheel components |
 
-The current coupled supervisor authenticates same-host descendants; vendor
-MGMN potential is not an admitted multi-host Phydrax execution profile.
+The native lease proves that every participating MPI rank belongs to one
+`MPI_COMM_TYPE_SHARED` domain in addition to authenticated local process
+supervision. Vendor MGMN potential is not an admitted multi-host Phydrax
+execution profile.
 
 `cudss_availability(execution_mode=...)` and
 `sparse_provider_capabilities("cudss", execution_mode=...)` distinguish artifact

@@ -73,6 +73,14 @@ if TYPE_CHECKING:
         import_backend_module as import_backend_module,
         probe_backend as probe_backend,
     )
+    from ._cuda_profiles import (
+        cuda_candidate_declarations as cuda_candidate_declarations,
+        cuda_candidate_profiles as cuda_candidate_profiles,
+    )
+    from ._rocm_profiles import (
+        rocm_candidate_declarations as rocm_candidate_declarations,
+        rocm_candidate_profiles as rocm_candidate_profiles,
+    )
     from ._types import (
         AbstractExternalBackend as AbstractExternalBackend,
         BackendArrayModel as BackendArrayModel,
@@ -298,6 +306,10 @@ if TYPE_CHECKING:
 
 
 _EXPORTS = {
+    "cuda_candidate_declarations": "._cuda_profiles",
+    "cuda_candidate_profiles": "._cuda_profiles",
+    "rocm_candidate_declarations": "._rocm_profiles",
+    "rocm_candidate_profiles": "._rocm_profiles",
     "RocmDeviceFacts": ".._rocm_environment",
     "RocmEnvironmentFacts": ".._rocm_environment",
     "RocmEnvironmentIssue": ".._rocm_environment",

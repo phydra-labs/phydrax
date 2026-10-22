@@ -602,6 +602,121 @@ def test_local_guarded_matches_global_fft_within_stencil_truncation() -> None:
     assert 1e-12 * scale < difference <= 4.0 * steps * tail * scale
 
 
+def test_local_cubic_migration_science_and_restart(tmp_path: Path) -> None:
+    if len(jax.local_devices()) < 8:
+        pytest.skip("Needs eight devices on one host.")
+    mesh = Mesh(
+        np.asarray(jax.local_devices()[:8], dtype=object).reshape((2, 2, 2)),
+        ("x", "y", "z"),
+    )
+    capacity = 128
+    base, species = _cochain_base(capacity, (12, 12, 12))
+    reference = phx.solver.ElectromagneticPICPlan(
+        base, species=species, constraint_tolerance=1e-6
+    )
+    run = _distributed(
+        base,
+        species,
+        mesh,
+        guard_cells=2,
+        packet_capacity=16,
+        constraint_tolerance=1e-6,
+    )
+    decomposition = run.solver.decomposition
+    for owner in range(8):
+        window = decomposition.window_indicator(owner)
+        assert np.any(window) and not np.all(window), ("locality", owner)
+    # Each owner sends two particles across a face, an edge, and a corner.
+    position = np.full((capacity, 3), 0.1, dtype=np.float64)
+    velocity = np.zeros((capacity, 3), dtype=np.float64)
+    for owner in range(8):
+        coordinates = np.asarray(decomposition.coordinates(owner))
+        for kind in range(3):
+            for duplicate in range(2):
+                slot = 6 * owner + 2 * kind + duplicate
+                position[slot] = (coordinates + 0.5) * 0.75
+                position[slot, : kind + 1] = (coordinates[: kind + 1] + 1) * 0.75 - 0.0001
+                velocity[slot, : kind + 1] = 0.2
+    active = np.arange(capacity) < 48
+    mass = active.astype(np.float64) * 1e-4
+    dt = 0.4 * float(base.stable_step)
+
+    def initialize(plan: Any) -> Any:
+        return plan.initialize(
+            (position, position),
+            (velocity, np.zeros_like(velocity)),
+            dt,
+            active_masks=(active, active),
+            masses=(mass, mass),
+        )
+
+    state, expected = initialize(run), initialize(reference)
+    for value in state.species:
+        owners = np.asarray(decomposition.owner(value.particles.position))
+        np.testing.assert_array_equal(
+            np.bincount(owners[np.asarray(value.population.active)], minlength=8),
+            np.full(8, 6),
+        )
+    _assert_same_run(state, expected, atol=1e-12)
+    narrow = phx.solver.DistributedElectromagneticPICPlan(run.pic, packet_capacity=1)
+    rejected = eqx.filter_jit(lambda value: narrow.step_detailed(value, dt))(state)
+    assert bool(rejected.diagnostics.successful), ("physics", rejected.diagnostics)
+    assert not bool(rejected.successful), "resource overflow must reject"
+    assert bool(rejected.migration.packet_overflow), ("resource", rejected.migration)
+    assert int(rejected.rejection_reason) & int(PIC.PICRejectionReason.MIGRATION)
+    _assert_bitwise(rejected.accepted_state, state)
+    advance = eqx.filter_jit(lambda value: run.step_detailed(value, dt))
+    oracle = eqx.filter_jit(lambda value: reference.step_detailed(value, dt))
+    result, single = advance(state), oracle(expected)
+    assert bool(single.successful), (
+        "reference physics",
+        single.diagnostics.rejection_reason,
+    )
+    assert bool(result.successful), (
+        "distributed physics/migration",
+        result.rejection_reason,
+    )
+    assert int(result.migration.migrated) == 48, ("migration", result.migration)
+    for shift in ((1, 0, 0), (1, 1, 0), (1, 1, 1)):
+        index = result.migration.shifts.index(shift)
+        assert int(result.migration.sent[index]) == 2, ("migration", shift)
+    _assert_same_run(result.accepted_state, single.accepted_state, atol=1e-11)
+    np.testing.assert_allclose(
+        result.diagnostics.electric_constraint,
+        single.diagnostics.electric_constraint,
+        rtol=1e-8,
+        atol=1e-10,
+    )
+    for before, after in zip(state.species, result.accepted_state.species, strict=True):
+        original = _by_identity(before.population)
+        moved = _by_identity(after.population)
+        for name in ("identity", "parent", "mass"):
+            np.testing.assert_array_equal(moved[name], original[name])
+        owners = np.asarray(decomposition.owner(after.particles.position))
+        occupied = np.asarray(after.population.active)
+        blocks = np.arange(capacity) // (capacity // 8)
+        np.testing.assert_array_equal(owners[occupied], blocks[occupied])
+        np.testing.assert_array_equal(
+            np.bincount(owners[occupied], minlength=8), np.full(8, 6)
+        )
+    plan = phx.solver.PICRestartPlan(run)
+    repository = _repository(tmp_path)
+    checkpoint = _publish(plan, result.accepted_state, repository, "pic-local-cube")
+    restored = plan.restore(repository, checkpoint)
+    assert restored.restart_class == "bitwise"
+    _assert_bitwise(restored.state, result.accepted_state)
+    continued, resumed = advance(result.accepted_state), advance(restored.state)
+    assert bool(continued.successful), (
+        "continuation physics",
+        continued.rejection_reason,
+    )
+    assert bool(resumed.successful), ("restart physics", resumed.rejection_reason)
+    _assert_bitwise(resumed.accepted_state, continued.accepted_state)
+    reference_next = oracle(single.accepted_state)
+    assert bool(reference_next.successful)
+    _assert_same_run(continued.accepted_state, reference_next.accepted_state, atol=1e-11)
+
+
 def test_diagonal_migration_crosses_a_block_corner_in_one_packet() -> None:
     mesh = _mesh((2, 2))
     base, species = _reduced_base(8, 2), _reduced_species(16, 2)

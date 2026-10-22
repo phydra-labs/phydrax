@@ -57,7 +57,6 @@ from phydrax.linalg.backends._provider import provider_for
 
 
 _ROOT = Path(__file__).resolve().parents[2]
-_WORKER = _ROOT / "tests" / "_support" / "cuda_collective_worker.py"
 
 
 def _launch(dtype: str, failure_case: str | None = None) -> tuple[dict[str, Any], ...]:
@@ -78,7 +77,8 @@ def _launch(dtype: str, failure_case: str | None = None) -> tuple[dict[str, Any]
         port = coordinator.getsockname()[1]
     arguments = [
         sys.executable,
-        str(_WORKER),
+        "-m",
+        "tests._support.cuda_collective_worker",
         "--case",
         "mgmn",
         "--dtype",

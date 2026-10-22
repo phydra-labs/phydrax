@@ -42,6 +42,68 @@ from phydrax._execution_resources import ExecutionGroupSpec
 from phydrax._execution_runtime import ExecutionGroup
 
 
+def test_collective_dispatch_records_observed_qualified_identity() -> None:
+    identity = collectives._require_collective_jax_abi()
+    provenance = collectives.CollectiveProgramProvenance(jax.__version__, identity)
+    assert len(identity) == 64
+    assert collectives._require_collective_jax_abi() == identity
+    assert (
+        replace(provenance, private_dispatch_identity="changed").identity
+        != provenance.identity
+    )
+
+
+@pytest.mark.parametrize("descriptor", (staticmethod, classmethod))
+def test_collective_dispatch_refuses_same_version_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    descriptor: Any,
+) -> None:
+    original = collectives.Compiled.call
+
+    def replacement(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("unqualified dispatch must never execute")
+
+    setattr(replacement, "__wrapped__", original)
+    monkeypatch.setattr(collectives.Compiled, "call", descriptor(replacement))
+    with pytest.raises(CollectiveLeaseError, match="unqualified collective private"):
+        collectives._require_collective_jax_abi()
+
+
+def test_collective_dispatch_refuses_in_place_code_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = collectives.Compiled.call
+    collectives._require_collective_jax_abi()
+
+    def replacement(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("modified dispatch must never execute")
+
+    monkeypatch.setattr(original, "__code__", replacement.__code__)
+    with pytest.raises(CollectiveLeaseError, match="unqualified collective private"):
+        collectives._require_collective_jax_abi()
+
+
+def test_collective_dispatch_refuses_modified_token_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pxla = sys.modules["jax._src.interpreters.pxla"]
+
+    def replacement(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("modified token path must never execute")
+
+    monkeypatch.setattr(pxla.ExecuteReplicated, "_handle_token_bufs", replacement)
+    with pytest.raises(CollectiveLeaseError, match="unqualified collective private"):
+        collectives._require_collective_jax_abi()
+
+
+def test_collective_dispatch_refuses_unqualified_jaxlib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(collectives.jaxlib, "__version__", "0.12.1")
+    with pytest.raises(CollectiveLeaseError, match="unqualified JAXlib"):
+        collectives._require_collective_jax_abi()
+
+
 @dataclass(frozen=True)
 class _Device:
     process_index: int
@@ -716,7 +778,8 @@ def test_program_records_qualified_private_dispatch_provenance_and_refuses_chang
     program = _ticket_program(lease)
     assert program.provenance.jax_release == "0.12.0"
     assert (
-        "Compiled.call/Compiled._params" in program.provenance.private_dispatch_identity
+        program.provenance.private_dispatch_identity
+        == collectives._require_collective_jax_abi()
     )
     assert (
         program.provenance.identity
@@ -725,6 +788,48 @@ def test_program_records_qualified_private_dispatch_provenance_and_refuses_chang
     monkeypatch.setattr(collectives.jax, "__version__", "0.12.1")
     with pytest.raises(CollectiveLeaseError, match="qualified JAX 0.12.0"):
         lease.invoke(program, lease.binding)
+    assert harness.bridge.events == ["create", "agree-program"]
+    assert harness.bridge.active_ticket == 0
+    lease.close()
+
+
+def test_same_version_dispatch_change_is_refused_before_staging(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease = harness.create()
+    staged: list[bool] = []
+
+    def executable(binding: CollectiveBinding) -> Array:
+        staged.append(True)
+        return binding.invocation_ticket
+
+    def replacement(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("replacement must not execute")
+
+    monkeypatch.setattr(collectives.Compiled, "call", staticmethod(replacement))
+    with pytest.raises(CollectiveLeaseError, match="unqualified collective private"):
+        prepare_collective_program(executable, lease.binding, lease_key=lease.spec)
+    assert staged == []
+    assert harness.bridge.events == ["create", "fail"]
+    assert harness.bridge.active_ticket == 0
+
+
+def test_same_version_dispatch_change_is_refused_before_ticket_admission(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease = harness.create()
+    program = _ticket_program(lease)
+    provenance = program.provenance
+
+    def replacement(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("replacement must not execute")
+
+    monkeypatch.setattr(collectives.Compiled, "call", staticmethod(replacement))
+    with pytest.raises(CollectiveLeaseError, match="unqualified collective private"):
+        lease.invoke(program, lease.binding)
+    assert program.provenance == provenance
     assert harness.bridge.events == ["create", "agree-program"]
     assert harness.bridge.active_ticket == 0
     lease.close()

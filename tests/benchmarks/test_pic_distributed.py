@@ -263,3 +263,68 @@ def test_rejected_warmup_cannot_be_hidden_by_a_successful_final_sample() -> None
     assert len(timings.samples_seconds) == 1
     assert [row["passed"] for row in outcomes] == [False, True]
     assert outcomes[0]["rejection_reason"] == 4
+
+
+def test_cubic_scaling_executes_two_local_scientific_sizes() -> None:
+    if len(jax.local_devices()) < 8:
+        pytest.skip("Needs eight devices on one host.")
+    records, errors = benchmark._cubic_scaling(32, 0, 1)
+    assert not errors, errors
+    assert len(records) == 2
+    for record, width, slots in zip(records, (6, 8), (16, 32), strict=True):
+        assert record["passed"] is True
+        assert record["mesh_shape"] == [2, 2, 2]
+        assert record["grid_shape"] == [2 * width] * 3
+        assert record["local_cells"] == [width] * 3
+        assert record["slots_per_part"] == slots
+        assert record["slots_per_species"] == 8 * slots
+        for name in (
+            "field_difference_from_one_device",
+            "particle_difference_from_one_device",
+        ):
+            difference = record[name]
+            assert isinstance(difference, float)
+            assert difference <= 1e-11
+
+
+@pytest.mark.parametrize("fault", ["physics", "particle", "locality"])
+def test_cubic_acceptance_refuses_failed_science(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    population = SimpleNamespace(
+        active=np.asarray([True]),
+        id_hi=np.asarray([0], dtype=np.uint32),
+        id_lo=np.asarray([1], dtype=np.uint32),
+        mass=np.asarray([1.0]),
+    )
+
+    def case(
+        route: str, parts: int, problem: Any, packet: int, warmup: int, repeats: int
+    ) -> tuple[dict[str, Any], Any]:
+        failed = fault == "physics" and parts == 8
+        record = {
+            "physics": {"successful": not failed, "rejection_reason": 4 if failed else 0},
+            "acceptance": {
+                "all_samples_accepted": not failed,
+                "finite_candidate": True,
+                "finite_accepted": True,
+                "accepted_step_delta": 1,
+                "time_advanced": True,
+                "field_absolute_tolerance": 1e-11,
+            },
+            "evidence": {"all_windows_strictly_local": fault != "locality"},
+        }
+        particles = SimpleNamespace(
+            position=np.asarray([[1.0 if fault == "particle" and parts == 8 else 0.0]]),
+            proper_velocity=np.zeros((1, 3), dtype=np.float64),
+        )
+        state = SimpleNamespace(
+            field=np.asarray([0.0]),
+            species=(SimpleNamespace(population=population, particles=particles),),
+        )
+        return record, state
+
+    monkeypatch.setattr(benchmark, "_case", case)
+    records, errors = benchmark._cubic_scaling(32, 0, 1)
+    assert errors
+    assert all(record["passed"] is False for record in records)

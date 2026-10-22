@@ -13,16 +13,20 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import inspect
 import math
 import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
+from types import CodeType, FunctionType, MemberDescriptorType, MethodType
 from typing import Any, final, Protocol
 
 import equinox as eqx
 import jax
+import jaxlib
 import numpy as np
 from jax import Array
 from jax.sharding import NamedSharding, PartitionSpec, Sharding, SingleDeviceSharding
@@ -50,17 +54,161 @@ class CollectiveLeaseError(RuntimeError):
 
 
 _QUALIFIED_COLLECTIVE_JAX_RELEASE = "0.12.0"
-_COLLECTIVE_PRIVATE_DISPATCH = (
-    "jax.stages.Compiled.call/Compiled._params/pxla.ExecuteReplicated.runtime_tokens"
-)
+# SHA-256 of the published jax-v0.12.0 sources, not the local installation.
+_QUALIFIED_DISPATCH_SOURCES = {
+    "jax._src.stages": "85faffefd43598283b52e22c5d99293b05702f9796b1c898000d3d2c38a7aca2",
+    "jax._src.interpreters.pxla": "78aa89c3a410591ff240bbb46e0cf7ab0b7c76773a9430fbfaf1fa9befc07986",
+    "jax._src.profiler": "d82af8499a246bc19fcdfd0225e94c0cceda98832a821c1463fcd3caa34dfb84",
+    "jax._src.dispatch": "fe674386831eba96b681afe939accc2aabe1759ea1671189e98996b089d6e514",
+}
 
 
-def _require_collective_jax_abi() -> None:
+def _dispatch_code_payload(code: CodeType) -> dict[str, Any]:
+    from ._identity import _code_payload
+
+    return {
+        "code": _code_payload(code, code.co_qualname),
+        "exception_table": code.co_exceptiontable.hex(),
+        "nested": [
+            _dispatch_code_payload(value)
+            for value in code.co_consts
+            if isinstance(value, CodeType)
+        ],
+    }
+
+
+@cache
+def _qualified_dispatch_code(module_name: str) -> dict[str, dict[str, Any]]:
+    module = sys.modules[module_name]
+    module_file = module.__file__
+    if not isinstance(module_file, str):
+        raise CollectiveLeaseError("qualified collective dispatch source has no file")
+    source = Path(module_file).read_bytes()
+    if hashlib.sha256(source).hexdigest() != _QUALIFIED_DISPATCH_SOURCES[module_name]:
+        raise CollectiveLeaseError("unqualified collective private dispatch source")
+    codes: dict[str, dict[str, Any]] = {}
+
+    def collect(code: CodeType) -> None:
+        codes[code.co_qualname] = _dispatch_code_payload(code)
+        for constant in code.co_consts:
+            if isinstance(constant, CodeType):
+                collect(constant)
+
+    collect(compile(source, module_file, "exec", dont_inherit=True))
+    return codes
+
+
+def _collective_dispatch_identity() -> str:
+    stages = sys.modules["jax._src.stages"]
+    pxla = sys.modules["jax._src.interpreters.pxla"]
+    dispatch = sys.modules["jax._src.dispatch"]
+    observed: dict[str, Any] = {}
+
+    def observe(function: Any, module: str, name: str) -> None:
+        if type(function) is not FunctionType or function.__closure__ is not None:
+            raise CollectiveLeaseError("unqualified collective private dispatch callable")
+        payload = _dispatch_code_payload(function.__code__)
+        if (
+            payload != _qualified_dispatch_code(module)[name]
+            or function.__globals__ is not vars(sys.modules[module])
+            or function.__defaults__ is not None
+            or function.__kwdefaults__ is not None
+        ):
+            raise CollectiveLeaseError(
+                "unqualified collective private dispatch implementation"
+            )
+        observed[f"{module}.{name}"] = payload
+
+    descriptor = inspect.getattr_static(Compiled, "call")
+    if type(descriptor) is not staticmethod:
+        raise CollectiveLeaseError("unqualified collective private dispatch descriptor")
+    observe(descriptor.__func__, "jax._src.stages", "Compiled.call")
+    params = inspect.getattr_static(Compiled, "_params")
+    if type(params) is not MemberDescriptorType or params.__objclass__ is not Compiled:
+        raise CollectiveLeaseError("unqualified collective private parameter descriptor")
+    observed["Compiled._params"] = "member_descriptor"
+    observe(stages.raise_lo_outs, "jax._src.stages", "raise_lo_outs")
+    observe(pxla.MeshExecutable.call, "jax._src.interpreters.pxla", "MeshExecutable.call")
+    unsafe = inspect.getattr_static(pxla.MeshExecutable, "unsafe_call")
+    if type(unsafe) is not property:
+        raise CollectiveLeaseError("unqualified collective private executable descriptor")
+    observe(unsafe.fget, "jax._src.interpreters.pxla", "MeshExecutable.unsafe_call")
+    for name in ("_add_tokens_to_inputs", "_handle_token_bufs"):
+        observe(
+            inspect.getattr_static(pxla.ExecuteReplicated, name),
+            "jax._src.interpreters.pxla",
+            f"ExecuteReplicated.{name}",
+        )
+    # Only the upstream profiler closure is admitted, never __wrapped__ traversal.
+    wrapper = inspect.getattr_static(pxla.ExecuteReplicated, "__call__")
+    if type(wrapper) is not FunctionType or wrapper.__closure__ is None:
+        raise CollectiveLeaseError("unqualified collective private profiler wrapper")
+    payload = _dispatch_code_payload(wrapper.__code__)
+    if (
+        payload
+        != _qualified_dispatch_code("jax._src.profiler")[
+            "annotate_function.<locals>.wrapper"
+        ]
+        or wrapper.__globals__ is not vars(sys.modules["jax._src.profiler"])
+        or wrapper.__defaults__ is not None
+        or wrapper.__kwdefaults__ is not None
+    ):
+        raise CollectiveLeaseError(
+            "unqualified collective private profiler implementation"
+        )
+    captures = dict(
+        zip(
+            wrapper.__code__.co_freevars,
+            (cell.cell_contents for cell in wrapper.__closure__),
+            strict=True,
+        )
+    )
+    if (
+        captures["name"] != "ExecuteReplicated.__call__"
+        or captures["decorator_kwargs"] != {}
+    ):
+        raise CollectiveLeaseError("unqualified collective private profiler captures")
+    observe(captures["func"], "jax._src.interpreters.pxla", "ExecuteReplicated.__call__")
+    observed["profiler.wrapper"] = payload
+    if type(dispatch.runtime_tokens) is not dispatch.RuntimeTokenSet:
+        raise CollectiveLeaseError("unqualified collective runtime token owner")
+    for name in ("get_token_input", "set_token_result", "set_output_runtime_token"):
+        method = getattr(dispatch.runtime_tokens, name)
+        if (
+            type(method) is not MethodType
+            or method.__self__ is not dispatch.runtime_tokens
+        ):
+            raise CollectiveLeaseError("unqualified collective runtime token method")
+        observe(method.__func__, "jax._src.dispatch", f"RuntimeTokenSet.{name}")
+    return canonical_fingerprint(observed)
+
+
+def _require_collective_jax_abi() -> str:
     if jax.__version__ != _QUALIFIED_COLLECTIVE_JAX_RELEASE:
         raise CollectiveLeaseError(
             "ordered collective execution requires the qualified JAX 0.12.0 "
             f"private dispatch ABI; found unqualified JAX {jax.__version__}"
         )
+    if jaxlib.__version__ != _QUALIFIED_COLLECTIVE_JAX_RELEASE:
+        raise CollectiveLeaseError(
+            "ordered collective execution requires the qualified JAXlib 0.12.0 "
+            f"private dispatch ABI; found unqualified JAXlib {jaxlib.__version__}"
+        )
+    return _collective_dispatch_identity()
+
+
+def _require_collective_executable(executable: Compiled) -> None:
+    pxla = sys.modules["jax._src.interpreters.pxla"]
+    owner = executable._params.executable
+    if type(owner) is not pxla.MeshExecutable:
+        raise CollectiveLeaseError("unqualified collective private executable owner")
+    unsafe_descriptor = inspect.getattr_static(pxla.MeshExecutable, "unsafe_call")
+    if (
+        type(unsafe_descriptor) is not property
+        or type(unsafe_descriptor.__get__(owner, pxla.MeshExecutable))
+        is not pxla.ExecuteReplicated
+    ):
+        raise CollectiveLeaseError("unqualified collective private token dispatch owner")
 
 
 def _identity(value: str, name: str) -> None:
@@ -369,7 +517,7 @@ class CollectiveProgram[Result]:
 
     def __init__(self, traced: Traced, *, lease_key: CollectiveLeaseSpec) -> None:
         _require_host_phase("program compilation")
-        _require_collective_jax_abi()
+        dispatch_identity = _require_collective_jax_abi()
         if type(traced) is not Traced:
             raise TypeError("CollectiveProgram requires an actual JAX Traced graph")
         lease = require_collective_lease(lease_key)
@@ -387,6 +535,7 @@ class CollectiveProgram[Result]:
             raise TypeError(
                 "collective graph lowering did not produce an actual JAX Compiled executable"
             )
+        _require_collective_executable(executable)
         for sharding in jax.tree.leaves(executable.input_shardings):
             lease._require_program_sharding(sharding)
         for sharding in jax.tree.leaves(executable.output_shardings):
@@ -397,11 +546,13 @@ class CollectiveProgram[Result]:
         object.__setattr__(
             self,
             "provenance",
-            CollectiveProgramProvenance(jax.__version__, _COLLECTIVE_PRIVATE_DISPATCH),
+            CollectiveProgramProvenance(jax.__version__, dispatch_identity),
         )
 
     def _dispatch(self, *args: Any) -> Result:
-        _require_collective_jax_abi()
+        if _require_collective_jax_abi() != self.provenance.private_dispatch_identity:
+            raise CollectiveLeaseError("collective private dispatch provenance changed")
+        _require_collective_executable(self.executable)
         # JAX 0.12's AOT C++ cache admits ordered-only programs but omits their
         # runtime tokens. Its Python Compiled.call path retains the same exact
         # executable, PyTree/HiJAX checks, constants, and token input/results.
@@ -602,7 +753,9 @@ class CollectiveLease:
             raise ValueError(
                 "collective program configuration does not match its live lease"
             )
-        _require_collective_jax_abi()
+        if _require_collective_jax_abi() != program.provenance.private_dispatch_identity:
+            raise CollectiveLeaseError("collective private dispatch provenance changed")
+        _require_collective_executable(program.executable)
         self._admit_arguments(args)
         return self._execute(program._dispatch, args, program.schedule)
 

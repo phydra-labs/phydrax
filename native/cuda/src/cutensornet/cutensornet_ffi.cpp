@@ -1,6 +1,8 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // cuTensorNet 2.14 network-centric API; no implicit optimizer in execution.
 #include "phx_cuda_common.hpp"
+#include "tensor_cleanup.hpp"
+#include "tensor_registry.hpp"
 #include <cutensornet.h>
 #include <algorithm>
 #include <charconv>
@@ -182,13 +184,9 @@ struct Budget {
       throw std::invalid_argument("cuTensorNet retained device scratch exceeds partition cache_limit_bytes, including active evicted leases");
     used += bytes;
   }
-  void release(int64_t bytes, cudaError_t status) {
+  void release(int64_t bytes) noexcept {
     std::lock_guard<std::mutex> lock(mutex);
-    if (status == cudaSuccess) used -= bytes;
-    else {
-      cleanup_failed = true;
-      phx::cuda::set_last_error(std::string("cudaFree(cuTensorNet scratch): ") + cudaGetErrorString(status));
-    }
+    used -= bytes;
   }
 };
 struct Entry {
@@ -208,22 +206,60 @@ struct Entry {
   std::unique_ptr<unsigned char[]> host_buffer;
   int64_t charged_bytes = 0;
   bool prepared = false;
+  bool cleanup_started = false;
+  std::atomic<bool> cleanup_failed{false};
   std::atomic<bool> invalid{false};
   std::mutex mutex;
   explicit Entry(int device_, Recipe recipe_)
       : device(device_), recipe(std::move(recipe_)), lifted_recipe(unit_axis_recipe(recipe)) {}
   const Recipe& descriptors() const { return lifted_recipe ? *lifted_recipe : recipe; }
-  ~Entry() {
-    int previous = -1;
-    if (device >= 0) { cudaGetDevice(&previous); cudaSetDevice(device); }
-    if (workspace) cutensornetDestroyWorkspaceDescriptor(workspace);
-    if (config) cutensornetDestroyContractionOptimizerConfig(config);
-    if (info) cutensornetDestroyContractionOptimizerInfo(info);
-    if (network) cutensornetDestroyNetwork(network);
-    if (handle) cutensornetDestroy(handle);
-    const cudaError_t scratch_status = device_buffer ? cudaFree(device_buffer) : cudaSuccess;
-    if (budget && charged_bytes) budget->release(charged_bytes, scratch_status);
-    if (previous >= 0) cudaSetDevice(previous);
+  void cleanup_error(const char* operation, const char* detail) noexcept {
+    cleanup_failed = true;
+    if (budget) {
+      std::lock_guard<std::mutex> lock(budget->mutex);
+      budget->cleanup_failed = true;
+    }
+    phx::cuda::set_cleanup_error(operation, detail);
+  }
+  bool cuda_cleanup(cudaError_t status, const char* operation) noexcept {
+    if (status == cudaSuccess) return true;
+    cleanup_error(operation, cudaGetErrorString(status));
+    return false;
+  }
+  bool vendor_cleanup(cutensornetStatus_t status, const char* operation) noexcept {
+    if (status == CUTENSORNET_STATUS_SUCCESS) return true;
+    cleanup_error(operation, cutensornetGetErrorString(status));
+    return false;
+  }
+  bool get_device(int& value) noexcept { return cuda_cleanup(cudaGetDevice(&value), "cudaGetDevice(cuTensorNet cleanup)"); }
+  bool set_device(int value) noexcept { return cuda_cleanup(cudaSetDevice(value), "cudaSetDevice(cuTensorNet cleanup)"); }
+  bool drain() noexcept { return cuda_cleanup(cudaDeviceSynchronize(), "cudaDeviceSynchronize(cuTensorNet cleanup)"); }
+  ~Entry() noexcept { close(); }
+  void close() noexcept {
+    if (cleanup_started) return;
+    cleanup_started = true;
+    phx::cuda::TensorCleanup<Entry> cleanup(*this, device);
+    if (!cleanup.ready()) {
+      // Device work may still reference host workspace; retain it as well.
+      host_buffer.release();
+      return;
+    }
+    if ((workspace && !vendor_cleanup(cutensornetDestroyWorkspaceDescriptor(workspace), "cutensornetDestroyWorkspaceDescriptor")) ||
+        (config && !vendor_cleanup(cutensornetDestroyContractionOptimizerConfig(config), "cutensornetDestroyContractionOptimizerConfig")) ||
+        (info && !vendor_cleanup(cutensornetDestroyContractionOptimizerInfo(info), "cutensornetDestroyContractionOptimizerInfo")) ||
+        (network && !vendor_cleanup(cutensornetDestroyNetwork(network), "cutensornetDestroyNetwork")) ||
+        (handle && !vendor_cleanup(cutensornetDestroy(handle), "cutensornetDestroy"))) {
+      // An opaque owner may still reference either workspace. Abandon host
+      // ownership so member destruction cannot free it; retain the device charge.
+      // cleanup_started prevents retrying partially completed vendor teardown.
+      host_buffer.release();
+      return;
+    }
+    cleanup.release_scratch(device_buffer, charged_bytes,
+        [this](void* pointer) noexcept { return cuda_cleanup(cudaFree(pointer), "cudaFree(cuTensorNet scratch)"); },
+        [this](int64_t bytes) noexcept { budget->release(bytes); });
+    // Host storage has no device budget charge and no surviving opaque owner.
+    host_buffer.reset();
   }
 };
 phx::cuda::Registry<Entry>& registry() {
@@ -411,11 +447,14 @@ void contract(Entry& entry, cudaStream_t stream) {
     PHX_CUTN_CHECK(cutensornetWorkspacePurgeCache(entry.handle, entry.workspace, CUTENSORNET_MEMSPACE_DEVICE));
     PHX_CUTN_CHECK(cutensornetWorkspacePurgeCache(entry.handle, entry.workspace, CUTENSORNET_MEMSPACE_HOST));
     PHX_CUTN_CHECK(cutensornetNetworkContract(entry.handle, entry.network, 0, entry.workspace, nullptr, stream));
-    cuda_check(cudaStreamSynchronize(stream));
+    const auto status = cudaStreamSynchronize(stream);
+    entry.cuda_cleanup(status, "cudaStreamSynchronize(cuTensorNet)");
+    cuda_check(status);
     PHX_CUTN_CHECK(cutensornetWorkspacePurgeCache(entry.handle, entry.workspace, CUTENSORNET_MEMSPACE_DEVICE));
     PHX_CUTN_CHECK(cutensornetWorkspacePurgeCache(entry.handle, entry.workspace, CUTENSORNET_MEMSPACE_HOST));
   } catch (const std::exception& error) {
     const auto status = cudaStreamSynchronize(stream);
+    entry.cuda_cleanup(status, "cudaStreamSynchronize(cuTensorNet error cleanup)");
     if (status != cudaSuccess)
       throw std::runtime_error(std::string(error.what()) + "; stream drain: " + cudaGetErrorString(status));
     throw;
@@ -454,12 +493,13 @@ std::shared_ptr<Entry> memo(int device, int64_t partition, int64_t capacity,
 ffi::Error Contract(cudaStream_t stream, ffi::RemainingArgs inputs, ffi::Result<ffi::AnyBuffer> output,
                     std::string_view recipe, int64_t workspace_limit_bytes, int64_t cache_limit_bytes,
                     int64_t partition, int64_t capacity) {
+  std::shared_ptr<Entry> entry;
   try {
     if (workspace_limit_bytes < 0 || cache_limit_bytes < 0 || partition <= 0 || capacity < 1 || capacity > 4096)
       throw std::invalid_argument("cuTensorNet requires nonnegative byte limits and positive partition/capacity <=4096");
     if (recipe.empty() || recipe.size() > kMaxRecipeBytes) throw std::invalid_argument("Invalid tensor recipe size");
     int device = 0; cuda_check(cudaGetDevice(&device));
-    auto entry = memo(device, partition, capacity, workspace_limit_bytes, cache_limit_bytes,
+    entry = memo(device, partition, capacity, workspace_limit_bytes, cache_limit_bytes,
                       recipe, output->element_type());
     std::lock_guard<std::mutex> lock(entry->mutex);
     // Scratch is reused under the entry lock. Its partition budget includes
@@ -474,6 +514,7 @@ ffi::Error Contract(cudaStream_t stream, ffi::RemainingArgs inputs, ffi::Result<
       // still owning the entry lock, before another caller can bind its pointers.
       entry->invalid.store(true);
       const auto drain = cudaStreamSynchronize(stream);
+      entry->cuda_cleanup(drain, "cudaStreamSynchronize(cuTensorNet invocation cleanup)");
       if (drain != cudaSuccess)
         throw std::runtime_error(std::string("cuTensorNet failure; stream drain: ") + cudaGetErrorString(drain));
       throw;
@@ -481,6 +522,10 @@ ffi::Error Contract(cudaStream_t stream, ffi::RemainingArgs inputs, ffi::Result<
     return ffi::Error::Success();
   } catch (const std::exception& error) {
     const auto drain = cudaStreamSynchronize(stream);
+    if (drain != cudaSuccess) {
+      if (entry) entry->cuda_cleanup(drain, "cudaStreamSynchronize(cuTensorNet failure cleanup)");
+      else phx::cuda::set_cleanup_error("cudaStreamSynchronize(cuTensorNet failure cleanup)", cudaGetErrorString(drain));
+    }
     std::string message = error.what();
     if (drain != cudaSuccess) message += std::string("; stream drain: ") + cudaGetErrorString(drain);
     phx::cuda::set_last_error(message);
@@ -516,7 +561,18 @@ void optimize(Entry& entry, int64_t workspace_limit, int32_t iterations, int32_t
 }
 }  // namespace
 
-phx::cuda::RegistryBase* component_registry() { return &registry(); }
+phx::cuda::RegistryBase* component_registry() {
+  static auto* view = new phx::cuda::TensorRegistry(registry(), [](bool all, int64_t partition) {
+    std::lock_guard<std::mutex> lock(index_mutex());
+    for (const auto& item : budgets()) {
+      if (!all && item.first.second != partition) continue;
+      std::lock_guard<std::mutex> budget_lock(item.second->mutex);
+      if (item.second->cleanup_failed)
+        phx::cuda::set_cleanup_error("cuTensorNet partition cleanup failed");
+    }
+  });
+  return view;
+}
 int32_t component_shutdown() {
   std::lock_guard<std::mutex> lock(index_mutex());
   index().clear();
@@ -525,7 +581,7 @@ int32_t component_shutdown() {
   for (const auto& item : budgets()) {
     std::lock_guard<std::mutex> budget_lock(item.second->mutex);
     if (item.second->cleanup_failed) {
-      phx::cuda::set_last_error("cuTensorNet partition retained scratch cleanup failed; allocation charge remains retained");
+      phx::cuda::set_cleanup_error("cuTensorNet partition cleanup failed");
       return PHX_CUDA_PROVIDER_ERROR;
     }
   }
@@ -573,6 +629,9 @@ extern "C" PHX_CUDA_EXPORT int32_t phydrax_cutensornet_plan(
       pair_path[2 * i] = path[i].first; pair_path[2 * i + 1] = path[i].second;
       --live;
     }
+    entry.close();
+    if (entry.cleanup_failed)
+      throw std::runtime_error("cuTensorNet planner cleanup failed");
     *pair_count = count;
     return 0;
   } catch (const std::exception& failure) {

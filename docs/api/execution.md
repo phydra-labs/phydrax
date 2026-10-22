@@ -82,7 +82,9 @@ an explicit JAX-process/MPI-rank map, an execution group, stable
 provider/configuration/preparation identifiers, and the live supervisor.
 Creation does not initialize another MPI world. The bridge verifies the exact
 site MPI library/header/build and the MPI instance behind the communicator,
-`MPI_THREAD_MULTIPLE`, and runtime CUDA-buffer support.
+`MPI_THREAD_MULTIPLE`, runtime CUDA-buffer support, and one shared-memory MPI
+domain containing every participating rank. A split-domain communicator refuses
+before any vendor provider executes.
 
 The invocation protocol has distinct phases:
 
@@ -104,15 +106,18 @@ The invocation protocol has distinct phases:
    Stale compiled invocations and closed bindings refuse; retirement is not a
    local LRU destructor or an interpreter-exit collective.
 
-Ordered site programs currently admit **JAX 0.12.0** at the private dispatch
-boundary. That release's cached AOT C++ call path can omit ordered-effect runtime
-tokens. The sole execution owner therefore invokes the same exact compiled
-program through JAX's token-preserving Python call path. It does not substitute
-or recompile a graph, patch JAX globally, add fake arguments, or remove ordering.
-Other unqualified JAX releases refuse before staging/invocation.
-`CollectiveProgramProvenance` records the JAX release and dispatch identity.
-This host artifact is not a numerical PyTree field or a serialized live handle;
-MPI and hardware qualification remain separate.
+Ordered site programs admit exactly **JAX/JAXlib 0.12.0** at the private dispatch
+boundary. Admission verifies the published upstream source and observed code,
+descriptor, executable-owner, token-input, token-output, and profiler-wrapper
+identities; a modified downstream build with the same version string refuses.
+That release's cached AOT C++ call path can omit ordered-effect runtime tokens.
+The sole execution owner therefore invokes the same exact compiled program
+through JAX's token-preserving Python call path. It does not substitute or
+recompile a graph, patch JAX globally, add fake arguments, or remove ordering.
+`CollectiveProgramProvenance` records the observed dispatch identity, and staging
+and invocation revalidate it before ticket admission. This host artifact is not
+a numerical PyTree field or a serialized live handle; MPI and hardware
+qualification remain separate.
 
 `lease.binding` is exact-local-device metadata for rank-local CSR execution.
 `binding_for(sharding)` explicitly admits replicated global metadata for the

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import socket
@@ -44,6 +45,7 @@ from phydrax.execution import (
     ExecutionWorksetPlan,
     launch_local_processes,
     LocalProcessLaunchPlan,
+    LocalProcessResult,
     LogicalAxis,
     LogicalAxisKind,
     partition_execution_group_specs,
@@ -958,7 +960,7 @@ def test_local_substrate_launcher_preserves_device_ownership(
         range(process_count)
     )
     assert all(rank["passed"] for rank in ranks)
-    if platform == "gpu":
+    if platform == "gpu" and vendor == "nvidia":
         uuids = [owner["gpu_uuid"] for rank in ranks for owner in rank["ownership"]]
         assert len(set(uuids)) == process_count * devices_per_process
     runtime = report["runtime"]
@@ -1675,3 +1677,138 @@ def test_local_launcher_error_exposes_bounded_stderr_without_losing_raw_status()
     assert error.launcher_returncode == 13
     assert error.launcher_stdout == b"launcher-output"
     assert error.launcher_stderr == launcher_stderr
+
+
+def _successful_substrate_rank() -> dict[str, Any]:
+    return {
+        "runtime": {
+            "process_index": 0,
+            "process_count": 1,
+            "execution_group_id": "group",
+        },
+        "problem": {"group_identity_consistent": True},
+        "weighted_mean": {
+            "absolute_error": 0.0,
+            "seconds": 0.0,
+            "observed": 0.5,
+            "expected": 0.5,
+        },
+        "distributed_pcg": {
+            "maximum_solution_error": 0.0,
+            "seconds": 0.0,
+            "converged": True,
+            "breakdown": 0,
+            "residual_norm": 0.0,
+            "residual_absolute_tolerance": 1e-12,
+        },
+        "passed": True,
+        "errors": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "none",
+        "unknown-exit",
+        "exit",
+        "truncation",
+        "supervisor",
+        "science",
+        "malformed",
+        "missing",
+        "duplicate",
+        "identity",
+        "tolerance",
+    ],
+)
+def test_substrate_supervision_cannot_be_overwritten_by_rank_success(
+    failure: str,
+) -> None:
+    rank = _successful_substrate_rank()
+    if failure == "science":
+        rank["distributed_pcg"]["converged"] = False
+    elif failure == "malformed":
+        rank["runtime"] = None
+    elif failure == "identity":
+        rank["runtime"]["process_index"] = 1
+    elif failure == "tolerance":
+        rank["distributed_pcg"]["residual_absolute_tolerance"] = float("inf")
+    stdout = substrate.RANK_RESULT_PREFIX + json.dumps(rank).encode() + b"\n"
+    result = LocalProcessResult(
+        0,
+        None if failure == "unknown-exit" else 7 if failure == "exit" else 0,
+        stdout,
+        b"retained stderr",
+        output_truncated=failure == "truncation",
+    )
+    results = (
+        ()
+        if failure == "missing"
+        else ((result, result) if failure == "duplicate" else (result,))
+    )
+    record, errors = substrate._rank_record(
+        results,
+        1,
+        "supervisor failed" if failure == "supervisor" else None,
+    )
+    assert record["passed"] is (failure == "none")
+    assert bool(errors) is (failure != "none")
+    if results:
+        assert record["rank_outputs"][0]["stderr"] == "retained stderr"
+        assert record["rank_outputs"][0]["returncode"] == result.returncode
+
+
+@pytest.mark.parametrize("vendor,required", [("amd", None), ("nvidia", 4), (None, None)])
+def test_substrate_launch_forwards_all_hardware_expectations(
+    monkeypatch: pytest.MonkeyPatch,
+    vendor: str | None,
+    required: int | None,
+) -> None:
+    commands: list[list[str]] = []
+
+    def launch(
+        command: list[str],
+        plan: LocalProcessLaunchPlan,
+        *,
+        environment: dict[str, str],
+    ) -> tuple[LocalProcessResult, ...]:
+        commands.append(command)
+        assert plan.num_processes == 2
+        assert plan.devices_per_process == 2
+        return ()
+
+    monkeypatch.setattr(substrate, "launch_local_processes", launch)
+    arguments = argparse.Namespace(
+        size=17,
+        iterations=3,
+        local_processes=2,
+        devices_per_process=2,
+        required_gpus=required,
+        expected_vendor=vendor,
+        expected_global_devices=4,
+        expected_local_devices=2,
+    )
+    assert substrate._launch_ranks(arguments) == ((), None)
+    command = commands[0]
+    for option, expected in (
+        ("--size", 17),
+        ("--iterations", 3),
+        ("--local-processes", 2),
+        ("--devices-per-process", 2),
+        ("--expected-vendor", vendor),
+        ("--expected-global-devices", 4),
+        ("--expected-local-devices", 2),
+        ("--required-gpus", required),
+    ):
+        if expected is None:
+            assert option not in command
+        else:
+            assert command[command.index(option) + 1] == str(expected)
+    assert "--worker" in command
+
+
+def test_substrate_refuses_cuda_ownership_for_amd_campaign() -> None:
+    with pytest.raises(SystemExit) as error:
+        substrate.main(["--expected-vendor", "amd", "--required-gpus", "1"])
+    assert error.value.code == 2

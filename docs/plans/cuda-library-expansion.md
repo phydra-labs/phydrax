@@ -2,21 +2,30 @@
 
 ## 0. Status, scope, and baseline
 
-**Status: closed at the user's request with peer-dependent qualification blocked.**
-The implementation and passing observations are preserved; this is not a claim
-that all eight-GPU workflows are qualified. No host-staging workaround was added.
-The original planning task was read-only. The subsequent `//code` instruction created the
-`accelerator-capabilities` worktree from updated `dev` commit
-`b42e720f0`; no implementation edits were made on the parent checkout.
-The file maps below are the design baseline, not claims that every proposed
-filename must exist independently of its canonical owner.
+**Status: implementation complete with current eight-A100 same-host qualification.**
+The original eight-A40 campaign remains closed with its peer-dependent
+qualification blocked; no historical failure is overwritten or relabeled.
+The implementation was resumed from `affb475c4` on current `dev`, repaired, and
+qualified on a distinct A100 host. The file maps below remain the design
+baseline rather than a requirement that every proposed filename exist outside
+its canonical owner.
 
 Original planning baseline: `dc39e1bd8c57229e95635da2fa490f589857241b`.
-Implementation retains the intervening B300 qualification, cuDSS failed-refresh
-recovery, and explicit CPU-extra work. The current runtime is CPython 3.13.15,
-JAX/JAXlib/CUDA plugin 0.12.0, driver 595.91.07, and eight A40 GPUs (sm86).
-Historical H100/H200 and single-device B300/Spark records do not qualify this
-host or the new representations.
+The historical WIP retained the intervening B300 qualification, cuDSS
+failed-refresh recovery, and explicit CPU-extra work. Its final A40 runtime was
+CPython 3.13.15, JAX/JAXlib/CUDA plugin 0.12.0, driver 595.91.07, and eight A40
+GPUs (sm86). Historical H100/H200 and single-device B300/Spark records do not
+qualify this host or the new representations.
+
+Continuation baseline: CPython 3.13.16, exact JAX/JAXlib/CUDA plugin 0.12.0,
+driver 595.91.07, wheel CUDA runtime 13.4.92, and eight A100-SXM4-80GB GPUs
+(sm80) with all-pair NVLink. The inspected companion contains sm80 AmgX/QUDA
+SASS. Physical transport, installed local providers, cuDSS MG/MGMN, cuDecomp,
+compiled and distributed MACE, spectral/LES, PIC including genuine 2×2×2
+locality, FMM, tensor execution, and cuEST scientific/capacity gates pass within
+their explicit single-host contracts. The aarch64 publication resolver remains
+outside this x86-64 artifact campaign, and no multi-host/RDMA or general speedup
+claim follows.
 
 ### 0.0 Implementation reconciliation
 
@@ -44,6 +53,12 @@ host or the new representations.
 - Full-device installed execution exposed AmgX's process-global device-memory
   pool reuse. Its pinned integration now owns pools, allocation bookkeeping,
   thread streams, and library handles per device, with owning-device shutdown.
+- cuDSS MG refresh/read rebuilds can create native descendant IDs that never
+  return to Python. MG release now retires the authoritative host partition and
+  its device-group reservation; ordinary cuDSS retains per-ID, per-device
+  release so same-plan factors on other devices survive. Projected FGMRES also
+  solves the largest nonsingular prefix at happy breakdown instead of dividing
+  through a singular trailing pivot.
 - Runtime evidence remains scope-specific: device-local mathematics, host-staged
   slices, same-host collectives, and multi-host execution are distinct claims.
   Candidate catalog entries are not automatically promoted by a small benchmark.
@@ -72,8 +87,8 @@ completed final FMM case are not relabeled as a successful original process.
 
 Isolated capacity measurements cover five tensor path/executor combinations
 at two sizes, local/hybrid/MG/MGMN sparse solves, equal-topology native and
-cuDecomp slabs, and six cuEST s/p/d molecular cases spanning 4–40 orbital and
-10–500 auxiliary functions. The cuEST energy and analytic-force comparisons
+cuDecomp slabs, and six cuEST s/p/d molecular cases spanning 4–80 orbital and
+10–1,000 auxiliary functions. The cuEST energy and analytic-force comparisons
 use independently matched density fitting, not exact HF as a substituted
 oracle. These bounded measurements do not establish a general speedup.
 

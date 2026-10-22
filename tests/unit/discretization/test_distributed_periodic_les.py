@@ -365,7 +365,7 @@ def test_eight_owner_les_matches_scientific_reference(
         schedule="slab" if len(mesh_shape) == 1 else "pencil",
     ).prepare()
     velocity = _velocity(space)
-    evaluate = jax.jit(distributed.evaluate)
+    evaluate = jax.jit(lambda state: distributed.evaluate(state))
     for scale in (1.0, 0.7):
         state = velocity * scale
         reference = scientific.evaluate(state)
@@ -384,7 +384,7 @@ def test_eight_owner_les_matches_scientific_reference(
         )
         assert bool(stage.energy_consistent)
         assert len(stage.projected_rate.addressable_shards) == 8
-        assert (
-            stage.projected_rate.sharding
-            == distributed.execution.modal_layout.sharding(topology)
+        expected_sharding = distributed.execution.modal_layout.sharding(topology)
+        assert stage.projected_rate.sharding.is_equivalent_to(
+            expected_sharding, stage.projected_rate.ndim
         )

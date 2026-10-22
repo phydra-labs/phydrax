@@ -96,6 +96,7 @@ void *phx_cuda_handler(int32_t i) {{ return (void *)handler; }}
 int32_t phx_cuda_registry_partitions(void) {{ return 0; }}
 int32_t phx_cuda_registry_partition(int32_t i, int32_t *d, int64_t *p, int64_t *l, int64_t *c, int64_t *r) {{ return 1; }}
 int32_t phx_cuda_release(int64_t p, const int32_t *ids, int64_t count, int64_t *released) {{ *released=0; return 0; }}
+int32_t phx_cuda_release_partition(int64_t p, int64_t *released) {{ *released=0; return 0; }}
 int32_t phx_cuda_release_all(int64_t *released) {{ *released=0; return 0; }}
 {"" if omit_symbol else "int32_t phx_cuda_shutdown(void) { return 0; }"}
 ''')
@@ -252,6 +253,45 @@ def test_registration_is_idempotent(
     resources = native.cuda_native_resources()
     assert resources.components == (first,)
     assert resources.partitions == ()
+
+
+@pytest.mark.parametrize("failed_dispatch", [False, True])
+def test_partition_release_drains_even_failed_dispatch_without_token_reads(
+    isolated_loader: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failed_dispatch: bool,
+) -> None:
+    _override(monkeypatch, _compile_library(tmp_path))
+    native.load_cuda_component("cudss")
+    events: list[str] = []
+
+    def barrier() -> None:
+        events.append("barrier")
+        if failed_dispatch:
+            raise RuntimeError("failed preparation")
+
+    def synchronize() -> None:
+        events.append("synchronize")
+
+    def release(partition: int, output: object) -> int:
+        assert partition == 17
+        events.append("release")
+        return 0
+
+    def forbidden_get(value: object) -> object:
+        raise AssertionError("partition release must not materialize device tokens")
+
+    monkeypatch.setattr(jax, "effects_barrier", barrier)
+    monkeypatch.setattr(jax, "device_get", forbidden_get)
+    monkeypatch.setattr(native, "_synchronize_devices", synchronize)
+    native._LOADED["cudss"].functions["phx_cuda_release_partition"] = release
+    if failed_dispatch:
+        with pytest.raises(RuntimeError, match="failed preparation"):
+            native.release_cuda_partition("cudss", 17)
+    else:
+        assert native.release_cuda_partition("cudss", 17) == 0
+    assert events == ["barrier", "synchronize", "release"]
 
 
 def test_failed_component_does_not_block_another(

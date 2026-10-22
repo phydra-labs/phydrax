@@ -151,6 +151,7 @@ _SIGNATURES: dict[str, tuple[Any, tuple[Any, ...]]] = {
     "phx_cuda_registry_partitions": (_I32, ()),
     "phx_cuda_registry_partition": (_I32, (_I32, _P, _P, _P, _P, _P)),
     "phx_cuda_release": (_I32, (_I64, _P, _I64, _P)),
+    "phx_cuda_release_partition": (_I32, (_I64, _P)),
     "phx_cuda_release_all": (_I32, (_P,)),
     "phx_cuda_shutdown": (_I32, ()),
 }
@@ -671,6 +672,39 @@ def release_cuda_entries(
             "release",
         )
         return released.value
+
+
+def release_cuda_partition(name: CudaNativeComponentName, partition: int, /) -> int:
+    """Drain dispatch and retire every memo owned by authoritative host metadata."""
+    name = parse(name, CudaNativeComponentName, "name")
+    if name in _GROUP_OWNED_COMPONENTS:
+        raise ValueError(
+            f"CUDA {name} resources must be retired through their collective lease."
+        )
+    if type(partition) is not int:
+        raise TypeError("CUDA partition must be an integer.")
+    if not 0 < partition < (1 << 63):
+        raise ValueError("CUDA partition must be a positive int63.")
+    load_cuda_component(name)
+    # A failed dispatched preparation must still retire its native descendants.
+    # Preserve the dispatch error after cleanup rather than reading its token.
+    try:
+        try:
+            jax.effects_barrier()
+        finally:
+            _synchronize_devices()
+    finally:
+        with _LOCK:
+            loaded = _LOADED[name]
+            released = _I64()
+            _check_status(
+                loaded,
+                loaded.functions["phx_cuda_release_partition"](
+                    partition, ctypes.byref(released)
+                ),
+                "release_partition",
+            )
+    return released.value
 
 
 def release_cuda_component(name: CudaNativeComponentName, /) -> int:

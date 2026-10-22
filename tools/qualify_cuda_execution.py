@@ -15,7 +15,14 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from tests._support.cuda_execution_worker import SIZES, STEPS
+from tests._support.cuda_execution_worker import (
+    consumer_evidence,
+    consumer_oracle,
+    CONSUMER_ROUTES,
+    CONSUMER_SIZES,
+    SIZES,
+    STEPS,
+)
 from tools._accelerator_process import (
     CommandEvidence,
     read_json_evidence,
@@ -25,7 +32,17 @@ from tools._accelerator_process import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCENARIOS = ("peer-copies", "1x1", "1x2", "1x4", "1x8", "2x4", "4x2", "8x1")
+SCENARIOS = (
+    "peer-copies",
+    "jax-consumers",
+    "1x1",
+    "1x2",
+    "1x4",
+    "1x8",
+    "2x4",
+    "4x2",
+    "8x1",
+)
 
 
 class ScenarioEvidence(TypedDict):
@@ -43,7 +60,7 @@ def required_scenarios(required_gpus: int) -> tuple[str, ...]:
     return tuple(
         case
         for case in SCENARIOS
-        if case == "peer-copies"
+        if case in ("peer-copies", "jax-consumers")
         or math.prod(int(value) for value in case.split("x")) <= required_gpus
     )
 
@@ -87,9 +104,18 @@ def environment_errors(environment: Mapping[str, str]) -> list[str]:
 def _ownership_errors(
     rows: list[dict[str, Any]], devices: Sequence[str], processes: int, local: int
 ) -> list[str]:
-    if len(rows) != len(devices):
+    if not isinstance(rows, list) or len(rows) != len(devices):
         return ["Missing or duplicate physical device ownership"]
-    errors = []
+    if any(
+        not isinstance(row, dict)
+        or type(row.get("rank")) is not int
+        or type(row.get("local_ordinal")) is not int
+        or not isinstance(row.get("gpu_uuid"), str)
+        or not isinstance(row.get("platform"), str)
+        for row in rows
+    ):
+        return ["Malformed physical device ownership evidence"]
+    errors: list[str] = []
     expected = [
         (rank, ordinal)
         for rank in range(processes)
@@ -105,8 +131,38 @@ def _ownership_errors(
     return errors
 
 
+def _peer_connectivity_errors(
+    record: dict[str, Any], devices: Sequence[str]
+) -> list[str]:
+    expected = {
+        (source, destination)
+        for source in devices
+        for destination in devices
+        if source != destination
+    }
+    rows = record.get("peer_connectivity")
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        return ["Missing or duplicate directed peer connectivity evidence"]
+    observed = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return ["Malformed directed peer connectivity evidence"]
+        source = row.get("source_uuid")
+        destination = row.get("destination_uuid")
+        if not isinstance(source, str) or not isinstance(destination, str):
+            return ["Malformed directed peer connectivity identities"]
+        pair = (source, destination)
+        if pair not in expected or pair in observed:
+            return ["Unexpected or duplicate directed peer connectivity pair"]
+        observed.add(pair)
+        if row.get("capability_reported") is not True:
+            return ["Direct peer capability is unavailable or unproven"]
+    return []
+
+
 def peer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
     errors = _ownership_errors(record["ownership"], devices, 1, len(devices))
+    errors.extend(_peer_connectivity_errors(record, devices))
     expected = {
         (route, source, destination, size, step)
         for route in ("cuda", "jax")
@@ -117,6 +173,19 @@ def peer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
         for step in STEPS
     }
     rows = record["rows"]
+    if any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("route"), str)
+        or not isinstance(row.get("source_uuid"), str)
+        or not isinstance(row.get("destination_uuid"), str)
+        or type(row.get("bytes")) is not int
+        or type(row.get("step")) is not int
+        or type(row.get("ingress_mismatch_count")) is not int
+        or type(row.get("mismatch_count")) is not int
+        for row in rows
+    ):
+        errors.append("Malformed directed peer-copy identity or count evidence")
+        return errors
     actual = [
         (
             row["route"],
@@ -139,7 +208,11 @@ def peer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
         ),
         "passed_copy_observations": sum(row["passed"] is True for row in rows),
     }
-    if any(coverage[key] != count for key, count in required_counts.items()):
+    if not isinstance(coverage, dict) or any(
+        type(coverage.get(key)) is not int for key in required_counts
+    ):
+        errors.append("Malformed peer-copy coverage counts")
+    elif any(coverage[key] != count for key, count in required_counts.items()):
         errors.append(
             "Reported ingress/copy counts differ from actual recorded observations"
         )
@@ -188,6 +261,65 @@ def peer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
                     errors.append(
                         "Peer-copy oracle does not match the requested current inputs"
                     )
+    return errors
+
+
+def consumer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
+    errors = _ownership_errors(record["ownership"], devices, 1, len(devices))
+    expected = {
+        (route, source, destination, size, step)
+        for route in CONSUMER_ROUTES
+        for source in devices
+        for destination in devices
+        if source != destination
+        for size in CONSUMER_SIZES
+        for step in STEPS
+    }
+    rows = record["rows"]
+    actual = [
+        (
+            row["route"],
+            row["source_uuid"],
+            row["destination_uuid"],
+            row["bytes"],
+            row["step"],
+        )
+        for row in rows
+    ]
+    if set(actual) != expected or len(actual) != len(expected):
+        errors.append("Missing, duplicate, or narrowed directed consumer points")
+    if (
+        record["sizes_bytes"] != list(CONSUMER_SIZES)
+        or record["steps"] != list(STEPS)
+        or record["routes"] != list(CONSUMER_ROUTES)
+    ):
+        errors.append("Consumer route/size/step contract differs")
+    if any(type(row["bytes"]) is not int or type(row["step"]) is not int for row in rows):
+        errors.append("Consumer size and step must be integer identities")
+    counts = {
+        "expected_consumer_observations": len(expected),
+        "recorded_consumer_observations": len(rows),
+        "passed_consumer_observations": sum(row["passed"] is True for row in rows),
+    }
+    if any(
+        type(record["coverage"][key]) is not int or record["coverage"][key] != value
+        for key, value in counts.items()
+    ):
+        errors.append("Consumer coverage counts differ from authoritative observations")
+    for identity, row in zip(actual, rows, strict=True):
+        if identity not in expected:
+            continue
+        _, source, destination, size, step = identity
+        values = consumer_oracle(
+            devices.index(source), devices.index(destination), size, step
+        )
+        oracle = consumer_evidence(values, values, values, values * 3 + 7, 0, 0)
+        # Validate every diagnostic, not merely a producer's success flag.
+        if any(
+            type(row[key]) is not type(value) or row[key] != value
+            for key, value in oracle.items()
+        ):
+            errors.append(f"Incorrect or malformed consumer evidence: {identity}")
     return errors
 
 
@@ -281,7 +413,9 @@ def scenario_errors(
         if record["passed"] is not True or record["errors"]:
             errors.append("Required scenario failed or was skipped")
         errors.extend(
-            peer_errors(record, devices)
+            consumer_errors(record, devices)
+            if scenario == "jax-consumers"
+            else peer_errors(record, devices)
             if scenario == "peer-copies"
             else collective_errors(record, scenario, devices)
         )
@@ -300,11 +434,11 @@ def _scenario(
     output = directory / f"{scenario}.json"
     selected = (
         devices
-        if scenario == "peer-copies"
+        if scenario in ("peer-copies", "jax-consumers")
         else devices[-math.prod(int(value) for value in scenario.split("x")) :]
     )
     child_environment = dict(environment, CUDA_VISIBLE_DEVICES=",".join(selected))
-    if scenario == "peer-copies":
+    if scenario in ("peer-copies", "jax-consumers"):
         command = [
             sys.executable,
             "-m",
@@ -383,6 +517,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             "scenarios": args.scenarios,
             "sizes_bytes": list(SIZES),
             "steps": list(STEPS),
+            "consumer_sizes_bytes": list(CONSUMER_SIZES),
+            "consumer_routes": list(CONSUMER_ROUTES),
         },
         "environment": {
             key: value

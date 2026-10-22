@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from importlib import metadata
 from pathlib import Path
 from typing import Literal
 
@@ -29,6 +32,41 @@ def case(cuest_runtime: None) -> CuestCase:
         pytest.fail(f"cuEST provider NOT ADMITTED: {type(error).__name__}: {error}")
     assert bool(one.successful), "cuEST provider NOT ADMITTED"
     return case
+
+
+def test_runtime_manifest_binds_installed_vendor_payload(
+    cuest_runtime: None,
+) -> None:
+    distribution = metadata.distribution("phydrax-cuest")
+    manifests = tuple(
+        file
+        for file in distribution.files or ()
+        if str(file) == "phydrax_cuest/build.json"
+    )
+    assert len(manifests) == 1
+    manifest_path = Path(str(distribution.locate_file(manifests[0])))
+    manifest = json.loads(manifest_path.read_bytes())
+    assert isinstance(manifest, dict)
+    assert manifest["package_version"] == distribution.version
+    assert manifest["cuda_major"] == 13
+    assert manifest["source_version"] == "0.2.2.2"
+    assert manifest["soname"] == "libcuest.so.0"
+    for field in ("library", "library_sha256", "license", "license_sha256"):
+        assert isinstance(manifest[field], str) and manifest[field]
+    paths = (
+        (
+            Path(str(distribution.locate_file("phydrax_cuest"))) / manifest["library"],
+            manifest["library_sha256"],
+        ),
+        (
+            Path(str(distribution.locate_file(manifest["license"]))),
+            manifest["license_sha256"],
+        ),
+    )
+    for path, expected in paths:
+        assert path.is_file()
+        with path.open("rb") as stream:
+            assert hashlib.file_digest(stream, "sha256").hexdigest() == expected
 
 
 def test_resource_shortage_is_native_failure_and_does_not_poison_normal_plan(

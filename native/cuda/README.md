@@ -140,6 +140,10 @@ license, including third-party notices; it does not ship the vendor SDK headers.
 The small core companion wrapper links that C ABI but does not duplicate the
 runtime into every core CUDA installation. Build the optional runtime wheel with
 `uv build --wheel native/cuest_runtime` and include it in the consumer wheelhouse.
+The runtime recipe is compiler-free and does not discover a system CUDA toolkit.
+It accepts only Linux x86-64/SBSA native builds, verifies the complete archive
+before each fresh extraction, and installs only the runtime SONAME plus complete
+license material.
 
 Site MPI integration is deliberately separate:
 
@@ -154,7 +158,9 @@ source identity. Do not compile an independent copy of the communicator registry
 into each provider. Runtime overrides are `PHYDRAX_CUDA_COLLECTIVE_LIBRARY`,
 `PHYDRAX_CUDA_CUDSS_MGMN_LIBRARY`, and `PHYDRAX_CUDA_CUDECOMP_LIBRARY`.
 The MPI transport profile is same-host, one GPU per rank, with the actual
-CUDA-aware Open MPI instance already initialized by the owning bootstrap.
+CUDA-aware Open MPI instance already initialized by the owning bootstrap. Native
+lease creation verifies that all participants belong to one
+`MPI_COMM_TYPE_SHARED` domain; process ancestry alone is insufficient.
 
 The standalone recipe in `src/cudss_mgmn/commlayer` compiles the checksum-pinned,
 unmodified NVIDIA Open MPI communication source against the chosen site MPI and
@@ -169,6 +175,9 @@ memo registry. Site-provider resources are retired through their collective
 lease, not process-local LRU eviction or a Python atexit callback. Compiled
 programs must be staged and admitted before `lease.invoke`; arbitrary callbacks
 and unattached compiled executables are not accepted.
+Collective staging and invocation require the exact source-verified JAX/JAXlib
+0.12.0 dispatch implementation used by the CUDA extra. A downstream-modified
+build with the same version string is not admitted.
 
 Device scratch/cache limits, vendor memory estimates, opaque resident bytes,
 compiler estimates, and observed memory samples are distinct. A finite vendor
@@ -215,6 +224,12 @@ per-case JUnit device evidence, not just visibility. For four H100s, use
 `CUDA_VISIBLE_DEVICES=0,1,2,3` and `--required-gpus 4`. Missing, skipped, or
 partial provider or lifecycle coverage fails qualification. Provider tests run
 serially; the concurrent cuDSS scenario owns its synchronized worker threads.
+Before interpreting any multi-GPU provider result, run
+`tools/qualify_cuda_execution` with all selected physical UUIDs and every
+required scenario. Qualification requires direct-access capability for all
+directed pairs, changed-content CUDA/JAX copies, and the tiny-buffer destination
+consumer/readback matrix; a passing host-staged control does not repair a peer
+failure.
 
 cuDSS and AmgX checks cover independent solves with identical plan identities,
 distinct numerical coefficients, device-partitioned caches, release/rebuild,
@@ -233,12 +248,22 @@ serialized; resources survive device switches and are destroyed with their
 owning device selected. Empty manager metadata remains retained so static
 destruction never invokes CUDA cleanup.
 
+Single-process cuDSS MG is a synchronous host-orchestrated route. Each phase
+drains its configured per-device streams and all provider-owned work on every
+reserved device before returning output buffers or admitting teardown.
+
 Releasing a live preparation frees its named memo only. Reading an evicted or
 released immutable preparation reconstructs a bounded memo under a fresh native
 ID; the original preparation's ID does not change. Releasing that stale ID does
 not release the anonymous reconstructed memo. Such entries remain bounded by
 their device/plan cache capacity and are reclaimed by eviction or the explicit
 component-wide release-all/shutdown sequence before process exit.
+
+cuTENSOR and cuTensorNet propagate every cleanup status and preserve charges for
+resources not proven freed. cuEST selects the owning device and drains its stream
+before invoking any device-bound destructor. If either prerequisite fails, it
+abandons parameters, plans, bases, workspaces, cuBLAS state, and the stream,
+retains outstanding workspace charges, and poisons the partition.
 
 Failed cuDSS numeric refresh and AmgX coefficient resetup retire the affected
 resident memo without discarding partition rebuild counters. The original

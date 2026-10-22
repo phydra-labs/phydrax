@@ -49,10 +49,10 @@ def _ownership(devices: list[str], processes: int) -> list[dict[str, object]]:
     ]
 
 
-def _peers() -> dict[str, Any]:
+def _peers(devices: list[str] = DEVICES) -> dict[str, Any]:
     rows = []
-    for source_index, source in enumerate(DEVICES):
-        for destination_index, destination in enumerate(DEVICES):
+    for source_index, source in enumerate(devices):
+        for destination_index, destination in enumerate(devices):
             if source == destination:
                 continue
             for size in SIZES:
@@ -83,7 +83,17 @@ def _peers() -> dict[str, Any]:
     return {
         "passed": True,
         "errors": [],
-        "ownership": _ownership(DEVICES, 1),
+        "ownership": _ownership(devices, 1),
+        "peer_connectivity": [
+            {
+                "source_uuid": source,
+                "destination_uuid": destination,
+                "capability_reported": True,
+            }
+            for source in devices
+            for destination in devices
+            if source != destination
+        ],
         "rows": rows,
         "coverage": {
             "expected_copy_observations": len(rows),
@@ -159,6 +169,72 @@ def test_peer_fixture_covers_all_56_directed_pairs_on_both_routes() -> None:
     assert len(pairs) == 56
 
 
+@pytest.mark.parametrize("count", [1, 2, 4, 8])
+def test_peer_qualification_requires_complete_direct_matrix(count: int) -> None:
+    devices = DEVICES[:count]
+    record = _peers(devices)
+    assert len(record["peer_connectivity"]) == count * (count - 1)
+    assert qualification.scenario_errors(_command(), record, "peer-copies", devices) == []
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "unavailable",
+        "missing-matrix",
+        "missing-pair",
+        "extra-pair",
+        "duplicate",
+        "self-pair",
+        "foreign-source",
+        "foreign-destination",
+        "malformed-matrix",
+        "malformed-row",
+        "malformed-source",
+        "malformed-destination",
+        "missing-capability",
+        "integer-capability",
+        "string-capability",
+    ],
+)
+def test_correct_copy_contents_cannot_replace_direct_peer_evidence(fault: str) -> None:
+    devices = DEVICES[:2]
+    record = _peers(devices)
+    rows = record["peer_connectivity"]
+    if fault == "unavailable":
+        rows[0]["capability_reported"] = False
+    elif fault == "missing-matrix":
+        del record["peer_connectivity"]
+    elif fault == "missing-pair":
+        rows.pop()
+    elif fault == "extra-pair":
+        rows.append(copy.deepcopy(rows[0]))
+    elif fault == "duplicate":
+        rows[1] = copy.deepcopy(rows[0])
+    elif fault == "self-pair":
+        rows[0]["destination_uuid"] = rows[0]["source_uuid"]
+    elif fault == "foreign-source":
+        rows[0]["source_uuid"] = DEVICES[2]
+    elif fault == "foreign-destination":
+        rows[0]["destination_uuid"] = DEVICES[2]
+    elif fault == "malformed-matrix":
+        record["peer_connectivity"] = {}
+    elif fault == "malformed-row":
+        rows[0] = None
+    elif fault == "malformed-source":
+        rows[0]["source_uuid"] = []
+    elif fault == "malformed-destination":
+        rows[0]["destination_uuid"] = None
+    elif fault == "missing-capability":
+        del rows[0]["capability_reported"]
+    elif fault == "integer-capability":
+        rows[0]["capability_reported"] = 1
+    else:
+        rows[0]["capability_reported"] = "true"
+    assert all(row["passed"] is True for row in record["rows"])
+    assert qualification.scenario_errors(_command(), record, "peer-copies", devices)
+
+
 @pytest.mark.parametrize(
     "fault",
     ["missing-pair", "duplicate", "skip", "contents", "stale", "sizes", "cpu", "uuid"],
@@ -190,6 +266,39 @@ def test_peer_qualification_refuses_false_success(fault: str) -> None:
     else:
         record["ownership"][1]["gpu_uuid"] = DEVICES[0]
     assert qualification.scenario_errors(_command(), record, "peer-copies", DEVICES)
+
+
+@pytest.mark.parametrize(
+    "field", ["bytes", "step", "ingress_mismatch_count", "mismatch_count"]
+)
+def test_peer_qualification_rejects_boolean_identity_and_counts(field: str) -> None:
+    record = _peers()
+    record["rows"][0][field] = False
+    assert qualification.scenario_errors(_command(), record, "peer-copies", DEVICES)
+
+
+@pytest.mark.parametrize("field", ["rank", "local_ordinal"])
+def test_peer_qualification_rejects_boolean_ownership(field: str) -> None:
+    record = _peers()
+    record["ownership"][0][field] = False
+    assert qualification.scenario_errors(_command(), record, "peer-copies", DEVICES)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "expected_copy_observations",
+        "recorded_copy_observations",
+        "recorded_ingress_observations",
+        "passed_ingress_observations",
+        "passed_copy_observations",
+    ],
+)
+def test_peer_qualification_rejects_boolean_zero_coverage(field: str) -> None:
+    devices = DEVICES[:1]
+    record = _peers(devices)
+    record["coverage"][field] = False
+    assert qualification.scenario_errors(_command(), record, "peer-copies", devices)
 
 
 @pytest.mark.parametrize("scenario", ["1x1", "1x2", "1x4", "1x8", "2x4", "4x2", "8x1"])
@@ -402,3 +511,169 @@ def test_copy_evidence_distinguishes_ingress_and_peer_failures(
         == len(row["observed_prefix"])
         == 8
     )
+
+
+def _consumers(devices: list[str]) -> dict[str, Any]:
+    from tests._support.cuda_execution_worker import (
+        consumer_evidence,
+        consumer_oracle,
+        CONSUMER_ROUTES,
+        CONSUMER_SIZES,
+    )
+
+    rows = []
+    for source, source_uuid in enumerate(devices):
+        for destination, destination_uuid in enumerate(devices):
+            if source == destination:
+                continue
+            for route in CONSUMER_ROUTES:
+                for size in CONSUMER_SIZES:
+                    for step in STEPS:
+                        values = consumer_oracle(source, destination, size, step)
+                        rows.append(
+                            dict(
+                                route=route,
+                                source_uuid=source_uuid,
+                                destination_uuid=destination_uuid,
+                                bytes=size,
+                                step=step,
+                                **consumer_evidence(
+                                    values, values, values, values * 3 + 7, 0, 0
+                                ),
+                            )
+                        )
+    return dict(
+        passed=True,
+        errors=[],
+        ownership=_ownership(devices, 1),
+        rows=rows,
+        sizes_bytes=list(CONSUMER_SIZES),
+        steps=list(STEPS),
+        routes=list(CONSUMER_ROUTES),
+        coverage=dict(
+            expected_consumer_observations=len(rows),
+            recorded_consumer_observations=len(rows),
+            passed_consumer_observations=len(rows),
+        ),
+    )
+
+
+@pytest.mark.parametrize("count", [1, 2, 4, 8])
+def test_consumer_coverage_is_exact_for_every_directed_pair(count: int) -> None:
+    record = _consumers(DEVICES[:count])
+    assert len(record["rows"]) == count * (count - 1) * 3 * 5 * 3
+    assert {row["bytes"] for row in record["rows"]} == (
+        {4, 12, 16, 40, 1024} if count > 1 else set()
+    )
+    assert (
+        qualification.scenario_errors(
+            _command(), record, "jax-consumers", DEVICES[:count]
+        )
+        == []
+    )
+    assert "jax-consumers" in qualification.required_scenarios(count)
+
+
+def test_consumer_controls_do_not_qualify_unavailable_direct_peers() -> None:
+    devices = DEVICES[:2]
+    peers = _peers(devices)
+    peers["peer_connectivity"][0]["capability_reported"] = False
+    consumers = _consumers(devices)
+    consumers["peer_connectivity"] = copy.deepcopy(peers["peer_connectivity"])
+    assert (
+        qualification.scenario_errors(_command(), consumers, "jax-consumers", devices)
+        == []
+    )
+    assert qualification.scenario_errors(_command(), peers, "peer-copies", devices)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing",
+        "duplicate",
+        "consumer",
+        "transfer",
+        "ingress",
+        "readback",
+        "stale",
+        "prefix",
+        "count",
+        "boolean-count",
+        "missing-field",
+        "failed",
+        "route",
+        "size",
+        "step",
+        "malformed",
+    ],
+)
+def test_consumer_gate_refuses_incomplete_or_incorrect_evidence(fault: str) -> None:
+    record = _consumers(DEVICES[:2])
+    row = record["rows"][0]
+    if fault == "missing":
+        record["rows"].pop()
+    elif fault == "duplicate":
+        record["rows"][-1] = copy.deepcopy(row)
+    elif fault == "consumer":
+        row["device_consumer_mismatch_count"] = 1
+    elif fault == "transfer":
+        row["device_transfer_mismatch_count"] = 1
+    elif fault == "ingress":
+        row["ingress_mismatch_count"] = 1
+    elif fault == "readback":
+        row["consumer_sha256"] = "0" * 64
+    elif fault == "stale":
+        row["expected_sha256"] = "0" * 64
+    elif fault == "prefix":
+        row["consumer_prefix"] = [0]
+    elif fault == "count":
+        record["coverage"]["expected_consumer_observations"] -= 1
+    elif fault == "boolean-count":
+        row["device_transfer_mismatch_count"] = False
+    elif fault == "missing-field":
+        del row["consumer_sha256"]
+    elif fault == "failed":
+        row["passed"] = False
+    elif fault == "route":
+        row["route"] = "host-fallback"
+    elif fault == "size":
+        row["bytes"] = 8
+    elif fault == "step":
+        row["step"] = 99
+    else:
+        record["rows"][0] = None
+    assert qualification.scenario_errors(_command(), record, "jax-consumers", DEVICES[:2])
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "source-ingress",
+        "peer-transfer",
+        "destination-consumer",
+        "host-readback",
+    ],
+)
+def test_consumer_evidence_distinguishes_failure_boundaries(stage: str) -> None:
+    from tests._support.cuda_execution_worker import consumer_evidence, consumer_oracle
+
+    values = consumer_oracle(0, 1, 40, 1)
+    ingress, transferred, consumed = values.copy(), values.copy(), values * 3 + 7
+    transfer_bad = consumer_bad = 0
+    if stage == "source-ingress":
+        ingress[0] += 1
+    elif stage == "peer-transfer":
+        transfer_bad = 1
+        transferred[0] += 1
+    elif stage == "destination-consumer":
+        consumer_bad = 1
+        consumed[0] += 1
+    else:
+        consumed[0] += 1
+    row = consumer_evidence(
+        values, ingress, transferred, consumed, transfer_bad, consumer_bad
+    )
+    assert row["passed"] is False
+    assert row["failure_stage"] == stage
+    assert len(row["expected_prefix"]) == 8

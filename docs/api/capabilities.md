@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `233166542263ae582306c826697b1a0d4c191b939594f7af849a8d8874fe85c0`
+Catalog ID: `eb630f1349228515f2f1ebd316b87309bca55aac00443864ff77c4b335aa235e`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 308 |
+| candidate | 316 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |

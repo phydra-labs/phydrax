@@ -259,6 +259,12 @@ and math-library wheels (including NCCL), and the metadata-only
 A system CUDA toolkit and `LD_LIBRARY_PATH` are not required for
 this JAX setup. The extra does not install a CUDA backend on non-Linux platforms.
 
+The CUDA extra pins JAX, JAXlib, and the CUDA plugin to 0.12.0. Site collective
+programs use an exact source-verified private dispatch boundary from that release;
+a later 0.12.x installation is not admitted merely because its public version
+range would otherwise be compatible. The base and CPU extras retain their
+documented JAX ranges.
+
 On Linux x86-64 and aarch64, the extra also requires the lockstep wheel-only
 companion `phydrax-cuda13==0.2.2`:
 
@@ -332,6 +338,10 @@ builds, not universal MPI wheels. They require one checksum-identified,
 CUDA-aware Open MPI stack, the matching communication shim, and supervised
 same-host processes. MPI availability alone does not establish device-buffer
 integrity, multi-host support, RDMA, or zero host copies.
+The native lease also splits the participating communicator by
+`MPI_COMM_TYPE_SHARED` and requires every participant to belong to that one
+shared-memory domain before publishing a live lease. Local process supervision
+does not substitute for this MPI-owned same-host proof.
 
 For local development, `PHYDRAX_CUDA_CUTENSOR_LIBRARY`,
 `PHYDRAX_CUDA_CUTENSORNET_LIBRARY`, and `PHYDRAX_CUDA_CUEST_LIBRARY` select
@@ -346,6 +356,13 @@ requires all declared precision/scenario coverage, and tests actual hostile
 library paths. Tensor slice placement is a separate, explicitly host-orchestrated
 profile. Required skips, missing cases, duplicate evidence, failed numerical
 results, and timeouts prevent a successful qualification.
+
+Physical execution qualification separately requires every directed GPU pair to
+report direct peer capability and pass changed-content CUDA/JAX copies. A second,
+vendor-free JAX gate exercises 1, 3, 4, 10, and 256 `int32` words through
+ordinary placement, forced copy, and an explicit host control, checking both
+destination arithmetic and host readback. Host-control success diagnoses a
+failure; it never qualifies an unavailable or corrupt peer route.
 
 ### Eight-A40 host admission
 
@@ -381,6 +398,78 @@ preserve failed evidence rather than narrowing the requested device set silently
 Historical H100/H200 evidence used a different JAX stack; single-B300 evidence
 does not qualify this A40 topology. Compiled Pallas MACE still refuses sm86;
 native-JAX execution is a separate route, not an accelerated fallback.
+
+
+### Eight-A100 NVLink deployment profile
+
+The current same-host profile uses eight NVIDIA A100-SXM4-80GB devices
+(compute capability 8.0), driver 595.91.07, CPython 3.13.16, JAX/JAXlib and the
+CUDA plugin 0.12.0, and wheel-provided CUDA runtime 13.4.92. Every GPU pair is
+connected by the reported bonded `NV12` topology. The audited
+`manylinux_2_39_x86_64` companion contains only sm80 AmgX/QUDA SASS and has
+build hash
+`82f862503cfbfb5485ef0b7ffe623c8499e9c8bf08d2dceb8a2d53b0f9f01e3d`;
+cuDSS and the tensor/cuEST wrappers call separately installed vendor runtimes.
+
+All 1,008 changed-content CUDA/JAX directed-copy observations pass with direct
+peer capability reported for every ordered pair. All 2,520 tiny-buffer
+peer-placement, forced-copy, and host-control consumer/readback observations
+also pass. The native JAX weighted-reduction/PCG matrix passes at
+1×1, 1×2, 1×4, 1×8, 2×4, 4×2, and 8×1 process/device layouts without a
+transport override.
+
+The fresh installed-wheel campaign passes all required device-local cuDSS,
+AmgX, and QUDA numerical/lifecycle cases on every device; optional cuTENSOR,
+cuTensorNet, and cuEST profiles, including multi-GPU host slices, pass their
+declared precision and scientific matrices. Clean and hostile-library-path
+audits load only owned CUDA 13 libraries. Missing optional Grid/qlat providers
+remain skips, not QUDA failures. The separate publication resolver gate remains
+incomplete because this x86-64 campaign did not build the required aarch64
+companion; it is not relabeled as release-architecture qualification.
+
+Single-process cuDSS MG passes eighteen float32/float64 positive-definite and
+indefinite lifecycle, true-multiple-RHS, transpose, derivative, failure, and
+retirement cases across 2, 4, and 8 GPUs. A source-pinned CUDA-aware Open MPI
+5.0.11 site build, cuDSS Open MPI communication shim, and cuDecomp 0.7.0 commit
+`73121159fec42eb9144dfed9159e53fde6603fca` pass 21 MGMN cases across 2, 4,
+and 8 one-GPU ranks plus 16 cuDecomp cases. Those cases cover both precisions,
+composed histories, derivatives, resource refusal, closed-lease behavior, and
+coupled failure without orphan ranks. These are same-host site-artifact
+results, not portable-wheel or multi-host claims.
+
+The separate mpi4jax 0.9.1.post2 CUDA-direct campaign is **not qualified** on
+JAX 0.12.0: upstream declares JAX 0.11.2 as its latest supported release and all
+four direct integration cases terminate with a native segmentation fault. The
+four explicitly host-staged cases pass, but the campaign stops before timing and
+cannot be promoted. This does not invalidate the independently owned native
+collective/MGMN/cuDecomp routes above.
+
+Compiled sm80 MACE passes all four precision/accumulation value, derivative,
+and resource cases; the distributed MACE matrix passes 29 scenarios. Nineteen
+current FMM, pencil-spectral, and eight-owner LES cases pass, as do the
+local-guarded PSATD/restart pair and the genuinely local 2×2×2 PIC
+science/scaling pair with every owner populated.
+
+Bounded, uncontended measurements retain preparation, lowering, compilation,
+first-call, warm, derivative, transfer, and memory scopes separately. At the
+16- and 32-axis tensor points all five path/executor combinations pass; exact
+warm samples remain in the qualification evidence, and no blanket tensor
+speedup is claimed.
+The 2×2×2 PIC campaign passes local-width 6 and 8 cases against its one-device
+reference, but XLA reports involuntary full rematerialization for several
+sharding transitions; that remains a compiler-cost limitation, not a hidden
+success claim. The cuEST campaign completes six s/p/d capacity points spanning
+4–80 orbital and 10–1,000 auxiliary functions against independently matched
+density-fitting references. These bounded records do not extrapolate to
+unmeasured chemistry, graph sizes, or general application speedup.
+
+These observations resolve the prior A40 host-slice blocker only for this
+A100/source/artifact/runtime tuple. They do not prove the A40 host recovered,
+multi-host execution, network RDMA, arbitrary workloads, or release-wide
+architecture coverage.
+Exact artifact hashes, support scopes, successful and failed gates, scientific
+nodes, and phase-separated records are retained in
+[`a100_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/a100_qualification.json).
 
 
 ## Inspect the environment

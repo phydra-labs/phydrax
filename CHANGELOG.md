@@ -31,6 +31,10 @@
   Compiler-derived executable identities may change; reprepare affected
   execution artifacts rather than relabeling their identities. Historical
   JAX 0.11.2 GPU/MPI qualification does not qualify the new stack.
+- Pin the CUDA 13 extra and native companion build to JAX/JAXlib 0.12.0.
+  Ordered site collectives now verify the exact upstream private dispatch
+  implementation and record its observed identity; a same-version modified
+  implementation refuses before staging or ticket admission.
 - Require CPython 3.13 (`>=3.13,<3.14`) for Phydrax, `phydrax-meshcore`, and
   `phydrax-cuda13`; Python 3.12 and the free-threaded build are unsupported.
   Require s2fft 1.5, whose stable-ABI extension loads on 3.13 (the 1.4 wheels
@@ -111,6 +115,38 @@
   installed-wheel provider profiles. Qualification requires actual device
   ownership and complete numerical/precision/lifecycle evidence; skips,
   missing records, incorrect finite results, and timeouts cannot pass.
+- Require a complete directed direct-peer capability matrix plus changed-content
+  CUDA/JAX copies. Add a vendor-free tiny-buffer destination-consumer/readback
+  gate with forced-copy and explicit host controls; host staging cannot qualify
+  a failed peer path.
+- Add a genuinely local eight-device 2×2×2 cochain PIC workflow and bounded
+  scaling cases with every owner populated, face/edge/corner migration,
+  conservation, rollback, and restart evidence.
+- Enforce one MPI shared-memory domain in the native collective lease. Propagate
+  all cuTENSOR/cuTensorNet teardown failures. If cuEST's owning device cannot be
+  selected or its stream cannot be drained, abandon its device resources without
+  invoking vendor destructors and retain native memory charges not proven freed.
+- Restore the tracked, compiler-free cuEST runtime-wheel recipe and retain its
+  archive, binary, license, platform, CUDA-major, source-release, and package
+  provenance in `phydrax_cuest/build.json`.
+- Qualify the current x86-64 stack on eight NVLink-connected A100-SXM4-80GB
+  devices: all-pair direct transport and destination-consumer gates, every
+  1/2/4/8-device JAX process layout, installed core/optional providers,
+  cuDSS MG/MGMN, cuDecomp, compiled/distributed MACE, spectral/LES, PIC
+  including genuine 2×2×2 locality, FMM, tensor derivatives/slices, and cuEST
+  matched-DF energy/forces pass. Retain aarch64 publication and multi-host/RDMA
+  as explicit nonclaims.
+- Retire every cuDSS MG descendant memo by its authoritative host partition
+  while preserving per-ID, per-device retirement for ordinary cuDSS factors.
+  Failed mutation no longer leaves a conflicting live device-group reservation.
+  Synchronous MG phases drain all provider-owned work on every reserved device
+  before returning buffers or admitting teardown.
+  Resident reads validate the supplied structure but no longer rebind a
+  factorized descriptor to transient CSR storage.
+- Solve the largest nonsingular projected FGMRES prefix when the next Arnoldi
+  pivot is singular. Exact eigendirections now produce finite mathematical
+  solve derivatives while true residual and breakdown evidence remain
+  authoritative.
 - Check explicit spectral topology availability against its selected JAX
   backend rather than the process default; an explicit CPU mesh remains valid
   when CUDA is the default.

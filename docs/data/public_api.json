@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "949fc4dc64294e0cb8201ebc10a2561bf544432af2fd59e9e14ac4994634f4e9",
+  "manifest_id": "7911aa5a9bc0d4a16e495e5c0391958b058268a5812322e0a1b72ba2b0d67358",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -9832,6 +9832,8 @@
       "phydrax.backends.collect_rocm_environment",
       "phydrax.backends.collect_tpu_environment",
       "phydrax.backends.create_lattice_provider",
+      "phydrax.backends.cuda_candidate_declarations",
+      "phydrax.backends.cuda_candidate_profiles",
       "phydrax.backends.cuda_environment",
       "phydrax.backends.cuda_native_resources",
       "phydrax.backends.cudecomp_availability",
@@ -9886,6 +9888,8 @@
       "phydrax.backends.refresh_slepc_eigensolve",
       "phydrax.backends.release_amgx",
       "phydrax.backends.release_slepc_eigensolve",
+      "phydrax.backends.rocm_candidate_declarations",
+      "phydrax.backends.rocm_candidate_profiles",
       "phydrax.backends.rocm_environment",
       "phydrax.backends.scip_availability",
       "phydrax.backends.slepc_availability",

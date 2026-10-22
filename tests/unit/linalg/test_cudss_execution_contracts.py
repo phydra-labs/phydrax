@@ -205,3 +205,33 @@ def test_rank_local_estimate_does_not_claim_remote_group_capacity() -> None:
     )
     with pytest.raises(ValueError, match="explicit all-rank resource evidence"):
         evidence.resource_evidence(caller_device_bytes=(1024,))
+
+
+def test_release_uses_host_partition_without_touching_token_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An abstract ID has no reshape/device materialization route. Retirement
+    # must need only the static owner even when a dispatched ID is inaccessible.
+    token = _cudss_ffi.CudssToken(
+        jax.ShapeDtypeStruct((1,), jnp.int32),  # ty: ignore[invalid-argument-type]
+        jnp.ones((1,), dtype=jnp.float32),
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        jnp.asarray([0], dtype=jnp.int32),
+        jnp.zeros((1,), dtype=jnp.int32),
+        jnp.zeros((2, 6, 2), dtype=jnp.uint32),
+        "factorized",
+        np.dtype(np.float32),
+        1,
+        1,
+        1,
+        (17, 8, 1, 0, 0, 0, 0, 23, (0, 1)),
+    )
+    retired: list[tuple[str, int]] = []
+
+    def release(name: str, partition: int) -> int:
+        retired.append((name, partition))
+        return 3
+
+    monkeypatch.setattr(_cudss_ffi, "release_cuda_partition", release)
+    assert _cudss_ffi.release(token)
+    assert retired == [("cudss", 17)]

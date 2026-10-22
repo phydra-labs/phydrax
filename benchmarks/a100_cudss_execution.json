@@ -1,0 +1,498 @@
+{
+  "accepted": true,
+  "cases": [
+    {
+      "absolute_tolerance": 1e-12,
+      "analysis_rhs_columns": 1,
+      "certified_memory_bounds": false,
+      "changed_max_abs_error_local": 5.551115123125783e-17,
+      "changed_solve_seconds": 0.04198833,
+      "device_keys": [
+        [
+          0,
+          0
+        ]
+      ],
+      "dtype": "float64",
+      "first_analysis_seconds": 0.460520055,
+      "first_factorization_seconds": 0.375190952,
+      "first_refresh_seconds": 0.255669177,
+      "first_solve_seconds": 0.996451072,
+      "global_shape": [
+        256,
+        256
+      ],
+      "group_id": null,
+      "host_estimates_additive": false,
+      "input_sha256": "a06e57e5b195b11431ad133906f6ad4f81bbbf81c58f379ba5b9371e75755465",
+      "memory_basis": "provider_estimate",
+      "memory_estimates": [
+        [
+          1114108,
+          1114108,
+          33648,
+          41840,
+          null,
+          null
+        ]
+      ],
+      "memory_mode": "device",
+      "mode": "local",
+      "native_rebuilds": 0,
+      "operator_preparation_seconds": 1.634135939,
+      "owned_rows": [
+        0,
+        256
+      ],
+      "plan_seconds": 0.213678333,
+      "process_index": 0,
+      "relative_tolerance": 1e-10,
+      "release_seconds": 0.00201486,
+      "residual_norm": [
+        5.043005543882879e-16,
+        3.6978510793634424e-16,
+        4.4147945634195513e-16,
+        4.147150266138403e-16
+      ],
+      "rhs_columns": 4,
+      "solution_max_abs_error_local": 5.551115123125783e-17,
+      "steady_solve": {
+        "count": 5,
+        "max_seconds": 0.001035894,
+        "mean_seconds": 0.0010087785999999999,
+        "median_seconds": 0.001013892,
+        "min_seconds": 0.000981551,
+        "samples_seconds": [
+          0.000981551,
+          0.001029472,
+          0.001013892,
+          0.001035894,
+          0.000983084
+        ],
+        "std_seconds": 2.276472381207384e-05
+      },
+      "successful": true
+    },
+    {
+      "absolute_tolerance": 1e-12,
+      "analysis_rhs_columns": 1,
+      "certified_memory_bounds": false,
+      "changed_max_abs_error_local": 5.551115123125783e-17,
+      "changed_solve_seconds": 0.038120617,
+      "device_keys": [
+        [
+          0,
+          0
+        ]
+      ],
+      "dtype": "float64",
+      "first_analysis_seconds": 0.456742735,
+      "first_factorization_seconds": 0.417019509,
+      "first_refresh_seconds": 0.265611615,
+      "first_solve_seconds": 1.058143716,
+      "global_shape": [
+        1024,
+        1024
+      ],
+      "group_id": null,
+      "host_estimates_additive": false,
+      "input_sha256": "63658f2aacbd8e6295217806d5c22a72d2f74170d497adb6062e20421bac4cf5",
+      "memory_basis": "provider_estimate",
+      "memory_estimates": [
+        [
+          4419468,
+          4419468,
+          95072,
+          127840,
+          null,
+          null
+        ]
+      ],
+      "memory_mode": "device",
+      "mode": "local",
+      "native_rebuilds": 0,
+      "operator_preparation_seconds": 1.036793762,
+      "owned_rows": [
+        0,
+        1024
+      ],
+      "plan_seconds": 0.015988209,
+      "process_index": 0,
+      "relative_tolerance": 1e-10,
+      "release_seconds": 0.001117628,
+      "residual_norm": [
+        1.2434107939582994e-15,
+        1.2441088218087833e-15,
+        1.1951681391678496e-15,
+        1.1871876010079072e-15
+      ],
+      "rhs_columns": 4,
+      "solution_max_abs_error_local": 5.551115123125783e-17,
+      "steady_solve": {
+        "count": 5,
+        "max_seconds": 0.001549167,
+        "mean_seconds": 0.001503935,
+        "median_seconds": 0.001522717,
+        "min_seconds": 0.001427426,
+        "samples_seconds": [
+          0.001427426,
+          0.001549167,
+          0.001528908,
+          0.001491457,
+          0.001522717
+        ],
+        "std_seconds": 4.25010014987882e-05
+      },
+      "successful": true
+    },
+    {
+      "absolute_tolerance": 1e-12,
+      "analysis_rhs_columns": 1,
+      "certified_memory_bounds": false,
+      "changed_max_abs_error_local": 5.551115123125783e-17,
+      "changed_solve_seconds": 0.005951052,
+      "device_keys": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "dtype": "float64",
+      "first_analysis_seconds": 0.263970455,
+      "first_factorization_seconds": 0.268266138,
+      "first_refresh_seconds": 0.267733028,
+      "first_solve_seconds": 0.616815704,
+      "global_shape": [
+        256,
+        256
+      ],
+      "group_id": "a100-cudss-mg-benchmark-2",
+      "host_estimates_additive": false,
+      "input_sha256": "a06e57e5b195b11431ad133906f6ad4f81bbbf81c58f379ba5b9371e75755465",
+      "memory_basis": "provider_estimate",
+      "memory_estimates": [
+        [
+          1106228,
+          1107268,
+          37392,
+          45584,
+          null,
+          null
+        ],
+        [
+          1110124,
+          1111148,
+          16592,
+          16592,
+          null,
+          null
+        ]
+      ],
+      "memory_mode": "device",
+      "mode": "mg",
+      "native_rebuilds": 0,
+      "operator_preparation_seconds": 0.024487483,
+      "owned_rows": [
+        0,
+        256
+      ],
+      "plan_seconds": 0.010015817,
+      "process_index": 0,
+      "relative_tolerance": 1e-10,
+      "release_seconds": 0.001595134,
+      "residual_norm": [
+        4.38085515576797e-16,
+        3.90062130444102e-16,
+        4.4147945634195513e-16,
+        4.22080003223746e-16
+      ],
+      "rhs_columns": 4,
+      "solution_max_abs_error_local": 5.551115123125783e-17,
+      "steady_solve": {
+        "count": 5,
+        "max_seconds": 0.002966143,
+        "mean_seconds": 0.0029411598,
+        "median_seconds": 0.002939893,
+        "min_seconds": 0.002913253,
+        "samples_seconds": [
+          0.002939893,
+          0.002939753,
+          0.002966143,
+          0.002946757,
+          0.002913253
+        ],
+        "std_seconds": 1.6957961462392778e-05
+      },
+      "successful": true
+    },
+    {
+      "absolute_tolerance": 1e-12,
+      "analysis_rhs_columns": 1,
+      "certified_memory_bounds": false,
+      "changed_max_abs_error_local": 5.551115123125783e-17,
+      "changed_solve_seconds": 0.053354678,
+      "device_keys": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "dtype": "float64",
+      "first_analysis_seconds": 0.469772005,
+      "first_factorization_seconds": 0.353277359,
+      "first_refresh_seconds": 0.252685972,
+      "first_solve_seconds": 0.935771338,
+      "global_shape": [
+        512,
+        512
+      ],
+      "group_id": "a100-cudss-mg-benchmark-4",
+      "host_estimates_additive": false,
+      "input_sha256": "1f75cb498f84dea31ee9a09aeebb93387e265d79a2cc3fe41138aa59256ab95c",
+      "memory_basis": "provider_estimate",
+      "memory_estimates": [
+        [
+          2188140,
+          2189180,
+          59440,
+          75824,
+          null,
+          null
+        ],
+        [
+          2195884,
+          2196924,
+          30928,
+          30928,
+          null,
+          null
+        ],
+        [
+          2195924,
+          2196964,
+          30928,
+          30928,
+          null,
+          null
+        ],
+        [
+          2196108,
+          2197148,
+          30992,
+          30992,
+          null,
+          null
+        ]
+      ],
+      "memory_mode": "device",
+      "mode": "mg",
+      "native_rebuilds": 0,
+      "operator_preparation_seconds": 1.013035532,
+      "owned_rows": [
+        0,
+        512
+      ],
+      "plan_seconds": 0.016099591,
+      "process_index": 0,
+      "relative_tolerance": 1e-10,
+      "release_seconds": 0.001680136,
+      "residual_norm": [
+        6.674335893081556e-16,
+        6.551010522623069e-16,
+        7.5669743592038e-16,
+        7.255293079830975e-16
+      ],
+      "rhs_columns": 4,
+      "solution_max_abs_error_local": 5.551115123125783e-17,
+      "steady_solve": {
+        "count": 5,
+        "max_seconds": 0.005863195,
+        "mean_seconds": 0.0058369356,
+        "median_seconds": 0.005840171,
+        "min_seconds": 0.005809093,
+        "samples_seconds": [
+          0.005840171,
+          0.005851674,
+          0.005820545,
+          0.005863195,
+          0.005809093
+        ],
+        "std_seconds": 1.980457764861438e-05
+      },
+      "successful": true
+    },
+    {
+      "absolute_tolerance": 1e-12,
+      "analysis_rhs_columns": 1,
+      "certified_memory_bounds": false,
+      "changed_max_abs_error_local": 5.551115123125783e-17,
+      "changed_solve_seconds": 0.013473884,
+      "device_keys": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          0,
+          6
+        ],
+        [
+          0,
+          7
+        ]
+      ],
+      "dtype": "float64",
+      "first_analysis_seconds": 0.345828508,
+      "first_factorization_seconds": 0.289928385,
+      "first_refresh_seconds": 0.260223972,
+      "first_solve_seconds": 0.663552156,
+      "global_shape": [
+        1024,
+        1024
+      ],
+      "group_id": "a100-cudss-mg-benchmark-8",
+      "host_estimates_additive": false,
+      "input_sha256": "63658f2aacbd8e6295217806d5c22a72d2f74170d497adb6062e20421bac4cf5",
+      "memory_basis": "provider_estimate",
+      "memory_estimates": [
+        [
+          4351508,
+          4352564,
+          103408,
+          136176,
+          null,
+          null
+        ],
+        [
+          4367708,
+          4368748,
+          59696,
+          59696,
+          null,
+          null
+        ],
+        [
+          4367508,
+          4368548,
+          59632,
+          59632,
+          null,
+          null
+        ],
+        [
+          4367644,
+          4368684,
+          59664,
+          59664,
+          null,
+          null
+        ],
+        [
+          4367780,
+          4368820,
+          59696,
+          59696,
+          null,
+          null
+        ],
+        [
+          4367708,
+          4368748,
+          59696,
+          59696,
+          null,
+          null
+        ],
+        [
+          4367660,
+          4368700,
+          59664,
+          59664,
+          null,
+          null
+        ],
+        [
+          4367420,
+          4368460,
+          59600,
+          59600,
+          null,
+          null
+        ]
+      ],
+      "memory_mode": "device",
+      "mode": "mg",
+      "native_rebuilds": 0,
+      "operator_preparation_seconds": 0.023145057,
+      "owned_rows": [
+        0,
+        1024
+      ],
+      "plan_seconds": 0.010326226,
+      "process_index": 0,
+      "relative_tolerance": 1e-10,
+      "release_seconds": 0.001095808,
+      "residual_norm": [
+        1.2511313687922147e-15,
+        1.2401550378021548e-15,
+        1.1964565887624004e-15,
+        1.1952663562439252e-15
+      ],
+      "rhs_columns": 4,
+      "solution_max_abs_error_local": 5.551115123125783e-17,
+      "steady_solve": {
+        "count": 5,
+        "max_seconds": 0.015598742,
+        "mean_seconds": 0.013112434000000001,
+        "median_seconds": 0.012489647,
+        "min_seconds": 0.012461985,
+        "samples_seconds": [
+          0.015598742,
+          0.01248079,
+          0.012461985,
+          0.012489647,
+          0.012531006
+        ],
+        "std_seconds": 0.00124335897324578
+      },
+      "successful": true
+    }
+  ],
+  "scope": "uncontended local and single-process MG size/device sweep; no MGMN or general speedup claim"
+}

@@ -48,6 +48,8 @@ PHX_COLLECTIVE_EXPORT const char* phx_collective_mpi_library_version();
 PHX_COLLECTIVE_EXPORT int phx_collective_validate_mpi_symbol(void* library_version_symbol);
 // The caller supplies an ALREADY initialized communicator and explicit JAX
 // process -> source MPI rank mapping. This library never calls MPI_Init/Finalize.
+// All participating ranks must belong to one MPI shared-memory domain;
+// admission releases its temporary communicator before publishing a lease.
 PHX_COLLECTIVE_EXPORT int phx_collective_create(
     int64_t source_fortran, int32_t process_index, const int32_t* processes,
     const int32_t* source_ranks, int32_t count, int32_t tag,

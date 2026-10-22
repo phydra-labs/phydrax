@@ -1579,6 +1579,9 @@ policy/plan identity. Evicted factors rebuild from their dynamic CSR operands;
 solve provenance reports exact int32 `native_rebuilds`. Failed numeric refresh
 retires the affected memo without changing the original prepared value's
 coefficients or suppressing the provider error.
+Resident solves validate current CSR shape, placement, and structure identity
+without rebinding the factorized descriptor to transient caller storage.
+Numeric refresh owns coefficient-pointer replacement and refactorization.
 Public dense factorizations and matrix-function/spectral artifacts are currently
 unbatched; only local shared-pattern sparse LDLT values admit matrix-batch axes.
 
@@ -1616,6 +1619,9 @@ memory mode:
   shard. Distributed/replicated multi-device inputs, matrix-batch `vmap`,
   capture, and conflicting live vendor reservations are refused. The group is
   a declared execution reservation, not an OS-exclusive GPU allocation.
+  Phase return drains configured streams and provider-owned device work across
+  the reservation. Handle destruction performs a second device-wide drain;
+  failures in that drain or in device restoration reach the component channel.
 - `"mgmn"` requires `DistributedCSRStorage` and
   `DistributedCSRLinearOperator`, one GPU per participating process on the same host, an exact
   site-MPI communication-library path/SHA256/build identity, and a live

@@ -1,4 +1,6 @@
 #include "phx_cuda_common.hpp"
+#include "tensor_cleanup.hpp"
+#include "tensor_registry.hpp"
 #include <cutensor.h>
 #include <algorithm>
 #include <array>
@@ -148,31 +150,46 @@ struct Entry {
   // Storage is reusable, values are not: each call reruns every intermediate
   // producer with beta=0 before consuming it, using only that call's inputs.
   void* scratch = nullptr;
-  bool scratch_charged = false;
+  uint64_t charged_bytes = 0;
 
-  ~Entry() {
-    int previous = -1;
-    cudaGetDevice(&previous);
-    if (device >= 0) cudaSetDevice(device);
-    // Every operation drains its stream while retaining its Entry lease.
-    if (scratch_charged) {
-      const cudaError_t status = scratch ? cudaFree(scratch) : cudaSuccess;
+  void cleanup_error(const char* operation, const char* detail) noexcept {
+    if (budget) {
       std::lock_guard<std::mutex> guard(budget->mutex);
-      if (status == cudaSuccess) budget->used -= scratch_bytes;
-      else {
-        budget->cleanup_failed = true;
-        phx::cuda::set_last_error(std::string("cudaFree(cuTENSOR scratch): ") + cudaGetErrorString(status));
-      }
+      budget->cleanup_failed = true;
     }
+    phx::cuda::set_cleanup_error(operation, detail);
+  }
+  bool cuda_cleanup(cudaError_t status, const char* operation) noexcept {
+    if (status == cudaSuccess) return true;
+    cleanup_error(operation, cudaGetErrorString(status));
+    return false;
+  }
+  bool vendor_cleanup(cutensorStatus_t status, const char* operation) noexcept {
+    if (status == CUTENSOR_STATUS_SUCCESS) return true;
+    cleanup_error(operation, cutensorGetErrorString(status));
+    return false;
+  }
+  bool get_device(int& value) noexcept { return cuda_cleanup(cudaGetDevice(&value), "cudaGetDevice(cuTENSOR cleanup)"); }
+  bool set_device(int value) noexcept { return cuda_cleanup(cudaSetDevice(value), "cudaSetDevice(cuTENSOR cleanup)"); }
+  bool drain() noexcept { return cuda_cleanup(cudaDeviceSynchronize(), "cudaDeviceSynchronize(cuTENSOR cleanup)"); }
+  ~Entry() noexcept {
+    phx::cuda::TensorCleanup<Entry> cleanup(*this, device);
+    if (!cleanup.ready()) return;
     for (auto& stage : stages) {
-      if (stage.plan) cutensorDestroyPlan(stage.plan);
-      if (stage.operation) cutensorDestroyOperationDescriptor(stage.operation);
+      if (stage.plan && !vendor_cleanup(cutensorDestroyPlan(stage.plan), "cutensorDestroyPlan")) return;
+      if (stage.operation && !vendor_cleanup(cutensorDestroyOperationDescriptor(stage.operation), "cutensorDestroyOperationDescriptor")) return;
     }
-    if (preference) cutensorDestroyPlanPreference(preference);
+    if (preference && !vendor_cleanup(cutensorDestroyPlanPreference(preference), "cutensorDestroyPlanPreference")) return;
     for (auto& tensor : tensors)
-      if (tensor.descriptor) cutensorDestroyTensorDescriptor(tensor.descriptor);
-    if (handle) cutensorDestroy(handle);
-    if (previous >= 0 && previous != device) cudaSetDevice(previous);
+      if (tensor.descriptor && !vendor_cleanup(cutensorDestroyTensorDescriptor(tensor.descriptor), "cutensorDestroyTensorDescriptor")) return;
+    if (handle && !vendor_cleanup(cutensorDestroy(handle), "cutensorDestroy")) return;
+    // Opaque owners must be gone before their scratch and charge can retire.
+    cleanup.release_scratch(scratch, charged_bytes,
+        [this](void* pointer) noexcept { return cuda_cleanup(cudaFree(pointer), "cudaFree(cuTENSOR scratch)"); },
+        [this](uint64_t bytes) noexcept {
+          std::lock_guard<std::mutex> guard(budget->mutex);
+          budget->used -= bytes;
+        });
   }
 };
 phx::cuda::Registry<Entry>& registry() {
@@ -193,7 +210,7 @@ struct Index {
     for (auto item = budgets.begin(); item != budgets.end();) {
       const auto budget = item->second;
       std::lock_guard<std::mutex> guard(budget->mutex);
-      if (budget.use_count() == 2 && budget->used == 0) item = budgets.erase(item);
+      if (budget.use_count() == 2 && budget->used == 0 && !budget->cleanup_failed) item = budgets.erase(item);
       else ++item;
     }
   }
@@ -380,7 +397,7 @@ std::shared_ptr<Entry> create_entry(int device, std::string_view recipe, ffi::Da
       if (entry->scratch_bytes > static_cast<uint64_t>(cache_limit) - entry->budget->used)
         throw std::invalid_argument("cuTENSOR retained scratch exceeds partition cache_limit_bytes; release memos or allow overlap space");
       entry->budget->used += entry->scratch_bytes;
-      entry->scratch_charged = true;
+      entry->charged_bytes = entry->scratch_bytes;
     }
     check_cuda(cudaMalloc(&entry->scratch, static_cast<size_t>(entry->scratch_bytes)),
                "cudaMalloc(cuTENSOR retained scratch)");
@@ -447,11 +464,17 @@ bool overlaps(const void* a, uint64_t a_bytes, const void* b, uint64_t b_bytes) 
 }
 struct StreamDrain {
   cudaStream_t stream;
+  const std::shared_ptr<Entry>& entry;
   bool drained = false;
-  ~StreamDrain() { if (!drained) cudaStreamSynchronize(stream); }
-  cudaError_t finish() {
+  ~StreamDrain() noexcept { if (!drained) finish(); }
+  cudaError_t finish() noexcept {
     drained = true;
-    return cudaStreamSynchronize(stream);
+    const auto status = cudaStreamSynchronize(stream);
+    if (status != cudaSuccess) {
+      if (entry) entry->cuda_cleanup(status, "cudaStreamSynchronize(cuTENSOR)");
+      else phx::cuda::set_cleanup_error("cudaStreamSynchronize(cuTENSOR)", cudaGetErrorString(status));
+    }
+    return status;
   }
 };
 struct Scalars {
@@ -478,7 +501,7 @@ ffi::Error contract(cudaStream_t stream, ffi::RemainingArgs args, ffi::Result<ff
   Scalars scalars;
   // Declared last so every exit drains before releasing scalars, descriptor/
   // scratch leases, or the per-entry serialization lock.
-  StreamDrain drain{stream};
+  StreamDrain drain{stream, entry};
   ffi::Error error = ffi::Error::Success();
   try {
     if (capacity < 1 || workspace_limit_bytes < 0 || cache_limit_bytes < 0)
@@ -541,7 +564,18 @@ ffi::Error contract(cudaStream_t stream, ffi::RemainingArgs args, ffi::Result<ff
 }
 }  // namespace
 
-phx::cuda::RegistryBase* component_registry() { return &registry(); }
+phx::cuda::RegistryBase* component_registry() {
+  static auto* view = new phx::cuda::TensorRegistry(registry(), [](bool all, int64_t partition) {
+    std::lock_guard<std::mutex> guard(index().mutex);
+    for (const auto& item : index().budgets) {
+      if (!all && item.first.second != partition) continue;
+      std::lock_guard<std::mutex> budget_guard(item.second->mutex);
+      if (item.second->cleanup_failed)
+        phx::cuda::set_cleanup_error("cuTENSOR partition cleanup failed");
+    }
+  });
+  return view;
+}
 int32_t component_shutdown() {
   std::lock_guard<std::mutex> guard(index().mutex);
   registry().release_all();
@@ -549,7 +583,10 @@ int32_t component_shutdown() {
   index().prune_budgets();
   for (const auto& item : index().budgets) {
     std::lock_guard<std::mutex> budget_guard(item.second->mutex);
-    if (item.second->cleanup_failed) return PHX_CUDA_PROVIDER_ERROR;
+    if (item.second->cleanup_failed) {
+      phx::cuda::set_cleanup_error("cuTENSOR partition cleanup failed");
+      return PHX_CUDA_PROVIDER_ERROR;
+    }
   }
   return PHX_CUDA_SUCCESS;
 }

@@ -179,8 +179,7 @@ struct FactorEntry {
     int previous = -1;
     cudaGetDevice(&previous);
     for (int i = 0; i < options.device_count; ++i)
-      if (mg_streams[i]) {
-        cudaSetDevice(options.devices[i]);
+      if (mg_streams[i] && cudaSetDevice(options.devices[i]) == cudaSuccess) {
         cudaStreamSynchronize(mg_streams[i]);
       }
     if (device >= 0) cudaSetDevice(device);
@@ -194,10 +193,18 @@ struct FactorEntry {
     if (handle) cudssDestroy(handle);
     for (int i = 0; i < options.device_count; ++i)
       if (mg_streams[i]) {
-        cudaSetDevice(options.devices[i]);
-        cudaStreamDestroy(mg_streams[i]);
+        auto status = cudaSetDevice(options.devices[i]);
+        // Vendor destruction can enqueue work outside the configured stream.
+        if (status == cudaSuccess) status = cudaDeviceSynchronize();
+        if (status == cudaSuccess) status = cudaStreamDestroy(mg_streams[i]);
+        if (status != cudaSuccess)
+          phx::cuda::set_cleanup_error("cuDSS MG teardown", cudaGetErrorString(status));
       }
-    if (previous >= 0) cudaSetDevice(previous);
+    if (previous >= 0) {
+      const auto status = cudaSetDevice(previous);
+      if (status != cudaSuccess)
+        phx::cuda::set_cleanup_error("cuDSS device restore", cudaGetErrorString(status));
+    }
   }
 };
 
@@ -282,10 +289,10 @@ static ffi::Error begin_phase(cudaStream_t stream, ffi::Buffer<ffi::S32>& token,
 }
 
 template <ffi::DataType T>
-static ffi::Error repoint(FactorEntry* e, cudaStream_t stream,
-                          ffi::Buffer<ffi::S32>& offsets,
-                          ffi::Buffer<ffi::S32>& columns,
-                          ffi::Buffer<ffi::U32>& fingerprint, ffi::Buffer<T>& values) {
+static ffi::Error validate_structure(const FactorEntry* e, cudaStream_t stream,
+                                     ffi::Buffer<ffi::S32>& offsets,
+                                     ffi::Buffer<ffi::S32>& columns,
+                                     ffi::Buffer<ffi::U32>& fingerprint, ffi::Buffer<T>& values) {
   if (offsets.element_count() != e->n + 1 || columns.element_count() != e->nnz ||
       values.element_count() != e->nnz || fingerprint.element_count() != 2)
     return ffi::Error::InvalidArgument("cuDSS token CSR structure size mismatch");
@@ -299,6 +306,16 @@ static ffi::Error repoint(FactorEntry* e, cudaStream_t stream,
   CUDA_CHECK(cudaStreamSynchronize(stream));
   if (fp[0] != e->fp[0] || fp[1] != e->fp[1])
     return ffi::Error::InvalidArgument("cuDSS CSR structure fingerprint mismatch; analyze the new pattern");
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType T>
+static ffi::Error repoint(FactorEntry* e, cudaStream_t stream,
+                          ffi::Buffer<ffi::S32>& offsets,
+                          ffi::Buffer<ffi::S32>& columns,
+                          ffi::Buffer<ffi::U32>& fingerprint, ffi::Buffer<T>& values) {
+  if (auto err = validate_structure(e, stream, offsets, columns, fingerprint, values); err.failure())
+    return err;
   CUDSS_CHECK(cudssMatrixSetCsrPointers(e->A, offsets.typed_data(), nullptr,
                                        columns.typed_data(), values.typed_data()));
   return ffi::Error::Success();
@@ -316,9 +333,11 @@ static ffi::Error execute(FactorEntry* e, cudaStream_t stream, cudssPhase_t phas
     for (int i = 0; i < e->options.device_count; ++i) {
       auto error = cudaSetDevice(e->options.devices[i]);
       if (error == cudaSuccess) error = cudaStreamSynchronize(e->mg_streams[i]);
+      if (error == cudaSuccess) error = cudaDeviceSynchronize();
       if (completion == cudaSuccess) completion = error;
     }
-    cudaSetDevice(e->device);
+    const auto restoration = cudaSetDevice(e->device);
+    if (completion == cudaSuccess) completion = restoration;
     CUDSS_CHECK(status);
     CUDA_CHECK(completion);
   }
@@ -524,7 +543,13 @@ static ffi::Error factor_for_read(cudaStream_t stream, ffi::Buffer<ffi::S32>& to
   if (auto err = begin_phase<T>(stream, token, options, lease); err.failure()) return err;
   auto& e = lease->entry;
   if (e) {
-    if (auto err = repoint(e.get(), stream, offsets, columns, fingerprint, values); err.failure()) return err;
+    // A resident read consumes the factors, not the caller's CSR storage.
+    // Native refinement is disabled; keep the factorized descriptor unchanged.
+    // Numeric phases rebind current operands, and rebuilds create a new A.
+    if (auto err = validate_structure(e.get(), stream, offsets, columns, fingerprint, values); err.failure()) {
+      registry().erase(lease->device, options.partition, lease->id);
+      return err;
+    }
   }
   *rebuilt = !e || !e->factorized;
   if (*rebuilt) {
@@ -537,7 +562,7 @@ static ffi::Error factor_for_read(cudaStream_t stream, ffi::Buffer<ffi::S32>& to
                                 1, lease->device, options, &e); err.failure()) return err;
     if (auto err = execute(e.get(), stream, CUDSS_PHASE_FACTORIZATION); err.failure()) return err;
     e->factorized = true;
-    registry().insert(lease->device, options.partition, options.capacity, e);
+    lease->id = registry().insert(lease->device, options.partition, options.capacity, e);
     registry().count_rebuild(lease->device, options.partition);
   }
   return ffi::Error::Success();
@@ -569,7 +594,11 @@ static ffi::Error solve(cudaStream_t stream, ffi::Buffer<ffi::S32> token,
   DensePair dense;
   CUDSS_CHECK(cudssMatrixCreateDn(&dense.b, e->n, nrhs, e->n, rhs.typed_data(), e->dtype, CUDSS_LAYOUT_COL_MAJOR));
   CUDSS_CHECK(cudssMatrixCreateDn(&dense.x, e->n, nrhs, e->n, output->typed_data(), e->dtype, CUDSS_LAYOUT_COL_MAJOR));
-  if (auto err = execute(e.get(), stream, CUDSS_PHASE_SOLVE, dense.x, dense.b); err.failure()) return err;
+  if (auto err = execute(e.get(), stream, CUDSS_PHASE_SOLVE, dense.x, dense.b); err.failure()) {
+    e->factorized = false;
+    registry().erase(lease.device, partition, lease.id);
+    return err;
+  }
   return write_scalar(stream, rebuilt_output, rebuilt);
 }
 
@@ -596,15 +625,25 @@ static ffi::Error diagonal(cudaStream_t stream, ffi::Buffer<ffi::S32> token,
 }
 
 static ffi::Error release(cudaStream_t stream, ffi::Buffer<ffi::S32> tokens,
-                           ffi::ResultBuffer<ffi::S32> output, int64_t partition) {
-  std::vector<int32_t> ids(tokens.element_count());
-  if (!ids.empty()) {
-    CUDA_CHECK(cudaMemcpyAsync(ids.data(), tokens.typed_data(), ids.size() * sizeof(int32_t),
-                               cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+                           ffi::ResultBuffer<ffi::S32> output, int64_t partition,
+                           int64_t release_partition) {
+  int32_t released = 0;
+  if (release_partition == 1) {
+    const auto completion = cudaStreamSynchronize(stream);
+    released = static_cast<int32_t>(registry().release_partition(partition));
+    CUDA_CHECK(completion);
+  } else {
+    if (release_partition != 0)
+      return ffi::Error::InvalidArgument("cuDSS release mode must be zero or one");
+    std::vector<int32_t> ids(tokens.element_count());
+    if (!ids.empty()) {
+      CUDA_CHECK(cudaMemcpyAsync(ids.data(), tokens.typed_data(), ids.size() * sizeof(int32_t),
+                                 cudaMemcpyDeviceToHost, stream));
+      CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
+    released = static_cast<int32_t>(
+        registry().release(partition, ids.data(), ids.size()));
   }
-  const auto released = static_cast<int32_t>(
-      registry().release(partition, ids.data(), ids.size()));
   if (output->element_count() == 1) return write_scalar(stream, output, released);
   // broadcast_all batches the result as well as the operands. Release is one
   // deduplicated operation; every output lane receives that operation's count.
@@ -661,7 +700,8 @@ DEFINE_HANDLERS(f64, ffi::F64);
 PHX_CUDA_EXPORT XLA_FFI_Error* phydrax_cudss_release(XLA_FFI_CallFrame*);
 XLA_FFI_DEFINE_HANDLER_SYMBOL(phydrax_cudss_release, release,
   ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
-    .Arg<ffi::Buffer<ffi::S32>>().Ret<ffi::Buffer<ffi::S32>>().Attr<int64_t>("partition"));
+    .Arg<ffi::Buffer<ffi::S32>>().Ret<ffi::Buffer<ffi::S32>>()
+    .Attr<int64_t>("partition").Attr<int64_t>("release_partition"));
 }
 
 PHX_CUDA_HANDLER_TABLE(

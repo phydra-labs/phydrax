@@ -21,7 +21,11 @@ import numpy as np
 from jax import Array, lax
 from jax.custom_batching import custom_vmap
 
-from ..._cuda_native import load_cuda_component, release_cuda_entries
+from ..._cuda_native import (
+    load_cuda_component,
+    release_cuda_entries,
+    release_cuda_partition,
+)
 from ..._strict import StrictModule
 
 
@@ -599,8 +603,10 @@ def diagonal(token: CudssToken, /) -> tuple[Array, Array]:
 
 
 def release(token: CudssToken, /) -> bool | Array:
+    if token.config[8] and not isinstance(token.id, jax_core.Tracer):
+        return release_cuda_partition("cudss", token.config[0]) > 0
     ids = token.id.reshape(-1)
-    if isinstance(ids, jax_core.Tracer):
+    if isinstance(token.id, jax_core.Tracer):
         load_cuda_component("cudss")
         return (
             jax.ffi.ffi_call(
@@ -608,7 +614,11 @@ def release(token: CudssToken, /) -> bool | Array:
                 _count_spec(),
                 has_side_effect=True,
                 vmap_method="broadcast_all",
-            )(ids, partition=np.int64(token.config[0]))[0]
+            )(
+                ids,
+                partition=np.int64(token.config[0]),
+                release_partition=np.int64(bool(token.config[8])),
+            )[0]
             > 0
         )
     return release_cuda_entries("cudss", token.config[0], ids) > 0

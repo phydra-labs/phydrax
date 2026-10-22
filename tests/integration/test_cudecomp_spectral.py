@@ -26,7 +26,6 @@ from phydrax._execution_launch import (
 
 
 _ROOT = Path(__file__).resolve().parents[2]
-_WORKER = _ROOT / "tests" / "_support" / "cuda_collective_worker.py"
 
 
 def _launch(
@@ -46,7 +45,8 @@ def _launch(
         port = coordinator.getsockname()[1]
     arguments = [
         sys.executable,
-        str(_WORKER),
+        "-m",
+        "tests._support.cuda_collective_worker",
         "--case",
         "cudecomp",
         "--dtype",

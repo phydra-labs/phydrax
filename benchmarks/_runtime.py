@@ -203,7 +203,11 @@ class CompilationTiming:
 
 @dataclass(frozen=True, slots=True)
 class CompilerEvidence:
-    """Compiler-estimated operation and executable-memory evidence."""
+    """Compiler-estimated operations and executable memory, not vendor allocations.
+
+    External-provider workspace and resident state require separate provider
+    evidence; known XLA buffer sizes do not certify a total allocation bound.
+    """
 
     flops: int | None
     bytes_accessed: int | None
@@ -437,7 +441,12 @@ def compiler_evidence(
     unavailable_reason: str | None = None,
     opaque_custom_calls: bool = False,
 ) -> CompilerEvidence:
-    """Normalize compiler estimates, retaining XLA's explicit unknown-cost marker."""
+    """Retain unknown costs without discarding independently known XLA memory.
+
+    ``opaque_custom_calls`` invalidates aggregate arithmetic and traffic totals,
+    including positive totals, but does not turn compiler buffer sizes into
+    estimates of external vendor workspace.
+    """
     if opaque_custom_calls:
         # Unknown per-call costs accumulate and can be masked by known work.
         # Even a positive aggregate cannot certify opaque arithmetic or traffic.

@@ -137,6 +137,7 @@ struct Parameters {
   }
   Parameters(const Parameters&) = delete;
   template<class T> void set(int attr, T v) { CUEST(cuestParametersConfigure(type, value, attr, &v, sizeof(v))); }
+  void abandon() noexcept { value = nullptr; }
 };
 // Every opaque object is destroyed before its user-owned persistent workspace.
 struct Object {
@@ -152,6 +153,7 @@ struct Object {
     budget->poison("cuEST object cleanup failed: status " + std::to_string(status));
     return false;
   }
+  void abandon() noexcept { value = nullptr; }
   ~Object() { clear(); }
   Object(const Object&) = delete;
   Object(Object&& other) noexcept
@@ -268,18 +270,42 @@ struct Entry {
   ~Entry() {
     int previous = device;
     const auto got_device = cudaGetDevice(&previous);
-    bool safe = cudaSetDevice(device) == cudaSuccess;
-    if (stream && cudaStreamSynchronize(stream) != cudaSuccess) safe = false;
+    const bool selected =
+        got_device == cudaSuccess && cudaSetDevice(device) == cudaSuccess;
+    const bool drained =
+        selected && (!stream || cudaStreamSynchronize(stream) == cudaSuccess);
+    if (!drained) {
+      for (auto& p : compute_parameters) {
+        if (p) p->abandon();
+        p.reset();
+      }
+      for (Object* o : {&df, &oe, &pair, &auxiliary, &primary, &handle})
+        o->abandon();
+      for (Workspace* w : {&scratch, &temporary, &df_ws, &oe_ws, &pair_ws,
+                           &auxiliary_ws, &primary_ws})
+        w->value = {};
+      blas = nullptr;
+      stream = nullptr;
+      budget->poison(
+          "cuEST teardown abandoned device resources after ownership or drain failure");
+      if (selected && got_device == cudaSuccess &&
+          cudaSetDevice(previous) != cudaSuccess)
+        budget->poison("cuEST device restore failed");
+      return;
+    }
+    bool safe = true;
     for (auto& p : compute_parameters) p.reset();
     // A failed vendor teardown may leave a live object using its workspace.
     // Abandon that storage, retaining its charge and poisoning this partition.
     for (Object* o : {&df, &oe, &pair, &auxiliary, &primary, &handle})
       if (!o->clear()) safe = false;
-    for (Workspace* w : {&scratch, &temporary, &df_ws, &oe_ws, &pair_ws, &auxiliary_ws, &primary_ws}) {
+    for (Workspace* w : {&scratch, &temporary, &df_ws, &oe_ws, &pair_ws,
+                         &auxiliary_ws, &primary_ws}) {
       if (safe) w->release();
       else w->value = {};
     }
-    if (!safe) budget->poison("cuEST teardown could not safely release owned workspace");
+    if (!safe)
+      budget->poison("cuEST teardown could not safely release owned workspace");
     if (blas && cublasDestroy(blas) != CUBLAS_STATUS_SUCCESS)
       budget->poison("cuEST cuBLAS cleanup failed");
     if (stream && cudaStreamDestroy(stream) != cudaSuccess)

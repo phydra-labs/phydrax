@@ -354,6 +354,11 @@ external-cache budget. Inspect `external_workspace_bound_bytes`,
 `external_cache_bound_bytes`, `vendor_host_bound_bytes`, and
 `derivative_contract` in execution evidence. Opaque vendor host descriptor
 storage has an **unknown** byte bound (`None`), not a zero-byte allocation.
+Release and shutdown retain the same accounting contract. Native cleanup verifies
+the owning CUDA device, drains submitted work, checks every vendor destruction
+status, and restores the prior device. If scratch or opaque objects cannot be
+shown released, the partition stays poisoned and charged; no later idempotent
+release can manufacture successful teardown evidence.
 
 The optional route is for explicitly prepared ordinary dense contractions.
 Abelian charge blocks, fermionic grading, reduced SU(2) tensors, and TRG/HOTRG

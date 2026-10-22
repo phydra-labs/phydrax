@@ -131,6 +131,9 @@ class GroupRegistry final : public phx::cuda::RegistryBase {
         throw std::runtime_error("cuDecomp group resources require collective lease retirement, not local release");
     return 0;
   }
+  int64_t release_partition(int64_t lease) override {
+    return release(lease, nullptr, 0);
+  }
   int64_t release_all() override {
     std::lock_guard<std::mutex> lock(mutex);
     if (!entries.empty()) throw std::runtime_error("retire live cuDecomp collective leases before release_all or shutdown");

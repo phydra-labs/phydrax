@@ -18,6 +18,8 @@ from numpy.typing import NDArray
 SIZES = (4, 4096, 1048580)
 STEPS = (0, 1, 2)
 MAX_BYTES = 16 * 1024 * 1024
+CONSUMER_SIZES = (4, 12, 16, 40, 1024)
+CONSUMER_ROUTES = ("peer-placement", "forced-copy", "host-control")
 
 
 class Ownership(TypedDict):
@@ -381,9 +383,188 @@ def peer_copies(runtime: ctypes.CDLL, rows: list[CopyEvidence]) -> None:
                         )
 
 
+def bare_ownership() -> list[Ownership]:
+    """Resolve physical identities using the driver, never an optional vendor DSO."""
+    import jax
+
+    driver = ctypes.CDLL("libcuda.so.1")
+    driver.cuInit.argtypes = (ctypes.c_uint,)
+    driver.cuDeviceGet.argtypes = (ctypes.POINTER(ctypes.c_int), ctypes.c_int)
+    driver.cuDeviceGetUuid.argtypes = (ctypes.c_void_p, ctypes.c_int)
+    checked(driver.cuInit(0), "cuInit")
+    rows: list[Ownership] = []
+    for device in jax.local_devices():
+        if device.platform != "gpu":
+            raise ValueError("Bare JAX transport requires physical CUDA devices")
+        handle, raw = ctypes.c_int(), ctypes.create_string_buffer(16)
+        checked(
+            driver.cuDeviceGet(ctypes.byref(handle), device.local_hardware_id),
+            "cuDeviceGet",
+        )
+        checked(driver.cuDeviceGetUuid(raw, handle), "cuDeviceGetUuid")
+        rows.append(
+            {
+                "rank": jax.process_index(),
+                "local_ordinal": device.local_hardware_id,
+                "gpu_uuid": "GPU-" + str(uuid.UUID(bytes=raw.raw)),
+                "platform": device.platform,
+            }
+        )
+    if len({row["gpu_uuid"] for row in rows}) != len(rows):
+        raise ValueError("Duplicate physical GPU UUIDs")
+    return rows
+
+
+def consumer_oracle(
+    source: int, destination: int, size: int, step: int
+) -> NDArray[np.int32]:
+    # Small signed values avoid overflow and expose stale inputs on every step.
+    return (pattern(source, destination, size, step) % np.uint32(100003)).astype(np.int32)
+
+
+def consumer_evidence(
+    expected: NDArray[np.int32],
+    ingress: NDArray[np.int32],
+    transferred: NDArray[np.int32],
+    consumed: NDArray[np.int32],
+    transfer_mismatches: int,
+    consumer_mismatches: int,
+) -> dict[str, Any]:
+    wanted = expected * np.int32(3) + np.int32(7)
+    row: dict[str, Any] = {}
+    for name, actual, reference in (
+        ("ingress", ingress, expected),
+        ("transfer", transferred, expected),
+        ("consumer", consumed, wanted),
+    ):
+        row[name + "_sha256"] = hashlib.sha256(actual.tobytes()).hexdigest()
+        row[name + "_prefix"] = actual[:8].tolist()
+        row[name + "_mismatch_count"] = int(np.count_nonzero(actual != reference))
+    for name, values in (("expected", expected), ("expected_consumer", wanted)):
+        row[name + "_sha256"] = hashlib.sha256(values.tobytes()).hexdigest()
+        row[name + "_prefix"] = values[:8].tolist()
+    row["device_transfer_mismatch_count"] = transfer_mismatches
+    row["device_consumer_mismatch_count"] = consumer_mismatches
+    stage = "none"
+    if row["ingress_mismatch_count"]:
+        stage = "source-ingress"
+    elif transfer_mismatches:
+        stage = "peer-transfer"
+    elif consumer_mismatches:
+        stage = "destination-consumer"
+    elif row["transfer_mismatch_count"] or row["consumer_mismatch_count"]:
+        stage = "host-readback"
+    row.update(failure_stage=stage, passed=stage == "none")
+    return row
+
+
+def jax_consumers(record: dict[str, Any], required_gpus: int) -> None:
+    import jax
+    import jax.numpy as jnp
+
+    identities = bare_ownership()
+    record["ownership"] = identities
+    if len(identities) != required_gpus:
+        raise ValueError("Visible physical GPUs differ from --required-gpus")
+    devices = jax.local_devices()
+
+    def consume(
+        value: jax.Array, reference: jax.Array
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        result = value * jnp.int32(3) + jnp.int32(7)
+        return (
+            result,
+            jnp.count_nonzero(value != reference),
+            jnp.count_nonzero(result != reference * jnp.int32(3) + jnp.int32(7)),
+        )
+
+    for destination, dst in enumerate(devices):
+        consumer = jax.jit(consume)
+        for source, src in enumerate(devices):
+            if source == destination:
+                continue
+            for size in CONSUMER_SIZES:
+                for step in STEPS:
+                    expected = consumer_oracle(source, destination, size, step)
+                    for route in CONSUMER_ROUTES:
+                        identity = dict(
+                            route=route,
+                            source_uuid=identities[source]["gpu_uuid"],
+                            destination_uuid=identities[destination]["gpu_uuid"],
+                            bytes=size,
+                            step=step,
+                        )
+                        stage = "source-ingress"
+                        try:
+                            placed = jax.device_put(expected, src)
+                            placed.block_until_ready()
+                            if placed.devices() != {src}:
+                                raise ValueError("Incorrect source placement")
+                            ingress = np.asarray(placed)
+                            stage = "peer-transfer"
+                            if route == "peer-placement":
+                                copied = jax.device_put(placed, dst)
+                            elif route == "forced-copy":
+                                copied = jax.device_put(placed, dst, may_alias=False)
+                            else:
+                                # This control is explicit; it never repairs a peer route.
+                                copied = jax.device_put(np.array(ingress, copy=True), dst)
+                            copied.block_until_ready()
+                            if copied.devices() != {dst}:
+                                raise ValueError("Incorrect destination placement")
+                            stage = "destination-consumer"
+                            reference = jax.device_put(expected, dst)
+                            result, transfer_bad, consumer_bad = consumer(
+                                copied, reference
+                            )
+                            result.block_until_ready()
+                            if result.devices() != {dst}:
+                                raise ValueError(
+                                    "Consumer did not execute at destination"
+                                )
+                            stage = "host-readback"
+                            row = consumer_evidence(
+                                expected,
+                                ingress,
+                                np.asarray(copied),
+                                np.asarray(result),
+                                int(transfer_bad),
+                                int(consumer_bad),
+                            )
+                            record["rows"].append(dict(identity, **row))
+                        except Exception as error:
+                            record["rows"].append(
+                                dict(
+                                    identity,
+                                    passed=False,
+                                    failure_stage=stage,
+                                    error=f"{type(error).__name__}: {error}",
+                                )
+                            )
+    count = (
+        required_gpus
+        * (required_gpus - 1)
+        * len(CONSUMER_ROUTES)
+        * len(CONSUMER_SIZES)
+        * len(STEPS)
+    )
+    record["coverage"] = {
+        "expected_consumer_observations": count,
+        "recorded_consumer_observations": len(record["rows"]),
+        "passed_consumer_observations": sum(
+            row["passed"] is True for row in record["rows"]
+        ),
+    }
+    record["passed"] = len(record["rows"]) == count and all(
+        row["passed"] for row in record["rows"]
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", choices=("inventory", "peer-copies"), required=True)
+    parser.add_argument(
+        "--case", choices=("inventory", "peer-copies", "jax-consumers"), required=True
+    )
     parser.add_argument("--required-gpus", type=int, choices=(1, 2, 4, 8), required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -398,6 +579,16 @@ def main() -> None:
         "rows": [],
         "errors": [],
     }
+    if args.case == "jax-consumers":
+        record.update(sizes_bytes=list(CONSUMER_SIZES), routes=list(CONSUMER_ROUTES))
+        try:
+            jax_consumers(record, args.required_gpus)
+        except Exception as error:
+            record["errors"].append(f"{type(error).__name__}: {error}")
+        write_json_evidence(args.output, record)
+        if not record["passed"]:
+            raise SystemExit(1)
+        return
     try:
         runtime = cuda_runtime()
         record.update(inventory(runtime))

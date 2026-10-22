@@ -157,6 +157,34 @@ void owner(const Lease& lease) {
   if (lease.owner != std::this_thread::get_id())
     throw std::runtime_error("collective lease calls must use the owning host thread");
 }
+void require_same_host(Lease& lease, int count, int member) {
+  MPI_Comm shared = MPI_COMM_NULL;
+  int shared_size = 0;
+  const int split_status = MPI_Comm_split_type(
+      lease.control, MPI_COMM_TYPE_SHARED, member, MPI_INFO_NULL, &shared);
+  int refused = split_status != MPI_SUCCESS || shared == MPI_COMM_NULL;
+  if (shared != MPI_COMM_NULL) {
+    const int size_status = MPI_Comm_size(shared, &shared_size);
+    refused |= size_status != MPI_SUCCESS || shared_size != count;
+    // Release even a communicator returned alongside an MPI error. No rank
+    // throws before the full participating group has agreed on refusal.
+    refused |= MPI_Comm_free(&shared) != MPI_SUCCESS;
+    if (shared != MPI_COMM_NULL) refused = 2;
+  }
+  int any_refused = 0;
+  check(MPI_Allreduce(&refused, &any_refused, 1, MPI_INT, MPI_MAX,
+                      lease.control), "collective shared-memory-domain agreement");
+  if (any_refused) {
+    check(MPI_Comm_free(&lease.control), "MPI_Comm_free refused collective control");
+    // An unreleased MPI resource cannot be made safe locally; retain the
+    // armed watchdog so this failure still terminates the coupled launch.
+    if (any_refused == 2)
+      throw std::runtime_error("MPI could not release the refused shared-memory communicator");
+    lease.supervisor.disarm();
+    throw std::runtime_error(
+        "collective lease requires every participating rank in one MPI shared-memory domain");
+  }
+}
 void agreement(Lease& lease, std::string_view identity) {
   constexpr size_t capacity = 4096;
   std::array<char, capacity> local{};
@@ -304,6 +332,7 @@ int phx_collective_create(int64_t source_fortran, int32_t process_index,
     check(MPI_Group_free(&group), "MPI_Group_free");
     check(MPI_Group_free(&parent), "MPI_Group_free");
     check(MPI_Comm_set_errhandler(lease->control, MPI_ERRORS_RETURN), "MPI_Comm_set_errhandler");
+    require_same_host(*lease, count, member);
     std::vector<int32_t> actual(count);
     check(MPI_Allgather(&process_index, 1, MPI_INT32_T, actual.data(), 1, MPI_INT32_T, lease->control), "JAX process membership agreement");
     if (!std::equal(actual.begin(), actual.end(), processes))

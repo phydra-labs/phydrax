@@ -97,6 +97,8 @@ def qualification_errors(record: dict[str, Any]) -> list[str]:
         or pcg["breakdown"]
         not in (int(KrylovBreakdownStatus.NONE), int(KrylovBreakdownStatus.HAPPY))
         or not math.isfinite(pcg["residual_norm"])
+        or not math.isfinite(pcg["residual_absolute_tolerance"])
+        or pcg["residual_absolute_tolerance"] < 0
         or not 0 <= pcg["residual_norm"] <= pcg["residual_absolute_tolerance"]
     ):
         errors.append("distributed_pcg residual or breakdown gate failed")
@@ -369,16 +371,33 @@ def _rank_record(
     launch_error: str | None,
 ) -> tuple[dict[str, Any], list[str]]:
     ranks = []
+    group_ids = []
     errors = [] if launch_error is None else [launch_error]
+    if sorted(result.process_id for result in results) != list(range(process_count)):
+        errors.append("supervised rank identities differ from requested topology")
     for result in results:
         try:
             rank = _terminal_record(result.stdout)
-            ranks.append(rank)
-            if rank["runtime"]["process_index"] != result.process_id:
+            runtime = rank["runtime"]
+            if (
+                type(runtime["process_index"]) is not int
+                or runtime["process_index"] != result.process_id
+            ):
                 errors.append(f"rank {result.process_id} identity differs")
-            if rank["passed"] is not True:
+            if runtime["process_count"] != process_count:
+                errors.append(f"rank {result.process_id} process count differs")
+            group_id = runtime["execution_group_id"]
+            if not isinstance(group_id, str) or not group_id:
+                raise ValueError("execution group identity must be nonempty")
+            group_ids.append(group_id)
+            ranks.append(rank)
+            if rank["passed"] is not True or rank["errors"] != []:
                 errors.append(f"rank {result.process_id} scientific gate failed")
-        except (ValueError, KeyError) as error:
+            errors.extend(
+                f"rank {result.process_id}: {error}"
+                for error in qualification_errors(rank)
+            )
+        except (ValueError, KeyError, TypeError, OverflowError) as error:
             errors.append(f"rank {result.process_id} terminal record: {error}")
         if result.returncode != 0:
             errors.append(f"rank {result.process_id} exited {result.returncode}")
@@ -386,7 +405,7 @@ def _rank_record(
             errors.append(f"rank {result.process_id} output was truncated")
     if len(ranks) != process_count:
         errors.append("missing terminal ranks")
-    if len({rank["runtime"]["execution_group_id"] for rank in ranks}) != 1:
+    if len(set(group_ids)) != 1:
         errors.append("terminal rank groups differ")
     record = dict(ranks[0]) if ranks else {}
     record.update(ranks=ranks, passed=not errors, errors=errors)
@@ -421,8 +440,8 @@ def _local_record(
     if arguments.required_gpus is not None:
         from tests._support.cuda_execution_worker import cuda_runtime, ownership
 
-        if any(device.platform != "gpu" for device in jax.devices()):
-            errors.append("physical CUDA qualification refuses CPU topology")
+        if any(device_vendor(device) != "nvidia" for device in jax.devices()):
+            errors.append("physical CUDA qualification requires NVIDIA devices")
         else:
             record["ownership"] = ownership(cuda_runtime())
         if jax.device_count() != arguments.required_gpus:
@@ -452,7 +471,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--expected-vendor")
     parser.add_argument("--expected-global-devices", type=int)
     parser.add_argument("--expected-local-devices", type=int)
-    parser.add_argument("--required-gpus", type=int)
+    parser.add_argument(
+        "--required-gpus",
+        type=int,
+        help="Require NVIDIA CUDA GPU count and physical ownership evidence.",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
@@ -474,6 +497,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         != arguments.local_processes * arguments.devices_per_process
     ):
         parser.error("required-gpus must equal the requested process/device product")
+    if arguments.required_gpus is not None and arguments.expected_vendor not in (
+        None,
+        "nvidia",
+    ):
+        parser.error(
+            "required-gpus requires expected-vendor nvidia, not AMD qualification"
+        )
     if arguments.local_processes > 1 and not arguments.worker:
         results, launch_error = _launch_ranks(arguments)
         record, errors = _rank_record(results, arguments.local_processes, launch_error)

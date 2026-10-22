@@ -105,6 +105,10 @@ def _block_shape(route: str, parts: int) -> tuple[int, ...]:
         raise ValueError("parts must be positive.")
     if route == "reduced-slabs":
         return (parts,)
+    if route == "cochain-cubic":
+        if parts not in (1, 8):
+            raise ValueError("Cubic PIC requires one or eight local devices.")
+        return (1, 1, 1) if parts == 1 else (2, 2, 2)
     if route not in _ROUTES:
         raise ValueError(f"Unknown route {route!r}.")
     second = math.isqrt(parts)
@@ -189,6 +193,36 @@ def _base(
                 _PIC.ReducedPICTransferPlan(grid),
             )
             return base, _species(capacity, 1), 1, (1.0,)
+        case "cochain-cubic":
+            grid = _D.TensorGridPlan(
+                tuple(_D.UniformCellAxisSpec(n, periodic=True) for n in counts),
+                axis_names=("x", "y", "z"),
+            ).prepare(jnp.asarray([[0.0] * 3, [n * 0.125 for n in counts]]))
+            bridge = _D.StructuredCochainBridge(grid)
+            species = _species(capacity, 3)
+            transfers = tuple(
+                _PIC.PICParticleCochainTransferPlan(bridge).prepare(
+                    _D.ChargedParticlePlan(
+                        plan.charge_model.base_specific_charge * jnp.ones((capacity,)),
+                        plan.species_id,
+                    ).prepare(plan.population.particles)
+                )
+                for plan in species
+            )
+            maxwell = phx.solver.CompatibleMaxwellPlan(
+                bridge,
+                sources=(phx.solver.PICMaxwellCurrentSourcePlan(),),
+                plan_id="pic-cubic-benchmark",
+            ).prepare()
+            base = phx.solver.CochainMaxwellPICFieldSolver(
+                maxwell,
+                phx.solver.CochainElectrostaticPlan(
+                    bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+                ),
+                transfers,
+                tuple(_PIC.ChargeConservingCurrentPlan(value) for value in transfers),
+            )
+            return base, species, 3, tuple(n * 0.125 for n in counts)
         case "spectral-global-fft-blocks" | "spectral-local-guarded-blocks":
             h = 0.125
             grid = _D.TensorGridPlan(
@@ -258,19 +292,32 @@ def _case(
     start = time.perf_counter()
     shape = _mesh_shape(_block_shape(route, parts))
     mesh = Mesh(
-        np.asarray(jax.devices()[:parts], dtype=object).reshape(shape),
-        ("x", "y")[: len(shape)],
+        np.asarray(
+            (jax.local_devices() if route == "cochain-cubic" else jax.devices())[:parts],
+            dtype=object,
+        ).reshape(shape),
+        ("x", "y", "z")[: len(shape)],
     )
     capacity = problem.capacity
     base, species, dimension, lengths = _base(route, problem, mesh)
-    solver = phx.solver.distribute_pic_field_solver(base, mesh)
+    solver = phx.solver.distribute_pic_field_solver(
+        base, mesh, **({"guard_cells": 2} if route == "cochain-cubic" else {})
+    )
     # Local-guarded PSATD keeps Gauss's law to its stencil truncation.
     tolerance = {"constraint_tolerance": 1e-2} if route.endswith("guarded-blocks") else {}
+    if route == "cochain-cubic":
+        tolerance = {"constraint_tolerance": 1e-6}
     pic = phx.solver.ElectromagneticPICPlan(solver, species=species, **tolerance)
     run = phx.solver.DistributedElectromagneticPICPlan(pic, packet_capacity=packet)
     preparation = time.perf_counter() - start
     dt = 0.4 * float(base.stable_step)
     position, velocity, active, mass = _particles(capacity, dimension, lengths)
+    if route == "cochain-cubic":
+        coordinates = np.asarray(list(np.ndindex(2, 2, 2)), dtype=np.float64)
+        owners = np.arange(capacity) % 8
+        position = (coordinates[owners] + 0.25 + 0.5 * position / lengths) * (
+            np.asarray(lengths) / 2
+        )
     start = time.perf_counter()
     state = jax.block_until_ready(
         run.initialize(
@@ -332,11 +379,19 @@ def _case(
             "field_sharded": evidence.field_sharded,
             "spectral_guard_cells": evidence.spectral_guard_cells,
             "guard_truncation": truncation,
+            "all_windows_strictly_local": all(
+                not np.all(solver.decomposition.window_indicator(owner))
+                for owner in range(parts)
+            ),
         },
+        "scope": "single-host native JAX; no cuDecomp or multi-host claim",
         "physics": {
             "successful": bool(result.successful),
             "migrated": int(result.migration.migrated),
             "rejection_reason": int(result.rejection_reason),
+            "physics_successful": bool(result.diagnostics.successful),
+            "electric_constraint": float(result.diagnostics.electric_constraint),
+            "packet_overflow": bool(result.migration.packet_overflow),
         },
         "acceptance": {
             "all_samples_accepted": all(row["passed"] for row in sample_outcomes),
@@ -437,6 +492,70 @@ def _field_difference(left: Any, right: Any) -> float:
     return max(differences) if all(map(math.isfinite, differences)) else math.inf
 
 
+def _particle_difference(left: Any, right: Any) -> float:
+    difference = 0.0
+    for actual, expected in zip(left.species, right.species, strict=True):
+        a, b = actual.population, expected.population
+        active_a, active_b = np.asarray(a.active), np.asarray(b.active)
+        ids_a = (np.asarray(a.id_hi, dtype=np.uint64) << np.uint64(32)) | np.asarray(
+            a.id_lo, dtype=np.uint64
+        )
+        ids_b = (np.asarray(b.id_hi, dtype=np.uint64) << np.uint64(32)) | np.asarray(
+            b.id_lo, dtype=np.uint64
+        )
+        order_a, order_b = np.argsort(ids_a[active_a]), np.argsort(ids_b[active_b])
+        if not np.array_equal(ids_a[active_a][order_a], ids_b[active_b][order_b]):
+            return math.inf
+        for x, y in (
+            (a.mass, b.mass),
+            (actual.particles.position, expected.particles.position),
+            (actual.particles.proper_velocity, expected.particles.proper_velocity),
+        ):
+            error = float(
+                np.max(
+                    np.abs(
+                        np.asarray(x)[active_a][order_a]
+                        - np.asarray(y)[active_b][order_b]
+                    ),
+                    initial=0.0,
+                )
+            )
+            if not math.isfinite(error):
+                return math.inf
+            difference = max(difference, error)
+    return difference
+
+
+def _cubic_scaling(
+    packet: int, warmup: int, repeats: int
+) -> tuple[list[dict[str, object]], list[str]]:
+    records, errors = [], []
+    for width, slots in ((6, 16), (8, 32)):
+        problem = _Problem((2 * width,) * 3, 8 * slots)
+        reference_record, reference = _case(
+            "cochain-cubic", 1, problem, packet, warmup, repeats
+        )
+        record, state = _case("cochain-cubic", 8, problem, packet, warmup, repeats)
+        difference = _field_difference(state, reference)
+        record["field_difference_from_one_device"] = (
+            difference if math.isfinite(difference) else None
+        )
+        failures = _case_errors(reference_record) + _case_errors(record, reference=True)
+        particle_error = _particle_difference(state, reference)
+        record["particle_difference_from_one_device"] = (
+            particle_error if math.isfinite(particle_error) else None
+        )
+        if not math.isfinite(particle_error) or particle_error > 1e-11:
+            failures.append("PIC particle identity/conservation/parity failed")
+        evidence = record["evidence"]
+        if not isinstance(evidence, dict) or not evidence["all_windows_strictly_local"]:
+            failures.append("PIC cubic guarded windows are not strictly local")
+        record.update(passed=not failures, errors=failures, reference=reference_record)
+        records.append(record)
+        errors.extend(f"cochain-cubic/local-{width}: {error}" for error in failures)
+    return records, errors
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--routes", nargs="+", choices=_ROUTES, default=list(_ROUTES))
@@ -446,6 +565,11 @@ def main() -> None:
     parser.add_argument("--packet-capacity", type=int, default=128)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--cubic-scaling",
+        action="store_true",
+        help="Also qualify bounded 2x2x2 cochain cases (local widths 6/8, slots 16/32).",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     parts = sorted(args.parts)
@@ -465,6 +589,8 @@ def main() -> None:
             "slots, packet capacity, and repeats must be positive; warmup must be nonnegative."
         )
     timing = (args.warmup, args.repeats)
+    if args.cubic_scaling and len(jax.local_devices()) < 8:
+        raise ValueError("Cubic scaling requires eight devices on this host.")
     routes = {}
     errors = []
     for route in args.routes:
@@ -497,6 +623,10 @@ def main() -> None:
             errors.extend(f"{route}/strong/{count}: {error}" for error in failures)
             strong.append(record)
         routes[route] = {"weak_scaling": weak, "strong_scaling": strong}
+    if args.cubic_scaling:
+        cubic, failures = _cubic_scaling(args.packet_capacity, *timing)
+        routes["cochain-cubic"] = {"local_problem_scaling": cubic}
+        errors.extend(failures)
     payload = {
         "passed": not errors,
         "errors": errors,
@@ -509,6 +639,7 @@ def main() -> None:
             "packet_capacity": args.packet_capacity,
             "warmup": args.warmup,
             "repeats": args.repeats,
+            "cubic_scaling": args.cubic_scaling,
         },
         "routes": routes,
     }

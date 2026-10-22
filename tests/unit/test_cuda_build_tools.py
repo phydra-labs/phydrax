@@ -1,13 +1,83 @@
 """CUDA 13 build and resolver gates refuse incompatible runtime artifacts."""
 
 import json
+import platform
+import shutil
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from email.message import Message
 from pathlib import Path
 
 import pytest
 
 from tools import build_cuda_wheels as build, check_cuda_extras as extras
+
+
+@pytest.mark.parametrize("failure", ["architecture", "archive-hash"])
+def test_cuest_runtime_recipe_refuses_invalid_build_inputs(
+    tmp_path: Path, failure: str
+) -> None:
+    cmake = shutil.which("cmake")
+    if cmake is None:
+        pytest.skip("runtime packaging coverage requires CMake")
+    if sys.platform != "linux" or platform.machine() not in ("x86_64", "aarch64"):
+        pytest.skip("runtime packaging coverage requires a supported Linux host")
+    source = Path(__file__).resolve().parents[2] / "native/cuest_runtime"
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    archive_platform = "linux-x86_64" if platform.machine() == "x86_64" else "linux-sbsa"
+    archive = downloads / f"libcuest-{archive_platform}-0.2.2.2_cuda13-archive.tar.xz"
+    archive.write_bytes(b"Untrusted archive: must be refused before extraction")
+    command = [
+        cmake,
+        "-S",
+        str(source.resolve()),
+        "-B",
+        str(tmp_path / "build"),
+        f"-DPHX_CUDA_DOWNLOAD_DIR={downloads}",
+        f"-DSKBUILD_METADATA_DIR={tmp_path / 'metadata'}",
+    ]
+    if failure == "architecture":
+        command.extend(["-DCMAKE_SYSTEM_NAME=Linux", "-DCMAKE_SYSTEM_PROCESSOR=riscv64"])
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    diagnostic = (
+        "do not support cross-compilation"
+        if failure == "architecture"
+        else "archive SHA256 mismatch"
+    )
+    assert diagnostic in result.stdout + result.stderr
+    assert not (tmp_path / "build/cuest-support").exists()
+
+
+def test_cuda_metadata_records_core_and_cuest_intent() -> None:
+    metadata = Message()
+    metadata["Version"] = "0.2.2"
+    metadata["Provides-Extra"] = "cuda13"
+    metadata["Provides-Extra"] = "cuest"
+    metadata["Requires-Dist"] = 'phydrax-cuda-major==13.*; extra == "cuda13"'
+    metadata["Requires-Dist"] = 'phydrax-cuda-major==13.*; extra == "cuest"'
+    metadata["Requires-Dist"] = (
+        "phydrax-cuda13==0.2.2; "
+        '(sys_platform == "linux" and '
+        '(platform_machine == "x86_64" or platform_machine == "aarch64")) '
+        'and extra == "cuda13"'
+    )
+    assert extras.metadata_errors(metadata) == []
+
+    incomplete = Message()
+    incomplete["Version"] = "0.2.2"
+    incomplete["Provides-Extra"] = "cuda13"
+    incomplete["Provides-Extra"] = "cuest"
+    incomplete["Requires-Dist"] = 'phydrax-cuda-major==13.*; extra == "cuda13"'
+    requirements = metadata.get_all("Requires-Dist")
+    if requirements is None:
+        raise AssertionError("complete metadata fixture lost its requirements")
+    incomplete["Requires-Dist"] = requirements[-1]
+    assert any(
+        "marker requirements" in error for error in extras.metadata_errors(incomplete)
+    )
 
 
 @pytest.fixture
