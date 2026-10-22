@@ -1651,6 +1651,7 @@ def _execute_surface_envelope_route(
         {
             "kind": "native-surface-envelope-volume",
             "plan": plan_id,
+            "specification": specification.specification_id,
             "envelope": source.envelope.envelope_id,
             "preserved_carrier": source.envelope.carrier_id,
             "wrapping_evidence": asdict(evidence),
@@ -1766,45 +1767,55 @@ def _admit_surface_envelope_record(
             admit(0, storage - text_buffers, text_buffers)
             if isinstance(current, str):
                 text_owners[id(current)] = current
-            if isinstance(current, np.dtype):
-                descendants = iter((current.fields, current.subdtype, current.metadata))
-            elif isinstance(current, Fraction):
-                descendants = iter((current.numerator, current.denominator))
-            elif isinstance(current, Enum):
-                # Constructor parsing/equality uses the existing enum value;
-                # neither rebuilds its class/name/value object graph.
-                descendants = iter(())
-            elif isinstance(current, np.generic):
-                descendants = iter((current.dtype, current.item()))
-            elif isinstance(current, memoryview):
-                descendants = iter((current.obj,))
-            elif isinstance(current, FormValueSpec):
-                descendants = iter(
-                    (current.form_type, current.proxy, current.value_spec_id)
-                )
-            elif isinstance(current, FormType):
-                descendants = iter(
-                    (
-                        current.dimension,
-                        current.degree,
-                        current.twist,
-                        current.fiber_shape,
-                        current.ambient_dimension,
-                        current.form_type_id,
+            match current:
+                case np.dtype():
+                    descendants = iter(
+                        (current.fields, current.subdtype, current.metadata)
                     )
-                )
-            elif current is None or isinstance(
-                current, (str, bytes, bytearray, int, float, complex, type)
-            ):
-                continue
-            elif is_dataclass(current) or isinstance(
-                current, (Mapping, tuple, list, set, frozenset, MethodType)
-            ):
-                descendants = iter(_model_owner_children(current))
-            else:
-                raise TypeError(
-                    "SurfaceEnvelope.repair_preparation.owner must have declared model fields; got an unsupported host owner"
-                )
+                case Fraction():
+                    descendants = iter((current.numerator, current.denominator))
+                case Enum():
+                    # Constructor parsing/equality uses the existing enum value;
+                    # neither rebuilds its class/name/value object graph.
+                    descendants = iter(())
+                case np.generic():
+                    descendants = iter((current.dtype, current.item()))
+                case memoryview():
+                    descendants = iter((current.obj,))
+                case FormValueSpec():
+                    descendants = iter(
+                        (current.form_type, current.proxy, current.value_spec_id)
+                    )
+                case FormType():
+                    descendants = iter(
+                        (
+                            current.dimension,
+                            current.degree,
+                            current.twist,
+                            current.fiber_shape,
+                            current.ambient_dimension,
+                            current.form_type_id,
+                        )
+                    )
+                case (
+                    None
+                    | str()
+                    | bytes()
+                    | bytearray()
+                    | int()
+                    | float()
+                    | complex()
+                    | type()
+                ):
+                    continue
+                case Mapping() | tuple() | list() | set() | frozenset() | MethodType():
+                    descendants = iter(_model_owner_children(current))
+                case _ if is_dataclass(current):
+                    descendants = iter(_model_owner_children(current))
+                case _:
+                    raise TypeError(
+                        "SurfaceEnvelope.repair_preparation.owner must have declared model fields; got an unsupported host owner"
+                    )
         identifier = id(current)
         if identifier in active:
             raise ValueError(
@@ -1889,7 +1900,7 @@ def _certified_surface_envelope_domain(
         or not result.audit.passed
         or not result.compliance.passed
         or report.embedding is None
-        or report.coverage is None
+        or not isinstance(report.coverage, DomainCoverageCertificate)
         or not isinstance(report.request.domain, PiecewiseLinearDomain)
     ):
         raise ValueError(
@@ -1987,7 +1998,7 @@ def _require_surface_envelope_payload_schema(payload: dict[str, Any], /) -> None
         "exact_repaired_volume",
     }
     history = (
-        ("plan",)
+        ("plan", "specification")
         if payload["kind"] == "native-surface-envelope-volume"
         else ("source", "repair_provenance")
     )
@@ -2015,6 +2026,21 @@ def _surface_envelope_provenance_bounds(
     return work, storage
 
 
+_SURFACE_ENVELOPE_OWNER_KINDS = frozenset(
+    ("native-surface-envelope-volume", "native-adapted-surface-envelope-volume")
+)
+
+
+def _declares_surface_envelope_repair(result: CellMeshingResult, /) -> bool:
+    # The provenance owner authenticates this index at construction and restore.
+    # Metrics independently detect stripped history without parsing unrelated JSON.
+    return result.provenance.content_kind in _SURFACE_ENVELOPE_OWNER_KINDS or any(
+        name in _SURFACE_ENVELOPE_REPAIR_METRIC_NAMES
+        for group in (result.compliance.requested, result.compliance.achieved)
+        for name, _ in group
+    )
+
+
 @contextmanager
 def _surface_envelope_repair_payload(
     result: CellMeshingResult,
@@ -2023,6 +2049,9 @@ def _surface_envelope_repair_payload(
     budget: CoordinateEnclosureBudget,
 ) -> Iterator[dict[str, Any] | None]:
     """Keep authenticated decoded records inside their admitted host lifetime."""
+    if not _declares_surface_envelope_repair(result):
+        yield None
+        return
     provenance = result.provenance
     resources = budget.live_object_storage_upper(provenance.resource_ids)
     work, storage = _surface_envelope_provenance_bounds(
@@ -2051,13 +2080,16 @@ def _classify_surface_envelope_repair_payload(
         if isinstance(encoded, dict) and encoded.get("kind") == "mapping"
         else {}
     )
-    if payload.get("kind") in (
-        "native-surface-envelope-volume",
-        "native-adapted-surface-envelope-volume",
-    ):
+    if payload.get("kind") in _SURFACE_ENVELOPE_OWNER_KINDS:
         _require_surface_envelope_payload_schema(payload)
+        if (
+            payload["kind"] == "native-surface-envelope-volume"
+            and payload["specification"] != result.compliance.specification_id
+        ):
+            raise ValueError(
+                "SurfaceEnvelope.repair_provenance.specification must match the published request; got foreign specification"
+            )
         return payload
-    # No retained source-kind field distinguishes an envelope from another PLC.
     # Only this owner's declared requested/achieved metric schema reserves repair
     # history here; generic topology repairs and unrelated payload keys do not.
     if any(
@@ -2359,61 +2391,257 @@ def _retained_surface_envelope_repair(
         yield payload, evidence, policy, stage, domain
 
 
+def _require_surface_envelope_anchor(
+    source: native_sources_owner.NativeSurfaceEnvelopeSource,
+    /,
+    *,
+    limits: MeshingLimits,
+) -> None:
+    """Authenticate an authored anchor by rewrapping its retained source once.
+
+    Self-consistent identities are not evidence: ``SurfaceEnvelope`` permits
+    construction from supplied evidence, so the native wrap of the retained
+    input source must reproduce the whole anchor, including its repaired
+    PLC and solid binding. The caller's request ``limits`` govern this replay:
+    the wrap and binding scopes nest under them, so the envelope policy's own
+    maxima never self-authorize it. No mutable registry is consulted.
+    """
+    if (
+        type(source) is not native_sources_owner.NativeSurfaceEnvelopeSource
+        or type(source.envelope) is not SurfaceEnvelope
+    ):
+        raise TypeError(
+            f"SurfaceEnvelope.anchor must be an authored NativeSurfaceEnvelopeSource; got {type(source).__name__}"
+        )
+    regions = source.plc_source.complex.region_ids
+    if len(regions) != 1:
+        raise ValueError(
+            f"SurfaceEnvelope.anchor must declare one solid region; got {regions!r}"
+        )
+    envelope = source.envelope
+    record = envelope.execution_evidence
+    with _meshcore.NativeExecutionScope(limits.native_limits()) as scope:
+        fresh = wrap_surface_envelope(envelope.source, envelope.policy)
+        rebuilt = native_sources_owner.NativeSurfaceEnvelopeSource(fresh, regions[0])
+        # The fresh settlement record is this replay's; the anchor retains its
+        # authored one, which must name the reproduced envelope.
+        rebuilt = eqx.tree_at(
+            lambda value: value.envelope.execution_evidence,
+            rebuilt,
+            record,
+            is_leaf=lambda value: value is None,
+        )
+        # The comparison traverses every declared owner of both graphs,
+        # including static records; the record admission charges each visit
+        # and its copy/fingerprint storage under the same request allowance.
+        with (
+            _surface_envelope_scope_budget(scope, limits) as budget,
+            _surface_envelope_record_preparation((rebuilt, source), budget=budget),
+        ):
+            reproduced = (
+                record is None or record.owner_id == fresh.envelope_id
+            ) and tree_content_equal(rebuilt, source)
+            budget.ticket.checkpoint()
+    if not reproduced:
+        raise ValueError(
+            "SurfaceEnvelope.anchor must reproduce from the native wrap of its retained source and policy; got changed wrapping evidence, repaired surface, carrier or solid binding"
+        )
+
+
+def _require_authored_surface_envelope_history(
+    anchor: native_sources_owner.NativeSurfaceEnvelopeSource,
+    payload: dict[str, Any],
+    evidence: SurfaceEnvelopeEvidence,
+    policy: SurfaceEnvelopePolicy,
+    stages: tuple[MeshingStageReport, ...],
+    /,
+) -> MeshingStageReport:
+    """Compare decoded history with its independently authored envelope owner."""
+    envelope = anchor.envelope
+    stage = _surface_envelope_repair_stage(
+        envelope.evidence, anchor.source_id, anchor.source_revision
+    )
+    if (
+        evidence != envelope.evidence
+        or policy.policy_id != envelope.policy.policy_id
+        or payload["envelope"] != envelope.envelope_id
+        or payload["preserved_carrier"] != envelope.carrier_id
+        or stage not in stages
+    ):
+        raise ValueError(
+            "SurfaceEnvelope.repair_provenance must match the retained authored envelope; got foreign repair provenance"
+        )
+    return stage
+
+
+def _require_surface_envelope_adaptation_source(
+    result: CellMeshingResult,
+    payload: dict[str, Any] | None,
+    anchor: native_sources_owner.NativeSurfaceEnvelopeSource | None,
+    /,
+) -> None:
+    """Admit a result's repair history only together with its authored anchor.
+
+    A result without envelope history and without an anchor is unaffected; an
+    anchor requires history, and history requires its anchor.
+    """
+    if payload is None:
+        if anchor is not None:
+            raise ValueError(
+                "MeshAdaptationPolicy.envelope_source must anchor retained surface-envelope repair history; got a result without envelope provenance"
+            )
+        return
+    if anchor is None:
+        raise ValueError(
+            "MeshAdaptationPolicy.envelope_source must supply the independently authored envelope of retained repair history; got None"
+        )
+    evidence, policy = _decode_surface_envelope_repair(payload)
+    _require_authored_surface_envelope_history(
+        anchor, payload, evidence, policy, result.trace.stages
+    )
+    _require_surface_envelope_repair_metrics(result, evidence, policy)
+
+
+@contextmanager
+def _surface_envelope_authentication_budget(
+    limits: MeshingLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> Iterator[CoordinateEnclosureBudget]:
+    if budget is not None:
+        with budget.activate(), budget.bound_stage(
+            limits.maximum_work_units, limits.maximum_scratch_bytes
+        ):
+            yield budget
+        return
+    # A standalone call owns its independently supplied specification allowance.
+    with (
+        _meshcore.NativeExecutionScope(limits.native_limits()) as scope,
+        _surface_envelope_scope_budget(scope, limits) as budget,
+    ):
+        yield budget
+
+
+@contextmanager
+def _surface_envelope_scope_budget(
+    scope: _meshcore.NativeExecutionScope, limits: MeshingLimits, /
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Meter host authentication within an already open request scope."""
+    from .providers._native_publication import coordinate_budget, coordinate_phase
+
+    budget = coordinate_budget(limits)
+    with budget.retained_storage(lambda amount: scope.batch(0, bytes_upper=amount)):
+        with (
+            coordinate_phase(scope, limits, budget),
+            budget.measurement(),
+            budget.activate(),
+        ):
+            yield budget
+
+
 def _require_surface_envelope_repair_provenance(
     source: native_sources_owner.NativeSurfaceEnvelopeSource,
     result: CellMeshingResult,
     /,
     *,
     limits: MeshingLimits,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> None:
     """Authenticate retained repair history against its independently kept author."""
-    report = result.certification
-    if report is None:
+    if result.certification is None:
         raise ValueError(
             "SurfaceEnvelope.repair_provenance.certification must retain the declared request limits; got no volume certificate"
         )
-    # This allowance is independently supplied by the caller's specification.
-    from .providers._native_publication import coordinate_budget, coordinate_phase
+    with (
+        _surface_envelope_authentication_budget(limits, budget=budget) as budget,
+        _retained_surface_envelope_repair(result, budget=budget) as retained,
+    ):
+        if retained is None:
+            raise ValueError(
+                "SurfaceEnvelope.repair_provenance must retain its declared envelope owner; got another provenance kind"
+            )
+        payload, evidence, policy, stage, _ = retained
+        _require_authored_surface_envelope_history(
+            source, payload, evidence, policy, (stage,)
+        )
 
-    with _meshcore.NativeExecutionScope(limits.native_limits()) as scope:
-        budget = coordinate_budget(limits)
-        with budget.retained_storage(lambda amount: scope.batch(0, bytes_upper=amount)):
-            with (
-                coordinate_phase(scope, limits, budget),
-                budget.measurement(),
-                budget.activate(),
-            ):
-                with _retained_surface_envelope_repair(result, budget=budget) as retained:
-                    if retained is None:
-                        raise ValueError(
-                            "SurfaceEnvelope.repair_provenance must retain its declared envelope owner; got another provenance kind"
-                        )
-                    payload, evidence, policy, stage, _ = retained
-                    if (
-                        evidence != source.envelope.evidence
-                        or policy.policy_id != source.envelope.policy.policy_id
-                        or payload["envelope"] != source.envelope.envelope_id
-                        or payload["preserved_carrier"] != source.envelope.carrier_id
-                        or stage.output_ids[:2]
-                        != (source.source_id, source.source_revision)
-                    ):
-                        raise ValueError(
-                            "SurfaceEnvelope.repair_provenance must match the retained authored envelope; got foreign repair provenance"
-                        )
+
+def _require_surface_envelope_result_anchor(
+    anchor: native_sources_owner.NativeSurfaceEnvelopeSource | None,
+    result: CellMeshingResult,
+    /,
+    *,
+    limits: MeshingLimits,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> None:
+    """Authenticate the result/anchor relationship under the request allowance.
+
+    This decodes and compares retained history without the certified-domain
+    replay, so restored preparations and unchanged outcomes cannot pair one
+    envelope's history with another anchor.
+    """
+    if not _declares_surface_envelope_repair(result):
+        _require_surface_envelope_adaptation_source(result, None, anchor)
+        return
+    with (
+        _surface_envelope_authentication_budget(limits, budget=budget) as budget,
+        _surface_envelope_repair_payload(result, budget=budget) as payload,
+    ):
+        _require_surface_envelope_adaptation_source(result, payload, anchor)
+
+
+def _require_anchored_surface_envelope_target(
+    anchor: native_sources_owner.NativeSurfaceEnvelopeSource | None,
+    result: CellMeshingResult,
+    /,
+    *,
+    limits: MeshingLimits,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> None:
+    """Re-authenticate a replayed changed adaptation target in one allowance.
+
+    An anchored transition must carry the authored history; the full
+    provenance check requires it and validates metrics, certificates and
+    authored ownership. An unanchored one must carry none.
+    """
+    if anchor is None:
+        _require_surface_envelope_result_anchor(
+            None, result, limits=limits, budget=budget
+        )
+    else:
+        _require_surface_envelope_repair_provenance(
+            anchor, result, limits=limits, budget=budget
+        )
 
 
 def _carry_surface_envelope_repair(
     source: CellMeshingResult,
     target: CellMeshingResult,
+    anchor: native_sources_owner.NativeSurfaceEnvelopeSource | None,
     /,
     *,
     budget: CoordinateEnclosureBudget,
 ) -> CellMeshingResult:
-    """Retain only authenticated repair invariants after target certification."""
+    """Carry repair invariants only from the independently authored envelope."""
     with _retained_surface_envelope_repair(source, budget=budget) as retained:
         if retained is None:
+            if anchor is not None:
+                raise ValueError(
+                    "MeshAdaptationPolicy.envelope_source must anchor retained surface-envelope repair history; got a source result without envelope provenance"
+                )
             return target
+        if anchor is None:
+            raise ValueError(
+                "MeshAdaptationPolicy.envelope_source must supply the independently authored envelope of retained repair history; got None"
+            )
         payload, evidence, policy, stage, domain = retained
+        stage = _require_authored_surface_envelope_history(
+            anchor, payload, evidence, policy, (stage,)
+        )
+        # Carried records come from the authored owner, not the decoded payload.
+        envelope = anchor.envelope
+        evidence, policy = envelope.evidence, envelope.policy
         target_domain = _certified_surface_envelope_domain(target, budget=budget)
         _require_surface_envelope_associations(
             target, *stage.output_ids[:2], budget=budget
@@ -2448,8 +2676,8 @@ def _carry_surface_envelope_repair(
                 "kind": "native-adapted-surface-envelope-volume",
                 "source": source.result_id,
                 "repair_provenance": source.provenance.semantic_id,
-                "envelope": payload["envelope"],
-                "preserved_carrier": payload["preserved_carrier"],
+                "envelope": envelope.envelope_id,
+                "preserved_carrier": envelope.carrier_id,
                 "wrapping_evidence": asdict(evidence),
                 "wrapping_policy": _surface_envelope_policy_payload(policy),
                 "exact_repaired_volume": target.provenance.content_id,

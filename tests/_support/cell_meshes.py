@@ -455,4 +455,7 @@ def storage(mesh: CellMesh, geometry: CellGeometrySpec) -> CellMeshStorage:
         coordinate_global_ids=coordinate_ids,
         coordinate_owner=owners,
         local_geometry=geometry,
+        local_physical_boundary_entities=tuple(
+            entity.subset("boundary").mask for entity in mesh.topology.entity_sets
+        ),
     )

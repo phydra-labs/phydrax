@@ -35,26 +35,39 @@ from ..._strict import StrictModule
 from ..._validation import nonnegative_integer, positive_integer
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...typing import checked
-from .._interval_enclosure import interval_subtract, PreparedIntervalFunction
+from .._interval_enclosure import (
+    interval_add,
+    interval_subtract,
+    PreparedIntervalFunction,
+)
 from ._carrier_pieces import CurvePiece
 from ._coordinate_request import coordinate_source_request
-from ._correspondence import bernstein_rational_piece, RationalCurveSurfaceJets
+from ._correspondence import bernstein_rational_piece, curve_surface_chain_jet
+from ._curve_approximation_topology import prepare_root_gauge
 from ._intersection_curve import (
+    coupled_cell_source_jets,
+    CoupledCellSourceJets,
     curve_pieces_for_interval,
-    intersection_derivative_bounds,
     IntersectionCurve,
     IntersectionJetPreparation,
     surface_pieces_for_box,
 )
 from ._patches import (
     AbstractCurve,
+    AbstractSurfacePatch,
     BernsteinCurvePiece,
     BSplineCurve,
     BSplineSurfacePatch,
-    rational_piece_jet_bounds,
+    coefficient_enclosures,
+    rational_piece_jets,
+    RationalBezierPiece,
 )
 from ._request_preparations import TrimRequestPreparations
 from ._source_correspondence import norm_upper
+
+# Cells sharing one batched source pass: two chart queries per cell fill one
+# capacity-64 contraction chunk.
+_WAVE_CELLS = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,11 +258,17 @@ class _IntervalMap:
     def evaluate(
         self, box: tuple[np.ndarray, np.ndarray]
     ) -> tuple[np.ndarray, np.ndarray]:
+        lower, upper = self.evaluate_rows(box[0][None], box[1][None])
+        return lower[0], upper[0]
+
+    def evaluate_rows(
+        self, lower: np.ndarray, upper: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Charge one jet per row; chunks share the capacity-sized workspace."""
         self.budget.reserve(self.workspace, "evaluating source or spline interval jets")
         try:
-            self.budget.jets += 1
-            lower, upper = self.prepared.evaluate(box[0][None], box[1][None])
-            return lower[0], upper[0]
+            self.budget.jets += lower.shape[0]
+            return self.prepared.evaluate(lower, upper)
         finally:
             self.budget.release(self.workspace)
 
@@ -259,13 +278,14 @@ def _map(
     dimension: int,
     coefficients: tuple[tuple[np.ndarray, np.ndarray, np.ndarray], ...],
     budget: _Budget,
+    capacity: int = 1,
 ) -> _IntervalMap:
     # Build the prepared interpreter without its eager validation
     # allocation; validation is performed through the bounded evaluator below.
     # Tracing metadata is owned by JAX, not numeric interval proof workspace.
-    budget.reserve(16 * dimension, "tracing one fixed-size interval input")
+    budget.reserve(16 * dimension * capacity, "tracing one fixed-size interval input")
     try:
-        probe = jnp.zeros((1, dimension), dtype=jnp.float64)
+        probe = jnp.zeros((capacity, dimension), dtype=jnp.float64)
         closed = jax.make_jaxpr(jax.vmap(function))(probe)
         if len(closed.jaxpr.outvars) != 1:
             raise ValueError(
@@ -278,17 +298,17 @@ def _map(
             )
         shape = tuple(output_aval.shape[1:])
         prepared = PreparedIntervalFunction(
-            closed, dimension, shape, 1, tuple(coefficients)
+            closed, dimension, shape, capacity, tuple(coefficients)
         )
     finally:
-        budget.release(16 * dimension)
+        budget.release(16 * dimension * capacity)
     result = _IntervalMap(prepared, budget)
     result.evaluate((np.zeros(dimension), np.ones(dimension)))
     return result
 
 
 class _BatchMap:
-    """Adapt a counted one-box interpreter to the interval batch protocol."""
+    """Adapt a counted interpreter to the interval batch protocol."""
 
     def __init__(self, interval_map: _IntervalMap) -> None:
         self.interval_map = interval_map
@@ -296,12 +316,7 @@ class _BatchMap:
     def evaluate(
         self, lower: np.ndarray, upper: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
-        if lower.shape[0] != 1:
-            raise ValueError(
-                f"CoupledApproximation.boxes must contain one interval box; got {lower.shape[0]} boxes"
-            )
-        result = self.interval_map.evaluate((lower[0], upper[0]))
-        return result[0][None], result[1][None]
+        return self.interval_map.evaluate_rows(lower, upper)
 
 
 class _SourceJets:
@@ -310,13 +325,13 @@ class _SourceJets:
     def __init__(self, source: IntersectionCurve, budget: _Budget) -> None:
         self.source = source
 
-        def observe_point_jet() -> None:
-            budget.jets += 1
+        def observe_point_jet(rows: int) -> None:
+            budget.jets += rows
 
         self.preparation = IntersectionJetPreparation(
             source,
-            prepare=lambda function, dimension, coefficients: _BatchMap(
-                _map(function, dimension, coefficients, budget)
+            prepare=lambda function, dimension, coefficients, capacity: _BatchMap(
+                _map(function, dimension, coefficients, budget, capacity)
             ),
             wrap=lambda prepared: _BatchMap(
                 _IntervalMap(prepared, budget, borrowed=True)
@@ -324,94 +339,129 @@ class _SourceJets:
             observe_point_jet=observe_point_jet,
         )
 
-    def enclosure(
+    def cells(
         self,
-        chart: int,
-        first: float,
-        last: float,
+        cells: list[tuple[int, float, float, float]],
         *,
-        preparations: TrimRequestPreparations | None = None,
-        budget: CoordinateEnclosureBudget | None = None,
-    ) -> np.ndarray:
-        if preparations is None:
-            preparations = TrimRequestPreparations()
-        if budget is None:
-            with coordinate_source_request(
-                (
-                    self,
-                    chart,
-                    first,
-                    last,
-                )
-            ) as budget:
-                return self.enclosure(
-                    chart, first, last, preparations=preparations, budget=budget
-                )
-        return self.source.parameter_enclosures(
-            first,
-            last,
-            minimum_chart=chart,
-            maximum_chart=chart,
-            _preparation=self.preparation,
-            preparations=preparations,
-            budget=budget,
-        )[0]
-
-    def value(self, chart: int, box: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        system = self.preparation.pairs[0][int(self.preparation.pairs[1][chart])]
-        prepared = self.preparation.program(
-            chart, "spatial-value", system.first.evaluate, 2
-        )
-        result = prepared.evaluate(box[None, 0, :2], box[None, 1, :2])
-        return result[0][0], result[1][0]
-
-    def jet(
-        self,
-        chart: int,
-        first: float,
-        last: float,
-        order: int,
-        *,
-        preparations: TrimRequestPreparations | None = None,
-        budget: CoordinateEnclosureBudget | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        if preparations is None:
-            preparations = TrimRequestPreparations()
-        if budget is None:
-            with coordinate_source_request(
-                (
-                    self,
-                    chart,
-                    first,
-                    last,
-                    order,
-                )
-            ) as budget:
-                return self.jet(
-                    chart, first, last, order, preparations=preparations, budget=budget
-                )
-        return intersection_derivative_bounds(
-            self.source,
-            first,
-            last,
-            order,
-            "all",
-            minimum_chart=chart,
-            maximum_chart=chart,
-            _preparation=self.preparation,
-            preparations=preparations,
-            budget=budget,
-        )
+        preparations: TrimRequestPreparations,
+        budget: CoordinateEnclosureBudget,
+    ) -> list[CoupledCellSourceJets]:
+        """Chart boxes and jets of one wave; results stay in this wave only."""
+        with self.preparation.retained_queries():
+            return coupled_cell_source_jets(
+                self.preparation, cells, preparations=preparations, budget=budget
+            )
 
 
 class _SplineJets:
-    def __init__(self, evaluator: BernsteinCurvePiece, budget: _Budget) -> None:
-        self.piece = bernstein_rational_piece(evaluator)
+    def __init__(self, piece: RationalBezierPiece, budget: _Budget) -> None:
+        self.piece = piece
         self.budget = budget
 
-    def jet(self, first: float, last: float, order: int) -> tuple[np.ndarray, np.ndarray]:
+    def jets(self, first: float, last: float, order: int) -> tuple[_Interval, ...]:
+        """Every quotient jet of orders ``0..order`` from one enclosure pass."""
         self.budget.jets += 1
-        return rational_piece_jet_bounds(self.piece, first, last, order=order)
+        return rational_piece_jets(self.piece, first, last, order)
+
+
+def _fitted_cell_jets(
+    selected: tuple[CurvePiece[AbstractCurve], ...],
+    first: float,
+    last: float,
+    center: float,
+    shared_knots: bool,
+    cache: dict[tuple[int, ...], _SplineJets],
+    budget: _Budget,
+) -> tuple[list[tuple[_Interval, ...]], list[tuple[_Interval, ...]]]:
+    """Share a denominator only for identical private homogeneous source spans."""
+    prepared: list[_SplineJets] = []
+    for side, piece in enumerate(selected):
+        key = (side, piece.index)
+        if key not in cache:
+            match piece.evaluator:
+                case BernsteinCurvePiece() as evaluator:
+                    cache[key] = _SplineJets(bernstein_rational_piece(evaluator), budget)
+                case _:
+                    raise ValueError(
+                        "CoupledApproximation.spline_pieces must retain rational Bernstein controls; got an unsupported fitted evaluator"
+                    )
+        prepared.append(cache[key])
+    group_key = (len(selected), *(piece.index for piece in selected))
+    grouped = cache.get(group_key) if shared_knots else None
+    if grouped is None and shared_knots:
+        pieces = [item.piece for item in prepared]
+        reference = pieces[0]
+        names = ("homogeneous_controls", "homogeneous_lower", "homogeneous_upper")
+        compatible = all(
+            piece.parameter_bounds == reference.parameter_bounds
+            and all(
+                np.array_equal(getattr(piece, name)[:, -1], getattr(reference, name)[:, -1])
+                for name in names
+            )
+            for piece in pieces[1:]
+        )
+        if compatible:
+            # These are kernel-owned, immutable pieces within this certificate.
+            # Admit every copied numerator/denominator before concatenating.
+            budget.reserve(
+                1024 + sum(getattr(piece, name).nbytes for piece in pieces for name in names),
+                "retaining the coupled homogeneous spline-jet preparation",
+            )
+            arrays = tuple(
+                np.concatenate(
+                    [*(getattr(piece, name)[:, :-1] for piece in pieces),
+                     getattr(reference, name)[:, -1:]],
+                    axis=1,
+                )
+                for name in names
+            )
+            for array in arrays:
+                array.setflags(write=False)
+            grouped = _SplineJets(
+                RationalBezierPiece(
+                    arrays[0], reference.parameter_bounds, reference.span_index,
+                    arrays[1], arrays[2],
+                ),
+                budget,
+            )
+            cache[group_key] = grouped
+    if grouped is None:
+        return (
+            [item.jets(first, last, 2) for item in prepared],
+            [item.jets(center, center, 1) for item in prepared],
+        )
+    interval = grouped.jets(first, last, 2)
+    center_jets = grouped.jets(center, center, 1)
+    interval_parts: list[tuple[_Interval, ...]] = []
+    center_parts: list[tuple[_Interval, ...]] = []
+    offset = 0
+    for item in prepared:
+        end = offset + item.piece.homogeneous_controls.shape[1] - 1
+        interval_parts.append(tuple((lower[offset:end], upper[offset:end]) for lower, upper in interval))
+        center_parts.append(tuple((lower[offset:end], upper[offset:end]) for lower, upper in center_jets))
+        offset = end
+    return interval_parts, center_parts
+
+
+@dataclass(frozen=True, slots=True)
+class _SurfacePrograms:
+    value: _BatchMap
+    jacobian: _BatchMap
+    hessian: _BatchMap
+
+
+def _surface_programs(surface: AbstractSurfacePatch, budget: _Budget) -> _SurfacePrograms:
+    """Native surface value/Jacobian/Hessian programs at the wave capacity."""
+    coefficients = coefficient_enclosures(surface)
+
+    def program(function: Callable[[Array], Array]) -> _BatchMap:
+        return _BatchMap(_map(function, 2, coefficients, budget, 2 * _WAVE_CELLS))
+
+    return _SurfacePrograms(
+        program(surface.evaluate),
+        program(jax.jacfwd(surface.evaluate)),
+        program(jax.jacfwd(jax.jacfwd(surface.evaluate))),
+    )
 
 
 def _taylor_bound(
@@ -476,9 +526,11 @@ def _subtract_array_intervals(first: _Interval, second: _Interval, /) -> _Interv
 class _ApproximationWorkset(StrictModule):
     segments: tuple[tuple[CurvePiece[AbstractCurve], ...], ...]
     source_jets: _SourceJets
+    lifts: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]]
     pending: list[tuple[float, float, int]]
     pending_bytes: int
     record_bytes: int
+    shared_knots: bool
 
 
 class _ApproximationCell(StrictModule):
@@ -487,8 +539,8 @@ class _ApproximationCell(StrictModule):
     center: float
     radius: float
     selected: tuple[CurvePiece[AbstractCurve], ...]
-    splines: tuple[_SplineJets, ...]
-    values: tuple[_Interval, ...]
+    interval_jets: tuple[tuple[_Interval, ...], ...]
+    center_jets: tuple[tuple[_Interval, ...], ...]
     distance: float
     parameter: float
 
@@ -533,6 +585,15 @@ def _prepare_approximation_workset(
         for item in fitted
     )
     source_jets = _SourceJets(source, budget)
+    # Fitted p-curves follow the continuous native-period lift of the branch;
+    # charts on another sheet compare after an enclosed integer-period shift.
+    gauge = prepare_root_gauge(source).gauge
+    lifts: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for chart in range(source.num_charts):
+        mask = gauge[chart] != 0
+        if np.any(mask):
+            lower, upper = source.shift_parameter_bounds(gauge[chart])
+            lifts[chart] = (mask, lower, upper)
     breaks = {
         domain[0],
         domain[1],
@@ -558,7 +619,12 @@ def _prepare_approximation_workset(
         for index in range(initial_cells - 1, -1, -1)
     ]
     return _ApproximationWorkset(
-        segments, source_jets, pending, pending_bytes, record_bytes
+        segments, source_jets, lifts, pending, pending_bytes, record_bytes,
+        all(
+            item.degree == fitted[0].degree
+            and np.array_equal(np.asarray(item.knots), np.asarray(fitted[0].knots))
+            for item in fitted[1:]
+        ),
     )
 
 
@@ -572,56 +638,46 @@ def _enclose_approximation_cell(
     workset: _ApproximationWorkset,
     first: float,
     last: float,
-    spline_jets: dict[tuple[int, int], _SplineJets],
+    chart: int,
+    source_cell: CoupledCellSourceJets,
+    spline_jets: dict[tuple[int, ...], _SplineJets],
     budget: _Budget,
     distance_tolerance: float,
     parameter_tolerance: float,
-    preparations: TrimRequestPreparations,
-    coordinate_budget: CoordinateEnclosureBudget,
 ) -> _ApproximationCell:
     center = first + 0.5 * (last - first)
     radius = float(np.nextafter(max(center - first, last - center), np.inf))
-    source_prepared = workset.source_jets
-    chart = min(int(math.floor(center)), source_prepared.source.num_charts - 1)
-    center_box = source_prepared.enclosure(
-        chart, center, center, preparations=preparations, budget=coordinate_budget
+    center_lower, center_upper = (
+        source_cell.center_box[0].copy(),
+        source_cell.center_box[1].copy(),
     )
-    physical_center = source_prepared.value(chart, center_box)
+    if chart in workset.lifts:
+        mask, shift_lower, shift_upper = workset.lifts[chart]
+        center_lower[mask], center_upper[mask] = interval_add(
+            (center_lower[mask], center_upper[mask]),
+            (shift_lower[mask], shift_upper[mask]),
+        )
     source_value = (
-        np.concatenate((physical_center[0], center_box[0])),
-        np.concatenate((physical_center[1], center_box[1])),
+        np.concatenate((source_cell.center_point.lower, center_lower)),
+        np.concatenate((source_cell.center_point.upper, center_upper)),
     )
-    source_first = source_prepared.jet(
-        chart, first, last, 1, preparations=preparations, budget=coordinate_budget
-    )
-    source_second = source_prepared.jet(
-        chart, first, last, 2, preparations=preparations, budget=coordinate_budget
-    )
-    source_center_first = source_prepared.jet(
-        chart, center, center, 1, preparations=preparations, budget=coordinate_budget
+    source_first = (source_cell.first.lower, source_cell.first.upper)
+    source_second = (source_cell.second.lower, source_cell.second.upper)
+    source_center_first = (
+        source_cell.center_first.lower,
+        source_cell.center_first.upper,
     )
     selected = tuple(
         next(piece for piece in pieces if piece.lower <= center <= piece.upper)
         for pieces in workset.segments
     )
-    prepared_splines = []
-    for side, piece in enumerate(selected):
-        key = (side, piece.index)
-        if key not in spline_jets:
-            match piece.evaluator:
-                case BernsteinCurvePiece() as evaluator:
-                    spline_jets[key] = _SplineJets(evaluator, budget)
-                case _:
-                    raise ValueError(
-                        "CoupledApproximation.spline_pieces must retain rational Bernstein controls; got an unsupported fitted evaluator"
-                    )
-        prepared_splines.append(spline_jets[key])
-    values, firsts, center_firsts, seconds = [], [], [], []
-    for prepared in prepared_splines:
-        values.append(prepared.jet(center, center, 0))
-        firsts.append(prepared.jet(first, last, 1))
-        center_firsts.append(prepared.jet(center, center, 1))
-        seconds.append(prepared.jet(first, last, 2))
+    interval_jets, center_jets = _fitted_cell_jets(
+        selected, first, last, center, workset.shared_knots, spline_jets, budget
+    )
+    values = [jets[0] for jets in center_jets]
+    firsts = [jets[1] for jets in interval_jets]
+    center_firsts = [jets[1] for jets in center_jets]
+    seconds = [jets[2] for jets in interval_jets]
     residual = _subtract_array_intervals(source_value, _combine_jets(values))
     for kind, columns, tolerance in (
         ("distance", slice(0, 3), distance_tolerance),
@@ -647,93 +703,106 @@ def _enclose_approximation_cell(
         center,
         radius,
         selected,
-        tuple(prepared_splines),
-        tuple(values),
+        tuple(interval_jets),
+        tuple(center_jets),
         norm_upper(errors[:3]),
         max(norm_upper(errors[3:5]), norm_upper(errors[5:7])),
     )
 
 
-def _enclose_surface_lift(
+def _enclose_surface_lifts(
     source: IntersectionCurve,
-    side: int,
-    cell: _ApproximationCell,
-    correspondence: dict[tuple[int, int, int, int], RationalCurveSurfaceJets],
+    cells: list[_ApproximationCell],
+    programs: dict[tuple[int, int], _SurfacePrograms],
     budget: _Budget,
     distance_tolerance: float,
     preparations: TrimRequestPreparations,
     coordinate_budget: CoordinateEnclosureBudget,
-) -> float:
-    region = (source.first, source.second)[side]
-    uv_piece = cell.selected[side + 1]
-    uv_box = uv_piece.evaluator.bounding_box(
-        cell.first, cell.last, preparations=preparations, budget=coordinate_budget
-    )
-    # Polynomial continuations cover every intersected surface piece, including
-    # knot crossings whose preimage has no representable scalar split.
-    patches = surface_pieces_for_box(region.patch, uv_box, budget=coordinate_budget)
-    if not patches:
-        return np.inf
-    bound = 0.0
-    for patch in patches:
-        key = (side, cell.selected[0].index, uv_piece.index, patch.index)
-        if key not in correspondence:
+) -> list[tuple[float, float]]:
+    """Both native surface-lift bounds of every wave cell.
 
-            def observe_curve_jet() -> None:
-                budget.jets += 1
-
-            correspondence[key] = RationalCurveSurfaceJets(
-                cell.splines[0].piece,
-                cell.splines[side + 1].piece,
-                patch.evaluator,
-                point=np.zeros(3),
-                prepare=lambda function, dimension, coefficients: _BatchMap(
-                    _map(function, dimension, coefficients, budget)
-                ),
-                observe_curve_jet=observe_curve_jet,
+    Rows sharing one side and surface piece evaluate together; each row keeps
+    the one-cell chain rule over the cell's own fitted spline jets.
+    """
+    bounds = [[0.0, 0.0] for _ in cells]
+    rows: dict[tuple[int, int], list[tuple[int, int, np.ndarray, np.ndarray]]] = {}
+    for position, cell in enumerate(cells):
+        for side in (0, 1):
+            region = (source.first, source.second)[side]
+            uv_box = cell.selected[side + 1].evaluator.bounding_box(
+                cell.first, cell.last, preparations=preparations, budget=coordinate_budget
             )
-        maps = correspondence[key]
-        value = maps.jet(
-            cell.center,
-            cell.center,
-            0,
-            preparations=preparations,
-            budget=coordinate_budget,
-        )
-        center_uv = cell.values[side + 1]
-        if np.all(center_uv[0] >= patch.lower) and np.all(center_uv[1] <= patch.upper):
-            lower_bound = _norm_lower(value)
-            if lower_bound > distance_tolerance:
-                raise ApproximationDeviationError(
-                    kind=f"{('first', 'second')[side]} correspondence",
-                    interval=(cell.first, cell.last),
-                    lower_bound=lower_bound,
-                    tolerance=distance_tolerance,
-                    budget=budget,
+            # Polynomial continuations cover every intersected surface piece,
+            # including knot crossings whose preimage has no scalar split.
+            patches = surface_pieces_for_box(
+                region.patch, uv_box, budget=coordinate_budget
+            )
+            if not patches:
+                bounds[position][side] = np.inf
+                continue
+            for patch in patches:
+                key = (side, patch.index)
+                if key not in programs:
+                    programs[key] = _surface_programs(patch.evaluator, budget)
+                rows.setdefault(key, []).append(
+                    (position, side, np.asarray(patch.lower), np.asarray(patch.upper))
                 )
-        d1 = maps.jet(
-            cell.first,
-            cell.last,
-            1,
-            preparations=preparations,
-            budget=coordinate_budget,
-        )
-        cd1 = maps.jet(
-            cell.center,
-            cell.center,
-            1,
-            preparations=preparations,
-            budget=coordinate_budget,
-        )
-        d2 = maps.jet(
-            cell.first,
-            cell.last,
-            2,
-            preparations=preparations,
-            budget=coordinate_budget,
-        )
-        bound = max(bound, norm_upper(_taylor_bound(value, d1, cd1, d2, cell.radius)))
-    return bound
+    for key, members in rows.items():
+        surface = programs[key]
+        uv_interval = [cells[position].interval_jets[side + 1][0] for position, side, *_ in members]
+        uv_center = [cells[position].center_jets[side + 1][0] for position, side, *_ in members]
+        interval_lower = np.stack([box[0] for box in uv_interval])
+        interval_upper = np.stack([box[1] for box in uv_interval])
+        center_lower = np.stack([box[0] for box in uv_center])
+        center_upper = np.stack([box[1] for box in uv_center])
+        values = surface.value.evaluate(center_lower, center_upper)
+        interval_jacobians = surface.jacobian.evaluate(interval_lower, interval_upper)
+        center_jacobians = surface.jacobian.evaluate(center_lower, center_upper)
+        hessians = surface.hessian.evaluate(interval_lower, interval_upper)
+        for row, (position, side, lower, upper) in enumerate(members):
+            cell = cells[position]
+            curve_interval, curve_center = cell.interval_jets[0], cell.center_jets[0]
+            uv_jets, uv_center_jets = (
+                cell.interval_jets[side + 1],
+                cell.center_jets[side + 1],
+            )
+            value = curve_surface_chain_jet(
+                0, curve_center[0], value=(values[0][row], values[1][row])
+            )
+            center_uv = uv_center_jets[0]
+            if np.all(center_uv[0] >= lower) and np.all(center_uv[1] <= upper):
+                lower_bound = _norm_lower(value)
+                if lower_bound > distance_tolerance:
+                    raise ApproximationDeviationError(
+                        kind=f"{('first', 'second')[side]} correspondence",
+                        interval=(cell.first, cell.last),
+                        lower_bound=lower_bound,
+                        tolerance=distance_tolerance,
+                        budget=budget,
+                    )
+            jacobian = (interval_jacobians[0][row], interval_jacobians[1][row])
+            d1 = curve_surface_chain_jet(
+                1, curve_interval[1], jacobian=jacobian, direction=uv_jets[1]
+            )
+            cd1 = curve_surface_chain_jet(
+                1,
+                curve_center[1],
+                jacobian=(center_jacobians[0][row], center_jacobians[1][row]),
+                direction=uv_center_jets[1],
+            )
+            d2 = curve_surface_chain_jet(
+                2,
+                curve_interval[2],
+                jacobian=jacobian,
+                direction=uv_jets[2],
+                hessian=(hessians[0][row], hessians[1][row]),
+                velocity=uv_jets[1],
+            )
+            bounds[position][side] = max(
+                bounds[position][side],
+                norm_upper(_taylor_bound(value, d1, cd1, d2, cell.radius)),
+            )
+    return [(first, second) for first, second in bounds]
 
 
 def _freeze_approximation_evidence(
@@ -832,69 +901,97 @@ def certify_coupled_approximation(
     )
     workset = _prepare_approximation_workset(source, fitted, budget, coordinate_budget)
     pending = workset.pending
-    spline_jets: dict[tuple[int, int], _SplineJets] = {}
-    correspondence: dict[tuple[int, int, int, int], RationalCurveSurfaceJets] = {}
+    spline_jets: dict[tuple[int, ...], _SplineJets] = {}
+    surfaces: dict[tuple[int, int], _SurfacePrograms] = {}
     records: list[tuple[float, ...]] = []
     maxima = np.zeros(4)
+    count = source.num_charts
     while pending:
-        first, last, depth = pending.pop()
-        budget.release(workset.pending_bytes)
-        budget.cell(depth)
-        cell = _enclose_approximation_cell(
-            workset,
-            first,
-            last,
-            spline_jets,
+        # A wave pops cells in stack order and shares its batched source jets;
+        # each popped cell is charged before its source work is performed.
+        wave: list[tuple[float, float, int]] = []
+        while pending and len(wave) < _WAVE_CELLS:
+            first, last, depth = pending.pop()
+            budget.release(workset.pending_bytes)
+            budget.cell(depth)
+            wave.append((first, last, depth))
+        charts = [
+            min(int(math.floor(first + 0.5 * (last - first))), count - 1)
+            for first, last, _ in wave
+        ]
+        source_cells = workset.source_jets.cells(
+            [
+                (chart, first, last, first + 0.5 * (last - first))
+                for chart, (first, last, _) in zip(charts, wave, strict=True)
+            ],
+            preparations=preparations,
+            budget=coordinate_budget,
+        )
+        cells = [
+            _enclose_approximation_cell(
+                workset,
+                first,
+                last,
+                chart,
+                source_cell,
+                spline_jets,
+                budget,
+                distance_tolerance,
+                parameter_tolerance,
+            )
+            for (first, last, _), chart, source_cell in zip(
+                wave, charts, source_cells, strict=True
+            )
+        ]
+        lifts = _enclose_surface_lifts(
+            source,
+            cells,
+            surfaces,
             budget,
             distance_tolerance,
-            parameter_tolerance,
             preparations,
             coordinate_budget,
         )
-        lift_bounds = tuple(
-            _enclose_surface_lift(
-                source,
-                side,
-                cell,
-                correspondence,
-                budget,
-                distance_tolerance,
-                preparations,
-                coordinate_budget,
+        children: list[tuple[float, float, int]] = []
+        for (first, last, depth), cell, lift_bounds in zip(
+            wave, cells, lifts, strict=True
+        ):
+            bounds = (cell.distance, cell.parameter, *lift_bounds)
+            accepted = (
+                all(math.isfinite(value) for value in bounds)
+                and cell.distance <= distance_tolerance
+                and cell.parameter <= parameter_tolerance
+                and max(lift_bounds) <= distance_tolerance
             )
-            for side in (0, 1)
-        )
-        bounds = (cell.distance, cell.parameter, *lift_bounds)
-        accepted = (
-            all(math.isfinite(value) for value in bounds)
-            and cell.distance <= distance_tolerance
-            and cell.parameter <= parameter_tolerance
-            and max(lift_bounds) <= distance_tolerance
-        )
-        budget.reserve(
-            workset.record_bytes, "retaining another continuous interval evidence record"
-        )
-        records.append((first, last, float(depth), *bounds, float(accepted)))
-        if accepted:
-            maxima = np.maximum(maxima, bounds)
-            continue
-        if depth >= maximum_depth:
-            budget.fail(
-                "maximum_depth",
-                f"unproved interval [{first}, {last}] has continuous bounds {bounds}",
+            budget.reserve(
+                workset.record_bytes,
+                "retaining another continuous interval evidence record",
             )
-        if not first < cell.center < last:
-            raise ValueError(
-                f"CoupledApproximation.bounds must meet their tolerances; got bounds {bounds} at machine-resolved interval [{first}, {last}]"
+            records.append((first, last, float(depth), *bounds, float(accepted)))
+            if accepted:
+                maxima = np.maximum(maxima, bounds)
+                continue
+            if depth >= maximum_depth:
+                budget.fail(
+                    "maximum_depth",
+                    f"unproved interval [{first}, {last}] has continuous bounds {bounds}",
+                )
+            if not first < cell.center < last:
+                raise ValueError(
+                    f"CoupledApproximation.bounds must meet their tolerances; got bounds {bounds} at machine-resolved interval [{first}, {last}]"
+                )
+            if budget.cells + len(pending) + len(children) + 2 > maximum_cells:
+                budget.fail(
+                    "maximum_cells",
+                    f"subdivision required by continuous bounds {bounds}",
+                )
+            budget.reserve(
+                2 * workset.pending_bytes, "subdividing an unproved continuous interval"
             )
-        if budget.cells + len(pending) + 2 > maximum_cells:
-            budget.fail(
-                "maximum_cells", f"subdivision required by continuous bounds {bounds}"
+            children.extend(
+                ((cell.center, last, depth + 1), (first, cell.center, depth + 1))
             )
-        budget.reserve(
-            2 * workset.pending_bytes, "subdividing an unproved continuous interval"
-        )
-        pending.extend(((cell.center, last, depth + 1), (first, cell.center, depth + 1)))
+        pending.extend(children)
     return _freeze_approximation_evidence(records, maxima, budget)
 
 

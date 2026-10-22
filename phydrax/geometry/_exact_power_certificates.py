@@ -182,7 +182,11 @@ End mesh certificate checks
 
 from __future__ import annotations
 
+from bisect import bisect_right
+from collections import Counter
+from dataclasses import dataclass
 from fractions import Fraction
+from heapq import merge
 from typing import assert_never
 
 import numpy as np
@@ -203,14 +207,20 @@ from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
 from ..typing import checked
 from ._exact_polyhedral_geometry import (
+    convex_cell_overlap,
+    convex_cells_disjoint,
+    exact_convex_cells,
     exact_vertices,
+    ExactConvexCell,
     ExactOverlapRefusal,
     ExactTetrahedronOverlap,
     star_tetrahedra,
     tetrahedra_disjoint,
     Tetrahedron,
     tetrahedron_overlap,
+    TetrahedronPlanePreparation,
     triangle_contact,
+    TriangleContactPreparation,
 )
 
 
@@ -240,9 +250,24 @@ def certify_exact_power_embedding(
         ):
             cell_sites = _power_cell_sites(mesh, source, len(cells))
             work = source.prepare(geometry.coordinates, budget=budget).operation_count
+            multiplicity = Counter(cell_sites)
+            unseparated = (
+                None
+                if None in multiplicity
+                else frozenset(
+                    cell
+                    for cell, site in enumerate(cell_sites)
+                    if multiplicity[site] > 1
+                )
+            )
+            # Positive stars about each vertex mean make supporting faces a hull proof.
+            convex = exact_convex_cells(
+                mesh, points, budget=budget, selected=unseparated
+            )
             _certify_power_nonoverlap(
                 state,
                 cells,
+                convex,
                 cell_sites,
                 cell_ids,
                 work,
@@ -265,8 +290,18 @@ def _certify_power_facets(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> bool:
+    """Triangulate each facet loop once and test each distinct triangle pair once.
+
+    Both occurrences of an interior facet bound the same planar region; when
+    their vertex loops are one cycle up to rotation and reversal, a single
+    loop proof and triangulation serve both. Occurrence pairs are tested
+    unless they share a cell or a facet group, so a triangle pair is tested
+    exactly when some occurrence pair of its two classes has distinct cells.
+    """
+    classes = _facet_loop_classes(facets, budget=budget)
+    rows = facets.rows[classes.representatives]
     triangles, owners, failed, unknown = polygon_triangulation_owner.loop_triangles(
-        points, facets.rows, limits.maximum_candidate_pairs, budget=budget
+        points, rows, limits.maximum_candidate_pairs, budget=budget
     )
     state.checks.extend(
         (
@@ -281,14 +316,14 @@ def _certify_power_facets(
             "exact_polyhedral_facet",
             "violated",
             "facet",
-            facet_entity_ids(mesh, facets.rows[failed]),
+            facet_entity_ids(mesh, facets.rows[failed[classes.occurrence_class]]),
         )
     if np.any(unknown):
         state.add(
             "exact_polyhedral_facet_work_capacity",
             "unresolved",
             "facet",
-            facet_entity_ids(mesh, facets.rows[unknown]),
+            facet_entity_ids(mesh, facets.rows[unknown[classes.occurrence_class]]),
         )
     if np.any(failed | unknown):
         return False
@@ -296,28 +331,89 @@ def _certify_power_facets(
         *boxes(points, triangles), limits.maximum_candidate_pairs
     )
     state.candidate_pairs += first.size
+    groups, cells = facets.group[classes.representatives], classes.cells
+    preparation = budget.exact_triangle_contact_preparation
+    if preparation is None:
+        preparation = TriangleContactPreparation(budget)
+        budget.exact_triangle_contact_preparation = preparation
     for a, b in zip(first.tolist(), second.tolist(), strict=True):
-        if (
-            facets.cells[owners[a]] == facets.cells[owners[b]]
-            or facets.group[owners[a]] == facets.group[owners[b]]
+        left, right = owners[a], owners[b]
+        if groups[left] == groups[right] or (
+            len(cells[left]) == 1 and cells[left] == cells[right]
         ):
             continue
-        if triangle_contact(
-            points,
-            tuple(triangles[a].tolist()),
-            tuple(triangles[b].tolist()),
-            budget=budget,
-        ):
+        # The contact verdict is retained; its rational temporaries are not.
+        with budget.temporary_scope():
+            contact = triangle_contact(
+                points,
+                tuple(triangles[a].tolist()),
+                tuple(triangles[b].tolist()),
+                budget=budget,
+                preparation=preparation,
+            )
+        if contact:
             state.add(
                 "exact_polyhedral_contact",
                 "violated",
                 "facet",
-                facet_entity_ids(mesh, facets.rows[[owners[a], owners[b]]]),
+                facet_entity_ids(mesh, rows[[left, right]]),
             )
     if exceeded:
         state.add("exact_polyhedral_contact_capacity", "unresolved", "mesh")
         return False
     return True
+
+
+@dataclass(frozen=True, slots=True)
+class _FacetLoopClasses:
+    representatives: np.ndarray
+    occurrence_class: np.ndarray
+    cells: tuple[frozenset[int], ...]
+
+
+def _facet_loop_classes(
+    facets: Facets, /, *, budget: CoordinateEnclosureBudget
+) -> _FacetLoopClasses:
+    """Partition facet occurrences into equal vertex cycles within each group.
+
+    Integer rows only: a loop matches a class when it is the class cycle up to
+    rotation and reversal, which preserves the planar region and every loop
+    proof.
+    """
+    representatives: list[int] = []
+    loops: list[tuple[int, ...]] = []
+    cells: list[set[int]] = []
+    occurrence_class = np.empty(facets.rows.shape[0], dtype=np.int64)
+    for members in facets.groups:
+        start = len(representatives)
+        for occurrence in members.tolist():
+            row = facets.rows[occurrence]
+            loop = tuple(row[row >= 0].tolist())
+            match = None
+            for index in range(start, len(representatives)):
+                if _same_cycle(loops[index], loop):
+                    match = index
+                    break
+            if match is None:
+                match = len(representatives)
+                representatives.append(occurrence)
+                loops.append(loop)
+                cells.append(set())
+            occurrence_class[occurrence] = match
+            cells[match].add(int(facets.cells[occurrence]))
+    return _FacetLoopClasses(
+        np.asarray(representatives, dtype=np.int64),
+        occurrence_class,
+        tuple(frozenset(value) for value in cells),
+    )
+
+
+def _same_cycle(first: tuple[int, ...], second: tuple[int, ...], /) -> bool:
+    if len(first) != len(second) or not second or second[0] not in first:
+        return False
+    start = first.index(second[0])
+    rotated = first[start:] + first[:start]
+    return rotated == second or (rotated[0], *rotated[:0:-1]) == second
 
 
 def _power_cell_sites(
@@ -369,6 +465,7 @@ def _power_cell_sites(
 def _certify_power_nonoverlap(
     state: EmbeddingState,
     cells: tuple[tuple[Tetrahedron, ...], ...],
+    convex: tuple[ExactConvexCell | None, ...],
     cell_sites: list[int | None],
     cell_ids: np.ndarray,
     work: int,
@@ -377,49 +474,85 @@ def _certify_power_nonoverlap(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> None:
+    """Prove pairwise interior disjointness of cells not separated by site powers.
+
+    Verified convex cells use one exact convex intersection; other pairs test
+    every star tetrahedron pair with request-shared face planes.
+    """
+    preparation = TetrahedronPlanePreparation(budget)
+    # Vertex power inequalities separate interiors belonging to distinct
+    # sites, so only same-site pairs and pairs with an unknown site remain,
+    # visited in the same ascending order as the full pair table.
+    by_site: dict[int, list[int]] = {}
+    unknown: list[int] = []
+    for cell, site in enumerate(cell_sites):
+        (unknown if site is None else by_site.setdefault(site, [])).append(cell)
     for first_cell in range(len(cells)):
-        for second_cell in range(first_cell + 1, len(cells)):
-            # Vertex power inequalities separate interiors belonging to distinct sites.
-            if (
-                cell_sites[first_cell] is not None
-                and cell_sites[second_cell] is not None
-                and cell_sites[first_cell] != cell_sites[second_cell]
-            ):
-                continue
-            for first_tet in cells[first_cell]:
-                for second_tet in cells[second_cell]:
-                    if tetrahedra_disjoint(first_tet, second_tet):
+        site = cell_sites[first_cell]
+        partners = (
+            range(first_cell + 1, len(cells))
+            if site is None
+            else merge(
+                by_site[site][bisect_right(by_site[site], first_cell) :],
+                unknown[bisect_right(unknown, first_cell) :],
+            )
+        )
+        for second_cell in partners:
+            first_convex, second_convex = convex[first_cell], convex[second_cell]
+            hulls = first_convex is not None and second_convex is not None
+            pairs = (
+                ((first_convex, second_convex),)
+                if hulls
+                else (
+                    (first_tet, second_tet)
+                    for first_tet in cells[first_cell]
+                    for second_tet in cells[second_cell]
+                )
+            )
+            for first_piece, second_piece in pairs:
+                if hulls:
+                    if convex_cells_disjoint(first_piece, second_piece):
                         continue
-                    overlap = tetrahedron_overlap(
-                        first_tet,
-                        second_tet,
+                    overlap = convex_cell_overlap(
+                        first_piece,
+                        second_piece,
                         maximum_work=maximum_work - work,
                         budget=budget,
                     )
-                    match overlap:
-                        case ExactOverlapRefusal():
-                            state.add(
-                                "exact_power_nonoverlap_work_capacity",
-                                "unresolved",
-                                "mesh",
-                            )
-                            return
-                        case ExactTetrahedronOverlap():
-                            pass
-                        case invalid:
-                            assert_never(invalid)
-                    work += overlap.operation_count
-                    if work > maximum_work:
+                else:
+                    if tetrahedra_disjoint(first_piece, second_piece):
+                        continue
+                    overlap = tetrahedron_overlap(
+                        first_piece,
+                        second_piece,
+                        maximum_work=maximum_work - work,
+                        budget=budget,
+                        preparation=preparation,
+                    )
+                match overlap:
+                    case ExactOverlapRefusal():
                         state.add(
-                            "exact_power_nonoverlap_work_capacity", "unresolved", "mesh"
+                            "exact_power_nonoverlap_work_capacity",
+                            "unresolved",
+                            "mesh",
                         )
                         return
-                    if overlap.volume > Fraction(0):
-                        state.add(
-                            "exact_power_cell_overlap",
-                            "violated",
-                            "cell",
-                            cell_ids[[first_cell, second_cell]],
-                        )
-                        return
+                    case ExactTetrahedronOverlap():
+                        pass
+                    case invalid:
+                        assert_never(invalid)
+                work += overlap.operation_count
+                if work > maximum_work:
+                    state.add(
+                        "exact_power_nonoverlap_work_capacity", "unresolved", "mesh"
+                    )
+                    return
+                if overlap.volume > Fraction(0):
+                    state.add(
+                        "exact_power_cell_overlap",
+                        "violated",
+                        "cell",
+                        cell_ids[[first_cell, second_cell]],
+                    )
+                    return
     state.source_expression_work_units += work

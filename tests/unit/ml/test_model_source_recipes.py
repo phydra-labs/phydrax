@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from fractions import Fraction
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import equinox as eqx
 import jax
@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._fingerprint import array_tree_fingerprint
 from phydrax._model import _structure as structure_module, register_artifact_value
 from phydrax._model._structure import (
     deserialize_model_leaf,
@@ -37,6 +38,7 @@ from phydrax.equations import ChemicalComponentCatalog
 from phydrax.exterior import FormType, FormValueSpec
 from phydrax.geometry.brep._patches import BSplineCurve
 from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
+from tools.compile_counter import CompileCounter
 
 
 def _wire(*nodes: Mapping[str, object], root: int | None = None) -> str:
@@ -343,6 +345,104 @@ def test_recipe_restores_array_shared_by_runtime_leaves_as_one_object() -> None:
     assert len(arrays) == 1
     assert restored["encoder"] is restored["decoder"][0]
     np.testing.assert_array_equal(restored["encoder"], weight)
+
+
+@pytest.mark.parametrize("shape", ((), (13, 7)))
+@pytest.mark.parametrize("dtype", (np.bool_, np.int64, np.uint64, np.float64, np.complex128))
+def test_recipe_host_device_restore_preserves_bits_without_compilation(
+    shape: tuple[int, ...], dtype: type,
+) -> None:
+    size = int(np.prod(shape)) if shape else 1
+    host = np.arange(size).astype(dtype).reshape(shape)
+    with jax.default_device(jax.devices()[0]):
+        original = jax.device_put(host)
+        value = {"field": original, "history": (original,)}
+        recipe = model_structure_recipe(value)
+        arrays = model_recipe_array_values(value, recipe, prefix="cold-bank")
+        payloads = {name: np.asarray(array) for name, array in arrays.items()}
+        with CompileCounter() as compiler:
+            restored = model_from_logical_array_recipe(
+                recipe, payloads, prefix="cold-bank"
+            )
+            jax.block_until_ready(restored)
+    assert compiler.count == 0
+    field = restored["field"]
+    assert field is restored["history"][0]
+    assert field.shape == host.shape
+    assert field.dtype == host.dtype
+    assert field.devices() == original.devices()
+    assert field.sharding == original.sharding
+    assert field.committed == original.committed
+    assert np.asarray(field).tobytes() == host.tobytes()
+    assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(value)
+    assert model_structure_recipe(restored) == recipe
+    assert array_tree_fingerprint(restored) == array_tree_fingerprint(value)
+
+
+def test_recipe_host_device_restore_retains_signed_zero_and_nan_payloads() -> None:
+    bits = np.asarray(
+        (0, 0x8000000000000000, 0x7FF8000000000001, 0x7FF8000000000002),
+        dtype=np.uint64,
+    )
+    host = bits.view(np.float64)
+    original = jax.device_put(host)
+    recipe = model_structure_recipe(original)
+    arrays = model_recipe_array_values(original, recipe, prefix="float-bits")
+    payloads = {name: host for name in arrays}
+    with CompileCounter() as compiler:
+        restored = model_from_logical_array_recipe(
+            recipe, payloads, prefix="float-bits"
+        )
+        restored.block_until_ready()
+    assert compiler.count == 0
+    assert np.asarray(restored).tobytes() == bits.tobytes()
+    assert array_tree_fingerprint(restored) == array_tree_fingerprint(original)
+
+
+def test_recipe_device_restore_preserves_explicit_sharding_without_transfer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    original = jax.device_put(np.arange(17, dtype=np.float64), sharding)
+    recipe = model_structure_recipe(original)
+    arrays = model_recipe_array_values(original, recipe, prefix="placed")
+
+    def forbidden(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("An already placed logical bank must not be transferred")
+
+    monkeypatch.setattr(structure_module.jax, "device_put", forbidden)
+    restored = model_from_logical_array_recipe(recipe, arrays, prefix="placed")
+    assert restored is original
+    assert restored.sharding is original.sharding
+    assert restored.committed
+
+
+@pytest.mark.parametrize("fault", ("shape", "dtype", "nonarray", "missing", "extra"))
+def test_recipe_host_device_preflight_refuses_before_any_transfer(
+    monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    original = jax.device_put(np.arange(19, dtype=np.float64))
+    recipe = model_structure_recipe(original)
+    arrays = model_recipe_array_values(original, recipe, prefix="malformed")
+    name = next(iter(arrays))
+    payloads: dict[str, Any] = {name: np.asarray(original)}
+    if fault == "shape":
+        payloads[name] = np.asarray(original).reshape(1, 19)
+    elif fault == "dtype":
+        payloads[name] = np.asarray(original, dtype=np.float32)
+    elif fault == "nonarray":
+        payloads[name] = list(range(19))
+    elif fault == "missing":
+        del payloads[name]
+    else:
+        payloads["undeclared"] = np.asarray(original)
+
+    def forbidden(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("Malformed banks must be rejected before device transfer")
+
+    monkeypatch.setattr(structure_module.jax, "device_put", forbidden)
+    with pytest.raises(ValueError, match=r"\.payload|recipe\.arrays"):
+        model_from_logical_array_recipe(recipe, payloads, prefix="malformed")
 
 
 def test_recipe_array_pairs_ignore_storage_sharing_and_mutability() -> None:

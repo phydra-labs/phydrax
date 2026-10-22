@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import equinox as eqx
 import jax
@@ -44,12 +45,8 @@ def repeated_publication(source_kind: str) -> dict[str, Any]:
     )
     prepared = phx.meshing.prepare_adaptive_simplex(source, policy=policy)
     partitioned = phx.meshing.partition_adaptive_simplex(prepared)
-    update = phx.discretization.refine_adaptive_simplex_parts(
-        partitioned.layout,
-        partitioned.parts,
-        partitioned.states,
-        partitioned.states.mesh.cell_active,
-    )
+    update = phx.discretization.refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states,
+    partitioned.states.mesh.cell_active,)
     jax.block_until_ready(update)
     partition_valid = jax.block_until_ready(
         _raw_partition(update.state, partitioned.states)
@@ -80,6 +77,22 @@ def repeated_publication(source_kind: str) -> dict[str, Any]:
         second = phx.meshing.commit_partitioned_adaptive_simplex(
             partitioned, update.state
         )
+    # The scientific owners already carry validated predecessor DAGs. Result
+    # packaging must preserve them without flattening the retained arguments.
+    with patch(
+        "jax.tree_util.tree_leaves",
+        side_effect=AssertionError("result packaging recursively inspected its owners"),
+    ):
+        repackaged = type(first)(first.local_results, first.identity)
+    assert repackaged.local_results is first.local_results
+    assert repackaged.identity is first.identity
+    first_leaves, first_structure = jax.tree_util.tree_flatten(first)
+    repackaged_leaves, repackaged_structure = jax.tree_util.tree_flatten(repackaged)
+    assert repackaged_structure == first_structure
+    assert all(
+        left is right
+        for left, right in zip(first_leaves, repackaged_leaves, strict=True)
+    )
     for left, right in zip(first.local_results, second.local_results, strict=True):
         assert left.target.result_id == right.target.result_id
         assert left.target.mesh.mesh_id == right.target.mesh.mesh_id
@@ -104,4 +117,5 @@ def repeated_publication(source_kind: str) -> dict[str, Any]:
         ],
         "result_ids": [result.target.result_id for result in first.local_results],
         "raw_partition_warm_count": raw_warm.count,
+        "constructor_fields_preserved": True,
     }

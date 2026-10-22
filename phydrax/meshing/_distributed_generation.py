@@ -22,12 +22,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import multihost_utils
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.sharding import NamedSharding, PartitionSpec
 from numpy.typing import NDArray
 
 from phydrax.meshing._contracts import MeshingLimits, SurfaceMeshingSpec
 from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
+from .._execution_runtime import owner_execution_mesh, process_owner_devices
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionScope
 from .._strict import StrictModule
@@ -344,13 +345,8 @@ def _prepare_curve_boundary_packet(
         packet[cursor : cursor + count, 1] = values
         packet[cursor : cursor + count, 2:] = vertices[identifiers[curve]]
         cursor += count
-    devices = [
-        next(device for device in jax.devices() if device.process_index == rank)
-        for rank in range(jax.process_count())
-    ]
-    sharding = NamedSharding(
-        Mesh(np.asarray(devices), ("initial_owner",)), PartitionSpec("initial_owner")
-    )
+    mesh = owner_execution_mesh(process_owner_devices())
+    sharding = NamedSharding(mesh, PartitionSpec(mesh.axis_names[0]))
     data = jax.make_array_from_process_local_data(
         sharding, packet[None], (jax.process_count(), *packet.shape)
     )
@@ -361,15 +357,17 @@ def _prepare_curve_boundary_packet(
 def _exchange_curve_packet(
     data: jax.Array, sharding: NamedSharding, permutation: tuple[tuple[int, int], ...], /
 ) -> jax.Array:
+    axis = sharding.mesh.axis_names[0]
+
     @partial(
         jax.shard_map,
         mesh=sharding.mesh,
-        in_specs=PartitionSpec("initial_owner"),
-        out_specs=PartitionSpec("initial_owner"),
+        in_specs=PartitionSpec(axis),
+        out_specs=PartitionSpec(axis),
         check_vma=False,
     )
     def exchange(value: jax.Array) -> jax.Array:
-        return jax.lax.ppermute(value, "initial_owner", permutation)
+        return jax.lax.ppermute(value, axis, permutation)
 
     return exchange(data)
 

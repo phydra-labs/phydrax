@@ -535,6 +535,88 @@ class _FiniteElementRoute(StrictModule):
     weights: Array
 
 
+@eqx.filter_jit
+def _located_field_route(
+    discretization: generic_owner.FiniteElementDiscretization,
+    field_name: str,
+    block_index: int | None,
+    coordinates: Array,
+    element: FiniteElementSpec,
+    basis_value_shape: tuple[int, ...],
+    cell_dofs: Array,
+    continuity: int,
+    candidates: Array,
+    candidate_reference: Array,
+    location_status: Array,
+    candidates_complete: Array,
+    derivative: tuple[int, ...],
+    side: FieldSideBinding | None,
+    cell_global_ids: Array,
+    /,
+) -> tuple[_FiniteElementRoute, Array, Array]:
+    """Compile basis/Piola/side preparation with current numerical location.
+
+    Locator and kernel identities are attached by the caller, so one program
+    serves every packet locator of an equal field binding and query shape.
+    """
+    order = sum(derivative)
+    axis = None if order == 0 else derivative.index(1)
+    accepted = candidates >= 0
+    count = jnp.sum(accepted, axis=1, dtype=jnp.int32)
+    safe = jnp.where(accepted, candidates, 0)
+    flat_cells = safe.reshape((-1,))
+    reference = candidate_reference.reshape((-1, candidate_reference.shape[-1]))
+    weights, valid_basis = generic_owner.evaluate_paired_field_basis(
+        discretization,
+        field_name,
+        block_index,
+        flat_cells,
+        reference,
+        coordinates,
+        derivative_axis=axis,
+    )
+    weights = weights.reshape(
+        (*candidates.shape, element.local_dof_count, *basis_value_shape)
+    )
+    basis_failed = jnp.any(accepted & ~valid_basis.reshape(candidates.shape), axis=1)
+    if side is not None and side.side == "average":
+        share = accepted / jnp.maximum(count, 1)[:, None]
+    else:
+        first = jnp.argmin(
+            jnp.where(accepted, cell_global_ids[safe], jnp.iinfo(jnp.int64).max),
+            axis=1,
+        )
+        share = (jnp.arange(candidates.shape[1])[None, :] == first[:, None]) & accepted
+    share = share.astype(weights.dtype)
+    route = _FiniteElementRoute(
+        cell_dofs[safe],
+        weights * share.reshape(share.shape + (1,) * (weights.ndim - 2)),
+    )
+    ambiguous = (count > 1) & (order > continuity)
+    status = view_support_owner.cell_location_status(location_status)
+    status = jnp.where(
+        (status == int(FieldQueryStatus.VALID)) & basis_failed,
+        int(FieldQueryStatus.ILL_CONDITIONED),
+        status,
+    )
+    status = jnp.where(
+        (status == int(FieldQueryStatus.VALID)) & ~candidates_complete,
+        int(FieldQueryStatus.LOCATION_FAILED),
+        status,
+    )
+    if side is None:
+        side_status = FieldQueryStatus.SIDE_REQUIRED
+    else:
+        side_status = FieldQueryStatus.SIDE_UNRESOLVED
+    if side is None or side.side != "average":
+        status = jnp.where(
+            (status == int(FieldQueryStatus.VALID)) & ambiguous,
+            int(side_status),
+            status,
+        )
+    return route, status, count
+
+
 @final
 class FiniteElementFieldReconstructionKernel(
     AbstractFieldReconstructionKernel, NonTrainableState
@@ -556,6 +638,7 @@ class FiniteElementFieldReconstructionKernel(
     component_shape: tuple[int, ...] = eqx.field(static=True)
     basis_value_shape: tuple[int, ...] = eqx.field(static=True)
     cell_dofs: Array
+    cell_global_ids: Array
     continuity: int = eqx.field(static=True)
     global_dof_count: int = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
@@ -597,6 +680,12 @@ class FiniteElementFieldReconstructionKernel(
         self.block_index = block_index
         self.component_shape = _field_array_space(discretization, field_name).shape[1:]
         self.cell_dofs = routes
+        blocks = discretization.mesh.blocks
+        self.cell_global_ids = (
+            jnp.concatenate(tuple(block.global_ids for block in blocks))
+            if block_index is None
+            else blocks[block_index].global_ids
+        )
         self.continuity = continuity
         self.global_dof_count = dof_map.global_dof_count
         self._kernel_id = canonical_fingerprint(
@@ -630,74 +719,63 @@ class FiniteElementFieldReconstructionKernel(
     ) -> tuple[_FiniteElementRoute, FieldQueryEvidence]:
         mask = None if side is None else side.cell_mask
         location = self.locator.locate(points, cell_mask=mask)
-        return self._prepare_located_route(location, derivative, side)
+        return self._located_route(location, derivative, side)
 
-    @eqx.filter_jit
-    def _prepare_located_route(
+    def prepare_location(
+        self,
+        points: Array,
+        derivative: tuple[int, ...],
+        side: FieldSideBinding | None,
+        /,
+        *,
+        maximum_location_pairs: int | None = None,
+    ) -> tuple[_FiniteElementRoute, FieldQueryEvidence]:
+        if maximum_location_pairs is None:
+            return self.locate(points, derivative, side)
+        if not isinstance(
+            self.locator, simplicial_locator_owner.AbstractPreparedNewtonCellLocator
+        ):
+            raise ValueError("This FE locator cannot admit fixed-site candidate pairs.")
+        location = self.locator.prepare_location(
+            points,
+            maximum_location_pairs,
+            cell_mask=None if side is None else side.cell_mask,
+        )
+        return self._located_route(location, derivative, side, blocked=False)
+
+    def _located_route(
         self,
         location: simplicial_locator_owner.CellLocationResult,
         derivative: tuple[int, ...],
         side: FieldSideBinding | None,
         /,
+        *,
+        blocked: bool = True,
     ) -> tuple[_FiniteElementRoute, FieldQueryEvidence]:
-        """Compile basis/Piola/side preparation with current numerical location."""
-        order = sum(derivative)
-        axis = None if order == 0 else derivative.index(1)
-        candidates = location.candidate_cells
-        accepted = candidates >= 0
-        count = jnp.sum(accepted, axis=1, dtype=jnp.int32)
-        safe = jnp.where(accepted, candidates, 0)
-        flat_cells = safe.reshape((-1,))
-        reference = location.candidate_reference.reshape(
-            (-1, self.locator.cell_map.reference_dimension)
-        )
-        weights, valid_basis = generic_owner.evaluate_paired_field_basis(
+        arguments = (
             self.discretization,
             self.field_name,
             self.block_index,
-            flat_cells,
-            reference,
             self.locator.coordinates,
-            derivative_axis=axis,
+            self.element,
+            self.basis_value_shape,
+            self.cell_dofs,
+            self.continuity,
+            location.candidate_cells,
+            location.candidate_reference,
+            location.status,
+            location.candidates_complete,
+            derivative,
+            side,
+            self.cell_global_ids,
         )
-        weights = weights.reshape(
-            (*candidates.shape, self.element.local_dof_count, *self.basis_value_shape)
-        )
-        basis_failed = jnp.any(accepted & ~valid_basis.reshape(candidates.shape), axis=1)
-        if side is not None and side.side == "average":
-            share = accepted / jnp.maximum(count, 1)[:, None]
-        else:
-            first = jnp.argmax(accepted, axis=1)
-            share = (
-                jnp.arange(candidates.shape[1])[None, :] == first[:, None]
-            ) & accepted
-        share = share.astype(weights.dtype)
-        route = _FiniteElementRoute(
-            self.cell_dofs[safe],
-            weights * share.reshape(share.shape + (1,) * (weights.ndim - 2)),
-        )
-        ambiguous = (count > 1) & (order > self.continuity)
-        status = view_support_owner.cell_location_status(location.status)
-        status = jnp.where(
-            (status == int(FieldQueryStatus.VALID)) & basis_failed,
-            int(FieldQueryStatus.ILL_CONDITIONED),
-            status,
-        )
-        status = jnp.where(
-            (status == int(FieldQueryStatus.VALID)) & ~location.candidates_complete,
-            int(FieldQueryStatus.LOCATION_FAILED),
-            status,
-        )
-        if side is None:
-            side_status = FieldQueryStatus.SIDE_REQUIRED
-        else:
-            side_status = FieldQueryStatus.SIDE_UNRESOLVED
-        if side is None or side.side != "average":
-            status = jnp.where(
-                (status == int(FieldQueryStatus.VALID)) & ambiguous,
-                int(side_status),
-                status,
+        route, status, count = (
+            simplicial_locator_owner.row_blocked(
+                _located_field_route, arguments, (8, 9, 10, 11)
             )
+            if blocked
+            else _located_field_route(*arguments)
+        )
         evidence = FieldQueryEvidence(
             status, location.jacobian_condition, count, kernel_id=self.kernel_id
         )

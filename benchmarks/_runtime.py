@@ -13,7 +13,7 @@ import platform
 import re
 import statistics
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
@@ -25,6 +25,7 @@ import numpy as np
 
 from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
+from phydrax.meshing.providers import native_provider_source_root
 
 
 _T = TypeVar("_T")
@@ -45,8 +46,10 @@ _PERFORMANCE_ENVIRONMENT_KEYS = (
     "XLA_PYTHON_CLIENT_MEM_FRACTION",
     "JAX_COMPILATION_CACHE_DIR",
 )
-_SOURCE_BUILD_DIRECTORIES = ("phydrax", "native")
 _SOURCE_BUILD_FILES = ("pyproject.toml", "uv.lock")
+# Inventory paths name the source-checkout layout. A wheel installs the provider
+# tree inside the package; either way its bytes are recorded under this path.
+_PROVIDER_SOURCES = Path("native", "providers")
 _IGNORED_SOURCE_PARTS = (
     "__pycache__",
     ".mypy_cache",
@@ -413,48 +416,56 @@ def logical_array_bytes(value: Any, /) -> int:
     return sum(leaf.nbytes for leaf in _array_leaves(value))
 
 
-def source_build_inputs(project_root: Path, /) -> tuple[Path, ...]:
-    """Return the deterministic package source and repository build-input inventory."""
-    root = _repository_root(project_root)
-    required = tuple(root / name for name in _SOURCE_BUILD_FILES)
-    if any(not path.is_file() for path in required):
-        raise FileNotFoundError(
-            "Source/build identity requires pyproject.toml and uv.lock."
-        )
-    paths = list(required)
-    for directory_name in _SOURCE_BUILD_DIRECTORIES:
-        directory = root / directory_name
-        if not directory.exists():
-            continue
-        if not directory.is_dir():
-            raise FileNotFoundError(
-                f"Source/build input must be a directory: {directory}"
-            )
-        candidates = (
-            directory.rglob("*.py")
-            if directory_name == "phydrax"
-            else directory.rglob("*")
-        )
-        paths.extend(
-            path
-            for path in candidates
-            if path.is_file()
+def _source_files(directory: Path, pattern: str, /) -> Iterator[Path]:
+    """Yield the authored files below one optional source directory."""
+    if not directory.exists():
+        return
+    if not directory.is_dir():
+        raise FileNotFoundError(f"Source/build input must be a directory: {directory}")
+    for path in directory.rglob(pattern):
+        if (
+            path.is_file()
             and not any(
                 part in _IGNORED_SOURCE_PARTS
                 for part in path.relative_to(directory).parts
             )
             and path.suffix not in {".pyc", ".pyo"}
+        ):
+            yield path
+
+
+def source_build_inputs(project_root: Path, /) -> dict[str, Path]:
+    """Map the deterministic source/build inventory paths to the files they read.
+
+    Inventory paths follow the source-checkout layout. The native provider tree
+    is read from the one location ``native_provider_source_path`` reads for this
+    root's package: inside an installed wheel's package, beside the package in a
+    checkout. Equal bytes have equal identity in either layout, and an installed
+    root never substitutes a parallel checkout-layout copy for its package bytes.
+    """
+    root = _repository_root(project_root)
+    inputs = {name: root / name for name in _SOURCE_BUILD_FILES}
+    if any(not path.is_file() for path in inputs.values()):
+        raise FileNotFoundError(
+            "Source/build identity requires pyproject.toml and uv.lock."
         )
-    return tuple(sorted(set(paths), key=lambda path: path.relative_to(root).as_posix()))
+    providers = native_provider_source_root(root / "phydrax")
+    for directory, pattern in ((root / "phydrax", "*.py"), (root / "native", "*")):
+        for path in _source_files(directory, pattern):
+            if providers is None or not path.is_relative_to(providers):
+                inputs[path.relative_to(root).as_posix()] = path
+    if providers is not None:
+        for path in _source_files(providers, "*"):
+            inputs[(_PROVIDER_SOURCES / path.relative_to(providers)).as_posix()] = path
+    return dict(sorted(inputs.items()))
 
 
 def source_build_fingerprint(project_root: Path, /) -> str:
     """Fingerprint the current package source and repository build inputs."""
-    root = _repository_root(project_root)
     return canonical_fingerprint(
         {
             "kind": "phydrax-current-source-build",
-            "files": _file_records(root, source_build_inputs(root)),
+            "files": _file_records(source_build_inputs(project_root)),
         }
     )
 
@@ -520,7 +531,12 @@ def benchmark_driver_fingerprint(project_root: Path, driver_path: Path, /) -> st
     return canonical_fingerprint(
         {
             "kind": "phydrax-benchmark-driver",
-            "files": _file_records(root, _driver_source_paths(root, paths)),
+            "files": _file_records(
+                {
+                    path.relative_to(root).as_posix(): path
+                    for path in _driver_source_paths(root, paths)
+                }
+            ),
         }
     )
 
@@ -629,11 +645,10 @@ def _repository_root(project_root: Path, /) -> Path:
     return root
 
 
-def _file_records(root: Path, paths: Iterable[Path], /) -> list[dict[str, Any]]:
+def _file_records(files: Mapping[str, Path], /) -> list[dict[str, Any]]:
+    """Hash each inventory path's file, ordered by inventory path."""
     records: list[dict[str, Any]] = []
-    for path in sorted(
-        set(paths), key=lambda candidate: candidate.relative_to(root).as_posix()
-    ):
+    for identity, path in sorted(files.items()):
         before = path.stat()
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -642,7 +657,7 @@ def _file_records(root: Path, paths: Iterable[Path], /) -> list[dict[str, Any]]:
             raise RuntimeError(f"Source/build input changed while hashing: {path}")
         records.append(
             {
-                "path": path.relative_to(root).as_posix(),
+                "path": identity,
                 "size_bytes": after.st_size,
                 "sha256": digest,
             }

@@ -40,6 +40,7 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...discretization._coordinate_operands import CoordinateOperandCollector
 from ...discretization._mapped_geometry_measure import prepare_mapped_edge_arc_length
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry._domain_boundary import MeshingDomainBoundarySource
@@ -234,6 +235,7 @@ class PreparedParametricSurface(StrictModule, NonTrainableState):
                     generation.layout.cell_capacity,
                     generation.layout.candidate_capacity,
                     generation.layout.maximum_work_units,
+                    generation.layout.neighborhood_depth,
                     generation.maximum_metadata_bytes,
                     generation.partition_count,
                 ),
@@ -513,7 +515,7 @@ def _certification_request(
     source: sources_owner.NativeSurfaceSource,
     specification: SurfaceMeshingSpec,
     compiled: CompiledSurfaceDomain,
-    construction: SurfaceConstruction,
+    boundary_source: MeshingDomainBoundarySource,
     /,
 ) -> NativeCertificationRequest:
     """Independent global embedding and continuous two-sided source acceptance.
@@ -523,6 +525,19 @@ def _certification_request(
     Taylor bounds. Nodal residuals alone never certify this request.
     """
 
+    if (
+        boundary_source.domain is not source.domain
+        or compiled.domain is not source.domain
+        or boundary_source.source_id != source.source_id
+        or boundary_source.source_revision != source.source_revision
+        or boundary_source.patches != tuple(compiled.patches.tolist())
+        or compiled.specification_id != specification.specification_id
+    ):
+        raise ValueError(
+            "Surface certification boundary_source must retain the actual source "
+            "domain, revision, selected patches and compiled request."
+        )
+
     bounded = compiled.patch_deviations[np.isfinite(compiled.patch_deviations)]
     tolerance = float(np.min(bounded) if bounded.size else np.min(compiled.patch_sizes))
     return NativeCertificationRequest(
@@ -530,11 +545,7 @@ def _certification_request(
         source.source_id,
         source.source_revision,
         specification.limits,
-        fidelity_source=MeshingDomainBoundarySource(
-            source.domain,
-            tuple(compiled.patches.tolist()),
-            chart_triangulations=construction.chart_triangulations,
-        ),
+        fidelity_source=boundary_source,
         fidelity_tolerance=tolerance,
     )
 
@@ -840,6 +851,7 @@ def _quad_associations(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> tuple[GeometryAssociation, ...]:
     """Keep topology strata and rebuild source UV/curve parameters."""
 
@@ -861,7 +873,7 @@ def _quad_associations(
                 )
             uv[key] = point
     _, _, _, inherited = remap_dual_metadata(
-        extraction, associations=associations, surface_source_cover=True
+        extraction, associations=associations, surface_source_cover=True, scope=scope
     )
     outputs = []
     for association in inherited:
@@ -974,15 +986,18 @@ def quad_edge_evidence(
                 row = lookup[tuple(sorted((vertices[first], vertices[last])))]
                 if np.isfinite(value[row]):
                     continue
-                enclosure = prepare_mapped_edge_arc_length(
-                    element, local, points[first], points[last], budget=budget
-                ).integrate(
-                    absolute_tolerance=1e-12,
-                    relative_tolerance=1e-12,
-                    maximum_work=specification.limits.maximum_work_units,
-                    maximum_subcells=min(specification.limits.maximum_cells, 10000),
-                    budget=budget,
-                )
+                # Each edge's restriction snapshots and controls are consumed
+                # by its own enclosure; only the published floats survive.
+                with budget.polynomial_preparation_scope():
+                    enclosure = prepare_mapped_edge_arc_length(
+                        element, local, points[first], points[last], budget=budget
+                    ).integrate(
+                        absolute_tolerance=1e-12,
+                        relative_tolerance=1e-12,
+                        maximum_work=specification.limits.maximum_work_units,
+                        maximum_subcells=min(specification.limits.maximum_cells, 10000),
+                        budget=budget,
+                    )
                 value[row], lower[row], upper[row] = (
                     enclosure.value,
                     enclosure.lower,
@@ -1373,7 +1388,7 @@ def _execute_exact_source_quads(
             )
         source_labels = labels
         zones, patches, labels, _ = remap_dual_metadata(
-            extraction, zones=zones, patches=patches, labels=labels
+            extraction, zones=zones, patches=patches, labels=labels, scope=scope
         )
         label_map = {
             old.label_id: new for old, new in zip(source_labels, labels, strict=True)
@@ -1393,7 +1408,7 @@ def _execute_exact_source_quads(
         )
         with coordinate_phase(scope, specification.limits, budget):
             local_associations = _quad_associations(
-                extraction, support, source_associations, budget=budget
+                extraction, support, source_associations, budget=budget, scope=scope
             )
         with coordinate_phase(scope, specification.limits, budget):
             compliance = _quad_compliance(
@@ -1573,17 +1588,37 @@ def _prepare_surface_publication(
     )
     parameters = scope.allocate_host_array((faces.shape[0], 3, 2), np.float64)
     root_patches = scope.allocate_host_array((faces.shape[0],), np.int64)
+    boundary_occurrences = np.full((faces.shape[0], 3, 3), -1, dtype=np.int32)
+    boundary_cell_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    )[order]
     for output, index in enumerate(order.tolist()):
         row = rows[index]
         root_patches[output] = construction.triangle_patches[row]
         for slot, vertex in enumerate(faces[index].tolist()):
             local = int(np.flatnonzero(construction.triangles[row] == vertex)[0])
             parameters[output, slot] = construction.triangle_parameters[row, local]
+        for side, (first, last) in enumerate(((0, 1), (1, 2), (2, 0))):
+            endpoints = {int(faces[index, first]), int(faces[index, last])}
+            for original_side, (a, b) in enumerate(((0, 1), (1, 2), (2, 0))):
+                if endpoints == {
+                    int(construction.triangles[row, a]),
+                    int(construction.triangles[row, b]),
+                }:
+                    boundary_occurrences[output, side] = construction.boundary_occurrences[
+                        row, original_side
+                    ]
+                    break
+            else:
+                raise ValueError("Published cell side has no authored construction owner")
     if atlas is not None:
         root_boundary = MeshingDomainBoundarySource(
             source.domain,
             tuple(compiled.patches.tolist()),
             chart_triangulations=construction.chart_triangulations,
+            boundary_occurrences=boundary_occurrences,
+            boundary_cell_ids=boundary_cell_ids,
+            boundary_patch_ids=root_patches.astype(np.int32),
         )
         exact_support = PreparedSurfaceSourceSupport(
             source.domain,
@@ -1612,9 +1647,12 @@ def _prepare_surface_publication(
             source.domain,
             tuple(compiled.patches.tolist()),
             chart_triangulations=construction.chart_triangulations,
+            boundary_occurrences=boundary_occurrences,
+            boundary_cell_ids=boundary_cell_ids,
+            boundary_patch_ids=root_patches.astype(np.int32),
         )
         certification_request = _certification_request(
-            source, specification, compiled, construction
+            source, specification, compiled, root_boundary
         )
     source_charts = SurfaceSourceCharts(
         source.domain,
@@ -1780,9 +1818,17 @@ def execute_parametric_surface_route(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> CellMeshingResult:
     """Generate, associate, check, audit and publish one parametric surface."""
     budget = coordinate_budget(specification.limits)
+    budget.capture_coordinate_operands = coordinate_operands is not None
+    budget.capture_affine_areas = (
+        coordinate_operands is not None and coordinate_operands.capture_affine_areas
+    )
+    budget.capture_signed_determinant_operands = (
+        coordinate_operands is not None and coordinate_operands.capture_signed_determinants
+    )
     with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
         limits = specification.limits
         execution = NativePublicationExecution(scope, workspace, record_phase, budget)
@@ -1888,7 +1934,7 @@ def execute_parametric_surface_route(
             region_boundary_evidence=region_boundaries,
             associations=local_associations,
         )
-        return _publish_parametric_surface(
+        result = _publish_parametric_surface(
             source,
             specification,
             prepared,
@@ -1901,6 +1947,14 @@ def execute_parametric_surface_route(
             compliance,
             organization,
         ).result
+        if coordinate_operands is not None:
+            with coordinate_phase(scope, limits, budget):
+                coordinate_operands.capture(
+                    result.mesh, result.geometry, budget, scope,
+                    input_owners=(source.domain,),
+                    coordinate_contract=result.coordinate_contract,
+                )
+        return result
 
 
 __all__ = [

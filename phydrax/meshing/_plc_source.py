@@ -12,6 +12,9 @@ from typing import final, Literal
 import equinox as eqx
 import numpy as np
 
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_geometry_validity as cell_geometry_validity_owner
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import TetMeshBoundaryPolicy
 from .._strict import StrictModule
@@ -67,6 +70,10 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
     ``"fixed"`` declares the supplied boundary immutable (no Steiner point on
     any facet or edge; triangle polygons are kept exactly); ``"conforming"``
     admits rational boundary subdivision with recorded ancestry.
+    ``geometry`` may retain exact affine source coordinates distinct from the
+    rounded native execution view in ``vertices``. Its coefficient rows use
+    the same vertex identities; independent publication certifies that source
+    geometry rather than treating rounded execution coordinates as exact.
     """
 
     __strict_contract__ = True
@@ -77,6 +84,7 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
     polygon_facets: HostInt64[PlcPolygonDim]
     facet_regions: HostInt64[PlcFacetDim, Literal[2]]
     segments: HostInt64[PlcSegmentDim, Literal[2]]
+    geometry: cell_geometry_owner.CellGeometrySpec | None
     region_ids: tuple[str, ...] = eqx.field(static=True)
     boundary: TetMeshBoundaryPolicy = eqx.field(static=True)
     complex_id: str = eqx.field(static=True)
@@ -92,6 +100,7 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         *,
         segments: ConvertibleToArray | None = None,
         boundary: TetMeshBoundaryPolicy = "conforming",
+        geometry: cell_geometry_owner.CellGeometrySpec | None = None,
     ) -> None:
         if isinstance(polygons, np.ndarray) and polygons.ndim != 2:
             raise TypeError(
@@ -190,12 +199,17 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             raise ValueError(
                 "PiecewiseLinearComplex.facet_regions must cover every region; got an unbounded region"
             )
+        if geometry is not None and geometry.coordinates.shape != points.shape:
+            raise ValueError(
+                "PiecewiseLinearComplex.geometry must bind one source coefficient per execution vertex; got a different coordinate-bank shape"
+            )
         self.vertices = points
         self.polygon_offsets = offsets
         self.polygon_vertices = flat
         self.polygon_facets = owners
         self.facet_regions = incidence
         self.segments = curves
+        self.geometry = geometry
         self.region_ids = ids
         self.boundary = policy
         self.complex_id = canonical_fingerprint(
@@ -209,6 +223,14 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
                 "segments": array_tree_fingerprint(curves),
                 "region_ids": ids,
                 "boundary": policy,
+                **(
+                    {
+                        "geometry": cell_geometry_validity_owner.cell_geometry_id(geometry),
+                        "geometry_content": array_tree_fingerprint(geometry),
+                    }
+                    if geometry is not None
+                    else {}
+                ),
             }
         )
 
@@ -252,6 +274,7 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             value.region_ids,
             segments=value.segments,
             boundary=value.boundary,
+            geometry=value.geometry,
         )
         if fresh.complex_id != value.complex_id:
             raise ValueError(

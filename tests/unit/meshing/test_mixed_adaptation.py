@@ -1,15 +1,24 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+import json
+from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
 from typing import NamedTuple
 
+import equinox as eqx
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._meshcore import MeshcoreError, MeshcoreStatus
+from phydrax._fingerprint import tree_content_equal
+from phydrax._meshcore import (
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeBatchTicket,
+    NativeExecutionScope,
+)
 from phydrax._model._structure import model_from_structure_recipe, model_structure_recipe
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization._cell_complex import (
@@ -32,6 +41,7 @@ from phydrax.discretization._cell_geometry_transition_types import (
     NestedReferenceWitnesses,
 )
 from phydrax.discretization._chart_reconstruction import SurfaceGeometryReconstruction
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._coordinate_enclosure import (
     add,
     axes,
@@ -53,14 +63,21 @@ from phydrax.lifecycle._meshing_sources import (
     write_meshing_source_closure,
 )
 from phydrax.meshing._curving import straight_geometry
+from phydrax.meshing import _mixed_adaptation as mixed_owner
 from phydrax.meshing._mixed_adaptation import (
     adapt_mixed_mesh,
     MixedAdaptationEvidence,
     MixedAdaptationHierarchy,
     MixedLayerColumns,
+    MixedRetiredEntityBank,
+    MixedSiblingBank,
     MixedTemplateClosureError,
+    Sibling,
 )
-from phydrax.meshing._periodic import periodic_vertex_orbit_witness
+from phydrax.meshing._periodic import (
+    PeriodicConstructionOrbits,
+    periodic_vertex_orbit_witness,
+)
 from phydrax.meshing._topology_edit import assemble_topology_edit, build_mesh
 from phydrax.meshing.qualification import sphere_surface
 from tests._support.coordinate_references import coordinate_reference_budget
@@ -80,6 +97,180 @@ MEASURE_REGRESSION_ABS = 1e-11
 # Retained envelope from the unit-sphere, degree-two reconstruction probes on
 # the authored 0.1-radian chart; distinct from its caller's fidelity allowance.
 SPHERE_RECONSTRUCTION_REGRESSION_BOUND = 2e-4
+
+@pytest.fixture
+def template_request_budget() -> Iterator[
+    tuple[NativeExecutionScope, CoordinateEnclosureBudget, NativeBatchTicket]
+]:
+    limits = phx.meshing.MeshingLimits(
+        maximum_work_units=1 << 20, maximum_scratch_bytes=1 << 26
+    )
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.batch(1 << 20, bytes_upper=1 << 26) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket, maximum_work_units=1 << 20, maximum_memory_bytes=1 << 26
+            )
+            with budget.activate(), budget.temporary_scope():
+                yield scope, budget, ticket
+
+
+@pytest.mark.parametrize(
+    "kind", ("triangle", "quadrilateral", "tetrahedron", "prism", "hexahedron", "pyramid")
+)
+def test_prepared_template_facts_preserve_every_signature_and_protection(
+    kind: str,
+    template_request_budget: tuple[
+        NativeExecutionScope, CoordinateEnclosureBudget, NativeBatchTicket
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope, budget, ticket = template_request_budget
+    topology = reference_cell_topology(kind)
+    if kind == "triangle":
+        # Triangle point keys are a supported reference helper, not a native
+        # mixed-template generation route. Exercise an authored exact split.
+        templates = (
+            mixed_owner._Template(
+                "identity", np.asarray(topology.vertices, dtype=np.float64)[None], None
+            ),
+            mixed_owner._Template(
+                "reference-edge-split",
+                np.asarray(
+                    (((0, 0), (0.5, 0), (0, 1)), ((0.5, 0), (1, 0), (0, 1))),
+                    dtype=np.float64,
+                ),
+                None,
+            ),
+        )
+    else:
+        templates = mixed_owner._templates(
+            kind, True, scope=scope, budget=budget, ticket=ticket
+        )
+    ids = np.arange(len(topology.vertices), dtype=np.int64)[::-1] * 19 + 103
+    cell = mixed_owner.Cell(17, "cell", kind, ids, 0)
+    cache: mixed_owner._TemplateClosureCache = {}
+    edges = {
+        tuple(sorted(int(ids[index]) for index in edge))
+        for edge in topology.entities[1]
+    }
+    faces = {
+        tuple(sorted(int(ids[index]) for index in facet))
+        for facet in topology.entities[topology.dimension - 1]
+    }
+    identity = mixed_owner._facet_signatures(
+        kind, ids, templates[0], scope=scope, budget=budget
+    )
+    expected = []
+    for template in templates:
+        signature = mixed_owner._facet_signatures(
+            kind, ids, template, scope=scope, budget=budget
+        )
+        split_edge = any(
+            len(point) == 2 and tuple(identifier for identifier, _ in point) in edges
+            for child in template.children
+            for point in mixed_owner._point_keys(
+                kind, ids, child, scope=scope, budget=budget
+            )
+        )
+        expected.append((signature, not split_edge and signature == identity))
+        assert mixed_owner._prepared_facet_signatures(
+            cell, template, cache, None, scope=scope, budget=budget
+        ) == signature
+    assert len(cache) == len(templates)
+
+    def forbid_repreparation(*args, **kwargs):
+        raise AssertionError("Retained exact template facts must not be recomputed")
+
+    monkeypatch.setattr(mixed_owner, "_point_keys", forbid_repreparation)
+    for template, (signature, permitted) in zip(templates, expected, strict=True):
+        assert mixed_owner._prepared_facet_signatures(
+            cell, template, cache, None, scope=scope, budget=budget
+        ) == signature
+        assert mixed_owner._permitted_subdivision(
+            cell, template, edges, faces, references=cache,
+            identity_template=templates[0], scope=scope, budget=budget,
+        ) == permitted
+
+
+@pytest.mark.parametrize("kind", ("tetrahedron", "prism", "hexahedron", "pyramid"))
+@pytest.mark.parametrize("rotated", (False, True))
+def test_prepared_template_facts_preserve_periodic_facet_placement(
+    kind: str,
+    rotated: bool,
+    template_request_budget: tuple[
+        NativeExecutionScope, CoordinateEnclosureBudget, NativeBatchTicket
+    ],
+) -> None:
+    scope, budget, ticket = template_request_budget
+    if rotated:
+        mesh, _ = periodic_template_source(kind, True)
+    else:
+        # Keep every distinct fractional representative of the unit lattice;
+        # a pyramid apex is not an integer translate of a base corner.
+        points = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
+        block = CellBlock(
+            "periodic", kind, np.arange(points.shape[0], dtype=np.int32)[None],
+            global_ids=np.asarray([17], dtype=np.int64),
+        )
+        mesh = CellMesh(
+            points, (block,),
+            vertex_global_ids=np.arange(100, 100 + points.shape[0], dtype=np.int64),
+        )
+        representatives: dict[tuple[float, ...], int] = {}
+        roots = np.asarray(
+            [
+                representatives.setdefault(tuple(point - np.floor(point)), index)
+                for index, point in enumerate(points)
+            ],
+            dtype=np.int32,
+        )
+        shifts = (points - points[roots]).astype(np.int32)
+        periodic = phx.discretization.PeriodicMeshTopology(
+            mesh, phx.discretization.PeriodicCell(np.eye(3)), roots, shifts
+        )
+        mesh = CellMesh(
+            points, (block,), vertex_global_ids=mesh.vertex_global_ids,
+            periodic_topology=periodic,
+        )
+    block = mesh.blocks[0]
+    ids = np.asarray(mesh.vertex_global_ids)[np.asarray(block.vertices)[0]]
+    cell = mixed_owner.Cell(int(block.global_ids[0]), block.name, kind, ids, 0)
+    orbits = PeriodicConstructionOrbits(mesh)
+    cache: mixed_owner._TemplateClosureCache = {}
+    for template in mixed_owner._templates(
+        kind, True, scope=scope, budget=budget, ticket=ticket
+    ):
+        assert mixed_owner._prepared_facet_signatures(
+            cell, template, cache, orbits, scope=scope, budget=budget
+        ) == mixed_owner._periodic_facet_signatures(
+            orbits, cell, template, scope=scope, budget=budget
+        )
+
+
+@pytest.mark.parametrize("mixed", (False, True))
+def test_prepared_template_facts_preserve_closure_ids_and_canonical_work(
+    mixed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mesh, _ = red_shared_face_source(mixed, True)
+    requested = np.asarray((37,), dtype=np.int64)
+    actual = adapt_mixed_mesh(mesh, refine_cell_ids=requested)
+
+    def direct(cell, template, cache, orbits, *, scope, budget):
+        if orbits is None:
+            return mixed_owner._facet_signatures(
+                cell.kind, cell.vertices, template, scope=scope, budget=budget
+            )
+        return mixed_owner._periodic_facet_signatures(
+            orbits, cell, template, scope=scope, budget=budget
+        )
+
+    monkeypatch.setattr(mixed_owner, "_prepared_facet_signatures", direct)
+    reference = adapt_mixed_mesh(mesh, refine_cell_ids=requested)
+    assert tree_content_equal(actual.edit, reference.edit)
+    assert tree_content_equal(actual.hierarchy, reference.hierarchy)
+    assert actual.evidence.closure_steps == reference.evidence.closure_steps
+    assert actual.evidence.work_units == reference.evidence.work_units
+
 
 
 @pytest.mark.parametrize(
@@ -286,7 +477,7 @@ def test_layer_column_coarsening_rejects_partial_interval_cohort(failure: str) -
         fine, _, _ = assemble_topology_edit(
             source, refined.edit, numeric_version="column-fine", budget=budget
         )
-    first, second = refined.hierarchy.records
+    first, second = refined.hierarchy.siblings
     first_ids = np.asarray(first.child_ids, dtype=np.int64)
     all_ids = np.concatenate((first_ids, np.asarray(second.child_ids, dtype=np.int64)))
     marks = first_ids if failure == "partial" else all_ids
@@ -296,7 +487,7 @@ def test_layer_column_coarsening_rejects_partial_interval_cohort(failure: str) -
             (first,),
             next_cell_id=hierarchy.next_cell_id,
             next_vertex_id=hierarchy.next_vertex_id,
-            retired_entities=hierarchy.retired_entities,
+            retired_entities=tuple(hierarchy.retired),
             quotient_entities=hierarchy.quotient_entities,
             layer_columns=hierarchy.layer_columns,
             identity_cells=hierarchy.identity_cells,
@@ -557,7 +748,7 @@ def test_red_tetrahedral_refinement_evidence(red_lifecycle: _RedLifecycle) -> No
         and refined.geometry_transition.evidence.exact
     )
     assert isinstance(refined.hierarchy, MixedAdaptationHierarchy)
-    assert all(len(record.child_ids) == 8 for record in refined.hierarchy.records)
+    assert np.all(refined.hierarchy.siblings.child_counts == 8)
     fine = refined.target.mesh
     _assert_red_refinement_cell_count(fine)
 
@@ -621,7 +812,7 @@ def test_red_tetrahedral_diagonal_identity(red_lifecycle: _RedLifecycle) -> None
             np.asarray(mesh.vertex_global_ids), np.asarray(mesh.coordinates), strict=True
         )
     }
-    for record in refined.hierarchy.records:
+    for record in refined.hierarchy.siblings:
         if record.cell_kind != "tetrahedron":
             continue
         parent = record.parent_vertices
@@ -683,10 +874,7 @@ def test_red_tetrahedral_parent_restoration(red_lifecycle: _RedLifecycle) -> Non
     assert coarse.status is M.MeshAdaptationStatus.COMPLETE
     assert coarse.target.audit.passed
     assert isinstance(coarse.evidence, MixedAdaptationEvidence)
-    removed_children = np.asarray(
-        [child for record in refined.hierarchy.records for child in record.child_ids],
-        dtype=np.int64,
-    )
+    removed_children = refined.hierarchy.siblings.all_child_ids()
     np.testing.assert_array_equal(
         coarse.evidence.coarsened_cell_ids, np.sort(removed_children)
     )
@@ -885,7 +1073,7 @@ def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
                 source, invalid_edit, numeric_version="invalid", budget=budget
             )
     elif failure == "stale-source-orbit":
-        record = refined.hierarchy.records[0]
+        record = refined.hierarchy.siblings[0]
         invalid_record = record._replace(
             periodic_roots=(record.periodic_roots[0] + 1, *record.periodic_roots[1:])
         )
@@ -911,7 +1099,7 @@ def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
         banks = refined.hierarchy.quotient_entities
         invalid_bank = banks[0]._replace(allocator_next_id=banks[0].allocator_next_id + 1)
         hierarchy = MixedAdaptationHierarchy(
-            refined.hierarchy.records,
+            tuple(refined.hierarchy.siblings),
             next_cell_id=refined.hierarchy.next_cell_id,
             next_vertex_id=refined.hierarchy.next_vertex_id,
             quotient_entities=(invalid_bank, *banks[1:]),
@@ -1497,14 +1685,14 @@ def test_mixed_coarsening_authenticates_unchanged_source_cells(
         tmp_path / "identity-hierarchy", expected_content_id=receipt.content_id
     )
     assert isinstance(hierarchy, MixedAdaptationHierarchy)
-    children = np.asarray(hierarchy.records[0].child_ids, dtype=np.int64)
+    children = np.asarray(hierarchy.siblings[0].child_ids, dtype=np.int64)
     marks = np.concatenate((children[:1] if scope == "incomplete" else children, [18]))
     if scope == "unknown":
         hierarchy = MixedAdaptationHierarchy(
-            hierarchy.records,
+            tuple(hierarchy.siblings),
             next_cell_id=hierarchy.next_cell_id,
             next_vertex_id=hierarchy.next_vertex_id,
-            retired_entities=hierarchy.retired_entities,
+            retired_entities=tuple(hierarchy.retired),
         )
     classes = np.concatenate(
         [
@@ -1661,10 +1849,12 @@ def test_mixed_hierarchy_stored_fields_preserve_allocator_and_identity(
 ) -> None:
     restored = MixedAdaptationHierarchy.from_stored_fields(stored_hierarchy)
     assert restored is not stored_hierarchy
-    assert restored.records == stored_hierarchy.records
+    assert tuple(restored.siblings) == tuple(stored_hierarchy.siblings)
+    assert restored.siblings.bank_id == stored_hierarchy.siblings.bank_id
     assert restored.next_cell_id == stored_hierarchy.next_cell_id
     assert restored.next_vertex_id == stored_hierarchy.next_vertex_id
-    assert restored.retired_entities == stored_hierarchy.retired_entities
+    assert tuple(restored.retired) == tuple(stored_hierarchy.retired)
+    assert restored.retired.bank_id == stored_hierarchy.retired.bank_id
     assert restored.quotient_entities == stored_hierarchy.quotient_entities
     assert restored.layer_columns is stored_hierarchy.layer_columns
     assert restored.identity_cells == stored_hierarchy.identity_cells
@@ -1693,3 +1883,103 @@ def test_mixed_hierarchy_stored_fields_refuse_forged_identity(
     malformed = model_from_structure_recipe(recipe)
     with pytest.raises(ValueError, match=r"MixedAdaptationHierarchy\.hierarchy_id"):
         MixedAdaptationHierarchy.from_stored_fields(malformed)
+
+
+_BANK_TEMPLATE = (
+    ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
+    ((1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
+)
+
+
+def test_mixed_sibling_bank_preserves_rows_and_refuses_forged_padding() -> None:
+    signed = (((-0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), _BANK_TEMPLATE[1])
+    periodic = Sibling(
+        9,
+        "b",
+        "quadrilateral",
+        (4, 5, 6, 7),
+        (20, 21),
+        signed,
+        1,
+        3,
+        None,
+        (4, 5, 4, 5),
+        ((0, 0), (1, 0), (1, 1), (0, 1)),
+    )
+    plain = Sibling(
+        3, "a", "triangle", (0, 1, 2), (10, 11, 12), _BANK_TEMPLATE, 0, None, 2, (), ()
+    )
+    bank = MixedSiblingBank((periodic, plain))
+    assert tuple(bank) == (plain, periodic)
+    assert bank.block_kinds == (("a", "triangle"), ("b", "quadrilateral"))
+    # Signed zeros are distinct exact templates, ordered after equal values by bits.
+    assert [np.signbit(template[0][0][0]) for template in bank.reference_templates] == [
+        False,
+        True,
+    ]
+    assert np.signbit(bank[-1].references[0][0][0])
+    assert bank.parent_rows(np.asarray([9, 4, 3])).tolist() == [1, -1, 0]
+    assert bank.all_child_ids().tolist() == [10, 11, 12, 20, 21]
+    assert bank.child_ids.shape == (2, 3) and bank.periodic_shifts.shape == (2, 4, 2)
+    assert not bank.child_ids.flags.writeable
+    restored = MixedSiblingBank.from_stored_fields(bank)
+    assert restored.bank_id == bank.bank_id and tuple(restored) == tuple(bank)
+    children = np.array(bank.child_ids)
+    children[1, 2] = 99
+    forged = eqx.tree_at(lambda value: value.child_ids, bank, children)
+    with pytest.raises(ValueError, match=r"MixedSiblingBank\.columns"):
+        MixedSiblingBank.from_stored_fields(forged)
+    with pytest.raises(ValueError, match=r"MixedSiblingBank\.periodic_shifts"):
+        MixedSiblingBank((periodic._replace(periodic_shifts=((0, 0),)),))
+    with pytest.raises(ValueError, match=r"MixedSiblingBank\.parent_ids"):
+        MixedSiblingBank((plain, plain._replace(child_ids=(13,))))
+    with pytest.raises(ValueError, match=r"MixedSiblingBank\.child_ids"):
+        MixedSiblingBank((plain._replace(child_ids=(1 << 63,)),))
+
+
+def test_mixed_retired_entity_bank_keeps_tuple_order_and_key_padding() -> None:
+    rows = ((2, (5, 6, 7, -1), 40), (1, (0, 1), 30), (2, (5, 6, 7), 41))
+    bank = MixedRetiredEntityBank(rows)
+    assert tuple(bank) == tuple(sorted(rows))
+    assert bank[-1] == (2, (5, 6, 7, -1), 40)
+    assert bank.keys.shape == (3, 4) and bank.key_lengths.tolist() == [2, 3, 4]
+    assert MixedRetiredEntityBank.from_stored_fields(bank).bank_id == bank.bank_id
+    lengths = np.array(bank.key_lengths)
+    lengths[0] = 1
+    forged = eqx.tree_at(lambda value: value.key_lengths, bank, lengths)
+    with pytest.raises(ValueError, match=r"MixedRetiredEntityBank\.columns"):
+        MixedRetiredEntityBank.from_stored_fields(forged)
+
+
+def test_mixed_hierarchy_recipe_size_is_independent_of_row_count() -> None:
+    register_meshing_source_artifacts()
+
+    def recipe_bytes(count: int) -> int:
+        hierarchy = MixedAdaptationHierarchy(
+            tuple(
+                Sibling(
+                    index,
+                    "block",
+                    "quadrilateral",
+                    tuple(range(4 * index, 4 * index + 4)),
+                    (1_000_000 + 2 * index, 1_000_001 + 2 * index),
+                    _BANK_TEMPLATE,
+                    0,
+                    None,
+                    None,
+                    (),
+                    (),
+                )
+                for index in range(count)
+            ),
+            next_cell_id=2_000_000,
+            next_vertex_id=4_000_000,
+            retired_entities=tuple(
+                (1, (index, index + 1), 1_000_000 + index) for index in range(count)
+            ),
+        )
+        restored = MixedAdaptationHierarchy.from_stored_fields(hierarchy)
+        assert restored.hierarchy_id == hierarchy.hierarchy_id
+        return len(json.dumps(model_structure_recipe(hierarchy)))
+
+    assert abs(recipe_bytes(1024) - recipe_bytes(2)) < 512

@@ -246,7 +246,9 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
                         )
             resolved = tuple(resolved_elements)
             dofs = (
-                fem_owner.FiniteElementDofMap(mesh, resolved, coordinate_spec=geometry)
+                fem_owner.FiniteElementDofMap(
+                    mesh, resolved, coordinate_spec=geometry, budget=budget
+                )
                 if numbering is None
                 else numbering
             )
@@ -309,6 +311,8 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
         cls: type[PeriodicCellGeometrySource],
         value: PeriodicCellGeometrySource,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PeriodicCellGeometrySource:
         """Rebuild numbering and authenticate the stored quotient coordinate law."""
         renewed = cls(
@@ -317,6 +321,7 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
             active_indices=np.asarray(value.active_indices, dtype=np.int64),
             representative_coordinates=value.representative_coordinates,
             numbering=None,
+            budget=budget,
         )
         if renewed.source_layout_id != value.source_layout_id:
             raise ValueError(

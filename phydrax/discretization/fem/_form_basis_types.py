@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -141,5 +143,23 @@ class AbstractReferenceFormBasis(StrictModule, ABC):
         *,
         entity_bases: tuple[tuple[AbstractReferenceFormBasis | None, ...], ...]
         | None = None,
+        cache: EntityMomentCache | None = None,
     ) -> Array:
         raise NotImplementedError
+
+
+@dataclass(slots=True)
+class EntityMomentCache:
+    """Caller-scoped entity traces and moment blocks of one reference form basis.
+
+    A block depends only on its local entity, the canonical chart permutation
+    of its global vertex IDs and the shared canonical basis. One cache must
+    never outlive or cross the basis whose entities it records.
+    """
+
+    entities: dict[tuple[int, tuple[int, ...]], AbstractReferenceFormBasis] = field(
+        default_factory=dict
+    )
+    blocks: dict[
+        tuple[int, tuple[int, ...], tuple[int, ...], str | None], np.ndarray
+    ] = field(default_factory=dict)

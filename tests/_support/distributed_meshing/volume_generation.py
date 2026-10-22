@@ -2,6 +2,8 @@
 
 """PLC coverage admission observations in an isolated process."""
 
+from copy import copy
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -108,32 +110,47 @@ def coverage_threshold(shortfall: str) -> dict[str, Any]:
         raise AssertionError(
             "coverage_threshold.request must retain declared coverage inputs; got missing domain or cell regions."
         )
-    # A phase requirement excludes coordinate-scope preparation. Measure the entire
-    # public invocation independently instead of using it as an adaptation limit.
+    domain = request.domain
+    if not isinstance(
+        domain, (phx.geometry.PiecewiseLinearDomain, phx.geometry.MappedReferenceDomain)
+    ):
+        raise AssertionError(
+            "coverage_threshold.domain must retain the declared PLC or mapped domain."
+        )
+    # Issued coverage is keyed by its actual mesh owner as well as its complete
+    # request. The adaptation still owns its proof, so measuring on that mesh
+    # would price live-proof retention, not the fresh proof needed after changing
+    # the work limit. Independent shallow carriers preserve every scientific
+    # array without inheriting another owner's issued proof. Both requests start
+    # with fresh ledgers and the same already-prepared immutable source owners.
+    baseline_mesh = copy(target.mesh)
+    trial_mesh = copy(target.mesh)
     with coordinate_certificate_request(request.limits) as budget:
         baseline = phx.geometry.certify_domain_coverage(
-            target.mesh,
+            baseline_mesh,
             target.geometry,
-            request.domain,
+            domain,
             request.cell_regions,
             embedding=certificate.embedding,
             limits=request.limits,
             budget=budget,
         )
         required = budget.required_work_units
+        measured = budget.work_units
     if baseline.status != "certified":
         raise AssertionError(
             f"coverage_threshold.baseline.status must be certified; got {baseline.status!r}."
         )
-    limits = phx.geometry.MeshCertificateLimits(
-        maximum_work_units=required - int(shortfall),
-        maximum_scratch_bytes=request.limits.maximum_scratch_bytes,
-    )
-    with coordinate_certificate_request(request.limits) as budget:
+    if baseline is certificate.coverage or required <= 0:
+        raise AssertionError(
+            "coverage_threshold.baseline must earn fresh coverage, not retain an issued proof."
+        )
+    limits = replace(request.limits, maximum_work_units=required - int(shortfall))
+    with coordinate_certificate_request(limits) as budget:
         report = phx.geometry.certify_domain_coverage(
-            target.mesh,
+            trial_mesh,
             target.geometry,
-            request.domain,
+            domain,
             request.cell_regions,
             embedding=certificate.embedding,
             limits=limits,
@@ -165,6 +182,9 @@ def coverage_threshold(shortfall: str) -> dict[str, Any]:
         "status": "ACCEPT",
         "required_work": required,
         "charged_work": charged,
+        "measured_work": measured,
         "phase_required_work": report.source_expression_required_work_units,
         "phase_charged_work": report.source_expression_work_units,
+        "measured_phase_required_work": baseline.source_expression_required_work_units,
+        "measured_phase_charged_work": baseline.source_expression_work_units,
     }

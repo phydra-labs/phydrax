@@ -91,6 +91,9 @@ class _Library:
         self.functions = {name: _Function(b"0" * 64) for name in meshcore._SIGNATURES}
         self.functions["phx_mc_abi_contract"] = _Function(contract)
         self.functions["phx_mc_version"] = _Function(version)
+        self.functions["phx_mc_build_configuration"] = _Function(
+            f"compiler=test|{meshcore._EXECUTION_CLOCK_CAPABILITY}|config=Test".encode()
+        )
 
     def __getitem__(self, name: Any) -> Any:
         return self.functions[name]
@@ -119,6 +122,51 @@ def test_another_c_abi_contract_is_refused_before_binding() -> None:
         for name, function in library.functions.items()
         if name != "phx_mc_abi_contract"
     )
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    (
+        "compiler=test|config=Test",
+        "compiler=test|execution_clocks=shared-preparation-clock|config=Test",
+        f"{meshcore._EXECUTION_CLOCK_CAPABILITY}|{meshcore._EXECUTION_CLOCK_CAPABILITY}",
+        f"{meshcore._EXECUTION_CLOCK_CAPABILITY}|execution_clocks=shared-preparation-clock",
+        f"{meshcore._EXECUTION_CLOCK_CAPABILITY}-unimplemented",
+    ),
+    ids=("missing", "incompatible", "duplicate", "conflicting", "nonexact"),
+)
+def test_unpaired_clock_semantics_are_unavailable_before_dispatch(
+    configuration: str,
+) -> None:
+    library = _Library(
+        meshcore._ABI_CONTRACT.encode(), importlib.metadata.version("phydrax").encode()
+    )
+    library.functions["phx_mc_build_configuration"] = _Function(configuration.encode())
+    # ty: ignore[invalid-argument-type]
+    unavailable = meshcore._bind(library, Path("unpaired-clock-meshcore"), "0" * 64)
+    assert isinstance(unavailable, str)
+    assert "capability exactly once" in unavailable
+    identities = {
+        "phx_mc_abi_contract",
+        "phx_mc_version",
+        "phx_mc_build_hash",
+        "phx_mc_build_configuration",
+    }
+    assert all(
+        function.calls == 0
+        for name, function in library.functions.items()
+        if name not in identities
+    )
+
+
+def test_exact_clock_semantic_capability_binds_the_matched_release() -> None:
+    library = _Library(
+        meshcore._ABI_CONTRACT.encode(), importlib.metadata.version("phydrax").encode()
+    )
+    # ty: ignore[invalid-argument-type]
+    bound = meshcore._bind(library, Path("matched-clock-meshcore"), "0" * 64)
+    assert isinstance(bound, meshcore.MeshcoreLibrary)
+    assert meshcore._EXECUTION_CLOCK_CAPABILITY in bound.configuration.split("|")
 
 
 @pytest.mark.meshcore

@@ -49,6 +49,23 @@ def test_quotient_evidence_reconstruction_refuses_changed_group_binding(
         PeriodicQuotientEvidence.from_stored_fields(evidence, mesh=different_group)
 
 
+def test_quotient_evidence_reconstruction_refuses_other_mesh_with_equal_quotient(
+    periodic_mesh: CellMesh,
+) -> None:
+    # Moving an interior vertex keeps the quotient group, counts and measure,
+    # so only the bound mesh identity can reject this foreign carrier.
+    base = unit_square(2)
+    points = np.asarray(base.coordinates).copy()
+    points[4, 0] = 0.375
+    moved = _periodic_axis(CellMesh(points, base.blocks), 0)
+    evidence = PeriodicQuotientEvidence(periodic_mesh)
+    assert PeriodicQuotientEvidence(moved).total_measure == pytest.approx(
+        evidence.total_measure
+    )
+    with pytest.raises(ValueError, match="PeriodicQuotientEvidence.mesh_id"):
+        PeriodicQuotientEvidence.from_stored_fields(evidence, mesh=moved)
+
+
 def test_periodic_identity_admission_preserves_variable_arity_keys() -> None:
     keys = ((10, 20), (30, 40, 50))
     identifiers = (5, 6)

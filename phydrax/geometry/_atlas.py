@@ -185,6 +185,43 @@ class AbstractTrimCurve(StrictModule, CoefficientEnclosureSource):
         """Conservative ``(2, 2)`` box ``[lower, upper]`` of the arc ``[first, last]``."""
         raise NotImplementedError
 
+    def enclosures(
+        self,
+        intervals: npt.ArrayLike,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
+    ) -> np.ndarray:
+        """Conservative ``(N, 2, 2)`` boxes of independent ``(first, last)`` arcs.
+
+        Row ``k`` is ``enclosure(*intervals[k])``; carriers may share one
+        evaluation pass between rows without changing any row's enclosure.
+        """
+        rows = np.asarray(intervals, dtype=np.float64).reshape(-1, 2)
+        if rows.shape[0] == 0:
+            return np.empty((0, 2, 2), dtype=np.float64)
+        return np.stack(
+            [
+                np.asarray(
+                    self.enclosure(
+                        first, last, budget=budget, preparations=preparations
+                    ),
+                    dtype=np.float64,
+                )
+                for first, last in rows.tolist()
+            ]
+        )
+
+    def arc_partition_binding(self) -> tuple[tuple[object, ...], bool] | None:
+        """Source binding shared by both orientations of one ``[0, 1]`` trim.
+
+        ``(sources, reversed)`` states that every trim with identical sources
+        traverses one point set, local ``s`` of one orientation being ``1 - s``
+        of the other. Carriers without such a proof return None.
+        """
+        return None
+
     @checked
     def affine_chord_evidence(
         self,
@@ -202,6 +239,14 @@ class AbstractTrimCurve(StrictModule, CoefficientEnclosureSource):
         point samples or a straight-looking enclosure establish no such proof.
         """
         return None
+
+    def host_points(self, parameters: ArrayLike, /) -> np.ndarray:
+        """Evaluate concrete parameters through one compiled program, on the host.
+
+        Carriers whose own evaluation already runs a shape-stable compiled
+        program override this to avoid a per-carrier outer compilation.
+        """
+        return np.asarray(jax.device_get(_trim_points(self, parameters)))
 
     def derivative_bounds(
         self,
@@ -557,13 +602,18 @@ def _prepare_loop_geometry(
     preparations: TrimRequestPreparations,
 ) -> _LoopGeometry:
     endpoint_error = 0.0
-    for vertex, curve_index, first in zip(chords, batch.curves, batch.first, strict=True):
-        curve = curves[int(curve_index)]
-        endpoint_box = np.asarray(
-            curve.enclosure(
-                float(first), float(first), budget=budget, preparations=preparations
+    curve_indices = np.asarray(batch.curves, dtype=np.int64)
+    endpoint_boxes = np.empty((chords.shape[0], 2, 2), dtype=np.float64)
+    for index, curve in enumerate(curves):
+        rows = np.flatnonzero(curve_indices == index)
+        if rows.size:
+            endpoint_boxes[rows] = _point_enclosures(
+                curve,
+                batch.first[rows].tolist(),
+                budget=budget,
+                preparations=preparations,
             )
-        )
+    for vertex, endpoint_box in zip(chords, endpoint_boxes, strict=True):
         endpoint_error = max(
             endpoint_error,
             float(np.max(np.nextafter(np.abs(endpoint_box - vertex), np.inf))),
@@ -577,12 +627,12 @@ def _prepare_loop_geometry(
         next_curve = curves[(index + 1) % len(curves)]
         end = curve.parameter_interval[1]
         start = next_curve.parameter_interval[0]
-        first_box = np.asarray(
-            curve.enclosure(end, end, budget=budget, preparations=preparations)
-        )
-        second_box = np.asarray(
-            next_curve.enclosure(start, start, budget=budget, preparations=preparations)
-        )
+        first_box = _point_enclosures(
+            curve, [end], budget=budget, preparations=preparations
+        )[0]
+        second_box = _point_enclosures(
+            next_curve, [start], budget=budget, preparations=preparations
+        )[0]
         junction_boxes.append(
             np.stack(
                 (
@@ -913,9 +963,7 @@ def _arc_enclosure(
         raise ValueError(
             f"AbstractTrimCurve.enclosure must return finite (2, 2) boxes; got shape {box.shape}"
         )
-    end = np.asarray(
-        jax.device_get(_trim_points(curve, np.asarray(last, dtype=np.float64)))
-    )
+    end = curve.host_points(np.asarray(last, dtype=np.float64))
     lower = np.minimum(box[0], np.minimum(start, end))
     upper = np.maximum(box[1], np.maximum(start, end))
     return np.stack((lower, upper)), end
@@ -997,6 +1045,92 @@ def _affine_chord_within_tolerance(
     return maximum_squared <= tolerance_squared
 
 
+type _SourceArc = tuple[float, float, np.ndarray, np.ndarray, np.ndarray]
+
+
+@dataclass(slots=True)
+class TrimSourceArcs:
+    """Request facts of one oriented-trim source binding, in forward orientation.
+
+    ``sources`` is the binding from ``AbstractTrimCurve.arc_partition_binding``.
+    Point boxes are keyed by forward local parameter on ``[0, 1]``; partitions
+    map a cover tolerance to accepted ``(lower, upper, start, end, box)`` arcs.
+    A reversed trim reads both through the exact involution ``s -> 1 - s``.
+    """
+
+    sources: tuple[object, ...]
+    points: dict[float, np.ndarray] = field(default_factory=dict)
+    partitions: dict[float, tuple[_SourceArc, ...]] = field(default_factory=dict)
+
+
+def _source_arcs(
+    curve: AbstractTrimCurve, preparations: TrimRequestPreparations | None, /
+) -> tuple[TrimSourceArcs, bool] | None:
+    binding = None if preparations is None else curve.arc_partition_binding()
+    if binding is None or preparations is None:
+        return None
+    sources, reversed_ = binding
+    key = tuple(value if isinstance(value, float) else id(value) for value in sources)
+    record = preparations.trim_source_arcs.get(key)
+    if record is None or any(
+        retained is not value and not (isinstance(value, float) and retained == value)
+        for retained, value in zip(record.sources, sources, strict=True)
+    ):
+        record = TrimSourceArcs(sources)
+        preparations.trim_source_arcs[key] = record
+    return record, reversed_
+
+
+def _mirror(parameter: float, /) -> float | None:
+    """``1 - parameter`` when binary64 represents it exactly, else None."""
+    image = 1.0 - parameter
+    return image if Fraction(image) == 1 - Fraction(parameter) else None
+
+
+def _mirrored_arcs(arcs: Sequence[_SourceArc], /) -> tuple[_SourceArc, ...] | None:
+    mirrored = []
+    for lower, upper, start, end, box in reversed(arcs):
+        first, last = _mirror(upper), _mirror(lower)
+        if first is None or last is None:
+            return None
+        mirrored.append((first, last, end, start, box))
+    return tuple(mirrored)
+
+
+def _point_enclosures(
+    curve: AbstractTrimCurve,
+    parameters: Sequence[float],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
+) -> np.ndarray:
+    """Point boxes ``enclosure(s, s)``, shared by both orientations of one source."""
+    source = _source_arcs(curve, preparations)
+    values = [float(parameter) for parameter in parameters]
+    keys = [
+        None if source is None else (_mirror(value) if source[1] else value)
+        for value in values
+    ]
+    boxes: dict[int, np.ndarray] = {}
+    for position, key in enumerate(keys):
+        if source is not None and key is not None and key in source[0].points:
+            boxes[position] = source[0].points[key]
+    missing = [position for position in range(len(values)) if position not in boxes]
+    if missing:
+        computed = curve.enclosures(
+            np.asarray([(values[position], values[position]) for position in missing]),
+            budget=budget,
+            preparations=preparations,
+        )
+        for position, box in zip(missing, computed, strict=True):
+            boxes[position] = np.asarray(box, dtype=np.float64)
+            key = keys[position]
+            if source is not None and key is not None:
+                source[0].points[key] = boxes[position]
+    return np.stack([boxes[position] for position in range(len(values))])
+
+
 def _certified_arcs(
     curve: AbstractTrimCurve,
     index: int,
@@ -1009,43 +1143,105 @@ def _certified_arcs(
     budget: CoordinateEnclosureBudget,
     preparations: TrimRequestPreparations | None = None,
 ) -> list[tuple[int, float, float, np.ndarray, np.ndarray]]:
-    start = np.asarray(
-        jax.device_get(_trim_points(curve, np.asarray(first, dtype=np.float64)))
-    )
-    pending = [(first, last, start)]
-    accepted: list[tuple[int, float, float, np.ndarray, np.ndarray]] = []
-    while pending:
-        lower, upper, point = pending.pop()
-        box, end = _arc_enclosure(
-            curve, lower, upper, point, budget=budget, preparations=preparations
+    """Bisect until every arc box meets the tolerance or an affine chord proof.
+
+    Each subdivision level queries its pending arcs together; every arc keeps
+    the enclosure, acceptance and split rules of one-at-a-time bisection. A
+    source binding shares the accepted cover between both orientations.
+    """
+    source = _source_arcs(curve, preparations) if (first, last) == (0.0, 1.0) else None
+    if source is not None:
+        cover = source[0].partitions.get(tolerance)
+        arcs = (
+            None
+            if cover is None
+            else (_mirrored_arcs(cover) if source[1] else cover)
         )
-        if np.linalg.norm(box[1] - box[0]) <= tolerance or _affine_chord_within_tolerance(
-            curve,
-            lower,
-            upper,
-            point,
-            end,
-            tolerance,
+        if arcs is not None:
+            if len(arcs) > capacity:
+                raise ValueError(
+                    f"CurveTrimLoop.maximum_arcs must admit the certified cover; got {len(arcs)} > {capacity}"
+                )
+            return [
+                (index, lower, upper, start, box) for lower, upper, start, _, box in arcs
+            ]
+
+    from .brep._intersection import _padded_call
+
+    def points(parameters: Sequence[float]) -> np.ndarray:
+        (values,) = _padded_call(
+            curve.host_points,
+            np.asarray(parameters, dtype=np.float64),
+            64,
+        )
+        return values
+
+    endpoints = points((first, last))
+    level: list[tuple[float, float, np.ndarray, np.ndarray]] = [
+        (first, last, endpoints[0], endpoints[1])
+    ]
+    accepted: list[_SourceArc] = []
+    while level:
+        budget.ticket.checkpoint()
+        raw = curve.enclosures(
+            np.asarray([(lower, upper) for lower, upper, _, _ in level]),
             budget=budget,
             preparations=preparations,
-        ):
-            accepted.append((index, lower, upper, point, box))
-            if len(accepted) > capacity:
-                raise ValueError(
-                    f"CurveTrimLoop.maximum_arcs must admit the certified cover; got {len(accepted)} > {capacity}"
-                )
-            continue
-        middle = 0.5 * (lower + upper)
-        if not lower < middle < upper:
-            raise ValueError(
-                f"CurveTrimLoop.tolerance must be reachable by representable subdivisions; got unsplittable interval ({lower!r}, {upper!r})"
-            )
-        middle_point = np.asarray(
-            jax.device_get(_trim_points(curve, np.asarray(middle, dtype=np.float64)))
         )
-        pending.append((middle, upper, middle_point))
-        pending.append((lower, middle, point))
-    return accepted
+        split: list[tuple[float, float, float, np.ndarray, np.ndarray]] = []
+        for (lower, upper, start, end), enclosure in zip(level, raw, strict=True):
+            if enclosure.shape != (2, 2) or not np.all(np.isfinite(enclosure)):
+                raise ValueError(
+                    f"AbstractTrimCurve.enclosure must return finite (2, 2) boxes; got shape {enclosure.shape}"
+                )
+            box = np.stack(
+                (
+                    np.minimum(enclosure[0], np.minimum(start, end)),
+                    np.maximum(enclosure[1], np.maximum(start, end)),
+                )
+            )
+            if np.linalg.norm(
+                box[1] - box[0]
+            ) <= tolerance or _affine_chord_within_tolerance(
+                curve,
+                lower,
+                upper,
+                start,
+                end,
+                tolerance,
+                budget=budget,
+                preparations=preparations,
+            ):
+                accepted.append((lower, upper, start, end, box))
+                continue
+            middle = 0.5 * (lower + upper)
+            if not lower < middle < upper:
+                raise ValueError(
+                    f"CurveTrimLoop.tolerance must be reachable by representable subdivisions; got unsplittable interval ({lower!r}, {upper!r})"
+                )
+            split.append((lower, middle, upper, start, end))
+        # Every pending arc contributes at least one accepted arc.
+        required = len(accepted) + 2 * len(split)
+        if required > capacity:
+            raise ValueError(
+                f"CurveTrimLoop.maximum_arcs must admit the certified cover; got {required} > {capacity}"
+            )
+        following: list[tuple[float, float, np.ndarray, np.ndarray]] = []
+        if split:
+            middle_points = points([arc[1] for arc in split])
+            for (lower, middle, upper, start, end), point in zip(
+                split, middle_points, strict=True
+            ):
+                following.extend(
+                    ((lower, middle, start, point), (middle, upper, point, end))
+                )
+        level = following
+    accepted.sort(key=lambda arc: arc[0])
+    if source is not None:
+        forward = _mirrored_arcs(accepted) if source[1] else tuple(accepted)
+        if forward is not None:
+            source[0].partitions[tolerance] = forward
+    return [(index, lower, upper, start, box) for lower, upper, start, _, box in accepted]
 
 
 class DynamicCurveTrimLoop(StrictModule):
@@ -1229,11 +1425,7 @@ def _refined_chords(
             if outside or depth >= maximum_depth or not first < middle < last:
                 unresolved |= not outside
                 pieces.append(start)
-                start = np.asarray(
-                    jax.device_get(
-                        _trim_points(curve, np.asarray(last, dtype=np.float64))
-                    )
-                )
+                start = curve.host_points(np.asarray(last, dtype=np.float64))
                 continue
             refinements += 1
             stack.append((middle, last, depth + 1))

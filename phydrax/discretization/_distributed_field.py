@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
+from functools import partial
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 
@@ -22,6 +24,7 @@ from .._trainable import NonTrainableState
 from ..typing import AnyShape, Bool, checked, Int32, Int64, Scalar, validate
 from ._cell_mesh import CellMesh
 from ._distributed_preparation import (
+    FieldQueryRows,
     owner_local_host_array,
     prepare_field_query_rows,
     prepare_field_query_sources,
@@ -451,6 +454,54 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
             evidence_id=value.evidence_id,
         )
 
+    def execution_bucket(
+        self, local_capacity: int, message_capacity: int, /
+    ) -> DistributedHaloPlan:
+        """Pad an owner-local plan to collectively agreed row and message buckets.
+
+        Valid closure rows, their stable IDs, ownership and routes are unchanged.
+        Padding rows are invalid, unowned and carry negative IDs; padding message
+        slots are invalid and alias row zero.
+        """
+        if not self.owner_local:
+            raise ValueError(
+                "DistributedHaloPlan.owner_local must be True for an execution bucket; got global layout"
+            )
+        valid = owner_local_host_array(self.local_valid, dtype=np.bool_)
+        count = int(np.count_nonzero(valid))
+        if count > local_capacity or self.message_capacity > message_capacity:
+            raise ValueError(
+                "execution.halo must fit the declared bucket; got excess halo routes"
+            )
+        owned = np.zeros((local_capacity,), dtype=np.bool_)
+        owned[:count] = owner_local_host_array(self.local_owned, dtype=np.bool_)[:count]
+        pads = ((0, 0), (0, message_capacity - self.message_capacity))
+        return DistributedHaloPlan.from_owner_local(
+            self.part_count,
+            local_global_ids=np.concatenate(
+                (
+                    owner_local_host_array(self.local_global_ids, dtype=np.int64)[:count],
+                    np.arange(count - local_capacity, 0, dtype=np.int64),
+                )
+            ),
+            local_owned=owned,
+            local_valid=np.arange(local_capacity) < count,
+            global_entity_count=self.entity_count,
+            partition_index=int(owner_local_host_array(self.partition_index)),
+            phase_send_indices=np.pad(
+                owner_local_host_array(self.phase_send_indices), pads
+            ),
+            phase_receive_indices=np.pad(
+                owner_local_host_array(self.phase_receive_indices), pads
+            ),
+            phase_send_valid=np.pad(owner_local_host_array(self.phase_send_valid), pads),
+            phase_receive_valid=np.pad(
+                owner_local_host_array(self.phase_receive_valid), pads
+            ),
+            permutations=self.permutations,
+            evidence_id=self.evidence_id,
+        )
+
     def collective_certificate(self, /, *, axis_name: str) -> Array:
         """Collectively reconcile stable IDs, masks, coverage, and participants.
 
@@ -803,8 +854,19 @@ def make_owner_local_field_array(
     """Place uniform local buckets without materializing the global field on host."""
     assigned = tuple(devices)
     ranks = tuple(int(index) for index in partition_indices)
-    values = tuple(jnp.asarray(value) for value in local_values)
-    if any(not value.is_fully_addressable for value in values):
+    values: list[jax.Array | np.ndarray] = []
+    for value in local_values:
+        if isinstance(value, jax.Array):
+            values.append(value)
+        else:
+            host = np.asarray(value)
+            values.append(
+                host.astype(jax.dtypes.canonicalize_dtype(host.dtype), copy=False)
+            )
+    if any(
+        isinstance(value, jax.Array) and not value.is_fully_addressable
+        for value in values
+    ):
         raise ValueError(
             "owner_local.local_values must be process-local addressable arrays; "
             "got a global field requiring explicit local shard selection"
@@ -840,6 +902,7 @@ def make_owner_local_field_array(
     )
 
 
+@partial(jax.jit, static_argnums=(1, 2, 3))
 def exchange_owner_local_packets(
     packets: Array,
     permutations: tuple[tuple[tuple[int, int], ...], ...],
@@ -869,6 +932,69 @@ def exchange_owner_local_packets(
         out_specs=spec,
         check_vma=False,
     )(packets)
+
+
+@partial(jax.jit, static_argnums=(2, 3))
+def _admit_owner_local_packets(
+    maxima: Array, identities: Array, mesh: Mesh, axis: str, /
+) -> tuple[Array, Array]:
+    """Compile the shared width/identity collective once per placed signature."""
+    spec = PartitionSpec(axis)
+
+    def admit(maximum: Array, identity: Array) -> tuple[Array, Array]:
+        return (
+            jax.lax.pmax(maximum[0], axis),
+            jnp.all(jax.lax.pmin(identity[0], axis) == jax.lax.pmax(identity[0], axis)),
+        )
+
+    return jax.shard_map(
+        admit,
+        mesh=mesh,
+        in_specs=(spec, spec),
+        out_specs=(PartitionSpec(), PartitionSpec()),
+        check_vma=False,
+    )(maxima, identities)
+
+
+@partial(jax.jit, static_argnums=(1, 2))
+def _owner_local_packet_failure(missing: Array, mesh: Mesh, axis: str, /) -> Array:
+    """Compile the owner-coverage verdict without eager per-primitive programs."""
+    return jax.shard_map(
+        lambda value: jax.lax.pmax(value[0].astype(jnp.int32), axis),
+        mesh=mesh,
+        in_specs=PartitionSpec(axis),
+        out_specs=PartitionSpec(),
+        check_vma=False,
+    )(missing)
+
+
+@jax.jit
+def _owner_local_response_values(
+    field: Array, rows: np.ndarray, valid: np.ndarray, /
+) -> Array:
+    if field.shape[0] == 0:
+        return jnp.zeros(rows.shape + field.shape[1:], dtype=field.dtype)
+    mask = valid.reshape(valid.shape + (1,) * (field.ndim - 1))
+    return jnp.where(mask, field[rows], 0)
+
+
+@partial(jax.jit, static_argnums=(5,))
+def _owner_local_query_values(
+    field: Array,
+    responses: Array,
+    own: np.ndarray,
+    source_rows: np.ndarray,
+    phase_rows: tuple[np.ndarray, ...],
+    query_count: int,
+    /,
+) -> Array:
+    """Assemble accepted peer answers locally without eager slice/scatter programs."""
+    result = jnp.zeros((query_count,) + field.shape[1:], dtype=field.dtype)
+    if own.size:
+        result = result.at[own].set(field[source_rows])
+    for phase, rows in enumerate(phase_rows):
+        result = result.at[rows].set(responses[0, phase, : rows.size])
+    return result
 
 
 def prepare_owner_local_halo_plans(
@@ -931,7 +1057,7 @@ def prepare_owner_local_halo_plans(
             phase_rows.append(rows)
         rows_by_rank.append(tuple(phase_rows))
         maxima.append(
-            jnp.asarray(max((row.size for row in phase_rows), default=0), dtype=jnp.int32)
+            np.asarray(max((row.size for row in phase_rows), default=0), dtype=np.int32)
         )
         identity = canonical_fingerprint(
             {
@@ -945,33 +1071,21 @@ def prepare_owner_local_halo_plans(
             }
         )
         identities.append(
-            jnp.asarray(
+            np.asarray(
                 [int(identity[offset : offset + 7], 16) for offset in range(0, 64, 7)],
-                dtype=jnp.int32,
+                dtype=np.int32,
             )
         )
         requests_by_rank.append(ids)
     mesh = Mesh(np.asarray(assigned, dtype=object), (axis,))
-    spec = PartitionSpec(axis)
     maximum_array = make_owner_local_field_array(maxima, ranks, assigned, axis_name=axis)
     identity_array = make_owner_local_field_array(
         identities, ranks, assigned, axis_name=axis
     )
 
-    def admit(maximum: Array, identity: Array) -> tuple[Array, Array]:
-        count = jax.lax.pmax(maximum[0], axis)
-        agreed = jnp.all(
-            jax.lax.pmin(identity[0], axis) == jax.lax.pmax(identity[0], axis)
-        )
-        return count, agreed
-
-    required, agreed = jax.shard_map(
-        admit,
-        mesh=mesh,
-        in_specs=(spec, spec),
-        out_specs=(PartitionSpec(), PartitionSpec()),
-        check_vma=False,
-    )(maximum_array, identity_array)
+    required, agreed = _admit_owner_local_packets(
+        maximum_array, identity_array, mesh, axis
+    )
     if (
         not bool(replicated_host_array(agreed))
         or int(replicated_host_array(required)) > capacity
@@ -991,7 +1105,7 @@ def prepare_owner_local_halo_plans(
             packet[phase, : rows.size] = ids[rows]
             receive[phase, : rows.size] = rows
             valid[phase, : rows.size] = True
-        packets.append(jnp.asarray(packet, dtype=jnp.int64))
+        packets.append(packet)
         receives.append(receive)
         receives_valid.append(valid)
     packet_array = make_owner_local_field_array(packets, ranks, assigned, axis_name=axis)
@@ -1028,16 +1142,10 @@ def prepare_owner_local_halo_plans(
                 absent = True
             else:
                 send[phase, column] = row
-        missing.append(jnp.asarray(absent, dtype=jnp.bool_))
+        missing.append(np.asarray(absent, dtype=np.bool_))
         plans.append((storage, ids, owned, send, send_valid, receive, receive_valid))
     missing_array = make_owner_local_field_array(missing, ranks, assigned, axis_name=axis)
-    failed = jax.shard_map(
-        lambda value: jax.lax.pmax(value[0].astype(jnp.int32), axis),
-        mesh=mesh,
-        in_specs=spec,
-        out_specs=PartitionSpec(),
-        check_vma=False,
-    )(missing_array)
+    failed = _owner_local_packet_failure(missing_array, mesh, axis)
     if bool(replicated_host_array(failed)):
         raise ValueError(
             "halo_preparation.requests must exist in the declared owner closure; got an absent stable ID"
@@ -1104,22 +1212,9 @@ def resolve_owner_local_field_values(
         sources.axis,
     )
     parts = len(assigned)
-    requests = tuple(
-        tuple((rank, (rank + offset) % parts) for rank in range(parts))
-        for offset in range(1, parts)
-    )
-    responses = tuple(
-        tuple((target, source) for source, target in phase) for phase in requests
-    )
     component_shape = values[0].shape[1:]
     dtype = values[0].dtype
-    lookups = []
-    query_rows = []
-    own_rows = []
-    own_source_rows = []
-    maxima = []
-    identities = []
-    local_missing = []
+    prepared_rows = []
     for storage, field, ids, placement in zip(
         storages, values, query_ids, owners, strict=True
     ):
@@ -1135,33 +1230,240 @@ def resolve_owner_local_field_values(
             source_topology_id,
             bound,
         )
-        lookups.append(rows.lookup)
-        query_rows.append(rows.phase_rows)
-        own_rows.append(rows.own)
-        own_source_rows.append(rows.source_rows)
-        local_missing.append(rows.missing)
-        maxima.append(rows.maximum)
-        identities.append(rows.metadata)
+        prepared_rows.append(rows)
+    return _resolve_owner_local_query_rows(
+        values, query_ids, prepared_rows, assigned, ranks, bound, axis
+    )
+
+
+def resolve_owner_local_record_values(
+    source_global_ids: Sequence[ArrayLike],
+    source_values: Sequence[ArrayLike],
+    query_global_ids: Sequence[ArrayLike],
+    query_owners: Sequence[ArrayLike],
+    /,
+    *,
+    ranks: Sequence[int],
+    devices: Sequence[jax.Device],
+    axis_name: str,
+    message_capacity: int,
+    identity: str,
+) -> tuple[Array, ...]:
+    """Resolve authenticated owned records without inventing mesh storage.
+
+    ``identity`` binds the caller's authenticated record inventory. Source IDs
+    must be globally disjoint. All numeric fields remain owner-addressable.
+    The message bound also bounds each owner's source inventory.
+    """
+    assigned, local_ranks = tuple(devices), tuple(ranks)
+    axis, bound = axis_name.strip(), int(message_capacity)
+    source_ids: tuple[np.ndarray, ...] = ()
+    ids: tuple[np.ndarray, ...] = ()
+    owners: tuple[np.ndarray, ...] = ()
+    values: tuple[Array, ...] = ()
+    failure: Exception | None = None
+    try:
+        if not assigned or not axis or bound < 1 or not identity:
+            raise ValueError("record_queries must bind a nonempty transport identity")
+        expected = {
+            rank
+            for rank, device in enumerate(assigned)
+            if device.process_index == jax.process_index()
+        }
+        if (
+            len(set(assigned)) != len(assigned)
+            or len(set(local_ranks)) != len(local_ranks)
+            or set(local_ranks) != expected
+            or not local_ranks
+        ):
+            raise ValueError("record_queries.ranks must cover current local devices once")
+        source_ids = tuple(owner_local_host_array(value) for value in source_global_ids)
+        ids = tuple(owner_local_host_array(value) for value in query_global_ids)
+        owners = tuple(owner_local_host_array(value) for value in query_owners)
+        values = tuple(jnp.asarray(value) for value in source_values)
+        if any(
+            len(group) != len(local_ranks)
+            for group in (source_ids, ids, owners, values)
+        ):
+            raise ValueError("record_queries must align every local owner and bank")
+        shape, dtype = values[0].shape[1:], values[0].dtype
+        for stored, field, query, placement in zip(
+            source_ids, values, ids, owners, strict=True
+        ):
+            if (
+                not field.is_fully_addressable
+                or stored.ndim != 1
+                or stored.dtype.kind not in "iu"
+                or np.any(stored < 0)
+                or np.any(stored > np.iinfo(np.int64).max)
+                or np.unique(stored).size != stored.size
+                or stored.size > bound
+                or field.shape != (stored.size,) + shape
+                or field.dtype != dtype
+                or query.ndim != 1
+                or query.dtype.kind not in "iu"
+                or np.any(query < 0)
+                or np.any(query > np.iinfo(np.int64).max)
+                or placement.shape != query.shape
+                or placement.dtype.kind not in "iu"
+                or np.any(placement < 0)
+                or np.any(placement >= len(assigned))
+            ):
+                raise ValueError(
+                    "record_queries must contain disjoint owned IDs and aligned values"
+                )
+        values = tuple(
+            jax.device_put(value, assigned[rank])
+            for rank, value in zip(local_ranks, values, strict=True)
+        )
+    except Exception as error:
+        failure = error
+    refused = multihost_utils.process_allgather(
+        np.asarray(failure is not None, dtype=np.bool_), tiled=False
+    )
+    if np.any(refused):
+        raise ValueError("record_queries admission refused collectively") from failure
+    requested_ranks = local_ranks
+    order = sorted(range(len(local_ranks)), key=local_ranks.__getitem__)
+    source_ids = tuple(source_ids[index] for index in order)
+    ids = tuple(ids[index] for index in order)
+    owners = tuple(owners[index] for index in order)
+    values = tuple(values[index] for index in order)
+    local_ranks = tuple(local_ranks[index] for index in order)
     mesh = Mesh(np.asarray(assigned, dtype=object), (axis,))
-    spec = PartitionSpec(axis)
+    fingerprint = canonical_fingerprint(
+        {
+            "identity": identity,
+            "shape": values[0].shape[1:],
+            "dtype": str(values[0].dtype),
+            "parts": len(assigned),
+            "bound": bound,
+        }
+    )
+    metadata = jnp.asarray(
+        [int(fingerprint[offset : offset + 7], 16) for offset in range(0, 64, 7)],
+        dtype=jnp.int32,
+    )
+    maximum_inventory, agreed = _admit_owner_local_packets(
+        make_owner_local_field_array(
+            [np.asarray(stored.size, dtype=np.int32) for stored in source_ids],
+            local_ranks,
+            assigned,
+            axis_name=axis,
+        ),
+        make_owner_local_field_array(
+            [metadata] * len(local_ranks), local_ranks, assigned, axis_name=axis
+        ),
+        mesh,
+        axis,
+    )
+    if not bool(replicated_host_array(agreed)):
+        raise ValueError("record_queries identity disagrees collectively")
+    inventory_width = max(int(replicated_host_array(maximum_inventory)), 1)
+    # Each ID visits one deterministic disjointness arbiter, not every peer.
+    # This routing decides no scientific ownership or association.
+    phases = tuple(
+        tuple((rank, (rank + offset) % len(assigned)) for rank in range(len(assigned)))
+        for offset in range(1, len(assigned))
+    )
+    packets = []
+    for rank, stored in zip(local_ranks, source_ids, strict=True):
+        packet = np.full((len(phases), inventory_width), -1, dtype=np.int64)
+        for phase, offset in enumerate(range(1, len(assigned))):
+            routed = stored[stored % len(assigned) == (rank + offset) % len(assigned)]
+            packet[phase, : routed.size] = routed
+        packets.append(packet)
+    incoming = exchange_owner_local_packets(
+        make_owner_local_field_array(packets, local_ranks, assigned, axis_name=axis),
+        phases,
+        mesh,
+        axis,
+    )
+    received = {
+        (0 if shard.index[0].start is None else int(shard.index[0].start)):
+        owner_local_host_array(shard.data)[0]
+        for shard in incoming.addressable_shards
+    }
+    duplicates = []
+    for rank, stored in zip(local_ranks, source_ids, strict=True):
+        remote = received[rank]
+        inventory = np.concatenate((
+            stored[stored % len(assigned) == rank], remote[remote >= 0],
+        ))
+        duplicates.append(np.asarray(np.unique(inventory).size != inventory.size, dtype=np.bool_))
+    failed = _owner_local_packet_failure(
+        make_owner_local_field_array(duplicates, local_ranks, assigned, axis_name=axis),
+        mesh,
+        axis,
+    )
+    if bool(replicated_host_array(failed)):
+        raise ValueError("record_queries source IDs overlap across owners")
+    prepared_rows = []
+    for rank, stored, query, placement in zip(
+        local_ranks, source_ids, ids, owners, strict=True
+    ):
+        lookup = {int(identifier): row for row, identifier in enumerate(stored)}
+        phase_rows = tuple(
+            np.flatnonzero(placement == (rank + offset) % len(assigned)).astype(np.int32)
+            for offset in range(1, len(assigned))
+        )
+        own = np.flatnonzero(placement == rank).astype(np.int32)
+        source_rows = np.asarray(
+            [lookup.get(int(query[row]), -1) for row in own], dtype=np.int32
+        )
+        prepared_rows.append(
+            FieldQueryRows(
+                lookup,
+                phase_rows,
+                own,
+                source_rows,
+                jnp.asarray(
+                    max((row.size for row in phase_rows), default=0), dtype=jnp.int32
+                ),
+                metadata,
+                bool(np.any(source_rows < 0)),
+            )
+        )
+    resolved = _resolve_owner_local_query_rows(
+        values, ids, prepared_rows, assigned, local_ranks, bound, axis
+    )
+    by_rank = dict(zip(local_ranks, resolved, strict=True))
+    return tuple(by_rank[rank] for rank in requested_ranks)
+
+
+def _resolve_owner_local_query_rows(
+    values: tuple[Array, ...],
+    query_ids: tuple[np.ndarray, ...],
+    prepared_rows: Sequence[FieldQueryRows],
+    assigned: tuple[jax.Device, ...],
+    ranks: tuple[int, ...],
+    bound: int,
+    axis: str,
+) -> tuple[Array, ...]:
+    parts = len(assigned)
+    requests = tuple(
+        tuple((rank, (rank + offset) % parts) for rank in range(parts))
+        for offset in range(1, parts)
+    )
+    responses = tuple(
+        tuple((target, source) for source, target in phase) for phase in requests
+    )
+    lookups = [rows.lookup for rows in prepared_rows]
+    query_rows = [rows.phase_rows for rows in prepared_rows]
+    own_rows = [rows.own for rows in prepared_rows]
+    own_source_rows = [rows.source_rows for rows in prepared_rows]
+    local_missing = [rows.missing for rows in prepared_rows]
+    maxima = [rows.maximum for rows in prepared_rows]
+    identities = [rows.metadata for rows in prepared_rows]
+    mesh = Mesh(np.asarray(assigned, dtype=object), (axis,))
     maximum_array = make_owner_local_field_array(maxima, ranks, assigned, axis_name=axis)
     identity_array = make_owner_local_field_array(
         identities, ranks, assigned, axis_name=axis
     )
 
-    def admit(maximum: Array, identity: Array) -> tuple[Array, Array]:
-        return (
-            jax.lax.pmax(maximum[0], axis),
-            jnp.all(jax.lax.pmin(identity[0], axis) == jax.lax.pmax(identity[0], axis)),
-        )
-
-    required, agreed = jax.shard_map(
-        admit,
-        mesh=mesh,
-        in_specs=(spec, spec),
-        out_specs=(PartitionSpec(), PartitionSpec()),
-        check_vma=False,
-    )(maximum_array, identity_array)
+    required, agreed = _admit_owner_local_packets(
+        maximum_array, identity_array, mesh, axis
+    )
     if (
         not bool(replicated_host_array(agreed))
         or int(replicated_host_array(required)) > bound
@@ -1175,7 +1477,7 @@ def resolve_owner_local_field_values(
         packet = np.full((parts - 1, width), -1, dtype=np.int64)
         for phase, rows in enumerate(phase_rows):
             packet[phase, : rows.size] = ids[rows]
-        packets.append(jnp.asarray(packet, dtype=jnp.int64))
+        packets.append(packet)
     incoming = exchange_owner_local_packets(
         make_owner_local_field_array(packets, ranks, assigned, axis_name=axis),
         requests,
@@ -1183,7 +1485,9 @@ def resolve_owner_local_field_values(
         axis,
     )
     local_messages = {
-        int(shard.index[0].start): owner_local_host_array(shard.data)[0]
+        (
+            0 if shard.index[0].start is None else int(shard.index[0].start)
+        ): owner_local_host_array(shard.data)[0]
         for shard in incoming.addressable_shards
     }
     response_values = []
@@ -1200,18 +1504,11 @@ def resolve_owner_local_field_values(
                 absent = True
             else:
                 rows[phase, column] = row
-        missing.append(jnp.asarray(absent, dtype=jnp.bool_))
-        mask = jnp.asarray(valid).reshape(valid.shape + (1,) * len(component_shape))
-        response_values.append(
-            jnp.where(mask, field[jnp.asarray(rows, dtype=jnp.int32)], 0)
-        )
-    failed = jax.shard_map(
-        lambda value: jax.lax.pmax(value[0].astype(jnp.int32), axis),
-        mesh=mesh,
-        in_specs=spec,
-        out_specs=PartitionSpec(),
-        check_vma=False,
-    )(make_owner_local_field_array(missing, ranks, assigned, axis_name=axis))
+        missing.append(np.asarray(absent, dtype=np.bool_))
+        response_values.append(_owner_local_response_values(field, rows, valid))
+    failed = _owner_local_packet_failure(
+        make_owner_local_field_array(missing, ranks, assigned, axis_name=axis), mesh, axis
+    )
     if bool(replicated_host_array(failed)):
         raise ValueError(
             "resolve_owner_local_field_values.query_global_ids must exist in their "
@@ -1224,7 +1521,10 @@ def resolve_owner_local_field_values(
         axis,
     )
     local_responses = {
-        int(shard.index[0].start): shard.data[0] for shard in returned.addressable_shards
+        (
+            0 if shard.index[0].start is None else int(shard.index[0].start)
+        ): shard.data
+        for shard in returned.addressable_shards
     }
     results = []
     for rank, field, ids, phase_rows, own, source_rows in zip(
@@ -1236,18 +1536,15 @@ def resolve_owner_local_field_values(
         own_source_rows,
         strict=True,
     ):
-        result = jax.device_put(
-            jnp.zeros(ids.shape + component_shape, dtype=dtype),
-            assigned[rank],
+        result = _owner_local_query_values(
+            field,
+            local_responses[rank],
+            own,
+            source_rows,
+            phase_rows,
+            ids.size,
         )
-        result = result.at[jnp.asarray(own, dtype=jnp.int32)].set(
-            field[jnp.asarray(source_rows, dtype=jnp.int32)]
-        )
-        for phase, rows in enumerate(phase_rows):
-            result = result.at[jnp.asarray(rows, dtype=jnp.int32)].set(
-                local_responses[rank][phase, : rows.size]
-            )
-        results.append(result)
+        results.append(jax.device_put(result, assigned[rank]))
     return tuple(results)
 
 

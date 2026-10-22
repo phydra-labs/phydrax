@@ -448,3 +448,142 @@ def test_fresh_array_pairs_keep_metadata_and_limit_admission() -> None:
     limits = dataclasses.replace(DEFAULT_ARRAY_ARCHIVE_LIMITS, max_member_bytes=7)
     with pytest.raises(ValueError, match="array-byte"):
         structure.model_recipe_array_pairs(array, array, limits=limits)
+
+
+def test_needed_content_forms_equal_eager_forms_for_every_admitted_node() -> None:
+    from fractions import Fraction
+
+    array = np.asarray((1.0, -0.0), dtype=np.float64)
+    values = (
+        _Branch({"b": array, "a": array}, (Fraction(1, 3), complex(2, -1))),
+        (frozenset((("x", 2), ("y", 3))), slice(1, 4, 2), np.dtype("float64")),
+        {"nested": [None, True, "λ", float("inf"), float("nan")]},
+    )
+    for value in values:
+        table = structure._lower_recipe(
+            structure.model_structure_recipe(value), DEFAULT_ARRAY_ARCHIVE_LIMITS
+        )
+        eager = structure._content_forms(table.nodes)
+        needed = structure._needed_content_forms(table.nodes)
+        for index in reversed(range(len(table.nodes))):
+            assert needed(index) == eager[index]
+
+
+def test_lazy_pairs_preserve_eager_schema_alias_key_set_and_literal_semantics(monkeypatch) -> None:
+    from fractions import Fraction
+
+    first = np.asarray((1.0, -0.0), dtype=np.float64)
+    second = first.copy()
+    first.setflags(write=False)
+    cases = (
+        ((_Branch(first, first), first), (_Branch(second, second.copy()), second)),
+        ({"b": first, "a": 3}, {"a": 3, "b": second}),
+        ({"a": first}, {"b": second}),
+        ((frozenset((Fraction(1, 2), Fraction(2, 3))), first),
+         (frozenset((Fraction(2, 3), Fraction(1, 2))), second)),
+        ((frozenset(("x", "y")), first), (frozenset(("x", "z")), second)),
+        ((float("inf"), float("nan"), first), (float("inf"), float("nan"), second)),
+        ((first, "a"), (second, "b")),
+        (first, second.astype(np.float32)),
+    )
+
+    def eager_lookup(nodes):
+        return structure._content_forms(nodes).__getitem__
+
+    for left, right in cases:
+        with monkeypatch.context() as patch:
+            patch.setattr(structure, "_needed_content_forms", eager_lookup)
+            expected = structure.model_recipe_array_pairs(left, right)
+        actual = structure.model_recipe_array_pairs(left, right)
+        assert (actual is None) == (expected is None)
+        if actual is not None and expected is not None:
+            assert [(id(a), id(b)) for a, b in actual] == [(id(a), id(b)) for a, b in expected]
+
+
+def test_pairing_never_computes_unused_composite_content_forms(monkeypatch) -> None:
+    original = structure._needed_content_forms
+    requested = []
+
+    def observe(nodes):
+        lookup = original(nodes)
+
+        def read(index):
+            requested.append(nodes[index]["kind"])
+            return lookup(index)
+
+        return read
+
+    monkeypatch.setattr(structure, "_needed_content_forms", observe)
+    first = _Branch({"a": np.arange(4, dtype=np.int32)}, (None, "same"))
+    second = _Branch({"a": np.arange(4, dtype=np.int32)}, (None, "same"))
+    assert structure.model_recipe_array_pairs(first, second) is not None
+    assert requested
+    assert not set(requested) & {"dataclass", "tuple", "list", "array", "prng_key", "mapping"}
+
+
+@pytest.mark.parametrize("defect", ("unknown-kind", "literal", "fraction", "duplicate-key", "reference", "array", "type"))
+def test_pairing_eagerly_admits_even_a_mismatched_unused_bad_subtree(monkeypatch, defect) -> None:
+    import copy
+
+    left, right = object(), object()
+    array = structure.model_structure_recipe(np.arange(2, dtype=np.int32))
+    if defect == "unknown-kind":
+        invalid = {"kind": "unsupported"}
+    elif defect == "literal":
+        invalid = {"kind": "literal", "value": float("nan")}
+    elif defect == "fraction":
+        invalid = {"kind": "fraction", "numerator": 1, "denominator": 0}
+    elif defect == "duplicate-key":
+        invalid = {"kind": "mapping", "items": [
+            [{"kind": "literal", "value": "same"}, {"kind": "literal", "value": 1}],
+            [{"kind": "literal", "value": "same"}, {"kind": "literal", "value": 2}],
+        ]}
+    elif defect == "reference":
+        invalid = {"kind": "reference", "target": 10_000}
+    elif defect == "array":
+        invalid = copy.deepcopy(array)
+        invalid["dtype"] = "|O"
+    else:
+        invalid = {"kind": "type", "value": "test:missing-canonical-type"}
+    recipe = {"kind": "tuple", "items": [{"kind": "literal", "value": 0}, invalid]}
+    original = structure._structure_recipe
+
+    def encode(value, path, shared):
+        if value is left:
+            return {"kind": "literal", "value": 0}
+        if value is right:
+            return copy.deepcopy(recipe)
+        return original(value, path, shared)
+
+    def no_form_computation(nodes):
+        def refuse(_index):
+            pytest.fail("both full lowerings must finish before any lazy form is requested")
+        return refuse
+
+    monkeypatch.setattr(structure, "_structure_recipe", encode)
+    with monkeypatch.context() as patch:
+        patch.setattr(structure, "_needed_content_forms",
+                      lambda nodes: structure._content_forms(nodes).__getitem__)
+        with pytest.raises((TypeError, ValueError, KeyError)) as expected:
+            structure.model_recipe_array_pairs(left, right)
+    monkeypatch.setattr(structure, "_needed_content_forms", no_form_computation)
+    with pytest.raises(type(expected.value)) as actual:
+        structure.model_recipe_array_pairs(left, right)
+    assert str(actual.value) == str(expected.value)
+
+
+def test_pairing_preserves_cycle_and_size_admission_before_form_requests(monkeypatch) -> None:
+    cycle = []
+    cycle.append(cycle)
+    with monkeypatch.context() as patch:
+        patch.setattr(structure, "_needed_content_forms",
+                      lambda nodes: structure._content_forms(nodes).__getitem__)
+        with pytest.raises((TypeError, ValueError, RecursionError)) as expected:
+            structure.model_recipe_array_pairs(0, cycle)
+    with pytest.raises(type(expected.value)) as actual:
+        structure.model_recipe_array_pairs(0, cycle)
+    assert str(actual.value) == str(expected.value)
+    array = np.arange(4, dtype=np.int32)
+    limits = dataclasses.replace(DEFAULT_ARRAY_ARCHIVE_LIMITS, max_member_bytes=15)
+    with pytest.raises(ValueError, match="array-byte"):
+        structure.model_recipe_array_pairs(0, array, limits=limits)

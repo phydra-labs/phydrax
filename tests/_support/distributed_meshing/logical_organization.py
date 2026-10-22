@@ -161,9 +161,7 @@ def _organization_parts() -> tuple[
         M.prepare_adaptive_simplex(source, policy=policy)
     )
     marks = partitioned.cell_marks(np.asarray((0, 1), dtype=np.int64))
-    states = D.refine_adaptive_simplex_parts(
-        partitioned.layout, partitioned.parts, partitioned.states, marks
-    ).state
+    states = D.refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states, marks).state
     return source, partitioned, states
 
 
@@ -175,7 +173,9 @@ def _inventory_record(
         target = result.target
         storage = target.mesh.storage
         if storage is None:
-            raise AssertionError("Local organization lost logical storage.")
+            raise AssertionError(
+                "organization_fixture.storage must retain logical storage; got None."
+            )
         scope = target.labels[0].scope
         selected = M.resolve_mesh_scope(target.mesh, scope)
         union = scope.union(scope)
@@ -206,7 +206,9 @@ def _inventory_record(
     target = results[1].target
     storage = target.mesh.storage
     if storage is None:
-        raise AssertionError("Local organization lost logical storage.")
+        raise AssertionError(
+            "organization_fixture.storage must retain logical storage; got None."
+        )
     arrays = dict(storage.logical_arrays)
 
     def rejected(
@@ -247,16 +249,15 @@ def _inventory_record(
         )
     except ValueError:
         overlap_rejected = True
+    patches = tuple(target.patches)
     return {
         "locals": records,
         "material_change_rejected": rejected(
-            target.patches, (altered,), target.labels, target.attributes
+            patches, (altered,), target.labels, target.attributes
         ),
-        "dropped_label_rejected": rejected(
-            target.patches, target.zones, (), target.attributes
-        ),
+        "dropped_label_rejected": rejected(patches, target.zones, (), target.attributes),
         "wrong_owner_rejected": rejected(
-            target.patches, target.zones, (wrong_label,), target.attributes
+            patches, target.zones, (wrong_label,), target.attributes
         ),
         "global_overlap_rejected": overlap_rejected,
     }
@@ -270,8 +271,6 @@ def refine_organization() -> dict[str, Any]:
 
 def coarsen_organization() -> dict[str, Any]:
     source, partitioned, states = _organization_parts()
-    states = coarsen_adaptive_simplex_parts(
-        partitioned.layout, partitioned.parts, states, states.mesh.cell_active
-    ).state
+    states = coarsen_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), states, states.mesh.cell_active).state
     results = M.commit_partitioned_adaptive_simplex(partitioned, states).local_results
     return _inventory_record(source, results)

@@ -14,8 +14,9 @@ are excluded from that cohort; unknown or incompatible intervals retain the fine
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable, Iterator, Sequence
 from fractions import Fraction
-from typing import NamedTuple, Self
+from typing import Any, NamedTuple, Self
 
 import equinox as eqx
 import numpy as np
@@ -29,7 +30,11 @@ import phydrax.meshing._lineage_records as _dependency_phydrax_meshing__lineage
 import phydrax.meshing._periodic as _dependency_phydrax_meshing__periodic
 import phydrax.meshing._topology_edit as _dependency_phydrax_meshing__topology_edit
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
 from .._meshcore import NativeBatchTicket, NativeExecutionScope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -136,6 +141,8 @@ class MixedLayerColumns(StrictModule, NonTrainableState):
 
 
 class Sibling(NamedTuple):
+    """One refined parent and its template children; a ``MixedSiblingBank`` row."""
+
     parent_id: int
     block_name: str
     cell_kind: str
@@ -149,16 +156,542 @@ class Sibling(NamedTuple):
     periodic_shifts: tuple[tuple[int, ...], ...]
 
 
-class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
-    """Persistent template siblings, parent scientific identities and classes."""
+_ROW_PADDING = -1
 
-    records: tuple[Sibling, ...] = eqx.field(static=True)
+
+def _read_only(value: np.ndarray, /) -> np.ndarray:
+    value = np.ascontiguousarray(value)
+    value.setflags(write=False)
+    return value
+
+
+def _int64_values(values: Sequence[int | np.integer], name: str, /) -> np.ndarray:
+    """Admit integers into int64 only after explicit type and range checks."""
+    if any(
+        isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
+        for value in values
+    ):
+        raise TypeError(f"{name} must contain integers; got a non-integer value")
+    integers = [int(value) for value in values]
+    limits = np.iinfo(np.int64)
+    if integers and (min(integers) < limits.min or max(integers) > limits.max):
+        raise ValueError(
+            f"{name} must fit signed 64-bit integers; got an out-of-range value"
+        )
+    return np.asarray(integers, dtype=np.int64)
+
+
+def _dictionary_codes(codes: np.ndarray, size: int, name: str, /) -> np.ndarray:
+    """Return int32 codes after bounding the dictionary they index."""
+    if size > int(np.iinfo(np.int32).max) + 1:
+        raise ValueError(
+            f"{name} must index at most 2**31 distinct values; got {size} values"
+        )
+    return codes.astype(np.int32)
+
+
+def _arity_mask(counts: np.ndarray, width: int, /) -> np.ndarray:
+    return np.arange(width, dtype=np.int64) < counts[:, None]
+
+
+def _padded_rows(
+    rows: Sequence[Sequence[int | np.integer]], name: str, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return rows ``-1``-padded to their exact maximum arity, and each arity."""
+    counts = np.asarray([len(row) for row in rows], dtype=np.int64)
+    values = np.full(
+        (len(rows), int(counts.max(initial=0))), _ROW_PADDING, dtype=np.int64
+    )
+    values[_arity_mask(counts, values.shape[1])] = _int64_values(
+        [value for row in rows for value in row], name
+    )
+    return values, counts
+
+
+def _canonical_padding(values: np.ndarray, counts: np.ndarray, /) -> bool:
+    """Whether arities are exact and every slot after them holds the padding."""
+    width = values.shape[1]
+    return bool(
+        counts.dtype == np.int64
+        and counts.shape == values.shape[:1]
+        and np.all(counts >= 0)
+        and int(counts.max(initial=0)) == width
+        and np.all(values[~_arity_mask(counts, width)] == _ROW_PADDING)
+    )
+
+
+def _nested_tuple(value: Any, /) -> Any:
+    """Convert the nested lists of ``ndarray.tolist`` into nested tuples."""
+    if isinstance(value, list):
+        return tuple(_nested_tuple(item) for item in value)
+    return value
+
+
+def _reference_dictionary(
+    records: list[Sibling], /
+) -> tuple[tuple[tuple[tuple[tuple[float, ...], ...], ...], ...], np.ndarray]:
+    """Return the distinct exact binary64 reference templates and each record's code.
+
+    Templates are identified by shape and bits, so signed zeros remain distinct;
+    the dictionary is ordered by rank, shape, values and then bits.
+    """
+    tables: list[np.ndarray] = []
+    by_bits: dict[tuple[tuple[int, ...], bytes], int] = {}
+    # Rows materialized from a bank share their dictionary template objects.
+    by_object: dict[int, int] = {}
+    provisional = []
+    for record in records:
+        code = by_object.get(id(record.references))
+        if code is None:
+            try:
+                table = np.array(record.references, dtype=np.float64)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "MixedSiblingBank.references must be rectangular binary64 child-corner tables; got a ragged or nonnumeric template"
+                ) from error
+            if not np.all(np.isfinite(table)):
+                raise ValueError(
+                    "MixedSiblingBank.references must be finite; got a nonfinite reference coordinate"
+                )
+            code = by_bits.setdefault((table.shape, table.tobytes()), len(tables))
+            if code == len(tables):
+                tables.append(table)
+            by_object[id(record.references)] = code
+        provisional.append(code)
+    order = sorted(
+        range(len(tables)),
+        key=lambda code: (
+            tables[code].ndim,
+            tables[code].shape,
+            tuple(tables[code].ravel().tolist()),
+            tables[code].tobytes(),
+        ),
+    )
+    remap = np.empty(len(tables), dtype=np.int64)
+    remap[order] = np.arange(len(tables), dtype=np.int64)
+    return tuple(_nested_tuple(tables[code].tolist()) for code in order), (
+        _dictionary_codes(
+            remap[np.asarray(provisional, dtype=np.int64)],
+            len(tables),
+            "MixedSiblingBank.reference_codes",
+        )
+    )
+
+
+class MixedSiblingBank(StrictModule, NonTrainableState):
+    """Template siblings of refined parents, stored once as parent-ordered columns.
+
+    Rows are sorted by unique ``parent_ids``. Parent corners, child IDs and
+    periodic roots are ``-1``-padded to their exact maximum arity; the count
+    columns are authoritative and every later slot holds the padding.
+    ``periodic_shifts[i, j]`` is the lattice shift of ``periodic_roots[i, j]``
+    and shares its arity. An absent layer column or interval has a false
+    presence flag and a zero value. Block/kind pairs and exact binary64
+    reference templates are static dictionaries of their distinct present
+    values in canonical sorted order, indexed by int32 codes. ``Sibling`` rows
+    are built on demand and never retained.
+    """
+
+    parent_ids: np.ndarray
+    block_kind_codes: np.ndarray
+    parent_vertices: np.ndarray
+    parent_vertex_counts: np.ndarray
+    child_ids: np.ndarray
+    child_counts: np.ndarray
+    reference_codes: np.ndarray
+    cell_classes: np.ndarray
+    layer_columns: np.ndarray
+    layer_column_present: np.ndarray
+    layer_intervals: np.ndarray
+    layer_interval_present: np.ndarray
+    periodic_roots: np.ndarray
+    periodic_root_counts: np.ndarray
+    periodic_shifts: np.ndarray
+    block_kinds: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    reference_templates: tuple[tuple[tuple[tuple[float, ...], ...], ...], ...] = (
+        eqx.field(static=True)
+    )
+    bank_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(self, records: tuple[Sibling, ...] = (), /) -> None:
+        parents = _int64_values(
+            [record.parent_id for record in records], "MixedSiblingBank.parent_ids"
+        )
+        order = np.argsort(parents, kind="stable")
+        parents = parents[order]
+        if np.any(parents[1:] == parents[:-1]):
+            raise ValueError(
+                "MixedSiblingBank.parent_ids must be unique; got duplicate parents"
+            )
+        ordered = [records[row] for row in order.tolist()]
+        pairs = [(record.block_name, record.cell_kind) for record in ordered]
+        if not all(
+            isinstance(name, str) and isinstance(kind, str) for name, kind in pairs
+        ):
+            raise TypeError(
+                "MixedSiblingBank.block_kinds must contain string block names and cell kinds; got another value"
+            )
+        block_kinds = tuple(sorted(set(pairs)))
+        block_codes = {pair: code for code, pair in enumerate(block_kinds)}
+        templates, reference_codes = _reference_dictionary(ordered)
+        if any(
+            len(record.periodic_shifts) != len(record.periodic_roots)
+            for record in ordered
+        ):
+            raise ValueError(
+                "MixedSiblingBank.periodic_shifts must hold one lattice shift per periodic root; got misaligned rows"
+            )
+        shift_widths = {
+            len(shift) for record in ordered for shift in record.periodic_shifts
+        }
+        if len(shift_widths) > 1:
+            raise ValueError(
+                f"MixedSiblingBank.periodic_shifts must share one lattice dimension; got widths {sorted(shift_widths)}"
+            )
+        roots, root_counts = _padded_rows(
+            [record.periodic_roots for record in ordered],
+            "MixedSiblingBank.periodic_roots",
+        )
+        shifts = np.full(
+            (*roots.shape, shift_widths.pop() if shift_widths else 0),
+            _ROW_PADDING,
+            dtype=np.int64,
+        )
+        shifts[_arity_mask(root_counts, roots.shape[1])] = _int64_values(
+            [
+                value
+                for record in ordered
+                for shift in record.periodic_shifts
+                for value in shift
+            ],
+            "MixedSiblingBank.periodic_shifts",
+        ).reshape(int(root_counts.sum()), shifts.shape[2])
+        vertices, vertex_counts = _padded_rows(
+            [record.parent_vertices for record in ordered],
+            "MixedSiblingBank.parent_vertices",
+        )
+        children, child_counts = _padded_rows(
+            [record.child_ids for record in ordered], "MixedSiblingBank.child_ids"
+        )
+        columns = [record.layer_column for record in ordered]
+        intervals = [record.layer_interval for record in ordered]
+        self.parent_ids = _read_only(parents)
+        self.block_kind_codes = _read_only(
+            _dictionary_codes(
+                np.asarray([block_codes[pair] for pair in pairs], dtype=np.int64),
+                len(block_kinds),
+                "MixedSiblingBank.block_kind_codes",
+            )
+        )
+        self.parent_vertices = _read_only(vertices)
+        self.parent_vertex_counts = _read_only(vertex_counts)
+        self.child_ids = _read_only(children)
+        self.child_counts = _read_only(child_counts)
+        self.reference_codes = _read_only(reference_codes)
+        self.cell_classes = _read_only(
+            _int64_values(
+                [record.cell_class for record in ordered],
+                "MixedSiblingBank.cell_classes",
+            )
+        )
+        self.layer_columns = _read_only(
+            _int64_values(
+                [0 if value is None else value for value in columns],
+                "MixedSiblingBank.layer_columns",
+            )
+        )
+        self.layer_column_present = _read_only(
+            np.asarray([value is not None for value in columns], dtype=np.bool_)
+        )
+        self.layer_intervals = _read_only(
+            _int64_values(
+                [0 if value is None else value for value in intervals],
+                "MixedSiblingBank.layer_intervals",
+            )
+        )
+        self.layer_interval_present = _read_only(
+            np.asarray([value is not None for value in intervals], dtype=np.bool_)
+        )
+        self.periodic_roots = _read_only(roots)
+        self.periodic_root_counts = _read_only(root_counts)
+        self.periodic_shifts = _read_only(shifts)
+        self.block_kinds = block_kinds
+        self.reference_templates = templates
+        self.bank_id = canonical_fingerprint(
+            {
+                "kind": "mixed-sibling-bank",
+                "parent_ids": self.parent_ids,
+                "block_kinds": self.block_kinds,
+                "block_kind_codes": self.block_kind_codes,
+                "parent_vertices": self.parent_vertices,
+                "parent_vertex_counts": self.parent_vertex_counts,
+                "child_ids": self.child_ids,
+                "child_counts": self.child_counts,
+                "reference_templates": self.reference_templates,
+                "reference_codes": self.reference_codes,
+                "cell_classes": self.cell_classes,
+                "layer_columns": self.layer_columns,
+                "layer_column_present": self.layer_column_present,
+                "layer_intervals": self.layer_intervals,
+                "layer_interval_present": self.layer_interval_present,
+                "periodic_roots": self.periodic_roots,
+                "periodic_root_counts": self.periodic_root_counts,
+                "periodic_shifts": self.periodic_shifts,
+            }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: MixedSiblingBank, /) -> Self:
+        """Rebuild every row through the constructor and authenticate the columns."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"MixedSiblingBank.value must have type {cls.__name__} without subclass substitution; got {type(value).__name__}"
+            )
+        value._require_columns()
+        rebuilt = cls(tuple(value))
+        if rebuilt.bank_id != value.bank_id or not tree_content_equal(rebuilt, value):
+            raise ValueError(
+                f"MixedSiblingBank.bank_id must match the rebuilt sibling columns; got {value.bank_id}"
+            )
+        return rebuilt
+
+    def __len__(self) -> int:
+        return int(self.parent_ids.shape[0])
+
+    def __iter__(self) -> Iterator[Sibling]:
+        return (self[row] for row in range(len(self)))
+
+    def __getitem__(self, index: int, /) -> Sibling:
+        """Build row ``index`` on demand; negative indices count from the end."""
+        if type(index) is not int:
+            raise TypeError(
+                f"MixedSiblingBank.index must be an integer; got {type(index).__name__}"
+            )
+        row = index if index >= 0 else len(self) + index
+        if not 0 <= row < len(self):
+            raise IndexError(
+                f"MixedSiblingBank.index must be in [-{len(self)}, {len(self)}); got {index}"
+            )
+        roots = int(self.periodic_root_counts[row])
+        block_name, cell_kind = self.block_kinds[int(self.block_kind_codes[row])]
+        return Sibling(
+            int(self.parent_ids[row]),
+            block_name,
+            cell_kind,
+            tuple(
+                self.parent_vertices[row, : int(self.parent_vertex_counts[row])].tolist()
+            ),
+            tuple(self.children(row).tolist()),
+            self.reference_templates[int(self.reference_codes[row])],
+            int(self.cell_classes[row]),
+            int(self.layer_columns[row]) if self.layer_column_present[row] else None,
+            int(self.layer_intervals[row]) if self.layer_interval_present[row] else None,
+            tuple(self.periodic_roots[row, :roots].tolist()),
+            tuple(tuple(shift) for shift in self.periodic_shifts[row, :roots].tolist()),
+        )
+
+    def children(self, row: int, /) -> np.ndarray:
+        """Return a read-only view of the child IDs of ``row``."""
+        return self.child_ids[row, : int(self.child_counts[row])]
+
+    def all_child_ids(self) -> np.ndarray:
+        """Return every child ID in row order, without padding."""
+        return self.child_ids[_arity_mask(self.child_counts, self.child_ids.shape[1])]
+
+    def parent_rows(self, parent_ids: ArrayLike, /) -> np.ndarray:
+        """Return the rows of ``parent_ids`` by binary search; ``-1`` marks absent parents."""
+        targets = np.asarray(parent_ids, dtype=np.int64)
+        rows = np.searchsorted(self.parent_ids, targets)
+        if len(self) == 0:
+            return np.full(targets.shape, -1, dtype=np.int64)
+        found = (rows < len(self)) & (
+            self.parent_ids[np.minimum(rows, len(self) - 1)] == targets
+        )
+        return np.where(found, rows, -1).astype(np.int64)
+
+    def row_slots(self) -> int:
+        """Return the padded integer slots of one row's variable-arity columns."""
+        return (
+            self.parent_vertices.shape[1]
+            + self.child_ids.shape[1]
+            + self.periodic_roots.shape[1] * (1 + self.periodic_shifts.shape[2])
+        )
+
+    def _require_columns(self) -> None:
+        """Refuse restored columns that do not form one canonical padded bank."""
+        vectors = (
+            self.parent_ids,
+            self.parent_vertex_counts,
+            self.child_counts,
+            self.cell_classes,
+            self.layer_columns,
+            self.layer_intervals,
+            self.periodic_root_counts,
+        )
+        codes = (self.block_kind_codes, self.reference_codes)
+        flags = (self.layer_column_present, self.layer_interval_present)
+        rows = (self.parent_vertices, self.child_ids, self.periodic_roots)
+        if not all(
+            isinstance(column, np.ndarray)
+            for column in (*vectors, *codes, *flags, *rows, self.periodic_shifts)
+        ):
+            raise ValueError(
+                "MixedSiblingBank.columns must be host arrays; got another column type"
+            )
+        count = self.parent_ids.shape[:1]
+        if (
+            self.parent_ids.ndim != 1
+            or any(column.dtype != np.int64 or column.shape != count for column in vectors)
+            or any(column.dtype != np.int32 or column.shape != count for column in codes)
+            or any(column.dtype != np.bool_ or column.shape != count for column in flags)
+            or any(column.dtype != np.int64 or column.ndim != 2 for column in rows)
+            or self.periodic_shifts.dtype != np.int64
+            or self.periodic_shifts.ndim != 3
+            or self.periodic_shifts.shape[:2] != self.periodic_roots.shape
+            or (
+                self.periodic_shifts.shape[2] != 0
+                and not np.any(self.periodic_root_counts)
+            )
+            or not _canonical_padding(self.parent_vertices, self.parent_vertex_counts)
+            or not _canonical_padding(self.child_ids, self.child_counts)
+            or not _canonical_padding(self.periodic_roots, self.periodic_root_counts)
+            or not _canonical_padding(self.periodic_shifts, self.periodic_root_counts)
+            or np.any(self.parent_ids[1:] <= self.parent_ids[:-1])
+            or np.any(self.block_kind_codes < 0)
+            or np.any(self.block_kind_codes >= len(self.block_kinds))
+            or np.any(self.reference_codes < 0)
+            or np.any(self.reference_codes >= len(self.reference_templates))
+            or np.any(self.layer_columns[~self.layer_column_present] != 0)
+            or np.any(self.layer_intervals[~self.layer_interval_present] != 0)
+        ):
+            raise ValueError(
+                "MixedSiblingBank.columns must align sorted parents, padded rows, presence flags and dictionary codes; got inconsistent columns"
+            )
+
+
+class MixedRetiredEntityBank(StrictModule, NonTrainableState):
+    """Issued IDs of retired intermediate entities, sorted as ``(dimension, key, identifier)``.
+
+    ``keys`` are ``-1``-padded to the exact maximum key length and
+    ``key_lengths`` is authoritative, because source keys of mixed meshes may
+    themselves end in ``-1`` entity-key padding. Rows are built on demand and
+    never retained.
+    """
+
+    dimensions: np.ndarray
+    keys: np.ndarray
+    key_lengths: np.ndarray
+    identifiers: np.ndarray
+    bank_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self, rows: tuple[tuple[int, tuple[int, ...], int], ...] = (), /
+    ) -> None:
+        dimensions = _int64_values(
+            [row[0] for row in rows], "MixedRetiredEntityBank.dimensions"
+        )
+        identifiers = _int64_values(
+            [row[2] for row in rows], "MixedRetiredEntityBank.identifiers"
+        )
+        keys, lengths = _padded_rows(
+            [row[1] for row in rows], "MixedRetiredEntityBank.keys"
+        )
+        # Admitted integer rows keep their canonical lexicographic tuple order.
+        order = np.asarray(
+            sorted(range(len(rows)), key=rows.__getitem__), dtype=np.int64
+        )
+        self.dimensions = _read_only(dimensions[order])
+        self.keys = _read_only(keys[order])
+        self.key_lengths = _read_only(lengths[order])
+        self.identifiers = _read_only(identifiers[order])
+        self.bank_id = canonical_fingerprint(
+            {
+                "kind": "mixed-retired-entity-bank",
+                "dimensions": self.dimensions,
+                "keys": self.keys,
+                "key_lengths": self.key_lengths,
+                "identifiers": self.identifiers,
+            }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: MixedRetiredEntityBank, /) -> Self:
+        """Rebuild every row through the constructor and authenticate the columns."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"MixedRetiredEntityBank.value must have type {cls.__name__} without subclass substitution; got {type(value).__name__}"
+            )
+        columns = (value.dimensions, value.keys, value.key_lengths, value.identifiers)
+        if (
+            not all(
+                isinstance(column, np.ndarray) and column.dtype == np.int64
+                for column in columns
+            )
+            or value.dimensions.ndim != 1
+            or value.identifiers.shape != value.dimensions.shape
+            or value.keys.ndim != 2
+            or value.keys.shape[:1] != value.dimensions.shape
+            or not _canonical_padding(value.keys, value.key_lengths)
+        ):
+            raise ValueError(
+                "MixedRetiredEntityBank.columns must align dimensions, padded keys and identifiers; got inconsistent columns"
+            )
+        rebuilt = cls(tuple(value))
+        if rebuilt.bank_id != value.bank_id or not tree_content_equal(rebuilt, value):
+            raise ValueError(
+                f"MixedRetiredEntityBank.bank_id must match the rebuilt retired columns; got {value.bank_id}"
+            )
+        return rebuilt
+
+    def __len__(self) -> int:
+        return int(self.dimensions.shape[0])
+
+    def __iter__(self) -> Iterator[tuple[int, tuple[int, ...], int]]:
+        return (
+            (dimension, tuple(key[:length]), identifier)
+            for dimension, key, length, identifier in zip(
+                self.dimensions.tolist(),
+                self.keys.tolist(),
+                self.key_lengths.tolist(),
+                self.identifiers.tolist(),
+                strict=True,
+            )
+        )
+
+    def __getitem__(self, index: int, /) -> tuple[int, tuple[int, ...], int]:
+        """Build row ``index`` on demand; negative indices count from the end."""
+        if type(index) is not int:
+            raise TypeError(
+                f"MixedRetiredEntityBank.index must be an integer; got {type(index).__name__}"
+            )
+        row = index if index >= 0 else len(self) + index
+        if not 0 <= row < len(self):
+            raise IndexError(
+                f"MixedRetiredEntityBank.index must be in [-{len(self)}, {len(self)}); got {index}"
+            )
+        return (
+            int(self.dimensions[row]),
+            tuple(self.keys[row, : int(self.key_lengths[row])].tolist()),
+            int(self.identifiers[row]),
+        )
+
+
+class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
+    """Persistent template siblings, parent scientific identities and classes.
+
+    Authored ``Sibling`` rows and retired ``(dimension, key, identifier)`` rows
+    are stored as ``MixedSiblingBank`` and ``MixedRetiredEntityBank`` columns.
+    """
+
+    siblings: MixedSiblingBank
     next_cell_id: int = eqx.field(static=True)
     next_vertex_id: int = eqx.field(static=True)
     hierarchy_id: str = eqx.field(static=True)
-    retired_entities: tuple[tuple[int, tuple[int, ...], int], ...] = eqx.field(
-        static=True
-    )
+    retired: MixedRetiredEntityBank
     quotient_entities: tuple[
         _dependency_phydrax_meshing__topology_edit.PeriodicEntityIdentityBank, ...
     ] = eqx.field(static=True)
@@ -185,36 +718,32 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
             raise ValueError(
                 "MixedAdaptationHierarchy.next_ids must be nonnegative; got a negative allocator identity"
             )
-        if len({record.parent_id for record in records}) != len(records):
-            raise ValueError(
-                "MixedAdaptationHierarchy.records must have unique parent IDs; got duplicate parents"
-            )
-        ordered = tuple(sorted(records, key=lambda record: record.parent_id))
-        retired = tuple(sorted(retired_entities))
+        siblings = MixedSiblingBank(records)
+        retired = MixedRetiredEntityBank(retired_entities)
         if len({row[0] for row in identity_cells}) != len(identity_cells):
             raise ValueError(
                 "MixedAdaptationHierarchy.identity_cells must have unique cell IDs; got duplicate IDs"
             )
-        if {row[0] for row in identity_cells} & {
-            child for record in ordered for child in record.child_ids
-        }:
+        if not {row[0] for row in identity_cells}.isdisjoint(
+            siblings.all_child_ids().tolist()
+        ):
             raise ValueError(
                 "MixedAdaptationHierarchy.identity_cells must exclude refinement siblings; got overlapping IDs"
             )
-        self.records = ordered
+        self.siblings = siblings
         self.next_cell_id = next_cell_id
         self.next_vertex_id = next_vertex_id
-        self.retired_entities = retired
+        self.retired = retired
         self.quotient_entities = quotient_entities
         self.layer_columns = layer_columns
         self.identity_cells = tuple(sorted(identity_cells))
         self.hierarchy_id = canonical_fingerprint(
             {
                 "kind": "mixed-template-hierarchy",
-                "records": ordered,
+                "siblings": siblings.bank_id,
                 "next_cell_id": next_cell_id,
                 "next_vertex_id": next_vertex_id,
-                "retired_entities": self.retired_entities,
+                "retired_entities": retired.bank_id,
                 "quotient_entities": quotient_entities,
                 "layer_columns": None
                 if layer_columns is None
@@ -226,16 +755,18 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(cls, value: MixedAdaptationHierarchy, /) -> Self:
-        """Rebuild hierarchy state through its constructor validation."""
+        """Rebuild hierarchy state from its replayed banks through the constructor."""
         if type(value) is not cls:
             raise TypeError(
                 f"MixedAdaptationHierarchy.value must have type {cls.__name__} without subclass substitution; got {type(value).__name__}"
             )
         rebuilt = cls(
-            value.records,
+            tuple(MixedSiblingBank.from_stored_fields(value.siblings)),
             next_cell_id=value.next_cell_id,
             next_vertex_id=value.next_vertex_id,
-            retired_entities=value.retired_entities,
+            retired_entities=tuple(
+                MixedRetiredEntityBank.from_stored_fields(value.retired)
+            ),
             quotient_entities=value.quotient_entities,
             layer_columns=value.layer_columns,
             identity_cells=value.identity_cells,
@@ -269,6 +800,7 @@ class MixedAdaptationEvidence(NamedTuple):
                 record.status,
                 record.host_storage_live_bytes_upper,
                 record.host_storage_peak_bytes_upper,
+                record.managed_admission_peak_bytes_upper,
                 record.externally_charged_work,
                 record.externally_charged_geometry_queries,
                 record.native_primitive_queries,
@@ -373,6 +905,27 @@ type _FaceSignature = tuple[
     ],
     ...,
 ]
+
+
+type _ReferenceFaceSignature = tuple[
+    tuple[_dependency_phydrax_meshing__periodic.ConstructionPointKey, ...], ...
+]
+
+
+class _TemplateClosureFacts(NamedTuple):
+    template: _Template
+    edge_supports: tuple[tuple[int, int], ...]
+    facets: tuple[_ReferenceFaceSignature, ...]
+    # Distinct reference points of ``facets`` and each facet face as indices
+    # into them, so a cell relabels every point once rather than per face.
+    points: tuple[_dependency_phydrax_meshing__periodic.ConstructionPointKey, ...]
+    faces: tuple[tuple[tuple[int, ...], ...], ...]
+    # Signature storage is fixed + per_identifier_byte * integer_bytes.
+    signature_storage: tuple[int, int]
+
+
+type _TemplateClosureCache = dict[tuple[str, int], _TemplateClosureFacts]
+
 
 
 def _point_keys(
@@ -520,16 +1073,32 @@ def _facet_signatures(
     *,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
-) -> tuple[_FaceSignature, ...]:
+) -> tuple[_ReferenceFaceSignature, ...]:
     """Return sorted child subfaces on each parent facet, in facet order."""
+    return _facet_signatures_from_points(
+        kind,
+        ids,
+        (
+            _point_keys(kind, ids, child, scope=scope, budget=budget)
+            for child in template.children
+        ),
+    )
+
+
+def _facet_signatures_from_points(
+    kind: str,
+    ids: np.ndarray,
+    children: Iterable[
+        tuple[_dependency_phydrax_meshing__periodic.ConstructionPointKey, ...]
+    ],
+) -> tuple[_ReferenceFaceSignature, ...]:
     topology = reference_cell_topology(kind)
     facets = topology.entities[topology.dimension - 1]
     supports = [set(int(ids[index]) for index in facet) for facet in facets]
     faces: list[
         list[tuple[_dependency_phydrax_meshing__periodic.ConstructionPointKey, ...]]
     ] = [[] for _ in facets]
-    for child in template.children:
-        points = _point_keys(kind, ids, child, scope=scope, budget=budget)
+    for points in children:
         for face in facets:
             keys = tuple(points[index] for index in face)
             vertices = {identifier for key in keys for identifier, _ in key}
@@ -537,6 +1106,121 @@ def _facet_signatures(
                 if vertices.issubset(support):
                     faces[facet].append(tuple(sorted(keys)))
     return tuple(tuple(sorted(values)) for values in faces)
+
+
+def _template_closure_facts(
+    kind: str,
+    template: _Template,
+    cache: _TemplateClosureCache,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _TemplateClosureFacts:
+    """Retain exact reference facts once for this request-owned template."""
+    key = kind, id(template)
+    retained = cache.get(key)
+    if retained is not None and retained.template is template:
+        return retained
+    count = len(reference_cell_topology(kind).vertices)
+    # Includes the distinct-point table and per-face point indices.
+    _reserve_host_storage(
+        512 + 8 * count + 448 * template.children.size, scope=scope, budget=budget
+    )
+    ids = np.arange(count, dtype=np.int64)
+    children = tuple(
+        _point_keys(kind, ids, child, scope=scope, budget=budget)
+        for child in template.children
+    )
+    edges = tuple(
+        (point[0][0], point[1][0])
+        for child in children
+        for point in child
+        if len(point) == 2
+    )
+    facets = _facet_signatures_from_points(kind, ids, children)
+    point_rows: dict[_dependency_phydrax_meshing__periodic.ConstructionPointKey, int] = {}
+    faces = tuple(
+        tuple(
+            tuple(point_rows.setdefault(point, len(point_rows)) for point in face)
+            for face in facet
+        )
+        for facet in facets
+    )
+    weights = sum(len(point) for facet in facets for face in facet for point in face)
+    retained = _TemplateClosureFacts(
+        template,
+        edges,
+        facets,
+        tuple(point_rows),
+        faces,
+        (
+            sum(
+                128 + 128 * len(face) + 128 * sum(len(point) for point in face)
+                for facet in facets
+                for face in facet
+            ),
+            weights,
+        ),
+    )
+    cache[key] = retained
+    return retained
+
+
+def _prepared_facet_signatures(
+    cell: Cell,
+    template: _Template,
+    cache: _TemplateClosureCache,
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[_FaceSignature, ...]:
+    ids = cell.vertices
+    topology = reference_cell_topology(cell.kind)
+    if ids.shape != (len(topology.vertices),) or len(set(map(int, ids))) != ids.size:
+        return (
+            _facet_signatures(cell.kind, ids, template, scope=scope, budget=budget)
+            if orbits is None
+            else _periodic_facet_signatures(
+                orbits, cell, template, scope=scope, budget=budget
+            )
+        )
+    facts = _template_closure_facts(
+        cell.kind, template, cache, scope=scope, budget=budget
+    )
+    identifiers = ids.tolist()
+    integer_bytes = max(
+        32 + (abs(value).bit_length() + 7) // 8 for value in identifiers
+    )
+    fixed, weights = facts.signature_storage
+    _reserve_host_storage(
+        512 + fixed + weights * integer_bytes, scope=scope, budget=budget
+    )
+    mapped = [
+        tuple(sorted((identifiers[local], weight) for local, weight in point))
+        for point in facts.points
+    ]
+
+    # Injective corner relabeling preserves the proved local facet incidence.
+    # Only canonical point/face ordering and periodic placement are cell-local.
+    if orbits is None:
+        return tuple(
+            tuple(sorted(tuple(sorted(mapped[row] for row in face)) for face in facet))
+            for facet in facts.faces
+        )
+    anchors = [
+        orbits.face(ids[np.asarray(local, dtype=np.int32)])[1]
+        for local in topology.entities[topology.dimension - 1]
+    ]
+    return tuple(
+        tuple(
+            sorted(
+                tuple(sorted(orbits.point(mapped[row], anchor)[0] for row in face))
+                for face in facet
+            )
+        )
+        for facet, anchor in zip(facts.faces, anchors, strict=True)
+    )
 
 
 class Cell(NamedTuple):
@@ -561,6 +1245,7 @@ def _closure(
     orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits
     | None = None,
     *,
+    references: _TemplateClosureCache,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _MixedClosure:
@@ -568,15 +1253,21 @@ def _closure(
     # The chosen table is retained by the caller; only closure indices,
     # lazy signatures, and live backtracking copies occupy this workspace.
     with budget.temporary_scope():
-        return _solve_closure(
-            cells,
-            domains,
-            maximum_steps,
-            maximum_work_units,
-            orbits,
-            scope=scope,
-            budget=budget,
-        )
+        try:
+            return _solve_closure(
+                cells,
+                domains,
+                maximum_steps,
+                maximum_work_units,
+                orbits,
+                scope=scope,
+                references=references,
+                budget=budget,
+            )
+        finally:
+            # No reference facts outlive the closure workspace that admits
+            # lazily prepared entries; selected templates have separate owners.
+            references.clear()
 
 
 class _ClosureInterfaces(StrictModule):
@@ -617,7 +1308,9 @@ def _prepare_closure_interfaces(
     return _ClosureInterfaces(interfaces)
 
 
-class _ClosureSignature(StrictModule):
+class _ClosureSignature(NamedTuple):
+    """Internal host result of the admitted exact signature calculation."""
+
     value: tuple[_FaceSignature, ...]
     work: int
 
@@ -629,6 +1322,7 @@ def _prepare_closure_signature(
     maximum_work_units: int,
     orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None,
     *,
+    references: _TemplateClosureCache,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _ClosureSignature:
@@ -661,12 +1355,8 @@ def _prepare_closure_signature(
         scope=scope,
         budget=budget,
     )
-    value = (
-        _facet_signatures(cell.kind, cell.vertices, template, scope=scope, budget=budget)
-        if orbits is None
-        else _periodic_facet_signatures(
-            orbits, cell, template, scope=scope, budget=budget
-        )
+    value = _prepared_facet_signatures(
+        cell, template, references, orbits, scope=scope, budget=budget
     )
     return _ClosureSignature(value, work)
 
@@ -679,6 +1369,7 @@ def _solve_closure(
     maximum_work_units: int,
     orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None,
     *,
+    references: _TemplateClosureCache,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _MixedClosure:
@@ -698,6 +1389,7 @@ def _solve_closure(
                 maximum_work_units,
                 orbits,
                 scope=scope,
+                references=references,
                 budget=budget,
             )
             work = prepared.work
@@ -848,12 +1540,12 @@ class CoarsenPatch(StrictModule):
 
 class _CoarsenCandidates(StrictModule):
     active: dict[int, Cell]
-    candidates: list[tuple[Sibling, set[int]]]
+    candidates: list[tuple[int, set[int]]]
 
 
 def _admit_coarsen_candidates(
     cells: list[Cell],
-    records: tuple[Sibling, ...],
+    siblings: MixedSiblingBank,
     marks: set[int],
     protected: set[int],
     blocked: set[int],
@@ -864,34 +1556,37 @@ def _admit_coarsen_candidates(
 ) -> _CoarsenCandidates:
     active = {cell.identifier: cell for cell in cells}
     candidates = []
-    for record in records:
-        _reserve_host_storage(
-            256 + 64 * len(record.child_ids), scope=scope, budget=budget
-        )
+    for row in range(len(siblings)):
+        children = siblings.children(row)
+        _reserve_host_storage(256 + 64 * children.size, scope=scope, budget=budget)
         # A physical column is one refinement/coarsening cohort, even when its
         # intervals do not share a face (for example, separate material blocks).
         # Every live column interval participates unless its unchanged SCI
         # signature is authenticated; missing ancestry cannot hide an interval.
-        siblings = set(record.child_ids)
+        members = set(children.tolist())
         if (
-            not siblings.issubset(marks)
-            or not siblings.issubset(active)
-            or siblings & blocked
+            not members.issubset(marks)
+            or not members.issubset(active)
+            or members & blocked
         ):
             continue
-        if any(active[child].cell_class != record.cell_class for child in siblings):
+        cell_class = int(siblings.cell_classes[row])
+        if any(active[child].cell_class != cell_class for child in members):
             continue
+        corners = siblings.parent_vertices[
+            row, : int(siblings.parent_vertex_counts[row])
+        ].tolist()
         if orbits is not None:
-            if len(record.periodic_roots) != len(record.parent_vertices) or len(
-                record.periodic_shifts
-            ) != len(record.parent_vertices):
+            # Lattice shifts share the root arity, so aligned roots align both.
+            roots = int(siblings.periodic_root_counts[row])
+            if roots != len(corners):
                 raise MixedTemplateClosureError(
                     "mixed_adaptation.hierarchy.periodic_roots must align with parent corners; got missing orbit data"
                 )
             for vertex, root, shift in zip(
-                record.parent_vertices,
-                record.periodic_roots,
-                record.periodic_shifts,
+                corners,
+                siblings.periodic_roots[row, :roots].tolist(),
+                siblings.periodic_shifts[row, :roots],
                 strict=True,
             ):
                 if (
@@ -903,16 +1598,17 @@ def _admit_coarsen_candidates(
                         "mixed_adaptation.hierarchy.periodic_roots must retain source-corner orbits; got changed orbit data"
                     )
         discarded = set(
-            int(value) for child in siblings for value in active[child].vertices
-        ) - set(record.parent_vertices)
+            int(value) for child in members for value in active[child].vertices
+        ) - set(corners)
         if not discarded & protected:
-            candidates.append((record, discarded))
+            candidates.append((row, discarded))
     return _CoarsenCandidates(active, candidates)
 
 
 def _restore_coarsen_candidates(
     active: dict[int, Cell],
-    candidates: list[tuple[Sibling, set[int]]],
+    siblings: MixedSiblingBank,
+    candidates: list[tuple[int, set[int]]],
     vertex_ids: np.ndarray,
     *,
     scope: NativeExecutionScope,
@@ -921,41 +1617,42 @@ def _restore_coarsen_candidates(
     restored, removed = [], set()
     fine, parents, references = [], [], []
     source_support = {int(identifier): {int(identifier)} for identifier in vertex_ids}
-    for record, _ in candidates:
-        restored.append(
-            Cell(
-                record.parent_id,
-                record.block_name,
-                record.cell_kind,
-                np.asarray(record.parent_vertices, dtype=np.int64),
-                record.cell_class,
-            )
+    for row, _ in candidates:
+        parent = int(siblings.parent_ids[row])
+        block_name, cell_kind = siblings.block_kinds[int(siblings.block_kind_codes[row])]
+        corners = np.array(
+            siblings.parent_vertices[row, : int(siblings.parent_vertex_counts[row])],
+            dtype=np.int64,
         )
-        removed.update(record.child_ids)
-        for child, reference in zip(record.child_ids, record.references, strict=True):
-            corners = np.asarray(reference, dtype=np.float64)
+        restored.append(
+            Cell(parent, block_name, cell_kind, corners, int(siblings.cell_classes[row]))
+        )
+        children = siblings.children(row).tolist()
+        removed.update(children)
+        for child, reference in zip(
+            children,
+            siblings.reference_templates[int(siblings.reference_codes[row])],
+            strict=True,
+        ):
+            reference_corners = np.asarray(reference, dtype=np.float64)
             for identifier, key in zip(
                 active[child].vertices,
                 _point_keys(
-                    record.cell_kind,
-                    np.asarray(record.parent_vertices, dtype=np.int64),
-                    corners,
-                    scope=scope,
-                    budget=budget,
+                    cell_kind, corners, reference_corners, scope=scope, budget=budget
                 ),
                 strict=True,
             ):
                 source_support[int(identifier)] = {vertex for vertex, _ in key}
             fine.append(child)
-            parents.append(record.parent_id)
-            references.append(corners)
+            parents.append(parent)
+            references.append(reference_corners)
     return CoarsenPatch(restored, removed, fine, parents, references, source_support)
 
 
 @checked
 def coarsen_patch(
     cells: list[Cell],
-    records: tuple[Sibling, ...],
+    siblings: MixedSiblingBank,
     marks: set[int],
     protected: set[int],
     blocked: set[int],
@@ -971,7 +1668,7 @@ def coarsen_patch(
     """Restore sibling patches jointly across shared faces and physical columns."""
     admitted = _admit_coarsen_candidates(
         cells,
-        records,
+        siblings,
         marks,
         protected,
         blocked,
@@ -989,14 +1686,20 @@ def coarsen_patch(
             256
             + 64
             * (
-                sum(len(record.child_ids) for record, _ in candidates)
+                int(
+                    siblings.child_counts[
+                        np.asarray([row for row, _ in candidates], dtype=np.int64)
+                    ].sum()
+                )
                 + sum(cell.vertices.size for cell in cells)
             ),
             scope=scope,
             budget=budget,
         )
         removed_candidates = {
-            identifier for record, _ in candidates for identifier in record.child_ids
+            identifier
+            for row, _ in candidates
+            for identifier in siblings.children(row).tolist()
         }
         # A sibling patch survives only when no retained cell uses a discarded vertex.
         outside = {
@@ -1006,34 +1709,37 @@ def coarsen_patch(
             for vertex in cell.vertices
         }
         retained = [
-            (record, discarded)
-            for record, discarded in candidates
-            if not discarded & outside
+            (row, discarded) for row, discarded in candidates if not discarded & outside
         ]
         if orbits is not None:
             outside_roots = {orbits.vertices[vertex][0] for vertex in outside}
             retained = [
-                (record, discarded)
-                for record, discarded in retained
+                (row, discarded)
+                for row, discarded in retained
                 if not {orbits.vertices[vertex][0] for vertex in discarded}
                 & outside_roots
             ]
         retained_children = {
-            identifier for record, _ in retained for identifier in record.child_ids
+            identifier
+            for row, _ in retained
+            for identifier in siblings.children(row).tolist()
         }
         retained = [
-            (record, discarded)
-            for record, discarded in retained
-            if record.layer_column is None
+            (row, discarded)
+            for row, discarded in retained
+            if not siblings.layer_column_present[row]
             or (
-                record.layer_column in column_children
-                and column_children[record.layer_column].issubset(retained_children)
+                int(siblings.layer_columns[row]) in column_children
+                and column_children[int(siblings.layer_columns[row])].issubset(
+                    retained_children
+                )
             )
         ]
         changed = len(retained) != len(candidates)
         candidates = retained
     return _restore_coarsen_candidates(
         admitted.active,
+        siblings,
         candidates,
         vertex_ids,
         scope=scope,
@@ -1069,17 +1775,19 @@ def _permitted_subdivision(
     edges: set[tuple[int, ...]],
     faces: set[tuple[int, ...]],
     *,
+    references: _TemplateClosureCache,
+    identity_template: _Template,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
     if not edges and not faces:
         return True
-    for child in template.children:
-        for key in _point_keys(
-            cell.kind, cell.vertices, child, scope=scope, budget=budget
-        ):
-            if len(key) == 2 and tuple(identifier for identifier, _ in key) in edges:
-                return False
+    facts = _template_closure_facts(
+        cell.kind, template, references, scope=scope, budget=budget
+    )
+    for first, last in facts.edge_supports:
+        if tuple(sorted((int(cell.vertices[first]), int(cell.vertices[last])))) in edges:
+            return False
     if faces:
         topology = reference_cell_topology(cell.kind)
         protected = [
@@ -1088,15 +1796,11 @@ def _permitted_subdivision(
             if tuple(sorted(int(cell.vertices[index]) for index in local)) in faces
         ]
         if protected:
-            candidate = _facet_signatures(
-                cell.kind, cell.vertices, template, scope=scope, budget=budget
+            candidate = _prepared_facet_signatures(
+                cell, template, references, None, scope=scope, budget=budget
             )
-            identity = _facet_signatures(
-                cell.kind,
-                cell.vertices,
-                _Template("identity", _reference(cell.kind)[None], None),
-                scope=scope,
-                budget=budget,
+            identity = _prepared_facet_signatures(
+                cell, identity_template, references, None, scope=scope, budget=budget
             )
             if any(candidate[facet] != identity[facet] for facet in protected):
                 return False
@@ -1139,8 +1843,15 @@ def adapt_mixed_mesh(
     maximum_closure_steps: int = 1 << 20,
     maximum_work_units: int = 1 << 26,
     maximum_scratch_bytes: int = MeshingLimits().maximum_scratch_bytes,
+    maximum_cavity_cells: int = MeshingLimits().maximum_cavity_cells,
+    maximum_geometry_queries: int = MeshingLimits().maximum_geometry_queries,
+    maximum_wall_seconds: float = MeshingLimits().maximum_wall_seconds,
 ) -> MixedAdaptationOutcome:
-    """Build a mixed edit within its explicit native request allowance."""
+    """Build a mixed edit within its explicit native request allowance.
+
+    The work, scratch, cavity, query and wall allowances all bound the nested
+    native scope, which is further intersected with any active parent scope.
+    """
     if (
         isinstance(maximum_scratch_bytes, bool)
         or not isinstance(maximum_scratch_bytes, (int, np.integer))
@@ -1152,6 +1863,9 @@ def adapt_mixed_mesh(
     limits = MeshingLimits(
         maximum_work_units=maximum_work_units,
         maximum_scratch_bytes=maximum_scratch_bytes,
+        maximum_cavity_cells=maximum_cavity_cells,
+        maximum_geometry_queries=maximum_geometry_queries,
+        maximum_wall_seconds=maximum_wall_seconds,
     )
     with NativeExecutionScope(limits.native_limits()) as scope:
         remaining = scope.remaining()
@@ -1239,7 +1953,7 @@ class _MixedMarks(StrictModule):
     protected: set[int]
     blocked: set[int]
     cells: list[Cell]
-    records: tuple[Sibling, ...]
+    siblings: MixedSiblingBank
 
 
 class _MixedAncestry(StrictModule):
@@ -1265,6 +1979,7 @@ class _MixedCoarsening(StrictModule):
 
 class _MixedDomains(StrictModule):
     domains: list[list[_Template]]
+    references: _TemplateClosureCache
 
 
 class _MixedChildren(StrictModule):
@@ -1525,7 +2240,7 @@ def _admit_mixed_marks(
             )
             offset += 1
     cells.sort(key=lambda cell: cell.identifier)
-    records = () if hierarchy is None else hierarchy.records
+    siblings = MixedSiblingBank() if hierarchy is None else hierarchy.siblings
     return _MixedMarks(
         ids=ids,
         refine=refine,
@@ -1534,7 +2249,7 @@ def _admit_mixed_marks(
         protected=protected,
         blocked=blocked,
         cells=cells,
-        records=records,
+        siblings=siblings,
     )
 
 
@@ -1551,19 +2266,20 @@ def _admit_mixed_ancestry(
     ids = marks.ids
     coarsen = marks.coarsen
     cells = marks.cells
-    records = marks.records
+    siblings = marks.siblings
+    child_total = int(siblings.child_counts.sum())
     _reserve_host_storage(
         256
         + 128
         * (
-            sum(len(record.child_ids) for record in records)
+            child_total
             + (0 if hierarchy is None else len(hierarchy.identity_cells))
             + len(cells)
         ),
         scope=scope,
         budget=budget,
     )
-    sibling_ids = {child for record in records for child in record.child_ids}
+    sibling_ids = set(siblings.all_child_ids().tolist())
     identity_bank = set(() if hierarchy is None else hierarchy.identity_cells)
     unchanged = {
         cell.identifier
@@ -1606,7 +2322,7 @@ def _admit_mixed_ancestry(
     for identifier, column in columns.items():
         column_members.setdefault(int(column), set()).add(int(identifier))
     identity_work = (
-        sum(len(record.child_ids) for record in records)
+        child_total
         + len(identity_bank)
         + len(cells)
         + (sum(cell.vertices.size for cell in cells) if identity_bank else 0)
@@ -1643,7 +2359,7 @@ def _prepare_mixed_coarsening(
     protected = marks.protected
     blocked = marks.blocked
     cells = marks.cells
-    records = marks.records
+    siblings = marks.siblings
     unchanged_marks = ancestry.unchanged_marks
     intervals = ancestry.intervals
     columns = ancestry.columns
@@ -1651,7 +2367,7 @@ def _prepare_mixed_coarsening(
     unchanged = ancestry.unchanged
     patch = coarsen_patch(
         cells,
-        records,
+        siblings,
         coarsen,
         protected,
         blocked,
@@ -1676,14 +2392,21 @@ def _prepare_mixed_coarsening(
     source_support = patch.source_support
     working = [cell for cell in cells if cell.identifier not in removed] + restored
     working.sort(key=lambda cell: cell.identifier)
-    for record in records:
-        if (
-            record.parent_id in restored_ids
-            and record.layer_column is not None
-            and record.layer_interval is not None
-        ):
-            columns[record.parent_id] = record.layer_column
-            intervals[record.parent_id] = record.layer_interval
+    restored_rows = siblings.parent_rows(
+        np.asarray(sorted(restored_ids), dtype=np.int64)
+    )
+    restored_rows = restored_rows[
+        siblings.layer_column_present[restored_rows]
+        & siblings.layer_interval_present[restored_rows]
+    ]
+    for parent, column, interval in zip(
+        siblings.parent_ids[restored_rows].tolist(),
+        siblings.layer_columns[restored_rows].tolist(),
+        siblings.layer_intervals[restored_rows].tolist(),
+        strict=True,
+    ):
+        columns[parent] = column
+        intervals[parent] = interval
     selected_columns = {
         columns[identifier] for identifier in refine if identifier in columns
     }
@@ -1730,6 +2453,7 @@ def _prepare_mixed_domains(
     working = coarsening.working
     domains = []
     tables: dict[tuple[str, bool], tuple[_Template, ...]] = {}
+    references: _TemplateClosureCache = {}
     for cell in working:
         _reserve_host_storage(256, scope=scope, budget=budget)
         axial = dimension == 3 and (
@@ -1784,7 +2508,14 @@ def _prepare_mixed_domains(
             template
             for template in templates
             if _permitted_subdivision(
-                cell, template, edges, faces, scope=scope, budget=budget
+                cell,
+                template,
+                edges,
+                faces,
+                references=references,
+                identity_template=tables[cell.kind, axial][0],
+                scope=scope,
+                budget=budget,
             )
         ]
         if not templates:
@@ -1797,6 +2528,7 @@ def _prepare_mixed_domains(
     )
     return _MixedDomains(
         domains=domains,
+        references=references,
     )
 
 
@@ -1823,9 +2555,19 @@ def _execute_mixed_closure(
         maximum_work_units - identity_work,
         orbits,
         scope=scope,
+        references=prepared_domains.references,
         budget=budget,
     )
     chosen, steps, work = selection.chosen, selection.steps, selection.work
+    # Lazy: the bisection kernel owns the shared host cavity admission.
+    from ._bisection_kernel_host import _uniform_cavity
+
+    # The edit's local cavity is every source cell it retires: refined cells
+    # replaced by a nonidentity template and fine cells coarsened away.
+    _uniform_cavity(
+        sum(template.name != "identity" for template in chosen) + len(coarsening.removed),
+        budget=budget,
+    )
     work += identity_work
     work += sum(template.children.size for template in chosen)
     if work > maximum_work_units:
@@ -2100,13 +2842,18 @@ def _recover_mixed_entity_identities(
 ) -> _MixedEntityIdentities:
     mesh, hierarchy, dimension = request.mesh, request.hierarchy, controls.dimension
     prescribed = []
+    if hierarchy is not None:
+        # Retired rows materialize from the bank as Python keys, like current keys.
+        _reserve_host_storage(
+            (hierarchy.retired.keys.size + 2 * len(hierarchy.retired))
+            * (64 + 3 * np.dtype(np.int64).itemsize),
+            scope=scope,
+            budget=budget,
+        )
     retired = (
         {}
         if hierarchy is None
-        else {
-            (dimension, key): identifier
-            for dimension, key, identifier in hierarchy.retired_entities
-        }
+        else {(level, key): identifier for level, key, identifier in hierarchy.retired}
     )
     for degree in range(1, dimension):
         current_keys = entity_keys_owner.entity_keys(mesh, degree)
@@ -2399,7 +3146,7 @@ def _publish_mixed_edit(
     dimension = controls.dimension
     requested_refine = marks.requested_refine
     coarsen = marks.coarsen
-    records = marks.records
+    siblings = marks.siblings
     unchanged_marks = ancestry.unchanged_marks
     intervals = ancestry.intervals
     removed = coarsening.removed
@@ -2476,7 +3223,20 @@ def _publish_mixed_edit(
         coarsening=coarsening_witness,
         periodic_orbits=periodic_witness,
     )
-    retained = tuple(record for record in records if record.parent_id not in restored_ids)
+    kept = np.ones(len(siblings), dtype=np.bool_)
+    kept[siblings.parent_rows(np.asarray(sorted(restored_ids), dtype=np.int64))] = False
+    kept_rows = np.flatnonzero(kept).tolist()
+    # Successor banks transiently materialize retained authoring rows and pack
+    # them, and the retired rows, into int64 columns: at most 1 KiB of row and
+    # column objects plus 128 bytes (Python integer, references and bank slot)
+    # per padded integer slot. New rows were charged with their template children.
+    _reserve_host_storage(
+        len(kept_rows) * (1024 + 128 * siblings.row_slots())
+        + len(retired) * (256 + 64 * max((len(key) for _, key in retired), default=0)),
+        scope=scope,
+        budget=budget,
+    )
+    retained = tuple(siblings[row] for row in kept_rows)
     successor_columns = (
         None
         if layer_columns is None

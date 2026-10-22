@@ -15,6 +15,7 @@ End mesh certificate checks
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import nullcontext
 from fractions import Fraction
 from itertools import combinations, product
@@ -171,6 +172,10 @@ type ContactMethod = Literal["affine_simplex", "affine_polytope", "tangent_cone"
 
 type Point = tuple[Fraction | RadicalElement, ...]
 type Plane = tuple[Point, Fraction | RadicalElement]
+type _AffineCellImageKey = tuple[
+    tuple[tuple[tuple[tuple[int, ...], Fraction | RadicalElement], ...], ...],
+    tuple[Point, ...],
+]
 
 # Bounds retain Python Fraction/PyLong owners and the rational elimination workspace.
 _FRACTION_OWNER_BYTES = 128
@@ -201,20 +206,66 @@ def affine_expressions(values: tuple[Expression, ...], /) -> bool:
     )
 
 
+def _evaluate_cell_images(cell: Cell, *, budget: CoordinateEnclosureBudget) -> tuple[Point, ...]:
+    return tuple(
+        tuple(expression_evaluate(value, point, budget=budget) for value in cell.coordinates)
+        for point in cell.reference_vertices
+    )
+
+
+def _cell_image_key(
+    cell: Cell, /, *, budget: CoordinateEnclosureBudget,
+) -> _AffineCellImageKey:
+    polynomials = tuple(
+        value for value in cell.coordinates if not isinstance(value, RationalPolynomial)
+    )
+    budget.reserve(
+        0, 512 + 256 * len(polynomials) + 128 * sum(map(len, polynomials))
+    )
+    # Every current coefficient and reference point participates, not a Cell ID.
+    return (
+        tuple(tuple(value.items()) for value in polynomials),
+        cell.reference_vertices,
+    )
+
+
+def _retain_affine_cell_images(
+    cell: Cell, images: tuple[Point, ...], /, *, budget: CoordinateEnclosureBudget,
+) -> None:
+    """Issue a canonical producer's already computed affine numeric corners."""
+    if not affine_expressions(cell.coordinates) or len(images) != len(cell.reference_vertices):
+        raise ValueError("Issued affine cell corners must bind the current complete affine source.")
+    with budget.temporary_scope():
+        key = _cell_image_key(cell, budget=budget)
+        existing = budget.affine_cell_corner_images_cache.get(key)
+        if existing is not None:
+            if existing != images:
+                raise ValueError("Issued affine cell corners conflict with the current numerical source.")
+            return
+        budget.retain_polynomial_preparation((key, images))
+        budget.affine_cell_corner_images_cache[key] = images
+
+
+def _cell_images(cell: Cell, *, budget: CoordinateEnclosureBudget) -> tuple[Point, ...]:
+    if any(isinstance(value, RationalPolynomial) for value in cell.coordinates):
+        return _evaluate_cell_images(cell, budget=budget)
+    with budget.temporary_scope():
+        key = _cell_image_key(cell, budget=budget)
+        cached = budget.affine_cell_corner_images_cache.get(key)
+        if cached is not None:
+            return cached
+        values = _evaluate_cell_images(cell, budget=budget)
+        budget.retain_polynomial_preparation((key, values))
+        budget.affine_cell_corner_images_cache[key] = values
+        return values
+
+
 def _images(
     first: Cell, second: Cell, *, budget: CoordinateEnclosureBudget
 ) -> _AffineImages:
-    values = tuple(
-        tuple(
-            tuple(
-                expression_evaluate(value, point, budget=budget)
-                for value in cell.coordinates
-            )
-            for point in cell.reference_vertices
-        )
-        for cell in (first, second)
+    return _AffineImages(
+        _cell_images(first, budget=budget), _cell_images(second, budget=budget)
     )
-    return _AffineImages(values[0], values[1])
 
 
 @checked
@@ -278,6 +329,8 @@ def _simplex_planes(points: tuple[Point, ...], dimension: int, /) -> tuple[Plane
 
 
 def _intersection_vertices(
+    first_points: tuple[Point, ...],
+    second_points: tuple[Point, ...],
     planes: tuple[Plane, ...],
     dimension: int,
     maximum_work: int,
@@ -312,6 +365,21 @@ def _intersection_vertices(
             * ((12 * (dimension + 1) * bits + _PYLONG_LIMB_BITS - 1) // _PYLONG_LIMB_BITS)
         )
     )
+    if not algebraic:
+        # The crossing characterization below holds for simplices in 2-D/3-D.
+        if dimension not in (2, 3):
+            raise ValueError(
+                f"affine_simplex_contact.dimension must be 2 or 3; got {dimension}"
+            )
+        return _simplex_crossing_vertices(
+            first_points,
+            second_points,
+            planes,
+            dimension,
+            maximum_work,
+            storage_upper,
+            budget=budget,
+        )
     for selected in combinations(planes, dimension):
         if work >= maximum_work:
             return _Intersection(candidates, work, True)
@@ -352,6 +420,76 @@ def _intersection_vertices(
             for normal, offset in planes
         ):
             candidates.add(point)
+    return _Intersection(candidates, work, False)
+
+
+def _simplex_crossing_vertices(
+    first_points: tuple[Point, ...],
+    second_points: tuple[Point, ...],
+    planes: tuple[Plane, ...],
+    dimension: int,
+    maximum_work: int,
+    storage_upper: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _Intersection:
+    """Return the same vertex set from contained corners and edge crossings.
+
+    A vertex of the closed intersection has ``dimension`` independent active
+    half-spaces. With ``dimension`` active facets of one simplex it is that
+    simplex's corner. Otherwise, for dimension two or three, one simplex has
+    exactly ``dimension - 1`` active facets, so the vertex is interior to one
+    of its edges, and an active facet plane of the other simplex is not
+    parallel to that edge and separates its endpoints strictly. Every corner
+    or strict crossing feasible for the other simplex has ``dimension``
+    independent active planes and so is a vertex. The rational edge parameter
+    is the unique solution of the plane triple; every visited plane value is
+    charged as performed.
+    """
+    candidates: set[Point] = set()
+    work = 0
+    side = 2 * dimension
+    budget.reserve(0, storage_upper)
+    for own, other in (
+        (first_points, planes[dimension + 1 :]),
+        (second_points, planes[: dimension + 1]),
+    ):
+        budget.reserve(side * len(own) * len(other))
+        sides = tuple(
+            tuple(
+                sum((a * x for a, x in zip(normal, point, strict=True)), offset)
+                for point in own
+            )
+            for normal, offset in other
+        )
+        for corner, point in enumerate(own):
+            if work >= maximum_work:
+                return _Intersection(candidates, work, True)
+            work += 1
+            if all(row[corner] >= 0 for row in sides):
+                candidates.add(point)
+        for start, end in combinations(range(dimension + 1), 2):
+            for crossed, row in enumerate(sides):
+                low, high = row[start], row[end]
+                if not (low < 0 < high or high < 0 < low):
+                    continue
+                if work >= maximum_work:
+                    return _Intersection(candidates, work, True)
+                work += 1
+                budget.reserve(2 + 3 * dimension + side * (len(other) - 1))
+                parameter = low / (low - high)
+                point = tuple(
+                    own[start][axis] + parameter * (own[end][axis] - own[start][axis])
+                    for axis in range(dimension)
+                )
+                if all(
+                    index == crossed
+                    or sum((a * x for a, x in zip(normal, point, strict=True)), offset)
+                    >= 0
+                    for index, (normal, offset) in enumerate(other)
+                ):
+                    candidates.add(point)
     return _Intersection(candidates, work, False)
 
 
@@ -400,19 +538,38 @@ def _supported_intersection(
 
 
 @checked
+def _require_authenticated_traces(
+    first: Cell, traces: tuple[tuple[int, ...], ...], /
+) -> None:
+    for trace in traces:
+        if (
+            not trace
+            or len(set(trace)) > first.dimension
+            or not set(trace).issubset(first.vertices)
+        ):
+            raise ValueError(
+                "affine_simplex_contact.authenticated_first_traces must contain proper first-simplex traces; got invalid trace"
+            )
+
+
+@checked
 def affine_simplex_contact(
     first: Cell,
     second: Cell,
     maximum_work: int,
     *,
     authenticated_first_traces: tuple[tuple[int, ...], ...] = (),
+    trace_preparation: Callable[[], tuple[tuple[int, ...], ...]] | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> ContactDecision | None:
     """Classify closed affine simplices using their barycentric half-spaces.
 
     A separated decision permits only one shared convex trace. Additional
     first-cell traces must have been authenticated by the caller's partition
-    proof; a union of traces cannot certify a volume intersection.
+    proof; a union of traces cannot certify a volume intersection. A lazy trace
+    preparation is consumed only when shared incidence has not already proved
+    separation. It classifies an exact supporting-face enclosure or the single
+    earned intersection, without repeating intersection construction.
     """
     if (
         first.kind not in ("triangle", "tetrahedron")
@@ -426,15 +583,7 @@ def affine_simplex_contact(
     ):
         return None
     dimension = first.dimension
-    for trace in authenticated_first_traces:
-        if (
-            not trace
-            or len(set(trace)) > dimension
-            or not set(trace).issubset(first.vertices)
-        ):
-            raise ValueError(
-                "affine_simplex_contact.authenticated_first_traces must contain proper first-simplex traces; got invalid trace"
-            )
+    _require_authenticated_traces(first, authenticated_first_traces)
     images = _images(first, second, budget=budget)
     algebraic = any(
         isinstance(value, RadicalElement)
@@ -457,20 +606,39 @@ def affine_simplex_contact(
         *_simplex_planes(images.first, dimension),
         *_simplex_planes(images.second, dimension),
     )
-    intersection = _intersection_vertices(planes, dimension, maximum_work, budget=budget)
+    shared = tuple(set(first.vertices).intersection(second.vertices))
+    axis_work = 0
+    additional_traces: tuple[tuple[int, ...], ...] | None = None
+    if not algebraic:
+        separated, axis_work, additional_traces = _coordinate_axis_separation(
+            images, first, (shared, *authenticated_first_traces),
+            maximum_work, trace_preparation=trace_preparation, budget=budget,
+        )
+        if separated:
+            return ContactDecision("separated", axis_work)
+    intersection = _intersection_vertices(
+        images.first, images.second, planes, dimension, maximum_work - axis_work, budget=budget
+    )
     if intersection.exhausted:
         return ContactDecision(
-            "unresolved", intersection.work, check="mapped_intersection_piece_budget"
+            "unresolved", axis_work + intersection.work, check="mapped_intersection_piece_budget"
         )
-    shared = tuple(set(first.vertices).intersection(second.vertices))
     separated = _supported_intersection(
         first,
         planes,
         intersection.points,
-        (shared, *authenticated_first_traces),
+        (shared, *authenticated_first_traces, *(additional_traces or ())),
         budget=budget,
     )
-    return ContactDecision("separated" if separated else "overlap", intersection.work)
+    if not separated and trace_preparation is not None and additional_traces is None:
+        traces = trace_preparation()
+        _require_authenticated_traces(first, traces)
+        separated = _supported_intersection(
+            first, planes, intersection.points, traces, budget=budget
+        )
+    return ContactDecision(
+        "separated" if separated else "overlap", axis_work + intersection.work
+    )
 
 
 @checked
@@ -576,26 +744,78 @@ def _axis_separates(
         )
         for points in (images.first, images.second)
     )
+    return _projection_separates(projections, first, traces)
+
+
+def _projection_separates(
+    projections: tuple[Point, ...], first: Cell, traces: tuple[set[int], ...], /
+) -> bool:
+    support = _projection_support(projections, first)
+    return support is not None and (
+        not support or any(set(support).issubset(trace) for trace in traces)
+    )
+
+
+def _projection_support(
+    projections: tuple[Point, ...], first: Cell, /
+) -> tuple[int, ...] | None:
     first_min, first_max = min(projections[0]), max(projections[0])
     second_min, second_max = min(projections[1]), max(projections[1])
     if first_max < second_min or second_max < first_min:
-        return True
-    first_support: tuple[int, ...] = ()
+        return ()
     if first_max == second_min:
-        first_support = tuple(
+        return tuple(
             first.vertices[index]
             for index, value in enumerate(projections[0])
             if value == first_max
         )
     elif second_max == first_min:
-        first_support = tuple(
+        return tuple(
             first.vertices[index]
             for index, value in enumerate(projections[0])
             if value == first_min
         )
-    return bool(first_support) and any(
-        set(first_support).issubset(trace) for trace in traces
-    )
+    return None
+
+
+def _coordinate_axis_separation(
+    images: _AffineImages,
+    first: Cell,
+    traces: tuple[tuple[int, ...], ...],
+    maximum_work: int,
+    /,
+    *,
+    trace_preparation: Callable[[], tuple[tuple[int, ...], ...]] | None,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[bool, int, tuple[tuple[int, ...], ...] | None]:
+    """Use existing coordinate values, not dense dot products, as exact axes."""
+    support = tuple(set(trace) for trace in traces)
+    work = 0
+    additional: tuple[tuple[int, ...], ...] | None = None
+    for axis in range(first.dimension):
+        if work >= maximum_work:
+            break
+        with budget.temporary_scope():
+            # One geometric comparison of already-earned corners, not a new
+            # source query, dense dot product or constructed-coordinate solve.
+            budget.reserve(1, 1024)
+            work += 1
+            projections = tuple(
+                tuple(point[axis] for point in points)
+                for points in (images.first, images.second)
+            )
+            face = _projection_support(projections, first)
+            if face is None:
+                continue
+            if not face or any(set(face).issubset(trace) for trace in support):
+                return True, work, additional
+            if trace_preparation is not None and additional is None:
+                additional = trace_preparation()
+                _require_authenticated_traces(first, additional)
+                support = (*support, *(set(trace) for trace in additional))
+            if any(set(face).issubset(trace) for trace in support):
+                return True, work, additional
+    return False, work, additional
 
 
 @checked

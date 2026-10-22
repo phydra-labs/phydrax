@@ -17,11 +17,2380 @@
     "partition_communication_checkpoint_restart",
     "solver_time_and_memory_to_physical_target"
   ],
+  "profile_requests": {
+    "native-cad-lifecycle:brep": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "planar-box",
+        "cad_format": "brep",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:brep:external-combined": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "external-combined",
+        "cad_format": "brep",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:brep:external-routine": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "external-routine",
+        "cad_format": "brep",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:brep:quadric-larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "quadric-larger",
+        "cad_format": "brep",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:brep:quadric-routine": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "quadric-routine",
+        "cad_format": "brep",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:iges": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "planar-box",
+        "cad_format": "iges",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:iges:external-combined": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "external-combined",
+        "cad_format": "iges",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:iges:external-routine": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "external-routine",
+        "cad_format": "iges",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:iges:quadric-larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "quadric-larger",
+        "cad_format": "iges",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:iges:quadric-routine": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "quadric-routine",
+        "cad_format": "iges",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:step": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "planar-box",
+        "cad_format": "step",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:step:external-combined": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "external-combined",
+        "cad_format": "step",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:step:external-routine": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "external-routine",
+        "cad_format": "step",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:step:quadric-larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "quadric-larger",
+        "cad_format": "step",
+        "timeout": 600.0
+      }
+    },
+    "native-cad-lifecycle:step:quadric-routine": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 600.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Native CAD cylinder at 240 seconds reached accepted volume and spent 203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, archive, and cold continuation had not started, with healthy memory. The finite 600-second whole deadline is 2.5 times the current completion lower bound, retaining all work/query/scratch and scientific controls.",
+        "requested": {
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "cad_case": "quadric-routine",
+        "cad_format": "step",
+        "timeout": 600.0
+      }
+    },
+    "native-design-lifecycle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_work_units": 480000,
+          "timeout": 180.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Uniform design required more than 330000 work units; larger cold continuation exceeded 120 seconds.",
+        "requested": {
+          "maximum_work_units": 480000,
+          "timeout": 180.0
+        }
+      },
+      "scenario_controls": {
+        "design_case": "routine-sphere",
+        "maximum_work_units": 480000,
+        "timeout": 180.0
+      }
+    },
+    "native-design-lifecycle:combined-design-target": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_work_units": 480000,
+          "timeout": 180.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Uniform design required more than 330000 work units; larger cold continuation exceeded 120 seconds.",
+        "requested": {
+          "maximum_work_units": 480000,
+          "timeout": 180.0
+        }
+      },
+      "scenario_controls": {
+        "design_case": "combined-design-target",
+        "maximum_work_units": 480000,
+        "timeout": 180.0
+      }
+    },
+    "native-design-lifecycle:larger-sphere": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_work_units": 480000,
+          "timeout": 180.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Uniform design required more than 330000 work units; larger cold continuation exceeded 120 seconds.",
+        "requested": {
+          "maximum_work_units": 480000,
+          "timeout": 180.0
+        }
+      },
+      "scenario_controls": {
+        "design_case": "larger-sphere",
+        "maximum_work_units": 480000,
+        "timeout": 180.0
+      }
+    },
+    "native-distributed-lifecycle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_memory_bytes": 25769803776,
+          "maximum_work_units": 8000000,
+          "timeout": 600.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 25769803776
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Distributed routine at work 8000000, 24 GiB and 300 seconds completed 4-to-2 restore, all 16 roles and continued FE/FV/Euler/RNG/allfield acceptance, then rearchive binding failed. Producer time was 148.9 seconds, consumer time 275.4 seconds and scenario time 425 seconds; memory was healthy. Finite whole timeout 600 seconds provides remaining workflow headroom; routine work 8000000, routine/larger memory 24/32 GiB and science are unchanged. This does not resolve the binding failure or establish successful workflow completion.",
+        "requested": {
+          "maximum_memory_bytes": 25769803776,
+          "maximum_work_units": 8000000,
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "distributed_bisection_compatibility": "uniform_refinement",
+        "distributed_parts": 4,
+        "distributed_processes": 4,
+        "maximum_memory_bytes": 25769803776,
+        "maximum_work_units": 8000000,
+        "restart_parts": 2,
+        "timeout": 600.0
+      }
+    },
+    "native-distributed-lifecycle:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_memory_bytes": 34359738368,
+          "maximum_work_units": 32000000,
+          "timeout": 600.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Distributed routine at work 8000000, 24 GiB and 300 seconds completed 4-to-2 restore, all 16 roles and continued FE/FV/Euler/RNG/allfield acceptance, then rearchive binding failed. Producer time was 148.9 seconds, consumer time 275.4 seconds and scenario time 425 seconds; memory was healthy. Finite whole timeout 600 seconds provides remaining workflow headroom; routine work 8000000, routine/larger memory 24/32 GiB and science are unchanged. This does not resolve the binding failure or establish successful workflow completion. Current larger 6-to-3 at work 8000000, 600 seconds and 32 GiB reached initial FE/FV and first refine, then all ranks exhausted about 7.99M work with next 6144. Storage/query/cavity/time/memory were healthy; checkpoint/cold had not started. Only larger authors finite work 32000000, four times the prior cap for its two-times resolution/six-rank topology and remaining lifecycle. Routine remains at 8000000; all other caps and science are unchanged.",
+        "requested": {
+          "maximum_memory_bytes": 34359738368,
+          "maximum_work_units": 32000000,
+          "timeout": 600.0
+        }
+      },
+      "scenario_controls": {
+        "distributed_bisection_compatibility": "uniform_refinement",
+        "distributed_parts": 6,
+        "distributed_processes": 6,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_work_units": 32000000,
+        "restart_parts": 3,
+        "timeout": 600.0
+      }
+    },
+    "native-envelope-lifecycle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "native-family-lifecycle:curved-cavity-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "curved-cavity-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:curved-cavity-hex:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "curved-cavity-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:curved-frame-sweep-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "curved-frame-sweep-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:curved-material-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "curved-material-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:curved-material-hex:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "curved-material-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:curved-nonsweepable-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "curved-nonsweepable-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:curved-quarter-extrusion-quad": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "curved-quarter-extrusion-quad",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:dual-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "dual-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:dual-quad": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "dual-quad",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:hex-dominant": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "hex-dominant",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:multiblock-cycle-quad": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "multiblock-cycle-quad",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:multiblock-material-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "multiblock-material-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:multiblock-quad": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "multiblock-quad",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:multiblock-reversed-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "multiblock-reversed-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:nonsweepable-dual-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "nonsweepable-dual-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:sweep-hex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "sweep-hex",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:sweep-prism": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "sweep-prism",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-family-lifecycle:transfinite-quad": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+        "external_cgroup_properties": {
+          "MemoryMax": 34359738368
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Family durable 2400-second run at MemoryMax=16G completed publication, independent acceptance, association and all-field preparation, then the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/process memory 32 GiB (34359738368 bytes) doubles the prior cap; native scratch 1536000000, retained data 40960000, work/query/deadline and science are unchanged. Durable incremental stage and failure evidence remains required before any rerun. This envelope is not evidence of successful completion; RSS enforcement belongs to the external cgroup.",
+        "requested": {
+          "maximum_data_bytes": 40960000,
+          "maximum_geometry_queries": 32000000,
+          "maximum_memory_bytes": 34359738368,
+          "maximum_scratch_bytes": 1536000000,
+          "maximum_work_units": 128000000,
+          "timeout": 2400.0
+        },
+        "rerun_prerequisites": [
+          "durable-incremental-stage-and-failure-evidence"
+        ]
+      },
+      "scenario_controls": {
+        "family_case": "transfinite-quad",
+        "maximum_data_bytes": 40960000,
+        "maximum_geometry_queries": 32000000,
+        "maximum_memory_bytes": 34359738368,
+        "maximum_scratch_bytes": 1536000000,
+        "maximum_work_units": 128000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-hybrid-lifecycle:archived-layer-core": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "archived-layer-core"
+      }
+    },
+    "native-hybrid-lifecycle:cad-entire-solid-slab": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "cad-entire-solid-slab"
+      }
+    },
+    "native-hybrid-lifecycle:cad-outside-controlled-solid": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "cad-outside-controlled-solid"
+      }
+    },
+    "native-hybrid-lifecycle:cad-overlapping-wall-slabs": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "cad-overlapping-wall-slabs"
+      }
+    },
+    "native-hybrid-lifecycle:cad-slab-and-core": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "cad-slab-and-core"
+      }
+    },
+    "native-hybrid-lifecycle:channel_gap005_policies": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "channel_gap005_policies"
+      }
+    },
+    "native-hybrid-lifecycle:channel_gap005_rejection": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "channel_gap005_rejection"
+      }
+    },
+    "native-hybrid-lifecycle:concave-box-core-lifecycle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_material_site": "fluid-density",
+        "hybrid_profile": "concave-box-core-lifecycle",
+        "hybrid_region_densities": [
+          2.0
+        ]
+      }
+    },
+    "native-hybrid-lifecycle:concave-box-core-lifecycle:larger": {
+      "minimum_adaptation_rounds": 2,
+      "resolution_scale": 2,
+      "scenario_controls": {
+        "hybrid_material_site": "fluid-density",
+        "hybrid_profile": "concave-box-core-lifecycle",
+        "hybrid_region_densities": [
+          2.0
+        ]
+      }
+    },
+    "native-hybrid-lifecycle:concave_box_count3": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "concave_box_count3"
+      }
+    },
+    "native-hybrid-lifecycle:curved-periodic-layer-core": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "first_thickness": 0.01,
+        "geometry_order": 2,
+        "hybrid_profile": "curved-periodic-layer-core",
+        "layer_count": 2,
+        "layer_growth": 1.0
+      }
+    },
+    "native-hybrid-lifecycle:curved-periodic-layer-core:larger": {
+      "minimum_adaptation_rounds": 2,
+      "resolution_scale": 2,
+      "scenario_controls": {
+        "first_thickness": 0.01,
+        "geometry_order": 2,
+        "hybrid_profile": "curved-periodic-layer-core",
+        "layer_count": 2,
+        "layer_growth": 1.0
+      }
+    },
+    "native-hybrid-lifecycle:exact-sweep-nonperiodic-accepted": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "exact-sweep-nonperiodic-accepted"
+      }
+    },
+    "native-hybrid-lifecycle:exact-sweep-nonperiodic-perturbed-cap": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "exact-sweep-nonperiodic-perturbed-cap"
+      }
+    },
+    "native-hybrid-lifecycle:exact-sweep-periodic-accepted": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "exact-sweep-periodic-accepted"
+      }
+    },
+    "native-hybrid-lifecycle:exact-sweep-periodic-perturbed-cap": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "exact-sweep-periodic-perturbed-cap"
+      }
+    },
+    "native-hybrid-lifecycle:open_box_floor_count4": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "open_box_floor_count4"
+      }
+    },
+    "native-hybrid-lifecycle:opposing_sloped_plates4": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "opposing_sloped_plates4"
+      }
+    },
+    "native-hybrid-lifecycle:original-curved-periodic-refusal": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "original-curved-periodic-refusal"
+      }
+    },
+    "native-hybrid-lifecycle:outward_box_count3": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "outward_box_count3"
+      }
+    },
+    "native-hybrid-lifecycle:periodic-convex-ridge": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "periodic-convex-ridge"
+      }
+    },
+    "native-hybrid-lifecycle:periodic-partial-quadrilateral": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "periodic-partial-quadrilateral"
+      }
+    },
+    "native-hybrid-lifecycle:periodic-partial-triangle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "periodic-partial-triangle"
+      }
+    },
+    "native-hybrid-lifecycle:periodic-rotation-quadrilateral": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "periodic-rotation-quadrilateral"
+      }
+    },
+    "native-hybrid-lifecycle:periodic-rotation-triangle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "periodic-rotation-triangle"
+      }
+    },
+    "native-hybrid-lifecycle:periodic-translation-quadrilateral": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "periodic-translation-quadrilateral"
+      }
+    },
+    "native-hybrid-lifecycle:periodic-translation-triangle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "periodic-translation-triangle"
+      }
+    },
+    "native-hybrid-lifecycle:plate5": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "plate5"
+      }
+    },
+    "native-hybrid-lifecycle:quadrilateral_plate3": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "quadrilateral_plate3"
+      }
+    },
+    "native-hybrid-lifecycle:sphere_radius04_subdivision2": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "sphere_radius04_subdivision2"
+      }
+    },
+    "native-hybrid-lifecycle:unit-box": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_material_site": "fluid-density",
+        "hybrid_profile": "unit-box",
+        "hybrid_region_densities": [
+          2.0
+        ]
+      }
+    },
+    "native-hybrid-lifecycle:wedge30_rejection": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "hybrid_profile": "wedge30_rejection"
+      }
+    },
+    "native-image-lifecycle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "image_case": "two-slab"
+      }
+    },
+    "native-image-lifecycle:oblique-junction-transport": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 360.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Oblique6 warm and archive consumed 130.352 seconds; cold ran another 109.686 seconds before the 240-second deadline killed it. Completion requires more than 240 seconds; 360 seconds leaves at most 229.648 seconds for cold continuation, with 50% headroom over the current completion lower bound. Two-slab remains unchanged.",
+        "requested": {
+          "timeout": 360.0
+        }
+      },
+      "scenario_controls": {
+        "image_case": "oblique-junction-transport",
+        "image_size": 6,
+        "timeout": 360.0
+      }
+    },
+    "native-implicit-lifecycle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "implicit_case": "sphere"
+      }
+    },
+    "native-implicit-lifecycle:offset-ring-torus-anisotropic": {
+      "minimum_adaptation_rounds": 2,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_work_units": 80000000,
+          "timeout": 2400.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Implicit sphere-refinement at 120 seconds completed both adaptations/transfers, scalar query and final PDE/error, then received native TIMEOUT at checkpoint publication. Process time was 122.292 seconds including 1.319 seconds reporting; archive/cold had not started. Sphere-refinement authors a finite 240-second whole deadline; routine sphere remains at 120 seconds. Reporting time does not extend the scientific clock. Prior torus at work 80000000 and whole timeout 1200 seconds timed out in its first metric stage at 1145 seconds. The exact workset optimization has a verified 1.67-1.75x speedup with identical arrays/evidence/order. Only torus authors finite whole timeout 2400 seconds, combining that measured stage and verified speedup with remaining workflow headroom. The work 80000000 two-adaptation envelope and all other scientific/resource controls are unchanged. This envelope is not evidence of successful completion.",
+        "requested": {
+          "maximum_work_units": 80000000,
+          "timeout": 2400.0
+        }
+      },
+      "scenario_controls": {
+        "implicit_case": "offset-ring-torus-anisotropic",
+        "maximum_work_units": 80000000,
+        "timeout": 2400.0
+      }
+    },
+    "native-implicit-lifecycle:sphere-refinement": {
+      "minimum_adaptation_rounds": 2,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "timeout": 240.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Implicit sphere-refinement at 120 seconds completed both adaptations/transfers, scalar query and final PDE/error, then received native TIMEOUT at checkpoint publication. Process time was 122.292 seconds including 1.319 seconds reporting; archive/cold had not started. Sphere-refinement authors a finite 240-second whole deadline; routine sphere remains at 120 seconds. Reporting time does not extend the scientific clock.",
+        "requested": {
+          "timeout": 240.0
+        }
+      },
+      "scenario_controls": {
+        "implicit_case": "sphere-refinement",
+        "timeout": 240.0
+      }
+    },
+    "native-overset-lifecycle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 2560000,
+          "maximum_scratch_bytes": 128000000,
+          "maximum_work_units": 1280000,
+          "timeout": 180.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Moving overset mandatory workflows exhausted the prior finite work/query envelope. Cold common-refinement polynomial preparation required 93128801 storage bytes before expansion against 81920000; 128000000 authored scratch bytes provides 37.4% headroom without changing queries, cavity, or deadline.",
+        "requested": {
+          "maximum_geometry_queries": 2560000,
+          "maximum_scratch_bytes": 128000000,
+          "maximum_work_units": 1280000,
+          "timeout": 180.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 2560000,
+        "maximum_scratch_bytes": 128000000,
+        "maximum_work_units": 1280000,
+        "overset_profile": "routine",
+        "timeout": 180.0
+      }
+    },
+    "native-overset-lifecycle:combined": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 2560000,
+          "maximum_scratch_bytes": 128000000,
+          "maximum_work_units": 2000000,
+          "timeout": 180.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Moving overset mandatory workflows exhausted the prior finite work/query envelope. Cold common-refinement polynomial preparation required 93128801 storage bytes before expansion against 81920000; 128000000 authored scratch bytes provides 37.4% headroom without changing queries, cavity, or deadline. Larger warm execution and both archives passed at 1280000 work; fresh cold FE restore completed, then conservative archive MeshingGeometryMotionTransition.from_stored_fields to stored_record_content_id exhausted work before remap. Larger and combined author 2000000 work; the positive routine remains at 1280000.",
+        "requested": {
+          "maximum_geometry_queries": 2560000,
+          "maximum_scratch_bytes": 128000000,
+          "maximum_work_units": 2000000,
+          "timeout": 180.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 2560000,
+        "maximum_scratch_bytes": 128000000,
+        "maximum_work_units": 2000000,
+        "overset_profile": "combined",
+        "timeout": 180.0
+      }
+    },
+    "native-overset-lifecycle:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 2560000,
+          "maximum_scratch_bytes": 128000000,
+          "maximum_work_units": 2000000,
+          "timeout": 180.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Moving overset mandatory workflows exhausted the prior finite work/query envelope. Cold common-refinement polynomial preparation required 93128801 storage bytes before expansion against 81920000; 128000000 authored scratch bytes provides 37.4% headroom without changing queries, cavity, or deadline. Larger warm execution and both archives passed at 1280000 work; fresh cold FE restore completed, then conservative archive MeshingGeometryMotionTransition.from_stored_fields to stored_record_content_id exhausted work before remap. Larger and combined author 2000000 work; the positive routine remains at 1280000.",
+        "requested": {
+          "maximum_geometry_queries": 2560000,
+          "maximum_scratch_bytes": 128000000,
+          "maximum_work_units": 2000000,
+          "timeout": 180.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 2560000,
+        "maximum_scratch_bytes": 128000000,
+        "maximum_work_units": 2000000,
+        "overset_profile": "larger",
+        "timeout": 180.0
+      }
+    },
+    "native-periodic-lifecycle:skew-lattice": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "periodic_case": "skew-lattice"
+      }
+    },
+    "native-periodic-lifecycle:skew-lattice-exact-algebraic": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Retained periodic work evidence 639987 of 640000 predates the current 2048-times-capacity work multiplier and is stale for work-cap policy. The default work remains 40960000 at capacity 20000 unless explicitly overridden. The baseline positive exact-algebraic periodic envelope has scratch 256000000 and whole timeout 300 seconds, above the prior 81920000/120 defaults. Entity/data/scientific controls and historical binary64 refusal controls are unchanged. This is not evidence of successful completion. No current work failure is observed for exact lattice profiles; their 2048-times-capacity work allowance remains unchanged.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "periodic_case": "skew-lattice-exact-algebraic",
+        "timeout": 300.0
+      }
+    },
+    "native-periodic-lifecycle:skew-lattice-exact-algebraic:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Retained periodic work evidence 639987 of 640000 predates the current 2048-times-capacity work multiplier and is stale for work-cap policy. The default work remains 40960000 at capacity 20000 unless explicitly overridden. The baseline positive exact-algebraic periodic envelope has scratch 256000000 and whole timeout 300 seconds, above the prior 81920000/120 defaults. Entity/data/scientific controls and historical binary64 refusal controls are unchanged. This is not evidence of successful completion. No current work failure is observed for exact lattice profiles; their 2048-times-capacity work allowance remains unchanged.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "periodic_case": "skew-lattice-exact-algebraic",
+        "timeout": 300.0
+      }
+    },
+    "native-periodic-lifecycle:skew-lattice:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "scenario_controls": {
+        "periodic_case": "skew-lattice"
+      }
+    },
+    "native-periodic-lifecycle:skew-material-feature": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "periodic_case": "skew-material-feature"
+      }
+    },
+    "native-periodic-lifecycle:skew-material-feature-exact-algebraic": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 5120000,
+          "maximum_recipe_bytes": 2097152,
+          "maximum_scratch_bytes": 512000000,
+          "maximum_work_units": 320000000,
+          "timeout": 1200.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Retained periodic work evidence 639987 of 640000 predates the current 2048-times-capacity work multiplier and is stale for work-cap policy. The default work remains 40960000 at capacity 20000 unless explicitly overridden. The baseline positive exact-algebraic periodic envelope has scratch 256000000 and whole timeout 300 seconds, above the prior 81920000/120 defaults. Entity/data/scientific controls and historical binary64 refusal controls are unchanged. This is not evidence of successful completion. Material-feature routine at work 160000000 and queries 2560000 reached its target after three refinements (2480 cells, L2 0.0181), then coarsen exhausted 159997437 work with next 16384. Queries were 1.93M; storage/time had headroom, but archive/cold had not started and lifecycle time was 440 seconds. Only material-feature routine/larger now author finite work 320000000, queries 5120000 and whole timeout 1200 seconds. Scratch 512000000 and science are unchanged; exact lattice profiles are untouched. The scratch cap retains headroom over the earlier 307950571-byte geometry-association requirement. Target attainment alone is not evidence of completed coarsen/archive/cold workflow. At the numerical envelope target and coarsen completed, then archive recipe 1099585 bytes exceeded the authored 1048576-byte metadata ceiling by 51009; cold had not started. Only material-feature routine/larger author finite maximum_recipe_bytes 2097152, mapped to the existing archive max_manifest_bytes admission owner. Lattice retains 1048576; numerical and scientific caps are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 5120000,
+          "maximum_recipe_bytes": 2097152,
+          "maximum_scratch_bytes": 512000000,
+          "maximum_work_units": 320000000,
+          "timeout": 1200.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 5120000,
+        "maximum_recipe_bytes": 2097152,
+        "maximum_scratch_bytes": 512000000,
+        "maximum_work_units": 320000000,
+        "periodic_case": "skew-material-feature-exact-algebraic",
+        "timeout": 1200.0
+      }
+    },
+    "native-periodic-lifecycle:skew-material-feature-exact-algebraic:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 5120000,
+          "maximum_recipe_bytes": 2097152,
+          "maximum_scratch_bytes": 512000000,
+          "maximum_work_units": 320000000,
+          "timeout": 1200.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Retained periodic work evidence 639987 of 640000 predates the current 2048-times-capacity work multiplier and is stale for work-cap policy. The default work remains 40960000 at capacity 20000 unless explicitly overridden. The baseline positive exact-algebraic periodic envelope has scratch 256000000 and whole timeout 300 seconds, above the prior 81920000/120 defaults. Entity/data/scientific controls and historical binary64 refusal controls are unchanged. This is not evidence of successful completion. Material-feature routine at work 160000000 and queries 2560000 reached its target after three refinements (2480 cells, L2 0.0181), then coarsen exhausted 159997437 work with next 16384. Queries were 1.93M; storage/time had headroom, but archive/cold had not started and lifecycle time was 440 seconds. Only material-feature routine/larger now author finite work 320000000, queries 5120000 and whole timeout 1200 seconds. Scratch 512000000 and science are unchanged; exact lattice profiles are untouched. The scratch cap retains headroom over the earlier 307950571-byte geometry-association requirement. Target attainment alone is not evidence of completed coarsen/archive/cold workflow. At the numerical envelope target and coarsen completed, then archive recipe 1099585 bytes exceeded the authored 1048576-byte metadata ceiling by 51009; cold had not started. Only material-feature routine/larger author finite maximum_recipe_bytes 2097152, mapped to the existing archive max_manifest_bytes admission owner. Lattice retains 1048576; numerical and scientific caps are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 5120000,
+          "maximum_recipe_bytes": 2097152,
+          "maximum_scratch_bytes": 512000000,
+          "maximum_work_units": 320000000,
+          "timeout": 1200.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 5120000,
+        "maximum_recipe_bytes": 2097152,
+        "maximum_scratch_bytes": 512000000,
+        "maximum_work_units": 320000000,
+        "periodic_case": "skew-material-feature-exact-algebraic",
+        "timeout": 1200.0
+      }
+    },
+    "native-periodic-lifecycle:skew-material-feature:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "scenario_controls": {
+        "periodic_case": "skew-material-feature"
+      }
+    },
+    "native-reconstruction-lifecycle:lobed-sphere": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "reconstruction_case": "lobed-sphere"
+      }
+    },
+    "native-reconstruction-lifecycle:lobed-sphere:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "scenario_controls": {
+        "reconstruction_case": "lobed-sphere"
+      }
+    },
+    "native-reconstruction-lifecycle:rotated-ellipsoid": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "reconstruction_case": "rotated-ellipsoid"
+      }
+    },
+    "native-reconstruction-lifecycle:rotated-ellipsoid:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "scenario_controls": {
+        "reconstruction_case": "rotated-ellipsoid"
+      }
+    },
+    "native-reconstruction-lifecycle:torus": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {
+        "reconstruction_case": "torus"
+      }
+    },
+    "native-reconstruction-lifecycle:torus:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "scenario_controls": {
+        "reconstruction_case": "torus"
+      }
+    },
+    "native-surface-pde:annulus": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "annulus",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:annulus:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "annulus",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:capped_cylinder": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "capped_cylinder",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:capped_cylinder:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "capped_cylinder",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:capped_cylinder_features": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "capped_cylinder_features",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:capped_cylinder_features:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "capped_cylinder_features",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:cylinder_sheet": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "cylinder_sheet",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:cylinder_sheet:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "cylinder_sheet",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:folded_plates": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "folded_plates",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:folded_plates:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "folded_plates",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:torus": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "torus",
+        "timeout": 300.0
+      }
+    },
+    "native-surface-pde:torus:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "torus",
+        "timeout": 300.0
+      }
+    },
+    "planar-capacity-refusal": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "planar-hole-feature": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "timeout": 300.0
+      }
+    },
+    "planar-hole-feature:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 8,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "timeout": 300.0
+      }
+    },
+    "planar-stale-revision": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "planar-thin-channel": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-cavity-refusal": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-disconnected": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-entities-refusal": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-fixed-boundary": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-incompatible-constraints": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-material-cavity": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-material-cavity:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "scenario_controls": {}
+    },
+    "plc-nonconvex": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-queries-refusal": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-sliver-rich": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-small-angle": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-stale-revision": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-storage-refusal": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-thin-channel": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-triple-junction": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "plc-work-refusal": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "scenario_controls": {}
+    },
+    "polyhedral-material-L": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Material-L routine at 640000 work, 1280000 queries, 81920000 scratch and 120 seconds passed source FE/VEM/FV and regeneration, then common-refinement/conservative remap received native CAPACITY_EXCEEDED. Target continuation/archive/cold had not started; the exact limiting axis is not established by that status alone. Finite work 2000000, scratch 256000000 and whole timeout 300 seconds author diagnostic headroom for all six polyhedral profiles. Geometry queries retain their prior capacity-scaled limit (1280000 at capacity 20000); scientific, entity and data controls are unchanged. This is not evidence of successful completion.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "maximum_work_units": 2000000,
+        "timeout": 300.0
+      }
+    },
+    "polyhedral-material-L:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Material-L routine at 640000 work, 1280000 queries, 81920000 scratch and 120 seconds passed source FE/VEM/FV and regeneration, then common-refinement/conservative remap received native CAPACITY_EXCEEDED. Target continuation/archive/cold had not started; the exact limiting axis is not established by that status alone. Finite work 2000000, scratch 256000000 and whole timeout 300 seconds author diagnostic headroom for all six polyhedral profiles. Geometry queries retain their prior capacity-scaled limit (1280000 at capacity 20000); scientific, entity and data controls are unchanged. This is not evidence of successful completion.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "maximum_work_units": 2000000,
+        "timeout": 300.0
+      }
+    },
+    "polyhedral-periodic-cube": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Material-L routine at 640000 work, 1280000 queries, 81920000 scratch and 120 seconds passed source FE/VEM/FV and regeneration, then common-refinement/conservative remap received native CAPACITY_EXCEEDED. Target continuation/archive/cold had not started; the exact limiting axis is not established by that status alone. Finite work 2000000, scratch 256000000 and whole timeout 300 seconds author diagnostic headroom for all six polyhedral profiles. Geometry queries retain their prior capacity-scaled limit (1280000 at capacity 20000); scientific, entity and data controls are unchanged. This is not evidence of successful completion.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "maximum_work_units": 2000000,
+        "timeout": 300.0
+      }
+    },
+    "polyhedral-periodic-cube:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Material-L routine at 640000 work, 1280000 queries, 81920000 scratch and 120 seconds passed source FE/VEM/FV and regeneration, then common-refinement/conservative remap received native CAPACITY_EXCEEDED. Target continuation/archive/cold had not started; the exact limiting axis is not established by that status alone. Finite work 2000000, scratch 256000000 and whole timeout 300 seconds author diagnostic headroom for all six polyhedral profiles. Geometry queries retain their prior capacity-scaled limit (1280000 at capacity 20000); scientific, entity and data controls are unchanged. This is not evidence of successful completion.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "maximum_work_units": 2000000,
+        "timeout": 300.0
+      }
+    },
+    "polyhedral-stretched-L": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Material-L routine at 640000 work, 1280000 queries, 81920000 scratch and 120 seconds passed source FE/VEM/FV and regeneration, then common-refinement/conservative remap received native CAPACITY_EXCEEDED. Target continuation/archive/cold had not started; the exact limiting axis is not established by that status alone. Finite work 2000000, scratch 256000000 and whole timeout 300 seconds author diagnostic headroom for all six polyhedral profiles. Geometry queries retain their prior capacity-scaled limit (1280000 at capacity 20000); scientific, entity and data controls are unchanged. This is not evidence of successful completion.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "maximum_work_units": 2000000,
+        "timeout": 300.0
+      }
+    },
+    "polyhedral-stretched-L:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Material-L routine at 640000 work, 1280000 queries, 81920000 scratch and 120 seconds passed source FE/VEM/FV and regeneration, then common-refinement/conservative remap received native CAPACITY_EXCEEDED. Target continuation/archive/cold had not started; the exact limiting axis is not established by that status alone. Finite work 2000000, scratch 256000000 and whole timeout 300 seconds author diagnostic headroom for all six polyhedral profiles. Geometry queries retain their prior capacity-scaled limit (1280000 at capacity 20000); scientific, entity and data controls are unchanged. This is not evidence of successful completion.",
+        "requested": {
+          "maximum_scratch_bytes": 256000000,
+          "maximum_work_units": 2000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_scratch_bytes": 256000000,
+        "maximum_work_units": 2000000,
+        "timeout": 300.0
+      }
+    },
+    "sphere-feature-surface": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 1,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "sphere",
+        "timeout": 300.0
+      }
+    },
+    "sphere-feature-surface:larger": {
+      "minimum_adaptation_rounds": 0,
+      "resolution_scale": 2,
+      "resource_envelope": {
+        "effective": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        },
+        "policy": "finite-authored-whole-workflow-envelope",
+        "rationale": "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and 300 seconds progressed through scientific carrier fixes into adaptation, then exhausted 1999999 work with next 2. Queries were 2047558, scratch 359 MB and elapsed time 133 seconds; transfer/cold had not started. Finite work 4000000 doubled the prior work cap. At work/query caps 4000000 and scratch 512000000, adaptation certification reached source_affine_chain, requesting 57886604 scratch bytes with 57885430 remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and elapsed time 146 seconds; later lifecycle had not started. Finite scratch 1024000000 doubles the prior cap; other caps and science are unchanged.",
+        "requested": {
+          "maximum_geometry_queries": 4000000,
+          "maximum_scratch_bytes": 1024000000,
+          "maximum_work_units": 4000000,
+          "timeout": 300.0
+        }
+      },
+      "scenario_controls": {
+        "maximum_geometry_queries": 4000000,
+        "maximum_scratch_bytes": 1024000000,
+        "maximum_work_units": 4000000,
+        "surface_case": "sphere",
+        "timeout": 300.0
+      }
+    }
+  },
   "provenance": {
     "origin": "Deterministic qualification workflow, scenario, and profile tables",
     "owner": "tools/meshing_qualification/_campaign.py::campaign_registration_record"
   },
-  "registration_id": "a081b7f9469b66c8e636566f4331f64ff8401e479f9dcd26a65a0a3dc1ee6410",
+  "registration_id": "571b4ba9511c56d5367a62c9d7f4f6b5820b166dc7166e2b983567813784712c",
   "required_result_fields": [
     "runtime",
     "frozen_controls",
@@ -32,19 +2401,28 @@
     "positive_completion",
     "mandatory_workflow_completion"
   ],
-  "source_corpus_registration_id": "1d49c288a0a9a2a5c52df503c27810b34dcd883529afee5d32b7b13ee8056836",
+  "source_corpus_registration_id": "66e55a59b5e5a6e01840875616844457ed87d3f8bd3df3d6e95ba8a7d730d3f0",
   "workflows": [
     {
       "expected_admission": "positive",
       "profiles": [
         "native-surface-pde:annulus",
+        "native-surface-pde:annulus:larger",
         "native-surface-pde:capped_cylinder",
+        "native-surface-pde:capped_cylinder:larger",
+        "native-surface-pde:capped_cylinder_features",
+        "native-surface-pde:capped_cylinder_features:larger",
         "native-surface-pde:cylinder_sheet",
+        "native-surface-pde:cylinder_sheet:larger",
         "native-surface-pde:folded_plates",
+        "native-surface-pde:folded_plates:larger",
         "native-surface-pde:torus",
+        "native-surface-pde:torus:larger",
         "planar-hole-feature",
+        "planar-hole-feature:larger",
         "planar-thin-channel",
-        "sphere-feature-surface"
+        "sphere-feature-surface",
+        "sphere-feature-surface:larger"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -59,6 +2437,7 @@
         "plc-disconnected",
         "plc-fixed-boundary",
         "plc-material-cavity",
+        "plc-material-cavity:larger",
         "plc-nonconvex",
         "plc-sliver-rich",
         "plc-small-angle",
@@ -74,7 +2453,9 @@
     {
       "expected_admission": "positive",
       "profiles": [
-        "native-implicit-lifecycle"
+        "native-implicit-lifecycle",
+        "native-implicit-lifecycle:offset-ring-torus-anisotropic",
+        "native-implicit-lifecycle:sphere-refinement"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -85,7 +2466,8 @@
     {
       "expected_admission": "positive",
       "profiles": [
-        "native-image-lifecycle"
+        "native-image-lifecycle",
+        "native-image-lifecycle:oblique-junction-transport"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -96,11 +2478,18 @@
     {
       "expected_admission": "positive",
       "profiles": [
-        "native-envelope-lifecycle"
+        "native-envelope-lifecycle",
+        "native-reconstruction-lifecycle:lobed-sphere",
+        "native-reconstruction-lifecycle:lobed-sphere:larger",
+        "native-reconstruction-lifecycle:rotated-ellipsoid",
+        "native-reconstruction-lifecycle:rotated-ellipsoid:larger",
+        "native-reconstruction-lifecycle:torus",
+        "native-reconstruction-lifecycle:torus:larger"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
-        "native-envelope-lifecycle"
+        "native-envelope-lifecycle",
+        "native-reconstruction-lifecycle"
       ],
       "workflow": "imperfect-surface"
     },
@@ -108,8 +2497,20 @@
       "expected_admission": "positive",
       "profiles": [
         "native-cad-lifecycle:brep",
+        "native-cad-lifecycle:brep:external-combined",
+        "native-cad-lifecycle:brep:external-routine",
+        "native-cad-lifecycle:brep:quadric-larger",
+        "native-cad-lifecycle:brep:quadric-routine",
         "native-cad-lifecycle:iges",
-        "native-cad-lifecycle:step"
+        "native-cad-lifecycle:iges:external-combined",
+        "native-cad-lifecycle:iges:external-routine",
+        "native-cad-lifecycle:iges:quadric-larger",
+        "native-cad-lifecycle:iges:quadric-routine",
+        "native-cad-lifecycle:step",
+        "native-cad-lifecycle:step:external-combined",
+        "native-cad-lifecycle:step:external-routine",
+        "native-cad-lifecycle:step:quadric-larger",
+        "native-cad-lifecycle:step:quadric-routine"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -120,8 +2521,10 @@
     {
       "expected_admission": "positive",
       "profiles": [
-        "native-periodic-lifecycle:skew-lattice",
-        "native-periodic-lifecycle:skew-material-feature"
+        "native-periodic-lifecycle:skew-lattice-exact-algebraic",
+        "native-periodic-lifecycle:skew-lattice-exact-algebraic:larger",
+        "native-periodic-lifecycle:skew-material-feature-exact-algebraic",
+        "native-periodic-lifecycle:skew-material-feature-exact-algebraic:larger"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -137,8 +2540,10 @@
         "native-hybrid-lifecycle:cad-slab-and-core",
         "native-hybrid-lifecycle:channel_gap005_policies",
         "native-hybrid-lifecycle:concave-box-core-lifecycle",
+        "native-hybrid-lifecycle:concave-box-core-lifecycle:larger",
         "native-hybrid-lifecycle:concave_box_count3",
         "native-hybrid-lifecycle:curved-periodic-layer-core",
+        "native-hybrid-lifecycle:curved-periodic-layer-core:larger",
         "native-hybrid-lifecycle:exact-sweep-nonperiodic-accepted",
         "native-hybrid-lifecycle:exact-sweep-periodic-accepted",
         "native-hybrid-lifecycle:open_box_floor_count4",
@@ -166,8 +2571,10 @@
       "expected_admission": "positive",
       "profiles": [
         "native-family-lifecycle:curved-cavity-hex",
+        "native-family-lifecycle:curved-cavity-hex:larger",
         "native-family-lifecycle:curved-frame-sweep-hex",
         "native-family-lifecycle:curved-material-hex",
+        "native-family-lifecycle:curved-material-hex:larger",
         "native-family-lifecycle:curved-nonsweepable-hex",
         "native-family-lifecycle:curved-quarter-extrusion-quad",
         "native-family-lifecycle:dual-hex",
@@ -177,6 +2584,7 @@
         "native-family-lifecycle:multiblock-material-hex",
         "native-family-lifecycle:multiblock-quad",
         "native-family-lifecycle:multiblock-reversed-hex",
+        "native-family-lifecycle:nonsweepable-dual-hex",
         "native-family-lifecycle:sweep-hex",
         "native-family-lifecycle:sweep-prism",
         "native-family-lifecycle:transfinite-quad"
@@ -191,8 +2599,11 @@
       "expected_admission": "positive",
       "profiles": [
         "polyhedral-material-L",
+        "polyhedral-material-L:larger",
         "polyhedral-periodic-cube",
-        "polyhedral-stretched-L"
+        "polyhedral-periodic-cube:larger",
+        "polyhedral-stretched-L",
+        "polyhedral-stretched-L:larger"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -203,7 +2614,8 @@
     {
       "expected_admission": "positive",
       "profiles": [
-        "native-distributed-lifecycle"
+        "native-distributed-lifecycle",
+        "native-distributed-lifecycle:larger"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -214,7 +2626,9 @@
     {
       "expected_admission": "positive",
       "profiles": [
-        "native-overset-lifecycle"
+        "native-overset-lifecycle",
+        "native-overset-lifecycle:combined",
+        "native-overset-lifecycle:larger"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [
@@ -225,7 +2639,9 @@
     {
       "expected_admission": "positive",
       "profiles": [
-        "native-design-lifecycle"
+        "native-design-lifecycle",
+        "native-design-lifecycle:combined-design-target",
+        "native-design-lifecycle:larger-sphere"
       ],
       "refusal_counts_as_positive_completion": false,
       "scenarios": [

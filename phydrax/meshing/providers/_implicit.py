@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -60,6 +61,8 @@ from ...geometry.implicit import (
     ImplicitSurfacePolicy,
     ImplicitSurfaceStatus,
 )
+from ...geometry.implicit._discovery import implicit_realization_operations
+from ...geometry.implicit._enclosure import consume_queries
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...typing import checked
 from .._controls import FeatureKind
@@ -187,8 +190,16 @@ def prepare_implicit_route(
     specification: SurfaceMeshingSpec,
     policy: ImplicitSurfacePolicy,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> ImplicitSurfacePlan:
-    """Discover and freeze the implicit surface topology within the budgets."""
+    """Discover and freeze the implicit surface topology within the budgets.
+
+    Discovery runs on a coordinate phase of ``scope``: lattice samples, the
+    realized ITP iterations, gradients, QEF levels and the base realization
+    are charged as they execute, conditional stages after admitting their
+    upper bound.
+    """
 
     limits = specification.limits
     bounded = _bounded_policy(policy, limits)
@@ -222,12 +233,18 @@ def prepare_implicit_route(
             ),
         )
     try:
-        return discover_implicit_surface(
-            source.geometry,
-            source.grid,
-            policy=bounded,
-            source_id=source.source_id,
-        )
+        budget = coordinate_budget(limits)
+        with (
+            budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+            coordinate_phase(scope, limits, budget),
+        ):
+            return discover_implicit_surface(
+                source.geometry,
+                source.grid,
+                policy=bounded,
+                source_id=source.source_id,
+                budget=budget,
+            )
     except ValueError as error:
         # Discovery reports exhausted capacities as ValueError; only those are
         # resource refusals, every other invalid input propagates unchanged.
@@ -368,7 +385,8 @@ def _certification_request(
                 source_id=source.source_id,
                 source_revision=source.source_revision,
                 budget=budget,
-            )
+            ),
+            budget=budget,
         )
     else:
         fidelity_source = ImplicitBoundarySource(
@@ -398,6 +416,7 @@ def _publish_surface(
     /,
     *,
     started: float,
+    route: Literal["implicit", "implicit_adaptive"],
     derivative_mode: MeshingDerivativeMode,
     minimum_face_area: float,
     record_phase: NativeMeshingPhaseRecorder | None = None,
@@ -420,13 +439,16 @@ def _publish_surface(
                 vertices, faces, numeric_version=source.source_revision
             )
         with measure_phase(record_phase, "compliance"):
-            # Only field evaluation crosses to the dynamic geometry kernel.
+            # Only field evaluation crosses to the dynamic geometry kernel: one
+            # fixed-shape query per face centroid, charged before dispatch.
             centroids = np.mean(vertices[faces], axis=1)
-            residuals = np.abs(
-                np.asarray(
-                    jax.device_get(geometry.boundary_field(jnp.asarray(centroids)))
+            with coordinate_phase(scope, limits, budget):
+                consume_queries(budget, faces.shape[0], work_units=faces.shape[0])
+                residuals = np.abs(
+                    np.asarray(
+                        jax.device_get(geometry.boundary_field(jnp.asarray(centroids)))
+                    )
                 )
-            )
             compliance = _implicit_compliance(
                 specification,
                 vertices,
@@ -478,7 +500,7 @@ def _publish_surface(
             {**provenance, "specification": specification.specification_id},
             request,
             # The realized dual surface is a closed manifold by construction.
-            policy=publication_policy("implicit", derivative_mode=derivative_mode),
+            policy=publication_policy(route, derivative_mode=derivative_mode),
             organization=NativePublicationOrganization(
                 boundary=boundary,
                 associations=(association,),
@@ -508,21 +530,33 @@ def execute_implicit_route(
 
     Certification consumes the gradient-stopped primal realization, while
     ``result.geometry.coordinates`` remains the JAX realization of ``state``.
+    The concrete discovery state reuses the complete retained proof, but
+    still meters projection/QEF coordinate realization; every other or
+    traced state runs all realization checks afresh.
     """
-
     started = scope.operation_started
     limits = specification.limits
     selected = source.geometry.state if state is None else state
-    with measure_phase(record_phase, "construction"):
-        realization = surface_plan.realize(selected)
-        primal = jax.lax.stop_gradient(
-            (
-                realization.vertices,
-                realization.evidence.status,
-                realization.evidence.minimum_face_area,
-            )
+    budget = coordinate_budget(limits)
+    with (
+        measure_phase(record_phase, "construction"),
+        coordinate_phase(scope, limits, budget),
+    ):
+        retained = surface_plan.binds_initial_state(selected)
+        work, queries = implicit_realization_operations(
+            surface_plan, retained_proof=retained
         )
-        primal_host, faces = jax.device_get((primal, realization.faces))
+        consume_queries(budget, queries, work_units=work)
+        realization = (
+            surface_plan.retained_initial_realization(selected)
+            if retained
+            else surface_plan.realize(selected)
+        )
+        vertices = realization.vertices
+        status = realization.evidence.status
+        minimum_area = realization.evidence.minimum_face_area
+        primal = jax.lax.stop_gradient((vertices, status, minimum_area))
+        primal_host, faces = jax.device_get((primal, surface_plan.faces))
         vertices_host = np.asarray(primal_host[0], dtype=np.float64)
         realization_status = int(np.asarray(primal_host[1]))
         faces_host = np.asarray(faces, dtype=np.int32)
@@ -571,6 +605,7 @@ def execute_implicit_route(
         coordinate_contract,
         provider,
         started=started,
+        route="implicit",
         derivative_mode=MeshingDerivativeMode.FIXED_ROUTE_PIECEWISE,
         minimum_face_area=float(np.asarray(primal_host[2])),
         record_phase=record_phase,
@@ -582,7 +617,7 @@ def execute_implicit_route(
     return eqx.tree_at(
         lambda result: result.geometry.coordinates,
         certified,
-        realization.vertices,
+        vertices,
     )
 
 
@@ -688,6 +723,7 @@ def execute_adaptive_implicit_route(
         coordinate_contract,
         provider,
         started=started,
+        route="implicit_adaptive",
         derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
         minimum_face_area=float(np.min(areas)),
         record_phase=record_phase,

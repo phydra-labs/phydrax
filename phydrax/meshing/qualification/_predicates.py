@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import final, Protocol
+from typing import final, Protocol, TypedDict
 
 import equinox as eqx
 import jax
@@ -25,8 +25,17 @@ from phydrax._meshcore import (
 _PREDICATE_ARITY = {"orient2d": 3, "orient3d": 4, "incircle": 4, "insphere": 5}
 
 
+class _PredicateStageRecord(TypedDict):
+    """Wall seconds and post-stage process peak bytes, or None when unavailable."""
+
+    wall_seconds: float
+    peak_resident_bytes: int | None
+
+
 class PredicateStageMeasurement(Protocol):
-    def __call__[T](self, call: Callable[[], T], /) -> tuple[T, dict[str, float]]: ...
+    def __call__[T](
+        self, call: Callable[[], T], /
+    ) -> tuple[T, _PredicateStageRecord]: ...
 
 
 @final

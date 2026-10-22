@@ -26,6 +26,9 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "AdaptiveImplicitSurfaceEvidence": ".implicit._adaptive_discovery",
     "AdaptiveImplicitSurfacePolicy": ".implicit._policy",
     "AdaptiveImplicitSurfaceStatus": ".implicit._policy",
+    "AffineChainResourceEvidence": "._source_boundary_records",
+    "AffineChainResourceMetric": "._source_boundary_records",
+    "AffineChainResourceRole": "._source_boundary_records",
     "AffinePCurve": ".brep._intersection_curve",
     "AffineSimplexEvidence": ".simplicial._affine",
     "AffineSimplexMap": ".simplicial._affine",
@@ -147,6 +150,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "CADSelectionSet": "._cad_revision",
     "CSGContinuationPolicy": ".design._continuation",
     "CSGContinuationResult": ".design._continuation",
+    "CadBoundaryClosureEvidence": "._source_boundary_records",
     "CadSourceDomain": "._domain_planar_boundary",
     "CertifiedImplicitCover": "._certified_implicit",
     "CertifiedImplicitTopology": "._certified_implicit",
@@ -180,6 +184,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "CoverageEvidence": "._domain_coverage",
     "CoverageExpressionWork": "._domain_coverage",
     "CoverageMeasures": "._domain_coverage",
+    "CoverageOverlapBank": "._domain_coverage",
     "CubatureAtlas": "._cubature",
     "CubatureAtlasProvider": "._cubature",
     "CubatureComponent": "._cubature",
@@ -293,6 +298,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "MappedBoundaryDegreeStatus": "._global_embedding",
     "MappedDomainBoundarySource": "._source_fidelity",
     "MappedReferenceDomain": "._mapped_reference_domain",
+    "MappedReferenceSourceEvidence": "._mapped_reference_coverage",
     "MappedRestrictionRootEmbeddingEvidence": "._embedding_state",
     "MarkerVelocityProvider": "._immersed_markers",
     "MeasureTarget": ".design._constraints",
@@ -355,6 +361,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "PatchTopologyError": ".surface._g1_multipatch",
     "PatchVertexKind": ".surface._g1_multipatch",
     "PeriodicAffineQuotientEvidence": "._embedding_state",
+    "PeriodicAffineTorusDegreeEvidence": "._embedding_state",
     "PeriodicDelaunayTriangulation": "._triangulation",
     "PeriodicImageBudgetError": "._triangulation",
     "PeriodicImageLimit": "._triangulation",
@@ -843,6 +850,7 @@ if TYPE_CHECKING:
         CoverageEvidence as CoverageEvidence,
         CoverageExpressionWork as CoverageExpressionWork,
         CoverageMeasures as CoverageMeasures,
+        CoverageOverlapBank as CoverageOverlapBank,
         DomainCoverageCertificate as DomainCoverageCertificate,
         PiecewiseLinearDomain as PiecewiseLinearDomain,
     )
@@ -859,6 +867,7 @@ if TYPE_CHECKING:
         MeshCertificateLimits as MeshCertificateLimits,
         MeshFindingStatus as MeshFindingStatus,
         PeriodicAffineQuotientEvidence as PeriodicAffineQuotientEvidence,
+        PeriodicAffineTorusDegreeEvidence as PeriodicAffineTorusDegreeEvidence,
     )
     from ._eroded_domain import (
         AbstractFiniteRadiusWallPlan as AbstractFiniteRadiusWallPlan,
@@ -893,6 +902,9 @@ if TYPE_CHECKING:
         PhaseGeometryMetrics as PhaseGeometryMetrics,
         regularized_delta_values as regularized_delta_values,
         regularized_heaviside_values as regularized_heaviside_values,
+    )
+    from ._mapped_reference_coverage import (
+        MappedReferenceSourceEvidence as MappedReferenceSourceEvidence,
     )
     from ._mapped_reference_domain import MappedReferenceDomain as MappedReferenceDomain
     from ._mesh_certificates import (
@@ -939,6 +951,10 @@ if TYPE_CHECKING:
         SamplingResult as SamplingResult,
     )
     from ._source_boundary_records import (
+        AffineChainResourceEvidence as AffineChainResourceEvidence,
+        AffineChainResourceMetric as AffineChainResourceMetric,
+        AffineChainResourceRole as AffineChainResourceRole,
+        CadBoundaryClosureEvidence as CadBoundaryClosureEvidence,
         SourceBoundaryChartCover as SourceBoundaryChartCover,
         SourceBoundaryChartQuery as SourceBoundaryChartQuery,
         SourceBoundaryDistance as SourceBoundaryDistance,
@@ -1611,6 +1627,9 @@ __all__ = [
     "AdaptiveImplicitSurfaceEvidence",
     "AdaptiveImplicitSurfacePolicy",
     "AdaptiveImplicitSurfaceStatus",
+    "AffineChainResourceEvidence",
+    "AffineChainResourceMetric",
+    "AffineChainResourceRole",
     "AffinePCurve",
     "AffineSimplexEvidence",
     "AffineSimplexMap",
@@ -1732,6 +1751,7 @@ __all__ = [
     "CADSelectionSet",
     "CSGContinuationPolicy",
     "CSGContinuationResult",
+    "CadBoundaryClosureEvidence",
     "CadSourceDomain",
     "CertifiedImplicitCover",
     "CertifiedImplicitTopology",
@@ -1765,6 +1785,7 @@ __all__ = [
     "CoverageEvidence",
     "CoverageExpressionWork",
     "CoverageMeasures",
+    "CoverageOverlapBank",
     "CubatureAtlas",
     "CubatureAtlasProvider",
     "CubatureComponent",
@@ -1878,6 +1899,7 @@ __all__ = [
     "MappedBoundaryDegreeStatus",
     "MappedDomainBoundarySource",
     "MappedReferenceDomain",
+    "MappedReferenceSourceEvidence",
     "MappedRestrictionRootEmbeddingEvidence",
     "MarkerVelocityProvider",
     "MeasureTarget",
@@ -1940,6 +1962,7 @@ __all__ = [
     "PatchTopologyError",
     "PatchVertexKind",
     "PeriodicAffineQuotientEvidence",
+    "PeriodicAffineTorusDegreeEvidence",
     "PeriodicDelaunayTriangulation",
     "PeriodicImageBudgetError",
     "PeriodicImageLimit",

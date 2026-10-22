@@ -17,6 +17,7 @@ from phydrax.discretization import (
 from phydrax.geometry import MappedReferenceDomain
 from phydrax.linalg import LinearSolvePolicy
 from phydrax.meshing import CellMeshingResult
+from phydrax.meshing.providers._native_publication import derived_certificate_limits
 
 
 M = phx.meshing
@@ -105,6 +106,7 @@ def curved_occupied_source(
     materials: bool = False,
     curvature: float = 1.0 / 64.0,
     chart_scale: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    limits: M.MeshingLimits | None = None,
 ) -> M.NativeMappedHexSource:
     """Author independent curved root charts, including cavity and junction parts."""
     scale = np.asarray(chart_scale, dtype=np.float64)
@@ -175,6 +177,7 @@ def curved_occupied_source(
         regions,
         source_id="curved-polynomial-domain",
         source_revision="declared-curved-state",
+        certificate_limits=None if limits is None else derived_certificate_limits(limits),
     )
     return M.NativeMappedHexSource(reference_source, domain)
 

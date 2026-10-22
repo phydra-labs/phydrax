@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -333,3 +335,130 @@ def test_cad_region_coverage_requires_every_cell_assignment() -> None:
     np.testing.assert_array_equal(
         result.geometry.coordinates, result.straight.coordinates
     )
+
+
+def test_inadmissible_intermediate_rounds_defer_their_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._curving as curving_owner
+
+    projection = sphere_projection()
+    mesh = icosphere(1)
+    association = phx.meshing.associate_mesh_vertices(
+        mesh, projection, policy=CURVING_ASSOCIATION_POLICY
+    )
+    evaluated: list[np.ndarray] = []
+    original = curving_owner._evidence
+
+    def counted(
+        mesh_: phx.meshing.CellMesh,
+        geometry: phx.discretization.CellGeometrySpec,
+        *args: Any,
+        **kwargs: Any,
+    ) -> curving_owner.CurvedGeometryEvidence:
+        evaluated.append(np.asarray(geometry.coordinates).copy())
+        return original(mesh_, geometry, *args, **kwargs)
+
+    monkeypatch.setattr(curving_owner, "_evidence", counted)
+
+    def curve(accept: bool) -> HighOrderCurvingResult:
+        evaluated.clear()
+        policy = phx.meshing.HighOrderCurvingPolicy(
+            fidelity_tolerance=sphere_fidelity_bound(mesh),
+            degree=2,
+            relaxation_rounds=3,
+            termination=phx.optim.OptimizationTermination(maximum_steps=1),
+            accept_valid_nonconverged_relaxation=accept,
+        )
+        return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+
+    replaced = curve(True)
+    every_round = [value.copy() for value in evaluated]
+    retained = curve(False)
+    # Rounds 1 and 2 cannot be accepted; only the projection and round 3 are proved.
+    assert len(every_round) == 4 and len(evaluated) == 2
+    np.testing.assert_array_equal(evaluated[0], every_round[0])
+    np.testing.assert_array_equal(evaluated[1], every_round[3])
+    assert retained.status is CURVING_STATUS.CURVED and retained.accepted_round == 0
+    assert replaced.accepted_round == 3
+    assert retained.candidate is not None and retained.candidate_geometry is not None
+    np.testing.assert_array_equal(retained.candidate_geometry.coordinates, every_round[3])
+    retained.candidate.certificate.require_bound(retained.candidate_geometry, mesh=mesh)
+
+
+def test_curving_node_jacobi_is_the_constructed_smoothing_normal_gram(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jax
+    import jax.numpy as jnp
+
+    import phydrax.meshing._curving as owner
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                    (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+    )
+    policy = phx.meshing.HighOrderCurvingPolicy(fidelity_tolerance=0.01)
+    geometry = owner.straight_geometry(
+        mesh, 2, maximum_nodes=policy.maximum_geometry_nodes,
+        maximum_entries=policy.maximum_tabulation_entries,
+        maximum_bernstein_nodes=policy.validity.maximum_bernstein_nodes,
+    )
+    coordinates = np.asarray(geometry.coordinates)
+    blocks = owner._distortion_blocks(mesh, geometry, 2)
+    rows = np.asarray((4,), dtype=np.int64)
+    normal = np.asarray((((0.5, 0.5, 0.0), (0.5, 0.5, 0.0),
+                          (0.0, 0.0, 0.0)),))
+    energy = owner._curving_round_energy(blocks, coordinates, rows, normal, 1.0, policy)
+    block = blocks[0]
+    _, determinant, _ = block.ratios(jnp.asarray(coordinates))
+    regularized = 0.5 * (
+        determinant + jnp.sqrt(determinant**2 + 4 * energy.regularization**2)
+    )
+    scale = 1.0 / (3.0 * regularized ** (2.0 / 3.0))
+
+    def residual(value: Any) -> Any:
+        _, _, jacobian = block.ratios(value)
+        normalized = jacobian @ block.target_inverses
+        smoothing = normalized * jnp.sqrt(
+            2.0 * energy.weights[0] * scale
+            / (block.routes.shape[0] * block.gradients.shape[0])
+        )[..., None, None]
+        penalty = jnp.einsum("bij,bj->bi", energy.normal_projectors, value[rows])
+        return jnp.concatenate((
+            smoothing.ravel(),
+            (jnp.sqrt(2.0 * energy.weights[1]) * penalty).ravel(),
+            (jnp.sqrt(2.0 * energy.weights[2]) * value).ravel(),
+        ))
+
+    jacobian = np.asarray(jax.jacfwd(residual)(jnp.asarray(coordinates)))
+    expected = np.einsum("mni,mnj->nij", jacobian, jacobian)
+    actual = np.asarray(owner._curving_node_gram(energy, jnp.asarray(coordinates)))
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+    fixed = np.zeros((coordinates.shape[0],), dtype=np.bool_)
+    fixed[:4] = True
+    count = coordinates.shape[0]
+    admitted_entries = (
+        block.routes.shape[0] * block.gradients.shape[0]
+        * (block.routes.shape[1] * 3 + 27 + 2 * block.routes.shape[1] + 8)
+        + 8 * count * 9
+        + block.gradients.size + block.target_inverses.size
+    )
+    tight = phx.meshing.HighOrderCurvingPolicy(
+        fidelity_tolerance=0.01, maximum_tabulation_entries=admitted_entries
+    )
+    method = owner._curving_volume_method(energy, coordinates, fixed, tight)
+    assert method.preconditioner is not None
+    assert method.preconditioner.properties.certifies("positive_definite")
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Gram allocation must follow workspace admission.")
+
+    monkeypatch.setattr(owner, "_curving_node_gram", forbidden)
+    refused = phx.meshing.HighOrderCurvingPolicy(
+        fidelity_tolerance=0.01, maximum_tabulation_entries=admitted_entries - 1
+    )
+    with pytest.raises(ValueError, match="node-Gram preconditioner workspace"):
+        owner._curving_volume_method(energy, coordinates, fixed, refused)

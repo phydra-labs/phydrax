@@ -6,7 +6,7 @@
 
 Unit-cube tables preserve oriented source-face order. Sphere refinement shares
 one normalized midpoint per undirected edge. Rational volume is independent
-of the Boolean implementation; cone intersection uses a different exact
+of the Boolean implementation; cone intersection uses a different rational
 polytope-clipping algorithm rather than fragment classification.
 """
 
@@ -147,7 +147,7 @@ def cone_tetrahedra(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
 
 
 def clipped_volume_reference(first: np.ndarray, second: np.ndarray) -> float:
-    """Independent reference: exact pairwise tetrahedron clipping of two cones."""
+    """Independent reference: rational pairwise tetrahedron clipping of two cones."""
 
     rows, columns = np.meshgrid(
         np.arange(first.shape[0]), np.arange(second.shape[0]), indexing="ij"

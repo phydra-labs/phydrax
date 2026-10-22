@@ -6,20 +6,42 @@
 
 A gate scans policy-listed, added and untracked files in full and other changed
 files only on the lines added or rewritten since a revision, so text the branch
-never touched stays with its owners. ``tools/branch-scope.tsv`` lists each
-whole-file path once; ``prose_test=1`` also includes a test in the prose gate's
-default scan. Missing or invalid policy data refuses the scan.
+never touched stays with its owners. A staged rename keeps the lines it moved
+with their owners: git pairs it with its source at 50% similarity, whatever the
+local diff configuration. ``tools/branch-scope.tsv`` lists each whole-file path
+once; ``prose_test=1`` also includes a test in the prose gate's default scan.
+Missing or invalid policy data refuses the scan, and so does a listed path that
+neither exists nor was deleted since the revision.
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 
 POLICY = "tools/branch-scope.tsv"
+ROOTS = ("phydrax", "tests", "tools")
+_PATH = re.compile(rf"(?:{'|'.join(ROOTS)})/(?:[A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.py")
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+# Command-line options override configuration that would change which paths are
+# renamed rather than added (diff.renames, diff.renameLimit) or which lines a hunk
+# reports (prefixes, hunk merging, algorithm, external and textconv drivers).
+_DIFF = (
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--find-renames=50%",
+    "-l0",
+    "--diff-algorithm=myers",
+    "--indent-heuristic",
+    "--inter-hunk-context=0",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+)
 
 
 def _git(root: Path, /, *arguments: str) -> str:
@@ -28,20 +50,40 @@ def _git(root: Path, /, *arguments: str) -> str:
     ).stdout
 
 
-def _python_files(root: Path, names: str, /) -> set[Path]:
+def _python_files(root: Path, names: Iterable[str], /) -> set[Path]:
     return {
-        root / name
-        for name in names.split("\0")
-        if name.endswith(".py") and (root / name).is_file()
+        root / name for name in names if name.endswith(".py") and (root / name).is_file()
     }
+
+
+def _untracked(root: Path, /) -> list[str]:
+    return _git(root, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
+
+
+def _changes(root: Path, revision: str, /) -> dict[str, str]:
+    # One status letter per path; a rename source is recorded as deleted.
+    fields = _git(root, *_DIFF, "--name-status", "-z", revision, "--").split("\0")
+    changes: dict[str, str] = {}
+    index = 0
+    while index + 1 < len(fields):
+        status = fields[index][0]
+        if status == "R":
+            changes[fields[index + 1]] = "D"
+            index += 1
+        changes[fields[index + 1]] = status
+        index += 2
+    return changes
 
 
 def changed_files(root: Path, revision: str, /) -> set[Path]:
     """Return existing tracked changes and untracked Python files since a revision."""
+    changes = _changes(root, revision)
     return _python_files(
         root,
-        _git(root, "diff", "--name-only", "-z", "--diff-filter=ACMRT", revision, "--")
-        + _git(root, "ls-files", "--others", "--exclude-standard", "-z"),
+        [
+            *(name for name, status in changes.items() if status in "ACMRT"),
+            *_untracked(root),
+        ],
     )
 
 
@@ -63,10 +105,7 @@ def load_policy(root: Path, /) -> dict[str, bool]:
             )
         name, prose_test = fields
         if (
-            re.fullmatch(
-                r"(?:phydrax|tools|tests)/(?:[A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.py", name
-            )
-            is None
+            _PATH.fullmatch(name) is None
             or name <= previous
             or prose_test not in {"0", "1"}
             or (prose_test == "1" and not name.startswith("tests/"))
@@ -82,20 +121,27 @@ def load_policy(root: Path, /) -> dict[str, bool]:
 def whole_files(root: Path, revision: str, /) -> set[Path]:
     """Return files scanned in full: policy-listed, added, or untracked since a revision."""
     policy = load_policy(root)
-    files = _python_files(
+    changes = _changes(root, revision)
+    for line, name in enumerate(policy, start=2):
+        if not (root / name).is_file() and changes.get(name) != "D":
+            raise ValueError(
+                f"BranchScope.policy must list existing or branch-deleted files; got {root / POLICY}:{line}"
+            )
+    return _python_files(
         root,
-        _git(root, "diff", "--name-only", "-z", "--diff-filter=A", revision, "--")
-        + _git(root, "ls-files", "--others", "--exclude-standard", "-z"),
+        [
+            *policy,
+            *(name for name, status in changes.items() if status == "A"),
+            *_untracked(root),
+        ],
     )
-    files.update(root / name for name in policy)
-    return files
 
 
 def changed_lines(root: Path, revision: str, /) -> dict[Path, frozenset[int]]:
     """Return the lines of each tracked file added or rewritten since a revision."""
     lines: dict[Path, set[int]] = {}
     current: Path | None = None
-    diff = _git(root, "diff", "-U0", "--no-color", "--no-ext-diff", revision, "--")
+    diff = _git(root, *_DIFF, "-U0", revision, "--")
     for row in diff.splitlines():
         if row.startswith("+++ "):
             current = root / row[6:] if row.startswith("+++ b/") else None

@@ -157,14 +157,67 @@ def closure_rows(
 
 
 def organization_scopes(source: CellMeshingResult, /) -> tuple[MeshingScope, ...]:
-    return tuple(
-        value.scope for value in (*source.patches, *source.zones, *source.labels)
+    return (
+        *source.patches.scopes,
+        *(value.scope for value in (*source.zones, *source.labels)),
     )
 
 
 def row_classes(rows: np.ndarray, /) -> np.ndarray:
-    _, inverse = np.unique(rows, axis=0, return_inverse=True)
-    return inverse.reshape((-1,)).astype(np.int64)
+    """Rank each row among the distinct rows in lexicographic column order.
+
+    Equal to ``np.unique(rows, axis=0, return_inverse=True)``'s inverse. Wide
+    integer tables (scope membership) are refined a column group at a time:
+    prefix ranks and column offsets form an exact mixed-radix key whose numeric
+    order is the lexicographic row order, so no full-width row is ever sorted.
+    """
+    values = np.asarray(rows)
+    if (
+        values.ndim != 2
+        or values.shape[0] == 0
+        or values.shape[1] < 2
+        or values.dtype.kind not in "biu"
+    ):
+        _, inverse = np.unique(values, axis=0, return_inverse=True)
+        return inverse.reshape((-1,)).astype(np.int64)
+    codes = np.zeros((values.shape[0],), dtype=np.int64)
+    classes = 1
+    column = 0
+    while column < values.shape[1]:
+        key = codes
+        span = classes
+        group = column
+        while column < values.shape[1]:
+            current = values[:, column]
+            low, high = int(current.min()), int(current.max())
+            width = high - low + 1
+            if span * width >= 1 << 62:
+                break
+            # Offsets lie in [0, width) and every partial key below span * width.
+            # Only uint64 may exceed int64 before its offset is taken.
+            offset = (
+                (current - np.uint64(low)).astype(np.int64)
+                if current.dtype == np.uint64
+                else current.astype(np.int64) - low
+            )
+            key = key * width + offset
+            span *= width
+            column += 1
+        if column == group:
+            # One column whose range cannot share an int64 key with the prefix:
+            # a structured (rank, value) pair sorts exactly field by field.
+            pairs = np.empty(
+                (values.shape[0],), dtype=[("rank", np.int64), ("value", values.dtype)]
+            )
+            pairs["rank"] = codes
+            pairs["value"] = values[:, column]
+            _, inverse = np.unique(pairs, return_inverse=True)
+            column += 1
+        else:
+            _, inverse = np.unique(key, return_inverse=True)
+        codes = inverse.reshape((-1,)).astype(np.int64)
+        classes = int(codes.max()) + 1
+    return codes
 
 
 def mesh_cell_ids(mesh: CellMesh, /) -> np.ndarray:

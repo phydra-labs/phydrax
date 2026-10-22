@@ -103,13 +103,16 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
         derivative: tuple[int, ...] | None = None,
         side: FieldSideBinding | None = None,
         coverage: FieldQueryCoverage = "complete",
+        maximum_location_pairs: int | None = None,
     ) -> None:
         coverage_ = parse(coverage, FieldQueryCoverage, "coverage")
         index = reconstruction.derivative_index(derivative)
         binding = reconstruction._side(side)
         host = _host_points(points, reconstruction.physical_dimension)
         query = reconstruction._points(jnp.asarray(host))
-        route, evidence = reconstruction.kernel.locate(query, index, binding)
+        route, evidence = reconstruction.kernel.prepare_location(
+            query, index, binding, maximum_location_pairs=maximum_location_pairs
+        )
         valid = np.asarray(evidence.valid)
         admitted = np.flatnonzero(valid).astype(np.int32)
         match coverage_:
@@ -122,8 +125,11 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
                         "evidence of the reconstruction before querying."
                     )
                 if admitted.size != valid.size:
-                    route, subset = reconstruction.kernel.locate(
-                        query[jnp.asarray(admitted)], index, binding
+                    route, subset = reconstruction.kernel.prepare_location(
+                        query[jnp.asarray(admitted)],
+                        index,
+                        binding,
+                        maximum_location_pairs=maximum_location_pairs,
                     )
                     if not bool(np.all(np.asarray(subset.valid))):
                         raise RuntimeError(
@@ -150,6 +156,7 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
                 "derivative": list(index),
                 "side": None if binding is None else binding.binding_id,
                 "coverage": coverage_,
+                "maximum_location_pairs": maximum_location_pairs,
                 "admitted": array_tree_fingerprint(admitted),
             }
         )

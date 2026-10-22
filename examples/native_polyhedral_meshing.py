@@ -20,6 +20,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 import phydrax as phx
+from phydrax._trainable import NonTrainableState
 from phydrax.discretization import (
     CellGeometrySpec,
     CellMesh,
@@ -29,6 +30,7 @@ from phydrax.discretization import (
     TopologyEpoch,
     UnstructuredConservativeRemapPlan,
 )
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization.finite_volume import (
     HybridDiffusionBoundary,
     HybridMimeticDiffusion,
@@ -118,8 +120,19 @@ def generate(
     ).execute()
 
 
+class _VemReactionAction(phx.StrictModule, NonTrainableState):
+    base: FunctionLinearOperator
+    mass: Array
+
+    def __call__(self, values: Array, /) -> Array:
+        return self.base.mv(values) + self.mass * values
+
+
 def prepare_vem(
-    mesh: CellMesh, geometry: CellGeometrySpec
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[PreparedPolyhedralH1VirtualElement3D, FunctionLinearOperator, Array]:
     """Prepare -Laplace(u)+u=1 with homogeneous natural flux, constant u=1.
 
@@ -127,7 +140,17 @@ def prepare_vem(
     whose integral of a constant is the exact reported cell measure. All VEM
     vertices remain unknown; this is not a boundary-only prescribed solution.
     """
-    vem = prepare_polyhedral_h1_virtual_element_3d(mesh, cell_geometry=geometry)
+    vem = prepare_polyhedral_h1_virtual_element_3d(
+        mesh, cell_geometry=geometry, budget=budget
+    )
+    return prepare_vem_system(vem)
+
+
+def prepare_vem_system(
+    vem: PreparedPolyhedralH1VirtualElement3D,
+) -> tuple[PreparedPolyhedralH1VirtualElement3D, FunctionLinearOperator, Array]:
+    """Assemble the reaction problem from its actual prepared VEM owner."""
+    mesh = vem.mesh
     c = mesh.connectivity
     if not isinstance(c, PolyhedralConnectivity):
         raise TypeError("Native polyhedral VEM requires root PolyhedralConnectivity.")
@@ -145,7 +168,7 @@ def prepare_vem(
     mass = jnp.asarray(lumped)
     base = vem.as_linear_operator()
     operator = phx.linalg.FunctionLinearOperator(
-        lambda x: base.mv(x) + mass * x,
+        _VemReactionAction(base, mass),
         source=base.source,
         target=base.target,
         properties=phx.linalg.OperatorProperties(
@@ -175,7 +198,10 @@ def solve_vem(
 
 
 def prepare_fv(
-    mesh: CellMesh, geometry: CellGeometrySpec
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     UnstructuredFiniteVolumeDiscretization,
     HybridMimeticDiffusion,
@@ -187,12 +213,26 @@ def prepare_fv(
     The global shared-face mimetic formulation is used, not an orthogonal TPFA
     assumption silently applied to a nonorthogonal power cell.
     """
-    fv = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare(cell_geometry=geometry)
+    fv = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh, budget=budget).prepare(
+        cell_geometry=geometry, budget=budget
+    )
     if not isinstance(fv, UnstructuredFiniteVolumeDiscretization):
         raise TypeError(
             "Native polyhedral FV requires canonical prepared unstructured geometry."
         )
-    diffusion = HybridMimeticDiffusion(fv)
+    return prepare_fv_system(HybridMimeticDiffusion(fv))
+
+
+def prepare_fv_system(
+    diffusion: HybridMimeticDiffusion,
+) -> tuple[
+    UnstructuredFiniteVolumeDiscretization,
+    HybridMimeticDiffusion,
+    Array,
+    HybridDiffusionBoundary,
+]:
+    """Assemble the manufactured physical problem on its actual hybrid owner."""
+    fv = diffusion.discretization
     coefficients = jnp.asarray([1.0, 2.0, 3.0])
     exact_faces = jnp.asarray(
         1 + fv.face_centers @ coefficients, dtype=fv.face_centers.dtype

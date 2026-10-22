@@ -30,7 +30,7 @@ from .._atlas import AbstractTrimCurve, CurveTrimLoop, TrimDomain
 from .._interval_enclosure import interval_add, interval_multiply, interval_subtract
 from ._boolean_arrangement import (
     Arc,
-    arc_area_bounds,
+    arc_area_bounds_batch,
     Arrangement,
     Cut,
     FaceOwner,
@@ -41,7 +41,16 @@ from ._boolean_arrangement import (
     piece_trim,
 )
 from ._boolean_coincidence import CoincidentFaceArc, CoincidentFaceOverlay
-from ._boolean_core import BRepBooleanFailure, merge_node_aliases, resolve_node
+from ._boolean_core import (
+    BRepBooleanFailure,
+    chart_add,
+    chart_parts,
+    chart_scale,
+    ChartScalar,
+    line_chart_coefficients,
+    merge_node_aliases,
+    resolve_node,
+)
 from ._coordinate_request import coordinate_source_request
 from ._intersection import (
     BranchRootEndpoint,
@@ -53,20 +62,17 @@ from ._intersection import (
     TrimRootEndpoint,
 )
 from ._intersection_curve import (
-    AffinePCurve,
     CurveTrimSegment,
     IntersectionCurve,
     IntersectionPCurve,
     original_trim_intersection_preparation,
     pcurve_affine_correspondence,
-    PeriodicPCurve,
     root_parameter_in_source,
 )
 from ._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
     curve_evaluate_host,
-    LineCurve,
     surface_evaluate_host,
 )
 from ._request_preparations import TrimRequestPreparations
@@ -75,7 +81,6 @@ from ._trim_helpers import PeriodOffset
 
 
 type HalfedgeKey = tuple[str, str, str, int]
-type _ChartScalar = Fraction | PeriodOffset
 
 
 def _halfedge_key(piece: Piece) -> HalfedgeKey:
@@ -284,10 +289,21 @@ def _cyclic_order(
     )
 
 
-def _box_status(domain: TrimDomain, box: np.ndarray, work: _FaceCellWork) -> int:
+def _box_status(
+    domain: TrimDomain,
+    box: np.ndarray,
+    work: _FaceCellWork,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> int:
+    """Retain the face request's source budget and certified refinement bank."""
     work.consume()
     decision = domain.classify_boxes(
-        box[None], maximum_refinements=work.maximum - work.used
+        box[None],
+        maximum_refinements=work.maximum - work.used,
+        preparations=preparations,
+        budget=budget,
     )
     work.consume(int(decision.refinements[0]))
     if not decision.resolved[0]:
@@ -580,6 +596,8 @@ def _full_pieces(
                         middle, middle, preparations=preparations, budget=budget
                     ),
                     work,
+                    preparations=preparations,
+                    budget=budget,
                 )
                 if status == 0:
                     raise BRepBooleanFailure(
@@ -596,6 +614,8 @@ def _full_pieces(
                         middle, middle, preparations=preparations, budget=budget
                     ),
                     work,
+                    preparations=preparations,
+                    budget=budget,
                 )
                 if status == 0:
                     raise BRepBooleanFailure(
@@ -687,17 +707,27 @@ def _cycles(
 
 
 def _exact_loop(
-    loop: tuple[Piece, ...], state: Arrangement, work: _FaceCellWork
+    loop: tuple[Piece, ...],
+    state: Arrangement,
+    work: _FaceCellWork,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> CurveTrimLoop:
+    """Certify one cycle using the request's shared root and oriented-arc facts."""
     remaining = work.maximum - work.used
     if len(loop) > remaining:
         raise BRepBooleanFailure(
             f"face_cells.loop_arcs must fit remaining work {remaining}; got {len(loop)} arcs"
         )
     exact = CurveTrimLoop(
-        tuple(piece_trim(piece) for piece in loop),
+        tuple(
+            piece_trim(piece, preparations=preparations, budget=budget) for piece in loop
+        ),
         tolerance=state.policy.trim_resolution,
         maximum_arcs=remaining,
+        preparations=preparations,
+        budget=budget,
     )
     work.consume(exact.chords.shape[0])
     return exact
@@ -710,43 +740,99 @@ def _area_sign(
     preparations: TrimRequestPreparations | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> int:
-    cells = [
-        (loop.curves[int(index)], float(first), float(last))
-        for index, first, last in zip(
-            loop.arc_curves, loop.arc_first, loop.arc_last, strict=True
+    """Certify a loop's signed area from enclosed Green integrals of its arcs.
+
+    Consecutive partition arcs of one curve sharing an exact endpoint start as
+    one cell, so the cells still cover every arc exactly once. Undecided sums
+    bisect the widest cells carrying half of the total enclosure width; every
+    other cell keeps its rigorous bound.
+    """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    cells: list[tuple[AbstractTrimCurve, float, float]] = []
+    owners: list[int] = []
+    for index, first, last in zip(
+        loop.arc_curves, loop.arc_first, loop.arc_last, strict=True
+    ):
+        owner, first_, last_ = int(index), float(first), float(last)
+        if owners and owners[-1] == owner and cells[-1][2] == first_:
+            cells[-1] = (cells[-1][0], cells[-1][1], last_)
+        else:
+            owners.append(owner)
+            cells.append((loop.curves[owner], first_, last_))
+    if not cells:
+        raise BRepBooleanFailure(
+            "face_cells.area_arcs must contain a directed curve; got no arcs"
         )
-    ]
-    while cells:
+
+    def enclose(
+        pending: list[tuple[AbstractTrimCurve, float, float]],
+    ) -> list[tuple[float, float]]:
+        result: list[tuple[float, float]] = []
+        for start in range(0, len(pending), 64):
+            batch = pending[start : start + 64]
+            for _ in batch:
+                work.consume()
+            result.extend(
+                arc_area_bounds_batch(batch, preparations=preparations, budget=budget)
+            )
+        return result
+
+    bounds = enclose(cells)
+    while True:
         lower, upper = (
             np.asarray(0.0, dtype=np.float64),
             np.asarray(0.0, dtype=np.float64),
         )
-        for curve, first, last in cells:
-            work.consume()
-            a, b = arc_area_bounds(
-                curve, first, last, preparations=preparations, budget=budget
-            )
+        for a, b in bounds:
             lower, upper = interval_add((lower, upper), (np.asarray(a), np.asarray(b)))
         if lower > 0:
             return 1
         if upper < 0:
             return -1
-        if 2 * len(cells) > work.maximum - work.used:
+        widths = [b - a for a, b in bounds]
+        unbounded = [
+            index for index, width in enumerate(widths) if not np.isfinite(width)
+        ]
+        if unbounded:
+            selected = set(unbounded)
+        else:
+            total = sum(widths)
+            selected, covered = set(), 0.0
+            for index in sorted(range(len(cells)), key=lambda item: -widths[item]):
+                selected.add(index)
+                covered += widths[index]
+                if covered >= 0.5 * total:
+                    break
+        if 2 * len(selected) > work.maximum - work.used:
             raise BRepBooleanFailure(
-                f"face_cells.area_subdivision must fit remaining work {work.maximum - work.used}; got required={2 * len(cells)}"
+                f"face_cells.area_subdivision must fit remaining work {work.maximum - work.used}; got required={2 * len(selected)}"
             )
-        following = []
-        for curve, first, last in cells:
+        following: list[tuple[AbstractTrimCurve, float, float]] = []
+        retained: list[tuple[float, float] | None] = []
+        for index, (curve, first, last) in enumerate(cells):
+            if index not in selected:
+                following.append((curve, first, last))
+                retained.append(bounds[index])
+                continue
             middle = 0.5 * (first + last)
             if not first < middle < last:
                 raise BRepBooleanFailure(
                     f"face_cells.area_interval must admit further bisection while containing zero; got parameter endpoints={(first, last)}"
                 )
             following.extend(((curve, first, middle), (curve, middle, last)))
+            retained.extend((None, None))
+        refined = iter(
+            enclose(
+                [
+                    cell
+                    for cell, bound in zip(following, retained, strict=True)
+                    if bound is None
+                ]
+            )
+        )
         cells = following
-    raise BRepBooleanFailure(
-        "face_cells.area_arcs must contain a directed curve; got no arcs"
-    )
+        bounds = [next(refined) if bound is None else bound for bound in retained]
 
 
 def _loop_signs(
@@ -816,6 +902,8 @@ def _holes(
                 TrimDomain(exact[outer]),
                 _reference_box(exact[index], preparations=preparations, budget=budget),
                 work,
+                preparations=preparations,
+                budget=budget,
             )
             if status == 0:
                 raise BRepBooleanFailure(
@@ -835,6 +923,8 @@ def _holes(
                         exact[candidate], preparations=preparations, budget=budget
                     ),
                     work,
+                    preparations=preparations,
+                    budget=budget,
                 )
                 for parent in matches
                 if parent != candidate
@@ -854,7 +944,12 @@ def _holes(
 
 
 def _seed_box(
-    domain: TrimDomain, outer: CurveTrimLoop, work: _FaceCellWork
+    domain: TrimDomain,
+    outer: CurveTrimLoop,
+    work: _FaceCellWork,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
     bounds = np.stack((np.min(outer.arc_lower, axis=0), np.max(outer.arc_upper, axis=0)))
     pending = deque((bounds,))
@@ -862,7 +957,9 @@ def _seed_box(
         box = pending.popleft()
         center = 0.5 * (box[0] + box[1])
         probe = np.stack((np.nextafter(center, -np.inf), np.nextafter(center, np.inf)))
-        if _box_status(domain, probe, work) > 0:
+        if _box_status(
+            domain, probe, work, preparations=preparations, budget=budget
+        ) > 0:
             return probe
         axis = int(np.argmax(box[1] - box[0]))
         middle = center[axis]
@@ -893,7 +990,10 @@ def _publish_face_cells(
     preparations: TrimRequestPreparations | None,
     budget: CoordinateEnclosureBudget,
 ) -> _PublishedFaceCells:
-    exact = tuple(_exact_loop(loop, state, work) for loop in loops)
+    exact = tuple(
+        _exact_loop(loop, state, work, preparations=preparations, budget=budget)
+        for loop in loops
+    )
     signs = _loop_signs(loops, exact, work, preparations=preparations, budget=budget)
     holes, exterior = _holes(
         exact,
@@ -909,8 +1009,12 @@ def _publish_face_cells(
     for outer, children in holes.items():
         owned = (outer, *children)
         domain = TrimDomain(exact[outer], tuple(exact[index] for index in children))
-        seed = _seed_box(domain, exact[outer], work)
-        status = _box_status(state.domains[owner], seed, work)
+        seed = _seed_box(
+            domain, exact[outer], work, preparations=preparations, budget=budget
+        )
+        status = _box_status(
+            state.domains[owner], seed, work, preparations=preparations, budget=budget
+        )
         if status == 0:
             raise BRepBooleanFailure(
                 f"face_cells.source_trim_membership must resolve the open-cell seed; got owner={owner}, unresolved classification"
@@ -1050,42 +1154,9 @@ def extract_face_arrangement_cells(
     )
 
 
-def _chart_add(first: _ChartScalar, second: _ChartScalar) -> _ChartScalar:
-    left = first if isinstance(first, PeriodOffset) else PeriodOffset(first, Fraction(0))
-    right = (
-        second if isinstance(second, PeriodOffset) else PeriodOffset(second, Fraction(0))
-    )
-    value = left + right
-    if not isinstance(value, (Fraction, PeriodOffset)):
-        raise TypeError(
-            f"face_cells.chart_sum must be a Fraction or PeriodOffset; got {type(value).__name__}"
-        )
-    return value
-
-
-def _chart_scale(value: _ChartScalar, factor: Fraction) -> _ChartScalar:
-    source = (
-        value if isinstance(value, PeriodOffset) else PeriodOffset(value, Fraction(0))
-    )
-    result = source * factor
-    if not isinstance(result, (Fraction, PeriodOffset)):
-        raise TypeError(
-            f"face_cells.chart_product must be a Fraction or PeriodOffset; got {type(result).__name__}"
-        )
-    return result
-
-
-def _chart_parts(value: _ChartScalar) -> tuple[Fraction, Fraction]:
-    return (
-        (value, Fraction(0))
-        if isinstance(value, Fraction)
-        else (value.rational, value.turns)
-    )
-
-
-def _chart_ratio(first: _ChartScalar, second: _ChartScalar) -> Fraction | None:
+def _chart_ratio(first: ChartScalar, second: ChartScalar) -> Fraction | None:
     """A rational quotient only when both native-period coefficients agree."""
-    a, b = _chart_parts(first), _chart_parts(second)
+    a, b = chart_parts(first), chart_parts(second)
     pivot = next((index for index, value in enumerate(b) if value), None)
     if pivot is None:
         return None
@@ -1093,54 +1164,11 @@ def _chart_ratio(first: _ChartScalar, second: _ChartScalar) -> Fraction | None:
     return ratio if all(x == ratio * y for x, y in zip(a, b, strict=True)) else None
 
 
-def _line_coefficients(
-    curve: AbstractCurve | AbstractTrimCurve,
-) -> tuple[tuple[_ChartScalar, ...], tuple[Fraction, ...]] | None:
-    if isinstance(curve, LineCurve):
-        return (
-            tuple(Fraction(float(value)) for value in np.asarray(curve.origin)),
-            tuple(Fraction(float(value)) for value in np.asarray(curve.direction)),
-        )
-    if isinstance(curve, PeriodicPCurve):
-        child = _line_coefficients(curve.source_curve)
-        if child is None:
-            return None
-        origin, direction = child
-        return (
-            tuple(
-                _chart_add(value, PeriodOffset(Fraction(0), Fraction(shift)))
-                for value, shift in zip(origin, curve.period_shifts, strict=True)
-            ),
-            direction,
-        )
-    if isinstance(curve, AffinePCurve):
-        child = _line_coefficients(curve.curve)
-        if child is None:
-            return None
-        origin, direction = child
-        transformed = []
-        for row in range(2):
-            value: _ChartScalar = curve.offset[row]
-            for column in range(2):
-                value = _chart_add(
-                    value, _chart_scale(origin[column], curve.matrix[row][column])
-                )
-            transformed.append(value)
-        return (
-            tuple(transformed),
-            tuple(
-                sum((curve.matrix[i][j] * direction[j] for j in range(2)), Fraction(0))
-                for i in range(2)
-            ),
-        )
-    return None
-
-
-def _arc_scalar_map(arc: Arc) -> tuple[_ChartScalar, _ChartScalar] | None:
+def _arc_scalar_map(arc: Arc) -> tuple[ChartScalar, ChartScalar] | None:
     """Return the raw-carrier scalar as an affine expression in the local trim."""
     if not isinstance(arc.trim, CurveTrimSegment):
         return Fraction(arc.offset), Fraction(arc.scale)
-    endpoints: list[_ChartScalar] = []
+    endpoints: list[ChartScalar] = []
     for value, root in (
         (arc.trim.first, arc.trim.first_root),
         (arc.trim.last, arc.trim.last_root),
@@ -1155,7 +1183,7 @@ def _arc_scalar_map(arc: Arc) -> tuple[_ChartScalar, _ChartScalar] | None:
             case _:
                 assert_never(root)
     first, last = endpoints if not arc.trim.reversed else tuple(reversed(endpoints))
-    return first, _chart_add(last, _chart_scale(first, Fraction(-1)))
+    return first, chart_add(last, chart_scale(first, Fraction(-1)))
 
 
 def _fixed_chart_cut(arc: Arc, cut: Cut) -> bool:
@@ -1164,25 +1192,25 @@ def _fixed_chart_cut(arc: Arc, cut: Cut) -> bool:
     if not isinstance(cut.endpoint, NativePeriodEndpoint):
         return False
     scalar = _arc_scalar_map(arc)
-    return scalar is not None and cut.endpoint.exact_parameter == _chart_add(
-        scalar[0], _chart_scale(scalar[1], Fraction(cut.parameter))
+    return scalar is not None and cut.endpoint.exact_parameter == chart_add(
+        scalar[0], chart_scale(scalar[1], Fraction(cut.parameter))
     )
 
 
 def _normalized_line(
     arc: Arc,
-) -> tuple[tuple[_ChartScalar, ...], tuple[_ChartScalar, ...]] | None:
-    coefficients, scalar = _line_coefficients(arc.pcurve), _arc_scalar_map(arc)
+) -> tuple[tuple[ChartScalar, ...], tuple[ChartScalar, ...]] | None:
+    coefficients, scalar = line_chart_coefficients(arc.pcurve), _arc_scalar_map(arc)
     if coefficients is None or scalar is None:
         return None
     origin, direction = coefficients
     offset, scale = scalar
     return (
         tuple(
-            _chart_add(value, _chart_scale(offset, derivative))
+            chart_add(value, chart_scale(offset, derivative))
             for value, derivative in zip(origin, direction, strict=True)
         ),
-        tuple(_chart_scale(scale, value) for value in direction),
+        tuple(chart_scale(scale, value) for value in direction),
     )
 
 
@@ -1194,19 +1222,19 @@ def _line_corner_node(
     if a is None or b is None:
         return None
     point = tuple(
-        _chart_add(origin, Fraction(endpoint) * direction)
+        chart_add(origin, Fraction(endpoint) * direction)
         for origin, direction in zip(*a, strict=True)
     )
     pivot = next((index for index, value in enumerate(b[1]) if value), None)
     if pivot is None:
         return None
     parameter = _chart_ratio(
-        _chart_add(point[pivot], _chart_scale(b[0][pivot], Fraction(-1))), b[1][pivot]
+        chart_add(point[pivot], chart_scale(b[0][pivot], Fraction(-1))), b[1][pivot]
     )
     if parameter is None:
         return None
     if any(
-        value != _chart_add(origin, parameter * direction)
+        value != chart_add(origin, parameter * direction)
         for value, origin, direction in zip(point, *b, strict=True)
     ):
         return None
@@ -1240,16 +1268,16 @@ def scalar_phase(first: Arc, second: Arc) -> tuple[Fraction, Fraction] | None:
             return None
         scale = _chart_ratio(direction_a[pivot], direction_b[pivot])
         offset = _chart_ratio(
-            _chart_add(origin_a[pivot], _chart_scale(origin_b[pivot], Fraction(-1))),
+            chart_add(origin_a[pivot], chart_scale(origin_b[pivot], Fraction(-1))),
             direction_b[pivot],
         )
         if scale is None or offset is None or not scale:
             return None
         if any(
-            x != _chart_scale(y, scale)
+            x != chart_scale(y, scale)
             for x, y in zip(direction_a, direction_b, strict=True)
         ) or any(
-            x != _chart_add(y, _chart_scale(d, offset))
+            x != chart_add(y, chart_scale(d, offset))
             for x, y, d in zip(origin_a, origin_b, direction_b, strict=True)
         ):
             return None
@@ -1307,7 +1335,12 @@ def scalar_phase(first: Arc, second: Arc) -> tuple[Fraction, Fraction] | None:
 
 
 def _overlay_arcs(
-    state: Arrangement, owner: FaceOwner, overlay: CoincidentFaceOverlay
+    state: Arrangement,
+    owner: FaceOwner,
+    overlay: CoincidentFaceOverlay,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[Arc, ...]:
     model = state.models[owner[0]]
     if model.face_ids[owner[1]] != overlay.first_face_id:
@@ -1327,6 +1360,8 @@ def _overlay_arcs(
                     reversed=source.sense < 0,
                     first_root=roots[0],
                     last_root=roots[1],
+                    preparations=preparations,
+                    budget=budget,
                 )
                 vertices = (
                     source.vertex_ids
@@ -1362,12 +1397,19 @@ class _OverlayGraph(StrictModule):
 
 
 def _prepare_overlay_graph(
-    state: Arrangement, owner: FaceOwner, overlays: tuple[CoincidentFaceOverlay, ...]
+    state: Arrangement,
+    owner: FaceOwner,
+    overlays: tuple[CoincidentFaceOverlay, ...],
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> _OverlayGraph:
     unique_arcs: dict[str, Arc] = {}
     sources: dict[str, CoincidentFaceArc] = {}
     for overlay in overlays:
-        for arc in _overlay_arcs(state, owner, overlay):
+        for arc in _overlay_arcs(
+            state, owner, overlay, preparations=preparations, budget=budget
+        ):
             unique_arcs.setdefault(arc.token, arc)
         for loops in (overlay.first_loops, overlay.second_loops):
             for loop in loops:
@@ -1614,7 +1656,9 @@ def prepare_face_cell_workset(
                 if arc.branch is not None
             },
         )
-    graph = _prepare_overlay_graph(state, owner, overlays)
+    graph = _prepare_overlay_graph(
+        state, owner, overlays, preparations=preparations, budget=budget
+    )
     arcs, cuts, sources = graph.arcs, graph.cuts, graph.sources
     prepared_native = graph.prepared_native
     if len(arcs) > state.policy.sewing.maximum_coedges:
@@ -1742,9 +1786,9 @@ def _exact_line_crossing(
     (origin_a, direction_a), (origin_b, direction_b) = a, b
     rows = []
     for oa, ob, da, db in zip(origin_a, origin_b, direction_a, direction_b, strict=True):
-        delta = _chart_add(ob, _chart_scale(oa, Fraction(-1)))
+        delta = chart_add(ob, chart_scale(oa, Fraction(-1)))
         rows.extend(
-            zip(_chart_parts(da), _chart_parts(db), _chart_parts(delta), strict=True)
+            zip(chart_parts(da), chart_parts(db), chart_parts(delta), strict=True)
         )
     for left, right in combinations(rows, 2):
         ax, bx, rx = left
@@ -1802,7 +1846,7 @@ def _add_exact_line_crossing(
         )
     origin, direction = _normalized_line(first) or ((), ())
     point = tuple(
-        _chart_add(value, _chart_scale(slope, crossing[0]))
+        chart_add(value, chart_scale(slope, crossing[0]))
         for value, slope in zip(origin, direction, strict=True)
     )
     uv = np.asarray(
@@ -1851,8 +1895,8 @@ def _add_exact_line_crossing(
                 )
                 scalar = _arc_scalar_map(arc)
                 if native is not None and scalar is not None:
-                    raw = _chart_add(scalar[0], _chart_scale(scalar[1], value))
-                    rational, turns = _chart_parts(raw)
+                    raw = chart_add(scalar[0], chart_scale(scalar[1], value))
+                    rational, turns = chart_parts(raw)
                     endpoint = NativePeriodEndpoint(
                         arc.pcurve,
                         native.patch,
@@ -1897,8 +1941,8 @@ def _transport_phase_cut(
                     (source.token, target.token),
                     (cut.node,),
                 )
-            raw = _chart_add(scalar[0], _chart_scale(scalar[1], value))
-            rational, turns = _chart_parts(raw)
+            raw = chart_add(scalar[0], chart_scale(scalar[1], value))
+            rational, turns = chart_parts(raw)
             endpoint = NativePeriodEndpoint(
                 target.pcurve,
                 endpoint.patch,

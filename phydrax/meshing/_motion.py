@@ -18,8 +18,9 @@ consumes. Nothing is accepted silently: every outcome carries its assessments.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
-from contextlib import nullcontext
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from enum import StrEnum
 from typing import assert_never
 
@@ -61,13 +62,18 @@ from ._association import (
     SurfaceAssociationTransfer,
 )
 from ._association_composition import ComposedAssociationTransfer
+from ._association_state import GeometryAssociation
 from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from ._canonical import certify_cell_mesh
 from ._compartments import revalidate_region_evidence
 from ._contracts import MeshingLimits
+from ._failures import MeshingFailure, MeshingFailureCategory
 from ._implicit_association_transfer import ImplicitAssociationTransfer
 from ._lineage import CellMeshTransition, identity_lineage, inherit_mesh_organization
+from ._lineage_records import MeshLineage
+from ._measurements import NativeExecutionImports, NativeExecutionRecord
 from ._metric import MeshMetricField
+from ._native_preparation import native_preparation_ledger
 from ._optimization import (
     MeshOptimizationResult,
     MeshQualityObjective,
@@ -346,9 +352,14 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
         )
 
     def assess(
-        self, coordinates: ArrayLike, /, *, boundary_residual: float
+        self,
+        coordinates: ArrayLike,
+        /,
+        *,
+        boundary_residual: float,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> MeshMotionAssessment:
-        """Certify and measure one proposal against every policy threshold."""
+        """Certify and measure a proposal, optionally on its owning request ledger."""
 
         points = np.asarray(coordinates, dtype=np.float64)
         if points.shape != self.reference.coordinates.shape:
@@ -375,14 +386,14 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
             )
         policy = self.policy
         certificate = cell_geometry_validity_owner.certify_cell_geometry_validity(
-            self.moved_mesh(points), policy=policy.validity
+            self.moved_mesh(points), policy=policy.validity, budget=budget
         )
         jacobian = np.asarray(certificate.determinant_lower) / np.asarray(
             self.reference_certificate.determinant_lower
         )
         jacobian_ratio = float(np.min(np.where(np.isnan(jacobian), -np.inf, jacobian)))
         quality = np.asarray(
-            evaluate_cell_quality(self.reference, points).mean_ratios
+            evaluate_cell_quality(self.reference, points, budget=budget).mean_ratios
         ) / np.asarray(self.reference_quality)
         quality_ratio = float(np.min(np.where(np.isnan(quality), 0.0, quality)))
         displacement = float(
@@ -457,6 +468,12 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
     same-topology mesh, and ``remesh_metric`` is the requested target metric.
     ``accepted`` is false for ``REJECT``, an unexecuted remesh request, and an
     adaptation that did not converge.
+
+    ``execution_evidence`` is the actual ended nonperiodic policy request.
+    Its totals include preparation and nested work once. An adapted target
+    retains its own narrower receipt through ``adaptation``; it is not added to
+    the outer totals. Earlier source receipts remain historical provenance,
+    not charged preparation. Execution evidence is excluded from ``advance_id``.
     """
 
     decision: MeshMotionDecision = eqx.field(static=True)
@@ -467,6 +484,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
     remesh_metric: MeshMetricField | None
     adaptation: MeshAdaptationResult | None
     transition: CellMeshTransition | None
+    execution_evidence: NativeExecutionRecord | None
     advance_id: str = eqx.field(static=True)
 
     @checked
@@ -480,6 +498,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         relocation: MeshOptimizationResult | None = None,
         remesh_metric: MeshMetricField | None = None,
         adaptation: MeshAdaptationResult | None = None,
+        execution_evidence: NativeExecutionRecord | None = None,
     ) -> None:
         remesh = decision is MeshMotionDecision.REMESH
         if (decision is MeshMotionDecision.REJECT) != (result is None):
@@ -492,6 +511,8 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
             raise ValueError(
                 "MeshMotionAdvance.remesh_metric must be present exactly for REMESH decisions, with adaptation absent for other decisions; got an inconsistent metric or adaptation state."
             )
+        if execution_evidence is not None:
+            execution_evidence.require_valid()
         self.decision = decision
         self.accepted = decision is not MeshMotionDecision.REJECT and (
             not remesh or (adaptation is not None and adaptation.status.converged)
@@ -502,6 +523,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         self.remesh_metric = remesh_metric
         self.adaptation = adaptation
         self.transition = None if adaptation is None else adaptation.transition
+        self.execution_evidence = execution_evidence
         self.advance_id = canonical_fingerprint(
             {
                 "kind": "mesh-motion-advance",
@@ -515,17 +537,28 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
                 "adaptation": None if adaptation is None else adaptation.result_id,
             }
         )
+        if (
+            execution_evidence is not None
+            and execution_evidence.owner_id != self.advance_id
+        ):
+            raise ValueError(
+                "MeshMotionAdvance.execution_evidence must bind this advance's identity; got another request owner."
+            )
 
 
 def _reference_size_metric(
-    reference: cell_mesh_owner.CellMesh, candidate: CellMeshingResult, /
+    reference: cell_mesh_owner.CellMesh,
+    candidate: CellMeshingResult,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> MeshMetricField:
     """Isotropic metric restoring the reference cell size around every vertex."""
 
     dimension = reference.topological_dimension
-    sizes = np.asarray(evaluate_cell_quality(reference).measures, dtype=np.float64) ** (
-        1.0 / dimension
-    )
+    sizes = np.asarray(
+        evaluate_cell_quality(reference, budget=budget).measures, dtype=np.float64
+    ) ** (1.0 / dimension)
     totals = np.zeros((reference.coordinates.shape[0],), dtype=np.float64)
     counts = np.zeros_like(totals)
     offset = 0
@@ -562,6 +595,55 @@ def _boundary_mask(mesh: cell_mesh_owner.CellMesh, /) -> np.ndarray:
     return np.asarray(mesh.topology.entities(0).subset("boundary").mask, dtype=np.bool_)
 
 
+@contextmanager
+def _motion_request(
+    limits: MeshingLimits, /
+) -> Iterator[tuple[NativeExecutionScope, CoordinateEnclosureBudget]]:
+    """Open one request scope and ledger under the caller's adaptation limits."""
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = HostBatchTicket(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+            yield scope, budget
+
+
+def _propagated_associations(
+    transfer: BRepAssociationTransfer
+    | PlcAssociationTransfer
+    | ComposedAssociationTransfer
+    | SurfaceAssociationTransfer
+    | MappedReferenceAssociationTransfer
+    | ImplicitAssociationTransfer,
+    source: CellMeshingResult,
+    lineage: MeshLineage,
+    moved: cell_mesh_owner.CellMesh,
+    geometry: cell_geometry_owner.CellGeometrySpec,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> tuple[GeometryAssociation, ...]:
+    """Revalidate fixed-topology associations on one request budget."""
+    match transfer:
+        case BRepAssociationTransfer():
+            return transfer.propagate(source, lineage, moved, budget=budget)
+        case (
+            PlcAssociationTransfer()
+            | ComposedAssociationTransfer()
+            | MappedReferenceAssociationTransfer()
+            | ImplicitAssociationTransfer()
+            | SurfaceAssociationTransfer()
+        ):
+            return transfer.propagate(
+                source, lineage, moved, geometry=geometry, budget=budget
+            )
+        case _ as unknown:
+            assert_never(unknown)
+
+
 def _carried(
     source: CellMeshingResult,
     moved: cell_mesh_owner.CellMesh,
@@ -582,20 +664,26 @@ def _carried(
 ) -> CellMeshingResult:
     """Certify moved coordinates using the source's region evidence and geometry.
 
-    Patches, zones, and labels are rebound through the identity lineage. B-Rep or PLC
-    associations are re-derived for the moved coordinates by their ``transfer``;
-    classification evidence is not copied. A curved coordinate map moves with its
-    vertices. The motion is refused if any requested entity cannot be carried.
+    Patches, zones, and labels are rebound through the identity lineage.
+    Associations, boundary models, moved coordinate maps, region evidence and
+    certification are re-derived together on the supplied request ledger;
+    classification evidence is not copied. Unassociated standalone motion
+    retains its ordinary host contract. Uncarriable evidence refuses the motion.
     """
 
-    if isinstance(transfer, PeriodicAssociationTransfer):
-        if scope is None or budget is None:
-            raise RuntimeError(
-                "_carried.scope must be supplied together with budget for periodic motion; got a missing request resource."
-            )
-        phase = adaptation_phase(scope, budget)
-    else:
-        phase = nullcontext()
+    if (scope is None) != (budget is None):
+        raise RuntimeError(
+            "_carried.scope must be supplied together with budget; got a missing request resource."
+        )
+    if transfer is not None and (scope is None or budget is None):
+        raise RuntimeError(
+            "_carried.scope and budget must own association-bearing motion; got no request resource."
+        )
+    phase = (
+        adaptation_phase(scope, budget)
+        if scope is not None and budget is not None
+        else nullcontext()
+    )
     with phase:
         return _carried_in_scope(
             source,
@@ -659,11 +747,15 @@ def _carried_in_scope(
             source.mesh, source.geometry, moved, budget=budget
         ).geometry
     )
-    boundary = (
-        transfer.remap_boundary(source, lineage, moved, geometry=geometry)
-        if isinstance(transfer, ImplicitAssociationTransfer)
-        else None
-    )
+    boundary = None
+    if source.boundary is not None and isinstance(transfer, ImplicitAssociationTransfer):
+        if budget is None:
+            raise RuntimeError(
+                "_carried.budget must own implicit boundary remapping; got no request ledger."
+            )
+        boundary = transfer.remap_boundary(
+            source, lineage, moved, geometry=geometry, budget=budget
+        )
     certification_inputs = (
         None if source.certification is None else source.certification.request
     )
@@ -716,6 +808,7 @@ def _carried_in_scope(
             lineage=lineage,
             certificate_limits=source.region_evidence.certificate_limits,
             limits=limits,
+            budget=budget,
         )
         zones, patches, region_evidence = (
             renewal.zones,
@@ -724,30 +817,22 @@ def _carried_in_scope(
         )
     if transfer is None or not source.associations:
         associations = ()
+    elif isinstance(transfer, PeriodicAssociationTransfer):
+        if scope is None or budget is None:
+            raise RuntimeError(
+                "_carried.scope must be supplied together with budget for periodic motion; got a missing request resource."
+            )
+        associations = transfer.propagate(
+            source, lineage, moved, geometry=geometry, scope=scope, budget=budget
+        )
     else:
-        match transfer:
-            case PeriodicAssociationTransfer():
-                if scope is None or budget is None:
-                    raise RuntimeError(
-                        "_carried.scope must be supplied together with budget for periodic motion; got a missing request resource."
-                    )
-                associations = transfer.propagate(
-                    source, lineage, moved, geometry=geometry, scope=scope, budget=budget
-                )
-            case (
-                PlcAssociationTransfer()
-                | ComposedAssociationTransfer()
-                | MappedReferenceAssociationTransfer()
-                | ImplicitAssociationTransfer()
-                | SurfaceAssociationTransfer()
-            ):
-                associations = transfer.propagate(
-                    source, lineage, moved, geometry=geometry
-                )
-            case BRepAssociationTransfer():
-                associations = transfer.propagate(source, lineage, moved)
-            case _ as unknown:
-                assert_never(unknown)
+        if budget is None:
+            raise RuntimeError(
+                "_carried.budget must own association revalidation; got no request ledger."
+            )
+        associations = _propagated_associations(
+            transfer, source, lineage, moved, geometry, budget
+        )
     associations = retain_association_scopes(source.associations, associations)
     return certify_cell_mesh(
         moved,
@@ -774,6 +859,8 @@ def _relocate(
     fixed: np.ndarray,
     numeric_version: str,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> MeshOptimizationResult:
     plan = TargetMatrixOptimizationPlan(
         moved,
@@ -785,7 +872,10 @@ def _relocate(
         accept_valid_nonconverged=monitor.policy.accept_valid_nonconverged_relocation,
     )
     return optimize_cell_mesh(
-        plan, source.coordinate_contract, numeric_version=f"{numeric_version}:relocated"
+        plan,
+        source.coordinate_contract,
+        numeric_version=f"{numeric_version}:relocated",
+        budget=budget,
     )
 
 
@@ -794,9 +884,13 @@ def _remesh(
     metric: MeshMetricField,
     policy: MeshAdaptationPolicy,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> MeshAdaptationResult:
     return execute_mesh_adaptation(
-        prepare_mesh_adaptation(candidate, MetricMeshAdaptation(metric), policy=policy)
+        prepare_mesh_adaptation(
+            candidate, MetricMeshAdaptation(metric), policy=policy, budget=budget
+        )
     )
 
 
@@ -813,10 +907,17 @@ def advance_mesh_motion(
     remesh_metric: Callable[[CellMeshingResult], MeshMetricField] | None = None,
     numeric_version: str = "mesh-motion",
 ) -> MeshMotionAdvance:
-    """Advance motion while retaining the adaptation limits for periodic transfer."""
-    if adaptation_policy is None or not isinstance(
-        adaptation_policy.association_transfer, PeriodicAssociationTransfer
-    ):
+    """Advance motion with one genuine caller-policy request.
+
+    Policy-bearing nonperiodic assessment, coordinate preparation, boundary and
+    association transport, region renewal and certification share one live
+    ledger and the original limits/deadline, including nested native work.
+    Earlier source execution is history, never new preparation. The ended
+    request is published only after successful settlement. Periodic motion
+    retains its existing request/phase semantics; policy-free ordinary motion
+    retains its standalone host contract.
+    """
+    if adaptation_policy is None:
         return _advance_mesh_motion(
             monitor,
             source,
@@ -829,17 +930,61 @@ def advance_mesh_motion(
             scope=None,
             budget=None,
         )
-    limits = adaptation_policy.limits
-    with NativeExecutionScope(limits.native_limits()) as scope:
-        initial = HostBatchTicket(0)
-        budget = CoordinateEnclosureBudget(
-            initial,
-            maximum_work_units=limits.maximum_work_units,
-            maximum_memory_bytes=limits.maximum_scratch_bytes,
+    if not isinstance(
+        adaptation_policy.association_transfer, PeriodicAssociationTransfer
+    ):
+        return _advance_nonperiodic_motion(
+            monitor,
+            source,
+            coordinates,
+            boundary_residual=boundary_residual,
+            adaptation_policy=adaptation_policy,
+            fixed_vertices=fixed_vertices,
+            remesh_metric=remesh_metric,
+            numeric_version=numeric_version,
         )
-        initial.settle()
-        with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
-            return _advance_mesh_motion(
+    with _motion_request(adaptation_policy.limits) as (scope, budget):
+        return _advance_mesh_motion(
+            monitor,
+            source,
+            coordinates,
+            boundary_residual=boundary_residual,
+            adaptation_policy=adaptation_policy,
+            fixed_vertices=fixed_vertices,
+            remesh_metric=remesh_metric,
+            numeric_version=numeric_version,
+            scope=scope,
+            budget=budget,
+        )
+
+
+def _advance_nonperiodic_motion(
+    monitor: MeshMotionMonitor,
+    source: CellMeshingResult,
+    coordinates: ArrayLike,
+    /,
+    *,
+    boundary_residual: float,
+    adaptation_policy: MeshAdaptationPolicy,
+    fixed_vertices: ArrayLike | None,
+    remesh_metric: Callable[[CellMeshingResult], MeshMetricField] | None,
+    numeric_version: str,
+) -> MeshMotionAdvance:
+    """Prepare and execute motion on the original request, then bind settlement."""
+    history = source.execution_evidence
+    with _motion_request(adaptation_policy.limits) as (scope, budget):
+        if history is not None:
+            ledger = native_preparation_ledger(scope)
+            # A completed source request may already have settled into the
+            # still-live workflow parent. It remains historical to this new
+            # motion, without replaying or relabeling the parent's charge.
+            if not ledger.receipt_is_accounted(scope, history):
+                ledger.record_history(scope, history)
+        # This is a view of the actual allowance, not a second reservation.
+        # Native owners and nested requests retain headroom and share this
+        # request's original deadline; all explicit science uses this ledger.
+        with budget.bind_ticket(scope.ticket_view()):
+            advance = _advance_mesh_motion(
                 monitor,
                 source,
                 coordinates,
@@ -851,6 +996,40 @@ def advance_mesh_motion(
                 scope=scope,
                 budget=budget,
             )
+        imports = NativeExecutionImports(scope)
+        expires_at = time.monotonic() + scope.remaining().remaining_seconds
+    # Nested adaptation remains reachable through advance.adaptation/result.
+    # Its raw work is already in this scope, not a predecessor import
+    # authorizing a cross-owner consumer receipt edge.
+    record = NativeExecutionRecord(
+        imports.evidence(),
+        owner_id=advance.advance_id,
+        imports=imports,
+        history_evidence=() if history is None else (history,),
+    )
+    result = advance.result
+    if result is not None and advance.adaptation is None:
+        result = result.with_execution_evidence(record)
+    publication = MeshMotionAdvance(
+        advance.decision,
+        advance.assessments,
+        result=result,
+        relocation=advance.relocation,
+        remesh_metric=advance.remesh_metric,
+        adaptation=advance.adaptation,
+        execution_evidence=record,
+    )
+    if scope.parent is not None:
+        native_preparation_ledger(scope.parent).remember_receipt(scope.parent, record)
+    if time.monotonic() >= expires_at:
+        raise MeshingFailure(
+            MeshingFailureCategory.TIMED_OUT,
+            "MeshMotionAdvance must finish receipt publication before its "
+            "original request or earlier parent deadline",
+            stage="motion-publication",
+            achieved=(("remaining_seconds", expires_at - time.monotonic()),),
+        )
+    return publication
 
 
 def _advance_mesh_motion(
@@ -904,7 +1083,13 @@ def _advance_mesh_motion(
     )
     limits = None if adaptation_policy is None else adaptation_policy.limits
     audit_policy = None if adaptation_policy is None else adaptation_policy.audit_policy
-    assessment = monitor.assess(coordinates, boundary_residual=boundary_residual)
+    # Periodic requests retain their existing per-carry phase contract.
+    assessment_budget = (
+        budget if budget is not None and not budget.ticket.settled else None
+    )
+    assessment = monitor.assess(
+        coordinates, boundary_residual=boundary_residual, budget=assessment_budget
+    )
     assessments = [assessment]
     match assessment.decision:
         case MeshMotionDecision.REJECT:
@@ -933,7 +1118,9 @@ def _advance_mesh_motion(
     # only an accepted relocation (converged, or explicitly admitted valid
     # non-convergence) seeds the relocated assessment.
     moved = monitor.moved_mesh(coordinates)
-    relocation = _relocate(monitor, source, moved, fixed, version)
+    relocation = _relocate(
+        monitor, source, moved, fixed, version, budget=assessment_budget
+    )
     if relocation.accepted:
         relocated_result = relocation.result
         if relocated_result is None:
@@ -941,7 +1128,9 @@ def _advance_mesh_motion(
                 "advance_mesh_motion.relocated_result must be present for an accepted relocation; got no certified relocation result."
             )
         relocated = monitor.assess(
-            relocation.coordinates, boundary_residual=boundary_residual
+            relocation.coordinates,
+            boundary_residual=boundary_residual,
+            budget=assessment_budget,
         )
         assessments.append(relocated)
         if relocated.decision is MeshMotionDecision.ACCEPT_MOTION:
@@ -985,7 +1174,7 @@ def _advance_mesh_motion(
             MeshMotionDecision.REJECT, tuple(assessments), relocation=relocation
         )
     metric = (
-        _reference_size_metric(monitor.reference, candidate)
+        _reference_size_metric(monitor.reference, candidate, budget=assessment_budget)
         if remesh_metric is None
         else remesh_metric(candidate)
     )
@@ -1001,7 +1190,9 @@ def _advance_mesh_motion(
             relocation=relocation,
             remesh_metric=metric,
         )
-    adaptation = _remesh(candidate, metric, adaptation_policy)
+    adaptation = _remesh(
+        candidate, metric, adaptation_policy, budget=assessment_budget
+    )
     return MeshMotionAdvance(
         MeshMotionDecision.REMESH,
         tuple(assessments),

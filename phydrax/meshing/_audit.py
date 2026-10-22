@@ -54,6 +54,7 @@ from ._organization_records import (
     MeshAttribute,
     MeshLabel,
     MeshPatch,
+    MeshPatchBank,
     MeshZone,
     validate_mesh_labels,
     validate_mesh_zones,
@@ -331,7 +332,7 @@ def _connectivity_entries(mesh: cell_mesh_owner.CellMesh, /) -> int:
 
 
 def evidence_id(
-    patches: tuple[MeshPatch, ...],
+    patches: MeshPatchBank | tuple[MeshPatch, ...],
     zones: tuple[MeshZone, ...],
     labels: tuple[MeshLabel, ...],
     attributes: tuple[MeshAttribute, ...],
@@ -599,13 +600,15 @@ def _patch_zone_adjacency_issues(
 def mesh_evidence_issues(
     mesh: cell_mesh_owner.CellMesh,
     boundary: SurfaceModel | None,
-    patches: tuple[MeshPatch, ...],
+    patches: MeshPatchBank | tuple[MeshPatch, ...],
     zones: tuple[MeshZone, ...],
     labels: tuple[MeshLabel, ...],
     attributes: tuple[MeshAttribute, ...],
     associations: tuple[GeometryAssociation, ...],
     /,
 ) -> tuple[str, ...]:
+    # A patch bank builds rows on demand; materialize them once per audit.
+    patches = tuple(patches)
     issues = list(_boundary_issues(mesh, boundary))
     issues.extend(_patch_zone_adjacency_issues(mesh, patches, zones))
     meshes = (mesh,) if boundary is None else (mesh, boundary.mesh)
@@ -820,6 +823,7 @@ def _dispose(
 
 def _topology_findings(
     mesh: cell_mesh_owner.CellMesh,
+    geometry: cell_geometry_owner.CellGeometrySpec,
     policy: CellMeshAuditPolicy,
     /,
     *,
@@ -840,6 +844,8 @@ def _topology_findings(
         check_watertight=policy.watertight_boundary != skip,
         check_self_intersection=policy.self_intersection != skip,
         budget=budget,
+        audit_policy_id=policy.policy_id,
+        audit_geometry=geometry,
     )
     findings = (
         ("coincident_vertices", evidence.coincident_vertices, policy.coincident_vertices),
@@ -1028,7 +1034,9 @@ def _certify_audit_verdict(
 ) -> _AuditVerdict:
     """Apply dispositions and quality thresholds in diagnostic order."""
     validity = _certify_audit_validity(mesh, geometry, policy, prepared_validity, budget)
-    topology_findings, unresolved_checks = _topology_findings(mesh, policy, budget=budget)
+    topology_findings, unresolved_checks = _topology_findings(
+        mesh, geometry, policy, budget=budget
+    )
     unresolved = list(unresolved_checks)
     if validity.unresolved_count:
         unresolved.append("geometry_validity")
@@ -1083,7 +1091,7 @@ def audit_cell_mesh(
     policy: CellMeshAuditPolicy | None = None,
     prepared_validity: CellValidityCertificate | None = None,
     boundary: SurfaceModel | None = None,
-    patches: tuple[MeshPatch, ...] = (),
+    patches: MeshPatchBank | tuple[MeshPatch, ...] = (),
     associations: tuple[GeometryAssociation, ...] = (),
     attributes: tuple[MeshAttribute, ...] = (),
     zones: tuple[MeshZone, ...] = (),
@@ -1100,6 +1108,8 @@ def audit_cell_mesh(
     """
 
     audit_policy = CellMeshAuditPolicy() if policy is None else policy
+    # A patch bank builds rows on demand; materialize them once per audit.
+    patches = tuple(patches)
     preparation = _prepare_audit_bindings(
         mesh,
         geometry,

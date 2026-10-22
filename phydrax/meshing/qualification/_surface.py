@@ -101,12 +101,15 @@ def surface_field_templates() -> tuple[
 def prepare_surface_fields(
     result: phx.meshing.CellMeshingResult,
     /,
+    *,
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
+    reuse_prepared: phx.discretization.FiniteElementDiscretization | None = None,
 ) -> phx.discretization.FiniteElementDiscretization:
-    """Prepare the declared surface fields on one accepted carrier."""
+    """Prepare declared fields on the caller's accepted-carrier coordinate ledger."""
     fields = tuple(field for _, field in surface_field_templates())
     return phx.discretization.FiniteElementPlan(
-        result.mesh, fields, coordinate_spec=result.geometry
-    ).prepare()
+        result.mesh, fields, coordinate_spec=result.geometry, budget=budget
+    ).prepare(reuse_prepared=reuse_prepared, budget=budget)
 
 
 @checked
@@ -116,11 +119,15 @@ def prepare_surface_checkpoint(
     /,
     *,
     failure_factory: Callable[[str, str, dict[str, Any]], RuntimeError],
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
+    reuse_prepared: phx.discretization.FiniteElementDiscretization | None = None,
 ) -> SurfaceCheckpointState:
     """Bind accepted coefficients and material history to their carrier indices."""
     names = ("u", "density", "history", "curl", "flux")
     carrier = accepted.result
-    owner = prepare_surface_fields(carrier)
+    owner = prepare_surface_fields(
+        carrier, budget=budget, reuse_prepared=reuse_prepared
+    )
     spaces = {space.name: space for space in owner.field_spaces}
     values = dict(zip(names, accepted.fields, strict=True))
     arrays: dict[str, Array | np.ndarray] = {

@@ -12,7 +12,7 @@ from jax import Array, Device
 from jax.typing import ArrayLike
 
 import phydrax as phx
-from phydrax._meshcore import NativeExecutionScope
+from phydrax._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionScope
 from phydrax.discretization import (
     CellBlock,
     CellMesh,
@@ -988,6 +988,82 @@ def test_periodic_orbit_bisection_refuses_label_conforming_closure() -> None:
             ),
             policy=policy,
         )
+
+
+def test_periodic_orbit_closure_capacity_refusal_is_typed_resource_evidence() -> None:
+    M = phx.meshing
+    source = M.certify_cell_mesh(
+        _two_triangle_torus(), phx.SpatialCoordinateContract.si()
+    )
+    marks = np.asarray(source.mesh.entity_set(2).entity_ids)
+
+    def refine(maximum_cells: int) -> M.MeshAdaptationResult:
+        return M.execute_mesh_adaptation(
+            M.prepare_mesh_adaptation(
+                source,
+                M.MarkedMeshAdaptation(marks),
+                policy=M.MeshAdaptationPolicy(
+                    M.MeshAdaptationRoute.NATIVE_BISECTION,
+                    limits=M.MeshingLimits(maximum_cells=maximum_cells),
+                ),
+            )
+        )
+
+    # Two source triangles give an eight-cell orbit-closure bound.
+    with pytest.raises(M.MeshingFailure) as refused:
+        refine(7)
+    failure = refused.value
+    assert failure.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert failure.stage == "bisection-closure"
+    assert failure.entity_ids == tuple(sorted(int(value) for value in marks))
+    assert dict(failure.requested)["maximum_cells"] == 7
+    assert dict(failure.achieved)["closure_cells_upper"] == 8
+    # The refused request leaves the source admissible at the unchanged bound.
+    assert refine(8).status is M.MeshAdaptationStatus.COMPLETE
+
+
+def test_periodic_orbit_edits_admit_their_retired_cells_as_one_cavity() -> None:
+    M = phx.meshing
+    source = M.certify_cell_mesh(
+        _two_triangle_torus(), phx.SpatialCoordinateContract.si()
+    )
+
+    def adapt(
+        result: M.CellMeshingResult,
+        request: M.MarkedMeshAdaptation,
+        maximum_cavity_cells: int,
+    ) -> M.MeshAdaptationResult:
+        return M.execute_mesh_adaptation(
+            M.prepare_mesh_adaptation(
+                result,
+                request,
+                policy=M.MeshAdaptationPolicy(
+                    M.MeshAdaptationRoute.NATIVE_BISECTION,
+                    limits=M.MeshingLimits(maximum_cavity_cells=maximum_cavity_cells),
+                ),
+            )
+        )
+
+    # Both triangles share their longest (diagonal) edge orbit, so the one
+    # orbit-refinement edit retires both source cells.
+    marks = M.MarkedMeshAdaptation(np.asarray(source.mesh.entity_set(2).entity_ids))
+    with pytest.raises(MeshcoreError) as refused:
+        adapt(source, marks, 1)
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    refined = adapt(source, marks, 2)
+    assert refined.status is M.MeshAdaptationStatus.COMPLETE
+    # Cavity and source-query admission now cover every periodic request limit.
+    assert refined.target.runtime.unenforced_limits == ()
+    fine = np.asarray(refined.target.mesh.entity_set(2).entity_ids)
+    assert fine.size == 4
+    # Restoring both parents coarsens away all four fine cells in one edit.
+    coarsen = M.MarkedMeshAdaptation((), fine, hierarchy=refined.hierarchy)
+    with pytest.raises(MeshcoreError) as refused:
+        adapt(refined.target, coarsen, 3)
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    coarsened = adapt(refined.target, coarsen, 4)
+    assert coarsened.status is M.MeshAdaptationStatus.COMPLETE
+    assert coarsened.target.mesh.topology_id == source.mesh.topology_id
 
 
 def test_decimal_image_rounding_is_bound_without_false_quotient_overlap() -> None:

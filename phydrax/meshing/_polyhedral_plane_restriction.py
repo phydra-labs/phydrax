@@ -7,13 +7,22 @@ from fractions import Fraction
 
 import numpy as np
 
-from phydrax.geometry._planar_primitives import convex_hull, plane_key, project, turn
+from phydrax.geometry._planar_primitives import (
+    binary64_fraction_bits,
+    convex_hull,
+    plane_key,
+    project,
+    turn,
+)
 from phydrax.meshing._failures import MeshingFailureCategory
 
 from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
-from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    reserve_polynomial,
+)
 from ..discretization._exact_power_geometry import ExactPowerCellGeometryRestrictionSource
 from ..linalg._small_batched import prepare_exact_small_linear_actions
 from ..typing import checked
@@ -22,6 +31,61 @@ from ._polyhedral_adaptation_shared import (
     polyhedral_face_loops,
     PolyhedralAdaptationError,
 )
+
+
+def _reserve_fraction_storage(
+    rows: tuple[tuple[Fraction, ...], ...],
+    terms: int,
+    operands: int,
+    additions: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Admit expression-derived Fraction storage without changing work prices.
+
+    Multiplication/division multiply denominator products; addition adds carry
+    bits. Count input occurrences in the expanded result, including both sides
+    of a quotient, using the observed numerator and denominator widths.
+    """
+    bits = max(
+        (value.numerator.bit_length() + value.denominator.bit_length()
+         for row in rows for value in row),
+        default=1,
+    )
+    reserve_polynomial(
+        0, terms, 0, operands * bits + max(additions, 1).bit_length(), budget=budget
+    )
+
+
+def _outside_plane(
+    plane: tuple[Fraction, ...],
+    orientation: int,
+    point: tuple[Fraction, ...],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    # The plane-key helper pays for coefficients, not later evaluations:
+    # three products, three sum additions, then the orientation product.
+    # Same coefficient-operation unit as plane_key's seven-operation
+    # determinant; reserve_polynomial forwards this work unchanged.
+    budget.reserve(7)
+    return orientation * sum(
+        (plane[axis] * point[axis] for axis in range(3)), plane[3]
+    ) > 0
+
+
+def _section_parameter(
+    point: tuple[Fraction, ...],
+    a: tuple[Fraction, ...],
+    b: tuple[Fraction, ...],
+    axis: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Fraction:
+    # Only called after the collinearity/segment predicates succeed.
+    # Two differences and one quotient; turn already owns its own circuit.
+    budget.reserve(3)
+    return (point[axis] - a[axis]) / (b[axis] - a[axis])
 
 
 # Mutable host scratch owns incremental vertex discovery; it is not retained
@@ -43,9 +107,24 @@ class _PlaneCut:
             )
         self.parent = parent
         self.budget = budget
-        self.points = list(geometry.rational_source_coordinates(budget=budget))
+        points = geometry.rational_source_coordinates(budget=budget)
+        # Lists, point-index dictionary, witness pairs, IDs and signs are
+        # allocated below, before the outer CellMesh builder is reached.
+        budget.reserve(0, 16 * 256 + 512 * len(points))
+        self.points = list(points)
         self.parent_count = len(self.points)
+        # Match rational_points' existing two visits per converted coefficient.
+        reserve_polynomial(
+            8, 4, 0, max(binary64_fraction_bits(float(value)) for value in plane),
+            budget=budget,
+        )
         self.plane = tuple(Fraction(float(value)) for value in plane)
+        _reserve_fraction_storage(
+            (*self.points, self.plane), len(self.points), 8, 4, budget=budget
+        )
+        # Per point: unary offset negation, three products and three additions.
+        # Neither coordinate extraction nor a later clip-row tariff owns these.
+        budget.reserve(7 * len(self.points))
         self.signs = [
             sum((self.plane[axis] * point[axis] for axis in range(3)), -self.plane[3])
             for point in self.points
@@ -57,7 +136,11 @@ class _PlaneCut:
         self.keys = {point: index for index, point in enumerate(self.points)}
         self.maximum_vertices = maximum_vertices
         self.vertex_bytes_upper = 256 + 3 * (
-            128 + 2 * ((self.parent.maximum_bits + 7) // 8)
+            128 + 2 * ((max(
+                (max(value.numerator.bit_length(), value.denominator.bit_length())
+                 for point in self.points for value in point),
+                default=1,
+            ) + 7) // 8)
         )
         self.check_vertices()
         self.budget.reserve(0, len(self.points) * self.vertex_bytes_upper)
@@ -70,12 +153,18 @@ class _PlaneCut:
             )
 
     def intersect(self, first: int, second: int) -> int:
+        # Existing edge primitive price includes the divisor difference and
+        # three (difference, product, addition) interpolation coordinates.
+        # The exact linear solver below separately owns its solve circuit.
         self.budget.reserve(40)
         if self.signs[first] == 0:
             return first
         if self.signs[second] == 0:
             return second
         a, b = self.points[first], self.points[second]
+        _reserve_fraction_storage(
+            ((self.signs[first], self.signs[second]),), 2, 2, 1, budget=self.budget
+        )
         divisor = self.signs[first] - self.signs[second]
         solve = prepare_exact_small_linear_actions(
             ((divisor,),), ((self.signs[first],),), budget=self.budget
@@ -89,6 +178,9 @@ class _PlaneCut:
             raise PolyhedralAdaptationError(
                 "PolyhedralPlane.edge_parameter must lie strictly inside its parent edge; got out-of-interior intersection"
             )
+        _reserve_fraction_storage(
+            (a, b, (parameter,)), 3, 4, 3, budget=self.budget
+        )
         point = tuple(x + parameter * (y - x) for x, y in zip(a, b, strict=True))
         point = (point[0], point[1], point[2])
         if (
@@ -122,7 +214,14 @@ class _PlaneCut:
         return index
 
     def clip(self, row: np.ndarray, sign: int) -> np.ndarray:
+        # Existing row primitive price owns the three sign products per edge
+        # and its traversal; do not charge those products a second time.
         self.budget.reserve(4 * row.size)
+        self.budget.reserve(0, 8 * 256 + 512 * row.size)
+        _reserve_fraction_storage(
+            (tuple(self.signs[int(value)] for value in row),), 4, 1, 1,
+            budget=self.budget,
+        )
         result = []
         previous = int(row[-1])
         for value in row:
@@ -141,6 +240,7 @@ class _PlaneCut:
         return np.asarray(unique, dtype=np.int32)
 
     def section(self, indices: set[int], sign: int) -> np.ndarray:
+        self.budget.reserve(0, 12 * 256 + 768 * len(indices))
         pivot = next(axis for axis in range(3) if self.plane[axis])
         axes = ((1, 2), (2, 0), (0, 1))[pivot]
         original = tuple(self.points[index] for index in sorted(indices))
@@ -152,10 +252,13 @@ class _PlaneCut:
             )
         lookup = dict(zip(projected, sorted(indices), strict=True))
         ordered = []
+        _reserve_fraction_storage(
+            projected, len(projected), 4, 3, budget=self.budget
+        )
         for a, b in zip(hull, (*hull[1:], hull[0]), strict=True):
             axis = next(index for index in range(2) if a[index] != b[index])
             members = [
-                ((point[axis] - a[axis]) / (b[axis] - a[axis]), point)
+                (_section_parameter(point, a, b, axis, budget=self.budget), point)
                 for point in projected
                 if turn(a, b, point, budget=self.budget) == 0
                 and all(
@@ -166,6 +269,7 @@ class _PlaneCut:
             ordered.extend(
                 lookup[point] for parameter, point in sorted(members) if parameter < 1
             )
+        self.budget.reserve(1)  # The section-orientation product.
         if sign * self.plane[pivot] < 0:
             ordered.reverse()
         return np.asarray(ordered, dtype=np.int32)
@@ -213,6 +317,12 @@ def restrict_polyhedral_plane(
                 "PolyhedralPlane.cells must fit the target cell budget; got excessive child cells",
                 category=MeshingFailureCategory.RESOURCE_EXHAUSTED,
             )
+        # Admit the actual current-plane workset before constructing either
+        # child or its exact restriction actions. The source epoch's workset
+        # does not bound descendants cut by subsequent request planes.
+        if len(cut) > budget.ticket.cavity_upper:
+            budget.ticket.refuse(0, cavity_upper=len(cut))
+        budget.ticket.consume(cavity_cells=len(cut))
         if not cut:
             return mesh, geometry
         result, result_ids, next_cell = [], [], max(cell_ids) + 1
@@ -237,10 +347,12 @@ def restrict_polyhedral_plane(
                     ),
                     None,
                 )
+                if key is not None:
+                    _reserve_fraction_storage(
+                        (key[0], *vertices), 4, 8, 4, budget=budget
+                    )
                 if key is None or any(
-                    key[3]
-                    * sum((key[0][axis] * point[axis] for axis in range(3)), key[0][3])
-                    > 0
+                    _outside_plane(key[0], key[3], point, budget=budget)
                     for point in vertices
                 ):
                     raise PolyhedralAdaptationError(

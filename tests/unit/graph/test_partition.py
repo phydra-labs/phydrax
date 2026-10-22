@@ -552,3 +552,71 @@ def test_serial_evidence_constructor_preserves_measured_identity() -> None:
     np.testing.assert_array_equal(
         rebuilt.part_vertex_counts, result.evidence.part_vertex_counts
     )
+
+
+def test_actual_graph_evidence_has_canonical_stored_field_restoration() -> None:
+    from phydrax._fingerprint import tree_content_equal
+    from phydrax._model._structure import (
+        model_from_logical_array_recipe, prepare_model_recipe,
+    )
+    from phydrax.lifecycle._meshing_sources import (
+        reconstruct_meshing_source, register_meshing_source_artifacts,
+    )
+
+    evidence = partition_graph(grid(4, 4), GraphPartitionPlan(2)).evidence
+    register_meshing_source_artifacts()
+    recipe, arrays = prepare_model_recipe(evidence, prefix="graph-evidence")
+    decoded = model_from_logical_array_recipe(recipe, arrays, prefix="graph-evidence")
+    restored = reconstruct_meshing_source(decoded)
+    assert isinstance(restored, GraphPartitionEvidence)
+    assert tree_content_equal(evidence, restored)
+    assert evidence.evidence_id == restored.evidence_id
+    assert evidence.work == restored.work
+
+
+def test_graph_work_restoration_replays_native_counter_constraints() -> None:
+    from phydrax._model._structure import (
+        model_from_logical_array_recipe, model_structure_recipe,
+    )
+    from phydrax.lifecycle._meshing_sources import (
+        reconstruct_meshing_source, register_meshing_source_artifacts,
+    )
+    from tests._support.recipes import recipe_field_position
+
+    work = partition_graph(grid(4, 4), GraphPartitionPlan(2)).evidence.work
+    register_meshing_source_artifacts()
+    recipe = model_structure_recipe(work)
+    position = recipe_field_position(recipe, "candidate_evaluations")
+    recipe["items"][position] = {"kind": "literal", "value": -1}
+    with pytest.raises(ValueError, match="GraphPartitionWork.counters"):
+        decoded = model_from_logical_array_recipe(recipe, {}, prefix="graph-work")
+        reconstruct_meshing_source(decoded)
+
+
+def test_logical_graph_measurements_match_actual_collective_evidence() -> None:
+    from phydrax._fingerprint import tree_content_equal
+    from phydrax._meshcore import GraphPartitionCounters
+    from phydrax.graph._partition import execute, GraphPartitionWork
+
+    count = jax.device_count() * 4
+    graph, _, _ = distributed_graph(
+        np.ones(count, np.int64),
+        [(vertex, vertex + 1, 3) for vertex in range(count - 1)],
+    )
+    parts, heavy, measured = execute(
+        graph, GraphPartitionPlan(jax.device_count(), refinement_passes=2)
+    )
+    work = GraphPartitionWork(GraphPartitionCounters.from_slots(
+        np.asarray(jax.device_get(measured.counters.slots))
+    ))
+    expected = GraphPartitionEvidence.collective(
+        graph, parts, measured, heavy, work, "xla/compiled-local-shard"
+    )
+    assert graph.vertex_ids is not None
+    restored = GraphPartitionEvidence.logical(
+        graph.graph_id, graph.vertex_ids, parts, measured, heavy, work,
+        "xla/compiled-local-shard",
+    )
+    assert tree_content_equal(expected, restored)
+    assert restored.edge_cut == 3
+    assert restored.work.candidate_evaluations > 0

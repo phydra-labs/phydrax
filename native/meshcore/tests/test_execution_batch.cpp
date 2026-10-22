@@ -388,6 +388,59 @@ void test_refusal_consumption_evidence() {
   PHX_CHECK(receipt.work[PHX_MC_EXECUTION_CONSTRUCTION_WORK] == 5 && receipt.work[PHX_MC_EXECUTION_SOURCE_QUERIES] == 3 && receipt.memory[PHX_MC_EXECUTION_MEMORY_EXTERNAL_LIVE_UPPER_BYTES] == 0);
 }
 
+// A parent refusal proven while a child reservation is live records the
+// refusal without settling; the child and then the parent settle once.
+void test_live_child_refusal() {
+  Execution execution({10, 0, 0, 0});
+  Batch root(execution.scope, {10, 0, 0, 0});
+  Batch child(execution.scope, {8, 0, 0, 0}, root.ticket);
+  const Counts actual{1, 0, 0, 0};
+  std::array<uint64_t, PHX_MC_EXECUTION_BATCH_REFUSAL_VALUES> evidence{};
+  evidence.fill(77);
+  const Counts fits{1, 0, 0, 0};
+  PHX_CHECK(phx_mc_execution_batch_refuse(root.ticket, actual.data(), fits.data(),
+                                          evidence.data()) == PHX_MC_INTERNAL_ERROR);
+  PHX_CHECK(evidence[PHX_MC_BATCH_REMAINING_WORK] == 77);
+  const Counts requested{5, 0, 0, 0};
+  PHX_CHECK(phx_mc_execution_batch_refuse(root.ticket, actual.data(), requested.data(),
+                                          evidence.data()) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(evidence[PHX_MC_BATCH_REMAINING_WORK] == 1);
+  PHX_CHECK(evidence[PHX_MC_BATCH_CONSUMED_WORK] == 1);
+  Counts request{};
+  PHX_CHECK(phx_mc_execution_refusal_request(execution.scope, request.data()) == PHX_MC_OK);
+  PHX_CHECK(request == requested);
+  // The parent stays live until its child settles.
+  PHX_CHECK(phx_mc_execution_batch_settle(root.ticket, 1, 0, 0, 0) == PHX_MC_INVALID_ARGUMENT);
+  child.actual = {3, 0, 0, 0};
+  child.settle();
+  root.actual = actual;
+  root.settle();
+  const Receipt receipt = execution.finish(PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(receipt.work[PHX_MC_EXECUTION_CONSTRUCTION_WORK] == 4);
+}
+
+// A live-child refusal limited by an ancestor scope reports that scope's
+// consumption, as an admission snapshot does.
+void test_live_child_refusal_limited_by_ancestor() {
+  Execution outer({10, 0, 0, 0});
+  PHX_CHECK(phx_mc_execution_charge(outer.scope, 3, 0) == PHX_MC_OK);
+  Execution inner({100, 0, 0, 0});
+  Batch root(inner.scope, {5, 0, 0, 0});
+  Batch child(inner.scope, {3, 0, 0, 0}, root.ticket);
+  const Counts actual{1, 0, 0, 0};
+  const Counts requested{4, 0, 0, 0};
+  std::array<uint64_t, PHX_MC_EXECUTION_BATCH_REFUSAL_VALUES> evidence{};
+  PHX_CHECK(phx_mc_execution_batch_refuse(root.ticket, actual.data(), requested.data(),
+                                          evidence.data()) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(evidence[PHX_MC_BATCH_REMAINING_WORK] == 3);
+  PHX_CHECK(evidence[PHX_MC_BATCH_CONSUMED_WORK] == 4);
+  child.settle();
+  root.actual = actual;
+  root.settle();
+  inner.finish(PHX_MC_CAPACITY_EXCEEDED);
+  outer.finish(PHX_MC_CAPACITY_EXCEEDED);
+}
+
 struct Case {
   std::string_view name;
   void (*run)();
@@ -413,6 +466,8 @@ constexpr std::array cases = {
     Case{"timeout_admission", test_timeout_admission},
     Case{"checkpoint_and_invalid_arguments", test_checkpoint_and_invalid_arguments},
     Case{"refusal_consumption_evidence", test_refusal_consumption_evidence},
+    Case{"live_child_refusal", test_live_child_refusal},
+    Case{"live_child_refusal_limited_by_ancestor", test_live_child_refusal_limited_by_ancestor},
 };
 }  // namespace
 

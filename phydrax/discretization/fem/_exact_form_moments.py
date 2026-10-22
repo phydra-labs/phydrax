@@ -23,7 +23,11 @@ from ...typing import checked
 from .. import _coordinate_enclosure as algebra
 from .._coordinate_budget import CoordinateEnclosureBudget
 from .._mapped_geometry_measure import integrate_mapped_polynomial
-from .._nested_reference_types import NestedReferencePair, PolynomialReferencePair
+from .._nested_reference_types import (
+    NestedReferencePair,
+    PolynomialReferencePair,
+    rational_pair_arrays,
+)
 from .._reference_cell import reference_cell_topology
 from ._form_basis_types import AbstractReferenceFormBasis
 from ._form_elements import form_entity_chart, form_reference_vertices
@@ -34,6 +38,14 @@ type _Expressions = tuple[tuple[algebra.Expression, ...], ...]
 type _Pair = NestedReferencePair | PolynomialReferencePair
 
 type _ArgumentKey = tuple[tuple[tuple[tuple[int, ...], Fraction], ...], ...]
+type _AffineArgumentKey = tuple[
+    tuple[int, ...],
+    tuple[int, ...],
+    bytes,
+    bytes,
+    tuple[tuple[Fraction, ...], ...] | None,
+    tuple[Fraction, ...] | None,
+]
 
 
 def _argument_key(arguments: tuple[algebra.Polynomial, ...], /) -> _ArgumentKey:
@@ -52,7 +64,9 @@ def identity_reference_pair(pair: _Pair, /) -> bool:
         case NestedReferencePair():
             dimension = pair.matrix.shape[0]
             return (
-                pair.matrix.shape == (dimension, dimension)
+                pair.exact_matrix is None
+                and pair.exact_offset is None
+                and pair.matrix.shape == (dimension, dimension)
                 and pair.offset.shape == (dimension,)
                 and np.array_equal(pair.matrix, np.eye(dimension, dtype=np.float64))
                 and np.array_equal(pair.offset, np.zeros(dimension, dtype=np.float64))
@@ -77,7 +91,8 @@ def reference_arguments(
         case PolynomialReferencePair():
             return pair.arguments
         case NestedReferencePair():
-            return algebra.affine_arguments(pair.offset, pair.matrix, budget=budget)
+            matrix, offset = rational_pair_arrays(pair)
+            return algebra.affine_arguments(offset, matrix, budget=budget)
         case _:
             assert_never(pair)
 
@@ -695,6 +710,37 @@ class ExactFormMoments:
         tuple[str, str, tuple[int, ...], tuple[int, ...], _ArgumentKey],
         tuple[MomentIntegralMatrix, tuple[tuple[Fraction, ...], ...]] | None,
     ] = field(default_factory=dict)
+    arguments_cache: dict[
+        _AffineArgumentKey, tuple[tuple[algebra.Polynomial, ...], _ArgumentKey]
+    ] = field(default_factory=dict)
+
+    def arguments(
+        self, pair: _Pair
+    ) -> tuple[tuple[algebra.Polynomial, ...], _ArgumentKey]:
+        """Prepare one exact chart once, while binding every mutable array view."""
+        if isinstance(pair, PolynomialReferencePair):
+            return pair.arguments, _argument_key(pair.arguments)
+        matrix, offset = np.asarray(pair.matrix), np.asarray(pair.offset)
+        # Admission precedes byte-key creation. The original pair validator
+        # still admits every new byte/exact-bank combination before caching it.
+        self.ledger.reserve(
+            matrix.size + offset.size, 256 + 16 * (matrix.size + offset.size)
+        )
+        key = (
+            matrix.shape,
+            offset.shape,
+            matrix.astype(np.float64, copy=False).tobytes(),
+            offset.astype(np.float64, copy=False).tobytes(),
+            pair.exact_matrix,
+            pair.exact_offset,
+        )
+        retained = self.arguments_cache.get(key)
+        if retained is None:
+            arguments = reference_arguments(pair, budget=self.ledger)
+            retained = arguments, _argument_key(arguments)
+            self.ledger.retain_basis((key, retained))
+            self.arguments_cache[key] = retained
+        return retained
 
     def _retain(self, values: _Expressions) -> None:
         # Cache the expressions that remain live, including their row containers.
@@ -802,8 +848,8 @@ class ExactFormMoments:
                     dtype=np.float64,
                 ),
             )
-        arguments = reference_arguments(pair, budget=self.ledger)
-        key = (source.basis_id, target.basis_id, _argument_key(arguments))
+        arguments, argument_key = self.arguments(pair)
+        key = (source.basis_id, target.basis_id, argument_key)
         cached = self.refine_cache.get(key)
         if cached is not None:
             return cached
@@ -926,13 +972,13 @@ class ExactFormMoments:
         fine_entity: tuple[int, ...],
         pair: _Pair,
     ) -> tuple[MomentIntegralMatrix, tuple[tuple[Fraction, ...], ...]] | None:
-        arguments = reference_arguments(pair, budget=self.ledger)
+        arguments, argument_key = self.arguments(pair)
         cache_key = (
             source.basis_id,
             target.basis_id,
             coarse_entity,
             fine_entity,
-            _argument_key(arguments),
+            argument_key,
         )
         if cache_key in self.coarse_cache:
             return self.coarse_cache[cache_key]

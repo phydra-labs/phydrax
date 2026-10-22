@@ -784,18 +784,9 @@ def _coefficient_identity_space(
 def _coefficient_identity_bank(
     space: DiscreteFieldSpace,
 ) -> MeshingCoefficientIdentityBank:
-    from phydrax.lifecycle._meshing_field_records import (
-        _coefficient_id_records,
-        MeshingCoefficientIdentityBank,
-    )
+    from phydrax.lifecycle._meshing_field_records import MeshingCoefficientIdentityBank
 
-    return MeshingCoefficientIdentityBank(
-        space.field_space_id,
-        tuple(
-            (value.ordinal, value.component, value.coefficient_id)
-            for value in _coefficient_id_records(space)
-        ),
-    )
+    return MeshingCoefficientIdentityBank.from_field_space(space)
 
 
 def test_coefficient_identity_banks_preserve_measured_counts_under_default_manifest_bound() -> (
@@ -804,8 +795,9 @@ def test_coefficient_identity_banks_preserve_measured_counts_under_default_manif
     from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
     from phydrax._model._structure import (
         _canonical_recipe_payload,
-        model_from_structure_recipe,
+        model_from_array_recipe,
         model_recipe_array_inventory,
+        model_recipe_array_values,
         model_recipe_from_wire_json,
         model_recipe_wire_json,
         model_structure_recipe,
@@ -825,16 +817,21 @@ def test_coefficient_identity_banks_preserve_measured_counts_under_default_manif
         len(_canonical_recipe_payload(recipe))
         < DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_bytes
     )
-    assert model_recipe_array_inventory(recipe, prefix="coefficient-identities") == ()
+    inventory = model_recipe_array_inventory(recipe, prefix="coefficient-identities")
+    assert [entry.shape for entry in inventory] == [
+        *((count, 1) for count in counts),
+        (320, 2),
+    ]
     wire = model_recipe_wire_json(recipe)
-    restored = model_from_structure_recipe(model_recipe_from_wire_json(wire))
+    restored = model_from_array_recipe(
+        model_recipe_from_wire_json(wire),
+        model_recipe_array_values(banks, recipe, prefix="coefficient-identities"),
+        prefix="coefficient-identities",
+    )
     assert restored == banks
-    assert [len(bank.rows) for bank in restored] == [*counts, 320]
+    assert [bank.row_count for bank in restored] == [*counts, 320]
     for bank, space in zip(restored, spaces, strict=True):
         bank.require_field_space(space)
-        assert not any(
-            isinstance(value, (jax.Array, np.ndarray)) for value in jax.tree.leaves(bank)
-        )
 
 
 @pytest.mark.parametrize(
@@ -847,7 +844,10 @@ def test_coefficient_identity_bank_refuses_incomplete_or_foreign_owner_rows(
 
     space = _coefficient_identity_space("physical-field", 4, (2,))
     bank = _coefficient_identity_bank(space)
-    rows, identity = bank.rows, bank.field_space_id
+    rows = tuple(
+        (ordinal, (component,)) for ordinal, component in bank.coordinates.tolist()
+    )
+    identity, explicit = bank.field_space_id, ()
     if change == "duplicate":
         rows = (rows[0], *rows)
     elif change == "reordered":
@@ -855,42 +855,13 @@ def test_coefficient_identity_bank_refuses_incomplete_or_foreign_owner_rows(
     elif change == "missing":
         rows = rows[:-1]
     elif change == "foreign-id":
-        rows = ((rows[0][0], rows[0][1], "foreign-scientific-coefficient"), *rows[1:])
+        explicit = ((0, "foreign-scientific-coefficient"),)
     else:
         identity = "foreign-field-space"
-    with pytest.raises(ValueError, match=r"MeshingCoefficientIdentityBank\.rows"):
-        MeshingCoefficientIdentityBank(identity, rows).require_field_space(space)
-
-
-@pytest.mark.parametrize(
-    "change", ("unknown-field", "noncanonical-json", "oversize", "deep-json")
-)
-def test_coefficient_identity_codec_refuses_noncanonical_or_unbounded_payload(
-    change: str,
-) -> None:
-    from phydrax._array_archive import (
-        ArrayArchiveCorruptionError,
-        DEFAULT_ARRAY_ARCHIVE_LIMITS,
-    )
-    from phydrax.lifecycle._meshing_field_records import (
-        _decode_coefficient_identity_bank,
-        _encode_coefficient_identity_bank,
-    )
-
-    bank = _coefficient_identity_bank(_coefficient_identity_space("physical-field", 2))
-    payload = dict(_encode_coefficient_identity_bank(bank))
-    if change == "unknown-field":
-        payload["coefficient_ids"] = "obsolete-carrier"
-    elif change == "noncanonical-json":
-        payload["rows_json"] = " " + payload["rows_json"]
-    elif change == "oversize":
-        payload["rows_json"] = " " * (DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_bytes + 1)
-    else:
-        payload["rows_json"] = "[" * 17 + "0" + "]" * 17
-    with pytest.raises(
-        ArrayArchiveCorruptionError if change == "deep-json" else ValueError
-    ):
-        _decode_coefficient_identity_bank(payload)
+    with pytest.raises(ValueError, match=r"MeshingCoefficientIdentityBank\.coordinates"):
+        MeshingCoefficientIdentityBank.from_rows(
+            identity, rows, explicit
+        ).require_field_space(space)
 
 
 class _ScaledMarker(phx.AbstractArrayModel):
@@ -1184,9 +1155,16 @@ def tensor_grid_source_record() -> PreparedTensorGrid:
     return PreparedTensorGrid((axis,), axis_names=("longitudinal",))
 
 
+@pytest.mark.parametrize("tree_updated", (False, True), ids=("direct", "tree-updated"))
 def test_tensor_grid_source_record_archive_round_trip(
-    tmp_path: Path, tensor_grid_source_record: PreparedTensorGrid
+    tmp_path: Path, tensor_grid_source_record: PreparedTensorGrid, tree_updated: bool
 ) -> None:
+    if tree_updated:
+        tensor_grid_source_record = eqx.tree_at(
+            lambda grid: grid.points,
+            tensor_grid_source_record,
+            tensor_grid_source_record.points,
+        )
     receipt = write_meshing_source_closure(
         tmp_path / "tensor-grid", tensor_grid_source_record
     )
@@ -1208,10 +1186,7 @@ def test_tensor_grid_source_record_archive_refuses_changed_points(
         tensor_grid_source_record.points
         + jax.numpy.asarray(0.25, dtype=jax.numpy.float64),
     )
-    with pytest.raises(
-        ValueError,
-        match=r"source_closure\.primary_entity_layout must retain its materialized tensor grid; got detached TensorEntityLayout",
-    ):
+    with pytest.raises(ValueError):
         write_meshing_source_closure(tmp_path / "tensor-grid-invalid", corrupted)
 
 

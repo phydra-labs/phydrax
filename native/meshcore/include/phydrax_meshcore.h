@@ -251,6 +251,12 @@ typedef struct phx_mc_tet_mesh phx_mc_tet_mesh;
 #define PHX_MC_LEVEL_SET_FAILED_EDGE 5
 #define PHX_MC_LEVEL_SET_COUNTERS 6
 
+/* Closed level-set output modes. FULL_CARRIERS publishes rounded carriers and
+ * their certified deviations; TOPOLOGY_ONLY publishes only cells, parents,
+ * sources and weights (out_points and out_deviations must be NULL). */
+#define PHX_MC_LEVEL_SET_FULL_CARRIERS 0
+#define PHX_MC_LEVEL_SET_TOPOLOGY_ONLY 1
+
 #define PHX_MC_RESTRICTED_DUAL_WORK_UNITS 0
 #define PHX_MC_RESTRICTED_DUAL_INTERIOR_FACETS 1
 #define PHX_MC_RESTRICTED_DUAL_HULL_FACETS 2
@@ -335,7 +341,8 @@ PHX_MC_API int32_t phx_mc_execution_batch_admit(
  * usage and settled children exactly once, and release unused reservation.
  * Native work remains native (not externally charged host work). Native payload
  * peaks remain allocator evidence; bytes here are host-only peaks.
- * Settlement is allowed on workers and after refusal, including exception
+ * Settlement is allowed on workers and after refusal (including a refusal
+ * recorded while children were live), including exception
  * paths. Success destroys the ticket. Live children/targets return
  * INVALID_ARGUMENT. Host consumption above the complete upper returns
  * INTERNAL_ERROR without mutation; corrected settlement may retry.
@@ -392,10 +399,15 @@ PHX_MC_API int32_t phx_mc_execution_target_end(void* target);
  * ticket for a child), without making a reservation. Four input slots are
  * [work, queries, cavity, bytes]; out_refusal has the eight named slots above.
  * A proven refusal commits/releases and destroys ticket, returning CAPACITY
- * (or TIMEOUT). A request that fits returns INTERNAL_ERROR without changing
- * the ticket, counters, reservations, snapshot, or output. Invalid lifetime or
- * input returns INVALID_ARGUMENT. Safe on workers; outputs are written only
- * for the committed refusal. */
+ * (or TIMEOUT). With live child tickets (no live target) the allowance also
+ * excludes their held reservations; a proven refusal then records the scope
+ * refusal and its snapshot (remaining after those reservations, parent-level
+ * consumption plus this ticket's validated actual work/queries, larger peaks)
+ * but neither settles nor destroys the ticket: after its children settle, one
+ * phx_mc_execution_batch_settle commits it. A request that fits returns
+ * INTERNAL_ERROR without changing the ticket, counters, reservations,
+ * snapshot, or output. Invalid lifetime or input returns INVALID_ARGUMENT.
+ * Safe on workers; outputs are written only for a proven refusal. */
 PHX_MC_API int32_t phx_mc_execution_batch_refuse(
     void* ticket, const uint64_t* actual_host, const uint64_t* requested_upper,
     uint64_t* out_refusal);
@@ -746,13 +758,28 @@ PHX_MC_API int32_t phx_mc_regular_3d(int64_t point_count, const double* points,
  * keep_convex_hull != 0 meshes the convex hull (hull edges act as boundary
  * constraints); otherwise triangles reachable from the hull or from hole seeds
  * holes (h, 2) without crossing a segment are removed.  min_angle_degrees in
- * [0, 60) (0 disables angle refinement), max_area > 0 (+inf disables), and
- * max_steiner >= 0 bound the refinement.  Steiner points are appended after the
- * input points.  cell_constraints (cell_count, 3) holds, for the edge opposite
+ * [0, 60) (0 disables angle refinement), max_area > 0 (+inf disables),
+ * max_edge_length > 0 (+inf disables) and max_steiner >= 0 bound the
+ * refinement.  A domain triangle is refined while any edge that is not an
+ * input segment piece has binary64 length sqrt(dx*dx + dy*dy) above
+ * max_edge_length; NaN or nonpositive bounds are INVALID_ARGUMENT.  Steiner
+ * points are appended after the input points.  cell_constraints
+ * (cell_count, 3) holds, for the edge opposite
  * each cell vertex, the input segment index it lies on or -1.  Returns
  * PHX_MC_REFINEMENT_LIMIT with a valid conforming mesh when the quality targets
  * are unmet after max_steiner insertions, and PHX_MC_CONSTRAINT_INTERSECTION when
  * two segments cross in their interiors.
+ *
+ * lattice_spacing s > 0 (0 disables; negative, NaN or infinite values are
+ * INVALID_ARGUMENT) seeds the carved domain before refinement with sites of the
+ * equilateral lattice o + i (s, 0) + j (s / 2, s sqrt(3) / 2), o the lower
+ * corner of the input bounding box, inserted coarse to fine by dyadic
+ * sublattice level.  A site is skipped when it lies outside the domain, on a
+ * vertex or a constrained edge, encroaches a constrained subsegment of its
+ * constrained Delaunay cavity, or would be joined to an input point closer
+ * than s / 2.  Accepted sites are free Steiner points sharing max_steiner and
+ * every resource limit; refinement then examines every domain triangle.  A
+ * lattice with more than 2^31 rows or columns returns PHX_MC_CAPACITY_EXCEEDED.
  *
  * Optional split witnesses are caller-owned buffers with witness_capacity rows:
  * witness_parents (N, 2), witness_segments (N), witness_ratios (N), where N is
@@ -780,6 +807,8 @@ typedef struct phx_mc_constrained_delaunay_2d_request {
   int32_t keep_convex_hull;
   double min_angle_degrees;
   double max_area;
+  double max_edge_length;
+  double lattice_spacing;
   int64_t max_steiner;
   int64_t max_triangles;
   int64_t max_cavity_cells;
@@ -978,9 +1007,13 @@ PHX_MC_API int32_t phx_mc_graph_partition(
  * (exact orient2d), no two of a, b, c, d share physical coordinates, the new
  * triangles are nondegenerate, and, when either old triangle is
  * surface-consistent, both new ones are surface-consistent and on the side of
- * every consistent old one.  work_limit bounds walk
- * steps and flip tests; an exhausted budget stops further work and leaves a
- * valid chart triangulation.  Outputs: triangles_out and constrained_out
+ * every consistent old one.  work_limit bounds source validation, walk
+ * steps and flip tests.  Source validation is mandatory: a work limit or
+ * execution allowance that cannot pay it refuses the call with
+ * CAPACITY_EXCEEDED (TIMEOUT for an expired deadline), writes counters with
+ * exhausted = 1 and no other output.  After validation an exhausted budget
+ * stops further work and leaves a valid chart triangulation with OK.
+ * Outputs: triangles_out and constrained_out
  * (max_triangles, 3), the first triangle_count_out rows written, and counters
  * (PHX_MC_SURFACE_COUNTERS,): inserted, refused, flips, walk steps, work,
  * exhausted (0 or 1). */
@@ -1276,6 +1309,17 @@ typedef struct phx_mc_tet_mesh_create_request {
   const int8_t* witness_strata;
   const int32_t* witness_entities;
   const double* witness_parameters;
+  /* Host-declared curved face sources of the own (undeclared) source complex:
+   * curved_sources (group rows), finite nonnegative curved_tolerances, 32-byte
+   * curved_digests per source and face_claims per input face (the host-
+   * certified deviation; NaN exactly for faces of undeclared sources). Claims
+   * are host evidence bound to the source/digest, never native proof. Zero
+   * count requires all four pointers null. */
+  int64_t curved_source_count;
+  const int32_t* curved_sources;
+  const double* curved_tolerances;
+  const uint8_t* curved_digests;
+  const double* face_claims;
   int32_t boundary_policy;
   int64_t max_vertices;
   int64_t max_tetrahedra;
@@ -1284,6 +1328,51 @@ typedef struct phx_mc_tet_mesh_create_request {
 } phx_mc_tet_mesh_create_request;
 PHX_MC_API int32_t phx_mc_tet_mesh_create(
     const phx_mc_tet_mesh_create_request* request);
+/* Inspect, without mutation, collapsing unprotected curved-source surface
+ * vertex `remove` (no incident segment) onto `keep` under the same native
+ * proofs as the commit below. face_count is 0 when refused; otherwise faces
+ * (capacity x 3) receive the new constrained faces, oriented from the
+ * stratum's first material side, with their curved source group row and the
+ * accepted generation they were validated in. Curved authority is delegated
+ * to the host and never shares the planar PLC collapse proof. */
+PHX_MC_API int32_t phx_mc_tet_mesh_inspect_curved_collapse(
+    phx_mc_tet_mesh* mesh, int32_t remove, int32_t keep, int32_t require_improvement,
+    int64_t work_limit, int64_t capacity, int64_t* face_count, int32_t* source,
+    int64_t* accepted_generation, int32_t* faces);
+/* Collapse unprotected curved-source surface vertex `remove` (no incident
+ * segment) onto `keep`. claim_faces (claim_count x 3) must be exactly the new
+ * constrained faces, claim_coordinates (claim_count x 9) their bitwise
+ * current vertex coordinates, claim_deviations their host-certified finite
+ * deviations within the source's declared tolerance, under the source's
+ * declared digest and the current accepted_generation. Volume and surface link
+ * conditions, positive cells, one material stratum and the exact oriented
+ * patch boundary chain are proved natively. applied is 0 on any refusal. */
+typedef struct phx_mc_tet_mesh_curved_collapse_request {
+  phx_mc_tet_mesh* mesh;
+  int32_t remove;
+  int32_t keep;
+  int32_t source;
+  int64_t accepted_generation;
+  const uint8_t* digest;
+  int64_t claim_count;
+  const int32_t* claim_faces;
+  const double* claim_coordinates;
+  const double* claim_deviations;
+  int32_t require_improvement;
+  int64_t work_limit;
+  int32_t* applied;
+} phx_mc_tet_mesh_curved_collapse_request;
+PHX_MC_API int32_t phx_mc_tet_mesh_collapse_curved_edge(
+    const phx_mc_tet_mesh_curved_collapse_request* request);
+/* Current accepted-state generation of a mesh. */
+PHX_MC_API int32_t phx_mc_tet_mesh_accepted_generation(const phx_mc_tet_mesh* mesh,
+                                                       int64_t* generation);
+/* Retained curved host claims: count, then rows (source row), sources,
+ * coordinates (count x 9), deviations and accepted generations. Null outputs
+ * report only the count. */
+PHX_MC_API int32_t phx_mc_tet_mesh_curved_claims(
+    const phx_mc_tet_mesh* mesh, int64_t capacity, int64_t* count, int32_t* rows,
+    int32_t* sources, double* coordinates, double* deviations, int64_t* generations);
 PHX_MC_API int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* mesh, const double* sizes,
                                           double radius_edge_bound, int64_t max_insertions,
                                           int64_t work_limit, int64_t* counters);
@@ -1504,6 +1593,16 @@ PHX_MC_API int32_t phx_mc_tet_mesh_execution_times(
 #define PHX_MC_POWER_CELLS_SIZES 5
 #define PHX_MC_POWER_CELLS_FAILURE 4
 #define PHX_MC_POWER_CELLS_COUNTERS 10
+/* Preflight slots: vertices, unique undirected edges, faces, face corners,
+ * cells, pieces, vertex-site witnesses, cell-face occurrences, cell-face
+ * corner occurrences, native output payload bytes, publication connectivity
+ * entries upper, publication numeric data bytes upper. The last two match
+ * the explicit-loop topology owner, not adaptation lineage/organization.
+ * Capacity evidence is (one-based preflight slot, required, remaining);
+ * zero axis means no capacity refusal. Numeric output banks remain empty
+ * until preflight succeeds. All new limits are nonnegative, including zero. */
+#define PHX_MC_POWER_CELLS_PREFLIGHT 12
+#define PHX_MC_POWER_CELLS_CAPACITY 3
 typedef struct phx_mc_power_cells phx_mc_power_cells;
 typedef struct phx_mc_restricted_power_cells_request {
   int64_t site_count;
@@ -1521,6 +1620,15 @@ typedef struct phx_mc_restricted_power_cells_request {
   int64_t max_pieces;
   int64_t max_vertices;
   int64_t work_limit;
+  int64_t max_edges;
+  int64_t max_faces;
+  int64_t max_face_entries;
+  int64_t max_cells;
+  int64_t max_site_witnesses;
+  int64_t max_sided_loop_occurrences;
+  int64_t max_sided_corner_occurrences;
+  int64_t max_connectivity_entries;
+  int64_t max_data_bytes;
   int8_t record_phases;
   phx_mc_power_cells** result;
 } phx_mc_restricted_power_cells_request;
@@ -1551,12 +1659,23 @@ typedef struct phx_mc_restricted_power_cells_exact_request {
   int64_t max_pieces;
   int64_t max_vertices;
   int64_t work_limit;
+  int64_t max_edges;
+  int64_t max_faces;
+  int64_t max_face_entries;
+  int64_t max_cells;
+  int64_t max_site_witnesses;
+  int64_t max_sided_loop_occurrences;
+  int64_t max_sided_corner_occurrences;
+  int64_t max_connectivity_entries;
+  int64_t max_data_bytes;
   int8_t record_phases;
   phx_mc_power_cells** result;
 } phx_mc_restricted_power_cells_exact_request;
 PHX_MC_API int32_t phx_mc_restricted_power_cells_exact(
     const phx_mc_restricted_power_cells_exact_request* request);
 PHX_MC_API int32_t phx_mc_power_cells_sizes(const phx_mc_power_cells* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_power_cells_preflight(const phx_mc_power_cells* result, int64_t* counts);
+PHX_MC_API int32_t phx_mc_power_cells_capacity(const phx_mc_power_cells* result, int64_t* evidence);
 PHX_MC_API int32_t phx_mc_power_cells_counters(const phx_mc_power_cells* result, int64_t* counters);
 /* Actual charged source-validation/expansion-decode visits, including a
  * refused prefix. The ordinary binary64 source path reports zero. */
@@ -1664,7 +1783,34 @@ typedef struct phx_mc_polyhedron_corner_hexes_request {
 PHX_MC_API int32_t phx_mc_polyhedron_corner_hexes(
     const phx_mc_polyhedron_corner_hexes_request* request);
 
-/* P1 level-set insertion; counts carry committed sizes and failed-edge evidence. */
+/* P1 level-set insertion into a positive conforming tetrahedral complex whose
+ * faces/edges are all listed (every face constrained, every edge a
+ * subsegment). Each edge (a, b) whose values have opposite nonzero signs is
+ * bisected, in edge order, at its exact source-owned P1 root
+ *   S = (|v_b| A + |v_a| B) / (|v_a| + |v_b|),
+ * on which the P1 field vanishes exactly; topology is this exact subdivision.
+ * Vertex rows: out_sources (a, b) with exact homogeneous nonnegative
+ * out_weights (|v_b|, |v_a|) (exact barycentrics are weights / their sum);
+ * input vertex i has sources (i, i) and weights (1, 0). Cells are grouped by
+ * out_parents (source cell row) in creation order. Every mode validates the
+ * source complex exactly, refuses a crossing protected edge as
+ * CONSTRAINT_INTERSECTION and work, vertex, cell or cavity (crossing-edge
+ * star) limits as CAPACITY_EXCEEDED; roots are exact for every finite value
+ * pair. output_mode is one of PHX_MC_LEVEL_SET_*; any other value, or output
+ * pointers that do not match it, is INVALID_ARGUMENT before any work.
+ * FULL_CARRIERS: the source vertices are their exact P1 positions.
+ * out_points holds each vertex's correctly rounded (per coordinate, ties to
+ * even) binary64 carrier and out_deviations an outward bound of the Euclidean
+ * distance between the carrier and its exact point, zero exactly when they
+ * coincide. Output is published only when every carrier cell is positively
+ * oriented and all carriers are distinct (else DEGENERATE_INPUT); a carrier
+ * outside the coordinate domain is INVALID_INPUT.
+ * TOPOLOGY_ONLY: the exact source positions are owned by the caller (the
+ * binary64 points are only rounded views); no carrier or deviation is
+ * computed, out_points and out_deviations must be NULL, and the caller must
+ * construct and certify every carrier from its exact source.
+ * Counters carry committed sizes, work and the failed edge row (-1 on
+ * success). */
 typedef struct phx_mc_level_set_split_3d_request {
   int64_t point_count;
   const double* points;
@@ -1680,11 +1826,13 @@ typedef struct phx_mc_level_set_split_3d_request {
   int64_t max_cells;
   int64_t work_limit;
   int64_t cavity_limit;
+  int32_t output_mode;
   double* out_points;
   int32_t* out_cells;
   int32_t* out_parents;
   int32_t* out_sources;
   double* out_weights;
+  double* out_deviations;
   int64_t* counters;
 } phx_mc_level_set_split_3d_request;
 PHX_MC_API int32_t phx_mc_level_set_split_3d(

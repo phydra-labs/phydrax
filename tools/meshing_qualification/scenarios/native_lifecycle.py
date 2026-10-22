@@ -1,11 +1,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
-import json
 import os
-import resource
-import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from importlib.util import find_spec
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -23,11 +21,24 @@ from phydrax import (
     canonical_fingerprint,
     model_array_bytes,
 )
-from phydrax.lifecycle import read_meshing_source_closure, write_meshing_source_closure
+from phydrax._meshcore import current_native_execution_scope
+from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
+from phydrax.lifecycle import (
+    MeshingAcceptedEpoch,
+    read_meshing_source_closure,
+    read_meshing_source_execution_controls,
+    validate_meshing_accepted_epochs,
+    write_meshing_source_closure,
+)
+from phydrax.lifecycle._meshing_field_records import (
+    rebind_meshing_adaptation_execution_endpoints,
+)
 from phydrax.meshing import NativeMeshingPhaseMeasurement, PlcAssociationTransfer
 from phydrax.meshing.qualification import (
     declared_geometry_edge_lengths,
     execute_native_consumer,
+    execute_native_request,
+    prepare_envelope_accepted_epoch,
     prepare_plc_associations,
     qualify_simplex_resources,
     transition_envelope_state,
@@ -36,6 +47,7 @@ from tools._meshing_cases import (
     _box_union_payload,
     analytic_region_indices,
     corpus_identity,
+    corpus_solution_field_degree,
     frozen_request_record,
     meshing_case,
     MeshingCase,
@@ -47,6 +59,7 @@ from tools.meshing_qualification._descent import certify_descent
 from tools.meshing_qualification._physics import (
     _compiled_solver_stages,
     _physical_error,
+    _physical_inventory,
     _prepare_corpus_solver,
     CorpusCompilerEvidence,
 )
@@ -59,18 +72,18 @@ from tools.meshing_qualification._records import (
 from tools.meshing_qualification._runtime import (
     _measured,
     _runtime_identity,
+    ColdControlPacket,
+    ColdWorkerReport,
     ColdWorkerTimeout,
     Deadline,
     peak_resident_bytes,
+    PEAK_RESIDENT_SCOPE,
+    prepare_cold_worker,
     qualification_failure,
     QualificationFailure,
-    run_cold_worker,
     StageLedger,
 )
-from tools.meshing_qualification.scenarios.bisection import (
-    _bisection_p1_integral,
-    _bisection_transfer,
-)
+from tools.meshing_qualification.scenarios.bisection import _bisection_transfer
 from tools.meshing_qualification.scenarios.triangulation import _simplex_measures
 
 
@@ -106,6 +119,57 @@ def _corpus_domain(case: MeshingCase) -> Any:
     )
 
 
+def _corpus_simplex_rows(mesh: phx.discretization.CellMesh) -> tuple[np.ndarray, ...]:
+    """Ascending vertex rows of every topology degree of an all-simplex mesh.
+
+    Rows are read from the mesh's canonical cell-complex incidences in entity
+    order, whatever packing its connectivity uses (an adapted target of several
+    tetrahedron blocks carries packed polyhedral incidence). Every degree-``d``
+    entity must have ``d + 1`` facets whose vertex rows cover ``d + 1``
+    distinct vertices exactly ``d`` times each, every block must declare the
+    simplex kind, and the top rows must be the blocks' sorted cells in order;
+    any other polygon or polyhedron is refused rather than relabeled.
+    """
+    kind = {2: "triangle", 3: "tetrahedron"}.get(mesh.topological_dimension)
+    kinds = sorted({block.cell_kind for block in mesh.blocks})
+    if kind is None or kinds != [kind]:
+        raise TypeError(
+            f"corpus.mesh.blocks must all declare one simplex kind; got {kinds} in dimension {mesh.topological_dimension}"
+        )
+    topology = mesh.topology
+    rows = [np.arange(topology.entity_sets[0].count, dtype=np.int64)[:, None]]
+    for degree, incidence in enumerate(topology.incidences, start=1):
+        count = topology.entity_sets[degree].count
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
+        sources = np.asarray(incidence.relation.source_indices, dtype=np.int64)[valid]
+        targets = np.asarray(incidence.relation.target_indices, dtype=np.int64)[valid]
+        if np.any(np.bincount(targets, minlength=count) != degree + 1):
+            raise TypeError(
+                f"corpus.topology must give every degree-{degree} entity {degree + 1} facets; got a non-simplicial entity"
+            )
+        facets = sources[np.argsort(targets, kind="stable")].reshape((count, degree + 1))
+        vertices = np.sort(rows[-1][facets].reshape((count, -1)), axis=1).reshape(
+            (count, degree + 1, degree)
+        )
+        if np.any(vertices != vertices[:, :, :1]) or np.any(
+            vertices[:, 1:, 0] <= vertices[:, :-1, 0]
+        ):
+            raise TypeError(
+                f"corpus.topology must span {degree + 1} distinct vertices per degree-{degree} simplex; got another cell"
+            )
+        rows.append(vertices[:, :, 0])
+    cells = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
+    )
+    if len(rows) != mesh.topological_dimension + 1 or not np.array_equal(
+        rows[-1], np.sort(cells, axis=1)
+    ):
+        raise TypeError(
+            "corpus.topology cells must be the declared block simplices in block order; got different cells"
+        )
+    return tuple(rows)
+
+
 def _embedded_feature_coverage(
     case: MeshingCase,
     mesh: phx.discretization.CellMesh,
@@ -121,18 +185,7 @@ def _embedded_feature_coverage(
     else:
         segments = np.asarray(payload["vertices"], dtype=np.float64)[payload["segments"]]
     points = np.asarray(mesh.coordinates, dtype=np.float64)
-    connectivity = mesh.connectivity
-    if not isinstance(
-        connectivity,
-        (
-            phx.discretization.PolygonalConnectivity,
-            phx.discretization.TetrahedralConnectivity,
-        ),
-    ):
-        raise TypeError(
-            f"corpus.connectivity must be polygonal or tetrahedral; got {type(connectivity).__name__}"
-        )
-    edges = points[np.asarray(connectivity.edges)]
+    edges = points[_corpus_simplex_rows(mesh)[1]]
     failures = []
     for index, segment in enumerate(segments):
         direction = segment[1] - segment[0]
@@ -187,13 +240,8 @@ def _material_semantics(
                 np.sort(zone.scope.entity_ids), np.sort(identifiers[regions == index])
             )
         )
-    connectivity = mesh.connectivity
-    if not isinstance(connectivity, phx.discretization.TetrahedralConnectivity):
-        raise TypeError(
-            f"corpus.connectivity must be TetrahedralConnectivity; got {type(connectivity).__name__}"
-        )
     points = np.asarray(mesh.coordinates, dtype=np.float64)
-    corners = points[np.asarray(connectivity.faces)]
+    corners = points[_corpus_simplex_rows(mesh)[2]]
     payload = source_payload(case)
     source_vertices = np.asarray(payload["vertices"], dtype=np.float64)
     patches = {patch.name: patch for patch in result.patches}
@@ -281,6 +329,7 @@ def _corpus_acceptance(
     *,
     epoch_zero: phx.discretization.CellMesh | None = None,
     hierarchy: phx.meshing.BisectionHierarchy | None = None,
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
 ) -> dict[str, object]:
     """Check frozen source controls, using certified descent for adapted epochs."""
 
@@ -304,10 +353,11 @@ def _corpus_acceptance(
         measures = np.linalg.det(corners[:, 1:] - corners[:, :1]) / 6.0
         regions = analytic_region_indices(case, corners.mean(axis=1))
     embedding = phx.geometry.certify_global_embedding(
-        mesh, result.geometry, result.audit.validity
+        mesh, result.geometry, result.audit.validity, budget=budget
     )
     coverage = phx.geometry.certify_domain_coverage(
-        mesh, result.geometry, _corpus_domain(case), regions, embedding=embedding
+        mesh, result.geometry, _corpus_domain(case), regions, embedding=embedding,
+        budget=budget,
     )
     features = _embedded_feature_coverage(case, mesh)
     measured = {
@@ -322,33 +372,21 @@ def _corpus_acceptance(
         if case.dimension == 3
         else {"passed": True, "status": "not-requested"}
     )
-    connectivity = mesh.connectivity
-    if not isinstance(
-        connectivity,
-        (
-            phx.discretization.PolygonalConnectivity,
-            phx.discretization.TetrahedralConnectivity,
-        ),
-    ):
-        raise TypeError(
-            f"corpus.connectivity must be polygonal or tetrahedral; got {type(connectivity).__name__}"
-        )
     lengths = declared_geometry_edge_lengths(
         mesh,
         result.geometry,
-        np.asarray(connectivity.edges, dtype=np.int64),
+        _corpus_simplex_rows(mesh)[1],
         failure_factory=qualification_failure,
+        budget=budget,
     )
     control = specification.size_controls[0]
     tolerance = specification.size_compliance.relative_tolerance
     p50 = float(np.quantile(lengths, 0.5))
     max_edge = float(np.max(lengths))
-    size_passed = ("hard-size" not in case.controls and descent is None) or (
-        (
-            descent is not None
-            or abs(p50 - control.target_size) <= tolerance * control.target_size
-        )
-        and max_edge <= control.maximum_size * (1.0 + tolerance)
+    target_size_satisfied = abs(p50 - control.target_size) <= tolerance * control.target_size
+    maximum_size_satisfied = max_edge <= control.maximum_size * (1.0 + tolerance)
+    size_passed = "hard-size" not in case.controls or (
+        (descent is not None or target_size_satisfied) and maximum_size_satisfied
     )
     quality_passed = (
         (
@@ -435,6 +473,9 @@ def _corpus_acceptance(
         "maximum_measure_residual": residual,
         "minimum_signed_cell_measure": float(np.min(measures)),
         "size_passed": size_passed,
+        "size_control_strength": control.strength.value,
+        "target_size_satisfied": bool(target_size_satisfied),
+        "maximum_size_satisfied": bool(maximum_size_satisfied),
         "quality_passed": bool(quality_passed),
         "fixed_boundary_passed": fixed_passed,
         "independent_minimum_dihedral": minimum_dihedral,
@@ -493,14 +534,15 @@ def _triangle_comparison(
 def _corpus_native_consumer[T](
     result: phx.meshing.CellMeshingResult,
     specification: Any,
-    call: Callable[[], T],
+    call: Callable[[phx.discretization.CoordinateEnclosureBudget | None], T],
     *,
     native: bool,
     target: Callable[[T], phx.meshing.CellMeshingResult] | None = None,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> tuple[phx.meshing.CellMeshingResult, T]:
-    """Continue the latest ended root without resetting its limits."""
+    """Continue the request that produced ``result`` under its remaining allowance."""
     if not native:
-        value = call()
+        value = call(None)
         return result if target is None else target(value), value
     consumed = execute_native_consumer(
         result,
@@ -508,34 +550,92 @@ def _corpus_native_consumer[T](
         call,
         target=target,
         failure_factory=qualification_failure,
+        observe_managed_admission=True,
+        prepared_operands=None
+        if coordinate_operands is None
+        else coordinate_operands.for_result(result.mesh, result.geometry),
     )
     return consumed.result, consumed.value
 
 
+def _corpus_native_request[T](
+    source: phx.meshing.CellMeshingResult,
+    specification: Any,
+    call: Callable[[phx.discretization.CoordinateEnclosureBudget | None], T],
+    *,
+    native: bool,
+    target: Callable[[T], phx.meshing.CellMeshingResult],
+    deadline: Deadline | None = None,
+    coordinate_operands: CoordinateOperandCollector | None = None,
+) -> tuple[phx.meshing.CellMeshingResult, T]:
+    """Run one new complete adaptation request under its original limits.
+
+    The source's completed request is history only; the workflow deadline
+    intersects this request's own wall budget and is never reset.
+    """
+    if not native:
+        value = call(None)
+        return target(value), value
+    try:
+        requested = execute_native_request(
+            source,
+            specification.limits,
+            call,
+            target=target,
+            failure_factory=qualification_failure,
+            observe_managed_admission=True,
+            workflow_remaining_seconds=None if deadline is None else deadline.remaining(),
+        )
+        if coordinate_operands is not None and coordinate_operands.pending:
+            receipt = requested.result.execution_evidence
+            if receipt is None:
+                raise RuntimeError("Native request must bind its actual operand earning phase.")
+            coordinate_operands.complete(receipt)
+    except BaseException:
+        if coordinate_operands is not None:
+            coordinate_operands.abort()
+        raise
+    return requested.result, requested.value
+
+
 def _corpus_cold_worker(
-    path: str,
+    path: Path,
     content_id: str,
     expected: tuple[str, ...],
     repeats: int,
     target_error: float,
-) -> dict[str, object]:
-    """Restore every accepted field epoch and continue its PDE."""
+    name: str,
+    engine: str,
+    expected_errors: tuple[float, ...],
+    *,
+    budget: phx.discretization.CoordinateEnclosureBudget | None,
+) -> tuple[phx.meshing.CellMeshingResult, ColdWorkerReport]:
+    """Restore all accepted epochs and continue their PDE in the owning request."""
 
+    started = perf_counter()
     restored = read_meshing_source_closure(
-        Path(path), expected_content_id=content_id, limits=ArrayArchiveLimits()
+        path, expected_content_id=content_id, limits=ArrayArchiveLimits(), budget=budget,
     )
-    if not isinstance(restored, tuple) or len(restored) != 7:
+    if not isinstance(restored, Mapping) or not {
+        "generation_source", "generation_specification", "generation_options",
+        "accepted_target", "accepted_data",
+    } <= restored.keys():
         raise qualification_failure(
             "_corpus_cold_worker",
-            "corpus.cold_packet must retain seven ordered source, control and history roles",
+            "corpus.cold_packet must retain the canonical accepted-epoch source envelope",
             {"packet_type": type(restored).__name__},
         )
-    source, result, specification, options, name, history, engine = restored
+    source = restored["generation_source"]
+    result = restored["accepted_target"]
+    specification = restored["generation_specification"]
+    options = restored["generation_options"]
+    history = validate_meshing_accepted_epochs(restored)
     if (
         not isinstance(result, phx.meshing.CellMeshingResult)
         or not isinstance(name, str)
         or not isinstance(history, tuple)
         or not history
+        or (engine == "native") != (budget is not None)
         or (
             source.binding_id,
             result.result_id,
@@ -563,38 +663,53 @@ def _corpus_cold_worker(
                 "specification": specification,
             },
         )
+    read_seconds = perf_counter() - started
     case = meshing_case(name)
-    bound, cold = _corpus_native_consumer(
-        result,
-        specification,
-        lambda: _corpus_cold_fields(
-            case, result, specification, history, repeats, target_error
-        ),
-        native=engine == "native",
+    cold = _corpus_cold_fields(
+        case, result, specification, history, repeats, target_error,
+        expected_errors=expected_errors, budget=budget,
     )
-    return {**cold, "continued_result": _result_identity(bound)}
+    return result, ColdWorkerReport(record=cold, read_seconds=read_seconds)
 
 
 def _corpus_cold_fields(
     case: MeshingCase,
     result: phx.meshing.CellMeshingResult,
     specification: Any,
-    history: tuple[Any, ...],
+    history: tuple[MeshingAcceptedEpoch, ...],
     repeats: int,
     target_error: float,
+    *,
+    expected_errors: tuple[float, ...],
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
 ) -> dict[str, object]:
 
     name = case.name
 
     accepted = []
-    epoch_zero = history[0][0].mesh
-    for publication, fields, original_error, hierarchy in history:
+    epoch_zero = history[0].carrier.mesh
+    for epoch, original_error in zip(history, expected_errors, strict=True):
+        publication = epoch.carrier
+        fields = tuple(epoch.fields[name] for name in ("u", "density", "history"))
+        if epoch.transition is not None and not isinstance(
+            epoch.transition, phx.meshing.MeshAdaptationResult
+        ):
+            raise qualification_failure(
+                "_corpus_cold_fields",
+                "Cold corpus history must retain its actual mesh adaptation transaction.",
+                {"transition": epoch.transition},
+            )
+        hierarchy = (
+            None if epoch.transition is None
+            else _lifecycle_descent_hierarchy(epoch.transition)
+        )
         acceptance = _corpus_acceptance(
             case,
             publication,
             specification,
             epoch_zero=epoch_zero if hierarchy is not None else None,
             hierarchy=hierarchy,
+            budget=budget,
         )
         if not acceptance["passed"]:
             raise qualification_failure(
@@ -609,10 +724,16 @@ def _corpus_cold_fields(
                 {"fields": fields},
             )
         space, _, _ = _prepare_corpus_solver(
-            publication, material_x=name == "plc-material-cavity"
+            publication,
+            material_x=name == "plc-material-cavity",
+            solution_degree=corpus_solution_field_degree(case),
+            budget=budget,
         )
         error = _physical_error(
-            publication.mesh, fields[0], material_x=name == "plc-material-cavity"
+            publication.mesh,
+            fields[0],
+            material_x=name == "plc-material-cavity",
+            space=space,
         )
         if error != original_error:
             raise qualification_failure(
@@ -641,19 +762,24 @@ def _corpus_cold_fields(
                 "history_max_defect": history_error,
             }
         )
-    if history[-1][0].result_id != result.result_id:
+    if history[-1].carrier.result_id != result.result_id:
         raise qualification_failure(
             "_corpus_cold_fields",
             ("Cold final corpus fields belong to a different accepted publication."),
             {"history": history, "result": result},
         )
-    _, problem, free = _prepare_corpus_solver(
-        result, material_x=name == "plc-material-cavity"
+    space, problem, free = _prepare_corpus_solver(
+        result,
+        material_x=name == "plc-material-cavity",
+        solution_degree=corpus_solution_field_degree(case),
+        budget=budget,
     )
     values, compiler, timings = _compiled_solver_stages(
-        problem, jnp.asarray(history[-1][1][0])[free], repeats
+        problem, jnp.asarray(history[-1].fields["u"])[free], repeats
     )
-    error = _physical_error(result.mesh, values, material_x=name == "plc-material-cavity")
+    error = _physical_error(
+        result.mesh, values, material_x=name == "plc-material-cavity", space=space
+    )
     if not np.isfinite(error) or error > target_error:
         raise qualification_failure(
             "_corpus_cold_fields",
@@ -662,7 +788,6 @@ def _corpus_cold_fields(
         )
     return {
         "passed": True,
-        "process_id": os.getpid(),
         "runtime": _runtime_identity(),
         "accepted_epochs": accepted,
         "field_names": ["u", "density", "history"],
@@ -681,7 +806,7 @@ def _corpus_cold_reanalysis(
     specification: Any,
     options: Any,
     case: MeshingCase,
-    history: tuple[Any, ...],
+    history: tuple[MeshingAcceptedEpoch, ...],
     repeats: int,
     target_error: float,
     deadline: Deadline,
@@ -691,16 +816,30 @@ def _corpus_cold_reanalysis(
     _ledger = StageLedger(record, deadline=deadline)
 
     limits = ArrayArchiveLimits()
-    records = (
-        source,
-        result,
-        specification,
-        options,
-        case.name,
-        history,
-        record["engine"],
-    )
-    with TemporaryDirectory(prefix="phydrax-native-corpus-source-") as directory:
+    if result.certification is None:
+        raise qualification_failure(
+            "_corpus_cold_reanalysis",
+            "Canonical accepted history requires its actual target certification inputs.",
+            {"result": result},
+        )
+    records = {
+        "certification_inputs": result.certification.request,
+        "report": result.certification,
+        "associations": result.associations,
+        "generation_source": source,
+        "generation_specification": specification,
+        "generation_options": options,
+        "accepted_target": result,
+        "accepted_data": {"accepted_epochs": history},
+    }
+    with (
+        TemporaryDirectory(prefix="phydrax-native-corpus-source-") as directory,
+        prepare_cold_worker(
+            "tools.meshing_qualification.scenarios.native_lifecycle",
+            deadline=deadline,
+            ledger=_ledger,
+        ) as cold_worker,
+    ):
         receipt, measured = _ledger.run(
             record.get("active_phase", "write_meshing_source_closure"),
             lambda: _measured(
@@ -725,20 +864,19 @@ def _corpus_cold_reanalysis(
             canonical_fingerprint(array_tree_fingerprint(history)),
         )
         remaining = deadline.remaining()
-        # The scenario module owns its worker command.
         cold_started = perf_counter()
         try:
-            cold = run_cold_worker(
-                "scenarios.native_lifecycle",
-                (
-                    str(receipt.path),
-                    receipt.content_id,
-                    json.dumps(expected),
-                    str(repeats),
-                    str(target_error),
-                ),
-                deadline=deadline,
-                ledger=_ledger,
+            cold = cold_worker.execute(
+                receipt.path,
+                receipt.content_id,
+                {
+                    "expected": list(expected),
+                    "repeats": repeats,
+                    "target_error": target_error,
+                    "engine": record["engine"],
+                    "case_name": case.name,
+                    "epoch_errors": [epoch["l2_error"] for epoch in record["epochs"]],
+                },
             )
             measured = {"wall_seconds": perf_counter() - cold_started}
         except ColdWorkerTimeout as failure:
@@ -749,7 +887,7 @@ def _corpus_cold_reanalysis(
             measured["wall_seconds"]
         )
         # Worker return-code evidence is retained by StageLedger.
-        # Parsed and process-validated by run_cold_worker.
+        # Parsed and process-bound by ColdWorker.execute.
         if (
             not isinstance(cold, dict)
             or cold.get("passed") is not True
@@ -777,19 +915,146 @@ type _CorpusSource = phx.meshing.NativePlanarSource | phx.meshing.NativePlcSourc
 type _CorpusRequest = phx.meshing.SurfaceMeshingSpec | phx.meshing.VolumeMeshingSpec
 
 
+def _corpus_generation_options(
+    source: _CorpusSource,
+    options: phx.meshing.NativeMeshingOptions,
+    *,
+    native: bool,
+    adaptation_rounds: int,
+) -> phx.meshing.NativeMeshingOptions:
+    """Select explicit source preparation before freezing generation controls."""
+    if (
+        not native
+        or adaptation_rounds == 0
+        or not isinstance(source, phx.meshing.NativePlcSource)
+        or source.complex.boundary != "fixed"
+    ):
+        return options
+    schedule = options.volume_schedule
+    if schedule is None:
+        raise ValueError("Fixed-boundary native adaptation requires a volume schedule.")
+    if schedule.prepare_fixed_boundary_adaptation:
+        return options
+    prepared_schedule = phx.meshing.NativeVolumeSchedule(
+        radius_edge_bound=schedule.radius_edge_bound,
+        minimum_dihedral_degrees=schedule.minimum_dihedral_degrees,
+        refinement_rounds=schedule.refinement_rounds,
+        improvement_passes=schedule.improvement_passes,
+        exudation_passes=schedule.exudation_passes,
+        exudation_weight_fraction=schedule.exudation_weight_fraction,
+        metric_optimization_passes=schedule.metric_optimization_passes,
+        prepare_fixed_boundary_adaptation=True,
+    )
+    return phx.meshing.NativeMeshingOptions(
+        options.route,
+        implicit_policy=options.implicit_policy,
+        curve_schedule=options.curve_schedule,
+        surface_schedule=options.surface_schedule,
+        volume_schedule=prepared_schedule,
+        polyhedral_schedule=options.polyhedral_schedule,
+        structured_schedule=options.structured_schedule,
+        hex_core_fraction=options.hex_core_fraction,
+        grid_schedule=options.grid_schedule,
+    )
+
+
 def _corpus_bisection_compatibility(
     source: _CorpusSource,
 ) -> phx.meshing.BisectionCompatibility:
-    """Select label construction for the declared source family."""
-    # Triangle closure repairs neighboring labels locally; recovered PLC
-    # tetrahedra need uniform initialization of matching bisection labels.
+    """Select the declared source family's conforming subdivision law."""
+    # Tetrahedral whole-edge stars need no matching-label initialization and
+    # retain the exact source domain without a barycentric compatibility prefix.
     match source:
         case phx.meshing.NativePlanarSource():
             return phx.meshing.BisectionCompatibility.CONFORMING_CLOSURE
         case phx.meshing.NativePlcSource():
-            return phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT
+            return phx.meshing.BisectionCompatibility.WHOLE_EDGE_STAR
         case invalid:
             assert_never(invalid)
+
+
+def _corpus_refinement_plan(
+    result: phx.meshing.CellMeshingResult,
+    target_error: float,
+    maximum_cells: int,
+    /,
+    *,
+    material_x: bool,
+    current_error: float | None = None,
+) -> tuple[int, int | None, dict[str, object]]:
+    """Provision whole-star generations from a quadratic interpolation proxy.
+
+    The proxy is the closed-form P1 interpolation L2 integral, not an FE error
+    estimator or a convergence theorem. A regular-tetrahedron reference gives
+    a desired cell count; binary generation counts provision that count only.
+    Actual closure capacities and the final physical solve remain authoritative.
+    """
+    mesh = result.mesh
+    if mesh.topological_dimension != 3:
+        return 1, None, {"rule": "one-triangle-generation", "maximum_generations": 1}
+    if current_error is not None and current_error <= target_error:
+        return 1, None, {
+            "rule": "physical-target-met-mandatory-whole-star",
+            "current_physical_error": current_error,
+            "target_error": target_error,
+            "maximum_generations": 1,
+            "convergence_claim": False,
+            "acceptance_authority": "actual-final-physical-solve",
+        }
+    count = sum(block.cell_count for block in mesh.blocks)
+    scope = current_native_execution_scope()
+    work, scratch = 128 * count, 512 * count
+    with (
+        scope.batch(work, bytes_upper=scratch)
+        if scope is not None else nullcontext()
+    ) as ticket:
+        if ticket is not None:
+            ticket.consume(work, managed_bytes=scratch)
+        points = np.asarray(mesh.coordinates)
+        cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
+        corners = points[cells]
+        volumes = _simplex_measures(points, cells)
+        pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)))
+        differences = corners[:, pairs[:, 0]] - corners[:, pairs[:, 1]]
+        coefficient = np.ones(count)
+        if material_x:
+            coefficient = np.where(np.mean(corners[:, :, 0], axis=1) > 1.0, 0.5, 1.0)
+            squared = differences[:, :, 0] ** 2 * coefficient[:, None]
+        else:
+            squared = np.sum(differences * differences, axis=2)
+        incident = np.zeros((count, 4))
+        for edge, (first, second) in enumerate(pairs):
+            incident[:, first] += squared[:, edge]
+            incident[:, second] += squared[:, edge]
+        # E[(sum_e |e|² lambda_i lambda_j)²], Dirichlet(1,1,1,1).
+        integral = volumes * (
+            np.sum(squared, axis=1) ** 2 + np.sum(squared * squared, axis=1)
+            + np.sum(incident * incident, axis=1)
+        ) / 840.0
+        proxy = float(np.sqrt(np.sum(integral)))
+        volume = float(np.sum(volumes))
+        regular_constant = np.sqrt(13.0 / 140.0) * (6.0 * np.sqrt(2.0)) ** (2.0 / 3.0)
+        if material_x:
+            regular_constant *= float(np.sum(volumes * coefficient) / volume) / 3.0
+        desired = max(
+            count,
+            int(np.ceil((regular_constant * volume ** (7.0 / 6.0) / target_error) ** 1.5)),
+        )
+        desired_depth = max(1, int(np.floor(np.log2(desired / count))))
+        capacity_depth = max(1, int(np.floor(np.log2(maximum_cells / count))))
+        generations = 1 if proxy <= target_error else min(desired_depth, capacity_depth)
+    return generations, desired, {
+        "rule": "quadratic-interpolation-regular-reference-provisioning",
+        "interpolation_l2_proxy": proxy,
+        "target_error": target_error,
+        "source_cells": count,
+        "domain_measure": volume,
+        "desired_cells": desired,
+        "maximum_generations": generations,
+        "binary_minimum_if_all_generations_execute": count * 2**generations,
+        "convergence_claim": False,
+        "acceptance_authority": "actual-final-physical-solve",
+    }
 
 
 @final
@@ -806,6 +1071,7 @@ class _NativeLifecycleContext(phx.StrictModule):
     native_phases: list[NativeMeshingPhaseMeasurement]
     ledger: StageLedger
     set_phase: Callable[[str], None]
+    coordinate_operands: CoordinateOperandCollector | None
 
 
 def _publish_native_lifecycle(
@@ -841,7 +1107,12 @@ def _publish_native_lifecycle(
         context.set_phase(phase)
         result, measured = _ledger.run(
             phase,
-            lambda: _measured(lambda: plan.execute(record_phase=native_phases.append)),
+            lambda: _measured(
+                lambda: plan.execute(
+                    record_phase=native_phases.append,
+                    coordinate_operands=context.coordinate_operands,
+                )
+            ),
         )
     elif engine == "triangle":
         record["phase_availability"] = {
@@ -873,8 +1144,11 @@ def _publish_native_lifecycle(
             lambda: _corpus_native_consumer(
                 result,
                 specification,
-                lambda: _corpus_acceptance(case, result, specification),
+                lambda budget: _corpus_acceptance(
+                    case, result, specification, budget=budget
+                ),
                 native=engine == "native",
+                coordinate_operands=context.coordinate_operands,
             )
         ),
     )
@@ -921,16 +1195,22 @@ def _prepare_native_lifecycle_association(
         phase = "authoritative_source_association_preparation"
         context.set_phase(phase)
 
-        def inspect_source() -> phx.meshing.qualification.PreparedPlcAssociations:
+        def inspect_source(
+            _budget: phx.discretization.CoordinateEnclosureBudget | None,
+        ) -> phx.meshing.qualification.PreparedPlcAssociations:
             return prepare_plc_associations(
-                source, result, specification.limits, record_phase=native_phases.append
+                source, result, specification.limits, record_phase=native_phases.append,
+                prepared_operands=None
+                if context.coordinate_operands is None
+                else context.coordinate_operands.for_result(result.mesh, result.geometry),
+                budget=_budget,
             )
 
         inspected, measured = _ledger.run(
             phase,
             lambda: _measured(
                 lambda: _corpus_native_consumer(
-                    result, specification, inspect_source, native=engine == "native"
+                    result, specification, inspect_source, native=engine == "native",
                 )
             ),
         )
@@ -996,13 +1276,19 @@ def _solve_native_lifecycle_epoch(
     context: _NativeLifecycleContext,
     result: phx.meshing.CellMeshingResult,
     previous_values: jax.Array | None,
+    previous_auxiliary: tuple[jax.Array, jax.Array] | None,
+    previous_carrier: phx.meshing.CellMeshingResult | None,
+    transition: phx.meshing.MeshAdaptationResult | None,
     epoch: int,
+    *,
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     phx.discretization.FiniteElementDiscretization,
     phx.equations.CompiledFiniteElementProblem,
     jax.Array,
     CorpusCompilerEvidence,
     float,
+    MeshingAcceptedEpoch,
 ]:
     case = context.case
     repeats = context.repeats
@@ -1014,7 +1300,10 @@ def _solve_native_lifecycle_epoch(
         phase,
         lambda: _measured(
             lambda: _prepare_corpus_solver(
-                result, material_x=case.name == "plc-material-cavity"
+                result,
+                material_x=case.name == "plc-material-cavity",
+                solution_degree=corpus_solution_field_degree(case),
+                budget=budget,
             )
         ),
     )
@@ -1030,9 +1319,28 @@ def _solve_native_lifecycle_epoch(
     values, compiler, timings = _compiled_solver_stages(problem, seed, repeats)
     stages.update({f"{key}_epoch_{epoch}": value for key, value in timings.items()})
     error = _physical_error(
-        result.mesh, values, material_x=case.name == "plc-material-cavity"
+        result.mesh, values, material_x=case.name == "plc-material-cavity", space=space
     )
-    return space, problem, values, compiler, error
+    if previous_auxiliary is None:
+        previous_auxiliary = (
+            jnp.full((result.mesh.coordinates.shape[0],), 2.0, dtype=values.dtype),
+            space.dof_maps[0].dof_coordinates[:, 0] + 0.5,
+        )
+    if transition is not None:
+        if previous_carrier is None:
+            raise qualification_failure(
+                "_solve_native_lifecycle_epoch",
+                "An adapted accepted epoch must retain its actual preceding carrier.",
+                {"transition": transition},
+            )
+        transition = rebind_meshing_adaptation_execution_endpoints(
+            transition, previous_carrier, result,
+        )
+    accepted = prepare_envelope_accepted_epoch(
+        result, space, values, previous_auxiliary, epoch,
+        part_name=case.name, transition=transition, budget=budget,
+    )
+    return space, problem, values, compiler, error, accepted
 
 
 def _adapt_native_lifecycle_fields(
@@ -1045,6 +1353,8 @@ def _adapt_native_lifecycle_fields(
     values: jax.Array,
     previous_auxiliary: tuple[jax.Array, jax.Array],
     epoch: int,
+    *,
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     phx.meshing.MeshAdaptationResult,
     jax.Array,
@@ -1058,12 +1368,39 @@ def _adapt_native_lifecycle_fields(
     identifiers = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in result.mesh.blocks]
     )
-    request = phx.meshing.MarkedMeshAdaptation(
-        identifiers, np.empty((0,), dtype=np.int64)
+    generations, target_cells, refinement_plan = _corpus_refinement_plan(
+        result, context.target_error, specification.limits.maximum_cells,
+        material_x=context.case.name == "plc-material-cavity",
+        current_error=context.record["epochs"][-1]["l2_error"],
     )
+    request = phx.meshing.MarkedMeshAdaptation(
+        identifiers, np.empty((0,), dtype=np.int64),
+        refinement_generations=generations,
+        refinement_target_cells=target_cells,
+    )
+    context.record.setdefault("refinement_plans", []).append(
+        {"epoch": epoch, "request_id": request.request_id, **refinement_plan}
+    )
+    protected_scopes: tuple[phx.meshing.MeshingScope, ...] = ()
+    if isinstance(source, phx.meshing.NativePlcSource) and source.complex.boundary == "fixed":
+        facets = result.mesh.entity_set(result.mesh.topological_dimension - 1)
+        if budget is not None:
+            budget.reserve(facets.count, 32 * facets.count)
+        boundary = np.asarray(facets.subset("boundary").mask, dtype=np.bool_)
+        fixed_boundary = phx.meshing.MeshingScope(
+            result.mesh.mesh_id, result.mesh.numeric_version,
+            phx.meshing.MeshingEntityKind.MESH, result.mesh.topological_dimension - 1,
+            facets.entity_set_id, np.asarray(facets.entity_ids)[boundary],
+        )
+        protected_scopes = (
+            fixed_boundary,
+            *(patch.scope for patch in result.patches
+              if patch.scope.entity_dimension == result.mesh.topological_dimension - 1),
+        )
     policy = phx.meshing.MeshAdaptationPolicy(
         phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION,
         compatibility=_corpus_bisection_compatibility(source),
+        protected_scopes=protected_scopes,
         limits=specification.limits,
         association_transfer=association_transfer,
         audit_policy=phx.meshing.CellMeshAuditPolicy(
@@ -1082,9 +1419,28 @@ def _adapt_native_lifecycle_fields(
     context.set_phase(phase)
     candidate, measured = _ledger.run(
         phase,
-        lambda: _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared)),
+        lambda: _measured(
+            lambda: phx.meshing.execute_mesh_adaptation(
+                prepared, coordinate_operands=context.coordinate_operands
+            )
+        ),
     )
     stages[phase] = measured["wall_seconds"]
+    if budget is not None:
+        identity_count = identifiers.size + sum(
+            block.cell_count for block in candidate.target.mesh.blocks
+        )
+        budget.reserve(identity_count, 32 * identity_count)
+    target_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in candidate.target.mesh.blocks]
+    )
+    retained_marks = np.intersect1d(identifiers, target_ids)
+    if candidate.status is not phx.meshing.MeshAdaptationStatus.COMPLETE or retained_marks.size:
+        raise qualification_failure(
+            "adapt_fields",
+            "Native lifecycle adaptation must genuinely refine every originally marked cell.",
+            {"status": candidate.status.value, "retained_marked_cells": retained_marks.tolist()},
+        )
     if candidate.transfer is None:
         raise qualification_failure(
             "adapt_fields",
@@ -1104,7 +1460,8 @@ def _adapt_native_lifecycle_fields(
                 epoch,
                 previous_auxiliary,
                 failure_factory=qualification_failure,
-                physical_error=_physical_error,
+                budget=budget,
+                solution_inventory=_physical_inventory,
             )
         ),
     )
@@ -1117,8 +1474,6 @@ def _accept_native_lifecycle_transfer(
     specification: _CorpusRequest,
     bound_target: phx.meshing.CellMeshingResult,
     adaptation: phx.meshing.MeshAdaptationResult,
-    values: jax.Array,
-    previous_values: jax.Array,
     state_transfer: dict[str, object],
     epoch: int,
     epoch_zero: phx.discretization.CellMesh,
@@ -1130,8 +1485,10 @@ def _accept_native_lifecycle_transfer(
     _ledger = context.ledger
     record["epochs"][-1]["transfer"] = _bisection_transfer(adaptation)
     record["epochs"][-1]["solver_state_transfer"] = state_transfer
-    before = _bisection_p1_integral(adaptation.source.mesh, values)
-    after = _bisection_p1_integral(adaptation.target.mesh, previous_values)
+    inventory = state_transfer["solution_inventory"]
+    if not isinstance(inventory, dict):
+        raise TypeError("corpus.state_transfer must retain actual FE solution inventories")
+    before, after = inventory["source"], inventory["target"]
     record["epochs"][-1]["state_inventory"] = {
         "source": before,
         "target": after,
@@ -1159,14 +1516,16 @@ def _accept_native_lifecycle_transfer(
                 lambda: _corpus_native_consumer(
                     result,
                     specification,
-                    lambda: _corpus_acceptance(
+                    lambda budget: _corpus_acceptance(
                         case,
                         result,
                         specification,
                         epoch_zero=epoch_zero,
                         hierarchy=_lifecycle_descent_hierarchy(adaptation),
+                        budget=budget,
                     ),
                     native=engine == "native",
+                    coordinate_operands=context.coordinate_operands,
                 )
             ),
         )
@@ -1206,15 +1565,7 @@ def _lifecycle_descent_hierarchy(
 @final
 class _NativeLifecycleEpochs(phx.StrictModule):
     result: phx.meshing.CellMeshingResult
-    history: tuple[
-        tuple[
-            phx.meshing.CellMeshingResult,
-            tuple[jax.Array, ...],
-            float,
-            phx.meshing.BisectionHierarchy | None,
-        ],
-        ...,
-    ]
+    history: tuple[MeshingAcceptedEpoch, ...]
     final_error: float
 
 
@@ -1234,26 +1585,41 @@ def _execute_native_lifecycle_epochs(
     record = context.record
     previous_values = None
     previous_auxiliary = None
-    accepted_history = []
+    accepted_history: list[MeshingAcceptedEpoch] = []
     epoch_zero = result.mesh
-    accepted_hierarchy = None
+    accepted_transition = None
     for epoch in range(adaptation_rounds + 1):
         result, solved = _corpus_native_consumer(
             result,
             specification,
-            lambda: _solve_native_lifecycle_epoch(
-                context, result, previous_values, epoch
+            lambda budget: _solve_native_lifecycle_epoch(
+                context, result, previous_values, previous_auxiliary,
+                accepted_history[-1].carrier if accepted_history else None,
+                accepted_transition, epoch, budget=budget,
             ),
             native=engine == "native",
+            coordinate_operands=context.coordinate_operands,
         )
-        space, problem, values, compiler, error = solved
-        if previous_auxiliary is None:
-            previous_auxiliary = (
-                jnp.full(values.shape, 2.0, dtype=values.dtype),
-                space.dof_maps[0].dof_coordinates[:, 0] + 0.5,
+        space, problem, values, compiler, error, prepared_epoch = solved
+        transition = prepared_epoch.transition
+        if transition is not None:
+            if not isinstance(transition, phx.meshing.MeshAdaptationResult):
+                raise qualification_failure(
+                    "_execute_native_lifecycle_epochs",
+                    "The corpus history must retain its actual mesh adaptation transaction.",
+                    {"transition": transition},
+                )
+            transition = rebind_meshing_adaptation_execution_endpoints(
+                transition, accepted_history[-1].carrier, result,
             )
-        accepted_history.append(
-            (result, (values, *previous_auxiliary), error, accepted_hierarchy)
+        accepted = MeshingAcceptedEpoch(
+            result, prepared_epoch.declarations, prepared_epoch.fields,
+            transition=transition,
+        )
+        accepted_history.append(accepted)
+        previous_auxiliary = (
+            jnp.asarray(accepted.fields["density"]),
+            jnp.asarray(accepted.fields["history"]),
         )
         if error <= target_error and record["time_to_target_error_seconds"] is None:
             record["time_to_target_error_seconds"] = perf_counter() - started
@@ -1263,6 +1629,7 @@ def _execute_native_lifecycle_epochs(
                 "result": _result_identity(result),
                 "l2_error": error,
                 "dofs": space.dof_maps[0].global_dof_count,
+                "solution_field_degree": corpus_solution_field_degree(case),
                 "compiler": compiler,
                 "retained_bytes": model_array_bytes(
                     (
@@ -1281,6 +1648,7 @@ def _execute_native_lifecycle_epochs(
                         result.mesh,
                         previous_values,
                         material_x=case.name == "plc-material-cavity",
+                        space=space,
                     )
                 ),
             }
@@ -1288,10 +1656,10 @@ def _execute_native_lifecycle_epochs(
         if epoch == adaptation_rounds:
             break
         auxiliary = previous_auxiliary
-        bound_target, transitioned = _corpus_native_consumer(
+        bound_target, transitioned = _corpus_native_request(
             result,
             specification,
-            lambda: _adapt_native_lifecycle_fields(
+            lambda budget: _adapt_native_lifecycle_fields(
                 context,
                 source,
                 specification,
@@ -1301,9 +1669,12 @@ def _execute_native_lifecycle_epochs(
                 values,
                 auxiliary,
                 epoch,
+                budget=budget,
             ),
             native=engine == "native",
             target=lambda value: value[0].target,
+            deadline=context.deadline,
+            coordinate_operands=context.coordinate_operands,
         )
         adaptation, previous_values, previous_auxiliary, state_transfer = transitioned
         result = _accept_native_lifecycle_transfer(
@@ -1311,13 +1682,11 @@ def _execute_native_lifecycle_epochs(
             specification,
             bound_target,
             adaptation,
-            values,
-            previous_values,
             state_transfer,
             epoch,
             epoch_zero,
         )
-        accepted_hierarchy = _lifecycle_descent_hierarchy(adaptation)
+        accepted_transition = adaptation
     return _NativeLifecycleEpochs(
         result=result, history=tuple(accepted_history), final_error=error
     )
@@ -1353,11 +1722,14 @@ def _complete_native_lifecycle(
     )
     elapsed = perf_counter() - started
     final_error = epochs.final_error
-    record["physical_target_first_reached_seconds"] = record[
-        "time_to_target_error_seconds"
-    ]
-    if final_error <= target_error:
-        record["time_to_target_error_seconds"] = elapsed
+    lifecycle_complete = (
+        final_error <= target_error
+        and elapsed <= timeout
+        and context.adaptation_rounds > 0
+        and len(accepted_history) == context.adaptation_rounds + 1
+    )
+    # time_to_target_error_seconds keeps its first-reach value; end_to_end_seconds
+    # separately records the whole lifecycle including cold reanalysis.
     record.update(
         {
             "status": "passed"
@@ -1366,14 +1738,16 @@ def _complete_native_lifecycle(
             "target_error_reached": final_error <= target_error,
             "physical_error": final_error,
             "end_to_end_seconds": elapsed,
-            "peak_process_resident_bytes": peak_resident_bytes(resource.RUSAGE_SELF),
+            "peak_process_resident_bytes": peak_resident_bytes(),
             "independent_scientific_certification": "passed",
-            "mandatory_workflow_completion": "incomplete",
+            "mandatory_workflow_completion": "complete"
+            if lifecycle_complete
+            else "incomplete",
             "case_contract_completion": "complete"
             if final_error <= target_error and elapsed <= timeout
             else "incomplete",
             "nonclaims": [
-                "This routine corpus case is not the entire W15 mandatory workflow.",
+                "This certifies one lifecycle; the corpus also requires its other routine, larger, and combined profiles.",
                 "No release or performance leadership is inferred from this run.",
             ],
         }
@@ -1406,13 +1780,10 @@ def _record_native_lifecycle_refusal(
         and array_tree_fingerprint(source) == source_fingerprint
     )
     record_failure(record, failure, phase)
+    if failure.category is expected and source_unchanged:
+        record["status"] = "expected-refusal"
     record.update(
         {
-            "status": "expected-refusal"
-            if failure.category is expected and source_unchanged
-            else "timeout"
-            if failure.category is phx.meshing.MeshingFailureCategory.TIMED_OUT
-            else "failed",
             "source_bits_preserved": source_unchanged,
             "mandatory_workflow_completion": "incomplete",
             "end_to_end_seconds": perf_counter() - started,
@@ -1426,8 +1797,8 @@ def _finish_native_lifecycle_measurements(context: _NativeLifecycleContext) -> N
     native_phases = context.native_phases
     record["native_phases"] = _phase_recordings(native_phases)
     record["end_to_end_seconds"] = perf_counter() - started
-    record["peak_process_resident_bytes"] = peak_resident_bytes(resource.RUSAGE_SELF)
-    record["process_peak_scope"] = "process-lifetime"
+    record["peak_process_resident_bytes"] = peak_resident_bytes()
+    record["process_peak_scope"] = PEAK_RESIDENT_SCOPE
     devices = []
     for device in jax.local_devices():
         statistics = device.memory_stats()
@@ -1456,6 +1827,9 @@ def qualify_native_lifecycle(
     target_error: float = 0.05,
     adaptation_rounds: int = 1,
     engine: str = "native",
+    maximum_work_units: int | None = None,
+    maximum_geometry_queries: int | None = None,
+    maximum_scratch_bytes: int | None = None,
 ) -> dict[str, object]:
     """Native geometry → certification → transfer → solve with fixed targets."""
     case = meshing_case(case_name)
@@ -1525,13 +1899,24 @@ def qualify_native_lifecycle(
         native_phases=native_phases,
         ledger=_ledger,
         set_phase=set_phase,
+        coordinate_operands=CoordinateOperandCollector() if engine == "native" else None,
     )
     try:
         prepared_case, measured = _ledger.run(
             phase,
-            lambda: _measured(lambda: prepare_case(case, resolution, capacity, timeout)),
+            lambda: _measured(
+                lambda: prepare_case(
+                    case, resolution, capacity, timeout,
+                    maximum_work_units=maximum_work_units,
+                    maximum_geometry_queries=maximum_geometry_queries,
+                    maximum_scratch_bytes=maximum_scratch_bytes,
+                )
+            ),
         )
         source, specification, options = prepared_case
+        options = _corpus_generation_options(
+            source, options, native=engine == "native", adaptation_rounds=adaptation_rounds
+        )
 
         source_fingerprint = array_tree_fingerprint(source)
         stages[phase] = measured["wall_seconds"]
@@ -1577,7 +1962,6 @@ def qualify_native_lifecycle(
         record_failure(record, failure, phase)
         record.update(
             {
-                "status": "timeout",
                 "mandatory_workflow_completion": "incomplete",
                 "end_to_end_seconds": perf_counter() - started,
             }
@@ -1592,19 +1976,45 @@ def qualify_native_lifecycle(
     return record
 
 
-def worker(argv: tuple[str, ...]) -> dict[str, Any]:
-    """Decode process arguments and run the scenario-owned cold consumer."""
-    return _corpus_cold_worker(
-        argv[0], argv[1], tuple(json.loads(argv[2])), int(argv[3]), float(argv[4])
+def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
+    """Run the scenario-owned cold consumer on its one control packet."""
+    controls = packet.controls
+    arguments = (
+        packet.archive_path,
+        packet.content_id,
+        tuple(controls["expected"]),
+        int(controls["repeats"]),
+        float(controls["target_error"]),
+        str(controls["case_name"]),
+        str(controls["engine"]),
+        tuple(float(value) for value in controls["epoch_errors"]),
     )
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] != "worker":
-        raise ValueError(
-            "qualification.subcommand must equal worker; got " + repr(sys.argv[1:])
+    if controls["engine"] != "native":
+        restored, report = _corpus_cold_worker(*arguments, budget=None)
+        return ColdWorkerReport(
+            record={**report.record, "continued_result": _result_identity(restored)},
+            read_seconds=report.read_seconds,
         )
-    print(json.dumps(worker(tuple(sys.argv[2:]))))
+    controls_started = perf_counter()
+    raw = read_meshing_source_execution_controls(
+        packet.archive_path, expected_content_id=packet.content_id,
+        limits=ArrayArchiveLimits(),
+    )
+    controls_seconds = perf_counter() - controls_started
+    request = execute_native_request(
+        raw.execution_evidence,
+        raw.limits,
+        lambda budget: _corpus_cold_worker(*arguments, budget=budget),
+        target=lambda value: value[0],
+        failure_factory=qualification_failure,
+        observe_managed_admission=True,
+        workflow_remaining_seconds=packet.deadline.remaining(),
+    )
+    report = request.value[1]
+    return ColdWorkerReport(
+        record={**report.record, "continued_result": _result_identity(request.result)},
+        read_seconds=controls_seconds + report.read_seconds,
+    )
 
 
 def run(args: QualificationControls) -> dict[str, object]:
@@ -1616,6 +2026,9 @@ def run(args: QualificationControls) -> dict[str, object]:
                 resolution=args.resolution,
                 capacity=args.capacity,
                 timeout=args.timeout,
+                maximum_work_units=args.maximum_work_units,
+                maximum_geometry_queries=args.maximum_geometry_queries,
+                maximum_scratch_bytes=args.maximum_scratch_bytes,
                 repeats=args.repeats,
                 target_error=args.target_error,
                 adaptation_rounds=args.adaptation_rounds,
@@ -1626,6 +2039,9 @@ def run(args: QualificationControls) -> dict[str, object]:
                 resolution=args.resolution,
                 capacity=args.capacity,
                 timeout=args.timeout,
+                maximum_work_units=args.maximum_work_units,
+                maximum_geometry_queries=args.maximum_geometry_queries,
+                maximum_scratch_bytes=args.maximum_scratch_bytes,
                 repeats=args.repeats,
                 target_error=args.target_error,
                 adaptation_rounds=args.adaptation_rounds,

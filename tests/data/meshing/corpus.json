@@ -9,12 +9,14 @@
         "maximum-vertices"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 2,
       "expected_admission": "refusal",
       "expected_region_measures": {
         "plate": 3.84
       },
       "family": "triangle",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -29,6 +31,7 @@
       "minimum_angle_radians": 0.4363323129985824,
       "minimum_mean_ratio": null,
       "name": "planar-capacity-refusal",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 157,
         "kind": "analytic-generated-fixture",
@@ -55,12 +58,14 @@
         "minimum-angle"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 2,
       "expected_admission": "positive",
       "expected_region_measures": {
         "plate": 3.84
       },
       "family": "triangle",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -75,6 +80,7 @@
       "minimum_angle_radians": 0.4363323129985824,
       "minimum_mean_ratio": null,
       "name": "planar-hole-feature",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 157,
         "kind": "analytic-generated-fixture",
@@ -102,12 +108,14 @@
         "stale-source-revision"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 2,
       "expected_admission": "refusal",
       "expected_region_measures": {
         "plate": 3.84
       },
       "family": "triangle",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -122,6 +130,7 @@
       "minimum_angle_radians": 0.4363323129985824,
       "minimum_mean_ratio": null,
       "name": "planar-stale-revision",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 157,
         "kind": "analytic-generated-fixture",
@@ -147,12 +156,14 @@
         "minimum-angle"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 2,
       "expected_admission": "positive",
       "expected_region_measures": {
         "plate": 0.324
       },
       "family": "triangle",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -167,6 +178,7 @@
       "minimum_angle_radians": 0.4363323129985824,
       "minimum_mean_ratio": null,
       "name": "planar-thin-channel",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 190,
         "kind": "analytic-generated-fixture",
@@ -195,6 +207,7 @@
         "maximum-cavity"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "refusal",
       "expected_region_measures": {
@@ -202,6 +215,7 @@
         "right": 0.875
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -220,6 +234,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-cavity-refusal",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 708,
         "kind": "analytic-generated-fixture",
@@ -245,12 +260,14 @@
         "minimum-quality"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
         "solid": 2.0
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -265,6 +282,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-disconnected",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 567,
         "kind": "analytic-generated-fixture",
@@ -293,6 +311,7 @@
         "maximum-entities"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "refusal",
       "expected_region_measures": {
@@ -300,6 +319,7 @@
         "right": 0.875
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -318,6 +338,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-entities-refusal",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 708,
         "kind": "analytic-generated-fixture",
@@ -342,12 +363,14 @@
         "soft-size"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
         "solid": 1.0
       },
       "family": "tetrahedron",
+      "history_field_degree": 2,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -362,6 +385,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "plc-fixed-boundary",
+      "solution_field_degree": 2,
       "source_artifact": {
         "bytes": 353,
         "kind": "analytic-generated-fixture",
@@ -386,6 +410,7 @@
         "soft-size"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "refusal",
       "expected_region_measures": {
@@ -393,6 +418,7 @@
         "b": 1.0
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -411,6 +437,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "plc-incompatible-constraints",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 495,
         "kind": "analytic-generated-fixture",
@@ -438,6 +465,7 @@
         "minimum-quality"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
@@ -445,6 +473,7 @@
         "right": 0.875
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -463,6 +492,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-material-cavity",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 708,
         "kind": "analytic-generated-fixture",
@@ -487,12 +517,14 @@
         "soft-size"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
         "solid": 3.0
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -507,6 +539,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "plc-nonconvex",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 380,
         "kind": "analytic-generated-fixture",
@@ -535,6 +568,7 @@
         "maximum-queries"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "refusal",
       "expected_region_measures": {
@@ -542,6 +576,7 @@
         "right": 0.875
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -560,6 +595,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-queries-refusal",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 708,
         "kind": "analytic-generated-fixture",
@@ -585,12 +621,14 @@
         "dihedral-25"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
         "solid": 1.0
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -605,6 +643,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "plc-sliver-rich",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 318,
         "kind": "analytic-generated-fixture",
@@ -629,12 +668,14 @@
         "soft-size"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
         "solid": 16.0
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -649,6 +690,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "plc-small-angle",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 248,
         "kind": "analytic-generated-fixture",
@@ -677,6 +719,7 @@
         "stale-source-revision"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "refusal",
       "expected_region_measures": {
@@ -684,6 +727,7 @@
         "right": 0.875
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -702,6 +746,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-stale-revision",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 708,
         "kind": "analytic-generated-fixture",
@@ -730,6 +775,7 @@
         "maximum-storage"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "refusal",
       "expected_region_measures": {
@@ -737,6 +783,7 @@
         "right": 0.875
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -755,6 +802,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-storage-refusal",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 708,
         "kind": "analytic-generated-fixture",
@@ -780,12 +828,14 @@
         "minimum-quality"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
         "solid": 0.324
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -800,6 +850,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-thin-channel",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 688,
         "kind": "analytic-generated-fixture",
@@ -826,6 +877,7 @@
         "minimum-quality"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
@@ -834,6 +886,7 @@
         "third": 2.0
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -856,6 +909,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-triple-junction",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 760,
         "kind": "analytic-generated-fixture",
@@ -884,6 +938,7 @@
         "maximum-work"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "refusal",
       "expected_region_measures": {
@@ -891,6 +946,7 @@
         "right": 0.875
       },
       "family": "tetrahedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -909,6 +965,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": 0.05,
       "name": "plc-work-refusal",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 708,
         "kind": "analytic-generated-fixture",
@@ -935,12 +992,14 @@
         "hard-source-deviation"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 2,
       "expected_admission": "positive",
       "expected_region_measures": {
         "surface": 12.566370614359172
       },
       "family": "triangle",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -955,6 +1014,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "sphere-feature-surface",
+      "solution_field_degree": 1,
       "source_artifact": {
         "bytes": 177,
         "kind": "analytic-generated-fixture",
@@ -981,6 +1041,7 @@
         "soft-size"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
@@ -988,6 +1049,7 @@
         "right": 1.0
       },
       "family": "polyhedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -1007,6 +1069,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "polyhedral-material-L",
+      "solution_field_degree": 1,
       "source_artifact": {
         "kind": "analytic-generated-fixture",
         "license": "LicenseRef-PHYDRA-Proprietary",
@@ -1032,12 +1095,14 @@
         "zero-periodic-tolerance"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
         "material-0": 1.0
       },
       "family": "polyhedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -1070,6 +1135,7 @@
           0.5
         ]
       ],
+      "solution_field_degree": 1,
       "source_artifact": {
         "kind": "analytic-generated-fixture",
         "license": "LicenseRef-PHYDRA-Proprietary",
@@ -1100,6 +1166,7 @@
         "soft-size"
       ],
       "coordinate_unit": "meter",
+      "density_field_degree": 1,
       "dimension": 3,
       "expected_admission": "positive",
       "expected_region_measures": {
@@ -1107,6 +1174,7 @@
         "right": 2.0
       },
       "family": "polyhedron",
+      "history_field_degree": 1,
       "independent_reference": {
         "coordinate_unit": "meter",
         "expected_region_measures": [
@@ -1126,6 +1194,7 @@
       "minimum_angle_radians": null,
       "minimum_mean_ratio": null,
       "name": "polyhedral-stretched-L",
+      "solution_field_degree": 1,
       "source_artifact": {
         "kind": "analytic-generated-fixture",
         "license": "LicenseRef-PHYDRA-Proprietary",
@@ -1261,5 +1330,5 @@
     "moving-overset",
     "design-learned-loop"
   ],
-  "registration_id": "1d49c288a0a9a2a5c52df503c27810b34dcd883529afee5d32b7b13ee8056836"
+  "registration_id": "66e55a59b5e5a6e01840875616844457ed87d3f8bd3df3d6e95ba8a7d730d3f0"
 }

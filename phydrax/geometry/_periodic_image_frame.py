@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import product
+from itertools import chain, product
 from typing import assert_never
 
 import equinox as eqx
@@ -34,6 +35,7 @@ from ..discretization._periodic_exact import (
     exact_isometry_power,
     exact_periodic_element,
     exact_periodic_generators,
+    ExactPeriodicActionLattice,
     PeriodicIsometryGroup,
 )
 from ..typing import checked
@@ -46,46 +48,51 @@ def lattice_overlap_images(
     *,
     budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[range, ...]:
-    """Bound potentially intersecting images without rounding source coordinates."""
-    if budget is not None:
-        reserve_algebraic_work(
-            tuple(points.flat) + tuple(vectors.flat),
-            32 * points.size,
-            8 * points.size,
-            4,
-            budget=budget,
-        )
-
+    """Reduce exact image extents with one Cramer row and retained axis extrema."""
     dimension = vectors.shape[0]
-    determinant = (
-        cofactor_determinant_2(vectors[0], vectors[1])
-        if dimension == 2
-        else cofactor_determinant_3(vectors[0], vectors[1], vectors[2])
-    )
-    fractions = []
-    for point in points:
-        row = []
-        for axis in range(dimension):
-            replaced = vectors.copy()
-            replaced[axis] = point
-            numerator = (
-                cofactor_determinant_2(replaced[0], replaced[1])
-                if dimension == 2
-                else cofactor_determinant_3(replaced[0], replaced[1], replaced[2])
+    with budget.temporary_scope() if budget is not None else nullcontext():
+        if budget is not None:
+            # Keep the original complete arithmetic charge. Only the live bank
+            # changes: one row's eight-scalar workspace per axis plus two
+            # extrema per axis, rather than every point's fractional row.
+            reserve_algebraic_work(
+                chain(points.flat, vectors.flat),
+                32 * points.size,
+                10 * dimension,
+                4,
+                budget=budget,
             )
-            row.append(
-                numerator / determinant
-                if isinstance(numerator, (Fraction, RadicalElement))
-                else Fraction(int(numerator), int(determinant))
-            )
-        fractions.append(row)
-    ranges = []
-    for axis in range(dimension):
-        values = [row[axis] for row in fractions]
-        diameter = max(values) - min(values)
-        limit = math.floor(diameter)
-        ranges.append(range(-limit, limit + 1))
-    return tuple(ranges)
+        determinant = (
+            cofactor_determinant_2(vectors[0], vectors[1])
+            if dimension == 2
+            else cofactor_determinant_3(vectors[0], vectors[1], vectors[2])
+        )
+        lower: list[Fraction | RadicalElement] = []
+        upper: list[Fraction | RadicalElement] = []
+        for point in points:
+            for axis in range(dimension):
+                replaced = vectors.copy()
+                replaced[axis] = point
+                numerator = (
+                    cofactor_determinant_2(replaced[0], replaced[1])
+                    if dimension == 2
+                    else cofactor_determinant_3(replaced[0], replaced[1], replaced[2])
+                )
+                value = (
+                    numerator / determinant
+                    if isinstance(numerator, (Fraction, RadicalElement))
+                    else Fraction(int(numerator), int(determinant))
+                )
+                if len(lower) < dimension:
+                    lower.append(value)
+                    upper.append(value)
+                else:
+                    lower[axis] = min(lower[axis], value)
+                    upper[axis] = max(upper[axis], value)
+        if not lower:
+            raise ValueError("lattice_overlap_images.points must contain at least one row")
+        limits = (math.floor(hi - lo) for lo, hi in zip(lower, upper, strict=True))
+        return tuple(range(-limit, limit + 1) for limit in limits)
 
 
 type PeriodicImage = int | tuple[int, ...]
@@ -310,8 +317,9 @@ def periodic_overlap_image_exponents(
     )
     finite_actions = tuple(product(*(range(order) for order in cell.linear_orders)))
     transformed_boxes = []
-    for action in finite_actions:
-        matrix = exact_periodic_element(matrices, orders, action, budget=budget)
+    for matrix in ExactPeriodicActionLattice(matrices, orders).prepare(
+        finite_actions, budget=budget
+    ):
         for lower, upper in source_boxes:
             transformed_boxes.append(
                 transformed_source_box(lower, upper, matrix, budget=budget)
@@ -493,21 +501,14 @@ def _isometry_image_coordinates(
             )
 
     prepared_generators = exact_periodic_generators(cell, budget=budget)
-    matrices = [
-        exact_periodic_group_element(
-            cell, action, prepared_generators=prepared_generators, budget=budget
-        )
-        for action in actions
-    ]
-    vertex_matrices = np.asarray(
-        [
-            exact_periodic_group_element(
-                cell, shift, prepared_generators=prepared_generators, budget=budget
-            )
-            for shift in vertex_shifts
-        ],
+    action_bank = np.asarray(
+        ExactPeriodicActionLattice(*prepared_generators).prepare(
+            actions.tolist() + np.asarray(vertex_shifts, dtype=np.int64).tolist(),
+            budget=budget,
+        ),
         dtype=object,
     )
+    matrices, vertex_matrices = action_bank[:image_count], action_bank[image_count:]
     actions = np.asarray(actions, dtype=np.int64)
     actions.setflags(write=False)
     packed, exponent = exact_periodic_dyadic_bank(
@@ -584,16 +585,11 @@ def _exact_image_coordinates(
     )
     matrices, orders = exact_periodic_generators(cell, budget=budget)
     points = np.empty_like(actual)
-    for vertex, root in enumerate(roots):
-        matrix = np.asarray(
-            exact_periodic_element(
-                matrices,
-                orders,
-                tuple(int(v) for v in vertex_shifts[vertex]),
-                budget=budget,
-            ),
-            dtype=object,
-        )
+    vertex_actions = ExactPeriodicActionLattice(matrices, orders).prepare(
+        np.asarray(vertex_shifts, dtype=np.int64).tolist(), budget=budget
+    )
+    for vertex, (root, action) in enumerate(zip(roots, vertex_actions, strict=True)):
+        matrix = np.asarray(action, dtype=object)
         points[vertex] = (
             periodic_exact_product(matrix[:-1, :-1], actual[int(root)], budget=budget)
             + matrix[:-1, -1]
@@ -726,12 +722,9 @@ def _exact_image_coordinates(
                     f"PeriodicImageFrame.image_count must fit maximum_images; got {len(actions)} images against {maximum_images}."
                 )
             group_matrices = np.asarray(
-                [
-                    exact_periodic_element(
-                        matrices, orders, tuple(int(v) for v in action), budget=budget
-                    )
-                    for action in actions
-                ],
+                ExactPeriodicActionLattice(matrices, orders).prepare(
+                    np.asarray(actions, dtype=np.int64).tolist(), budget=budget
+                ),
                 dtype=object,
             )
             actions = np.asarray(actions, dtype=np.int64)

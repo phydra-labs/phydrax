@@ -4,8 +4,22 @@
 
 """Insert P1 zero interfaces into existing meshes with conservative W08 transitions.
 
-Native roots split the declared piecewise-affine vertex field through meshcore
-cavity transactions. Material assignments inherit cell lineage independently
+Native roots split the declared piecewise-affine vertex field through the unrounded
+subdivision of every crossing source edge at its exact source-owned P1 root
+``S = (|v_b| A + |v_a| B) / (|v_a| + |v_b|)`` over the exact source positions
+``A`` and ``B``. Its exact homogeneous weights ``(|v_b|, |v_a|)`` are the
+scientific vertex identity; published coordinates are correctly rounded
+carriers with certified outward deviations from ``S``. When the source carrier
+is not itself the exact source (for example a non-dyadic root of an earlier
+adaptation), native execution publishes topology only and the carriers are
+rounded from the exact source positions, then certified with the native
+exact predicates before any edit is formed. Admitted sources are affine tetrahedral
+maps: binary64 P1 carriers, exact P1 coefficient actions, restricted parents and
+composed rational charts (including earlier zero insertions and uniform
+bisection), and declared exact rational or algebraic sources; PLC certificate
+carriers are refused. Rational-chart children publish one tetrahedral block per distinct
+coefficient action or nested reference action.
+Material assignments inherit cell lineage independently
 of level-set side identities. Moving interfaces bind the target numerical
 revision even when coordinates, connectivity, and content identity are unchanged.
 Tangential zero faces remain interface patches without distinct-zone adjacency
@@ -15,8 +29,9 @@ when both incident cells belong to the same side.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager, ExitStack, nullcontext
 from itertools import combinations
+from operator import index
 from typing import final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
@@ -34,7 +49,9 @@ from .._meshcore import (
     exact_orient3d,
     level_set_split_3d,
     LevelSetCounters,
+    LevelSetOutputMode,
     LevelSetSplitRequest,
+    meshcore_exact_domain,
     MeshcoreError,
     MeshcoreStatus,
     NativeBatchTicket,
@@ -43,19 +60,31 @@ from .._meshcore import (
 from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization._cell_complex import TetrahedralConnectivity
-from ..discretization._cell_geometry_transfer import is_affine_cell_geometry
+from ..discretization._cell_complex import PolyhedralConnectivity, TetrahedralConnectivity
+from ..discretization._cell_geometry_transfer import (
+    affine_geometry_is_carrier,
+    affine_vertex_positions,
+    exact_root_points,
+    is_affine_cell_geometry,
+    vertex_positions_are_carrier,
+)
 from ..discretization._cell_geometry_transition_types import NestedReferenceWitnesses
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_enclosure import ExactScalar
 from ..typing import checked
 from ._entity_keys import entity_keys
-from ._lineage_records import EntityLineageKind, MeshTransitionKind
+from ._lineage_records import (
+    EntityLineageKind,
+    MeshTransitionKind,
+    rounded_homogeneous_barycentrics,
+)
 from ._organization_records import MeshLabel, MeshPatch, MeshZone, MeshZoneRole
 from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
 from ._topology_edit import (
     CellTopologyEdit,
     EntityRelations,
-    nested_reference_vertices,
+    exact_nested_reference_vertices,
     TopologyEditBlock,
 )
 
@@ -168,26 +197,56 @@ class LevelSetMeshAdaptation(StrictModule, NonTrainableState):
         )
 
 
-class _Split(NamedTuple):
-    coordinates: np.ndarray
+class _TetrahedralRows(NamedTuple):
+    """Triangle and edge vertex rows aligned with the mesh face and edge entities."""
+
+    faces: np.ndarray
+    edges: np.ndarray
+
+
+class _NativeTopology(NamedTuple):
+    """Native exact subdivision; carriers only when the source is its carrier."""
+
     cells: np.ndarray
     parents: np.ndarray
     sources: np.ndarray
     weights: np.ndarray
     counters: LevelSetCounters
+    coordinates: np.ndarray | None
+    root_deviations: np.ndarray | None
+
+
+class _Split(NamedTuple):
+    """Certified exact subdivision: source vertex bytes, then root carriers."""
+
+    coordinates: np.ndarray
+    cells: np.ndarray
+    parents: np.ndarray
+    sources: np.ndarray
+    weights: np.ndarray
+    root_deviations: np.ndarray
+    counters: LevelSetCounters
 
 
 @final
 class LevelSetEvidence(StrictModule, NonTrainableState):
-    """Record P1 partitions, oriented zero facets, root residuals and topology events.
+    """Record P1 partitions, oriented zero facets, exact roots and topology events.
 
     ``topology_signature`` records strict inside/outside component counts, zero
     complex component count, Euler characteristic and maximum stratum dimension.
     Isolated vertices/edges equal to zero and tangential zero faces are retained.
     Zero face orientation is ±1 inside-to-outside, or 0 for a nonseparating face.
+    Inserted root ``root_vertex_global_ids[r]`` is the exact P1 root of source
+    edge ``root_source_global_ids[r]`` with exact homogeneous weights
+    ``root_weights[r]`` (the swapped source magnitudes) over the exact positions
+    of the source geometry ``source_geometry_id``; its published target carrier
+    is the correctly rounded root and lies within the certified outward
+    Euclidean bound ``root_deviations[r]``, which is zero exactly when the
+    carrier is the root.
     """
 
     source_mesh_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
     target_mesh_id: str = eqx.field(static=True)
     target_numeric_version: str = eqx.field(static=True)
@@ -199,6 +258,10 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
     interface_facet_global_ids: Array
     interface_orientations: Array
     zero_vertex_global_ids: Array
+    root_vertex_global_ids: Array
+    root_source_global_ids: Array
+    root_weights: Array
+    root_deviations: Array
     counters: Array
     topology_signature: tuple[int, int, int, int, int] = eqx.field(static=True)
     topology_changed: bool = eqx.field(static=True)
@@ -206,7 +269,7 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
     inserted_roots: int = eqx.field(static=True)
     exact_zero_samples: int = eqx.field(static=True)
     work_units: int = eqx.field(static=True)
-    maximum_root_residual: float = eqx.field(static=True)
+    maximum_carrier_deviation: float = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -214,7 +277,7 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
         prepared: PreparedMeshAdaptation,
         mesh: cell_mesh_owner.CellMesh,
         edit: CellTopologyEdit,
-        counters: LevelSetCounters,
+        split: _Split,
         /,
     ) -> None:
         request = _request(prepared)
@@ -226,7 +289,9 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "LevelSetMeshAdaptation.accept_topology_change must be True when the moving zero set changes topology; got False."
             )
+        counters = split.counters
         self.source_mesh_id = prepared.source.mesh.mesh_id
+        self.source_geometry_id = cell_geometry_id(prepared.source.geometry)
         self.request_id = request.request_id
         self.target_mesh_id = mesh.mesh_id
         self.target_numeric_version = mesh.numeric_version
@@ -246,6 +311,53 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
         self.zero_vertex_global_ids = jax.device_put(
             np.asarray(np.asarray(mesh.vertex_global_ids)[values == 0.0], dtype=np.int64)
         )
+        source_ids = np.asarray(prepared.source.mesh.vertex_global_ids)
+        count = source_ids.size
+        order = np.argsort(source_ids)
+        root_sources = np.asarray(edit.stencil_sources[count:], dtype=np.int64)
+        rows = order[np.searchsorted(source_ids[order], root_sources)]
+        root_values = _source_values(prepared)[rows]
+        weights = np.asarray(split.weights[count:], dtype=np.float64)
+        deviations = np.asarray(split.root_deviations, dtype=np.float64)
+        # The certified carriers are the published ones: a later geometry
+        # rebinding may not substitute another carrier for a certified root.
+        target_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        target_order = np.argsort(target_ids)
+        target_rows = target_order[
+            np.minimum(
+                np.searchsorted(target_ids[target_order], edit.vertex_global_ids),
+                target_ids.size - 1,
+            )
+        ]
+        if not np.array_equal(
+            target_ids[target_rows], edit.vertex_global_ids
+        ) or not np.array_equal(
+            np.asarray(mesh.coordinates, dtype=np.float64)[target_rows].view(np.uint64),
+            np.asarray(split.coordinates, dtype=np.float64).view(np.uint64),
+        ):
+            raise ValueError(
+                "LevelSetEvidence.root_deviations must certify the published target carriers; got target coordinates that differ from the certified source and root carriers."
+            )
+        # The unrounded source-owned law: opposite nonzero endpoint values and the
+        # swapped magnitudes as homogeneous weights, so the P1 value is zero.
+        if (
+            root_sources.shape != (counters.inserted, 2)
+            or deviations.shape != (counters.inserted,)
+            or not np.all(root_values != 0.0)
+            or not np.all(np.signbit(root_values[:, 0]) != np.signbit(root_values[:, 1]))
+            or not np.array_equal(weights, np.abs(root_values[:, ::-1]))
+            or not np.all(np.isfinite(deviations))
+            or np.any(deviations < 0.0)
+        ):
+            raise ValueError(
+                "LevelSetEvidence.root_weights must be the exact source-owned P1 roots of crossing source edges together with certified carrier deviations; got a different root law."
+            )
+        self.root_vertex_global_ids = jax.device_put(
+            np.asarray(edit.vertex_global_ids[count:], dtype=np.int64)
+        )
+        self.root_source_global_ids = jax.device_put(root_sources)
+        self.root_weights = jax.device_put(weights)
+        self.root_deviations = jax.device_put(deviations)
         counter_values = np.asarray(
             [value for _, value in counters.items()], dtype=np.int64
         )
@@ -256,35 +368,42 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
         self.inserted_roots = counters.inserted
         self.exact_zero_samples = counters.zero_vertices
         self.work_units = counters.work_units
-        source_ids = np.asarray(prepared.source.mesh.vertex_global_ids)
-        order = np.argsort(source_ids)
-        rows = order[np.searchsorted(source_ids[order], edit.stencil_sources)]
-        root_values = np.sum(
-            edit.stencil_weights * _source_values(prepared)[rows], axis=1
-        )[source_ids.size :]
-        self.maximum_root_residual = float(np.max(np.abs(root_values), initial=0.0))
-        self.evidence_id = canonical_fingerprint(
-            {
-                "kind": "native-level-set-evidence",
-                "request": request.request_id,
-                "source": self.source_mesh_id,
-                "target": self.target_mesh_id,
-                "target_revision": self.target_numeric_version,
-                "cells": array_tree_fingerprint((self.cell_global_ids, self.cell_sides)),
-                "facets": array_tree_fingerprint(
-                    (self.interface_facet_global_ids, self.interface_orientations)
-                ),
-                "zero_vertices": array_tree_fingerprint(self.zero_vertex_global_ids),
-                "topology": signature,
-                "event_accepted": self.topology_event_accepted,
-                "counters": array_tree_fingerprint(counter_values),
-                "maximum_root_residual": self.maximum_root_residual,
-            }
-        )
+        self.maximum_carrier_deviation = float(np.max(deviations, initial=0.0))
+        self.evidence_id = canonical_fingerprint(self._scientific_payload())
+
+    def _scientific_payload(self) -> dict[str, object]:
+        return {
+            "kind": "native-level-set-evidence",
+            "request": self.request_id,
+            "source": self.source_mesh_id,
+            "source_geometry": self.source_geometry_id,
+            "target": self.target_mesh_id,
+            "target_revision": self.target_numeric_version,
+            "cells": array_tree_fingerprint((self.cell_global_ids, self.cell_sides)),
+            "facets": array_tree_fingerprint(
+                (self.interface_facet_global_ids, self.interface_orientations)
+            ),
+            "zero_vertices": array_tree_fingerprint(self.zero_vertex_global_ids),
+            "roots": array_tree_fingerprint(
+                (
+                    self.root_vertex_global_ids,
+                    self.root_source_global_ids,
+                    self.root_weights,
+                    self.root_deviations,
+                )
+            ),
+            "topology": self.topology_signature,
+            "event_accepted": self.topology_event_accepted,
+            "counters": array_tree_fingerprint(self.counters),
+            "maximum_carrier_deviation": self.maximum_carrier_deviation,
+        }
 
     def validate_source_integrity(self) -> None:
         """Authenticate retained scientific evidence after archive reconstruction."""
         counters = np.asarray(self.counters)
+        roots = np.asarray(self.root_vertex_global_ids)
+        weights = np.asarray(self.root_weights)
+        deviations = np.asarray(self.root_deviations)
         if (
             counters.ndim != 1
             or counters.size < 5
@@ -292,31 +411,26 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
             or self.exact_zero_samples != int(counters[3])
             or self.work_units != int(counters[4])
             or self.topology_event_accepted != self.topology_changed
-            or not np.isfinite(self.maximum_root_residual)
-            or self.maximum_root_residual < 0.0
         ):
             raise ValueError(
                 "LevelSetEvidence.counters must be consistent with the retained topology signature together with topology_events; got inconsistent retained counters or events."
             )
-        expected = canonical_fingerprint(
-            {
-                "kind": "native-level-set-evidence",
-                "request": self.request_id,
-                "source": self.source_mesh_id,
-                "target": self.target_mesh_id,
-                "target_revision": self.target_numeric_version,
-                "cells": array_tree_fingerprint((self.cell_global_ids, self.cell_sides)),
-                "facets": array_tree_fingerprint(
-                    (self.interface_facet_global_ids, self.interface_orientations)
-                ),
-                "zero_vertices": array_tree_fingerprint(self.zero_vertex_global_ids),
-                "topology": self.topology_signature,
-                "event_accepted": self.topology_event_accepted,
-                "counters": array_tree_fingerprint(counters),
-                "maximum_root_residual": self.maximum_root_residual,
-            }
-        )
-        if expected != self.evidence_id:
+        if (
+            roots.shape != (self.inserted_roots,)
+            or np.asarray(self.root_source_global_ids).shape != (roots.size, 2)
+            or weights.shape != (roots.size, 2)
+            or deviations.shape != (roots.size,)
+            or not np.all(np.isfinite(weights))
+            or np.any(weights <= 0.0)
+            or not np.all(np.isfinite(deviations))
+            or np.any(deviations < 0.0)
+            or self.maximum_carrier_deviation != float(np.max(deviations, initial=0.0))
+            or not np.all(np.isin(roots, np.asarray(self.zero_vertex_global_ids)))
+        ):
+            raise ValueError(
+                "LevelSetEvidence.root_weights must retain one positive rational homogeneous root and certified deviation per inserted zero vertex; got inconsistent retained roots."
+            )
+        if canonical_fingerprint(self._scientific_payload()) != self.evidence_id:
             raise ValueError(
                 "LevelSetEvidence.evidence_id must match the retained scientific content; got a stale scientific identity."
             )
@@ -341,9 +455,7 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
             np.asarray(mesh.vertex_global_ids), np.asarray(self.zero_vertex_global_ids)
         )
         zero_values = np.where(zero_vertices, 0.0, 1.0)
-        facets = np.all(
-            zero_vertices[np.asarray(_tetrahedral_connectivity(mesh).faces)], axis=1
-        )
+        facets = np.all(zero_vertices[_tetrahedral_connectivity(mesh).faces], axis=1)
         if (
             sides.shape != self.cell_global_ids.shape
             or not np.all(np.isin(sides, (-1, 1)))
@@ -449,12 +561,11 @@ def validate_level_set_adaptation(
             else:
                 previous.require_current(mesh)
         existing = {
-            value.name
-            for value in (
-                *prepared.source.patches,
-                *prepared.source.zones,
-                *prepared.source.labels,
-            )
+            *prepared.source.patches.names,
+            *(
+                value.name
+                for value in (*prepared.source.zones, *prepared.source.labels)
+            ),
         }
         previous_names = (
             set()
@@ -487,26 +598,68 @@ def validate_level_set_adaptation(
             )
 
 
-def _tetrahedral_connectivity(
-    mesh: cell_mesh_owner.CellMesh, /
-) -> TetrahedralConnectivity:
-    """Narrow the admitted volume carrier at each native topology boundary."""
+def _tetrahedral_connectivity(mesh: cell_mesh_owner.CellMesh, /) -> _TetrahedralRows:
+    """Narrow the admitted volume carrier at each native topology boundary.
+
+    Exact root geometry publishes one block per distinct child action, so an
+    all-tetrahedron target may carry packed polyhedral incidence; its faces are
+    then the triangles of the same face entities.
+    """
     match mesh.connectivity:
-        case TetrahedralConnectivity() as connectivity:
-            return connectivity
+        case TetrahedralConnectivity(faces=faces, edges=edges):
+            return _TetrahedralRows(
+                np.asarray(faces, dtype=np.int64), np.asarray(edges, dtype=np.int64)
+            )
+        case PolyhedralConnectivity(
+            face_vertex_offsets=offsets, face_vertex_values=values, edges=edges
+        ) if all(block.cell_kind == "tetrahedron" for block in mesh.blocks):
+            offsets_ = np.asarray(offsets, dtype=np.int64)
+            if not np.all(np.diff(offsets_) == 3) or offsets_[0] != 0:
+                raise ValueError(
+                    "CellMesh.connectivity must have triangular faces for native level-set topology; got a non-triangular face."
+                )
+            return _TetrahedralRows(
+                np.asarray(values, dtype=np.int64).reshape((-1, 3)),
+                np.asarray(edges, dtype=np.int64),
+            )
         case _:
             raise ValueError(
                 "CellMesh.connectivity must be tetrahedral for native level-set topology; got a different connectivity kind."
             )
 
 
+def _exact_source_positions(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[ExactScalar, ...], ...] | None:
+    """Return exact source vertex positions, or None when the carrier is exactly the source.
+
+    The structural owner proof is the fast path. Otherwise the affine source
+    map is evaluated once through its prepared source bank; positions equal to
+    the binary64 carrier keep native carrier output, while any other unrounded
+    source (for example a non-dyadic root of an earlier adaptation) owns its
+    roots. Non-dyadic positions alone never refuse.
+    """
+    mesh = prepared.source.mesh
+    geometry = prepared.source.geometry
+    if affine_geometry_is_carrier(mesh, geometry):
+        return None
+    positions = affine_vertex_positions(mesh, geometry, budget=budget)
+    # One rational lift and comparison per carrier coordinate.
+    budget.reserve(2 * index(np.asarray(mesh.coordinates).size))
+    return None if vertex_positions_are_carrier(positions, mesh) else positions
+
+
 def _native_split(
     prepared: PreparedMeshAdaptation,
     /,
     *,
+    output_mode: LevelSetOutputMode,
     scope: NativeExecutionScope,
     budget: CoordinateEnclosureBudget,
-) -> _Split:
+) -> _NativeTopology:
     mesh = prepared.source.mesh
     connectivity = _tetrahedral_connectivity(mesh)
     points = np.ascontiguousarray(mesh.coordinates, dtype=np.float64)
@@ -532,22 +685,29 @@ def _native_split(
     protection = np.ascontiguousarray(protection[edge_order], dtype=np.int8)
     limits = prepared.policy.limits
     edge_values = values[edges]
-    crossings = np.count_nonzero(
-        (np.min(edge_values, axis=1) < 0.0) & (np.max(edge_values, axis=1) > 0.0)
+    # count_nonzero returns a NumPy scalar; static native metadata is a Python int.
+    crossings = index(
+        np.count_nonzero(
+            (np.min(edge_values, axis=1) < 0.0) & (np.max(edge_values, axis=1) > 0.0)
+        )
     )
     vertex_capacity = min(points.shape[0] + crossings, limits.maximum_vertices)
     cell_values = values[cells]
     roots_per_cell = np.count_nonzero(cell_values < 0.0, axis=1) * np.count_nonzero(
         cell_values > 0.0, axis=1
     )
-    # A source tetrahedron and its k edge roots admit at most C(4+k, 4)
-    # distinct tetrahedra. Uncut cells need just one output slot.
-    combinatorial_bound = np.asarray((1, 5, 15, 35, 70), dtype=np.int64)
+    # The native split bisects each crossing source edge once; a cell gains one
+    # child per descendant containing that edge, independently of its
+    # neighbours. With k = negatives x positives crossings, a 1/1, 1/2 or 1/3
+    # sign split shares one apex (k + 1 children) and a 2/2 split yields 6 in
+    # every edge order. Uncut cells keep one output slot.
+    combinatorial_bound = np.asarray((1, 2, 3, 4, 6), dtype=np.int64)
     cell_capacity = min(
         int(np.sum(combinatorial_bound[roots_per_cell])), limits.maximum_cells
     )
-    # Conservative bound includes native slot/constraint tables and staged cavities,
-    # not merely Python output arrays. Refuse before allocating the work buffers.
+    # Conservative bound for native source-validation tables, incidence lists
+    # and unrounded root temporaries, not merely Python output arrays. Refuse before
+    # allocating the work buffers.
     scratch_bound = 4096 * (
         vertex_capacity + cell_capacity + faces.shape[0] + edges.shape[0]
     )
@@ -561,15 +721,31 @@ def _native_split(
         bytes_upper=scratch_bound,
         cavity_upper=min(limits.maximum_cavity_cells, remaining.remaining_cavity_cells),
     )
+    carriers = output_mode is LevelSetOutputMode.FULL_CARRIERS
     with budget.bind_ticket(ticket):
-        output_points = np.empty((vertex_capacity, 3), dtype=np.float64)
+        output_points = (
+            np.empty((vertex_capacity, 3), dtype=np.float64) if carriers else None
+        )
         output_cells = np.empty((cell_capacity, 4), dtype=np.int32)
         parents = np.empty((cell_capacity,), dtype=np.int32)
         sources = np.empty((vertex_capacity, 2), dtype=np.int32)
         weights = np.empty((vertex_capacity, 2), dtype=np.float64)
+        deviations = np.empty((vertex_capacity,), dtype=np.float64) if carriers else None
         counter_slots = np.zeros((6,), dtype=np.int64)
         budget.retain_basis(
-            (output_points, output_cells, parents, sources, weights, counter_slots)
+            tuple(
+                array
+                for array in (
+                    output_points,
+                    output_cells,
+                    parents,
+                    sources,
+                    weights,
+                    deviations,
+                    counter_slots,
+                )
+                if array is not None
+            )
         )
         with ticket.native_target():
             run = level_set_split_3d(
@@ -584,11 +760,13 @@ def _native_split(
                     max_cells=cell_capacity,
                     work_limit=ticket.remaining_work_units,
                     cavity_limit=limits.maximum_cavity_cells,
+                    output_mode=output_mode,
                     output_points=output_points,
                     output_cells=output_cells,
                     output_parents=parents,
                     output_sources=sources,
                     output_weights=weights,
+                    output_deviations=deviations,
                     counter_slots=counter_slots,
                 )
             )
@@ -600,13 +778,115 @@ def _native_split(
                 f"LevelSetMeshAdaptation.native_split must satisfy its declared native contracts; got status={status.name}, failed_edge={counters.failed_edge}, work={counters.work_units}.",
             )
         nv, nc = counters.vertices, counters.cells
-        return _Split(
-            output_points[:nv],
+        return _NativeTopology(
             output_cells[:nc],
             parents[:nc],
             sources[:nv],
             weights[:nv],
             counters,
+            None if output_points is None else output_points[:nv],
+            None if deviations is None else deviations[points.shape[0] : nv],
+        )
+
+
+def _certified_split(
+    prepared: PreparedMeshAdaptation,
+    topology: _NativeTopology,
+    positions: tuple[tuple[ExactScalar, ...], ...] | None,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _Split:
+    """Attach carriers certified from the exact source to the native topology.
+
+    Native carriers are certified by the kernel when the source carrier is the
+    exact source. Otherwise the input vertex bytes are kept, each root is
+    the correctly rounded exact root over the exact source positions with its
+    upward Euclidean deviation, and every target cell and carrier is certified
+    with the native exact predicates exactly as the kernel certifies its own.
+    """
+    if positions is None:
+        if topology.coordinates is None or topology.root_deviations is None:
+            raise RuntimeError(
+                "LevelSetMeshAdaptation.native_split must publish carriers for an exact source carrier; got topology-only output."
+            )
+        return _Split(
+            topology.coordinates,
+            topology.cells,
+            topology.parents,
+            topology.sources,
+            topology.weights,
+            topology.root_deviations,
+            topology.counters,
+        )
+    source = np.asarray(prepared.source.mesh.coordinates, dtype=np.float64)
+    count = source.shape[0]
+    roots, deviations = exact_root_points(
+        positions,
+        topology.sources[count:],
+        topology.weights[count:],
+        budget=budget,
+    )
+    coordinates = np.concatenate((source, roots), axis=0)
+    _certify_carriers(coordinates, roots, topology, budget=budget)
+    return _Split(
+        coordinates,
+        topology.cells,
+        topology.parents,
+        topology.sources,
+        topology.weights,
+        deviations,
+        topology.counters,
+    )
+
+
+def _certify_carriers(
+    coordinates: np.ndarray,
+    roots: np.ndarray,
+    topology: _NativeTopology,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Refuse carriers outside the meshcore coordinate domain, nonpositive cells and coincidences."""
+    counters = topology.counters
+    minimum, maximum = meshcore_exact_domain()
+    magnitude = np.abs(roots)
+    if np.any(
+        (magnitude != 0.0)
+        & ((magnitude < np.ldexp(1.0, minimum)) | (magnitude > np.ldexp(1.0, maximum)))
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INVALID_INPUT,
+            f"LevelSetMeshAdaptation.exact_carriers must lie in the meshcore exact arithmetic domain; got status=INVALID_INPUT, inserted={counters.inserted}.",
+        )
+    cells = np.asarray(topology.cells, dtype=np.int64)
+    count = coordinates.shape[0]
+    levels = max(1, (count - 1).bit_length() + 1)
+    with budget.temporary_scope():
+        # Corner gathers, one exact orientation per cell and one sorted
+        # coincidence pass, as the kernel charges its own certification.
+        budget.reserve(
+            16 * cells.shape[0] + count * levels,
+            cells.size * 3 * 8 + cells.shape[0] + count * (3 * 8 + 8),
+        )
+        corners = coordinates[cells]
+        ticket = budget.ticket
+        with (
+            ticket.native_target()
+            if isinstance(ticket, NativeBatchTicket)
+            else nullcontext()
+        ):
+            signs = exact_orient3d(
+                corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3]
+            )
+        order = np.lexsort((coordinates[:, 2], coordinates[:, 1], coordinates[:, 0]))
+        ordered = coordinates[order]
+        coincident = np.all(ordered[1:] == ordered[:-1], axis=1)
+    if np.any(signs <= 0) or np.any(coincident):
+        raise MeshcoreError(
+            MeshcoreStatus.DEGENERATE_INPUT,
+            f"LevelSetMeshAdaptation.exact_carriers must form positively oriented cells with distinct carriers; got status=DEGENERATE_INPUT, inserted={counters.inserted}.",
         )
 
 
@@ -682,14 +962,18 @@ def _edit(
             ).astype(np.int32),
         )
     )
+    # Exact homogeneous roots own the geometry; rounded barycentrics are only
+    # their correctly rounded views.
+    valid = np.ones(sources.shape, dtype=np.bool_)
+    barycentrics = rounded_homogeneous_barycentrics(split.weights, valid, budget=budget)
+    reference_vertices, reference_homogeneous = exact_nested_reference_vertices(
+        sources[target_cells],
+        split.weights[target_cells],
+        old_vertices[source_cells[parents]],
+        budget=budget,
+    )
     witnesses = NestedReferenceWitnesses(
-        target_ids,
-        source_ids[parents],
-        nested_reference_vertices(
-            sources[target_cells],
-            split.weights[target_cells],
-            old_vertices[source_cells[parents]],
-        ),
+        target_ids, source_ids[parents], reference_vertices, reference_homogeneous
     )
     periodic_orbits = None
     if mesh.periodic_topology is not None:
@@ -713,11 +997,12 @@ def _edit(
         vertex_ids,
         tuple(blocks),
         sources,
-        split.weights,
-        np.ones(sources.shape, dtype=np.bool_),
+        barycentrics,
+        valid,
         tuple(relations),
         refinement=witnesses,
         periodic_orbits=periodic_orbits,
+        stencil_homogeneous=split.weights,
     )
 
 
@@ -1123,8 +1408,17 @@ def execute_level_set_route(
 
     with _level_set_coordinate_budget(prepared, scope=scope, budget=budget):
         validate_level_set_adaptation(prepared, budget=budget)
-    split = _native_split(prepared, scope=scope, budget=budget)
+        positions = _exact_source_positions(prepared, budget=budget)
+    topology = _native_split(
+        prepared,
+        output_mode=LevelSetOutputMode.FULL_CARRIERS
+        if positions is None
+        else LevelSetOutputMode.TOPOLOGY_ONLY,
+        scope=scope,
+        budget=budget,
+    )
     with _level_set_coordinate_budget(prepared, scope=scope, budget=budget):
+        split = _certified_split(prepared, topology, positions, budget=budget)
         edit = _edit(prepared, split, budget=budget)
     native = adaptation_owner.finalize_native(
         prepared,
@@ -1134,7 +1428,7 @@ def execute_level_set_route(
         scope=scope,
         budget=budget,
     )
-    evidence = LevelSetEvidence(prepared, native.target.mesh, edit, split.counters)
+    evidence = LevelSetEvidence(prepared, native.target.mesh, edit, split)
     limits = prepared.policy.limits
     if (
         native.target.mesh.entity_set(1).count > limits.maximum_edges

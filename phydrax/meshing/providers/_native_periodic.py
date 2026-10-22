@@ -14,7 +14,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from fractions import Fraction
 from itertools import combinations
-from typing import assert_never, final
+from typing import assert_never, final, Literal
 
 import equinox as eqx
 import numpy as np
@@ -83,7 +83,7 @@ from ...geometry._triangulation import (
     PeriodicImageBudgetError,
 )
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ...typing import checked
+from ...typing import checked, parse
 from .. import _periodic as periodic_owner
 from .._association_routes import PlcEntityClasses
 from .._controls import FeatureKind
@@ -481,10 +481,26 @@ def _bound_constraint_evidence(
     return requested, achieved
 
 
+type PeriodicConstructionMethod = Literal[
+    "orbit_lattice_algebraic_bands",
+    "source_action_algebraic_bands",
+    "orbit_sites",
+    "represented_source",
+]
+
+
 @final
 class PreparedPeriodicDomain(StrictModule, NonTrainableState):
+    """Admit one periodic construction from exact source and request premises.
+
+    The algebraic constructions are selected only when their capability proofs
+    pass; proof resource refusals propagate. Execution dispatches on the bound
+    selection and refuses a changed premise instead of choosing another route.
+    """
+
     source: NativePeriodicSource
     specification_id: str = eqx.field(static=True)
+    construction: PeriodicConstructionMethod = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     @checked
@@ -494,19 +510,45 @@ class PreparedPeriodicDomain(StrictModule, NonTrainableState):
         specification: SurfaceMeshingSpec | VolumeMeshingSpec,
         /,
     ) -> None:
+        from ._native_periodic_algebraic import (
+            prove_orbit_lattice_bands,
+            prove_source_action_bands,
+        )
+
         issues = periodic_support_issues(source, specification)
         if issues:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                 format_support_issues(issues),
             )
+        match source.domain:
+            case periodic_owner.PeriodicPointOrbits():
+                construction = (
+                    "orbit_lattice_algebraic_bands"
+                    if prove_orbit_lattice_bands(source, specification) is not None
+                    else "orbit_sites"
+                )
+            case cell_mesh_owner.CellMesh():
+                construction = (
+                    "source_action_algebraic_bands"
+                    if prove_source_action_bands(source, specification)
+                    else "represented_source"
+                )
+            case _ as invalid:
+                assert_never(invalid)
         self.source = source
         self.specification_id = specification.specification_id
+        self.construction = parse(
+            construction,
+            PeriodicConstructionMethod,
+            "PreparedPeriodicDomain.construction",
+        )
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-periodic-domain",
                 "source": source.binding_id,
                 "specification": specification.specification_id,
+                "construction": self.construction,
             }
         )
 
@@ -659,10 +701,7 @@ class _PeriodicSupportAllowance:
             count > self.ticket.remaining_work_units
             or count > self.ticket.remaining_geometry_queries
         ):
-            self.ticket.refuse(
-                self.ticket.work_units + count,
-                queries_upper=self.ticket.geometry_queries + count,
-            )
+            self.ticket.refuse(count, queries_upper=count)
         self.ticket.consume(count, geometry_queries=count)
         self.work += count
 
@@ -680,7 +719,7 @@ class _PeriodicSupportAllowance:
             and ticket is not None
             and not ticket.settled
         ):
-            ticket.refuse(ticket.work_upper, bytes_upper=bound)
+            ticket.refuse(0, bytes_upper=bound)
         if bound > available:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
@@ -699,12 +738,7 @@ class _PeriodicSupportAllowance:
                 upper > parent.remaining_work_units
                 or upper > parent.remaining_geometry_queries
             ):
-                parent.refuse(
-                    parent.work_upper - parent.remaining_work_units + upper,
-                    queries_upper=(
-                        parent.queries_upper - parent.remaining_geometry_queries + upper
-                    ),
-                )
+                parent.refuse(upper, queries_upper=upper)
         owner = self.scope if self.budget.ticket.settled else self.budget.ticket
         self.ticket = owner.batch(upper, queries_upper=upper)
         return self.ticket
@@ -1007,9 +1041,19 @@ def _periodic_seed_associations(
             raise ValueError(
                 "periodic.seed_support.identification must match the source identification; got a changed identification"
             )
-        quotient = periodic_owner.PeriodicQuotientEvidence(
-            target, geometry=geometry, budget=budget
+        allowance = _PeriodicSupportAllowance(
+            specification.limits, scope=scope, budget=budget
         )
+        # A declared field-valued geometry integrates its exact orbit measures on
+        # the request ledger; binary64 carriers need no exact phase. Only static
+        # counts and measures survive, so the proof's temporaries end here.
+        with (
+            allowance.exact_phase() if geometry is not None else nullcontext(),
+            budget.temporary_scope(),
+        ):
+            quotient = periodic_owner.PeriodicQuotientEvidence(
+                target, geometry=geometry, budget=budget
+            )
         if (
             not quotient.all_cells_valid
             or quotient.boundary_facet_count
@@ -1021,9 +1065,6 @@ def _periodic_seed_associations(
                 "periodic.seed_support.coverage must cover the source lattice region once with positive cells; got an invalid quotient cover",
                 stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
             )
-        allowance = _PeriodicSupportAllowance(
-            specification.limits, scope=scope, budget=budget
-        )
         periodic_owner.certify_periodic_embedding(
             target,
             maximum_images=specification.limits.maximum_vertices,
@@ -1376,7 +1417,10 @@ class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
                 with allowance.exact_phase():
                     budget.ticket.checkpoint()
                 return prepared.association, prepared.associated_degrees
-        with allowance.exact_phase():
+        # The classifier returns only a verdict. Its per-cell corner evaluation
+        # scratch must not overlap the subsequent full source-support proof;
+        # coordinate/basis caches keep their separately retained ownership.
+        with allowance.exact_phase(), budget.temporary_scope():
             affine = is_affine_cell_geometry(source.mesh, source.geometry, budget=budget)
         if not affine:
             raise ValueError(
@@ -1626,11 +1670,11 @@ class _SiteMesh:
         self.points = points
         # Hard statistics are judged on published coordinates, so measure the
         # same reference lifts and shift arithmetic as the compliance owner.
+        self.reference_lifts = periodic_reference_lifts(
+            simplices, shifts, points.shape[0]
+        )
         self.lengths = quotient_edge_lengths(
-            points,
-            self.keys,
-            periodic_reference_lifts(simplices, shifts, points.shape[0]),
-            vectors,
+            points, self.keys, self.reference_lifts, vectors
         )
 
     def merit(
@@ -1639,19 +1683,36 @@ class _SiteMesh:
         policy: SizeCompliancePolicy,
         /,
         *,
+        allowance: _PeriodicSupportAllowance,
         quadratic: bool = False,
     ) -> tuple[int, int, float, int]:
-        """Hard issues, over-target edges, statistic deviation, and target-length edges."""
+        """Hard issues, over-target edges, statistic deviation, and target-length edges.
+
+        Hard issues are the compliance owner's unrounded verdict on the lengths these
+        sites would publish; the remaining terms rank binary64 representatives.
+        """
         growth = edge_growth_evidence(
             self.lengths, self.keys[:, :2], self.points.shape[0]
         )
-        issues, longer, deviation, matched = 0, 0, 0.0, 0
+        budget = allowance.budget
+        with allowance.exact_phase(), budget.temporary_scope():
+            squared = periodic_owner.periodic_site_squared_lengths(
+                self.points, self.keys, self.reference_lifts, self.vectors, budget=budget
+            )
+            issues = sum(
+                len(
+                    periodic_owner.periodic_size_control_issues(
+                        squared, self.keys[:, :2], control, policy, budget=budget
+                    )
+                )
+                for control in controls
+            )
+        longer, deviation, matched = 0, 0.0, 0
         for control in controls:
-            _, achieved, failed = uniform_size_compliance(
+            _, achieved, _ = uniform_size_compliance(
                 control, policy, self.lengths, growth
             )
             tolerance = policy.tolerance(control.target_size)
-            issues += len(failed)
             longer += int(
                 np.count_nonzero(self.lengths > control.target_size + tolerance)
             )
@@ -1687,9 +1748,18 @@ class _SiteMesh:
 
 
 def _source_growth_site(
-    state: _SiteMesh, controls: list[UniformSizeControl], policy: SizeCompliancePolicy, /
+    state: _SiteMesh,
+    controls: list[UniformSizeControl],
+    policy: SizeCompliancePolicy,
+    /,
+    *,
+    allowance: _PeriodicSupportAllowance,
 ) -> np.ndarray | None:
-    """Remove unprotected fixed long edges, then make immutable quantiles feasible."""
+    """Remove unprotected fixed long edges, then make immutable quantiles feasible.
+
+    Edges exceed the target bound by their unrounded published lengths; among
+    unprotected fixed candidates the exactly longest, then lowest row, splits.
+    """
     if state.source_support is None:
         raise TypeError(
             "periodic.site_growth.source_support must retain source strata; got no constrained construction"
@@ -1700,19 +1770,30 @@ def _source_growth_site(
         for control in controls
     )
     fixed = np.all(state.protected_vertices[state.keys[:, :2]], axis=1)
-    for edge in np.argsort(-state.lengths, kind="stable"):
-        key = tuple(int(value) for value in state.keys[edge])
-        if fixed[edge] and state.lengths[edge] > threshold and key not in protected_edges:
-            return 0.5 * (
-                state.points[key[0]]
-                + state.points[key[1]]
-                + np.asarray(key[2:], dtype=np.int64) @ state.vectors
-            )
-    immutable_over = sum(
-        state.lengths[index] > threshold
-        for index, row in enumerate(state.keys)
-        if tuple(int(value) for value in row) in protected_edges
+    protected = np.asarray(
+        [tuple(int(value) for value in row) in protected_edges for row in state.keys],
+        dtype=np.bool_,
     )
+    budget = allowance.budget
+    with allowance.exact_phase(), budget.temporary_scope():
+        squared = periodic_owner.periodic_site_squared_lengths(
+            state.points, state.keys, state.reference_lifts, state.vectors, budget=budget
+        )
+        over = periodic_owner.periodic_lengths_exceeding(
+            squared, threshold, budget=budget
+        )
+        candidates = np.flatnonzero(fixed & over & ~protected)
+        (longest,) = periodic_owner.periodic_longest_positions(
+            [[squared[index] for index in candidates]], budget=budget
+        )
+    if candidates.size:
+        key = tuple(int(value) for value in state.keys[candidates[longest]])
+        return 0.5 * (
+            state.points[key[0]]
+            + state.points[key[1]]
+            + np.asarray(key[2:], dtype=np.int64) @ state.vectors
+        )
+    immutable_over = int(np.count_nonzero(over & protected))
     quantile = max(size_statistic_quantile(name) for name in policy.target_statistics)
     required_edges = int(np.ceil(1.0 + immutable_over / (1.0 - quantile)))
     if state.keys.shape[0] >= required_edges:
@@ -1816,6 +1897,7 @@ def _relocate_target_size_sites(
     *,
     source_binding_id: str,
     scope: NativeExecutionScope,
+    allowance: _PeriodicSupportAllowance,
 ) -> tuple[tuple[_SiteMerit, _SiteMesh] | None, int]:
     """Retain proposal/refusal evidence before accepting an improving relocation."""
     try:
@@ -1875,7 +1957,7 @@ def _relocate_target_size_sites(
             state.triangulation,
             source_support=state.source_support,
         )
-        measured = corrected.merit(controls, policy, quadratic=True)
+        measured = corrected.merit(controls, policy, allowance=allowance, quadratic=True)
         if _site_merit_score(measured) < current_score:
             corrected.sizing_evidence = state.sizing_evidence
             corrected.image_refusals = state.image_refusals
@@ -1896,6 +1978,7 @@ def _refine_target_size_sites(
     /,
     *,
     scope: NativeExecutionScope,
+    allowance: _PeriodicSupportAllowance,
 ) -> tuple[_SiteMesh, int]:
     """Keep one native quotient owner through all read-only candidate batches."""
     control_rows = np.asarray(
@@ -1981,7 +2064,10 @@ def _refine_target_size_sites(
     )
     refined.sizing_evidence = state.sizing_evidence
     refined.image_refusals = state.image_refusals + result.counters.image_refusals
-    if result.counters.stop_reason == 2 and refined.merit(controls, policy)[0]:
+    if (
+        result.counters.stop_reason == 2
+        and refined.merit(controls, policy, allowance=allowance)[0]
+    ):
         target = min(control.target_size for control in controls)
         proposal = propose_periodic_rank_placement(
             refined.points,
@@ -2041,6 +2127,7 @@ def _realize_target_size_sites(
     *,
     source_binding_id: str,
     scope: NativeExecutionScope,
+    allowance: _PeriodicSupportAllowance,
     source_strata: constraints_owner.PeriodicSourceStrata | None = None,
 ) -> tuple[_SiteMesh, int]:
     """Realize hard statistics while retaining protected source-support evidence."""
@@ -2067,11 +2154,12 @@ def _realize_target_size_sites(
         image_budget,
         work,
         scope=scope,
+        allowance=allowance,
     )
     if source_strata is None:
         return state, work
     size = min(control.target_size for control in controls)
-    current = state.merit(controls, policy, quadratic=True)
+    current = state.merit(controls, policy, allowance=allowance, quadratic=True)
     while current[0]:
         if state.points.shape[0] + 1 > limits.maximum_vertices:
             raise MeshingFailure(
@@ -2079,7 +2167,7 @@ def _realize_target_size_sites(
                 "periodic.site_insertion.vertices must fit the declared vertex budget; got a request beyond the budget",
                 stage=stage.value,
             )
-        growth = _source_growth_site(state, controls, policy)
+        growth = _source_growth_site(state, controls, policy, allowance=allowance)
         if growth is not None:
             enlarged, work = _triangulate_target_size_sites(
                 np.concatenate((state.points, growth[None])),
@@ -2105,8 +2193,12 @@ def _realize_target_size_sites(
                 image_budget,
                 work,
                 scope=scope,
+                allowance=allowance,
             )
-            current, state = enlarged.merit(controls, policy, quadratic=True), enlarged
+            current, state = (
+                enlarged.merit(controls, policy, allowance=allowance, quadratic=True),
+                enlarged,
+            )
             continue
         relocated, work = _relocate_target_size_sites(
             state,
@@ -2120,6 +2212,7 @@ def _realize_target_size_sites(
             _site_merit_score(current),
             source_binding_id=source_binding_id,
             scope=scope,
+            allowance=allowance,
         )
         if relocated is None:
             break
@@ -2198,6 +2291,7 @@ def _construct_periodic_seed(
                 image_budget,
                 source_binding_id=source.binding_id,
                 scope=scope,
+                allowance=_PeriodicSupportAllowance(limits, scope=scope, budget=budget),
             )
             inserted_sites = site_mesh.points.shape[0] - orbits.orbit_count
             sizing_evidence = site_mesh.sizing_evidence
@@ -2258,19 +2352,35 @@ def _construct_periodic_seed(
 def _construct_algebraic_periodic_domain(
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    construction: Literal[
+        "orbit_lattice_algebraic_bands", "source_action_algebraic_bands"
+    ],
     /,
     *,
     scope: NativeExecutionScope,
     budget: CoordinateEnclosureBudget,
-) -> _PeriodicConstruction | None:
-    with budget.temporary_scope():
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> _PeriodicConstruction:
+    """Construct and declare the field-valued geometry of an admitted algebraic carrier."""
+    with measure_phase(record_phase, "periodic_construction"), budget.temporary_scope():
         starting_work = budget.work_units
-        from ._native_periodic_algebraic import construct_exact_algebraic_carrier
+        from ._native_periodic_algebraic import (
+            construct_exact_algebraic_carrier,
+            construct_orbit_lattice_band_carrier,
+        )
 
         try:
-            carrier = construct_exact_algebraic_carrier(
-                source, specification, scope=scope, budget=budget
-            )
+            match construction:
+                case "orbit_lattice_algebraic_bands":
+                    carrier = construct_orbit_lattice_band_carrier(
+                        source, specification, scope=scope, budget=budget
+                    )
+                case "source_action_algebraic_bands":
+                    carrier = construct_exact_algebraic_carrier(
+                        source, specification, scope=scope, budget=budget
+                    )
+                case _ as invalid:
+                    assert_never(invalid)
         except NativeResourceFailure as error:
             raise MeshingFailure(
                 MeshingFailureCategory.TIMED_OUT
@@ -2301,24 +2411,31 @@ def _construct_algebraic_periodic_domain(
                 ),
                 achieved=(("completed", float(error.completed)),),
             ) from error
-        if carrier is None:
-            return None
-        domain = source.domain
-        if not isinstance(domain, cell_mesh_owner.CellMesh):
-            raise TypeError(
-                "periodic.algebraic.domain must retain represented source cells; got point orbits"
-            )
-        topology = periodic_owner.require_periodic_topology(domain)
-        if not isinstance(topology.cell, periodic_cell_owner.PeriodicCell):
-            raise TypeError(
-                "periodic.algebraic.cell must be a translational periodic cell; got isometries"
-            )
-        block_name = domain.blocks[0].name
+        # Seed orbits have no source cells: the carrier is its own region source.
+        original: cell_mesh_owner.CellMesh | None
+        match source.domain:
+            case periodic_owner.PeriodicPointOrbits() as orbits:
+                cell = orbits.cell
+                block_name = "periodic"
+                source_vertices = orbits.orbit_count
+                original = None
+            case cell_mesh_owner.CellMesh() as domain:
+                topology = periodic_owner.require_periodic_topology(domain)
+                if not isinstance(topology.cell, periodic_cell_owner.PeriodicCell):
+                    raise TypeError(
+                        "periodic.algebraic.cell must be a translational periodic cell; got isometries"
+                    )
+                cell = topology.cell
+                block_name = domain.blocks[0].name
+                source_vertices = topology.quotient.entities(0).count
+                original = domain
+            case _ as invalid:
+                assert_never(invalid)
         mesh = periodic_owner.publish_periodic_simplices(
             carrier.points,
             carrier.simplices,
             carrier.shifts,
-            topology.cell,
+            cell,
             block_name=block_name,
             exact_coordinates=carrier.exact_coordinates,
             scope=scope,
@@ -2332,7 +2449,7 @@ def _construct_algebraic_periodic_domain(
                 carrier.exact_coordinates,
                 carrier.simplices,
                 carrier.shifts,
-                topology.cell,
+                cell,
                 budget=budget,
             )
             elements = {
@@ -2357,12 +2474,14 @@ def _construct_algebraic_periodic_domain(
             budget.retain_basis((mesh, geometry))
         return _PeriodicConstruction(
             mesh,
-            domain,
+            mesh if original is None else original,
             carrier.regions,
-            np.asarray(source.cell_regions).copy(),
+            carrier.regions.copy()
+            if original is None
+            else np.asarray(source.cell_regions).copy(),
             carrier.ancestry,
             budget.work_units - starting_work,
-            carrier.points.shape[0] - topology.quotient.entities(0).count,
+            carrier.points.shape[0] - source_vertices,
             (),
             0,
             True,
@@ -2396,12 +2515,6 @@ def _construct_represented_periodic_domain(
     original_regions = np.asarray(source.cell_regions).copy()
     regions = original_regions.copy()
     ancestry = tuple((index,) for index in range(mesh.blocks[0].cell_count))
-    with measure_phase(record_phase, "periodic_construction"):
-        exact = _construct_algebraic_periodic_domain(
-            source, specification, scope=scope, budget=budget
-        )
-    if exact is not None:
-        return exact
     if (
         hard
         and source.ambient_dimension == 2
@@ -2448,6 +2561,7 @@ def _construct_represented_periodic_domain(
                 source_strata=strata,
                 source_binding_id=source.binding_id,
                 scope=scope,
+                allowance=_PeriodicSupportAllowance(limits, scope=scope, budget=budget),
             )
             sizing_evidence = site_mesh.sizing_evidence
             image_refusals = site_mesh.image_refusals
@@ -2498,6 +2612,7 @@ def _construct_represented_periodic_domain(
 def _construct_periodic_domain(
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    construction: PeriodicConstructionMethod,
     limits: MeshingLimits,
     started: float,
     stage: MeshingStageKind,
@@ -2508,8 +2623,22 @@ def _construct_periodic_domain(
     budget: CoordinateEnclosureBudget,
     record_phase: NativeMeshingPhaseRecorder | None,
 ) -> _PeriodicConstruction:
-    match source.domain:
-        case periodic_owner.PeriodicPointOrbits() as orbits:
+    match construction:
+        case "orbit_lattice_algebraic_bands" | "source_action_algebraic_bands":
+            return _construct_algebraic_periodic_domain(
+                source,
+                specification,
+                construction,
+                scope=scope,
+                budget=budget,
+                record_phase=record_phase,
+            )
+        case "orbit_sites":
+            orbits = source.domain
+            if not isinstance(orbits, periodic_owner.PeriodicPointOrbits):
+                raise TypeError(
+                    "periodic.construction must match the admitted seed-orbit domain; got represented source cells"
+                )
             return _construct_periodic_seed(
                 orbits,
                 source,
@@ -2523,7 +2652,12 @@ def _construct_periodic_domain(
                 budget=budget,
                 record_phase=record_phase,
             )
-        case cell_mesh_owner.CellMesh() as mesh:
+        case "represented_source":
+            mesh = source.domain
+            if not isinstance(mesh, cell_mesh_owner.CellMesh):
+                raise TypeError(
+                    "periodic.construction must match the admitted represented domain; got seed orbits"
+                )
             return _construct_represented_periodic_domain(
                 mesh,
                 source,
@@ -2660,68 +2794,45 @@ def _periodic_size_compliance(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> tuple[list[tuple[str, float]], list[tuple[str, float]], list[str]]:
-    requested, achieved, issues = uniform_size_compliance(
-        control, policy, lengths, growth
-    )
-    if geometry is None:
-        return requested, achieved, issues
-    prefix = f"size:{control.control_id}"
-    quantiles = tuple(size_statistic_quantile(name) for name in policy.target_statistics)
-    values = periodic_owner.periodic_edge_size_quantile(
-        mesh, np.asarray(quantiles, dtype=np.float64), geometry=geometry, budget=budget
-    )
-    replacements = {
-        f"{prefix}:{name}_edge": float(value)
-        for name, value in zip(policy.target_statistics, values, strict=True)
-    }
-    achieved = [(name, replacements.get(name, value)) for name, value in achieved]
+    """Display binary64 length evidence; decide hard issues on exact quotient lengths.
+
+    Without a separately declared geometry the published binary64
+    representatives and unrounded group actions are the source. In both cases the
+    verdict compares field-valued squares, never rounded Euclidean roots.
+    """
+    requested, achieved, _ = uniform_size_compliance(control, policy, lengths, growth)
+    if geometry is not None:
+        prefix = f"size:{control.control_id}"
+        values = periodic_owner.periodic_edge_size_quantile(
+            mesh,
+            np.asarray(
+                [size_statistic_quantile(name) for name in policy.target_statistics],
+                dtype=np.float64,
+            ),
+            geometry=geometry,
+            budget=budget,
+        )
+        replacements = {
+            f"{prefix}:{name}_edge": float(value)
+            for name, value in zip(policy.target_statistics, values, strict=True)
+        }
+        achieved = [(name, replacements.get(name, value)) for name, value in achieved]
     if control.strength is not SizeControlStrength.HARD:
-        return requested, achieved, issues
-    issues = []
-    tolerance = policy.tolerance(control.target_size)
-    lower = Fraction(control.target_size) - Fraction(tolerance)
-    upper = Fraction(control.target_size) + Fraction(tolerance)
-    for name, quantile in zip(policy.target_statistics, quantiles, strict=True):
-        if (
-            periodic_owner.periodic_edge_size_quantile_compare(
-                mesh, quantile, lower, geometry=geometry, budget=budget
-            )
-            < 0
-            or periodic_owner.periodic_edge_size_quantile_compare(
-                mesh, quantile, upper, geometry=geometry, budget=budget
-            )
-            > 0
-        ):
-            issues.append(f"target_size_{name}:{control.control_id}")
-    squared = periodic_owner.periodic_edge_squared_lengths(
-        mesh, geometry=geometry, budget=budget
-    )
-    if control.minimum_size is not None:
-        bound = Fraction(control.minimum_size) - Fraction(
-            policy.tolerance(control.minimum_size)
+        return requested, achieved, []
+    topology = periodic_owner.require_periodic_topology(mesh)
+    edges = periodic_owner.simplex_entity_corners(mesh, 1)[
+        np.asarray(topology.orbit_representatives(1))
+    ]
+    with budget.temporary_scope():
+        issues = periodic_owner.periodic_size_control_issues(
+            periodic_owner.periodic_edge_squared_lengths(
+                mesh, geometry=geometry, budget=budget
+            ),
+            np.asarray(topology.orbits(0)[0])[edges],
+            control,
+            policy,
+            budget=budget,
         )
-        if bound > 0 and min(squared) < bound * bound:
-            issues.append(f"minimum_size:{control.control_id}")
-    if control.maximum_size is not None:
-        bound = Fraction(control.maximum_size) + Fraction(
-            policy.tolerance(control.maximum_size)
-        )
-        if bound < 0 or max(squared) > bound * bound:
-            issues.append(f"maximum_size:{control.control_id}")
-    if control.maximum_growth_rate is not None:
-        bound = Fraction(control.maximum_growth_rate) + Fraction(
-            policy.tolerance(control.maximum_growth_rate)
-        )
-        topology = periodic_owner.require_periodic_topology(mesh)
-        leaders = np.asarray(topology.orbit_representatives(1))
-        edges = periodic_owner.simplex_entity_corners(mesh, 1)[leaders]
-        orbits = np.asarray(topology.orbits(0)[0])[edges]
-        exceeds = bound < 1
-        for vertex in np.unique(orbits):
-            incident = squared[np.any(orbits == vertex, axis=1)]
-            exceeds = exceeds or max(incident) > bound * bound * min(incident)
-        if exceeds:
-            issues.append(f"maximum_growth_rate:{control.control_id}")
     return requested, achieved, issues
 
 
@@ -3035,6 +3146,26 @@ def _organize_periodic_domain(
     )
 
 
+def _periodic_construction_label(
+    method: PeriodicConstructionMethod, stratified: bool, /
+) -> str:
+    match method:
+        case "orbit_lattice_algebraic_bands":
+            return "orbit_lattice_algebraic_equilateral_bands"
+        case "source_action_algebraic_bands":
+            return "source_identity_algebraic_circle_bands"
+        case "orbit_sites":
+            return "translational_delaunay"
+        case "represented_source":
+            return (
+                "source_stratified_periodic_cdt"
+                if stratified
+                else "represented_domain_orbit_bisection"
+            )
+        case _ as invalid:
+            assert_never(invalid)
+
+
 def _publish_periodic_domain(
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
@@ -3115,14 +3246,8 @@ def _publish_periodic_domain(
                 }
                 for record in sizing_evidence
             ],
-            "construction": "source_identity_algebraic_circle_bands"
-            if construction.geometry is not None
-            else "translational_delaunay"
-            if isinstance(source.domain, periodic_owner.PeriodicPointOrbits)
-            else (
-                "source_stratified_periodic_cdt"
-                if stratified
-                else "represented_domain_orbit_bisection"
+            "construction": _periodic_construction_label(
+                prepared.construction, stratified
             ),
         },
         certification,
@@ -3234,6 +3359,7 @@ def execute_periodic_route(
         construction = _construct_periodic_domain(
             source,
             specification,
+            prepared.construction,
             limits,
             started,
             stage,
@@ -3279,7 +3405,21 @@ def execute_periodic_route(
                     budget.retain_basis((size_evidence,))
                     lengths = size_evidence.representative_lengths
                     growth = size_evidence.maximum_local_edge_ratio
-            if stratified or float(np.max(lengths)) <= threshold:
+            # Only the stratified algebraic construction carries a separate
+            # declared geometry. Otherwise the constructed binary64 carrier is
+            # the declared geometry: its field-valued longest quotient edge, not
+            # a rounded norm, decides refinement and then orders the bisection.
+            if stratified:
+                break
+            geometry = cell_geometry_owner.CellGeometrySpec.affine(mesh)
+            with allowance.exact_phase(), budget.temporary_scope():
+                exceeds = (
+                    periodic_owner.periodic_edge_size_quantile_compare(
+                        mesh, 1.0, threshold, geometry=geometry, budget=budget
+                    )
+                    > 0
+                )
+            if not exceeds:
                 break
             # Bound the entire orbit closure before allocating a successor.
             count = mesh.blocks[0].cell_count
@@ -3308,10 +3448,7 @@ def execute_periodic_route(
                 )
             with measure_phase(record_phase, "refinement"):
                 refinement = periodic_owner.refine_periodic_mesh(
-                    mesh,
-                    source_geometry=cell_geometry_owner.CellGeometrySpec.affine(mesh),
-                    scope=scope,
-                    budget=budget,
+                    mesh, source_geometry=geometry, scope=scope, budget=budget
                 )
             regions = regions[np.asarray(refinement.parent_cells)]
             ancestry = tuple(
@@ -3351,9 +3488,11 @@ def execute_periodic_route(
             )
             if construction.geometry is not None:
                 budget.retain_basis((certification,))
+        # Hard verdicts compare unrounded lengths for every source, so they borrow
+        # the native ledger even without a separately declared geometry.
         with (
             allowance.exact_phase()
-            if construction.geometry is not None
+            if construction.geometry is not None or hard
             else nullcontext()
         ):
             compliance = _periodic_compliance(

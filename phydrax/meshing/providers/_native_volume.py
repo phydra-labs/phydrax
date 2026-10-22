@@ -40,6 +40,13 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...discretization._coordinate_operands import (
+    CoordinateOperandCollector,
+    PlcSourceCoordinateOperands,
+    PlcSourceInputWitness,
+    seal_coordinate_operand_array,
+)
+from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...optim import OptimizationStatus
 from ...typing import checked
 from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
@@ -63,6 +70,7 @@ from ._native_publication import (
     NativeCertificationRequest,
     NativePublicationExecution,
     NativePublicationOrganization,
+    coordinate_phase,
     publish_native_result,
 )
 from ._native_route_checks import (
@@ -414,7 +422,7 @@ def volume_compliance(
     *,
     scope: NativeExecutionScope | None = None,
 ) -> MeshingComplianceReport:
-    """Size requests are hard or recorded; refinement and sliver aims are recorded."""
+    """Enforce physical size and metric floors; retain soft shape AIM evidence."""
 
     requested: list[tuple[str, float]] = [
         ("radius_edge_bound", schedule.radius_edge_bound),
@@ -469,10 +477,19 @@ def volume_compliance(
             for criterion, reason, count in construction.unmet
         ),
     ]
+    requested.extend(construction.aim_requested)
+    achieved.extend(construction.aim_achieved)
     issues: list[str] = []
     metric = construction.metric_optimization
     if metric is not None:
         _append_metric_evidence(metric, requested, achieved)
+        # A stalled low-level outcome may retain bad input cells. Merely
+        # reporting its declared hard floor must not certify that output.
+        if metric.metric_quality_floor is not None and (
+            not np.isfinite(metric.minimum_metric_quality)
+            or metric.minimum_metric_quality < metric.metric_quality_floor
+        ):
+            issues.append("metric_optimization:metric_quality_floor")
     for control in specification.size_controls:
         match control:
             case UniformSizeControl():
@@ -579,6 +596,57 @@ def plc_volume_audit_policy() -> CellMeshAuditPolicy:
     )
 
 
+def _source_input_witness(
+    construction: VolumeConstruction,
+    source: sources_owner.NativePlcSource,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> PlcSourceInputWitness | None:
+    """Detach only actual source-prefix inputs, never carrier membership verdicts."""
+    actual = construction.source_input_points
+    fidelity = construction.source_fidelity
+    declared = None if fidelity is None else fidelity.declared_source
+    if actual is None or declared is None:
+        return None
+    points = source.complex.vertices
+    count = points.shape[0]
+    budget.reserve(3 * points.size + 4 * count)
+    if (
+        actual.shape != points.shape or actual.dtype != points.dtype
+        or declared.points.shape != points.shape or declared.points.dtype != points.dtype
+        or actual.tobytes(order="C") != points.tobytes(order="C")
+        or declared.points.tobytes(order="C") != points.tobytes(order="C")
+        or declared.witness_strata.shape[0] < count
+        or declared.witness_entities.shape[0] < count
+        or declared.witness_parameters.shape[0] < count
+    ):
+        raise ValueError("PLC source input witnesses require the actual unchanged source-point prefix.")
+    # Native carrier witnesses are indexed by every initial/generated point.
+    # Association source inputs need only the admitted original-point prefix.
+    # Keep all original source strata/groups, including declared diagonals,
+    # while detaching these input rows from the full carrier-sized arrays.
+    return PlcSourceInputWitness(
+        points=declared.points,
+        faces=declared.faces,
+        face_group_rows=declared.face_group_rows,
+        face_tolerances=declared.face_tolerances,
+        segments=declared.segments,
+        segment_group_rows=declared.segment_group_rows,
+        segment_tolerances=declared.segment_tolerances,
+        face_ids=declared.face_ids,
+        segment_ids=declared.segment_ids,
+        witness_strata=seal_coordinate_operand_array(
+            declared.witness_strata[:count], budget=budget, copy=True,
+        ),
+        witness_entities=seal_coordinate_operand_array(
+            declared.witness_entities[:count], budget=budget, copy=True,
+        ),
+        witness_parameters=seal_coordinate_operand_array(
+            declared.witness_parameters[:count], budget=budget, copy=True,
+        ),
+    )
+
+
 @checked
 def execute_volume_route(
     source: sources_owner.NativePlcSource,
@@ -593,6 +661,7 @@ def execute_volume_route(
     workspace: NativeHostStorageWorkspace,
     construction: VolumeConstruction | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> CellMeshingResult:
     """Generate and publish in the explicit request scope."""
     if construction is not None and construction.native_execution_evidence is not None:
@@ -623,6 +692,7 @@ def execute_volume_route(
         workspace=workspace,
         construction=construction,
         record_phase=record_phase,
+        coordinate_operands=coordinate_operands,
     )
 
 
@@ -639,6 +709,7 @@ def _execute_volume_route_bound(
     workspace: NativeHostStorageWorkspace,
     construction: VolumeConstruction | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> CellMeshingResult:
     """Generate, certify, and publish within the request allowance."""
 
@@ -702,6 +773,10 @@ def _execute_volume_route_bound(
             maximum_work_units=limits.maximum_work_units,
             maximum_memory_bytes=limits.maximum_scratch_bytes,
         )
+        budget.capture_coordinate_operands = coordinate_operands is not None
+        budget.capture_signed_determinant_operands = (
+            coordinate_operands is not None and coordinate_operands.capture_signed_determinants
+        )
         with budget.activate():
             geometry = (
                 plc_geometry_owner.exact_plc_geometry(construction, source, budget=budget)
@@ -722,7 +797,7 @@ def _execute_volume_route_bound(
         return scope.batch(0, bytes_upper=bytes_upper)
 
     with budget.retained_storage(retain_coordinate_storage):
-        return publish_native_result(
+        result = publish_native_result(
             mesh,
             coordinate_contract,
             compliance,
@@ -754,6 +829,39 @@ def _execute_volume_route_bound(
             execution=NativePublicationExecution(scope, workspace, record_phase, budget),
             geometry=geometry,
         )
+        if coordinate_operands is not None:
+            # Source recovery's numeric strata are retained with the same
+            # source/frame/policy and ended earning receipt as coordinate banks.
+            # The receiving consumer still validates every association freshly.
+            with coordinate_phase(scope, limits, budget):
+                constraints = construction.source_constraints
+                if constraints is None:
+                    raise ValueError("PLC operand capture requires the actual recovered source tables.")
+                certificate = result.certification
+                if certificate is None or not isinstance(certificate.request.domain, PiecewiseLinearDomain):
+                    raise ValueError("PLC operand capture requires the actual published declared domain owner.")
+                with budget.live_storage() as storage:
+                    storage.set_bound(
+                        65536 + 4096 * (
+                            constraints.points.shape[0]
+                            + constraints.input_triangles.shape[0]
+                            + constraints.plc_edges.shape[0]
+                            + source.complex.polygon_facets.size
+                        )
+                    )
+                    source_operands = PlcSourceCoordinateOperands(
+                        source, specification, coordinate_contract, constraints,
+                        certificate.request.domain,
+                        _source_input_witness(construction, source, budget),
+                        prepared.schedule, audit_policy,
+                    )
+                    budget.retain_owner(source_operands, temporary_storage_credit=storage)
+                coordinate_operands.capture(
+                    result.mesh, result.geometry, budget, scope,
+                    plc_source=source_operands,
+                    coordinate_contract=result.coordinate_contract,
+                )
+        return result
 
 
 __all__ = [

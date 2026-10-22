@@ -466,6 +466,7 @@ def original_trim_root_preparation_scope(
     for source in sources:
         if isinstance(source, TrimIntersectionRoot):
             preparations.trim_roots.setdefault(id(source), (source, None, {}))
+    _register_endpoint_preparations(curves, preparations)
     yield preparations
 
 
@@ -656,6 +657,13 @@ class CurveSurfaceIntersectionRoot(StrictModule):
                 return self.parameter_enclosure(
                     maximum_steps=maximum_steps, preparations=preparations, budget=budget
                 )
+        maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+        owners = preparations.curve_surface_roots
+        entry = owners.get(id(self))
+        if entry is not None and entry[0] is self:
+            cached = entry[2].get(maximum_steps)
+            if cached is not None:
+                return cached.copy()
         prepared = _curve_surface_root_preparation(
             self, preparations=preparations, budget=budget
         )
@@ -667,7 +675,13 @@ class CurveSurfaceIntersectionRoot(StrictModule):
             budget=budget,
             preparations=preparations,
         )
-        return np.stack((lower[0], upper[0]))
+        result = np.stack((lower[0], upper[0]))
+        # The contraction is a deterministic function of this immutable root
+        # and the step count; registered request roots retain it.
+        entry = owners.get(id(self))
+        if entry is not None and entry[0] is self:
+            entry[2][maximum_steps] = result
+        return result.copy()
 
     def point_enclosure(
         self,
@@ -745,13 +759,31 @@ def original_curve_surface_root_preparation(
         preparations = TrimRequestPreparations()
     sources = jax.tree_util.tree_leaves(
         endpoints,
-        is_leaf=lambda value: isinstance(value, CurveSurfaceIntersectionRoot),
+        is_leaf=lambda value: isinstance(
+            value, (CurveSurfaceIntersectionRoot, TripleSurfaceIntersectionRoot)
+        ),
     )
     request = TrimRequestPreparations() if preparations is None else preparations
     for source in sources:
         if isinstance(source, CurveSurfaceIntersectionRoot):
-            request.curve_surface_roots.setdefault(id(source), (source, None))
+            request.curve_surface_roots.setdefault(id(source), (source, None, {}))
+        elif isinstance(source, TripleSurfaceIntersectionRoot):
+            request.triple_roots.setdefault(id(source), (source, None, {}))
+    _register_endpoint_preparations(endpoints, request)
     yield request
+
+
+def _register_endpoint_preparations(
+    sources: tuple[object, ...], preparations: TrimRequestPreparations, /
+) -> None:
+    """Retain exact scalar expressions with the roots of this bounded request."""
+    endpoints = jax.tree_util.tree_leaves(
+        sources,
+        is_leaf=lambda value: isinstance(value, (TrimRootEndpoint, BranchRootEndpoint)),
+    )
+    for endpoint in endpoints:
+        if isinstance(endpoint, (TrimRootEndpoint, BranchRootEndpoint)):
+            preparations.root_endpoints.setdefault(id(endpoint), (endpoint, {}))
 
 
 def _curve_surface_root_preparation(
@@ -784,7 +816,7 @@ def _curve_surface_root_preparation(
         CurveSurfaceSystem(curve, surface), 3, 1, preparations=preparations
     )
     if owners is not None and entry is not None and entry[0] is root:
-        owners[id(root)] = (root, prepared)
+        owners[id(root)] = (root, prepared, entry[2])
     return prepared
 
 
@@ -1014,22 +1046,32 @@ class TripleSurfaceIntersectionRoot(StrictModule):
                 return self.parameter_enclosure(
                     maximum_steps=maximum_steps, preparations=preparations, budget=budget
                 )
-        evaluators = []
-        for index, region in enumerate((self.first, self.second, self.third)):
-            lower = self.parameter_lower[2 * index : 2 * index + 2]
-            upper = self.parameter_upper[2 * index : 2 * index + 2]
-            evaluators.append(
-                next(
-                    piece.evaluator
-                    for piece in intersection_curve_owner.surface_pieces(
-                        region, budget=budget
+        maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+        owners = preparations.triple_roots
+        entry = owners.get(id(self))
+        if entry is not None and entry[0] is self:
+            cached = entry[2].get(maximum_steps)
+            if cached is not None:
+                return cached.copy()
+        prepared = None if entry is None or entry[0] is not self else entry[1]
+        if prepared is None:
+            evaluators = []
+            for index, region in enumerate((self.first, self.second, self.third)):
+                lower = self.parameter_lower[2 * index : 2 * index + 2]
+                upper = self.parameter_upper[2 * index : 2 * index + 2]
+                evaluators.append(
+                    next(
+                        piece.evaluator
+                        for piece in intersection_curve_owner.surface_pieces(
+                            region, budget=budget
+                        )
+                        if np.all(lower >= piece.lower)
+                        and np.all(upper <= piece.upper)
                     )
-                    if np.all(lower >= piece.lower) and np.all(upper <= piece.upper)
                 )
+            prepared = prepare(
+                TripleSurfaceSystem(*evaluators), 6, 1, preparations=preparations
             )
-        prepared = prepare(
-            TripleSurfaceSystem(*evaluators), 6, 1, preparations=preparations
-        )
         lower, upper = _contract(
             prepared,
             self.parameter_lower[None],
@@ -1038,7 +1080,12 @@ class TripleSurfaceIntersectionRoot(StrictModule):
             budget=budget,
             preparations=preparations,
         )
-        return np.stack((lower[0], upper[0]))
+        result = np.stack((lower[0], upper[0]))
+        entry = owners.get(id(self))
+        if entry is not None and entry[0] is self:
+            entry[2][maximum_steps] = result
+            owners[id(self)] = (self, prepared, entry[2])
+        return result.copy()
 
     def point_enclosure(
         self,
@@ -2491,10 +2538,19 @@ class TrimRootEndpoint(StrictModule):
                 return self.parameter_enclosure(
                     maximum_steps=maximum_steps, preparations=preparations, budget=budget
                 )
+        maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+        entry = preparations.root_endpoints.get(id(self))
+        if entry is not None and entry[0] is self:
+            cached = entry[1].get(maximum_steps)
+            if cached is not None:
+                return cached
         _, bounds = self._expression(
             maximum_steps=maximum_steps, preparations=preparations, budget=budget
         )
-        return float(bounds[0]), float(bounds[1])
+        result = float(bounds[0]), float(bounds[1])
+        if entry is not None and entry[0] is self:
+            entry[1][maximum_steps] = result
+        return result
 
     def affine(self, scale: float, offset: float, /) -> TrimRootEndpoint:
         return TrimRootEndpoint(
@@ -2909,6 +2965,11 @@ class BranchRootEndpoint(StrictModule):
                     maximum_steps=maximum_steps, preparations=preparations, budget=budget
                 )
         maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+        entry = preparations.root_endpoints.get(id(self))
+        if entry is not None and entry[0] is self:
+            cached = entry[1].get(maximum_steps)
+            if cached is not None:
+                return cached
         image = self.source_image(
             maximum_steps=maximum_steps, preparations=preparations, budget=budget
         )
@@ -2941,7 +3002,10 @@ class BranchRootEndpoint(StrictModule):
                 interval_multiply(scalar, (np.asarray(scale), np.asarray(scale))),
                 (np.asarray(offset), np.asarray(offset)),
             )
-        return float(scalar[0]), float(scalar[1])
+        result = float(scalar[0]), float(scalar[1])
+        if entry is not None and entry[0] is self:
+            entry[1][maximum_steps] = result
+        return result
 
     @property
     def parameter(self) -> float:
@@ -3696,7 +3760,7 @@ def _march_step(
 
 
 def _padded_call(
-    kernel: Callable[[np.ndarray], tuple[Array, ...] | Array],
+    kernel: Callable[[np.ndarray], tuple[Array, ...] | Array | np.ndarray],
     points: np.ndarray,
     batch: int,
     /,
@@ -4846,6 +4910,7 @@ def _contract(
     """Iterate Krawczyk on certified boxes; every iterate still holds the root."""
     maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
     for _ in range(maximum_steps):
+        budget.ticket.checkpoint()
         result = krawczyk(
             prepared, lower, upper, budget=budget, preparations=preparations
         )

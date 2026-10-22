@@ -22,13 +22,16 @@ int32_t TetMesh::build(int64_t point_count, const double* points, int64_t tet_co
                        const int32_t* tets, const int32_t* regions, int64_t face_count,
                        const int32_t* faces, const int32_t* face_sources, int64_t segment_count,
                        const int32_t* segments, const int32_t* segment_sources,
-                       const double* protection, const SourceComplex* source) {
+                       const double* protection, const SourceComplex* source,
+                       const CurvedSourceDeclaration* curved) {
   const MemoryScope memory_scope(memory_owner_);
+  cancel_prepared_edit();
   try {
     TetMesh staged(policy_, max_vertices_, max_tetrahedra_, memory_owner_);
     const int32_t status = staged.build_state(point_count, points, tet_count, tets, regions,
                                               face_count, faces, face_sources, segment_count,
-                                              segments, segment_sources, protection, source);
+                                              segments, segment_sources, protection, source,
+                                              curved);
     if (status != PHX_MC_OK) {
       return status;
     }
@@ -42,12 +45,25 @@ int32_t TetMesh::build(int64_t point_count, const double* points, int64_t tet_co
     points_ = std::move(staged.points_);
     original_points_ = std::move(staged.original_points_);
     original_faces_ = std::move(staged.original_faces_);
+    source_face_nodes_ = std::move(staged.source_face_nodes_);
+    source_face_roots_ = std::move(staged.source_face_roots_);
     original_segments_ = std::move(staged.original_segments_);
     face_tolerance_ = std::move(staged.face_tolerance_);
     segment_tolerance_ = std::move(staged.segment_tolerance_);
     face_rows_ = std::move(staged.face_rows_);
     segment_rows_ = std::move(staged.segment_rows_);
     witnesses_ = std::move(staged.witnesses_);
+    curved_sources_ = std::move(staged.curved_sources_);
+    curved_claims_ = std::move(staged.curved_claims_);
+    claimed_rows_ = std::move(staged.claimed_rows_);
+    // Retire the old bank, then publish only the fully verified staged bank.
+    release_face_ancestry();
+    ancestry_faces_ = std::move(staged.ancestry_faces_);
+    ancestry_points_ = std::move(staged.ancestry_points_);
+    ancestry_witnesses_ = std::move(staged.ancestry_witnesses_);
+    ancestry_offsets_ = std::move(staged.ancestry_offsets_);
+    ancestry_rows_ = std::move(staged.ancestry_rows_);
+    ancestry_cached_ = staged.ancestry_cached_;
     source_refusals_.clear();
     dimension_ = std::move(staged.dimension_);
     protection_ = std::move(staged.protection_);
@@ -61,6 +77,8 @@ int32_t TetMesh::build(int64_t point_count, const double* points, int64_t tet_co
     cavity_.clear();
     stack_.clear();
     scratch_star_.clear();
+    scratch_ring_.clear();
+    facet_contributors_.clear();
     boundary_.clear();
     crossed_.clear();
     boundary_edges_.clear();
@@ -79,7 +97,7 @@ int32_t TetMesh::build_state(int64_t point_count, const double* points, int64_t 
                              const int32_t* faces, const int32_t* face_sources,
                              int64_t segment_count, const int32_t* segments,
                              const int32_t* segment_sources, const double* protection,
-                             const SourceComplex* source) {
+                             const SourceComplex* source, const CurvedSourceDeclaration* curved) {
   const MemoryScope memory_scope(memory_owner_);
   const auto n = static_cast<std::size_t>(point_count);
   native_execution_charge(tet_count);
@@ -112,6 +130,11 @@ int32_t TetMesh::build_state(int64_t point_count, const double* points, int64_t 
     own.segments = segments;
     own.segment_sources = segment_sources;
     status = build_source(point_count, source != nullptr ? *source : own);
+  }
+  if (status == PHX_MC_OK && curved != nullptr && curved->source_count > 0) {
+    // Curved claims bind the own complex only: row i is input face i.
+    status = source != nullptr ? PHX_MC_INVALID_INPUT
+                               : declare_curved_sources(face_count, face_sources, *curved);
   }
   if (status == PHX_MC_OK) {
     status = build_segments(point_count, segment_count, segments, segment_sources);
@@ -211,35 +234,62 @@ bool TetMesh::vertex_star(int32_t a, std::vector<int32_t, Allocator>& star) {
   return true;
 }
 
-int32_t TetMesh::edge_tet(int32_t a, int32_t b) {
+// The walk is vertex_star's breadth-first walk, but every cell is tested as
+// it joins the star.  The first accepted cell is therefore the one a scan of
+// the complete star would return, and only the visits up to it are made (and
+// charged one kVisit each, as vertex_star charges them).
+int32_t TetMesh::first_star_cell(int32_t a, int32_t b, int32_t c, bool face) {
   const MemoryScope memory_scope(memory_owner_);
-  if (!vertex_star(a, scratch_star_)) {
+  scratch_star_.clear();
+  if (!live_vertex(a)) {
     return -1;
   }
-  for (int32_t t : scratch_star_) {
-    if (vertex_slot(tet(t), b) >= 0) {
-      return t;
+  const int32_t start = vertex_tet_[static_cast<std::size_t>(a)];
+  if (start < 0 || !complex_.live(start) || vertex_slot(tet(start), a) < 0) {
+    return -1;
+  }
+  const auto accepted = [&](int32_t t) {
+    const Tetrahedron& current = tet(t);
+    return vertex_slot(current, b) >= 0 &&
+           (!face || (!is_ghost(current) && vertex_slot(current, c) >= 0));
+  };
+  if (!spend(TetWorkCost::kVisit)) return -1;
+  if (accepted(start)) return start;
+  next_stamp();
+  mark(start);
+  scratch_star_.push_back(start);
+  for (std::size_t i = 0; i < scratch_star_.size(); ++i) {
+    native_execution_charge(TetWorkCost::kCheckpoint);
+    const Tetrahedron& current = tet(scratch_star_[i]);
+    const int apex = vertex_slot(current, a);
+    for (int k = 0; k < 4; ++k) {
+      const int32_t next = current.n[k];
+      if (k != apex && !marked(next)) {
+        if (!spend(TetWorkCost::kVisit)) return -1;
+        if (accepted(next)) return next;
+        mark(next);
+        scratch_star_.push_back(next);
+      }
     }
   }
   return -1;
 }
 
+int32_t TetMesh::edge_tet(int32_t a, int32_t b) {
+  return first_star_cell(a, b, b, false);
+}
+
 bool TetMesh::find_face(int32_t a, int32_t b, int32_t c, int32_t& t, int& slot) {
-  const MemoryScope memory_scope(memory_owner_);
-  if (!vertex_star(a, scratch_star_)) {
+  const int32_t s = first_star_cell(a, b, c, true);
+  if (s < 0) {
     return false;
   }
-  for (int32_t s : scratch_star_) {
-    const Tetrahedron& current = tet(s);
-    if (is_ghost(current) || vertex_slot(current, b) < 0 || vertex_slot(current, c) < 0) {
-      continue;
-    }
-    for (int k = 0; k < 4; ++k) {
-      if (current.v[k] != a && current.v[k] != b && current.v[k] != c) {
-        t = s;
-        slot = k;
-        return true;
-      }
+  const Tetrahedron& current = tet(s);
+  for (int k = 0; k < 4; ++k) {
+    if (current.v[k] != a && current.v[k] != b && current.v[k] != c) {
+      t = s;
+      slot = k;
+      return true;
     }
   }
   return false;
@@ -571,8 +621,9 @@ int32_t TetMesh::build_segments(int64_t point_count, int64_t segment_count, cons
     }
     const std::uint64_t key = face_edges[r].edge;
     if (segments_.count(key) == 0) {
-      // Exactly planar, or folded only by a certified bounded witness of
-      // one of its four vertices; source identity always agrees.
+      // Exactly planar, folded only by a certified bounded witness of one of
+      // its four vertices, or inside one declared curved source whose every
+      // face carries a host claim; source identity always agrees.
       const auto bounded = [&](int32_t v) {
         return witnesses_[static_cast<std::size_t>(v)].deviation > 0.0;
       };
@@ -581,7 +632,8 @@ int32_t TetMesh::build_segments(int64_t point_count, int64_t segment_count, cons
           paired && (orient3d(point(edge_low(key)), point(edge_high(key)),
                               point(face_edges[r].apex), point(face_edges[r + 1].apex)) == 0 ||
                      bounded(edge_low(key)) || bounded(edge_high(key)) ||
-                     bounded(face_edges[r].apex) || bounded(face_edges[r + 1].apex));
+                     bounded(face_edges[r].apex) || bounded(face_edges[r + 1].apex) ||
+                     !std::isnan(curved_tolerance(face_edges[r].source)));
       if (!planar) {
         return PHX_MC_INVALID_INPUT;
       }

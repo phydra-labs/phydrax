@@ -10,12 +10,18 @@ from contextlib import contextmanager
 import jax
 import numpy as np
 
-from .._meshcore import NativeBatchTicket, NativeExecutionScope
+from .._meshcore import (
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeBatchTicket,
+    NativeExecutionScope,
+)
 from ..discretization import CellMesh
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..optim import MinimizationResult, ProjectedLBFGS
 from ..typing import checked
 from ._contracts import MeshingLimits
+from ._failures import MeshingFailure, MeshingFailureCategory
 from ._host_banks import failure
 
 
@@ -136,6 +142,62 @@ def charge_field_work(
     ticket.consume(rows * (int(objectives) + int(gradients)))
 
 
+@checked
+def family_capacity_failure(
+    error: MeshcoreError, limits: MeshingLimits, stage: str, /
+) -> MeshingFailure:
+    """Type a family admission refusal without discarding its native demand ledger."""
+    achieved: list[tuple[str, float]] = [("native_status", int(error.status))]
+    demand = error.batch_requested_upper
+    if demand is not None:
+        achieved.extend(
+            (f"native_batch:requested_{name}", value)
+            for name, value in zip(
+                ("work_units", "geometry_queries", "cavity_cells", "managed_bytes"),
+                demand,
+                strict=True,
+            )
+        )
+    if error.batch_refusal_evidence is not None:
+        achieved.extend(
+            (f"native_batch:refusal:{index}", int(value))
+            for index, value in enumerate(error.batch_refusal_evidence)
+        )
+    if error.memory_counters is not None:
+        achieved.extend(
+            (f"native_memory:{name}", value)
+            for name, value in error.memory_counters.items()
+        )
+    return MeshingFailure(
+        MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        f"{stage}.admission must fit the remaining request allowance; got excess resource demand",
+        stage=stage,
+        requested=(
+            ("maximum_work_units", limits.maximum_work_units),
+            ("maximum_geometry_queries", limits.maximum_geometry_queries),
+            ("maximum_cavity_cells", limits.maximum_cavity_cells),
+            ("maximum_scratch_bytes", limits.maximum_scratch_bytes),
+        ),
+        achieved=tuple(achieved),
+    )
+
+
+@contextmanager
+@checked
+def family_route_refusals(limits: MeshingLimits, stage: str, /) -> Iterator[None]:
+    """Surface every family ticket refusal as a typed resource failure.
+
+    Nested native owners already type their own refusals; only raw capacity
+    refusals from family tickets reach this boundary.
+    """
+    try:
+        yield
+    except MeshcoreError as error:
+        if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
+            raise
+        raise family_capacity_failure(error, limits, stage) from error
+
+
 __all__ = [
     "check_family_limits",
     "coordinate_phase",
@@ -143,4 +205,6 @@ __all__ = [
     "vertex_ids",
     "field_work_allowance",
     "charge_field_work",
+    "family_capacity_failure",
+    "family_route_refusals",
 ]

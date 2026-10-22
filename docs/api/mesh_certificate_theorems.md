@@ -14,7 +14,7 @@ An empty list denotes a success obligation recorded after its hypotheses hold.
 Coverage applies to the closed `MeshCertificateCheck` finding/obligation selector,
 not arbitrary descriptive strings in a certificate's `evaluated_checks` field.
 
-Closed checks: 271.
+Closed checks: 284.
 
 ## `analytic_boundary_bernstein_capacity`
 
@@ -1222,7 +1222,7 @@ Documentation: `phydrax.geometry._global_embedding`.
 
 Hypotheses:
 
-- **X** — Every rational source coordinate equals Fraction(float(source_coordinate)).
+- **X** — Every rational coordinate in the predicate input bank equals Fraction(float(source_coordinate)).
 
 Conclusion: The exported binary64 predicate view represents the same source values.
 
@@ -3008,6 +3008,86 @@ Citation (mathematical): [Lipman, Bijective Mappings of Meshes with Boundary and
 
 Failure statuses for this contract: none (success obligation)
 
+## `periodic_affine_torus_degree_one`
+
+Failure statuses: `unresolved`, `violated`
+
+### `phydrax.geometry._periodic_affine_degree.certify_affine_torus_degree`
+
+Documentation: `phydrax.geometry._periodic_affine_degree`.
+
+Hypotheses:
+
+- **X** — The current quotient is a closed connected coherently oriented triangle two-manifold; every vertex link is one cycle and its reconstructed incidence and winding cocycle match the declaration.
+- **X** — The current full coordinate bases and their reference actions are affine, and all lifted vertex images agree exactly under the same rank-two translation lattice.
+- **X** — Every authenticated triangle has strictly positive signed determinant, and the signed pullback area with multiplicity is exactly one lattice covolume.
+
+Conclusion: Every local covering degree is positive and their global sum is one, so the quotient map is a homeomorphism onto the flat torus; no image-pair enumeration is needed.
+
+Citation (mathematical): [Outerelo and Ruiz, Mapping Degree Theory: degree as the sum of local degrees for an orientation-preserving PL branched covering](https://doi.org/10.1090/gsm/108), closed oriented two-manifold degree theorem.
+
+Failure statuses for this contract: `unresolved`, `violated`
+
+## `periodic_affine_torus_manifold`
+
+Failure statuses: `unresolved`, `violated`
+
+### `phydrax.geometry._periodic_affine_degree.certify_affine_torus_degree`
+
+Documentation: `phydrax.geometry._periodic_affine_degree`.
+
+Hypotheses:
+
+- **X** — The current quotient is a closed connected coherently oriented triangle two-manifold; every vertex link is one cycle and its reconstructed incidence and winding cocycle match the declaration.
+- **X** — The current full coordinate bases and their reference actions are affine, and all lifted vertex images agree exactly under the same rank-two translation lattice.
+- **X** — Every authenticated triangle has strictly positive signed determinant, and the signed pullback area with multiplicity is exactly one lattice covolume.
+
+Conclusion: Every local covering degree is positive and their global sum is one, so the quotient map is a homeomorphism onto the flat torus; no image-pair enumeration is needed.
+
+Citation (mathematical): [Outerelo and Ruiz, Mapping Degree Theory: degree as the sum of local degrees for an orientation-preserving PL branched covering](https://doi.org/10.1090/gsm/108), closed oriented two-manifold degree theorem.
+
+Failure statuses for this contract: `unresolved`, `violated`
+
+## `periodic_affine_torus_orientation`
+
+Failure statuses: `unresolved`, `violated`
+
+### `phydrax.geometry._periodic_affine_degree.certify_affine_torus_degree`
+
+Documentation: `phydrax.geometry._periodic_affine_degree`.
+
+Hypotheses:
+
+- **X** — The current quotient is a closed connected coherently oriented triangle two-manifold; every vertex link is one cycle and its reconstructed incidence and winding cocycle match the declaration.
+- **X** — The current full coordinate bases and their reference actions are affine, and all lifted vertex images agree exactly under the same rank-two translation lattice.
+- **X** — Every authenticated triangle has strictly positive signed determinant, and the signed pullback area with multiplicity is exactly one lattice covolume.
+
+Conclusion: Every local covering degree is positive and their global sum is one, so the quotient map is a homeomorphism onto the flat torus; no image-pair enumeration is needed.
+
+Citation (mathematical): [Outerelo and Ruiz, Mapping Degree Theory: degree as the sum of local degrees for an orientation-preserving PL branched covering](https://doi.org/10.1090/gsm/108), closed oriented two-manifold degree theorem.
+
+Failure statuses for this contract: `unresolved`, `violated`
+
+## `periodic_affine_torus_trace`
+
+Failure statuses: `unresolved`, `violated`
+
+### `phydrax.geometry._periodic_affine_degree.certify_affine_torus_degree`
+
+Documentation: `phydrax.geometry._periodic_affine_degree`.
+
+Hypotheses:
+
+- **X** — The current quotient is a closed connected coherently oriented triangle two-manifold; every vertex link is one cycle and its reconstructed incidence and winding cocycle match the declaration.
+- **X** — The current full coordinate bases and their reference actions are affine, and all lifted vertex images agree exactly under the same rank-two translation lattice.
+- **X** — Every authenticated triangle has strictly positive signed determinant, and the signed pullback area with multiplicity is exactly one lattice covolume.
+
+Conclusion: Every local covering degree is positive and their global sum is one, so the quotient map is a homeomorphism onto the flat torus; no image-pair enumeration is needed.
+
+Citation (mathematical): [Outerelo and Ruiz, Mapping Degree Theory: degree as the sum of local degrees for an orientation-preserving PL branched covering](https://doi.org/10.1090/gsm/108), closed oriented two-manifold degree theorem.
+
+Failure statuses for this contract: `unresolved`, `violated`
+
 ## `periodic_affine_validity_reuse`
 
 Failure statuses: none (success obligation)
@@ -3356,6 +3436,72 @@ Citation (definition): phydrax.geometry._periodic_embedding.certify_periodic_map
 
 Failure statuses for this contract: `unresolved`
 
+## `periodic_restriction_boundary_subdivision`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._periodic_restriction.certify_periodic_restriction_partition`
+
+Documentation: `phydrax.geometry._periodic_restriction`.
+
+Hypotheses:
+
+- **X** — A complete current certified quotient embedding bound to the source mesh, geometry and positive source validity, with the same exact isometry group identification as the target, and closed convex full-dimensional lifted parent polytopes.
+- **X** — Every target lifted cell is a closed convex full-dimensional polytope contained in its one declared lifted parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent.
+- **X** — Exact rational child volumes sum to each parent's exact volume, and every source parent has at least one child.
+- **X** — Every source and target cell boundary is a face-subdivision complex of its convex hull boundary: each face a simple convex loop on an outward supporting plane, one consistent orientation, each directed edge with exactly one reversed partner, every vertex link one corner cycle, and per supporting plane positive face areas summing to the exact facet area (winding degree one).
+- **X** — Independently of the partition, the target's exact group, facet traces and reciprocal quotient facets are certified: every quotient face has exactly two occurrences whose lifted vertex keys agree exactly under the declared action, the target validity is positive, and the quotient has no boundary facet.
+
+Conclusion: The target cells partition every parent exactly, so all target images have pairwise disjoint interiors and cover the quotient; with conforming boundary subdivisions and reciprocal lifted faces every intersection is a common subcomplex, and the target quotient map is an embedding without image-pair enumeration.
+
+Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: polyhedral subdivisions and their face-to-face intersection property, applied through chamber adjacency in the local link of a point.
+
+Failure statuses for this contract: `unresolved`
+
+## `periodic_restriction_parent_partition`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._periodic_restriction.certify_periodic_restriction_partition`
+
+Documentation: `phydrax.geometry._periodic_restriction`.
+
+Hypotheses:
+
+- **X** — A complete current certified quotient embedding bound to the source mesh, geometry and positive source validity, with the same exact isometry group identification as the target, and closed convex full-dimensional lifted parent polytopes.
+- **X** — Every target lifted cell is a closed convex full-dimensional polytope contained in its one declared lifted parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent.
+- **X** — Exact rational child volumes sum to each parent's exact volume, and every source parent has at least one child.
+- **X** — Every source and target cell boundary is a face-subdivision complex of its convex hull boundary: each face a simple convex loop on an outward supporting plane, one consistent orientation, each directed edge with exactly one reversed partner, every vertex link one corner cycle, and per supporting plane positive face areas summing to the exact facet area (winding degree one).
+- **X** — Independently of the partition, the target's exact group, facet traces and reciprocal quotient facets are certified: every quotient face has exactly two occurrences whose lifted vertex keys agree exactly under the declared action, the target validity is positive, and the quotient has no boundary facet.
+
+Conclusion: The target cells partition every parent exactly, so all target images have pairwise disjoint interiors and cover the quotient; with conforming boundary subdivisions and reciprocal lifted faces every intersection is a common subcomplex, and the target quotient map is an embedding without image-pair enumeration.
+
+Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: polyhedral subdivisions and their face-to-face intersection property, applied through chamber adjacency in the local link of a point.
+
+Failure statuses for this contract: `unresolved`
+
+## `periodic_restriction_source_embedding`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._periodic_restriction.certify_periodic_restriction_partition`
+
+Documentation: `phydrax.geometry._periodic_restriction`.
+
+Hypotheses:
+
+- **X** — A complete current certified quotient embedding bound to the source mesh, geometry and positive source validity, with the same exact isometry group identification as the target, and closed convex full-dimensional lifted parent polytopes.
+- **X** — Every target lifted cell is a closed convex full-dimensional polytope contained in its one declared lifted parent and in one closed sign cell of the exact restriction planes; sign vectors are unique within each parent.
+- **X** — Exact rational child volumes sum to each parent's exact volume, and every source parent has at least one child.
+- **X** — Every source and target cell boundary is a face-subdivision complex of its convex hull boundary: each face a simple convex loop on an outward supporting plane, one consistent orientation, each directed edge with exactly one reversed partner, every vertex link one corner cycle, and per supporting plane positive face areas summing to the exact facet area (winding degree one).
+- **X** — Independently of the partition, the target's exact group, facet traces and reciprocal quotient facets are certified: every quotient face has exactly two occurrences whose lifted vertex keys agree exactly under the declared action, the target validity is positive, and the quotient has no boundary facet.
+
+Conclusion: The target cells partition every parent exactly, so all target images have pairwise disjoint interiors and cover the quotient; with conforming boundary subdivisions and reciprocal lifted faces every intersection is a common subcomplex, and the target quotient map is an embedding without image-pair enumeration.
+
+Citation (mathematical): [De Loera, Rambau and Santos, Triangulations: Structures for Algorithms and Applications](https://doi.org/10.1007/978-3-642-12971-1), Chapter 2: polyhedral subdivisions and their face-to-face intersection property, applied through chamber adjacency in the local link of a point.
+
+Failure statuses for this contract: `unresolved`
+
 ## `periodic_source_expression_resource_budget`
 
 Failure statuses: `unresolved`
@@ -3605,6 +3751,7 @@ Documentation: `phydrax.geometry.implicit._projection_cover`.
 Hypotheses:
 
 - **N** — Outward field and gradient intervals cover each reference-triangle image; its distance bound is at most the requested tolerance and reach-tube radius, and its normal derivative lower bound is strictly positive.
+- **T** — For a sphere source f(y) = |y - c| - R, convexity of the Euclidean norm bounds f on an exact affine piece below by the center's distance to its plane and above by its largest corner distance; field intervals may intersect this with the coordinate-box enclosure.
 - **N** — The source profile recomputes signed-distance and positive-reach bounds from the current sphere or ring-torus state; its tube radius is strictly below that reach.
 - **T** — Within positive reach, nearest-point projection is unique and continuous; the qualified smooth source tube has normal fibers and positive-normal surface maps give local covers.
 
@@ -4958,6 +5105,26 @@ Citation (definition): Source fidelity certificate contract, phydrax.geometry._s
 
 Failure statuses for this contract: `unresolved`
 
+## `source_chart_authority_premise`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._source_fidelity`
+
+Documentation: `phydrax.geometry._source_fidelity`.
+
+Hypotheses:
+
+- **X** — The independently reconstructed native BRep authority, revision, single region and complete oriented patch/trim chain agree with the supplied source.
+- **X** — Every source chart triangle matches exactly one target boundary facet, its corner coefficient values match the root vertex bank, and the authored region-side orientation agrees with the reference volume boundary orientation.
+- **X** — Native endpoint/root, coedge correspondence and original admitted gap envelopes authenticate a continuous closed representative and oriented incidence ribbons from every original face; removable value and one-sided derivative limits of its curved-edge corrections are proved.
+
+Conclusion: An unsupported source map, foreign authority, incomplete facet lineage or inconsistent source side cannot establish a boundary-degree identity.
+
+Citation (definition): Source fidelity certificate contract, phydrax.geometry._source_fidelity._chart_boundary_homotopy.
+
+Failure statuses for this contract: `unresolved`
+
 ## `source_chart_capacity`
 
 Failure statuses: `unresolved`
@@ -5005,6 +5172,104 @@ Hypotheses:
 Conclusion: Exceeding the chart count bound returns sampled coverage with an unresolved capacity finding.
 
 Citation (definition): Mapped source coverage evidence contract, phydrax.meshing._surface_boundary_sources.SurfaceSubdivisionBoundarySource.boundary_chart_cover.
+
+Failure statuses for this contract: `unresolved`
+
+## `source_chart_facet_lineage_premise`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._source_fidelity`
+
+Documentation: `phydrax.geometry._source_fidelity`.
+
+Hypotheses:
+
+- **X** — The independently reconstructed native BRep authority, revision, single region and complete oriented patch/trim chain agree with the supplied source.
+- **X** — Every source chart triangle matches exactly one target boundary facet, its corner coefficient values match the root vertex bank, and the authored region-side orientation agrees with the reference volume boundary orientation.
+- **X** — Native endpoint/root, coedge correspondence and original admitted gap envelopes authenticate a continuous closed representative and oriented incidence ribbons from every original face; removable value and one-sided derivative limits of its curved-edge corrections are proved.
+
+Conclusion: An unsupported source map, foreign authority, incomplete facet lineage or inconsistent source side cannot establish a boundary-degree identity.
+
+Citation (definition): Source fidelity certificate contract, phydrax.geometry._source_fidelity._chart_boundary_homotopy.
+
+Failure statuses for this contract: `unresolved`
+
+## `source_chart_homotopy_premise`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._source_fidelity`
+
+Documentation: `phydrax.geometry._source_fidelity`.
+
+Hypotheses:
+
+- **N** — Outward native source and exact target polynomial intervals certify continuous deviation including original-face-to-representative ribbon bounds, rank-two projected Jacobians, edge-atlas monotonicity, vertex-cone separation and synchronized-time separation of every nonadjacent pair throughout the closed-boundary homotopy.
+- **X** — Exact shared representative and target traces glue the complete oriented chart chain to the complete target boundary, without unidentified contacts or omitted authored patches; original nonzero incidences remain bounded ribbons under their unchanged import/model allowance.
+- **T** — A continuous family of embeddings of a closed oriented boundary preserves its degree off the swept image; oriented incidence ribbons preserve the represented region side off their support. Complete oriented chart boundaries and nonzero chart Jacobians give degree-one coverage of the bounded trimmed parameter domains.
+
+Conclusion: Only the fully certified source-to-target isotopy establishes the two directed boundary bounds and the source-bound signed-degree identity.
+
+Citation (mathematical): [Allen Hatcher, Algebraic Topology (2002)](https://math.uchicago.edu/~farb/algtop2023/Hatcher.pdf), Section 2.2, Degree; Section 2.B, Jordan separation.
+
+Failure statuses for this contract: `unresolved`
+
+## `source_chart_homotopy_resource`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._source_fidelity`
+
+Documentation: `phydrax.geometry._source_fidelity`.
+
+Hypotheses:
+
+- **X** — The shared coordinate/source budget refuses the chart map, exact trace or continuous homotopy phase at its original work or storage allowance.
+
+Conclusion: Retain the refusing resource phase and leave the boundary-degree proof unresolved.
+
+Citation (definition): Source fidelity certificate contract, phydrax.geometry._source_fidelity._chart_boundary_homotopy.
+
+Failure statuses for this contract: `unresolved`
+
+## `source_chart_map_premise`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._source_fidelity`
+
+Documentation: `phydrax.geometry._source_fidelity`.
+
+Hypotheses:
+
+- **X** — The independently reconstructed native BRep authority, revision, single region and complete oriented patch/trim chain agree with the supplied source.
+- **X** — Every source chart triangle matches exactly one target boundary facet, its corner coefficient values match the root vertex bank, and the authored region-side orientation agrees with the reference volume boundary orientation.
+- **X** — Native endpoint/root, coedge correspondence and original admitted gap envelopes authenticate a continuous closed representative and oriented incidence ribbons from every original face; removable value and one-sided derivative limits of its curved-edge corrections are proved.
+
+Conclusion: An unsupported source map, foreign authority, incomplete facet lineage or inconsistent source side cannot establish a boundary-degree identity.
+
+Citation (definition): Source fidelity certificate contract, phydrax.geometry._source_fidelity._chart_boundary_homotopy.
+
+Failure statuses for this contract: `unresolved`
+
+## `source_chart_orientation_premise`
+
+Failure statuses: `unresolved`
+
+### `phydrax.geometry._source_fidelity`
+
+Documentation: `phydrax.geometry._source_fidelity`.
+
+Hypotheses:
+
+- **X** — The independently reconstructed native BRep authority, revision, single region and complete oriented patch/trim chain agree with the supplied source.
+- **X** — Every source chart triangle matches exactly one target boundary facet, its corner coefficient values match the root vertex bank, and the authored region-side orientation agrees with the reference volume boundary orientation.
+- **X** — Native endpoint/root, coedge correspondence and original admitted gap envelopes authenticate a continuous closed representative and oriented incidence ribbons from every original face; removable value and one-sided derivative limits of its curved-edge corrections are proved.
+
+Conclusion: An unsupported source map, foreign authority, incomplete facet lineage or inconsistent source side cannot establish a boundary-degree identity.
+
+Citation (definition): Source fidelity certificate contract, phydrax.geometry._source_fidelity._chart_boundary_homotopy.
 
 Failure statuses for this contract: `unresolved`
 
@@ -5151,6 +5416,20 @@ Hypotheses:
 Conclusion: A missing, repeated, or unproved source chart chain leaves the selected patch cover incomplete and unresolved.
 
 Citation (mathematical): [Allen Hatcher, Algebraic Topology (2002)](https://pi.math.cornell.edu/~hatcher/AT/AT.pdf), Section 2.2, Degree, pp. 134-135 and Proposition 2.30 (local degree sum).
+
+Failure statuses for this contract: `unresolved`
+
+### `phydrax.geometry._source_fidelity`
+
+Documentation: `phydrax.geometry._source_fidelity`.
+
+Hypotheses:
+
+- **X** — An explicitly supplied chart witness names every selected authored patch exactly once and independently certifies its oriented chart chain and complete trims.
+
+Conclusion: A closed-form boundary projection cannot discard an invalid supplied chart witness; the accepted witness and its continuous cover bind the degree identity.
+
+Citation (definition): Source fidelity certificate contract, phydrax.geometry._source_fidelity.analytic_boundary_proof.
 
 Failure statuses for this contract: `unresolved`
 

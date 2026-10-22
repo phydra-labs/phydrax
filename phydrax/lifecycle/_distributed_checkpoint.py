@@ -18,7 +18,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.sharding import NamedSharding, PartitionSpec, Sharding, SingleDeviceSharding
+from jax.experimental import multihost_utils
+from jax.sharding import NamedSharding, Sharding, SingleDeviceSharding
 
 from .._array_archive import (
     ArrayArchiveCorruptionError,
@@ -30,6 +31,7 @@ from .._fingerprint import (
     canonical_fingerprint,
     canonical_json,
 )
+from .._host_storage import immutable_host_array
 from .._model._structure import (
     model_from_logical_array_recipe,
     model_recipe_array_inventory,
@@ -57,6 +59,7 @@ from ._meshing_checkpoint_binding import (
     source_logical_array_name,
 )
 from ._meshing_sources import (
+    meshing_source_local_restore_phase,
     meshing_source_owner_reconstruction_scope,
     validate_collective_mesh_source_epochs,
     validate_meshing_source_checkpoint_references,
@@ -369,7 +372,9 @@ def _snapshot_host_array(
     topology_epoch: int,
 ) -> AddressableCheckpointShard:
     # Authored coefficients stay on the host, with one publishing replica.
-    payload = np.array(leaf, copy=True, order="C") if leaf.flags.writeable else leaf
+    payload = immutable_host_array(leaf)
+    if payload.flags.writeable:
+        payload = np.array(payload, copy=True, order="C")
     payload.setflags(write=False)
     shape = tuple(leaf.shape)
     index = tuple((0, size, 1) for size in shape)
@@ -1445,6 +1450,7 @@ def _read_shard_payload(
         raise RepositoryCorruptionError(
             "checkpoint.shard.layout must remain unchanged during decoding; got payload shape or dtype changed while loading"
         )
+    value = immutable_host_array(value)
     value.setflags(write=False)
     return value
 
@@ -1606,17 +1612,21 @@ def _restore_checkpoint_packets(
     limits: ArrayArchiveLimits,
     maximum_host_packet_bytes: int,
 ) -> jax.Array:
-    """Assemble admitted addressable archive packets only in device storage."""
+    """Assemble admitted archive packets only into this process's destination shards.
+
+    Each distinct addressable destination is filled in device storage from the
+    archived packets that intersect it; one ingress packet is live at a time.
+    No process allocates a destination owned by another process, and a global
+    replica exists only where the requested sharding replicates the array.
+    """
     budget = operator.index(maximum_host_packet_bytes)
     if isinstance(maximum_host_packet_bytes, bool) or budget < 1:
         raise ValueError(
             f"restore.maximum_host_packet_bytes must be a positive integer; got {maximum_host_packet_bytes!r}"
         )
     match sharding:
-        case NamedSharding():
-            placement = NamedSharding(sharding.mesh, PartitionSpec())
-        case SingleDeviceSharding():
-            placement = sharding
+        case NamedSharding() | SingleDeviceSharding():
+            pass
         case _:
             raise TypeError(
                 "restore.sharding must be NamedSharding or SingleDeviceSharding for packet restoration; got an unsupported sharding"
@@ -1628,25 +1638,50 @@ def _restore_checkpoint_packets(
             raise ValueError(
                 "restore.maximum_host_packet_bytes must cover every archived numerical packet; got an over-limit packet"
             )
-    full_index = tuple((0, size, 1) for size in global_shape)
-    if all(index == full_index for _, _, _, index in records):
-        # A full-extent source packet is already the bounded result. Adopt it
-        # directly rather than compiling a zero-fill and a redundant copy.
-        destination = tuple(slice(0, size) for size in global_shape)
-        result = jax.device_put(load_destination(destination), sharding)
-        return result.block_until_ready()
-    result = jnp.zeros(global_shape, dtype=dtype, device=placement)
-    for _, _, _, index in records:
-        destination = tuple(slice(start, stop, step) for start, stop, step in index)
-        packet = jax.device_put(load_destination(destination), placement)
-        result = _place_checkpoint_packet(
-            result, packet, tuple(start for start, _, _ in index)
-        )
-        # This is the explicit cold-I/O packet barrier, not a runtime topology
-        # iteration. It bounds live ingress packets while donating the device
-        # assembly buffer; no global logical host destination is allocated.
-        result.block_until_ready()
-    return jax.device_put(result, sharding)
+    addressable = sharding.addressable_devices_indices_map(global_shape)
+    destinations: dict[CanonicalIndex, list[jax.Device]] = {}
+    for device, index in addressable.items():
+        destinations.setdefault(_canonical_index(index, global_shape), []).append(device)
+    placed: dict[jax.Device, jax.Array] = {}
+    for destination, devices in destinations.items():
+        first = devices[0]
+        if any(index == destination for _, _, _, index in records):
+            # One archived packet is exactly this destination: adopt it rather
+            # than compiling a zero-fill and a redundant copy.
+            result = jax.device_put(
+                load_destination(
+                    tuple(slice(start, stop) for start, stop, _ in destination)
+                ),
+                first,
+            )
+        else:
+            result = jnp.zeros(
+                tuple(stop - start for start, stop, _ in destination),
+                dtype=dtype,
+                device=first,
+            )
+            for _, _, _, index in records:
+                overlap = _intersection(index, destination)
+                if overlap is None:
+                    continue
+                _, local = overlap
+                region = tuple(
+                    slice(axis[0] + part.start, axis[0] + part.stop)
+                    for axis, part in zip(destination, local, strict=True)
+                )
+                packet = jax.device_put(load_destination(region), first)
+                result = _place_checkpoint_packet(
+                    result, packet, tuple(part.start for part in local)
+                )
+                # Explicit cold-I/O packet barrier: it bounds live ingress
+                # packets while donating this destination's assembly buffer.
+                result.block_until_ready()
+        placed[first] = result.block_until_ready()
+        for device in devices[1:]:
+            placed[device] = jax.device_put(result, device)
+    return jax.make_array_from_single_device_arrays(
+        global_shape, sharding, [placed[device] for device in addressable]
+    )
 
 
 @checked
@@ -2219,6 +2254,7 @@ class _MeshingRestorePlan:
     inventories: tuple[tuple[ModelRecipeArray, ...], ...]
     names: frozenset[str]
     host_names: frozenset[str]
+    decoded: frozenset[int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2234,6 +2270,28 @@ class _RestoredMeshingSources:
     logical_arrays: AdmittedMeshingSourceArrays | None
 
 
+def _decoded_meshing_owners(
+    decoded_source_owners: Sequence[int] | None,
+    source_owner_index: int,
+    owner_count: int,
+    /,
+) -> frozenset[int]:
+    if decoded_source_owners is None:
+        return frozenset(range(owner_count))
+    owners = tuple(decoded_source_owners)
+    if (
+        not owners
+        or any(type(owner) is not int or not 0 <= owner < owner_count for owner in owners)
+        or len(set(owners)) != len(owners)
+        or source_owner_index not in owners
+    ):
+        raise ValueError(
+            "restore.decoded_source_owners must name distinct archived owners including source_owner_index; "
+            f"got {owners!r} for {owner_count} owners and selected owner {source_owner_index!r}"
+        )
+    return frozenset(owners)
+
+
 def _prepare_meshing_restore(
     repository: ArtifactRepository,
     manifest: CheckpointManifest,
@@ -2242,6 +2300,7 @@ def _prepare_meshing_restore(
     source_owner_index: int,
     limits: ArrayArchiveLimits,
     parent_manifest: CheckpointManifest | None,
+    decoded_source_owners: Sequence[int] | None,
 ) -> _MeshingRestorePlan:
     if manifest.complete is not True:
         raise TypeError("CheckpointManifest.complete must be True for restore; got False")
@@ -2269,18 +2328,30 @@ def _prepare_meshing_restore(
         )
         for recipe in recipes
     )
-    names = frozenset(name for state in states for name, _ in state.array_roles)
+    decoded = _decoded_meshing_owners(
+        decoded_source_owners, source_owner_index, len(states)
+    )
+    archived_names = frozenset(name for state in states for name, _ in state.array_roles)
+    # Every owner's record and identity is admitted above; only the selected
+    # owners' source records are restored and decoded by this process.
+    names = frozenset(
+        name for owner in decoded for name, _ in states[owner].array_roles
+    ) | frozenset(
+        source_logical_array_name(name) for name in states[0].source_logical_array_names
+    )
     host_names = frozenset(
-        state.source_array_name(entry.name)
-        for state, inventory in zip(states, inventories, strict=True)
-        for entry in inventory
+        states[owner].source_array_name(entry.name)
+        for owner in decoded
+        for entry in inventories[owner]
         if entry.backend == "numpy"
     )
     if set(shardings) != names - host_names:
         raise ValueError(
             "restore.destination_shardings must cover every logical JAX scientific array; got missing or undeclared destination shardings"
         )
-    expected_paths = set(record_paths) | {_meshing_array_path(name) for name in names}
+    expected_paths = set(record_paths) | {
+        _meshing_array_path(name) for name in archived_names
+    }
     if {
         _metadata(shard)["array_path"] for shard in manifest.shards
     } != expected_paths or any(
@@ -2290,10 +2361,12 @@ def _prepare_meshing_restore(
         raise RepositoryCorruptionError(
             "manifest.array_epoch_binding must match the restored scientific state; got invalid array or epoch binding"
         )
-    return _MeshingRestorePlan(records, recipes, inventories, names, host_names)
+    return _MeshingRestorePlan(
+        records, recipes, inventories, names, host_names, decoded
+    )
 
 
-def _restore_meshing_arrays(
+def _load_meshing_arrays(
     repository: ArtifactRepository,
     manifest: CheckpointManifest,
     shardings: Mapping[str, Sharding],
@@ -2301,7 +2374,8 @@ def _restore_meshing_arrays(
     limits: ArrayArchiveLimits,
     parent_manifest: CheckpointManifest | None,
     maximum_host_packet_bytes: int | None,
-) -> _RestoredMeshingArrays:
+) -> dict[str, jax.Array | np.ndarray]:
+    """Admit and place this process's destinations; no collective is entered."""
     # Each committed artifact table is authenticated once for this restore.
     # Shard membership, lifecycle ownership and every payload remain checked.
     tables: dict[str, _ProcessShardTable] = {}
@@ -2332,22 +2406,31 @@ def _restore_meshing_arrays(
             tables=tables,
             shards_by_path=shards_by_path,
         )
-        host = load_host(tuple(slice(0, size) for size in shape))
+        host = immutable_host_array(load_host(tuple(slice(0, size) for size in shape)))
         host.setflags(write=False)
         arrays[name] = host
+    return arrays
+
+
+def _admit_meshing_arrays(
+    arrays: dict[str, jax.Array | np.ndarray],
+    plan: _MeshingRestorePlan,
+    maximum_host_packet_bytes: int | None,
+) -> _RestoredMeshingArrays:
     logical_arrays: dict[str, jax.Array] = {}
-    for name in plan.records[0].state.source_logical_array_names:
-        value = arrays[source_logical_array_name(name)]
-        match value:
-            case jax.Array():
-                logical_arrays[name] = value
-            case _:
-                raise RepositoryCorruptionError(
-                    f"source_binding.logical_arrays.backend must remain JAX during restore; got {type(value).__name__}"
-                )
-    source_chunk_bytes = (
-        1 << 20 if maximum_host_packet_bytes is None else maximum_host_packet_bytes
-    )
+    with meshing_source_local_restore_phase():
+        for name in plan.records[0].state.source_logical_array_names:
+            value = arrays[source_logical_array_name(name)]
+            match value:
+                case jax.Array():
+                    logical_arrays[name] = value
+                case _:
+                    raise RepositoryCorruptionError(
+                        f"source_binding.logical_arrays.backend must remain JAX during restore; got {type(value).__name__}"
+                    )
+        source_chunk_bytes = (
+            1 << 20 if maximum_host_packet_bytes is None else maximum_host_packet_bytes
+        )
     admitted = admit_meshing_source_logical_arrays(
         logical_arrays, maximum_chunk_bytes=source_chunk_bytes
     )
@@ -2363,35 +2446,52 @@ def _restore_meshing_sources(
     source_chunk_bytes = restored_arrays.source_chunk_bytes
     admitted = restored_arrays.logical_arrays
     decoded_closures: list[Mapping[str, Any] | None] = []
-    for record, recipe, inventory in zip(
-        plan.records, plan.recipes, plan.inventories, strict=True
-    ):
-        if recipe is None:
-            decoded_closures.append(None)
-            continue
-        source_arrays = {
-            entry.name: arrays[record.state.source_array_name(entry.name)]
-            for entry in inventory
-        }
-        try:
-            closure = model_from_logical_array_recipe(
-                recipe, source_arrays, prefix=MESHING_SOURCE_PREFIX, limits=limits
-            )
-            if not isinstance(closure, Mapping):
-                raise TypeError(
-                    "source_binding.closure must be an immutable scientific mapping; got an incompatible decoded closure"
+    # Recipe reconstruction is owner-local. A peer must not start common-epoch
+    # replay while another process has refused its typed source root.
+    with meshing_source_local_restore_phase():
+        for owner, (record, recipe, inventory) in enumerate(
+            zip(plan.records, plan.recipes, plan.inventories, strict=True)
+        ):
+            if recipe is None or owner not in plan.decoded:
+                decoded_closures.append(None)
+                continue
+            source_arrays = {
+                entry.name: arrays[record.state.source_array_name(entry.name)]
+                for entry in inventory
+            }
+            try:
+                closure = model_from_logical_array_recipe(
+                    recipe, source_arrays, prefix=MESHING_SOURCE_PREFIX, limits=limits
                 )
-            decoded_closures.append(closure)
-        except (TypeError, ValueError) as error:
-            raise RepositoryCorruptionError(
-                "source_binding.closure must reconstruct and validate its retained scientific fields; got an invalid source closure"
-            ) from error
-    source_roots = tuple(closure for closure in decoded_closures if closure is not None)
-    if source_roots:
-        if admitted is None:
+                if not isinstance(closure, Mapping):
+                    raise TypeError(
+                        "source_binding.closure must be an immutable scientific mapping; got an incompatible decoded closure"
+                    )
+                decoded_closures.append(closure)
+            except (TypeError, ValueError) as error:
+                raise RepositoryCorruptionError(
+                    "source_binding.closure must reconstruct and validate its retained scientific fields; got an invalid source closure"
+                ) from error
+        source_roots = tuple(
+            closure for closure in decoded_closures if closure is not None
+        )
+        if source_roots and admitted is None:
             admitted = AdmittedMeshingSourceArrays(
                 {}, maximum_chunk_bytes=source_chunk_bytes
             )
+    if jax.process_count() > 1:
+        roots_present = np.asarray(
+            multihost_utils.process_allgather(
+                np.int32(bool(source_roots)), tiled=False
+            )
+        ).reshape(-1)
+        if np.any(roots_present != roots_present[0]):
+            raise ValueError(
+                "restore.collective_admission must agree whether source replay is required; "
+                "got decoded source roots on only some processes"
+            )
+    if source_roots:
+        assert admitted is not None
         proof = validate_collective_mesh_source_epochs(
             source_roots,
             source_logical_arrays=admitted,
@@ -2399,31 +2499,63 @@ def _restore_meshing_sources(
             maximum_chunk_bytes=source_chunk_bytes,
             limits=limits,
         )
-        admitted = AdmittedMeshingSourceArrays(
-            admitted, maximum_chunk_bytes=source_chunk_bytes, source_validation=proof
-        )
-    restored_states: list[MeshingCheckpointState] = []
-    for record, closure in zip(plan.records, decoded_closures, strict=True):
-        if closure is None:
-            restored_states.append(record.state)
-            continue
-        try:
-            restored = MeshingCheckpointState.from_payload(
-                record.payload,
-                source_closure=closure,
-                source_logical_arrays=admitted,
-                limits=limits,
-                maximum_source_chunk_bytes=source_chunk_bytes,
+    # Common replay retains actual reconstructed numerical owners, their full
+    # content authentication, and clock scans before strictly local source guards.
+    with meshing_source_local_restore_phase():
+        if source_roots:
+            assert admitted is not None
+            admitted = AdmittedMeshingSourceArrays(
+                admitted, maximum_chunk_bytes=source_chunk_bytes, source_validation=proof
             )
-        except (TypeError, ValueError) as error:
-            raise RepositoryCorruptionError(
-                "source_binding.closure must reconstruct and validate its retained scientific fields; got an invalid source closure"
-            ) from error
-        _validate_meshing_arrays(
-            restored, {name: arrays[name] for name, _ in restored.array_roles}
-        )
-        restored_states.append(restored)
-    return _RestoredMeshingSources(tuple(restored_states), admitted)
+        restored_states: list[MeshingCheckpointState] = []
+        for record, closure in zip(plan.records, decoded_closures, strict=True):
+            if closure is None:
+                restored_states.append(record.state)
+                continue
+            try:
+                restored = MeshingCheckpointState.from_payload(
+                    record.payload,
+                    source_closure=closure,
+                    source_logical_arrays=admitted,
+                    limits=limits,
+                    maximum_source_chunk_bytes=source_chunk_bytes,
+                )
+            except (TypeError, ValueError) as error:
+                raise RepositoryCorruptionError(
+                    "source_binding.closure must reconstruct and validate its retained scientific fields; got an invalid source closure"
+                ) from error
+            _validate_meshing_arrays(
+                restored, {name: arrays[name] for name, _ in restored.array_roles}
+            )
+            restored_states.append(restored)
+        result = _RestoredMeshingSources(tuple(restored_states), admitted)
+    return result
+
+
+@checked
+def meshing_checkpoint_array_layouts(
+    manifest: CheckpointManifest,
+    names: Sequence[str],
+    /,
+    *,
+    limits: ArrayArchiveLimits = _DISTRIBUTED_CHECKPOINT_LIMITS,
+) -> dict[str, tuple[tuple[int, ...], np.dtype[Any]]]:
+    """Return archived global shapes and dtypes from shard metadata alone.
+
+    Destination placement is chosen from these logical layouts before any
+    payload is read; every listed name must identify an archived array.
+    """
+    shards = _checkpoint_shards_by_path(manifest)
+    layouts: dict[str, tuple[tuple[int, ...], np.dtype[Any]]] = {}
+    for name in names:
+        selected = shards.get(_meshing_array_path(name))
+        if not selected:
+            raise KeyError(
+                f"checkpoint.array_path must identify an archived array; got no array named {name!r}"
+            )
+        _, shape, dtype, _ = _validated_shard(selected[0], limits)
+        layouts[name] = (shape, dtype)
+    return layouts
 
 
 @checked
@@ -2440,6 +2572,7 @@ def restore_meshing_checkpoint(
     limits: ArrayArchiveLimits = _DISTRIBUTED_CHECKPOINT_LIMITS,
     parent_manifest: CheckpointManifest | None = None,
     maximum_host_packet_bytes: int | None = None,
+    decoded_source_owners: Sequence[int] | None = None,
 ) -> MeshingCheckpointRestore:
     """Restore source-owner records and logical arrays into new placement.
 
@@ -2447,45 +2580,58 @@ def restore_meshing_checkpoint(
     and collective evidence. Repreparation explicitly selects a source owner;
     source ranks never determine successor scientific IDs or local slots.
     Multi-owner archives require the expected identity mapping for every owner.
+    ``decoded_source_owners`` limits restored and decoded source records to the
+    named owners, which must include ``source_owner_index``; every owner's
+    record identity and the shared logical bank are still admitted. ``None``
+    decodes every owner. Local decode and owner-validation phases agree refusal
+    before common-epoch replay or acceptance; a failed invocation retains no
+    source reconstruction or publication admission for a subsequent restore.
     """
-    admission = admit_topology_restart(relation, policy)
-    if not admission.admitted:
-        raise ValueError(
-            f"restore_plan.admission must admit the topology restart; got {admission.reason}"
+    with meshing_source_local_restore_phase():
+        admission = admit_topology_restart(relation, policy)
+        if not admission.admitted:
+            raise ValueError(
+                f"restore_plan.admission must admit the topology restart; got {admission.reason}"
+            )
+        plan = _prepare_meshing_restore(
+            repository,
+            manifest,
+            shardings,
+            expected_state_id,
+            source_owner_index,
+            limits,
+            parent_manifest,
+            decoded_source_owners,
         )
-    plan = _prepare_meshing_restore(
-        repository,
-        manifest,
-        shardings,
-        expected_state_id,
-        source_owner_index,
-        limits,
-        parent_manifest,
-    )
-    restored_arrays = _restore_meshing_arrays(
-        repository,
-        manifest,
-        shardings,
-        plan,
-        limits,
-        parent_manifest,
-        maximum_host_packet_bytes,
-    )
+        loaded = _load_meshing_arrays(
+            repository,
+            manifest,
+            shardings,
+            plan,
+            limits,
+            parent_manifest,
+            maximum_host_packet_bytes,
+        )
+    # Source-bank admission has its own collective digest; the preceding phase
+    # admits every local record and destination before that work begins.
+    restored_arrays = _admit_meshing_arrays(loaded, plan, maximum_host_packet_bytes)
     with meshing_source_restore_admission(), meshing_source_owner_reconstruction_scope():
         restored_sources = _restore_meshing_sources(plan, restored_arrays, limits)
-        selected = restored_sources.states[source_owner_index]
-        if selected.source_closure is not None:
-            selected = MeshingCheckpointState.from_payload(
-                plan.records[source_owner_index].payload,
-                source_closure=selected.source_closure,
-                source_logical_arrays=selected.source_logical_arrays,
-                source_owner_states=restored_sources.states,
-                limits=limits,
-                maximum_source_chunk_bytes=restored_arrays.source_chunk_bytes,
-            )
-        else:
-            _validate_meshing_arrays(selected, restored_arrays.arrays)
-        return MeshingCheckpointRestore(selected, restored_arrays.arrays, admission)
+        with meshing_source_local_restore_phase():
+            selected = restored_sources.states[source_owner_index]
+            if selected.source_closure is not None:
+                selected = MeshingCheckpointState.from_payload(
+                    plan.records[source_owner_index].payload,
+                    source_closure=selected.source_closure,
+                    source_logical_arrays=selected.source_logical_arrays,
+                    source_owner_states=restored_sources.states,
+                    limits=limits,
+                    maximum_source_chunk_bytes=restored_arrays.source_chunk_bytes,
+                )
+            else:
+                _validate_meshing_arrays(selected, restored_arrays.arrays)
+            result = MeshingCheckpointRestore(selected, restored_arrays.arrays, admission)
+        return result
 
 
 __all__ = (

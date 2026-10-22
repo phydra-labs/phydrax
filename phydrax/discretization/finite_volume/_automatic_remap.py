@@ -52,6 +52,7 @@ from .._cell_geometry import cell_geometry_preparation_query_upper, CellGeometry
 from .._cell_geometry_transition_types import CellGeometryTransition
 from .._cell_geometry_validity import cell_geometry_id
 from .._coordinate_budget import CoordinateEnclosureBudget
+from .._nested_reference_types import reference_pair_record
 from ..fem import (
     _sphere_chart_transfer as imported_fem__sphere_chart_transfer,
     _surface_chart_transfer as imported_fem__surface_chart_transfer,
@@ -79,6 +80,7 @@ class _RemapRequest(StrictModule):
     target_geometry: CellGeometrySpec | None
     parent_cells: ArrayLike | None
     parent_reference_vertices: ArrayLike | None
+    parent_reference_homogeneous: ArrayLike | None
     geometry_transition: CellGeometryTransition | None
     surface_chart_deformation: (
         PreparedSurfaceChartDeformation | PreparedSphereChartDeformation | None
@@ -97,6 +99,7 @@ def prepare_unstructured_conservative_remap(
     target_geometry: CellGeometrySpec | None = None,
     parent_cells: ArrayLike | None = None,
     parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
     geometry_transition: CellGeometryTransition | None = None,
     surface_chart_deformation: PreparedSurfaceChartDeformation
     | PreparedSphereChartDeformation
@@ -153,6 +156,7 @@ def prepare_unstructured_conservative_remap(
         target_geometry,
         parent_cells,
         parent_reference_vertices,
+        parent_reference_homogeneous,
         geometry_transition,
         surface_chart_deformation,
     )
@@ -160,6 +164,7 @@ def prepare_unstructured_conservative_remap(
         surface_chart_deformation is not None
         or parent_cells is not None
         or parent_reference_vertices is not None
+        or parent_reference_homogeneous is not None
         or geometry_transition is not None
         or any(
             geometry is not None
@@ -195,11 +200,11 @@ def prepare_unstructured_conservative_remap(
             raise RuntimeError(
                 "prepare_unstructured_conservative_remap.budget must accompany the native scope; got None."
             )
-        if not budget.ticket.settled:
-            raise RuntimeError(
-                "prepare_unstructured_conservative_remap.budget.ticket must be settled before native preparation; got an unsettled ticket."
+        if not budget.ticket.settled and not budget.ticket.native_accounting:
+            raise ValueError(
+                "prepare_unstructured_conservative_remap.budget must charge the active native request; got a live nonnative ticket."
             )
-        if adaptation is not None:
+        if adaptation is not None and budget.ticket.settled:
             if owner_id is None:
                 raise RuntimeError(
                     "prepare_unstructured_conservative_remap.owner_id must identify the adaptation source; got None."
@@ -340,24 +345,10 @@ def _prepare_remap_phase(
         source_workspace.retain_owner(
             (source, target, source_geometry, target_geometry, surface_chart_deformation)
         )
-    allowance = scope.remaining()
     with (
-        budget.bind_ticket(
-            scope.batch(
-                min(policy.maximum_exact_work, allowance.remaining_work_units),
-                queries_upper=min(
-                    _remap_query_upper(
-                        source_geometry,
-                        target_geometry,
-                        maximum_work=policy.maximum_exact_work,
-                    ),
-                    allowance.remaining_geometry_queries,
-                ),
-                bytes_upper=min(
-                    policy.maximum_memory_bytes, allowance.remaining_managed_bytes
-                ),
-            )
-        ),
+        budget.bind_ticket(scope.ticket_view())
+        if budget.ticket.settled
+        else budget.activate(),
         budget.measurement(),
         budget.bound_stage(policy.maximum_exact_work, policy.maximum_memory_bytes),
         budget.ticket.native_target(),
@@ -468,6 +459,7 @@ def _prepare_unstructured_conservative_remap_state(
     source_geometry, target_geometry = request.source_geometry, request.target_geometry
     parent_cells = request.parent_cells
     parent_reference_vertices = request.parent_reference_vertices
+    parent_reference_homogeneous = request.parent_reference_homogeneous
     geometry_transition = request.geometry_transition
     if not isinstance(provenance, str):
         raise TypeError(
@@ -479,7 +471,11 @@ def _prepare_unstructured_conservative_remap_state(
         )
     chart = _bound_remap_chart(request)
     if chart is not None:
-        if parent_cells is not None or parent_reference_vertices is not None:
+        if (
+            parent_cells is not None
+            or parent_reference_vertices is not None
+            or parent_reference_homogeneous is not None
+        ):
             raise ValueError(
                 "prepare_unstructured_conservative_remap.parent_cells must be absent for chart deformation; got explicit nested-reference inputs."
             )
@@ -518,6 +514,7 @@ def _prepare_unstructured_conservative_remap_state(
     witnesses = (
         parent_cells is not None
         or parent_reference_vertices is not None
+        or parent_reference_homogeneous is not None
         or geometry_transition is not None
     )
     if witnesses and not exact_power:
@@ -534,6 +531,7 @@ def _prepare_unstructured_conservative_remap_state(
             policy=policy_,
             parent_cells=parent_cells,
             parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
             geometry_transition=geometry_transition,
             budget=budget,
         )
@@ -555,7 +553,7 @@ def _prepare_unstructured_conservative_remap_state(
             )
 
         refinement = imported_geometry__supermesh.prepare_common_refinement_active(
-            source.mesh, target.mesh, policy=policy_, scope=scope
+            source.mesh, target.mesh, policy=policy_, scope=scope, budget=budget
         )
     return _publish_common_refinement(request, refinement)
 
@@ -723,6 +721,7 @@ def _prepare_mapped_nested_remap(
     policy: CommonRefinementPolicy,
     parent_cells: ArrayLike | None,
     parent_reference_vertices: ArrayLike | None,
+    parent_reference_homogeneous: ArrayLike | None,
     geometry_transition: CellGeometryTransition | None,
 ) -> PreparedUnstructuredConservativeRemap:
 
@@ -754,6 +753,7 @@ def _prepare_mapped_nested_remap(
         target_geometry,
         parent_cells=parent_cells,
         parent_reference_vertices=parent_reference_vertices,
+        parent_reference_homogeneous=parent_reference_homogeneous,
         geometry_transition=geometry_transition,
         budget=budget,
     )
@@ -796,6 +796,8 @@ def _prepare_mapped_nested_remap(
             "target_topology": target.mesh.topology_id,
             "source_geometry": cell_geometry_id(source_geometry),
             "target_geometry": cell_geometry_id(target_geometry),
+            # Dyadic pairs keep their binary64 identity; retained exact maps
+            # additionally bind their rational rows.
             "pairs": [
                 (
                     p.source_cell,
@@ -803,6 +805,7 @@ def _prepare_mapped_nested_remap(
                     p.fine_is_source,
                     array_tree_fingerprint(p.matrix),
                     array_tree_fingerprint(p.offset),
+                    *(() if p.exact_matrix is None else (reference_pair_record(p)[3:],)),
                 )
                 for p in ordered
             ],
@@ -856,9 +859,10 @@ def _prepare_mapped_surface_chart_remap_state(
         raise TypeError(
             "prepare_unstructured_conservative_remap.cell_geometry must specify both chart endpoint maps; got a missing source or target geometry."
         )
+    sphere_validation = None
     match deformation:
         case PreparedSphereChartDeformation():
-            deformation.require_bound(
+            sphere_validation = deformation.require_bound(
                 source.mesh, source_geometry, target.mesh, target_geometry, budget=budget
             )
         case PreparedSurfaceChartDeformation():
@@ -904,6 +908,7 @@ def _prepare_mapped_surface_chart_remap_state(
                     source_geometry=source_geometry,
                     target_geometry=target_geometry,
                     budget=budget,
+                    validation=sphere_validation,
                     maximum_work=min(
                         policy.maximum_exact_work,
                         ledger.maximum_work_units - ledger.work_units,

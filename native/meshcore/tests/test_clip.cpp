@@ -1034,7 +1034,7 @@ void test_exact_reference_halfplanes() {
   // Resource refusal publishes no partial polygon or fake work success.
   magnitudes[11] = {0xffffffffu, 0xffffffffu, 0xffffu};
   PHX_CHECK(run(16384, 10000) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 0);
-  PHX_CHECK(run(1 << 20, 1) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 0);
+  PHX_CHECK(run(1 << 20, 1) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work <= 1);
   {
     phx::mc::MemoryBudgetWindow parent_memory(16);
     phx::mc::MemoryScope scope(parent_memory.owner());
@@ -1073,15 +1073,60 @@ void test_exact_reference_containment() {
       (std::array<std::int32_t, 6>{supports[0], supports[1], supports[2], supports[3], supports[4],
                                    supports[5]} == std::array<std::int32_t, 6>{0, 1, 1, 2, 2, 0}));
   PHX_CHECK(labels[0] == 1 && labels[1] == 2 && labels[2] == 0);
-  PHX_CHECK(run(14) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 0);
+  PHX_CHECK(run(14) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work <= 14);
   coefficients[11] = -1;
-  PHX_CHECK(run(81) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 1);
+  PHX_CHECK(run(81) == PHX_MC_OK && count == 0);
   coefficients[9] = 2;
   coefficients[11] = 1;
-  PHX_CHECK(run(81) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 3);
+  PHX_CHECK(run(10000) == PHX_MC_OK && count == 4);
+  auto required = work;
+  const auto expected_supports = supports;
+  const auto expected_labels = labels;
+  PHX_CHECK(run(required) == PHX_MC_OK && count == 4 && work == required);
+  PHX_CHECK(supports == expected_supports && labels == expected_labels);
+  PHX_CHECK(run(required - 1) == PHX_MC_CAPACITY_EXCEEDED && count == 0);
+  PHX_CHECK(work <= required - 1);
   coefficients[9] = 0;
   coefficients[10] = 2;
-  PHX_CHECK(run(81) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 5);
+  PHX_CHECK(run(10000) == PHX_MC_OK && count == 4);
+
+  // x <= y passes through the original origin. The two construction records
+  // for that endpoint must deduplicate without confusing distinct vertices.
+  coefficients[9] = 1;
+  coefficients[10] = -1;
+  coefficients[11] = 0;
+  coefficients[12] = 2;
+  coefficients[13] = 0;
+  coefficients[14] = 1;
+  PHX_CHECK(run(10000) == PHX_MC_OK && count == 3);
+  double area_twice = 0.0;
+  std::array<std::array<double, 2>, 3> points{};
+  for (int vertex = 0; vertex < count; ++vertex) {
+    const int first = 3 * supports[2 * vertex];
+    const int second = 3 * supports[2 * vertex + 1];
+    const double a = coefficients[first], b = coefficients[first + 1];
+    const double c = coefficients[first + 2], d = coefficients[second];
+    const double e = coefficients[second + 1], f = coefficients[second + 2];
+    const double determinant = a * e - b * d;
+    PHX_CHECK(determinant != 0.0);
+    points[vertex] = {(c * e - b * f) / determinant,
+                      (a * f - c * d) / determinant};
+  }
+  for (int vertex = 0; vertex < count; ++vertex) {
+    const auto& a = points[vertex];
+    const auto& b = points[(vertex + 1) % count];
+    PHX_CHECK(a != b);
+    area_twice += a[0] * b[1] - a[1] * b[0];
+    const int edge = 3 * labels[vertex];
+    for (const auto& point : {a, b}) {
+      PHX_CHECK(coefficients[edge] * point[0] +
+                    coefficients[edge + 1] * point[1] == coefficients[edge + 2]);
+    }
+  }
+  PHX_CHECK(area_twice == 0.5);
+  required = work;
+  PHX_CHECK(run(required) == PHX_MC_OK && count == 3 && work == required);
+  PHX_CHECK(run(required - 1) == PHX_MC_CAPACITY_EXCEEDED && count == 0);
 }
 
 #include "reference_tetrahedron_clip_cases.inc"

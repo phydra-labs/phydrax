@@ -1,40 +1,55 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Construct algebraic four-band carriers from represented source action grids.
+"""Construct algebraic periodic carriers admitted from exact source premises.
 
-The finite construction is selected by source incidence, deck actions, material
-sides, and a hard size request compared in the coefficient field. Topology is computed:
-a maximum compatible radius-edge graph receives a finite planar completion.
+Represented source-action grids receive four-band carriers selected by source
+incidence, deck actions, material sides, and a hard size request compared in the
+coefficient field; their topology is a maximum compatible radius-edge graph with a
+finite planar completion. Candidate banks, bigint graphs and search frontiers are
+admitted by live demand; closed rational periodic bins only prune disjoint pairs.
+Translational seed orbits forming one lattice coset
+receive equilateral row bands whose closed-form edge bank is admitted by the
+exact hard verdict before construction.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import cmp_to_key
 from itertools import product
-from math import ceil, floor, isqrt
-from typing import final
+from math import ceil, floor, gcd, isqrt, lcm
+from typing import assert_never, final
 
 import equinox as eqx
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
 from ..._meshcore import NativeExecutionScope
+from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ...discretization._cell_mesh import CellMesh
-from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
+)
 from ...discretization._exact_algebraic_geometry import RadicalElement
 from ...discretization._periodic_cell import PeriodicCell
 from ...typing import checked
 from .. import _periodic as periodic_owner
-from .._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
+from .._contracts import MeshingLimits, SurfaceMeshingSpec, VolumeMeshingSpec
 from .._controls import FeatureKind
 from .._failures import MeshingFailure, MeshingFailureCategory
-from .._sizing import size_statistic_quantile, SizeControlStrength, UniformSizeControl
+from .._sizing import (
+    size_statistic_quantile,
+    SizeCompliancePolicy,
+    SizeControlStrength,
+    UniformSizeControl,
+)
 from . import _native_periodic as source_owner
 from ._native_periodic_constraints import (
     PeriodicSourceStrata,
@@ -47,6 +62,40 @@ type Image = tuple[int, int]
 type Edge = tuple[int, int, int, int]
 type Corner = tuple[int, Image]
 type SiteIdentity = tuple[str, tuple[int, ...]]
+
+
+def _bitset_bytes(width: int) -> int:
+    # CPython stores a nonnegative bigint in 30-bit, four-byte digits, not bytes
+    # of a packed C bit array. Include its header and allocation alignment.
+    return 32 + 4 * ((width + 29) // 30)
+
+
+def _scalar_bytes(value: RadicalElement) -> int:
+    return 128 + sum(
+        192
+        + _bitset_bytes(radicand.bit_length())
+        + _bitset_bytes(abs(coefficient.numerator).bit_length())
+        + _bitset_bytes(coefficient.denominator.bit_length())
+        for radicand, coefficient in value.terms
+    )
+
+
+def _point_bytes(point: Point) -> int:
+    return 64 + sum(_scalar_bytes(value) for value in point)
+
+
+def _box_bytes(
+    a: Point,
+    b: Point,
+    box: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+) -> int:
+    return 512 + _point_bytes(a) + _point_bytes(b) + sum(
+        64
+        + _bitset_bytes(abs(value.numerator).bit_length())
+        + _bitset_bytes(value.denominator.bit_length())
+        for interval in box
+        for value in interval
+    )
 
 
 @final
@@ -94,6 +143,22 @@ class _Work:
             tuple[Point, Point],
             tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
         ] = {}
+        self._box_storage: CoordinateLiveStorage | None = None
+
+    @contextmanager
+    def box_scope(self) -> Iterator[None]:
+        """Keep cached enclosures live while releasing each interval workspace."""
+        if self._box_storage is not None:
+            yield
+            return
+        with self.budget.live_storage() as storage:
+            storage.set_bound(256)
+            self._box_storage = storage
+            try:
+                yield
+            finally:
+                self.boxes.clear()
+                self._box_storage = None
 
     def box(
         self, a: Point, b: Point
@@ -102,15 +167,38 @@ class _Work:
         old = self.boxes.get(key)
         if old is not None:
             return old
-        self.budget.reserve(0, 512)
-        ai = tuple(value.interval(bits=32, budget=self.budget) for value in a)
-        bi = tuple(value.interval(bits=32, budget=self.budget) for value in b)
-        result = (
-            (min(ai[0][0], bi[0][0]), max(ai[0][1], bi[0][1])),
-            (min(ai[1][0], bi[1][0]), max(ai[1][1], bi[1][1])),
-        )
-        self.boxes[key] = result
+        storage = self._box_storage
+        if storage is None:
+            raise RuntimeError("periodic.algebraic.box requires an active box scope")
+        # Interval evaluation owns scratch; only the four selected rational
+        # endpoints and their cache entry survive this scope.
+        with self.budget.temporary_scope():
+            self.budget.reserve(0, 512)
+            ai = tuple(value.interval(bits=32, budget=self.budget) for value in a)
+            bi = tuple(value.interval(bits=32, budget=self.budget) for value in b)
+            result = (
+                (min(ai[0][0], bi[0][0]), max(ai[0][1], bi[0][1])),
+                (min(ai[1][0], bi[1][0]), max(ai[1][1], bi[1][1])),
+            )
+            storage.set_bound(storage.bound + _box_bytes(a, b, result))
+            self.boxes[key] = result
         return result
+
+    def discard_boxes_except(self, segments: list[_Segment]) -> None:
+        """Drop candidate enclosures after their final visibility consumer."""
+        storage = self._box_storage
+        if storage is None:
+            raise RuntimeError("periodic.algebraic.box requires an active box scope")
+        with self.budget.temporary_scope():
+            self.budget.reserve(0, 512 + 512 * len(segments))
+            keep = {(segment.fa, segment.fb) for segment in segments}
+            self.spend("periodic_box_retention_visits", len(self.boxes))
+            # Rebuild rather than delete: the old dictionary's capacity and
+            # discarded coefficient keys must actually die before release.
+            self.boxes = {key: box for key, box in self.boxes.items() if key in keep}
+            storage.set_bound(
+                256 + sum(_box_bytes(*key, box) for key, box in self.boxes.items())
+            )
 
     def spend(self, kind: str, count: int = 1) -> None:
         self.budget.reserve(count)
@@ -177,7 +265,7 @@ def _lift(point: Point, image: Image, vectors: tuple[Point, Point]) -> Point:
     return _add(point, _add(_scale(vectors[0], image[0]), _scale(vectors[1], image[1])))
 
 
-def _fractional(point: Point, grid: _Grid) -> Point:
+def _fractional(point: Point, grid: _Grid | OrbitLatticeBands) -> Point:
     first, second = grid.dual
     return (
         point[0] * first[0] + point[1] * first[1],
@@ -500,6 +588,83 @@ def _segment(edge: Edge, points: tuple[Point, ...], grid: _Grid) -> _Segment:
     return _Segment(a, b, _fractional(a, grid), _fractional(b, grid))
 
 
+def _segment_bytes(segment: _Segment) -> int:
+    return 128 + sum(
+        _point_bytes(point) for point in (segment.a, segment.b, segment.fa, segment.fb)
+    )
+
+
+class _PeriodicBins:
+    """Index closed rational enclosures on the unit torus without image banks."""
+
+    def __init__(self, segments: list[_Segment], work: _Work) -> None:
+        self.work = work
+        self.segments = segments
+        self.width = max(1, isqrt(len(segments)))
+        self.mask_bytes = _bitset_bytes(len(segments))
+        work.budget.reserve(0, 512 + 4 * self.mask_bytes)
+        self.bins: dict[tuple[int, int], int] = {}
+        for index, segment in enumerate(segments):
+            bit = 1 << index
+            for key in self._keys(segment):
+                work.spend("periodic_bin_insertions")
+                if key not in self.bins:
+                    work.budget.reserve(0, 256 + self.mask_bytes)
+                self.bins[key] = self.bins.get(key, 0) | bit
+
+    def _keys(self, segment: _Segment) -> Iterator[tuple[int, int]]:
+        box = self.work.box(segment.fa, segment.fb)
+        first, second = (
+            range(
+                floor(lo * self.width),
+                min(floor(hi * self.width) + 1, floor(lo * self.width) + self.width),
+            )
+            for lo, hi in box
+        )
+        for x in first:
+            for y in second:
+                yield x % self.width, y % self.width
+
+    def candidates(self, segment: _Segment, *, stop: int | None = None) -> Iterator[int]:
+        mask = 0
+        for key in self._keys(segment):
+            self.work.spend("periodic_bin_queries")
+            mask |= self.bins.get(key, 0)
+        if stop is not None:
+            mask &= (1 << stop) - 1
+        box = self.work.box(segment.fa, segment.fb)
+        # Ascending low bits preserve the original exhaustive predicate order.
+        while mask:
+            bit = mask & -mask
+            index = bit.bit_length() - 1
+            mask ^= bit
+            other = self.segments[index]
+            other_box = self.work.box(other.fa, other.fb)
+            self.work.spend("periodic_box_pairs")
+            if all(
+                ceil(box[k][0] - other_box[k][1])
+                <= floor(box[k][1] - other_box[k][0])
+                for k in range(2)
+            ):
+                yield index
+
+
+def _conflict_graph(
+    segments: list[_Segment], grid: _Grid, work: _Work
+) -> list[int]:
+    count = len(segments)
+    work.budget.reserve(0, 256 + count * (16 + _bitset_bytes(count)))
+    adjacency = [0] * count
+    with work.budget.temporary_scope():
+        index = _PeriodicBins(segments, work)
+        for i, segment in enumerate(segments):
+            for j in index.candidates(segment, stop=i):
+                if _conflict(segment, segments[j], grid, work):
+                    adjacency[i] |= 1 << j
+                    adjacency[j] |= 1 << i
+    return adjacency
+
+
 def _images(first: _Segment, second: _Segment, work: _Work) -> Iterator[Image]:
     # Certified rational boxes are deliberately conservative. Near an integer
     # boundary they may admit an extra image, which exact predicates resolve.
@@ -569,14 +734,41 @@ def _compatible_edges(
     long_quota: int | None = None,
 ) -> tuple[Edge, ...]:
     """Keep maximum-cardinality completions with field-compared feasible length tails."""
+    # The result owns references only; all coefficient owners belong to the
+    # caller's candidate bank. Search state and adjacency die before returning.
+    work.budget.reserve(0, 64 + 16 * len(edges))
+    with work.budget.temporary_scope(), work.box_scope():
+        work.budget.reserve(
+            0,
+            2048
+            + 16 * _bitset_bytes(len(edges))
+            + sum(_scalar_bytes(penalty[2]) for penalty in penalties),
+        )
+        return _compatible_edges_search(
+            edges,
+            segments,
+            penalties,
+            grid,
+            work,
+            short_quota=short_quota,
+            long_quota=long_quota,
+        )
+
+
+def _compatible_edges_search(
+    edges: list[Edge],
+    segments: list[_Segment],
+    penalties: list[tuple[int, int, RadicalElement]],
+    grid: _Grid,
+    work: _Work,
+    *,
+    short_quota: int | None,
+    long_quota: int | None,
+) -> tuple[Edge, ...]:
     short_limit = len(edges) if short_quota is None else short_quota
     long_limit = len(edges) if long_quota is None else long_quota
-    adjacency = [0] * len(edges)
-    for i, segment in enumerate(segments):
-        for j in range(i):
-            if _conflict(segment, segments[j], grid, work):
-                adjacency[i] |= 1 << j
-                adjacency[j] |= 1 << i
+    adjacency = _conflict_graph(segments, grid, work)
+    work.budget.reserve(0, 1024 + 4 * _bitset_bytes(len(edges)))
     # A frontier retains the least geometric cost for every attainable pair of
     # tail counts at the maximum cardinality. Components combine additively;
     # throwing away a locally longer tail before this combination loses valid
@@ -597,9 +789,12 @@ def _compatible_edges(
             return
         old = frontier.get(tails)
         if old is None:
-            work.budget.reserve(0, 512 + (len(edges) + 7) // 8)
+            work.budget.reserve(
+                0, 512 + _bitset_bytes(len(edges)) + _scalar_bytes(cost)
+            )
             frontier[tails] = cost, selected
         elif cost < old[0]:
+            work.budget.reserve(0, max(0, _scalar_bytes(cost) - _scalar_bytes(old[0])))
             frontier[tails] = cost, selected
 
     def independent(
@@ -610,7 +805,7 @@ def _compatible_edges(
             return old
         work.spend("independent_graph_states")
         work.spend("independent_graph_vertex_visits", 2 * mask.bit_count())
-        work.budget.reserve(0, 256 + (2 * len(edges) + 7) // 8)
+        work.budget.reserve(0, 1024 + 12 * _bitset_bytes(len(edges)))
         isolates, best, degree = 0, -1, -1
         scan = mask
         while scan:
@@ -678,28 +873,70 @@ def _compatible_edges(
         cache[mask] = result
         return result
 
-    _, frontier = independent((1 << len(edges)) - 1)
-    if not frontier:
-        raise ValueError(
-            "periodic.algebraic.completion must satisfy requested quantile tail bounds; "
-            f"got no maximum-cardinality completion with {short_limit=}, {long_limit=}"
-        )
-    _, selected = min(frontier.values())
-    return tuple(edge for i, edge in enumerate(edges) if selected & (1 << i))
+    try:
+        _, frontier = independent((1 << len(edges)) - 1)
+        if not frontier:
+            raise ValueError(
+                "periodic.algebraic.completion must satisfy requested quantile tail bounds; "
+                f"got no maximum-cardinality completion with {short_limit=}, {long_limit=}"
+            )
+        _, selected = min(frontier.values())
+        return tuple(edge for i, edge in enumerate(edges) if selected & (1 << i))
+    finally:
+        cache.clear()
+        adjacency.clear()
+        # The recursive closure otherwise keeps its coefficient/cache banks
+        # alive until cyclic GC, beyond the admitted search lifetime.
+        del independent
 
 
 def _target_graph(
     points: tuple[Point, ...], grid: _Grid, work: _Work, quantiles: tuple[float, ...]
 ) -> tuple[Edge, ...]:
+    # A compatible straight-line graph on this torus has at most 3V edges.
+    # Its returned keys survive the candidate/search workspace.
+    work.budget.reserve(0, 512 + 768 * len(points))
+    with (
+        work.budget.temporary_scope(),
+        work.box_scope(),
+        work.budget.live_storage() as candidates,
+        work.budget.live_storage() as selected,
+    ):
+        field_bytes = max((_point_bytes(point) for point in points), default=64)
+        field_bytes += sum(_point_bytes(vector) for vector in grid.vectors)
+        # One field-operation workspace, plus fractional coordinates, singleton
+        # records and fixed segments. No all-pairs allocation is made.
+        work.budget.reserve(
+            0,
+            128 * field_bytes
+            + sum(8 * _point_bytes(point) + 256 for point in points)
+            + len(grid.protected) * 16 * field_bytes,
+        )
+        return _target_graph_search(points, grid, work, quantiles, candidates, selected)
+
+
+def _target_graph_search(
+    points: tuple[Point, ...],
+    grid: _Grid,
+    work: _Work,
+    quantiles: tuple[float, ...],
+    candidates: CoordinateLiveStorage,
+    selected: CoordinateLiveStorage,
+) -> tuple[Edge, ...]:
     protected = {edge: _segment(edge, points, grid) for edge in grid.protected}
     fractional = tuple(_fractional(point, grid) for point in points)
     bounds = tuple(grid.maximum * (abs(row[0]) + abs(row[1])) for row in grid.dual)
-    singletons = tuple(
+    singletons = [
         _Segment(point, point, fp, fp)
         for point, fp in zip(points, fractional, strict=True)
-    )
+    ]
+    singleton_index = _PeriodicBins(singletons, work)
+    protected_edges = list(protected)
+    protected_segments = list(protected.values())
+    protected_index = _PeriodicBins(protected_segments, work)
     radius2 = grid.radius * grid.radius
     maximum2 = grid.maximum * grid.maximum
+    candidates.set_bound(256)
     bank: list[tuple[Edge, _Segment, RadicalElement]] = []
     for a in range(len(points)):
         for b in range(a + 1, len(points)):
@@ -717,10 +954,18 @@ def _target_graph(
                 stop = _lift(points[b], (sx, sy), grid.vectors)
                 square = _square(points[a], stop)
                 if square <= maximum2:
-                    bank.append((edge, _segment(edge, points, grid), square))
+                    segment = _segment(edge, points, grid)
+                    # Arithmetic is covered by the field workspace; admit the
+                    # surviving coefficient owners before retaining this entry.
+                    candidates.set_bound(
+                        candidates.bound + 384
+                        + _segment_bytes(segment) + _scalar_bytes(square)
+                    )
+                    bank.append((edge, segment, square))
 
     def visible(edge: Edge, segment: _Segment) -> bool:
-        for root, singleton in enumerate(singletons):
+        for root in singleton_index.candidates(segment):
+            singleton = singletons[root]
             if root in edge[:2]:
                 continue
             work.spend("root_edge_visibility_pairs")
@@ -742,13 +987,15 @@ def _target_graph(
         if square != radius2:
             continue
         if any(
-            _conflict(segment, fixed, grid, work)
-            for key, fixed in protected.items()
-            if key != edge
+            _conflict(segment, protected_segments[index], grid, work)
+            for index in protected_index.candidates(segment)
+            if protected_edges[index] != edge
         ) or not visible(edge, segment):
             continue
+        work.budget.reserve(0, 192)
         radius_edges.append(edge)
         radius_segments.append(segment)
+    work.budget.reserve(0, 256 + 256 * len(radius_edges))
     selected_radius = _compatible_edges(
         radius_edges,
         radius_segments,
@@ -756,18 +1003,34 @@ def _target_graph(
         grid,
         work,
     )
+    work.budget.reserve(0, 512 + 256 * (len(protected) + len(selected_radius)))
     mandatory = dict(protected)
-    mandatory.update((edge, _segment(edge, points, grid)) for edge in selected_radius)
+    radius_lookup = dict(zip(radius_edges, radius_segments, strict=True))
+    mandatory.update((edge, radius_lookup[edge]) for edge in selected_radius)
+    mandatory_segments = list(mandatory.values())
+    mandatory_index = _PeriodicBins(mandatory_segments, work)
+    selected.set_bound(
+        1024 + sum(256 + _segment_bytes(segment) for segment in mandatory_segments)
+    )
+    radius_lookup.clear()
+    radius_edges.clear()
+    radius_segments.clear()
     optional: list[Edge] = []
     optional_segments: list[_Segment] = []
     optional_penalties: list[tuple[int, int, RadicalElement]] = []
     for edge, segment, square in bank:
         if edge in mandatory:
             continue
-        if any(_conflict(segment, fixed, grid, work) for fixed in mandatory.values()):
+        if any(
+            _conflict(segment, mandatory_segments[index], grid, work)
+            for index in mandatory_index.candidates(segment)
+        ):
             continue
         if not visible(edge, segment):
             continue
+        selected.set_bound(
+            selected.bound + 384 + _segment_bytes(segment) + _scalar_bytes(square)
+        )
         optional.append(edge)
         optional_segments.append(segment)
         optional_penalties.append((int(square < radius2), int(square > radius2), square))
@@ -779,12 +1042,19 @@ def _target_graph(
     ranks = tuple(quantile * (edge_count - 1) for quantile in quantiles)
     short_quota = min(floor(rank) for rank in ranks)
     long_quota = edge_count - 1 - max(ceil(rank) for rank in ranks)
-    bank_squares = {edge: square for edge, _, square in bank}
+    # Only mandatory classifications consume lengths now; do not duplicate the
+    # entire candidate bank in a square-length dictionary.
+    work.budget.reserve(0, 256 + 128 * len(mandatory))
+    mandatory_squares = {edge: square for edge, _, square in bank if edge in mandatory}
     for edge in mandatory:
         work.spend("mandatory_edge_classifications")
-        square = bank_squares[edge]
+        square = mandatory_squares[edge]
         short_quota -= int(square < radius2)
         long_quota -= int(square > radius2)
+    mandatory_squares.clear()
+    bank.clear()
+    candidates.set_bound(0)
+    work.discard_boxes_except(optional_segments)
     completion = _compatible_edges(
         optional,
         optional_segments,
@@ -917,20 +1187,39 @@ def _bind_materials(
     return np.asarray(regions, dtype=np.int64), tuple(ancestry)
 
 
+def _source_region_areas(grid: _Grid) -> dict[int, RadicalElement]:
+    expected: dict[int, RadicalElement] = {}
+    for cell, images, region in zip(
+        grid.strata.cells, grid.strata.shifts, grid.strata.regions, strict=True
+    ):
+        corners = tuple(
+            _lift(grid.points[int(root)], (int(image[0]), int(image[1])), grid.vectors)
+            for root, image in zip(cell, images, strict=True)
+        )
+        delta, other = _sub(corners[1], corners[0]), _sub(corners[2], corners[0])
+        label = int(region)
+        expected[label] = (
+            expected.get(label, RadicalElement())
+            + (delta[0] * other[1] - delta[1] * other[0]) / 2
+        )
+    return expected
+
+
 def _certify_carrier(
     triangles: list[tuple[Corner, Corner, Corner]],
     regions: np.ndarray,
     points: tuple[Point, ...],
-    grid: _Grid,
+    vectors: tuple[Point, Point],
+    protected: tuple[Edge, ...],
+    expected: dict[int, RadicalElement],
     work: _Work,
 ) -> None:
+    """Prove positive cells, closed incidence, manifold links, and region areas."""
     incidence: dict[Edge, list[int]] = {}
     links: dict[int, list[tuple[Corner, Corner]]] = {}
     areas: dict[int, RadicalElement] = {}
     for triangle, region in zip(triangles, regions, strict=True):
-        corners = tuple(
-            _lift(points[root], image, grid.vectors) for root, image in triangle
-        )
+        corners = tuple(_lift(points[root], image, vectors) for root, image in triangle)
         if work.orient(corners[0], corners[1], corners[2]) <= 0:
             raise ValueError(
                 "periodic.algebraic.orientation must be strictly positive; got a nonpositive completion cell"
@@ -954,7 +1243,7 @@ def _certify_carrier(
     if (
         len(incidence) != 3 * len(points)
         or any(sorted(signs) != [-1, 1] for signs in incidence.values())
-        or not set(grid.protected) <= incidence.keys()
+        or not set(protected) <= incidence.keys()
     ):
         raise ValueError(
             "periodic.algebraic.incidence must be closed and retain protected windings; got an invalid edge bank"
@@ -979,20 +1268,6 @@ def _certify_carrier(
             raise ValueError(
                 "periodic.algebraic.vertex_link must be connected; got multiple source-action link cycles"
             )
-    expected: dict[int, RadicalElement] = {}
-    for cell, images, region in zip(
-        grid.strata.cells, grid.strata.shifts, grid.strata.regions, strict=True
-    ):
-        corners = tuple(
-            _lift(grid.points[int(root)], (int(image[0]), int(image[1])), grid.vectors)
-            for root, image in zip(cell, images, strict=True)
-        )
-        delta, other = _sub(corners[1], corners[0]), _sub(corners[2], corners[0])
-        label = int(region)
-        expected[label] = (
-            expected.get(label, RadicalElement())
-            + (delta[0] * other[1] - delta[1] * other[0]) / 2
-        )
     if areas != expected or len(links) != len(points):
         raise ValueError(
             "periodic.algebraic.material_areas must equal the source partition and include every site; got an incomplete carrier"
@@ -1006,12 +1281,13 @@ def construct_exact_algebraic_carrier(
     *,
     scope: NativeExecutionScope,
     budget: CoordinateEnclosureBudget,
-) -> ExactAlgebraicCarrier | None:
-    """Return an algebraic source-action carrier, or leave ineligible routes unchanged.
+) -> ExactAlgebraicCarrier:
+    """Construct the admitted algebraic source-action carrier.
 
-    Eligibility proves commuting primitive source actions, two opposite protected
+    Admission proved commuting primitive source actions, two opposite protected
     material cycles, a rational lattice metric, and the small positive four-band
-    branch. The finite radius-edge and bounded-completion independent-set
+    branch; execution renews that proof on its own ledger and refuses a changed
+    premise. The finite radius-edge and bounded-completion independent-set
     programs use exact predicates; neither topology nor site coordinates are persisted in
     this construction module. Every operation is charged to the request ticket.
     """
@@ -1024,16 +1300,25 @@ def construct_exact_algebraic_carrier(
         work = _Work(budget)
         grid = _recover_grid(source, specification, work)
         if grid is None:
-            return None
+            raise MeshingFailure(
+                MeshingFailureCategory.AUDIT_FAILED,
+                "periodic.algebraic.source_actions must retain the admitted construction premises; got a changed source-action configuration",
+            )
         # This global reconstruction replaces the authored source-cell set.
         # Admit that touched-cell cavity through the native shared ledger before
         # allocating the generated topology; a refusal retains native evidence.
         cavity_cells = grid.strata.cells.shape[0]
         scope.admit_host_cavity(cavity_cells)
         carrier_count = 4 * len(grid.points) + 3 * len(grid.rows)
-        # Bound the edge banks, conflict graphs, search states, and field
-        # temporaries before generating sites. Images are streamed, not banked.
-        budget.reserve(0, 1024 * carrier_count * carrier_count)
+        # Source coordinates/identities survive graph construction. Admit a
+        # linear site bank and one field workspace, not a nonexistent V² bank.
+        field_bytes = (
+            max(_point_bytes(point) for point in grid.points)
+            + sum(_point_bytes(vector) for vector in grid.vectors)
+            + _scalar_bytes(grid.run)
+            + _scalar_bytes(grid.height)
+        )
+        budget.reserve(0, carrier_count * (512 + 8 * field_bytes) + 128 * field_bytes)
         coordinates, identities = _sites(grid, work)
         count = len(coordinates)
         if count > limits.maximum_vertices or 2 * count > limits.maximum_cells:
@@ -1046,6 +1331,14 @@ def construct_exact_algebraic_carrier(
             for statistic in specification.size_compliance.target_statistics
         )
         edges = _target_graph(coordinates, grid, work, quantiles)
+        # The final topology, its corners, source-overlap preparation and the
+        # manifold witness coexist. Their cardinalities are linear in the
+        # actual edge/cell banks, independent of rejected candidate pairs.
+        budget.reserve(
+            0,
+            (2 * count + cavity_cells) * (2048 + 8 * field_bytes)
+            + 512 * len(edges),
+        )
         faces = _faces(edges, coordinates, grid, work)
         if any(len(face) != 3 for face in faces):
             raise ValueError(
@@ -1053,12 +1346,21 @@ def construct_exact_algebraic_carrier(
                 f"got face_sizes={tuple(len(face) for face in faces)}, edges={len(edges)}"
             )
         triangles = [(face[0], face[1], face[2]) for face in faces]
+        faces.clear()
         if len(triangles) != 2 * count:
             raise ValueError(
                 "periodic.algebraic.cells must close the source torus; got an inconsistent Euler count"
             )
         regions, ancestry = _bind_materials(triangles, coordinates, grid, work)
-        _certify_carrier(triangles, regions, coordinates, grid, work)
+        _certify_carrier(
+            triangles,
+            regions,
+            coordinates,
+            grid.vectors,
+            grid.protected,
+            _source_region_areas(grid),
+            work,
+        )
         work.spend("representative_coordinates", 2 * count)
         points = np.asarray(
             [
@@ -1095,6 +1397,542 @@ def construct_exact_algebraic_carrier(
             image_count=0,
             source_identity=identity,
             site_identities=identities,
+            work_evidence=tuple(sorted(work.counts.items())),
+        )
+        budget.retain_basis((carrier,))
+        return carrier
+
+
+@contextmanager
+def _admission_budget(limits: MeshingLimits) -> Iterator[CoordinateEnclosureBudget]:
+    """Bound an admission proof by the request's own work and storage limits.
+
+    An exhausted proof is a resource refusal of the request, never evidence that
+    its premises fail; callers must not select another construction from it.
+    """
+    ticket = HostBatchTicket(
+        limits.maximum_work_units,
+        queries_upper=limits.maximum_geometry_queries,
+        bytes_upper=limits.maximum_scratch_bytes,
+    )
+    budget = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=limits.maximum_work_units,
+        maximum_memory_bytes=limits.maximum_scratch_bytes,
+    )
+    try:
+        with ticket, budget.activate():
+            yield budget
+    except CoordinateEnclosureResourceError as error:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "periodic.algebraic.admission must fit the request work and storage allowances; got a resource refusal",
+            requested=(
+                (str(error.resource), float(error.requested)),
+                ("limit", float(error.limit)),
+            ),
+            achieved=(("completed", float(error.completed)),),
+        ) from error
+
+
+@checked
+def prove_source_action_bands(
+    source: source_owner.NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    /,
+) -> bool:
+    """Admit the four-band carrier exactly when its source-action premises hold."""
+    with _admission_budget(specification.limits) as budget:
+        return _recover_grid(source, specification, _Work(budget)) is not None
+
+
+type _Vector = tuple[Fraction, Fraction]
+
+
+@dataclass(frozen=True, slots=True)
+class OrbitLatticeBands:
+    """Exact admission proof of one orbit-lattice equilateral band carrier.
+
+    The authored representatives are one coset of a translation lattice that
+    contains the cell lattice. ``step`` is a primitive vector of that lattice whose
+    exact length is the hard target; ``rise`` completes a positively oriented basis
+    with ``0 <= step.rise < |step|^2``. Every root receives one equilateral apex on
+    the ``rise`` side, and ``lead`` names the next-row seed ahead of that apex. The
+    authoritative zero-tolerance hard verdict passed on the complete closed-form
+    edge bank of this carrier.
+    """
+
+    roots: tuple[_Vector, ...]
+    fractional: tuple[_Vector, ...]
+    residues: Mapping[_Vector, int]
+    vectors: tuple[_Vector, _Vector]
+    dual: tuple[_Vector, _Vector]
+    step: _Vector
+    rise: _Vector
+    lead: int
+    target: Fraction
+
+
+def _hard_uniform_controls(
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+) -> list[UniformSizeControl] | None:
+    hard: list[UniformSizeControl] = []
+    for control in specification.size_controls:
+        match control:
+            case UniformSizeControl() if control.strength is SizeControlStrength.HARD:
+                hard.append(control)
+            case UniformSizeControl():
+                pass
+            case _:
+                return None
+    return hard
+
+
+def _dot(a: _Vector, b: _Vector) -> Fraction:
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def _cross(a: _Vector, b: _Vector) -> Fraction:
+    return a[0] * b[1] - a[1] * b[0]
+
+
+def _combine(m: Fraction | int, a: _Vector, k: Fraction | int, b: _Vector) -> _Vector:
+    return m * a[0] + k * b[0], m * a[1] + k * b[1]
+
+
+def _rational_fractional(point: _Vector, dual: tuple[_Vector, _Vector]) -> _Vector:
+    return _dot(dual[0], point), _dot(dual[1], point)
+
+
+def _integer_lattice_basis(
+    generators: tuple[tuple[int, int], ...], work: _Work
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Return the Hermite basis ``((alpha, 0), (beta, gamma))`` of a full-rank span."""
+    pivot_x = pivot_y = alpha = 0
+    for x, y in generators:
+        work.spend("lattice_basis_generators")
+        while y:
+            work.spend("lattice_basis_steps")
+            quotient = pivot_y // y
+            pivot_x, pivot_y, x, y = x, y, pivot_x - quotient * x, pivot_y - quotient * y
+        alpha = gcd(alpha, x)
+    if pivot_y < 0:
+        pivot_x, pivot_y = -pivot_x, -pivot_y
+    return (alpha, 0), (pivot_x % alpha, pivot_y)
+
+
+def _reduced_basis(
+    first: _Vector, second: _Vector, work: _Work
+) -> tuple[_Vector, _Vector]:
+    """Lagrange-reduce a rational lattice basis and orient it positively."""
+    while True:
+        work.spend("lattice_reduction_steps")
+        if _dot(first, first) > _dot(second, second):
+            first, second = second, first
+        quotient = round(_dot(first, second) / _dot(first, first))
+        if not quotient:
+            break
+        second = _combine(1, second, -quotient, first)
+    if _cross(first, second) < 0:
+        second = (-second[0], -second[1])
+    return first, second
+
+
+def _bezout(a: int, b: int) -> tuple[int, int]:
+    old_r, r, old_s, s, old_t, t = a, b, 1, 0, 0, 1
+    while r:
+        quotient = old_r // r
+        old_r, r = r, old_r - quotient * r
+        old_s, s = s, old_s - quotient * s
+        old_t, t = t, old_t - quotient * t
+    return (-old_s, -old_t) if old_r < 0 else (old_s, old_t)
+
+
+def _target_steps(
+    first: _Vector, second: _Vector, target: Fraction, work: _Work
+) -> list[tuple[_Vector, _Vector, int]]:
+    """Enumerate primitive lattice vectors of exact target length with complements.
+
+    The reduced Gram form bounds both coefficients, so every vector of length
+    ``target`` is visited. Each step keeps one sign; its complement is normalized
+    to ``0 <= step.rise < target^2`` and ``lead`` selects the next-row seed whose
+    projection follows the apex ``step / 2``.
+    """
+    square = target * target
+    g11, g12, g22 = _dot(first, first), _dot(first, second), _dot(second, second)
+    bound = isqrt(floor(square * g11 / (g11 * g22 - g12 * g12)))
+    steps: list[tuple[_Vector, _Vector, int]] = []
+    for k in range(-bound, bound + 1):
+        discriminant = (g12 * k) ** 2 - g11 * (g22 * k * k - square)
+        if discriminant < 0:
+            continue
+        radius = isqrt(floor(discriminant / (g11 * g11))) + 1
+        center = -g12 * k / g11
+        for m in range(floor(center) - radius, ceil(center) + radius + 1):
+            work.spend("row_step_candidates")
+            if gcd(m, k) != 1 or g11 * m * m + 2 * g12 * m * k + g22 * k * k != square:
+                continue
+            step = _combine(m, first, k, second)
+            if step[1] < 0 or (step[1] == 0 and step[0] < 0):
+                continue
+            # m*x + k*y = 1 makes (step, rise) unimodular with the basis orientation.
+            x, y = _bezout(m, k)
+            rise = _combine(-y, first, x, second)
+            rise = _combine(1, rise, -floor(_dot(step, rise) / square), step)
+            steps.append((step, rise, int(2 * _dot(step, rise) < square)))
+    return sorted(steps, key=lambda item: (item[0][1], item[0][0]))
+
+
+def _band_apex(step: _Vector, budget: CoordinateEnclosureBudget) -> Point:
+    height = RadicalElement.sqrt(Fraction(3, 4), budget=budget)
+    return (
+        RadicalElement(step[0] / 2) - height * step[1],
+        RadicalElement(step[1] / 2) + height * step[0],
+    )
+
+
+def _orbit_root(proof: OrbitLatticeBands, point: _Vector, work: _Work) -> Corner:
+    """Name the seed orbit and lattice image of a point of the admitted coset."""
+    work.spend("orbit_root_lookups")
+    fractional = _rational_fractional(point, proof.dual)
+    root = proof.residues[
+        (fractional[0] - floor(fractional[0]), fractional[1] - floor(fractional[1]))
+    ]
+    base = proof.fractional[root]
+    image = (fractional[0] - base[0], fractional[1] - base[1])
+    if image[0].denominator != 1 or image[1].denominator != 1:
+        raise ValueError(
+            "periodic.algebraic.orbit_lattice.image must be an integer lattice action; got a point outside the admitted coset"
+        )
+    return root, (int(image[0]), int(image[1]))
+
+
+def _band_neighbors(
+    proof: OrbitLatticeBands, root: int, work: _Work
+) -> tuple[Corner, Corner, Corner, Corner]:
+    """Return the next, previous, leading and trailing next-row seed corners."""
+    point, step, rise = proof.roots[root], proof.step, proof.rise
+    return (
+        _orbit_root(proof, _combine(1, point, 1, step), work),
+        _orbit_root(proof, _combine(1, point, -1, step), work),
+        _orbit_root(
+            proof, _combine(1, _combine(1, point, proof.lead, step), 1, rise), work
+        ),
+        _orbit_root(
+            proof, _combine(1, _combine(1, point, proof.lead - 1, step), 1, rise), work
+        ),
+    )
+
+
+def _band_size_issues(
+    proof: OrbitLatticeBands,
+    controls: list[UniformSizeControl],
+    policy: SizeCompliancePolicy,
+    work: _Work,
+) -> bool:
+    """Run the exact hard verdict on the closed-form edge bank before construction.
+
+    Per root the carrier has one seed-row, one apex-row and two equilateral edges
+    of target length, and one leading and one trailing filler edge whose squares
+    are field elements. Their quotient endpoints are the admitted seed orbits.
+    """
+    count = len(proof.roots)
+    apex = _band_apex(proof.step, work.budget)
+
+    def filler(shift: int) -> RadicalElement:
+        offset = _combine(shift, proof.step, 1, proof.rise)
+        x, y = offset[0] - apex[0], offset[1] - apex[1]
+        return x * x + y * y
+
+    target, leading, trailing = (
+        RadicalElement(proof.target * proof.target),
+        filler(proof.lead),
+        filler(proof.lead - 1),
+    )
+    work.budget.reserve(0, 384 * count)
+    squared = np.empty(6 * count, dtype=object)
+    pairs = np.empty((6 * count, 2), dtype=np.int64)
+    for root in range(count):
+        right, _, ahead, behind = _band_neighbors(proof, root, work)
+        top = count + root
+        for offset, (first, second, value) in enumerate(
+            (
+                (root, right[0], target),
+                (top, count + right[0], target),
+                (root, top, target),
+                (right[0], top, target),
+                (top, ahead[0], leading),
+                (top, behind[0], trailing),
+            )
+        ):
+            squared[6 * root + offset] = value
+            pairs[6 * root + offset] = first, second
+    return any(
+        periodic_owner.periodic_size_control_issues(
+            squared, pairs, control, policy, budget=work.budget
+        )
+        for control in controls
+    )
+
+
+@checked
+def prove_orbit_lattice_bands(
+    source: source_owner.NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> OrbitLatticeBands | None:
+    """Admit equilateral row bands only from exact seed and request premises.
+
+    The premises are a zero-tolerance hard uniform target, seed representatives
+    exhausting one coset of a translation lattice, equilateral apexes strictly
+    between consecutive seed rows, and a passing exact hard verdict of the
+    closed-form edge bank. ``None`` means a premise does not hold; resource
+    refusals propagate and never select another construction.
+    """
+    if budget is None:
+        with _admission_budget(specification.limits) as owned:
+            return prove_orbit_lattice_bands(source, specification, budget=owned)
+    match source.domain:
+        case periodic_owner.PeriodicPointOrbits() as orbits:
+            pass
+        case CellMesh():
+            return None
+        case _ as invalid:
+            assert_never(invalid)
+    policy = specification.size_compliance
+    controls = _hard_uniform_controls(specification)
+    if (
+        source.ambient_dimension != 2
+        or policy.absolute_tolerance != 0
+        or policy.relative_tolerance != 0
+        or not controls
+    ):
+        return None
+    target = Fraction(float(controls[0].target_size))
+    if any(Fraction(float(control.target_size)) != target for control in controls):
+        return None
+    raw = np.asarray(orbits.cell.vectors, dtype=np.float64)
+    vectors = (
+        (Fraction(float(raw[0, 0])), Fraction(float(raw[0, 1]))),
+        (Fraction(float(raw[1, 0])), Fraction(float(raw[1, 1]))),
+    )
+    a, b = vectors
+    determinant = _cross(a, b)
+    if determinant <= 0:
+        return None
+    dual = (
+        (b[1] / determinant, -b[0] / determinant),
+        (-a[1] / determinant, a[0] / determinant),
+    )
+    representatives = np.asarray(orbits.representatives, dtype=np.float64)
+    count = representatives.shape[0]
+    work = _Work(budget)
+    work.spend("orbit_lattice_roots", count)
+    budget.reserve(0, 1024 * count)
+    roots = tuple(
+        (Fraction(float(x)), Fraction(float(y))) for x, y in representatives.tolist()
+    )
+    fractional = tuple(_rational_fractional(root, dual) for root in roots)
+    residues: dict[_Vector, int] = {}
+    for index, value in enumerate(fractional):
+        residues.setdefault(
+            (value[0] - floor(value[0]), value[1] - floor(value[1])), index
+        )
+    if len(residues) != count:
+        return None
+    origin = fractional[0]
+    differences = tuple(
+        (value[0] - origin[0], value[1] - origin[1]) for value in fractional[1:]
+    )
+    denominator = lcm(1, *(part.denominator for value in differences for part in value))
+    (alpha, _), (beta, gamma) = _integer_lattice_basis(
+        (
+            (denominator, 0),
+            (0, denominator),
+            *(
+                (int(value[0] * denominator), int(value[1] * denominator))
+                for value in differences
+            ),
+        ),
+        work,
+    )
+    # Distinct roots in one coset exhaust it exactly when they meet its index.
+    if denominator * denominator != count * alpha * gamma:
+        return None
+    # The apex height sqrt(3)/2*target lies strictly below the row spacing.
+    if 3 * target**4 >= 4 * (determinant / count) ** 2:
+        return None
+    first, second = _reduced_basis(
+        _combine(Fraction(alpha, denominator), a, 0, b),
+        _combine(Fraction(beta, denominator), a, Fraction(gamma, denominator), b),
+        work,
+    )
+    for step, rise, lead in _target_steps(first, second, target, work):
+        proof = OrbitLatticeBands(
+            roots, fractional, residues, vectors, dual, step, rise, lead, target
+        )
+        if not _band_size_issues(proof, controls, policy, work):
+            return proof
+    return None
+
+
+@checked
+def construct_orbit_lattice_band_carrier(
+    source: source_owner.NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> ExactAlgebraicCarrier:
+    """Construct the admitted orbit-lattice equilateral band carrier.
+
+    Execution renews the admission proof on its own ledger and refuses a changed
+    premise. The authored seed roots stay first and unchanged; one apex per root
+    closes an equilateral row band and the ordered merge of an apex row with the
+    next seed row closes each filler band. Every cell, incidence, vertex link and
+    the exact quotient area are certified, and the hard verdict is rerun on the
+    constructed field-valued edges.
+    """
+    limits = specification.limits
+    starting_work = budget.work_units
+    with (
+        _phase(scope, budget, limits.maximum_work_units, limits.maximum_scratch_bytes),
+        budget.temporary_scope(),
+    ):
+        proof = prove_orbit_lattice_bands(source, specification, budget=budget)
+        controls = _hard_uniform_controls(specification)
+        if proof is None or not controls:
+            raise MeshingFailure(
+                MeshingFailureCategory.AUDIT_FAILED,
+                "periodic.algebraic.orbit_lattice must retain the admitted construction premises; got a changed seed-lattice configuration",
+            )
+        roots = len(proof.roots)
+        count = 2 * roots
+        if count > limits.maximum_vertices or 2 * count > limits.maximum_cells:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "periodic.algebraic.entities must fit the request vertex and cell bounds; got a larger orbit-lattice carrier",
+            )
+        work = _Work(budget)
+        budget.reserve(0, 4096 * count)
+        a, b = proof.vectors
+        vectors = (
+            (RadicalElement(a[0]), RadicalElement(a[1])),
+            (RadicalElement(b[0]), RadicalElement(b[1])),
+        )
+        apex = _band_apex(proof.step, budget)
+        coordinates: list[Point] = [
+            (RadicalElement(x), RadicalElement(y)) for x, y in proof.roots
+        ]
+        identities: list[SiteIdentity] = [
+            ("authored_source_root", (root,)) for root in range(roots)
+        ]
+        wraps: list[Image] = []
+        for root in range(roots):
+            work.spend("band_apex_sites")
+            raw = _add(coordinates[root], apex)
+            fractional = _fractional(raw, proof)
+            image = (floor(fractional[0]), floor(fractional[1]))
+            coordinates.append(_lift(raw, (-image[0], -image[1]), vectors))
+            wraps.append(image)
+            identities.append(("orbit_lattice_band_apex", (root,)))
+
+        def apex_corner(corner: Corner) -> Corner:
+            root, image = corner
+            return roots + root, (image[0] + wraps[root][0], image[1] + wraps[root][1])
+
+        triangles: list[tuple[Corner, Corner, Corner]] = []
+        for root in range(roots):
+            work.spend("band_cells", 4)
+            right, left, ahead, behind = _band_neighbors(proof, root, work)
+            here: Corner = (root, (0, 0))
+            top = apex_corner(here)
+            triangles.extend(
+                (
+                    (here, right, top),
+                    (here, top, apex_corner(left)),
+                    (top, apex_corner(right), ahead),
+                    (top, ahead, behind),
+                )
+            )
+        points = tuple(coordinates)
+        regions = np.zeros(len(triangles), dtype=np.int64)
+        _certify_carrier(
+            triangles,
+            regions,
+            points,
+            vectors,
+            (),
+            {0: RadicalElement(_cross(a, b))},
+            work,
+        )
+        squares: dict[Edge, RadicalElement] = {}
+        for triangle in triangles:
+            for (first, fi), (second, si) in (
+                (triangle[0], triangle[1]),
+                (triangle[1], triangle[2]),
+                (triangle[2], triangle[0]),
+            ):
+                edge, _ = _key(first, fi, second, si)
+                if edge not in squares:
+                    work.spend("carrier_edge_squares")
+                    squares[edge] = _square(
+                        points[edge[0]],
+                        _lift(points[edge[1]], (edge[2], edge[3]), vectors),
+                    )
+        squared = np.empty(len(squares), dtype=object)
+        for index, value in enumerate(squares.values()):
+            squared[index] = value
+        pairs = np.asarray([edge[:2] for edge in squares], dtype=np.int64)
+        if any(
+            periodic_owner.periodic_size_control_issues(
+                squared, pairs, control, specification.size_compliance, budget=budget
+            )
+            for control in controls
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.AUDIT_FAILED,
+                "periodic.algebraic.orbit_lattice.size must reproduce the admitted exact hard verdict; got hard issues on the constructed edges",
+            )
+        work.spend("representative_coordinates", 2 * count)
+        rounded = np.asarray(
+            [[value.rounded(budget=budget)[0] for value in point] for point in points],
+            dtype=np.float64,
+        )
+        simplices = np.asarray(
+            [[root for root, _ in triangle] for triangle in triangles], dtype=np.int64
+        )
+        shifts = np.asarray(
+            [[image for _, image in triangle] for triangle in triangles], dtype=np.int64
+        )
+        for array in (rounded, simplices, shifts, regions):
+            array.setflags(write=False)
+        identity = canonical_fingerprint(
+            {
+                "kind": "orbit-lattice-equilateral-band-algebraic-carrier",
+                "source_binding": source.binding_id,
+                "size_compliance": specification.size_compliance.policy_id,
+                "hard_controls": [control.control_id for control in controls],
+                "row_step": [[part.numerator, part.denominator] for part in proof.step],
+                "row_rise": [[part.numerator, part.denominator] for part in proof.rise],
+                "lead": proof.lead,
+                "sites": identities,
+                "topology_rule": "equilateral-row-bands-with-ordered-row-merge-fillers",
+            }
+        )
+        carrier = ExactAlgebraicCarrier(
+            points=rounded,
+            exact_coordinates=points,
+            simplices=simplices,
+            shifts=shifts,
+            regions=regions,
+            ancestry=tuple((index,) for index in range(len(triangles))),
+            work=budget.work_units - starting_work,
+            image_count=0,
+            source_identity=identity,
+            site_identities=tuple(identities),
             work_evidence=tuple(sorted(work.counts.items())),
         )
         budget.retain_basis((carrier,))

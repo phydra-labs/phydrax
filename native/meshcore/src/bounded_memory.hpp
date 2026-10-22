@@ -249,6 +249,9 @@ class NativeExecutionScope final {
   int32_t status() const noexcept;
   bool primitive_query() noexcept;
   bool checkpoint() noexcept;
+  // charge(0), with the same status, target refusal and admission checks,
+  // except that it reads the deadline every time, not on the logical cadence.
+  bool checkpoint_charge() noexcept;
   bool has_live_batches() const noexcept;
   int32_t batch_refusal(uint64_t* values) const noexcept;
   int32_t refusal_request(uint64_t* values) const noexcept;
@@ -263,7 +266,7 @@ class NativeExecutionScope final {
   friend class NativeExecutionBatch;
   friend class NativeParallelBatch;
   bool checkpoint_locked(Clock::time_point now) noexcept;
-  bool logical_checkpoint_locked() noexcept;
+  bool logical_checkpoint_locked(bool read_deadline = false) noexcept;
   bool admit_locked(uint64_t work, uint64_t queries) noexcept;
   void commit_locked(uint64_t work, uint64_t queries, bool external) noexcept;
   void refuse_locked(std::size_t resource) noexcept;
@@ -292,6 +295,8 @@ class NativeExecutionScope final {
   std::array<uint64_t, 4> refusal_request_{};
   bool has_refusal_request_ = false;
   Clock::time_point start_, deadline_;
+  // Captured absolute policy expiry is never shifted by imported preparation.
+  Clock::time_point workflow_deadline_;
   friend class NativeExecutionTarget;
   friend class BoundedMemoryResource;
   MemoryScope memory_scope_;
@@ -313,8 +318,10 @@ class NativeExecutionBatch final {
   static int32_t admit(NativeExecutionScope& scope, NativeExecutionBatch* parent,
                        std::array<uint64_t, 4> upper, void** out);
   int32_t settle(std::array<uint64_t, 4> actual) noexcept;
-  int32_t refuse(std::array<uint64_t, 4> actual,
-                 std::array<uint64_t, 4> requested, uint64_t* out) noexcept;
+  // A proven refusal settles and must then be destroyed (`settled`); with live
+  // children it records the refusal and keeps the ticket for a later settle.
+  int32_t refuse(std::array<uint64_t, 4> actual, std::array<uint64_t, 4> requested,
+                 uint64_t* out, bool& settled) noexcept;
   int32_t checkpoint() noexcept;
   int32_t usage(phx_mc_execution_usage** out) noexcept;
  private:
@@ -329,7 +336,8 @@ class NativeExecutionBatch final {
       NativeExecutionScope* admitting_scope = nullptr) noexcept;
   std::array<uint64_t, 4> remaining_locked() const noexcept;
   ExecutionBatchRefusal snapshot_locked() const noexcept;
-  int32_t validate_actual_locked(std::array<uint64_t, 4>& actual) const noexcept;
+  int32_t validate_actual_locked(std::array<uint64_t, 4>& actual,
+                                 bool live_children_allowed = false) const noexcept;
   void settle_locked(std::array<uint64_t, 4> actual,
                      std::array<uint64_t, 4> host) noexcept;
   NativeExecutionBatch(NativeExecutionScope& scope, NativeExecutionBatch* parent,
@@ -394,14 +402,22 @@ struct NativeChunkEvidence {
 uint64_t native_parallel_allocation_bytes(
     uint64_t payload, std::size_t alignment = alignof(std::max_align_t));
 
+// Admits all chunk allowances as one ticket. With arena_slots == 0 every chunk
+// owns one arena (chunk outputs may retain it). Otherwise arena_slots
+// recyclable arenas, each the largest chunk byte bound, serve the chunks: a
+// participant reuses its slot only after its chunk released every allocation,
+// so each chunk starts from an identical empty arena and the admitted bytes
+// scale with participants, not with the batch's chunk count.
 class NativeParallelBatch final {
  public:
-  explicit NativeParallelBatch(std::span<const NativeChunkAllowance> allowances);
+  explicit NativeParallelBatch(std::span<const NativeChunkAllowance> allowances,
+                               std::size_t arena_slots = 0);
   ~NativeParallelBatch();
   NativeParallelBatch(const NativeParallelBatch&) = delete;
   NativeParallelBatch& operator=(const NativeParallelBatch&) = delete;
   int32_t status() const noexcept { return status_; }
-  const MemoryOwner& chunk_owner(std::size_t index) const noexcept { return owners_[index]; }
+  std::size_t arena_count() const noexcept { return owners_.size(); }
+  const MemoryOwner& arena_owner(std::size_t index) const noexcept { return owners_[index]; }
   const NativeChunkAllowance& chunk_allowance(std::size_t index) const noexcept {
     return allowances_[index];
   }
@@ -449,6 +465,12 @@ inline void native_execution_charge(int64_t work, uint64_t queries = 0) {
   if (!native_execution_spend(work, queries)) {
     throw ExecutionRefusal{active_execution_scope == nullptr
                                ? PHX_MC_CAPACITY_EXCEEDED : active_execution_scope->status()};
+  }
+}
+// Reads the deadline at every call; fixed-chunk validation polls with it.
+inline void native_execution_checkpoint() {
+  if (active_execution_scope != nullptr && !active_execution_scope->checkpoint_charge()) {
+    throw ExecutionRefusal{active_execution_scope->status()};
   }
 }
 inline void native_execution_primitive_query() {

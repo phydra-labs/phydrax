@@ -10,6 +10,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from decimal import Decimal, localcontext
 from fractions import Fraction
 from pathlib import Path
 from types import ModuleType
@@ -21,8 +22,10 @@ import pytest
 
 import phydrax as phx
 from phydrax._external_resource import ResourceLimits
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry._atlas import PolygonTrimLoop, TrimDomain
 from phydrax.geometry.brep._model import BRepAssemblyContainer
+from phydrax.interchange._cad import _written_upper_bound
 from phydrax.interchange._cad_carriers import RigidPlacement
 from phydrax.units import MILLIMETER
 from tests._support.cad_models import (
@@ -34,6 +37,7 @@ from tests._support.cad_models import (
     native_repeated_assembly,
     native_sector_face,
     native_solid,
+    placement_budget,
     QUARTER_TURN,
     solid_volumes,
     SOLIDS,
@@ -516,6 +520,23 @@ def test_contradictory_length_units_are_refused(cylinder_step: str) -> None:
     assert _refusal(text.encode()).reason == "units"
 
 
+@pytest.mark.parametrize(
+    "prefixes", (("$", ".MILLI."), (".MILLI.", "$")), ids=("metre-first", "milli-first")
+)
+def test_repeated_unit_partials_refuse_in_either_order(
+    cylinder_step: str, prefixes: tuple[str, str]
+) -> None:
+    partials = " ".join(f"SI_UNIT({prefix},.METRE.)" for prefix in prefixes)
+    text = cylinder_step.replace(
+        "( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.) )",
+        f"( LENGTH_UNIT() NAMED_UNIT(*) {partials} )",
+    )
+    assert text != cylinder_step
+    refusal = _refusal(text.encode())
+    assert refusal.reason == "malformed"
+    assert "SI_UNIT" in refusal.message
+
+
 def test_unknown_schema_is_refused(cylinder_step: str) -> None:
     text = cylinder_step.replace("AUTOMOTIVE_DESIGN", "SHIP_STRUCTURES", 1)
     assert _refusal(text.encode()).reason == "unsupported-entity"
@@ -748,15 +769,13 @@ def _occt_edge_vertex_counts(shape: object) -> tuple[int, int]:
     return edges.Extent(), vertices.Extent()
 
 
-@pytest.mark.parametrize("name", [*SOLIDS, "assembly"])
-def test_occt_written_step_matches_native_reading(
-    occt: object, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / f"{name}.step"
-    data = _occt_write(_occt_shapes(name), path, assembly=name == "assembly")
-    shape = _occt_read(path)
-    solids, faces, volume, _ = _occt_facts(shape)
-    edges, vertices = _occt_edge_vertex_counts(shape)
+def _native_occt_read(
+    data: bytes,
+    policy: interchange.CadImportPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
+) -> interchange.CadImportResult:
+    """Decode OCCT-written STEP while refusing any OCP import."""
     original_import = builtins.__import__
 
     def native_only_import(
@@ -774,7 +793,15 @@ def test_occt_written_step_matches_native_reading(
 
     with monkeypatch.context() as guard:
         guard.setattr(builtins, "__import__", native_only_import)
-        result = _read(data, OCCT_POLICY)
+        return interchange.decode_step_bytes(
+            data, policy, coordinate_budget=coordinate_budget
+        )
+
+
+def _assert_matches_occt(result: interchange.CadImportResult, path: Path) -> None:
+    shape = _occt_read(path)
+    solids, faces, volume, _ = _occt_facts(shape)
+    edges, vertices = _occt_edge_vertex_counts(shape)
     assert result.model.topology.num_solids == solids
     assert result.model.topology.num_faces == faces
     geometry = result.model.geometry
@@ -790,6 +817,115 @@ def test_occt_written_step_matches_native_reading(
         volume, rel=_OCCT_WRITTEN_SOLID_VOLUME_RTOL
     )
     assert result.schema == "AP214"
+
+
+def _occt_moved_frame(data: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Authored origin, axis and reference of the one displaced usage target."""
+    records = dict(re.findall(r"^#(\d+)\s*=\s*(.*?);\s*$", data.decode(), re.M | re.S))
+
+    def values(reference: str) -> np.ndarray:
+        inner = re.search(r"\(([^()]*)\)\)$", records[reference])
+        assert inner is not None
+        return np.asarray([float(value) for value in inner.group(1).split(",")])
+
+    frames: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for body in records.values():
+        if body.startswith("ITEM_DEFINED_TRANSFORMATION"):
+            target = re.findall(r"#(\d+)", body)[-1]
+            point, axis, reference = re.findall(r"#(\d+)", records[target])
+            frames.append((values(point), values(axis), values(reference)))
+    (moved,) = (frame for frame in frames if np.any(frame[0]))
+    return moved
+
+
+@pytest.mark.parametrize("name", SOLIDS)
+def test_occt_written_step_matches_native_reading(
+    occt: object, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / f"{name}.step"
+    data = _occt_write(_occt_shapes(name), path)
+    _assert_matches_occt(_native_occt_read(data, OCCT_POLICY, monkeypatch), path)
+
+
+def test_occt_written_assembly_refuses_rounded_frame_at_zero_limit(
+    occt: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = _occt_write(
+        _occt_shapes("assembly"), tmp_path / "assembly.step", assembly=True
+    )
+    # OCCT writes its binary64 quarter turn with a rounded reference ratio.
+    _, _, reference = _occt_moved_frame(data)
+    assert sum(Fraction(float(value)) ** 2 for value in reference) != 1
+    with pytest.raises(interchange.CadInterchangeError) as caught:
+        _native_occt_read(data, OCCT_POLICY, monkeypatch)
+    assert caught.value.refusal.reason == "unsupported-entity"
+    assert "AXIS2_PLACEMENT_3D" in caught.value.refusal.entity
+
+
+def test_occt_written_assembly_matches_native_reading_under_declared_limit(
+    occt: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "assembly.step"
+    data = _occt_write(_occt_shapes("assembly"), path, assembly=True)
+    policy = replace(OCCT_POLICY, maximum_placement_deviation=1.0e-12)
+    with placement_budget() as budget:
+        result = _native_occt_read(data, policy, monkeypatch, budget)
+    _assert_matches_occt(result, path)
+    geometry = result.model.geometry
+    assert geometry is not None
+    (moved,) = (
+        occurrence
+        for occurrence in geometry.occurrences
+        if occurrence.placement_evidence is not None
+    )
+    evidence = moved.placement_evidence
+    assert evidence is not None and evidence.point_deviation_bound <= 1.0e-12
+    origin, axis, reference = _occt_moved_frame(data)
+    with localcontext() as context:
+        # Decimal projection of the authored ratios, independent of the
+        # decoder's rational enclosure construction.
+        context.prec = 100
+        z = [Decimal.from_float(float(value)) for value in axis]
+        z_norm = sum((value * value for value in z), Decimal(0)).sqrt()
+        z = [value / z_norm for value in z]
+        ratio = [Decimal.from_float(float(value)) for value in reference]
+        along = sum((a * b for a, b in zip(ratio, z, strict=True)), Decimal(0))
+        x = [a - along * b for a, b in zip(ratio, z, strict=True)]
+        x_norm = sum((value * value for value in x), Decimal(0)).sqrt()
+        x = [value / x_norm for value in x]
+        y = [
+            z[1] * x[2] - z[2] * x[1],
+            z[2] * x[0] - z[0] * x[2],
+            z[0] * x[1] - z[1] * x[0],
+        ]
+        ideal = [[x[row], y[row], z[row]] for row in range(3)]
+        errors = [
+            [
+                abs(Decimal.from_float(moved.rotation[row][column]) - ideal[row][column])
+                for column in range(3)
+            ]
+            for row in range(3)
+        ]
+        squared = sum((error * error for row in errors for error in row), Decimal(0))
+        assert squared.sqrt() <= Decimal.from_float(evidence.rotation_deviation_bound)
+        assert evidence.entrywise_deviation_bounds is not None
+        for row in range(3):
+            for column in range(3):
+                assert errors[row][column] <= Decimal.from_float(
+                    evidence.entrywise_deviation_bounds[row][column]
+                )
+        shift = sum(
+            (
+                (
+                    Decimal.from_float(moved.translation[row])
+                    - Decimal.from_float(float(origin[row]))
+                )
+                ** 2
+                for row in range(3)
+            ),
+            Decimal(0),
+        ).sqrt()
+        assert shift <= Decimal.from_float(evidence.translation_deviation_bound)
 
 
 @pytest.mark.parametrize("name", [*SOLIDS, "assembly"])
@@ -1011,6 +1147,15 @@ def test_step_uncertainty_is_recorded_and_larger_source_bound_declared(
     assert imported.tolerance_evidence is not None
     assert imported.source_tolerance is not None
     assert imported.source_tolerance > imported.tolerance_evidence.declared_limit
+    ordinary = _read(cylinder_step.encode())
+    assert ordinary.tolerance_evidence is not None
+    assert (
+        imported.tolerance_evidence.declared_limit
+        == ordinary.tolerance_evidence.declared_limit
+    )
+    assert imported.model.report.curve_surface_tolerance == (
+        ordinary.model.report.curve_surface_tolerance
+    )
     assert all(
         "entity=" in loss.rationale
         and "declared=" in loss.rationale
@@ -1081,6 +1226,147 @@ def test_step_written_uncertainty_is_certified_maximum(tmp_path: Path) -> None:
     written = match[1]
     assert Fraction(written) >= Fraction(bound)
     assert float(written) <= float(np.nextafter(bound, np.inf))
+
+
+def _bounded_step_descriptor() -> dict[str, object]:
+    # Independent declared law, not provenance or a claim of source authenticity.
+    gap = _written_upper_bound(
+        float(np.nextafter(0.01 + float(np.nextafter(2.0 * 0.01, np.inf)), np.inf))
+    )
+    return {
+        "representation": "bounded-coupled-approximation",
+        "source_model_id": "declared-source-model",
+        "source_geometry_id": "declared-source-geometry",
+        "source_gap_bound": 0.0,
+        "gap_bound": gap,
+        "rows": [
+            {
+                "source_branch_id": "declared-source-branch",
+                "approximation_id": "declared-new-carrier",
+                "spatial_bound": 0.01,
+                "parameter_bound": 0.01,
+                "distance_bound": 0.005,
+                "parameter_error": 0.005,
+                "surface_jacobian_lipschitz": 2.0,
+                "gap_bound": gap,
+            }
+        ],
+    }
+
+
+def _step_with_bounded_descriptor(
+    text: str, descriptor: dict[str, object], *, uncertainty: object | None = None
+) -> str:
+    description = json.dumps(descriptor, sort_keys=True, separators=(",", ":"))
+    magnitude = descriptor["gap_bound"] if uncertainty is None else uncertainty
+    updated, count = re.subn(
+        r"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\([^)]+\),#(\d+),'[^']*','[^']*'\)",
+        lambda match: (
+            f"UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({magnitude}),"
+            f"#{match[1]},'phydrax_bounded_approximation','{description}')"
+        ),
+        text,
+        count=1,
+    )
+    assert count == 1
+    return updated
+
+
+def test_step_bounded_descriptor_is_explicit_loss_and_new_identity(tmp_path: Path) -> None:
+    source = _write(native_solid("box"), tmp_path / "bounded-source.step").decode()
+    descriptor = _bounded_step_descriptor()
+    ordinary = _read(source.encode())
+    imported = _read(_step_with_bounded_descriptor(source, descriptor).encode())
+    assert imported.model.model_id != ordinary.model.model_id
+    assert imported.model.source_id != ordinary.model.source_id
+    assert imported.report.source_id == imported.model.source_id
+    assert imported.report.status == interchange.AdapterStatus.DECLARED_LOSS
+    assert any(
+        loss.path == "geometry.bounded-coupled-approximation"
+        and imported.source_digest in loss.rationale
+        for loss in imported.report.losses
+    )
+    assert imported.report.source_profile is not None
+    qualifiers = dict(imported.report.source_profile.qualifiers)
+    assert qualifiers["representation"] == "bounded-coupled-approximation"
+    assert qualifiers["artifact-sha256"] == imported.source_digest
+    assert json.loads(qualifiers["bounded-approximation-descriptor"]) == descriptor
+
+
+def test_step_bounded_descriptor_converts_with_context_length_unit(tmp_path: Path) -> None:
+    source = _write(native_solid("box"), tmp_path / "converted-bounded.step").decode()
+    descriptor = _bounded_step_descriptor()
+    encoded = _step_with_bounded_descriptor(source, descriptor).encode()
+    imported = _read(encoded, OCCT_POLICY)
+    gap = descriptor["gap_bound"]
+    assert isinstance(gap, float)
+    assert imported.source_tolerance == float(np.nextafter(gap * 1000.0, np.inf))
+    assert imported.report.source_profile is not None
+    qualifiers = dict(imported.report.source_profile.qualifiers)
+    assert qualifiers["representation"] == "bounded-coupled-approximation"
+
+
+def test_step_unreferenced_descriptor_does_not_change_source_representation(
+    tmp_path: Path,
+) -> None:
+    source = _write(native_solid("box"), tmp_path / "unreferenced-bounded.step").decode()
+    declared = _step_with_bounded_descriptor(source, _bounded_step_descriptor())
+    entity = re.search(
+        r"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\([^)]+\),#\d+,'phydrax_bounded_approximation','[^']*'\)",
+        declared,
+    )
+    assert entity is not None
+    source = source.replace(
+        "ENDSEC;\nEND-ISO",
+        f"#90001={entity[0]};\nENDSEC;\nEND-ISO",
+        1,
+    )
+    imported = _read(source.encode())
+    assert imported.report.source_profile is not None
+    qualifiers = dict(imported.report.source_profile.qualifiers)
+    assert qualifiers["representation"] == "source"
+    assert "bounded-approximation-descriptor" not in qualifiers
+    assert not any(
+        loss.path == "geometry.bounded-coupled-approximation"
+        for loss in imported.report.losses
+    )
+
+
+@pytest.mark.parametrize("tamper", ("missing-law", "wrong-law", "uncertainty"))
+def test_step_refuses_forged_bounded_descriptor(
+    tmp_path: Path, tamper: str
+) -> None:
+    source = _write(native_solid("box"), tmp_path / "forged-source.step").decode()
+    descriptor = _bounded_step_descriptor()
+    uncertainty = None
+    if tamper == "missing-law":
+        del descriptor["rows"]
+    elif tamper == "wrong-law":
+        descriptor["gap_bound"] = 0.02
+    else:
+        uncertainty = 0.25
+    refusal = _refusal(
+        _step_with_bounded_descriptor(
+            source, descriptor, uncertainty=uncertainty
+        ).encode()
+    )
+    assert refusal.reason == "inconsistent-geometry"
+
+
+def test_step_bounded_marker_does_not_bypass_stored_gap_proof(tmp_path: Path) -> None:
+    source = _write(native_solid("box"), tmp_path / "bad-carrier.step").decode()
+    # Move an actual stored UV point much farther than the complete declared law.
+    source, count = re.subn(
+        r"CARTESIAN_POINT\('',\(([^,()]+),([^,()]+)\)\)",
+        "CARTESIAN_POINT('',(5.,5.))",
+        source,
+        count=1,
+    )
+    assert count == 1
+    refusal = _refusal(
+        _step_with_bounded_descriptor(source, _bounded_step_descriptor()).encode()
+    )
+    assert refusal.reason == "inconsistent-geometry"
 
 
 def test_step_success_classifies_every_instance(cylinder_step: str) -> None:

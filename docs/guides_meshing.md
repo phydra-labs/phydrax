@@ -29,6 +29,173 @@ vertex prefix before calling native recovery. An insufficient allowance produces
 The evidence includes `required_vertices` and `available_vertices`; the source
 is unchanged and no candidate mesh is published.
 
+Native corpus resource assessment separates **request admission coverage** from
+**runtime measurement availability**. All eleven original named limits must
+cover the actual native/managed request, including its preparation, construction
+and consumers, with complete ended receipts bound to that publication and build.
+A scoped declaration such as `work_units:native_and_metered_host` is not silently
+converted into request-wide enforcement. Unknown scopes, missing native axes,
+foreign or incomplete receipts, and an unobserved managed-admission envelope
+remain blocking; separate native and host peaks cannot be summed to invent that
+envelope or an exact admission boundary.
+The publication's `resource_binding.native_managed_claim` records those exact
+enforced and unenforced declarations without stripping scopes. Its separate
+`outside_admission_measurement_requirements` lists obligations, not observations
+or admission guarantees; the actual measurements stay in their bound runtime
+and epoch records. A rehashed binding with changed claims or removed runtime
+measurement obligations does not satisfy the consumer.
+`canonical_connectivity` is the canonical certification route's normalization
+capability, not a resource allowance and not a synonym for
+`connectivity_entries`. `work_units:native_and_coordinate_batches` describes
+partial work coverage; it does not discharge request-wide work admission.
+
+Polyhedral adaptation additionally admits host protection/classification banks
+before creating masks, padded keys, memberships or classes. Their source-proof
+queries remain owned by the request's coordinate budget. Topology publication
+admits its offset-bank profiling scratch before reading device-backed indices,
+then keeps construction and retained-output storage live together. Retention
+uses one identity-deduplicated host-owner traversal, charging each fresh owner
+before inspection and admitting its pending stack/index expansion first. The
+final adaptation publication and restricted-diagram retention profiles now use
+that same fresh-owner callback convention; recovered tetrahedron facet lookup
+also charges each actual source/lookup key before constructing it.
+`record_count_upper` remains a hard weak-record/storage bound, not work charged
+for unused visits. Only explicit roots and array leaves receive weak retention
+callbacks; partial attachments are detached and reservations released on refusal,
+including a deadline refusal during the restricted diagram's final token resize.
+Callbacks never retain the scientific graph strongly. Original request limits
+also reach plane/agglomeration candidates, regenerated mesh builders, periodic
+seam expansion and final topology assembly. Each admits an occurrence-based
+entity/connectivity and numeric-output upper before constructing those banks;
+failure reports the required and remaining capacity without publishing a target.
+Native restricted-power preflight counts final topology before allocating its
+seventeen numeric output banks. Export retains typed axis/required/remaining
+capacity evidence; provider failure evidence also preserves every named native
+preflight count. Generation checks the exported counts, sided incidences,
+payload bytes and connectivity/numeric-data formulas against the Python
+publication owner; the canonical builder independently checks the edge count.
+The native count record is evidence, not another work or storage reservation:
+native scratch retires with its handle, exported arrays follow diagram/array
+leases, and host topology construction and retained aliases keep their existing
+separate workspace lifetimes. Source queries remain on the coordinate ticket.
+Whole-result data admission includes the source/request/policy, transition,
+transfer, common refinement, retained history and actual ended receipt, with
+identity-deduplicated numeric leaves. These checks prove `data_bytes` for the
+supported route, not a process-memory bound. Work, query and managed scratch
+remain partial. Concrete residual work/scratch owners include
+`prepare_mesh_adaptation`'s post-scope receipt/rebinding,
+`execute_mesh_adaptation`'s pre-scope identity and post-scope receipt/hash passes,
+`_AdaptationPublicationStorage.admit`'s schema sizing and `handover`,
+`_build_polyhedral_carrier`, `_measure_polyhedral_publication_active`,
+`_polyhedral_component_lineage`, and `_execute_restricted_source`'s guard/CSR
+normalization. The new metering does not reprice or skip any of those loops.
+Query promotion still requires end-to-end source-proof/certification receipts,
+not native predicate telemetry: direct restricted construction, including its
+guarded regular triangulation, may correctly require zero source queries.
+Neither native preflight nor an observed simultaneous envelope promotes a
+request-wide axis.
+Distributed and source-attribute variants remain scientifically rejected rather
+than enabled by this accounting.
+
+
+Compiler-phase assessment consumes canonical `phase_evidence.compiler_epochs`
+records and checks them against their exact owning JSON paths. Polyhedral
+qualification requires the actual warm and cold FE/VEM/FV kernels, material
+transferred-update kernels, and reported periodic trace/history solves. Missing
+kernels stay explicitly unmeasured; an empty epoch list or whole-workflow
+retention total cannot satisfy per-kernel measurements. Authentic
+`warm_publications` and the full cold-request publication retain their original
+native receipts and bindings. Archive history, resource summaries and
+source-prefix capacity trials never stand in for those publications.
+
+The independent source-prefix capacity-boundary obligation remains mandatory.
+Its `SOURCEPREFIX` admission proves only the original generation prefix, with
+`complete_request_R_claimed=False`; it is not a complete-request boundary.
+Qualification validates the frozen original and trial source/request/options
+records, actual original prefix publication, exact work-R and scratch-R
+admissions and typed R−1 refusals through one canonical record validator.
+Work trials execute the **same prepared plan**, including its original
+specification, derived certificate limits, plan identity and preparation receipt.
+Only the mechanical root work allowance changes. Evidence records that envelope
+separately from the unchanged frozen scientific request. The R replay must earn
+fresh execution evidence with identical total work, result identity, mesh/geometry
+bytes and charged phase graph; copying the original receipt or replanning a
+lower-work scientific specification is not a proof. The original prefix must be
+part of the warm source's charged preparation/consumer graph, not merely archive
+history. Passed/completed labels, copied counters or preservation assertions
+without that evidence cannot discharge the obligation.
+
+Work-boundary evidence also requires non-missing, validated managed-admission
+envelopes for both the original publication and its fresh replay. The earlier
+focused material-L r4 original-plan work boundaries R=90008 and R=102224 are
+historical, not current qualification results after host-operation accounting
+changes. Their capacity envelopes must be re-earned on the current candidate;
+material adaptation/cold and fixed-P2/two-slab workflow closure additionally
+require their own executed warm/cold evidence.
+The material `NATIVE_POLYHEDRAL` adaptation runtime remains partial:
+`_adaptation._adapted_runtime_limits` proves entity/connectivity, whole-result
+numeric data and per-candidate cavity limits for supported nondistributed,
+no-attributes requests. Wall enforcement additionally requires a live root
+preparation deadline and an unsharded source; nested/reconstructed variants
+remain partial on that axis. Work, query and scratch remain partial route-wide.
+Enabling managed observation in preparation, execution and cold continuation
+does not upgrade those declarations. The fixed-P2/two-slab corpus consumer,
+new-request and cold-worker wrappers opt into the existing root's managed
+observation; this is observation coverage, not an additional allowance or a
+substitute for executing their workflows.
+
+The supported adaptation publication stages target, transition and result root
+slots while the request is live and admits their final reference binding before
+scope end. It does not rediscover those roots or repeat target receipt validation
+after settlement. Host generation additionally accounts for site/weight scans,
+measurement reductions and component-lineage sorting/gather/scatter passes.
+These local boundaries do **not** close the remaining route-wide obligations:
+preparation receipt validation/debit before execution, preparation's ended
+receipt construction and identity rebinding, ended execution receipt graph
+validation/hashing, and exhaustive source-proof/certification query ownership.
+Generation input normalization/domain construction and refinement/failure
+branches also require exhaustive owner-level work admission, rather than
+inferring closure from the successful final measurement/lineage passes.
+Even the one-cell voxel generation replay at its consumed-work total can refuse
+the conservative `exact_power_cell_measures` admission envelope. Consumed work
+is therefore not a proved route work-capacity boundary; a passing query R/R−1
+or root-binding work R/R−1 test does not discharge that separate obligation.
+The receipt schema's simultaneous storage admission is not proof that all those
+operations are work-metered. Distributed/attribute variants remain unproved;
+no material 2→6 smoke or workflow promotion follows from these focused changes.
+
+Explicit compiler/device/process exclusions remain published limitations, not
+missing native admission guarantees when the corresponding named request limit
+is actually enforced. They require separate compiler temporary/output/code-byte,
+device-peak and process-peak measurements with their original sample/epoch/build
+binding and measurement scopes. Backend-unavailable device statistics are
+unavailable evidence, not zero usage or proof of admission. Neither complete
+runtime measurements nor native allocator counters establish a whole-process,
+compiler or device hard cap. Partial image/implicit source preparation remains
+unproved until the owning route accounts for its actual native/managed work;
+disclosing a compiler exclusion alone does not repair that gap.
+
+For the CPU backend, [OpenXLA's CPU device memory space represents ordinary
+host RAM](https://github.com/openxla/xla/blob/main/xla/pjrt/host_memory_spaces.h).
+That shared domain does not make process RSS a separately measured device
+allocator peak. JAX heap profiles and `live_arrays()` describe live-object
+snapshots, not the high-water mark of all runtime allocations; compiler memory
+analysis describes a compiled executable, not a whole-request runtime peak.
+The user-approved CPU-only disposition permits the device-allocator peak to
+remain explicitly **unavailable** for the verified installed unsupported CPU
+capability. The qualification runtime binds the exact probe evidence, provider
+versions and API surface to the actual device; the consumer rechecks that
+capability and requires the original explicit unavailable measurement. It
+reports `complete-with-cpu-device-peak-limitation`, never a measured-complete
+device peak, and carries `qualification_limitations` into profile, workflow and
+aggregate qualification records.
+
+Unknown or non-CPU providers, missing capability records, missing measurement
+data, and changed unverified providers are not covered. The original `None`,
+unavailable status and reason remain visible. Process/host and compiler
+measurements, logical retained bytes, every native/managed admission check,
+scientific acceptance and independent cold continuation remain hard requirements.
+
 ### Qualification outcomes that are not passes
 
 Declared-capacity work, storage, or recipe refusals remain typed resource
@@ -53,11 +220,62 @@ The installed native unit-square lifecycle request at resolution four with
 lower-resolution distributed run or a uniform-refinement corpus case is not a
 substitute for that request.
 
-Adapted surface-envelope results retain authenticated repair evidence, and the
-surface-envelope lifecycle passes adapted acceptance and its next solve.
-Envelope result structure recipes exceed the default archive manifest bound, so
-the accepted-epoch checkpoint and cold continuation refuse as an archive-size
-limitation. This is not a completed lifecycle qualification.
+Adapted surface-envelope results retain authenticated repair evidence only when
+the adaptation policy names the authored envelope source (see "Repaired
+surface-envelope tetrahedra"). Under the original 120-second request, the
+current lifecycle reaches the initial physical target and then times out during
+adaptation; adapted acceptance and checkpoint publication are unreached.
+Separately, retained accepted-epoch structure recipes exceed the default archive
+manifest bound. Neither result establishes cold continuation or a completed
+lifecycle qualification.
+
+Performance evidence is measured on CPU with unchanged scientific controls.
+The following misses are explicit limitations, not successful qualification:
+
+| Target | Observed result | Disposition |
+| --- | --- | --- |
+| Scope construction: at most 30 microseconds | Retained warm medians about 162-164 microseconds | Approved miss; public JAX array representation retained |
+| Functional qualification startup: at most 1.5 seconds | Median 4.706 seconds over 15 fresh interpreters | Approved miss; CLI and native lifecycle entry points are resolved |
+| Functional native API startup: at most 0.5 seconds | Median 3.928 seconds over 15 fresh interpreters | Approved miss; provider and adaptation entry points are resolved |
+| Native batch speedup: at least `0.6 × threads` | 5 of 54 parallel cells meet the target across all three attempts | Approved miss for the other 49; median absolute parallel speed improved 5.54 times against the retained pre-batching measurements |
+
+The functional qualification startup is 28.8% slower than the original monolithic
+import baseline and 23.0% faster than the later modular baseline. Native API
+startup is 3.2% and 28.9% faster, respectively; neither meets its absolute target.
+These are functional boundaries, not lazy package-shell imports.
+
+Link-time optimization stays off. On the current native source, three accepted
+planar requests per build preserve scientific outputs and non-timing evidence
+bitwise. The ON/OFF end-to-end median ratio is 1.001, with no 5% adoption gain.
+Private coordinate-tabulation kernels avoid per-chart recompilation in the
+measured layouts, but ordinary planar lifecycle preparation still records eager
+primitive compilations. The full-workflow compile-reduction gate is not passed.
+The unchanged historical planar baselines refuse before completing adaptation,
+so they do not establish an accepted-workflow regression bound.
+
+At resolution 32, measured Python resource-accounting time is 0.228-0.234% of
+end-to-end time, below the 3% threshold **on the refusal path only**. A 50 Hz
+Python profile found no first-party function above 10% of captured GIL-held
+samples, either overall or within an individual process. It covers startup,
+metadata preparation and the original-capacity refusal, not unreached solver
+work. These diagnostics do not complete the mandatory corpus workflows.
+
+The periodic skew-torus frontal construction with lattice vectors `(1, 0)` and
+`(0.25, 1)`, a 4 × 4 orbit lattice and uniform target size 1/4 fails exact
+compliance: its `target_size` p50 and p95 statistics do not attain 1/4 at zero
+tolerance, so it reports `COMPLIANCE_FAILED`. Its earlier pass came from
+rounded edge lengths. The source, resource limits, target and zero tolerance
+are unchanged, and an independent exact oracle confirms the failure. This
+limitation covers the resolution-four request. The 8 × 8 request with target
+1/8 and maximum 3/16 has been shown to fail for the same reason (`target_size`
+p50 and p95 at zero tolerance). The qualification CLI
+`native-periodic-lifecycle --periodic-case skew-lattice` at resolution four has
+a different source identity and capacity limits but the same points and size
+control, and it now reports the same `COMPLIANCE_FAILED` for the same
+mathematical cause. It is a separate record: positive admission remains its
+goal, and the observed failure is a nonpositive outcome, neither an expected
+refusal nor a pass. The `skew-material-feature` case uses algebraic carrier
+geometry and still passes.
 
 ### Native package identity
 
@@ -153,6 +371,16 @@ raw source UV, patch and cell scientific IDs, domain and authentic boundary
 support belong to the same generated source, not a reconstructed outcome proxy.
 Source archive reopening and stale/corrupt chart refusal are separate from a
 successful raw-coefficient bisection theorem or complete surface PDE lifecycle.
+
+Surface metric adaptation shares one request-local numeric material-routing bank
+between split midpoint preparation, relocation preparation and final assembly.
+Keys preserve exact rational UV and patch ownership; each batch authenticates the
+source cells, charts and scientific IDs against the request's source/frame role.
+Unchanged material points remain reusable after carrier topology edits. Changed
+source data, frames or material coordinates cannot reuse stale locations. Only
+immutable numeric stencils are retained, never candidate acceptance, fidelity or
+metric-quality verdicts. Storage is admitted on the original coordinate ledger
+and released on success or failure; cold requests do not inherit the bank.
 
 `CellGeometrySpec` belongs to `phydrax.discretization`, not FEM. Its coordinate
 nodes and element routes can represent geometry of a different polynomial order
@@ -273,20 +501,31 @@ whole registered `MeshPart` when generation roles are declared.
 `MeshingAcceptedEpoch(carrier, declarations, fields, transition=...)` binds an
 actual accepted carrier and complete declared field banks. The closed
 `accepted_epochs` role retains ordered history and exact source/target
-transition bindings; FE and FV fields may share one actual part without fake
-parts. The separate closed `neurofluid_transport` role requires the actual
+transition bindings; FE and FV fields may share one actual part without fake parts.
+The canonical physical-history mapping contains
+`accepted_data={"accepted_epochs": E}` and `accepted_target=E[-1].carrier`.
+The first epoch owns generation; subsequent epochs own their transitions.
+Duplicate `generation_part` or `adaptation_results` histories are refused.
+Execution-control extraction reads the first epoch's authenticated generation
+receipt without constructing scientific source owners. Same-request preparation
+is charged once; completed request history remains separately authenticated
+provenance rather than a fresh debit.
+The separate closed `neurofluid_transport` role requires the actual
 typed transport checkpoint and complete compartment source/result theorem,
 not a generic mapping or invented field declarations. These codec role
 contracts are not a full scientific Image/PDE continuation proof.
-`MeshingFieldIndexBinding.coefficient_bank` retains the complete ordered
-scientific coefficient identities in an immutable array-free bank, with the
-field-space identity stored once and every ordinal/component/coefficient ID
-explicit. It replaces the old repeated coefficient-identity tuple; it is not a
-digest, shape inference or moved numerical field. Actual `index_values` remain
-unchanged. Prepared-space validation rejects missing, duplicate, reordered or
-foreign identities, and canonical recipe/epoch/archive IDs honestly change.
-This bounded encoding does not raise the original archive limits or establish
-an unexercised full cold lifecycle.
+`MeshingFieldIndexBinding.coefficient_bank` retains complete ordered scientific
+coefficient identities in a read-only, C-contiguous host `int64` coordinate bank.
+Each row explicitly records an ordinal and component coordinates; the field-space
+identity is stored once. Derived coefficient IDs use the canonical
+`GlobalCoefficientId` rule, and authored overrides retain their original IDs.
+Prepared-space validation rejects missing, duplicate, reordered, or foreign
+identities. A derived-form override triggers a streaming collision check over
+the array-bounded rows, retaining one temporary derived ID at a time. Cumulative
+hash-input bytes are not serialized manifest data: the archive owner still
+enforces the unchanged limit on the actual recipe. Numerical field
+`index_values` are unchanged; recipe, epoch, and archive IDs change honestly.
+This representation does not by itself establish a full cold lifecycle.
 The original sweep-hex epoch-zero binding has exercised this codec gate with
 the complete scientific coefficient bank and all FE/FV fields under its original
 limits. Its next adaptation still capacity-refuses; first binding is not
@@ -383,19 +622,18 @@ Neither is relabeled as a B-Rep or piecewise-linear approximation.
 
 Source identity metadata is stored once in an immutable
 `GeometryAssociationSourceBank`, exposed as `association.source_entities`.
-Its ordered row routes preserve source IDs, roles and occurrence paths without
-putting that metadata on the device. Use `entity_id(row)`, `role(row)` and
+Its sorted unique `GeometryAssociationSourceIdentities` hold source IDs, roles
+and occurrence paths on the host; `row_indices` is a read-only int64 NumPy
+array routing each row to one identity. Use `entity_id(row)`, `role(row)` and
 `occurrence_path(row)` for a row, or `entity_ids()`, `roles()` and
-`occurrence_paths()` for ordered batches. The old stored row fields are removed;
-constructor row inputs are unchanged. An absent role declaration remains
-distinct from explicitly declared per-row roles. Semantic association IDs retain
-the complete original row identity; storage, PyTree and recipe structure change.
-Archives encode the bank as explicit identity, role-value and occurrence-path
-columns with its ordered row routes. This lossless representation avoids
-repeating typed recipe wrappers for every identity; all source labels and
-optional-role distinctions remain authenticated. The bank API, numerical leaves
-and semantic association IDs are unchanged, while recipe and archive content
-identities change.
+`occurrence_paths()` for ordered batches. Constructor row inputs are unchanged.
+An absent role declaration remains distinct from explicitly declared per-row
+roles. Semantic association IDs retain the complete original row identity.
+Archives store the row routes as a numerical bank. Identities are encoded as
+the longest common prefix of their IDs plus one suffix per identity, with role
+and occurrence-path codes into sorted dictionaries of present values; no ID
+format is assumed, and restore refuses any payload that is not the canonical
+encoding. Recipe and archive content identities change.
 
 Indexed `SURFACE` associations retain authored corner/curve/patch dimensions,
 64-bit definition indices, and declared occurrence paths in their identity.
@@ -570,6 +808,13 @@ refuse. Source-family labels, centers, radii, validity flags, and equal array
 shapes never supply a profile. `AnalyticImplicitProfile` replays its constructor
 with its retained geometry, spatial coordinate contract, tube and cover radii,
 and source identifiers.
+The canonical projection-evidence constructor publishes its validated numeric
+host banks on immutable bytes backing, including on stored reconstruction.
+Dtypes, shapes, dynamic leaves, numerical values and evidence IDs are unchanged.
+Producer aliases cannot alter those proof operands, and publication authenticates
+their exact owners and layouts instead of rescanning immutable coefficients.
+Genuinely mutable source arrays retain complete byte scans and the same work
+and storage admission rules.
 
 Nested and coarsened mesh transitions replay their complete ordered reference
 witness banks. Common-refinement evidence uses its owner's retained cell
@@ -585,11 +830,16 @@ addressable leaves are byte-admitted against the archive limits before
 gathering a host view for owner validation. Replay authenticates static
 metadata, shapes, dtypes, and numerical content, then retains the original
 distributed leaves and placement rather than returning gathered arrays.
-Association replay uses the declared kind to supply absent indexed constructor
-inputs for curve and mapped-reference records. Their stored `-1` index banks
-are still authenticated bitwise against the constructor's output; altered
-sentinels or forged indexed rows refuse. This does not relax the constructor's
-prohibition on indexed inputs for either representation.
+Association replay supplies absent indexed constructor inputs for every record
+whose `GeometryAssociation.indexed_source_strata` is false: curve and
+mapped-reference records, piecewise-linear records constructed without source
+indices, and surface records whose rows name no source entity. A surface
+association given explicit source banks in which every row is `-1` (all rows
+unresolved) takes the same canonical unindexed representation and identity as
+one constructed without those banks. Stored `-1` index banks are still
+authenticated bitwise against the constructor's output; altered sentinels or
+forged indexed rows refuse. This does not relax the constructor's prohibition
+on indexed inputs for curve and mapped-reference records.
 
 Native envelope source closures retain the original `RawTriangleSoup` or
 declared `SurfaceModel`, explicit wrapping permissions, repaired realization,
@@ -841,6 +1091,18 @@ Size bounds and growth become hard only when explicitly supplied. `target_size`
 is a preference, not an unstated exact bound. Provider compliance records
 per-control observed edges, hard-bound tolerances, and growth evidence.
 
+Native surface boundary sources retain a nominal occurrence bank alongside
+their chart triangulations. `boundary_cell_ids` and `boundary_patch_ids` name
+the active global cells and authored patches; `boundary_occurrences[cell, side]`
+stores `(loop, use_ordinal, orientation)` for oriented local sides `(0,1)`,
+`(1,2)`, `(2,0)`, with `(-1,-1,-1)` for interior sides. Orientation is the
+authored use's parameter traversal, not the triangle's normal orientation.
+Construction assigns these rows from chart incidence before publication;
+coincident seams remain separate occurrences. Subdivision transports ownership
+through cell and edge lineage IDs, never through coordinate matching. The bank
+participates in source identity and cold-restoration validation. Query-only
+sources may omit mesh ownership, but cannot authorize occurrence-based edits.
+
 For a selected volume-boundary scope,
 `geometry.certify_source_fidelity(..., target_facet_ids=...)` compares the actual
 global target facets with the selected authored patches of an original
@@ -851,8 +1113,49 @@ but missing or duplicate selected records and invalid trim chains still refuse.
 Independent affine triangulations are compared by native exact halfplane
 clipping, with nonoverlap, coplanarity and exhaustive exact projected measures;
 the original continuous chart remainder remains in both directed bounds.
+Within that authenticated scope, an exact triangle-key bijection is attempted
+before cross-chain broad-phase construction. After authenticating both complete
+corner and plane owners, a matched pair shares one exact unsigned projected
+area within that operation; both chains still compare every accumulated row
+independently. The numeric area map does not escape into a cache or certify a
+partition. A fresh target planar-complex theorem may additionally transport
+its nonoverlap evidence through that exact one-to-one triangle, vertex and
+plane permutation. The source receives a distinct role record only after
+current owner and complete incidence checks; one-use operation capabilities
+expire on success or refusal. No verdict is cached across requests. A
+single-triangle plane uses the canonical embedded-simplex theorem without a
+constructed incidence graph. The one-shot prepared batch supplies exact plane
+membership directly, retaining singleton members without a second grouping
+insertion; multi-face groups still prove fresh topology. Other tiny chains
+retain cheaper pairwise proof.
+Ineligible chains prove their roles independently. Support checks and final
+exact area comparisons remain unchanged.
+A completed domain-source chart-cover proof can retain immutable numerical
+vertex equivalence, oriented incidence, vertex-link and component schedules.
+Its private weak issuer binds the exact live source, original triangulation
+owners and bytes, and the actual cover rows. A later request authenticates all
+of those inputs under its own budget before importing the schedules through
+its current exact triangle permutation. Orientation, manifoldness, boundary
+Jordan and degree checks remain fresh; no stored nonoverlap verdict is used.
+Source-only exact records, construction caches and their owner-profile indices
+are released before target preparation; the schedule retains only immutable
+incidence, exact plane/vertex operands and bindings, not the old triangle
+records. Later source transport uses the current cover's exact rows. Source
+and cover issuers publish together after all fallible bindings; cover aliases
+cannot prolong a dead source's schedule lifetime.
+The source exporter also earns canonical full triangle keys once, storing exact
+corner and plane numerator/denominator tuples rather than retaining old source
+records. After current source/cover authentication, one-use ordered-row operands
+import those numeric keys; target keys, duplicate checks and the complete
+bijection are always fresh. No matching or tiling verdict is retained.
+Copies, decoded archives and user-created covers inherit no issuer authority.
+A cold source earns new schedules only after completing its own chart proof.
+Every matched row consumes a candidate slot, and source-sample, work and
+storage limits remain enforced. Ineligible chains retain the general overlay;
+duplicate keys do not authorize a partition verdict.
 The proof shares the original remaining work and scratch allowances. Evidence
-distinguishes actual coefficient work, retained canonical coefficient storage,
+distinguishes completed work from the maximum dry-admission work requirement,
+and records actual coefficient work, retained canonical coefficient storage,
 temporary CPython storage upper bounds, actual native clip work and observed
 managed native peak bytes. Exact proofs can use zero distance samples without
 claiming zero total work. Primitive telemetry unavailable from the exact-clip
@@ -1162,6 +1465,20 @@ The outward loops below independently author the unit cube. Facet incidence
 `(-1, 0)` places the exterior on the positive side and the solid on the negative
 side. The mixed-family policy permits pyramids and tetrahedra around the
 hex-dominant core. Pure-hex routes require hexahedra throughout.
+
+The tetrahedral schedule's dihedral value is an aim, not a certificate that
+every source admits that angle. Each requested improvement pass follows its
+accepted cavities' unmet children and optimizes the minimum incident physical
+dihedral before the owning source/region transaction can commit a relocation.
+Ordinary angle repair visits each topological cell once per requested pass;
+relocation does not silently request another sweep of an already visited cell.
+The native optimizer reuses complete unchanged-star negatives and prunes only
+proposals whose already evaluated cells or ring subpolygons prove that they
+cannot win. Every performed evaluation remains charged to the same request.
+Weighted exudation is still a separately requested stage; zero flips are valid
+when improvement has already met the aim. Remaining angle failures retain
+their unmet evidence, and exhausting the original request allowance refuses
+rather than publishing an incomplete improvement as success.
 
 ```python {.executable}
 cube_vertices = np.asarray(
@@ -1554,6 +1871,24 @@ assert envelope.evidence.source_to_repaired_upper <= 0.55
 assert envelope.evidence.repaired_to_source_upper <= 0.55
 ```
 
+To adapt such a volume and keep its repair evidence, pass the authored source as
+`MeshAdaptationPolicy(..., envelope_source=envelope_source)`. Policy
+construction re-runs the native wrap of the anchor's original source and policy
+under the request's work, scratch, query and wall-time limits and refuses unless
+it reproduces the same wrapping evidence, repaired surface, carrier and solid
+binding. Exhausting the work or scratch limit raises a typed native capacity
+refusal (`CAPACITY_EXCEEDED`), and exhausting the wall-time limit a deadline
+refusal (`TIMEOUT`); the request's entity, connectivity and data publication
+caps do not apply to the input anchor. The anchor contributes its binding and
+evidence IDs to `policy_id`. Only the native and device bisection, metric,
+surface-metric, level-set, mixed and polyhedral routes carry envelope history;
+other routes, partitioned sources, and an association transfer of a different
+repaired PLC revision refuse. After certification the retained history must
+match the anchor exactly; the carried evidence and policy come from the anchor,
+not from the decoded source payload. Missing, foreign or rehashed history
+refuses. A policy without an anchor leaves a source without envelope history
+unchanged and refuses one that has it.
+
 #### Advancing layers with a fixed core
 
 The wall grows two physical layers. The cap's exact vertex IDs and triangles
@@ -1709,27 +2044,99 @@ the phase starts. Managed-byte admission includes native allocations and
 explicit shape-derived bounds for Python-owned storage; process resident memory
 is a separate measurement.
 
+A refused batch with live children preserves the typed refusal and its
+first-refusal prefix without settling the parent early. Existing children keep
+their admitted reservations; after they settle, the parent commits their actual
+consumption once and releases its reservation. New work on the refused parent
+is forbidden, while storage release remains valid. The ended scope record
+includes the settled child work and must not be confused with the earlier
+refusal-prefix snapshot. Direct-scope refusals retain the same requested amounts
+and immutable snapshot as ticket refusals.
+
+Releasing temporary storage between preparation phases can reduce the storage
+covered by a retained reservation. Subsequent refusals charge only the
+nonnegative share owned by the current phase; a work-limit failure remains a
+typed work refusal rather than becoming an invalid negative-byte request.
+
 Source-fidelity and coverage operations debit the source-query allowance.
 Native primitive-query telemetry records a different operation class. Read
 execution-phase measurements with their phase labels; compilation, Python
 construction, and process-wide peaks have separate owners and measurements.
 `result.runtime.enforced_limits` names the limits enforced on that execution,
 and `unenforced_limits` names declarations for which the route supplies no
-enforcement.
+enforcement. Native route publication policies use the bare `MeshingLimits`
+names without the `maximum_` prefix (for example `work_units`,
+`scratch_bytes`, `wall_seconds`); refusal evidence keeps the `maximum_*`
+request names. A limit is listed as enforced only where the route enforces it
+route-wide: when work, scratch or query tickets cover only one preparation
+stage, those limits are listed as unenforced. Nested adaptation limits are
+declared only for `NATIVE_BISECTION` and changed `NATIVE_MIXED` targets;
+canonical certification names its own certification checks instead.
 
 An ended source-preparation receipt enters the consumer graph once through a
 child scope. A currently active root supplies the shared allowance directly.
+Domain-fidelity authority issuance and reconstruction authenticate the complete
+current coverage report on the caller's existing coordinate budget. They do
+not create a helper allowance or infer an ambient budget for that validation.
+B-Rep model restoration rebuilds its actual nested geometry on that same
+budget before deriving model identity. Unchanged stored identifiers cannot
+authorize mutated vertex, curve, incidence or gap data; restored geometry
+identity and complete fields must still match the stored owner.
+Private scalar ticket observations read fresh native counters and clocks without
+constructing a public `RemainingAllowance` module on every query. Public
+`NativeExecutionScope.remaining()` retains that validated API. Each observation
+still resolves the actual active descendant and current/borrowed target, with
+the same native status, ancestor minima and absolute expiry; there is no
+remaining-allowance cache or shared mutable output buffer.
 Prior source duration debits ancestor admission separately from the parent's
 raw elapsed clock. A child's retained `consumer_evidence` refers to that same
 historical consumption, so sum charges through the graph's ownership edges
 rather than counting each retained reference again.
 
+Same-result continuation may reuse a private preparation of its exact authenticated
+receipt graph. Every retained owner edge and immutable numerical owner is
+rechecked, while only the appended phase's numerics and actual ended-root counters
+are validated anew. Canonical receipt and graph identities remain unchanged.
+Clones, decoded sources and newly introduced ancestry cannot borrow that
+preparation; mutable numerical receipt leaves retain the full validation path.
+This local reuse does not establish capped-workflow or cold-continuation success.
+
+Changed-target publication can likewise reuse exact predecessor graphs captured
+at full preparation/history validation boundaries. The live root admits their
+snapshot work and retained metadata before use. New pre-root snapshot time is
+imported once into the same request; live history snapshot time remains in raw
+elapsed time. Abandoned mutable/cold snapshots still pay their metadata work,
+storage peak and applicable preparation time. Completion authenticates the
+entire immutable predecessor DAG, preserves canonical breadth-first ordering,
+and validates the new root's phase, ancestry, receipt identity and actual ended
+counters. The target's scientific seal remains independently staged and fully
+checked, including every mutable byte. Missing or mutable graph preparations
+retain full numerical validation; replacing an admitted owner or ancestry edge
+is refused. No receipt-validation unit price or request allowance is reduced.
+
+Surface boundary triangulations, chart-cover simplices/deviation bounds and
+retained root chart parameters/patch rows use ordinary dynamic NumPy leaves
+whose private backing storage is immutable `bytes`. Construction snapshots
+supported numerical banks after validation; subsequent certification copies
+share only already-proven immutable leaves, without merging source and target
+roles or equating separate owners by content. Neither `setflags(write=True)`
+nor an array view, base traversal or a writable buffer alias can modify those
+bytes. Array interpretation remains separately bound: publication checks the
+exact ndarray owner, dtype, shape, strides, data address and backing bytes owner.
+Only that proven backing avoids repeated publication content scans. Owning
+arrays, reversible read-only flags and views of mutable storage still undergo
+the complete scan. Model/archive/distributed restoration preserves the declared
+host backend and dynamic leaf layout, and restores read-only numeric banks to
+immutable bytes; it does not restore live publication or scientific authority.
+
 `NativeExecutionRecord.to_record()` validates and serializes the nested
 preparation/consumer graph, preserving shared historical nodes and leaving the
 owning objects unchanged. Qualification records include these receipts and the
 runtime enforced/unenforced limit sets. An absent receipt denotes unavailable
-execution evidence. Mesh certification records scientific acceptance; the
-receipt records resource consumption and admission.
+execution evidence. An unchanged `NATIVE_MIXED` result keeps its source as the
+target, so this adaptation's receipt is on the mixed evidence, not the target.
+Mesh certification records scientific acceptance; the receipt records resource
+consumption and admission.
 
 An owning host consumer opts into the same allocator through
 `execution.allocate_host_array(shape, dtype)`. This returns an uninitialized,
@@ -1775,6 +2182,12 @@ discardable temporary scopes. A live bound that grows inside a temporary scope
 remains charged afterward, while discarded compositions and subdivision
 workspaces are released. Neither shrinking storage nor leaving a temporary
 scope restores consumed work.
+Exact signed cell integration retains the source-bound integral for reuse, but
+releases expression scratch and newly created affine/Bernstein preparation at
+the end of each cell integral. Certification therefore admits the simultaneous
+retained integral bank plus one cell's preparation, not accumulated dead
+preparation from all preceding cells. Increasing the request cap does not
+increase this workload-derived storage requirement.
 
 Statistical tetrahedral insertion inspects its actual native source-authorized
 cavity before admitting physical size/shape evidence and committing once.
@@ -2013,15 +2426,36 @@ bound to the source vertices). Routes:
   closes split edges through neighbor bisection. Device and periodic orbit routes
   refuse label-conforming closure. Every host closure batch is admitted against
   the cell, vertex, and work-unit limits before bisection, charging one work unit
-  per bisection. Coarsening removes complete bisection patches (Chen–Zhang vertex
-  removal) and restores the recorded cell, edge, and face IDs, so a refine/coarsen
-  round trip reproduces the source topology exactly.
+  per bisection. Periodic orbit bisection selects longest edges and orders queued
+  orbits by the declared field-valued quotient edge lengths, never rounded
+  coordinates, with unchanged tie keys; its closure-bound refusal is a
+  `MeshingFailure` with category `RESOURCE_EXHAUSTED` and stage
+  `bisection-closure`. Coarsening removes complete bisection patches (Chen–Zhang
+  vertex removal) and restores the recorded cell, edge, and face IDs, so a
+  refine/coarsen round trip reproduces the source topology exactly.
 - `NATIVE_METRIC_2D`: planar triangle metric adaptation by edge split
   (metric length above sqrt(2)), collapse (below 1/sqrt(2)), metric-quality flip,
   and relocation, with deterministic independent-cavity selection. Orientation
   decisions use the policy's predicate mode; unresolved filtered signs reject the
   operation. The status is COMPLETE when the unit-mesh criterion holds, STALLED or
   PASS_LIMIT otherwise; `RelocationMeshAdaptation` moves vertices only.
+- `NATIVE_METRIC_3D`: tetrahedral unit-metric adaptation retains every measured
+  edge in `MetricRemeshingEvidence.out_of_range_edges`. A short edge belongs to
+  the source's lower-sizing contract only when both incident current exterior
+  facets are authenticated to the analytic curved source and independently
+  satisfy its original whole-facet fidelity and orientation requirements.
+  `source_lower_exemptions` retains ordered native edge-row pairs and lengths;
+  `source_lower_binding` binds them to the source, current coordinates, topology,
+  support and issued fidelity bounds. `unmet_metric_edges` excludes only these
+  source-owned short edges. Long boundary edges, unsupported short edges and
+  interior short edges remain unit-metric obligations. COMPLETE additionally
+  requires the quality floor and no resource refusal; failed source support or
+  fidelity remains an explicit issue rather than a successful no-op.
+  Required interior long-edge insertions prioritize strict reduction of the
+  maximum changed metric edge length over secondary short-edge/shape merit.
+  Their complete inspected cavity must still meet the hard quality floor,
+  source, fidelity and resource constraints. A primary tie or regression does
+  not qualify; other operation criteria and deterministic ordering are unchanged.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
   and hierarchy of `NATIVE_BISECTION` byte for byte.
@@ -2034,6 +2468,24 @@ bound to the source vertices). Routes:
   an adapter loss and Omega_h rejects the source.
 - `HP`: tensor-product h-refinement or coarsening of a `FiniteElementHPEpoch`,
   with lineage projected by `project_hp_lineage`.
+- `NATIVE_LEVEL_SET`: P1 zero insertion in affine tetrahedral meshes. Each
+  root is the exact point of the source geometry on the cut edge (declared
+  binary64, exact rational or algebraic P1 sources, restricted parents, and
+  composed rational charts from earlier insertions or uniform bisection). Its
+  binary64 coordinate is the round-to-nearest-even carrier of that exact point,
+  and `LevelSetEvidence` retains the root weights and an outward Euclidean
+  carrier-deviation bound. Exact homogeneous reference banks travel with the
+  transition, so later restriction, nesting and transfer compose the exact
+  geometry instead of re-rooting rounded endpoints. Sources with PLC ancestry
+  refuse at preparation. Distinct exact roots whose carriers lie within the
+  canonical audit's coincident-vertex tolerance fail that audit rather than
+  being merged or perturbed. Native capacity and deadline refusals propagate as
+  typed native errors.
+
+Nested refinement of restricted, composed or exact non-PLC parents publishes
+one target block per distinct child reference map, named
+`{block}/reference-action/{witness}`; full-P1 sources use one block per
+coefficient action. Cell IDs and lineage do not depend on this grouping.
 
 Protected scopes (including periodic boundaries) are never split, moved, or
 removed; marks whose closure would split them are rejected and reported, with
@@ -2108,6 +2560,21 @@ tags, selections, interfaces and orientation provenance in a renewed
 `SurfaceModel`. Canonical publication validates that model against the current
 mesh/frame and recertifies the original source-fidelity request; a boundary
 model is never silently dropped or replaced by an unbound scalar profile.
+Implicit volume results may have boundary associations without a `SurfaceModel`;
+motion revalidates those associations without inventing a boundary model.
+Association propagation uses the supplied adaptation limits and charges its
+geometry queries to the active request. That bound covers association
+revalidation, not a claim of route-wide motion resource enforcement.
+
+Exact PLC fixed-topology displacement reconstruction may reuse only the source
+and target measures, their error bounds and exactness earned by the actual live
+transition. A private weak numerical seal binds that transition, its source and
+target owners, and all direct fields including evidence; reuse also requires
+paid prepared-coordinate-operand admission on the current request. Geometry,
+identity witnesses, evidence and IDs are still rebuilt, and lifecycle
+publication retains the complete canonical equality comparison. Copies,
+decoded/cold transitions and changed owners receive no numerical authority from
+the seal and follow ordinary reconstruction.
 
 An adapted mesh reaches a running coupled problem only through one accepted
 cross-owner rebind (`phx.lifecycle.CompositionRebind`). A certified conservative
@@ -2202,6 +2669,23 @@ epoch still relate to their source cells. The next epoch is prepared from
 the compiled entry points. `execute_mesh_adaptation` with the
 `DEVICE_BISECTION` route runs one refine-then-coarsen epoch of a
 `MarkedMeshAdaptation` and commits it.
+
+When projecting compact field values back into distributed allocated history,
+`project_meshing_field_history(..., transition=adapted.transition)` authenticates
+the accepted transition before routing coarsened predecessor child IDs to their
+current parent owners. Multiple children can share a parent only through those
+coarsening witnesses; neither row order nor matching array shape establishes
+identity. Active rows require exactly one authoritative match collectively.
+Inactive and retired rows retain their supplied baseline bytes, and routing
+does not gather a global history bank.
+For vertices, allocator activity alone does not establish target membership:
+coarsening can leave allocated orphan vertices. The accepted target vertex
+entity set and its own merged/collapsed provenance determine which rows are
+current. Distributed membership witnesses are checked separately from unique
+value ownership, so a missing owner cannot be misclassified as retirement.
+Cell lineage never supplies vertex provenance. Allocated vertices absent from
+the target retain their history bytes, including when their allocation flag
+remains active.
 
 `BisectionHierarchy` now retains its active forest, scientific block authority,
 sibling records, retired-entity banks, and issued-ID cursors in the canonical
@@ -2370,6 +2854,17 @@ entity interior to one region inherits it, and boundary or interface entities li
 on the lowest B-Rep entity containing their vertex classes within the closure of
 every adjacent class (ties broken by the centroid distance, otherwise ambiguous).
 
+These operations, `propagate_association`, `rederive_association`,
+`mesh_entity_classes` (whose `policy` keyword is required) and the matching
+`BRepAssociationTransfer` methods charge one geometry query per point submitted
+to B-Rep projection, classification or solid location. An explicit
+`budget=CoordinateEnclosureBudget(...)` is charged under its own unchanged caps;
+without one, each call is limited by
+`AssociationPropagationPolicy.maximum_projection_queries` (positive; default
+`MeshingLimits().maximum_geometry_queries`). Candidate projections inside one
+classification and per-occurrence containment inside one solid location are not
+counted separately.
+
 `propagate_association` carries a vertex association through an exact
 `MeshLineage`: preserved vertices (B-Rep corners included) keep their class,
 relocated vertices are re-projected, children inherit the class of the source
@@ -2413,6 +2908,28 @@ high-order nodes the declared isometry of their source-side nodes
 certifies an existing high-order geometry, such as a Gmsh high-order output,
 without moving it.
 
+For full-dimensional P2 tetrahedra, relaxation uses the native matrix-free
+Newton trust-region method with a fixed SPD node-block Jacobi action assembled
+from target-normalized smoothing-gradient Gram blocks, the normal-penalty Gram
+and the displacement term. This is an approximate SPD accelerator, not a clipped
+or jittered objective Hessian. Native block factorization verifies its SPD action.
+The accelerator
+changes neither the objective nor the original termination tolerances, step
+limit or relaxation-round count. Its workspace is admitted against the existing
+tabulation-entry limit before Gram allocation. Policy IDs name the algorithm;
+each minimization retains the actual fixed preconditioner factors as method
+evidence, so its scientific state is not represented only by a method label.
+Other coordinate families
+retain their existing relaxation method.
+
+One curving request shares its coordinate budget across projection, every
+relaxation candidate, all final certificates and any rollback proof. Passing an
+existing `budget` joins that request without renewing its allowances. Only
+source enclosures with the same authenticated map and exact reference restriction
+can be reused across candidates; target enclosures remain candidate-specific.
+Intermediate proofs are deferred only for inadmissible nonconverged iterates.
+Every accepted or reported candidate retains its complete final evidence.
+
 ## Polyhedral storage
 
 Polyhedral topology uses packed incidence offsets/values. Exact-width
@@ -2434,6 +2951,59 @@ establish exact skew-site radical-plane geometry, all native work/byte bounds,
 or periodic/layer combinations; those require their owning construction and
 scientific-control evidence rather than projected or triangulated substitutes.
 
+The polyhedral qualification lifecycle keeps that authoritative polyhedral
+carrier throughout generation, refinement, inverse agglomeration, conservation
+and archive. Its P1 FE consumer constructs a conforming exact-source-star
+tetrahedral integration mesh downstream; this is not a replacement of the
+requested polyhedral meshing result. Shared faces and translated periodic seam
+copies use a canonical triangulation. Native FE equations solve the physical
+cell forcing/material problem, retain coefficients and three-state histories,
+and report independent physical quadrature error, gradients, vector flux and
+weak conservation. Topology changes transport the accepted FE coefficients
+through the owning continuous P1 reconstruction, with a checked raw transpose.
+Material runs use the transported positive material coefficient in an affine
+harmonic field tangent to the authored material interface, alongside the
+unchanged VEM and transferred-source mimetic-FV problems.
+
+Material workflows admit the source's real physical field and history banks
+before regeneration, transport those accepted primitives through the genuine
+regeneration transition, and solve on the target. Nonnested scalar VEM transfer
+explicitly selects continuous source-star H1 reconstruction: original vertex
+values and arithmetic-mean cell-center functionals feed the existing P1
+interpolation, then target vertex restriction. This is `reconstruction`, not
+evaluation of unknown virtual interiors or nested VEM equality. Constant,
+affine, transpose and independent manufactured-field errors are separate
+oracles; no positivity or conservation property is silently assigned to this
+nodal map. Loads, weak residuals and flux histories are reanalyzed by their
+actual native target operators, not point-interpolated as primal values.
+
+These manufactured benchmarks explicitly normalize with a one-meter reference
+length. Primitive solution and conserved banks and diffusion coefficients are
+dimensionless; the existing numeric-one source/reaction couplings have units
+`1/m²`, and affine slopes have units `1/m` with their original multipliers.
+Gradients and pointwise diffusive fluxes have units `1/m`; integrated face
+fluxes, nodal loads and weak residuals have units `m`. Primitive inventory
+volume integrals have units `m³`. Canonical field declarations retain that
+reference length, explicit primal/dual/physical roles, units, index banks and
+ordered component labels. Numerical values, tolerances and caps do not change.
+Scalar qualification errors compare primitive errors with weak defects normalized
+by that same reference length; raw diagnostic field banks retain their derived
+units. Initial numerical history is explicitly admitted starting-seed history,
+not a claim that every historical buffer already solved a PDE to equilibrium.
+
+For the periodic cube, exact refinement and inverse-union embedding use the
+same directed partition evidence. The imported certificate always binds the
+complete current source mesh, topology, geometry layout, coordinate map and
+validity. Every source and target cell must have a strong convex boundary
+subcomplex: outward supports, simple loops, reversed-edge pairing, connected
+vertex links and degree-one facet coverage. The inverse additionally requires
+unchanged exact source-query vertex selections and full signed face
+cancellation; equal cell counts, edge counts or area sums alone are insufficient.
+Exact-group/cocycle, reciprocal quotient facets, traces, regions and positive
+validity are independently admitted. Evidence records `refine` or `coarsen`,
+the partition parents and exact child/parent volumes; unsupported partitions
+retain the bounded image-contact proof rather than borrowing an old verdict.
+
 For scalar H1 VEM in two dimensions, periodic quotient layouts identify
 scientific vertex/edge entities and retain edge parity, physical-boundary
 traces and winding. Prepared local factorized actions scatter through the
@@ -2453,6 +3023,30 @@ cell_coefficients=...)` declares a connected zero-value gauge;
 nonzero-total physical load instead of hiding it at the pinned row. Zero
 material coefficients refuse.
 
+The degree-one 3-D local policy is
+`A = V G.T G + alpha (I-P).T (I-P)`, with the declared nonconstant affine
+basis `(x,y,z)` and `alpha = trace(V G.T G) / 3`: the mean of the three nonzero
+consistency modes, not an average over boundary degrees of freedom. Affine
+reproduction proves their rank is three. Both terms are symmetric positive
+semidefinite, the second vanishes on the affine nodal columns, and their common
+kernel is the constants; valid boundary or quotient-gauge constraints supply
+coercivity. Retaining a finer boundary subcomplex must not introduce another
+division by its vertex count. This spectral calibration is the canonical local
+numerical policy and participates in operator/evidence IDs, not a case-specific
+solver tolerance. The general consistency-plus-kernel-stability requirements
+and their mesh-regularity qualifications are described in
+[Mascotto, *The role of stabilization in the virtual element method*,
+Sections 2.1–2.3](https://arxiv.org/html/2304.10968v3#S2).
+The reference does not prescribe this particular spectral calibration or claim
+uniform stability for arbitrarily degenerating cells. Independent sine-Poisson
+nodal-convergence regressions exercise whole faces and conforming facet/edge
+subdivisions; affine patch, symmetry, constant-kernel and physical residual
+oracles remain separate.
+The cited Section 2 worked proofs concern two-dimensional nodal spaces;
+Section 2.3 also surveys qualified three-dimensional analyses. Those references
+and these finite regression meshes do not establish a uniform three-dimensional
+stability theorem for every admitted polyhedron or this spectral calibration.
+
 `assemble_cellwise_constant_load(cell_forcing)` accepts a real scalar or one
 constant force per original physical cell. Each admitted source volume is
 uniformly lumped over that cell's vertices once and gathered to quotient DOFs;
@@ -2461,13 +3055,24 @@ vertex lumping, not exact higher moments, continuum quadrature or automatic
 mean removal. Prepared sorted-arity buckets retain authenticated original
 `cell_indices`, so no physical cell is omitted or counted twice.
 
+The periodic physical consumer may explicitly call
+`zero_mean_load_compatibility_bound(density, weights, mean, force)`. This is the
+approved binary64-only compatibility admission, not a free numerical epsilon:
+the supplied force must be the rounded density-minus-weighted-mean expression,
+and weights must match admitted source volumes bit for bit. Exact rational
+arithmetic bounds all mean reduction, subtraction, load assembly, bucket
+scatter and final `fsum` stages, including finite-range and underflow premises.
+Evidence retains the measured load residual separately from the a-priori bound
+and records bound/input identities. Physical incompatibility still refuses;
+geometry, resources and solution-error thresholds are unchanged.
+
 `vertex_field_space(name)` exposes the actual scalar H1 quotient vertex layout.
 `vertex_field_transfer(target, physical_transfer, geometry, field_name=...)`
 composes scientific-ID lifting, the owning physical finite-element stencil
 and representative restriction with its true transpose/Euclidean adjoint.
-The scoped current test exercises an identity physical stencil only. This is
-interpolation, not conservative transfer, arbitrary face/interior VEM transfer
-or proof of nontrivial adaptation's independent continuum PDE acceptance.
+The qualification lifecycle exercises a nontrivial source-backed edge stencil
+and its raw transpose through refinement and inverse agglomeration. It remains
+interpolation, not conservative nodal transfer or arbitrary VEM interior equality.
 
 The original standalone native periodic cube source closure has exercised
 heterogeneous diffusion, gauge/refusal checks, exact source/RNE regeneration
@@ -2475,6 +3080,91 @@ and fresh-process continued diffusion from persisted material/history.
 That scope retains original PLC, sites, weights, constraints and schedule
 controls. It is not a certified-result lifecycle or three-dimensional de Rham
 qualification, and does not close every periodic meshing campaign.
+
+Certified-result polyhedral lifecycle archives retain the authored source and
+controls, every accepted certified carrier and all numerical field/history
+banks. A fresh interpreter verifies byte-level field and owner evidence,
+independently reprepares FE/VEM/FV consumers, and continues from those restored
+accepted seeds. Prepared operators, compiler caches and live-only
+same-request source-preparation witnesses are not archive authority.
+The archive uses canonical accepted epochs, including generation and every
+genuine adaptation transition, rather than tuple-position decoder conventions.
+Authenticated raw execution controls are read before scientific source owners
+are constructed. Restoration, owner revalidation and physical continuation use
+one original native request allowance and the inherited workflow expiry; the
+archived source receipt is history, not a renewed allowance. Independently
+reconstructed owners may be reused within that one cold request.
+Warm source/target geometric preparation, field/history transfer, physical
+consumers and canonical epoch admission continue the actual generation or
+adaptation request through its paid execution receipt. Closing an execution
+scope never grants those consumers another work/query/storage allowance.
+Receipt-only epoch/transition sealing verifies the real charged graph without
+repeating geometry proof outside that request.
+Actual native publication can retain its kernel-issued exact power coordinates
+and barycentrics in caller-owned `PreparedCoordinateOperands`. Their complete
+source structure, immutable numeric profiles and exact paid earning receipt
+are authenticated again, and retention, copying and authentication consume the
+same request allowance. These are numeric operands, never cached membership,
+coverage or certification verdicts; they detach at archive/process boundaries
+and cold reconstruction earns its own operands.
+Compartment publication can also keep the canonical collector's exact affine
+intersection areas live across its source and publication phases. This private
+numeric-only context authenticates current source-array bytes and complete
+rational polygon keys in the same native request; an explicit native workspace
+retains its storage until publication or failure. Source grouping, candidate
+ordering, overlap comparisons, coverage and certificate construction still run
+fresh, with independent publication budgets. Changed sources, cold callers and
+foreign or expired contexts do not import the operands.
+A cold verdict also binds the original warm build identity. Concurrent source
+edits or other warm/cold build drift remain failed qualification, even if both
+independent numerical solves finish below their physical error thresholds.
+All material and periodic lifecycle cases run independent reduced-limit
+source-prefix admission trials while that fresh process restores and continues
+the accepted epochs. The trials read the immutable original publication, use
+separate request scopes, and neither share numerical operators nor renew the
+whole-workflow expiry. Their `source_prefix_resources` evidence and
+`source_prefix_resource_boundary` obligation are separate from complete warm
+consumer enforcement; they never certify a whole scientific request's R.
+The prefix record retains the actual original publication and frozen
+source/request/options, plus each trial's actual admission envelope. Work trials
+retain the original prepared plan rather than preparing a reduced specification;
+other controls retain their existing request-owning semantics. Its
+original ended receipt must occur in the warm source's current paid
+preparation/consumer graph, not merely in historical provenance. Sharp-R
+replays retain their own publication, managed envelope and numerical mesh/
+geometry fingerprints. Status labels and copied counter summaries cannot
+replace those records. Typed refusals must reproduce their owning evidence
+identity; missing or unserialized logical findings remain incomplete evidence.
+Managed scratch admission records native allocator peaks, bounded-host peak
+uppers and the complete same-request managed admission envelope separately.
+Only the latter supplies a sharp-boundary candidate, which still requires
+actual R admission and R−1 typed refusal with unchanged scientific mesh/source
+bytes. A sum of peaks, missing observation or diagnostic search is not that
+proof or a whole-workflow positive.
+Every R/R−1 result names its measured request scope. An initial-generation-only
+pair is a prefix proof, not a complete generation/adaptation-plus-consumer R
+claim. Complete request limits and ended consumer receipts remain independently
+required. Native/managed admission also does not hard-cap compiler, device or
+whole-process resources: their separate measurements and explicit exclusions
+remain part of qualification, and genuinely missing enforcement or required
+measurements are failures.
+
+Native provider preparation and execution roots opt into managed observation
+before retaining request-owned host storage. Opt-in is not completeness:
+unknown/unmapped native entries, reentrant observation and unsynchronized outside
+reservation changes still leave the envelope absent. In particular, an unmapped
+`phx_mc_orient3d` call performs a native parallel predicate reservation; it is not
+an allocation-free control query and cannot be whitelisted as one. An absent
+envelope continues to block qualification even when exact work R/R−1 succeeds.
+The verified unsupported CPU device-allocator peak remains a separate explicit
+limitation; RSS or native-plus-host peak sums never replace either observation.
+Warm and independently cold-executed FE, VEM and FV solver kernels each publish
+their own lowering/compile/execution timings and `memory_analysis` temporary,
+output, argument and generated-code bytes. FV historical trace solves retain
+their individual compiler records as well. These are static requirements of
+the actual compiled executable, not compiler-process allocation peaks or
+device allocator peaks. An unsupported backend observation stays explicitly
+unavailable, never zero or a process-RSS substitute.
 
 The scoped native proper-quarter-turn polyhedral FV workflow has passed actual
 scientific quotient/source moments, reciprocal once-only flux and Euler state
@@ -2548,7 +3238,11 @@ route and parts are renamed to the source ranks they overlap most, minimizing
 migration. `MeshDistributionTransition` holds the target distribution with
 rebuilt ghosts, `send`/`receive` sparse relations over rank-ordered message
 slots, migration counts and volume, and `transfer`, which moves cell data
-exactly as the migration would. Global IDs are never renumbered.
+exactly as the migration would. Global IDs are never renumbered. Serial and
+logical sources both bind their routed source and target cell IDs, in order, to
+the retained cell lineage; a serial source must also match its bound partition
+and ID fingerprints. Stored-field reconstruction rebuilds the transition and
+refuses unless it reproduces the stored identity.
 
 Conformal and periodic overlays validate node bijections. Periodic vector
 traces include the isometry's rotation. `ContactCoupling` is frozen node-to-node
@@ -2925,10 +3619,14 @@ OpenVDB must know how inactive and out-of-domain voxels are extended.
 
 Native provider worker sources ship with every distribution: under
 `native/providers` in the source tree and source distribution, and inside the
-installed package in a wheel. `native_provider_source_path(provider)` (from
-`phydrax.meshing.providers`, for `"mmg"`, `"omega_h"`, `"tioga"`, or
-`"vorocrust"`) returns the provider's standalone CMake project in either layout;
-its sibling `common` directory holds the shared header-only protocol. Each
+installed package in a wheel. `native_provider_source_root(package)` (from
+`phydrax.meshing.providers`) returns the one provider-source directory for a
+package directory, or `None`; it refuses a package that has both layouts and a
+non-directory in either location. `native_provider_source_path(provider)` (for
+`"mmg"`, `"omega_h"`, `"tioga"`, or `"vorocrust"`) returns the provider's
+standalone CMake project under that root; its sibling `common` directory holds
+the shared header-only protocol. The source-build fingerprint hashes the same
+provider tree that this lookup selects. Each
 project builds one persistent worker executable against a separately installed
 upstream library; importing `phydrax` neither compiles nor launches them. Build
 and link each worker with the same C++ compiler and, where applicable, the same
@@ -3111,13 +3809,32 @@ python -m tools.meshing_benchmarks --case fresh-imports --resolution 1 --repeats
 python -m tools.meshing_benchmarks --case parallel-batches --resolution 1 2 4 --repeats 5
 ```
 
-`fresh-imports` starts a new interpreter for each sample of
-`tools.meshing_qualification` and `phydrax.meshing`. Import duration and complete
-child-launch duration are separate; a cached import is not a warm sample.
+`fresh-imports` starts a new interpreter for each sample. For
+`tools.meshing_qualification`, it resolves the CLI `main` and the native
+lifecycle scenario's `run`; for `phydrax.meshing`, it resolves
+`NativeMeshingProvider`, `MeshAdaptationPolicy` and `prepare_mesh_adaptation`.
+Each sample records the resolved entry points and measurement boundary.
+Import duration and child-launch duration are separate; a cached import is not
+a warm sample, and a lazy package-shell import is not functional readiness.
 `parallel-batches` maps each resolution to `10,000 × resolution` input items.
 It compares one and eight native threads, plus up to 32 threads when the CPU
 affinity permits, and requires identical result bits and non-timing execution
 evidence before reporting speedup.
+
+The native scope retains its fixed 1 GiB managed-storage limit and 120-second
+deadline. A typed capacity refusal produces a `resource-refused` record, not a
+timing or speedup: `seconds` and the candidate's median and speedup are absent
+(`null`), `threshold_met` is false, and `timing_is_headline` is false. The record
+retains the kernel, requested batch size, declared limits, completed native
+evidence and any attached reservation-refusal evidence. Other exceptions still
+propagate. All declared thread policies and repetitions are attempted.
+For exact and symbolic in-sphere refusals, a separately labeled frozen-Q3
+GNU/x86-64 source model reports arena demand and whether its source digest
+matches the loaded native implementation; it is not a runtime allocation
+measurement. That native implementation reserves one arena per fixed 64-row
+logical chunk, not per requested worker. Consequently the 20,000- and 40,000-row
+in-sphere batches exceed the declared 1 GiB limit even with one worker; the
+benchmark does not increase that limit or shrink the batch to obtain a timing.
 
 For lifecycle benchmarks, `--repeats` counts isolated cold attempts;
 `--benchmark-warm-repeats` sets solver repetitions within each attempt and
@@ -3125,9 +3842,157 @@ defaults to five. For example:
 
 ```sh
 python -m tools.meshing_benchmarks --case native-cad-lifecycle --cad-format step \
-  --resolution 4 --capacity 20000 --timeout 120 --target-error 0.05 \
+  --resolution 4 --capacity 20000 --timeout 600 --target-error 0.05 \
   --adaptation-rounds 1 --repeats 3 --benchmark-warm-repeats 5
 ```
+
+The curved CAD physical archive/continuation path is selected explicitly:
+
+```sh
+python -m tools.meshing_qualification --scenario native-cad-lifecycle \
+  --cad-case quadric-routine --cad-format step --resolution 4 \
+  --capacity 20000 --timeout 600 --target-error 0.05 \
+  --adaptation-rounds 1 --repeats 3
+```
+
+Each curved/external resolution publishes the certified P2 coordinate map as
+the accepted carrier, then retains the manufactured diffusion solution in a
+`MeshingAcceptedEpoch` with a `MeshingFiniteElementFieldDeclaration`. Its
+physical banks are the solved `u` coefficients, essential boundary mask,
+boundary lift, and accepted epoch counter. The source closure retains the
+original CAD source, generation specification/options, final source-fidelity,
+whole CAD-region coverage and embedding reports, and the canonical
+`accepted_data={"accepted_epochs": E}`, `accepted_target=E[-1].carrier` roles.
+The earlier B-Rep source-only archive is not a physical checkpoint.
+
+Within one curving request, a complete independently verified source chart
+cover and its native endpoint/trim maps may be retained under the original
+coordinate allowance. Reuse authenticates the full current source, including
+root/static metadata and chart/provenance/restriction arrays, and requires the
+actual request-issued preparation. It never reuses a candidate's target maps,
+correspondence or homotopy proof. Refused source proofs are not retained as
+authority, and an independent cold request earns its own source premises.
+Within each individual homotopy proof, shared frozen source-definition
+containers and carrier objects are fingerprinted once from their complete
+payloads. That memo expires with the proof, so subsequent proofs reauthenticate
+mutable carrier banks and static source fields before reusing source enclosures.
+Carrier fingerprint admission also shares immutable descendant traversals within
+that proof. Its depth-weighted storage summaries reproduce the original
+carrier owner's complete admission, including repeated occurrences, while the
+canonical carrier payload, PyTree auxiliary/static metadata and full array
+fingerprint remain unchanged. Mutable public arrays and containers are never
+admission-memo entries; cycles retain the owner's refusal. Memo records have
+explicit live storage and expire with the proof rather than crossing callbacks
+as unchecked mutable-source authority.
+Native gap-completion preparation reads the current authored host point bank
+once and preadmits a canonical byte-backed immutable copy with shared row
+views. Each pure proof authenticates their complete view metadata before
+memoizing a native root, and actual native evaluations retain their layout
+checks. Internal immutable-source memo hits do not repeat that first-visit
+walk; new proofs and public mutable leaves still authenticate afresh.
+Coordinate bits, canonical payloads, source roots and
+tolerances are unchanged; public NumPy arrays do not acquire this private
+authority merely by setting a read-only flag.
+The genuine map preparer binds its complete creation-time source definition
+through the existing request-owned weak issuer. A changed source revokes that
+prepared map and requires genuine reprepare/reproof; a newly computed digest
+cannot relabel old root, gap, trim or offset memos as current. This binding
+does not add a numeric/static field to the source, PyTree or archive payload.
+All requested optimization/reprojection rounds still run with their actual
+termination evidence. Since their objectives and iterates do not consume
+certificates, proof evaluation runs newest-first: it fully certifies the last
+reported candidate, including a rejected one, and then any latest admissible
+accepted fallback. A superseded, unreported candidate is not a substitute for
+either final proof, and the added retained coordinate lifetime is preadmitted.
+Publication may consume that actually issued whole-boundary CAD theorem only
+after authenticating the complete current source payload, not just source IDs.
+If the publication audit has a different local validity policy, it re-earns
+validity under that unchanged policy and rebuilds embedding and CAD-region
+coverage with the issued boundary theorem. It does not relabel the old policy,
+repeat an unchanged boundary homotopy, or trust reconstructed reports as proof.
+The CAD producer derives its initial curving validity policy from that actual
+publication audit, including the stricter 4,096-node Bernstein limit. Its
+independent validity check uses the same declared policy; certificates from
+different policies are never compared as if their identities should agree.
+Curving and prepared publication share one active `NativePublicationExecution`:
+the original native scope, host workspace, coordinate budget and preadmitted
+retained proof storage remain alive through both consumers. The curving ticket
+binding closes before publication rebinds that same budget. Only after this
+scope ends is its complete receipt bound to the published P2 carrier; completed
+generation remains historical evidence rather than a renewed allowance.
+The qualification orchestrator opens the original volume-limit root before
+surface preparation, CAD-volume source construction and volume generation.
+An enclosing native workflow policy spans source codecs, all requested scales,
+surface/volume generation, P2 publication and accepted archive/cold continuation.
+Ending the source request therefore does not discard the original absolute
+workflow expiry or give a later native request a fresh whole-workflow interval.
+Ended nested phases are remembered as already-paid work in that live root;
+the final root receipt measures the combined request without replaying child
+work or elapsed time. A standalone `NativeCadVolumeSource` still consumes a
+completed surface as input history, not as a newly paid preparation.
+Within this actual combined request, the private coordinate operand collector
+can retain exact projected triangle-intersection areas earned by the surface.
+Reuse authenticates the actual surface, source owners, mutable banks and paid
+earning receipt; only identical exact rational triangle pairs are reused,
+including reversed operand order because intersection area is symmetric.
+The affine preparation authenticates retained scalar owners before lookup;
+reversed hits retain no duplicate numeric area and still pay their lookup work.
+Every current chart chain, tiling, source-fidelity and coverage verdict is
+proved again. These numeric banks detach at archive/cold boundaries.
+Prepared CAD embedding requires the actual issued target closure, every
+orientation, trace, conformity and boundary-degree premise, and degree one
+with zero exterior shell degrees. It independently recounts cell, repeated
+vertex/edge, boundary-facet and balanced-shell counts against the current mesh;
+certified status or theorem-name strings alone cannot admit this route.
+For canonical polynomial tetrahedra, a just-earned complete facet coefficient
+proof can construct the remaining vertex/edge conformity proof through the
+actual connected incident-cell stars. Restricting an exact facet identity to
+its entities and transitivity establish the same coordinate action; actual
+topology, reference charts, actual resolved direct element/basis, coefficient
+bank and DOF rows, and complete polynomial laws are authenticated on the same
+geometry, proof state, live budget and actual ticket. Disconnected star
+components still undergo the original independent vertex/edge comparisons.
+Nonstandard, rational and composed-element ancestry retain the full original
+proof. This request-local witness is not portable, cannot be manufactured by
+copying status or IDs, and does not bypass orientation, shell degree, source
+coverage or any governed count.
+Warm source-archive registration may consume a producer-issued inspection only
+while the exact live plan and final report remain owned. Its weak process-local
+seal authenticates the full current source, specification, options, prepared
+route, scientific result and constructor bindings on the live request budget.
+Attaching an ended receipt preserves those actual owners; a declared plan ID,
+an options/source-ID hash, a reconstructed report or a new interpreter cannot
+grant this authority. Independent cold restoration still earns its full proof.
+
+The independent P2 error oracle orders coordinate nodes and solution
+coefficients separately through their exact vertex/edge functionals. Their
+native local numberings need not agree; physical proximity searches and a
+reconstructed straight mesh are not used to identify field coefficients.
+The accepted field remains degree two while declaring the supported first
+physical derivative needed by diffusion; derivative depth is not polynomial
+degree.
+
+`resolutions[].physical_checkpoint` reports the authenticated scientific
+content ID and container SHA-256. A fresh process restores the accepted arrays
+bitwise and independently renews source certification. Its request-local
+reconstruction scope shares only evidence earned in that cold process, avoiding
+duplicate proofs during restoration and explicit renewal; it retains the original
+and fresh certification IDs separately and compares their authenticated scientific
+content rather than rewriting execution receipts. It prepares the declared FE
+space and diffusion compiler anew, and solves using the restored free
+coefficients as its initial state. Its result must match the independently
+computed warm accepted-state continuation bitwise; neither process uses an
+analytic or zero reseed for continuation. Both consume the same original
+whole-workflow deadline, including archive publication and cold startup.
+Cold bootstrap first reads only authenticated original execution controls.
+Restoration, source renewal, FE preparation and continuation then receive the
+same explicit coordinate budget inside one new request bounded by those original
+limits and the remaining workflow time. The producer receipt is history only;
+the cold result reports its own ended request owner and work/query counts.
+Stale content IDs, incomplete archives, foreign physical epochs and failed
+P2/source certificates refuse rather than producing positive cold evidence.
+This describes the required evidence path, not a claim that an unverified
+case has met its time or physical-error target.
 
 Default microcase timing runs without compiler or accounting instrumentation.
 Run a separate process with `PHYDRAX_MESHING_ACCOUNTING_DIAGNOSTICS=1` for
@@ -3136,11 +4001,258 @@ performance. Unmeasured compiler fields in the clean run are `None`, not zero.
 Keep scientific qualification commands and their declared repetitions unchanged.
 
 In qualification and lifecycle benchmark workflows, `--timeout` is the
-whole-workflow deadline measured from the workflow start. Each stage runs under
-the remaining allowance, and nested native calls take the smaller of their own
+whole-workflow scientific deadline. A directly run scenario measures it from
+scenario start. A campaign-launched child inherits the launcher's expiry, so its
+deadline also covers interpreter and import startup. Each stage runs under the
+remaining allowance, and nested native calls take the smaller of their own
 limit and that remainder. An exhausted deadline ends the workflow with typed
 timeout evidence (elapsed time and the effective deadline) rather than letting
-later stages overrun.
+later stages overrun. The launcher waits a further 10 seconds only so that the
+child can report; this reporting allowance never extends the scientific
+deadline, and a child whose science did not return before the deadline is
+classified as a timeout. Each record's `deadline_policy` states the origin,
+whether startup is included, and the reporting allowance.
+
+### Authored finite qualification envelopes
+
+Registered native profiles take their controls from the canonical
+`_corpus_profiles()` registry in `tools/meshing_qualification/_records.py`,
+using the authored envelope policy in `_controls.py`.
+The following are authored qualification envelopes, not new scientific
+acceptance criteria or evidence that the workflows pass:
+
+| Profile family | Whole-workflow timeout (seconds) | Maximum work units | Maximum geometry queries | Memory envelope |
+| --- | ---: | ---: | ---: | --- |
+| Planar and surface lifecycles | 300 | 4,000,000 | 4,000,000 | 1,024,000,000 scratch bytes; RSS unchanged |
+| Polyhedral-system, all six profiles | 300 | 2,000,000 | Unchanged: 1,280,000 at capacity 20,000 | 256,000,000 scratch bytes; RSS unchanged |
+| Periodic exact lattice, routine/larger | 300 | Unchanged: 40,960,000 at capacity 20,000 | Unchanged | 256,000,000 scratch bytes; RSS unchanged |
+| Periodic exact material-feature, routine/larger | 1,200 | 320,000,000 | 5,120,000 | 512,000,000 scratch bytes; 2 MiB recipe/manifest metadata; RSS unchanged |
+| Moving overset, routine | 180 | 1,280,000 | 2,560,000 | 128,000,000 scratch bytes; RSS unchanged |
+| Moving overset, larger and combined | 180 | 2,000,000 | 2,560,000 | 128,000,000 scratch bytes; RSS unchanged |
+| Distributed, routine | 600 | 8,000,000 | Unchanged | 24 GiB execution group |
+| Distributed, larger | 600 | 32,000,000 | Unchanged | 32 GiB execution group |
+| Family lifecycles | 2,400 | 128,000,000 | 32,000,000 | 32 GiB execution group; 1,536,000,000 scratch; 40,960,000 retained-data bytes |
+| Design lifecycle | 180 | 480,000 | Unchanged | Unchanged |
+| Implicit sphere-refinement | 240 | Unchanged | Unchanged | Unchanged |
+| Implicit offset-ring-torus-anisotropic | 2,400 | 80,000,000 | Unchanged | Unchanged |
+| Implicit routine sphere | 120 (unchanged) | Unchanged | Unchanged | Unchanged |
+| Oblique image lifecycle | 360 | Unchanged | Unchanged | Unchanged |
+| Two-slab image lifecycle | 120 (unchanged) | Unchanged | Unchanged | Unchanged |
+| CAD lifecycles | 600 | Unchanged | Unchanged | Unchanged |
+
+Implicit `sphere-refinement` at 120s completed both adaptations/transfers,
+the scalar query and final PDE/error measurement, then received native
+`TIMEOUT` at checkpoint publication. Total process time was 122.292s including
+1.319s reporting; archive/cold continuation had not started. Only
+`sphere-refinement` now authors a finite 240s whole deadline. Routine `sphere`
+remains at 120s. Reporting time does not extend the scientific clock, and
+checkpoint/cold phases inherit the original absolute expiry.
+
+The prior implicit torus run at work 80,000,000 and whole timeout 1,200s timed
+out in its first metric stage at 1,145s. The exact workset optimization has
+a verified 1.67–1.75× speedup with identical arrays/evidence/order. Only
+`offset-ring-torus-anisotropic` now authors a finite **2,400s whole timeout**,
+combining the measured old stage and verified speedup with remaining
+workflow headroom. The work 80,000,000 two-adaptation envelope and all other
+scientific/resource controls are unchanged. This envelope is **not evidence
+of successful completion**. Every fidelity-level request and effective record
+uses the exact override; native R/R−1 enforcement and the inherited absolute
+deadline remain intact.
+
+These finite budgets address measured resource failures: full-quality family
+work exceeded 3.2 million work units; design work exceeded 330,000 units and
+its cold continuation exceeded 120 seconds. CAD cylinder at the 240-second
+deadline reached accepted volume, then spent 203.668 seconds in exact P2
+mapped-cell bisection before timing out; solve/archive/cold had not started
+and memory was healthy. Its finite 600-second whole deadline is 2.5 times
+the current completion lower bound, leaving room for remaining curving,
+P2, solve, archive, and cold continuation without changing work/query/scratch
+or scientific controls. These observations motivate explicit headroom, not
+automatic completion or permission to weaken quality checks.
+Oblique6 at the authored 240-second cap completed warm execution and archiving
+in 130.352 seconds, then ran cold continuation for 109.686 seconds before being
+killed. Its completion lower bound therefore exceeds 240 seconds. The revised
+finite 360-second cap leaves at most 229.648 seconds for that cold continuation,
+with 50% headroom over the current completion lower bound; two-slab stays at
+120 seconds.
+The registry retains the rationale and requested/effective resource limits in
+each authored profile's `resource_envelope` metadata.
+The distributed group-memory envelope is carried by `maximum_memory_bytes`
+into the MPI execution storage ceiling and launch records; native meshing
+scratch/data caps remain separate and unchanged. Execution-group RSS enforcement
+belongs to the existing external systemd/cgroup campaign wrapper, which must
+use that exact value; the in-process tools do not claim an RSS admission cap.
+
+Capped planar at work 2,000,000, queries 4,000,000, scratch 512,000,000 and
+whole timeout 300s progressed through scientific carrier fixes into adaptation,
+then exhausted 1,999,999 work with the next operation requiring 2. Queries were
+2,047,558, scratch 359MB and elapsed time 133s; transfer/cold had not started.
+The shared planar/surface finite work cap is now 4,000,000, twice the prior cap.
+At those work/query caps and scratch 512,000,000, adaptation certification
+reached `source_affine_chain`, requesting 57,886,604 scratch bytes with
+57,885,430 remaining—a 1,174-byte deficit. Work was 2.81M, queries 2.06M and
+elapsed time 146s; later lifecycle had not started. The finite planar/surface
+scratch cap is now 1,024,000,000 bytes, twice the prior cap. Other caps and
+science are unchanged. Exact controls reach planar, sphere and other surface
+request constructors without weakening scientific gates.
+
+Chart-chain work evidence is stored separately from generic source-cover
+`resource_counts` in `SourceBoundaryChartCover.affine_chain_resources`.
+Each `AffineChainResourceEvidence` row has a closed metric, a `source` or
+`target` role, an explicit deterministic proof-input `owner_id`, and exact
+`used`/`maximum` integers. Reusing a predecessor cover retains its counters
+as source evidence; a new proof adds its own target counters without summing,
+dropping, or renaming metric text. Historical source owners remain distinct
+across repeated adaptations. Rows are canonicalized by `(role, owner_id,
+metric)`, with duplicate keys, incomplete completed-proof metric sets, and owners
+split between roles rejected. Refusals use their own closed metrics and retain
+only the counters actually earned by that failed phase; coordinate resource
+kinds dispatch exhaustively rather than generating metric names. All rows
+participate in cover fingerprints and archive
+restoration. Consumers select the intended role and owner rather than flattening
+historical and current counters into one name-keyed dictionary. This evidence
+change does not alter resource charges, limits, or geometric proof decisions.
+
+Overset cold common-refinement polynomial preparation required 93,128,801
+storage bytes before expansion against the prior 81,920,000-byte cap, without
+work/query/cavity exhaustion. The explicit `maximum_scratch_bytes=128000000`
+provides 37.4% headroom. Both the native scratch scope and warm/cold
+`CommonRefinementPolicy.maximum_memory_bytes` use that same authored owner.
+The cold worker inherits the archived original limit and refuses disagreement
+between either archive and the launch packet. Archive-data and process RSS
+limits are unchanged.
+The larger overset profile passed warm execution and both archives at
+1,280,000 work units. Fresh cold FE restoration then completed, but conservative
+archive reconstruction exhausted work in
+`MeshingGeometryMotionTransition.from_stored_fields` →
+`stored_record_content_id`, before remapping. Larger and combined profiles
+therefore author 2,000,000 work units. The positive routine retains 1,280,000;
+queries, scratch, whole-workflow time and scientific gates are unchanged.
+
+Distributed routine at work 8,000,000, memory 24GiB and whole timeout 300s
+completed 4-to-2 restore, all 16 roles and continued FE/FV/Euler/RNG/allfield
+acceptance, then rearchive binding failed. Producer time was 148.9s, consumer
+time 275.4s and scenario time 425s; memory was healthy. Routine/larger now
+author a finite **600s whole timeout**. Routine work 8,000,000, routine/larger memory
+24/32GiB and science remain unchanged. Extra time **does not resolve the
+binding failure or establish successful workflow completion**.
+The canonical envelopes still bind exact cgroup `MemoryMax` values:
+25,769,803,776/34,359,738,368 bytes. Memory R/R−1 tests prove unrounded
+command/record transport, not kernel RSS admission. Producers and consumers
+inherit one absolute deadline; no phase resets its allowance.
+
+Larger distributed 6-to-3 at work 8,000,000, whole timeout 600s and 32GiB
+reached initial FE/FV and first refine, then all ranks exhausted about 7.99M
+work with next 6,144. Storage/query/cavity/time/memory were healthy; checkpoint/
+cold had not started. Only the larger profile now authors finite work 32,000,000,
+four times the prior cap for its two-times resolution/six-rank topology and
+remaining lifecycle. Routine remains at 8,000,000; other caps and science are
+unchanged.
+
+The durable family 2,400s run at `MemoryMax=16G` completed publication,
+independent acceptance, association and all-field preparation, then the
+external cgroup recorded `oom-kill` at
+`finite_volume_owner_preparation_epoch_0` after 1,442s, with work/query/deadline
+headroom. Family now authors the finite execution-group/process memory cap
+**32GiB (34,359,738,368 bytes)**. The canonical envelope records
+`external_cgroup_properties.MemoryMax=34359738368`, and the external
+systemd/cgroup wrapper must use that exact value. Native scratch 1,536,000,000,
+retained data 40,960,000, work/query/deadline and science are unchanged.
+Memory R/R−1 tests prove exact command/record forwarding without rounding;
+they do not claim actual kernel RSS admission, which remains externally enforced.
+
+**Before any family rerun, durable incremental stage and failure evidence
+is required.** The canonical envelope records this prerequisite as
+`durable-incremental-stage-and-failure-evidence`; the scenario capture owner
+supplies that evidence, rather than this policy introducing a second path.
+Other caps and science remain unchanged. This envelope is **not evidence of
+successful completion**. Cold continuation inherits the original absolute
+deadline; neither phase changes nor reporting grace restart scientific time.
+
+Material-L routine at work 640,000, queries 1,280,000, scratch 81,920,000 and
+whole timeout 120s passed source FE/VEM/FV and regeneration, then received
+native `CAPACITY_EXCEEDED` during common-refinement/conservative remapping.
+Target continuation/archive/cold had not started; that status alone does not
+establish the exact limiting resource axis. All six polyhedral-system profiles
+now author finite work 2,000,000, scratch 256,000,000 and whole timeout 300s:
+`polyhedral-material-L`, `polyhedral-stretched-L`, `polyhedral-periodic-cube`,
+and each corresponding `:larger` profile. Queries retain the existing
+`64 * capacity` allowance (1,280,000 at capacity 20,000); entity/data/scientific
+controls are unchanged. Native and remap work/storage policies use the same
+frozen request limits, including periodic and cold-restored requests.
+This envelope does not establish successful completion.
+
+The four positive periodic-system profiles have finite case-specific envelopes.
+Exact lattice routine/larger retain scratch 256,000,000 and whole timeout 300s,
+above the prior 81,920,000-byte/120s defaults at capacity 20,000. Exact
+material-feature routine/larger use the measured envelope described below.
+Retained work evidence of 639,987/640,000 predates the current
+`2048 * capacity` multiplier and is **stale for work-cap policy**.
+No current work failure is observed for exact lattice profiles, so their work
+remains 40,960,000 at capacity 20,000. Material-feature routine at work
+160,000,000 and queries 2,560,000 reached its target after three refinements
+(2,480 cells, L2 0.0181), then coarsen exhausted 159,997,437 work with next
+16,384. Queries were 1.93M and storage/time had headroom, but archive/cold had
+not started and lifecycle time was 440s. Only exact material-feature
+routine/larger now author finite work 320,000,000, queries 5,120,000 and whole
+timeout 1,200s. Scratch 512,000,000 and science remain unchanged; exact lattice
+and historical binary64 refusal controls are untouched. The scratch cap
+retains headroom over the earlier 307,950,571-byte geometry-association
+requirement. Constructor/resource records and cold continuation retain exact
+caps and the original absolute deadline. **Target attainment alone does not
+establish completed coarsen/archive/cold workflow.**
+
+At that numerical envelope, material-feature reached its target and coarsened,
+then archive recipe size 1,099,585 bytes exceeded the authored 1,048,576-byte
+ceiling by 51,009 bytes; cold continuation had not started. Only material-feature
+routine/larger now author finite `maximum_recipe_bytes=2097152` (2MiB).
+Exact lattice and historical refusal profiles retain the default 1MiB.
+This canonical CLI/control value lowers to the existing
+`ArrayArchiveLimits.max_manifest_bytes` recipe/manifest metadata admission
+owner; no archive format or numerical limit changes. Warm writer, cold reader,
+source-owner reconstruction and recertification share the same effective
+archive policy. Checkpoint/cold records retain requested/effective recipe
+allowances, and a mismatched cold policy is refused before reading the archive.
+Exact recipe and complete-archive R/R−1 tests preserve byte admission and
+atomic publication rollback; larger metadata allowance is not a success claim.
+
+`maximum_work_units`, `maximum_geometry_queries`, planar/surface/polyhedral/periodic/overset/family
+`maximum_scratch_bytes`, family `maximum_data_bytes`, and periodic
+`maximum_recipe_bytes` are exact overrides when specified.
+An omitted (`None`) override preserves the owner's existing finite default
+or capacity/multiplier-derived allowance; it never means uncapped. Exhaustion
+still refuses under the declared request. There is no uncapped retry, renewed
+per-phase allowance, altered native runtime clock, or extension of the
+10-second reporting grace into scientific time. Unlisted profiles and caps,
+including entity, connectivity, output-data and scratch bounds, retain their
+existing controls. Sources, resolutions, adaptation rounds, repetitions,
+quality targets, PDE error gates and independent certification remain unchanged.
+
+`tests/data/meshing/campaigns.json` is a generated registration, not benchmark
+evidence. Its profile requests copy canonical controls and envelope metadata;
+do not maintain another set of envelope constants in the manifest. After a
+registry change, regenerate the manifest from the repository root in the
+project's Python environment with this lightweight command (it does not run
+the qualification workflows):
+
+```sh
+python -c 'import json; from tools.meshing_qualification._campaign import NATIVE_CAMPAIGN_REGISTRATION_PATH, campaign_registration_record; NATIVE_CAMPAIGN_REGISTRATION_PATH.write_text(json.dumps(campaign_registration_record(), indent=2, sort_keys=True) + "\n", encoding="utf-8")'
+```
+
+Campaign timing statistics aggregate accepted cases: positive admission, child
+status passed, independent scientific certification passed, and the case
+contract complete. Mandatory workflow completion is counted separately, so an
+accepted case can report timings while its mandatory workflow remains
+incomplete; neither count treats a refusal as positive completion. Each child's
+`workflow_result` binds the workflow, scenario, outcome, controls, request,
+runtime and the complete emitted evidence, and the launcher refuses a result
+whose controls, build or verdict do not match that record.
+
+On Linux, `peak_process_resident_bytes` is the child's post-exec `VmHWM` from
+`/proc` (`process_peak_scope` names the source; descendants are excluded). The
+raw `ru_maxrss` product counter can retain the launcher's pre-exec high water
+and is not used for this attribution. Other platforms report the peak as
+unavailable.
 
 `--case native-family-lifecycle --family-case <name>` selects a canonical
 native family requirement; the parser derives its choices from that requirement
@@ -3151,11 +4263,75 @@ Its physical oracle is `u=x[:, 0]**2` with intrinsic forcing `-2`, not the
 ambient three-dimensional Laplacian `-6`. Original source controls, weights,
 knots, degrees and scientific IDs remain authoritative.
 
+Publication acceptance/source transfer and every warm physical epoch continue
+the actual producing native request, including its already-paid counters and
+nonrenewing deadline. A genuine adaptation starts its own original request;
+target acceptance, actual all-field/FV transfer and PDE continuation consume
+that same allowance. Accepted history binds the ended consumer receipt only
+after all physical work completes. Private epoch FE/FV/solver owners are reused
+for state, inventory and declarations, never substituted for source proofs.
+Cold replay independently reconstructs and authenticates these owners once,
+then uses them for declared dynamics, transfer replay and the final continued
+solve. No prepared owner or request budget is serialized.
+
+Mapped integer-grid construction aims at the authored target using compatible
+directional physical bounds. Source-frame grids intersect the root-direction
+derivative enclosure with the global Lipschitz/reference-edge enclosure, rather
+than oversampling every direction at the largest global stretch. If the target
+does not fit, exact count breakpoints select compatible admitted counts within
+the unchanged original compliance band before construction. Signed-frame grid
+placement shares rational axis atoms and sparse weighted columns; admission
+uses the same storage model as construction. Structured connectivity streams
+bounded C-order index rows while retaining every output cell and charging every
+performed operation. Streaming changes simultaneous scratch, not the source,
+marks, final cell cap or cumulative work. A chosen-grid refusal is not a theorem
+that all publications allowed by those original controls are impossible.
+
+The canonical affine-Q1 validity owner authenticates its exact element and
+cardinal corner action once per block. That private operand is not a validity
+verdict: every cell still supplies all its own coefficients and must pass the
+exact affinity identities and the original determinant/Hadamard-floor proof.
+Changed corner rows and non-Q1 laws retain the general polynomial route.
+Public source-frame extraction retains its materialized exact chart controls,
+single-block grid, cell order and IDs. The closed provider route instead keeps
+root-axis counts and C-order topology: it gathers connectivity directly from
+the node lattice, evaluates reference nodes from exact affine axis endpoints,
+and streams the identical public chart identity through bounded worksets.
+The canonical tensor theorem authenticates the complete root source, axis
+partitions, target chart groups, parent routes, order and original validity
+policy without constructing an ordinary predecessor. It issues the ordinary
+full target certificate, not a cached verdict or reusable proof token.
+Non-dyadic endpoints remain exact rationals. Physical realization independently
+evaluates root maps at those endpoints, checks exact shared-boundary images,
+and runs ordinary physical validity, quality and association checks. Phase
+callbacks retain their original order and source reauthentication boundaries.
+
 Family phase evidence keeps lowering, compilation, first execution and warm
 execution separate. Compiler temporary, output and code sizes are distinct
 from logical retained storage; unavailable measurements remain
 `None`/unmeasured, not zero. These interfaces describe the benchmark contract,
 not a positive receipt or qualification of every listed family.
+
+Set `FAMILY_COMPACT_PROFILE_PREFIX` to a unique run prefix for incremental
+family evidence. The warm process writes `<prefix>-progress.json`; independent
+cold workers use `<prefix>.cold-<pid>-progress.json`. Each fsynced atomic
+replacement contains a contiguous event prefix: stage entry/exit, completed
+native intervals, the first failure and traceback, source/native/backend/build
+identity, published and accepted mesh IDs, and the inherited absolute deadline.
+Live allowance observations distinguish consumed-or-reserved work/query/storage
+from exact ended-request receipt totals. Missing live scopes or unavailable
+counters are explicit, not zero.
+
+Reporting queues immutable metadata to a background writer without retaining
+numerical owners or waiting for filesystem writes on the scientific thread.
+An abrupt interruption can lose queued events, but the last committed snapshot
+remains readable with
+`tools.meshing_qualification._family_progress.read_family_progress(Path(...))`
+in a fresh interpreter. It is diagnostic evidence, not a scientific restart
+checkpoint or permission to replay accepted work. Existing evidence prefixes
+are never overwritten by a new writer. Reporting errors surface separately as
+`reporting_status="failed"` / `reporting_failures`; they do not change scientific
+callbacks, numerical identities, limits or reset deadlines.
 
 The original structured transfinite-quad workflow has passed its 16-to-64-to-16
 lifecycle with original source/history, Q1 native PDE and FV consumers, default
@@ -3194,6 +4370,33 @@ component sample reports passed. Source-only wall or sweep checks cannot
 qualify a positive hybrid lifecycle.
 Selection does not replace any original campaign's source, capacity, timeout,
 target, degree, seed, adaptation or archive controls with an easier request.
+
+The user-approved `plc-fixed-boundary` contract uses a P2 solution and matching
+P2 material history, with the conserved density still P1. This is a solution
+space change, not curved geometry: the original straight tetrahedral source
+and exactly twelve exterior triangles remain authoritative. Dirichlet values
+include boundary edge DOFs, retaining the original quadratic Poisson field and
+forcing. Transfer, archive identity and cold continuation use the actual
+degree-aware coefficient layouts; continuation starts from the accepted
+coefficients, not a manufactured reseed. An independent barycentric-moment
+oracle integrates the square of the actual routed FE error and the transferred
+solution inventory exactly, without solver quadrature or assembled forms.
+All other corpus solution degrees, the 0.05 physical target, and the original
+resource and time caps are unchanged.
+
+The original fixed-boundary lifecycle has exercised native generation,
+every-mark adaptation, all three fields, independent P2 solves, archive and
+fresh-process cold continuation under `--capacity 20000 --timeout 120
+--repeats 3 --target-error 0.05 --adaptation-rounds 1 --resolution 4`.
+That run retained twelve exterior triangles, progressed from 12 to 40 cells
+and 35 to 75 solution DOFs, and measured final and cold L2 error
+`7.677081566607365e-16` in 35.95 seconds of scientific work. Cold continuation
+used the actual restored final solution and preserved accepted fields bitwise;
+prepared FE caches were not serialized. This is one exercised lifecycle, not
+completion of other corpus profiles or frozen release/performance evidence:
+ongoing implementation edits produced different warm/cold runtime identities,
+which the record retains rather than aliasing them.
+
 Source status, scientific admission, full workflow, phase evidence and release
 authorization remain separate gates. This selection/reporting interface is not
 evidence that the current complete corpus pipeline has passed.

@@ -16,7 +16,11 @@ from jax.typing import ArrayLike
 
 from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
+from .._meshcore import (
+    current_native_execution_scope,
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
+)
 from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -29,6 +33,7 @@ from ..discretization import (
 from ..discretization._cell_geometry_transition_types import MaterialChartDeformation
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._nested_reference import PreparedNestedReference
 from ..discretization.fem import (
     FiniteElementDiscretization,
     FiniteElementFieldSpec,
@@ -40,10 +45,12 @@ from ..discretization.fem import (
     FiniteElementPlan,
     prepare_finite_element_hp_epoch,
     prepare_l2_projection_target,
-    prepare_nested_field_transfer,
     prepare_projection_field_transfer,
     prepare_source_realization_field_transfer,
     SourceRealizationFieldSemantics,
+)
+from ..discretization.fem._topology_transfer import (
+    prepare_shared_nested_field_transfer,
 )
 from ..discretization.finite_volume._remap_evidence import (
     MappedSurfaceChartRemapEvidence,
@@ -104,11 +111,15 @@ class FiniteElementTopologyResult(StrictModule, NonTrainableState):
 
 
 def _space_realizes_result(
-    space: FiniteElementDiscretization, result: CellMeshingResult, /
+    space: FiniteElementDiscretization,
+    result: CellMeshingResult,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> bool:
     mesh = result.mesh
     geometry = result.geometry
-    elements, routes, values = geometry.resolve(mesh)
+    elements, routes, values = geometry.resolve(mesh, budget=budget)
     return (
         space.mesh.topology_id == mesh.topology_id
         and tuple(element.element_id for element in space.coordinate_elements)
@@ -319,6 +330,8 @@ class PreparedFiniteElementTopologyTransition(StrictModule, NonTrainableState):
         target: FiniteElementDiscretization,
         transfers: Sequence[FiniteElementFieldTransfer],
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         prepared = tuple(transfers)
         source_fields = _fields_for_mesh(transaction.fields, adaptation.source.mesh)
@@ -327,8 +340,8 @@ class PreparedFiniteElementTopologyTransition(StrictModule, NonTrainableState):
         target_ids = tuple(field.field_spec_id for field in target_fields)
         if (
             adaptation.transition is None
-            or not _space_realizes_result(source, adaptation.source)
-            or not _space_realizes_result(target, adaptation.target)
+            or not _space_realizes_result(source, adaptation.source, budget=budget)
+            or not _space_realizes_result(target, adaptation.target, budget=budget)
             or tuple(field.field_spec_id for field in source.construction_plan.fields)
             != source_ids
             or tuple(field.field_spec_id for field in target.construction_plan.fields)
@@ -782,6 +795,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         source: FiniteElementDiscretization | None = None,
         target: FiniteElementDiscretization | None = None,
         field_transfers: Sequence[FiniteElementFieldTransfer] | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PreparedFiniteElementTopologyTransition:
         """Prepare reusable spaces and field operators for one nested transition."""
         if (source is None) != (target is None):
@@ -797,11 +811,11 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 f"FiniteElementTopologyTransaction.prepare_transition.geometry_transition must prepare inside its native execution scope; got kind={geometry_transition.evidence.kind!r}"
             )
         if source is None or target is None:
-            source_, target_ = self._prepared_pair(accepted, adaptation)
+            source_, target_ = self._prepared_pair(accepted, adaptation, budget=budget)
         else:
             source_, target_ = source, target
         transfers = (
-            self._field_transfers(source_, target_, adaptation)
+            self._field_transfers(source_, target_, adaptation, budget=budget)
             if field_transfers is None
             else tuple(field_transfers)
         )
@@ -810,7 +824,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 f"FiniteElementTopologyTransaction.prepare_transition.transfers must be admitted; got {transfers!r}"
             )
         prepared = PreparedFiniteElementTopologyTransition(
-            self, adaptation, source_, target_, transfers
+            self, adaptation, source_, target_, transfers, budget=budget
         )
         prepared.require(self, accepted, mesh, adaptation)
         return prepared
@@ -890,6 +904,31 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             raise RuntimeError(
                 f"FiniteElementTopologyTransaction.source_workspace must provide a persistent reservation separate from algebra scratch; got {source_workspace!r}"
             )
+        # One correspondence proof serves every field transfer of this request.
+        validation = (
+            correspondence.require_bound(
+                source.mesh,
+                correspondence.source_geometry,
+                target.mesh,
+                correspondence.target_geometry,
+                budget=ledger,
+            )
+            if isinstance(correspondence, PreparedSphereChartDeformation)
+            else None
+        )
+        prepared_fields: dict[
+            tuple[str, str, tuple[tuple[str, str], ...]],
+            tuple[FiniteElementFieldTransfer, ...],
+        ] | None = (
+            validation.derive("sphere-transaction-field-transfers", dict)
+            if validation is not None
+            else None
+        )
+        prepared_key = (
+            source.prepared_id, target.prepared_id, self.surface_chart_semantics
+        )
+        if prepared_fields is not None and prepared_key in prepared_fields:
+            return prepared_fields[prepared_key]
         for field in self.fields:
             semantic = semantics[field.name]
             work = min(
@@ -916,6 +955,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                                 maximum_work=work,
                                 maximum_storage_bytes=storage,
                                 budget=ledger,
+                                validation=validation,
                             ).field_transfer
                         elif semantic in ("intensive", "conservative-density"):
                             transfer = prepare_sphere_chart_field_transfer(
@@ -928,6 +968,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                                 semantics=semantic,
                                 maximum_work=work,
                                 budget=ledger,
+                                validation=validation,
                             )
                         else:
                             raise ValueError(
@@ -965,7 +1006,14 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                         assert_never(correspondence)
 
                 transfers.append(transfer)
-        return tuple(transfers)
+        result = tuple(transfers)
+        if prepared_fields is not None:
+            # This proof token lives until the complete request ends, including
+            # a rejected trial followed by an accepted trial. Keep the actual
+            # numerical owners admitted for that same lifetime.
+            ledger.retain_owner(result)
+            prepared_fields[prepared_key] = result
+        return result
 
     def _source_realization_field_transfers(
         self,
@@ -1059,6 +1107,10 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 tuple[str, str, tuple[str, ...], tuple[str, ...]],
                 FiniteElementFieldTransfer,
             ] = {}
+            # One transition's nested pieces are proved once and passed
+            # explicitly to every later field route that reads them; each
+            # field still owns its ticket and imports their charges.
+            references: list[PreparedNestedReference] = []
             transfers: list[FiniteElementFieldTransfer] = []
             for field in self.fields:
                 source_index = source.field_index(field.name)
@@ -1075,7 +1127,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 )
                 retained = prepared_by_layout.get(key)
                 if retained is None:
-                    retained = prepare_nested_field_transfer(
+                    retained, reference = prepare_shared_nested_field_transfer(
                         source,
                         target,
                         parents,
@@ -1085,11 +1137,22 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                             if parents is not None
                             else None
                         ),
+                        parent_reference_homogeneous=(
+                            adaptation.parent_reference_homogeneous
+                            if parents is not None
+                            else None
+                        ),
                         source_geometry=adaptation.source.geometry,
                         target_geometry=adaptation.target.geometry,
                         geometry_transition=adaptation.geometry_transition,
                         coarsening_witnesses=coarsening,
+                        prepared=tuple(references),
+                        budget=budget,
                     )
+                    if reference is not None and all(
+                        reference is not item for item in references
+                    ):
+                        references.append(reference)
                     prepared_by_layout[key] = retained
                     transfers.append(retained)
                     continue
@@ -1205,6 +1268,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         | None = None,
         compiled_layout_id: str | None = None,
         preparation: PreparedFiniteElementTopologyTransition | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> FiniteElementTopologyResult:
         geometry_transition = adaptation.geometry_transition
         if (
@@ -1220,6 +1284,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 reanalysis=reanalysis,
                 compiled_layout_id=compiled_layout_id,
                 preparation=preparation,
+                scope=current_native_execution_scope() if budget is not None else None,
+                budget=budget,
             )
         if preparation is not None:
             raise ValueError(
@@ -1246,6 +1312,58 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             )
         limits = adaptation.policy.limits
         owners: list[PreparedUnstructuredConservativeRemap] = []
+        active_scope = current_native_execution_scope()
+        if active_scope is not None:
+            if budget is None:
+                raise ValueError(
+                    "FiniteElementTopologyTransaction.budget must identify the active request ledger for a chart transition; got None"
+                )
+            if not budget.ticket.settled and not budget.ticket.native_accounting:
+                raise ValueError(
+                    "FiniteElementTopologyTransaction.budget must charge the active native request; got a live nonnative ticket"
+                )
+            with active_scope.host_workspace() as workspace:
+                workspace.retain_owner(
+                    (
+                        accepted,
+                        mesh,
+                        adaptation,
+                        args,
+                        decision,
+                        self.callback_owners,
+                        geometry_transition.chart_deformation,
+                    )
+                )
+                result = self._execute(
+                    accepted,
+                    mesh,
+                    adaptation,
+                    args,
+                    decision=decision,
+                    reanalysis=reanalysis,
+                    compiled_layout_id=compiled_layout_id,
+                    material_remaps=owners,
+                    source_workspace=workspace,
+                    scope=active_scope,
+                    budget=budget,
+                )
+                workspace.retain_owner((result, tuple(owners)))
+            # The caller binds the actual ended request receipt after its
+            # surrounding native scope exits. No intermediate receipt exists.
+            return FiniteElementTopologyResult(
+                state=result.state,
+                mesh=result.mesh,
+                adaptation=result.adaptation,
+                committed=result.committed,
+                receipt=result.receipt,
+                transfers=result.transfers,
+                diagnostics=result.diagnostics,
+                material_remaps=tuple(owners),
+            )
+        if budget is not None:
+            raise ValueError(
+                "FiniteElementTopologyTransaction.budget must belong to an active native request for a chart transition; got a standalone ledger"
+            )
         with NativeExecutionScope(limits.native_limits()) as native:
             with (
                 native_volume_source_execution_budget(
@@ -1384,19 +1502,11 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     raise RuntimeError(
                         f"FiniteElementTopologyTransaction.scope must be present for chart field preparation; got {scope!r}"
                     )
-                remaining = scope.remaining()
-                ticket = scope.batch(
-                    min(
-                        budget.maximum_work_units - budget.work_units,
-                        remaining.remaining_work_units,
-                    ),
-                    queries_upper=remaining.remaining_geometry_queries,
-                    bytes_upper=min(
-                        budget.maximum_memory_bytes, remaining.remaining_managed_bytes
-                    ),
-                    cavity_upper=remaining.remaining_cavity_cells,
-                )
-                with budget.bind_ticket(ticket), ticket.native_target():
+                with (
+                    budget.bind_ticket(scope.ticket_view())
+                    if budget.ticket.settled
+                    else budget.activate()
+                ):
                     source, target = self._prepared_pair(
                         accepted, adaptation, budget=budget
                     )

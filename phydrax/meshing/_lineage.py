@@ -25,6 +25,7 @@ from .._fingerprint import (
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..typing import checked, parse
 from . import _lineage_records as lineage_records_owner
 from ._organization_records import MeshAttribute, MeshLabel, MeshPatch, MeshZone
@@ -35,8 +36,10 @@ def _parent_witnesses(
     target: result_owner.CellMeshingResult,
     parents: transition_types_owner.NestedReferenceWitnesses,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Parent IDs and reference corners in target concatenated block order."""
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Parent IDs, reference corners, and rational homogeneous bank in target concatenated order."""
 
     mesh = target.mesh
     ids = np.concatenate(
@@ -64,11 +67,22 @@ def _parent_witnesses(
             "CellMeshTransition.parents must name distinct target cells; got duplicate or absent target IDs"
         )
     rows = order[position]
+    bank = transition_types_owner.require_reference_homogeneous(
+        vertices,
+        parents.fine_reference_homogeneous,
+        "CellMeshTransition.parents",
+        budget=budget,
+    )
     parent_ids = np.full(ids.shape, -1, dtype=np.int64)
     parent_ids[rows] = np.asarray(parents.coarse_cell_ids, dtype=np.int64)
     reference = np.zeros((ids.size, vertices.shape[1], dimension), dtype=np.float64)
     reference[rows] = vertices
-    return parent_ids, reference
+    if bank is None:
+        return parent_ids, reference, None
+    # All-zero rows of unnested target cells retain no rational coordinate.
+    homogeneous = np.zeros((*reference.shape[:2], dimension + 1), dtype=np.float64)
+    homogeneous[rows] = bank
+    return parent_ids, reference, homogeneous
 
 
 def _coarsening_witnesses(
@@ -76,7 +90,9 @@ def _coarsening_witnesses(
     lineage: lineage_records_owner.MeshLineage,
     witnesses: transition_types_owner.NestedReferenceWitnesses,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
     """Validate fine-to-coarse reference charts against accepted cell lineage."""
 
     fine = np.asarray(witnesses.fine_cell_ids, dtype=np.int64)
@@ -123,11 +139,17 @@ def _coarsening_witnesses(
         raise ValueError(
             "CellMeshTransition.coarsening must bind preserved or coarsened cell lineage; got an unbound fine/coarse pair"
         )
-    return fine, coarse, reference
+    homogeneous = transition_types_owner.require_reference_homogeneous(
+        reference,
+        witnesses.fine_reference_homogeneous,
+        "CellMeshTransition.coarsening",
+        budget=budget,
+    )
+    return fine, coarse, reference, homogeneous
 
 
 class CellMeshTransition(StrictModule, NonTrainableState):
-    """One accepted topology transition of a certified mesh.
+    """One accepted topology or same-topology geometry transition of a certified mesh.
 
     ``geometry_transition`` records how the target coordinate map was built from
     a non-affine source map (absent when both maps are affine carriers).
@@ -137,9 +159,16 @@ class CellMeshTransition(StrictModule, NonTrainableState):
     corners in that parent's reference coordinates. They are absent for
     non-nested transitions.
     The ``coarsened_*`` fields retain the ordered fine-to-coarse reference bank,
-    including its full padded reference arrays. ``from_stored_fields`` rebuilds
-    both banks through the reference-correspondence constructor and authenticates
-    every stored field against the retained target, lineage, and geometry transition.
+    including its full padded reference arrays. The ``*_reference_homogeneous``
+    banks, present only with an exact source-owned bank, retain its
+    exact homogeneous reference coordinates row-aligned with the rounded vertices
+    (all-zero rows carry none); a rational vertex stencil and the parent records
+    retain or omit their rational banks together. Their validation charges
+    ``budget``; ``None`` declares unbounded host validation of a standalone
+    record. ``from_stored_fields`` rebuilds both banks through the
+    reference-correspondence constructor on a replay ledger sized by
+    ``reconstruction_preparation_bounds`` and authenticates every stored field
+    against the retained target, lineage, and geometry transition.
     """
 
     source_mesh_id: str = eqx.field(static=True)
@@ -150,9 +179,11 @@ class CellMeshTransition(StrictModule, NonTrainableState):
     geometry_transition: transition_types_owner.CellGeometryTransition | None
     parent_cell_ids: Array | None
     parent_reference_vertices: Array | None
+    parent_reference_homogeneous: Array | None
     coarsened_cell_ids: Array | None
     coarsened_into_ids: Array | None
     coarsened_reference_vertices: Array | None
+    coarsened_reference_homogeneous: Array | None
     transition_kind: lineage_records_owner.MeshTransitionKind = eqx.field(static=True)
     transition_id: str = eqx.field(static=True)
 
@@ -170,6 +201,7 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         geometry_transition: transition_types_owner.CellGeometryTransition | None = None,
         parents: transition_types_owner.NestedReferenceWitnesses | None = None,
         coarsening: transition_types_owner.NestedReferenceWitnesses | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         mesh_id = str(source_mesh_id).strip()
         topology_id = str(source_topology_id).strip()
@@ -189,6 +221,21 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             lineage_records_owner.MeshTransitionKind,
             "CellMeshTransition.transition_kind",
         )
+        if transition_kind is lineage_records_owner.MeshTransitionKind.MOTION:
+            if (
+                topology_id != target.mesh.topology_id
+                or mesh_id == target.mesh.mesh_id
+                or vertex_stencil is not None
+                or parents is not None
+                or coarsening is not None
+                or target.certification is None
+                or not target.certification.passed
+                or not target.audit.passed
+                or not target.compliance.passed
+            ):
+                raise ValueError(
+                    "CellMeshTransition.motion must retain a distinct certified same-topology target without topology-edit witnesses; got incompatible motion"
+                )
         if geometry_transition is not None:
             if (
                 geometry_transition.source_topology_id != topology_id
@@ -199,11 +246,22 @@ class CellMeshTransition(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"CellMeshTransition.geometry_transition must match source topology and target map; got target geometry ID {geometry_transition.target_geometry_id!r}"
                 )
-        witnesses = None if parents is None else _parent_witnesses(target, parents)
+        if (
+            vertex_stencil is not None
+            and parents is not None
+            and (vertex_stencil.homogeneous_weights is None)
+            != (parents.fine_reference_homogeneous is None)
+        ):
+            raise ValueError(
+                "CellMeshTransition.parents must retain a rational reference bank exactly when the vertex stencil retains rational homogeneous weights; got one rational bank without the other"
+            )
+        witnesses = (
+            None if parents is None else _parent_witnesses(target, parents, budget=budget)
+        )
         coarsened = (
             None
             if coarsening is None or np.asarray(coarsening.fine_cell_ids).size == 0
-            else _coarsening_witnesses(target, lineage, coarsening)
+            else _coarsening_witnesses(target, lineage, coarsening, budget=budget)
         )
         self.source_mesh_id = mesh_id
         self.source_topology_id = topology_id
@@ -217,6 +275,11 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         self.parent_reference_vertices = (
             None if witnesses is None else jax.device_put(np.asarray(witnesses[1]))
         )
+        self.parent_reference_homogeneous = (
+            None
+            if witnesses is None or witnesses[2] is None
+            else jax.device_put(witnesses[2])
+        )
         self.coarsened_cell_ids = (
             None if coarsened is None else jax.device_put(np.asarray(coarsened[0]))
         )
@@ -226,34 +289,69 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         self.coarsened_reference_vertices = (
             None if coarsened is None else jax.device_put(np.asarray(coarsened[2]))
         )
-        self.transition_kind = transition_kind
-        self.transition_id = canonical_fingerprint(
-            {
-                "kind": "cell-mesh-transition",
-                "source_mesh": mesh_id,
-                "source_topology": topology_id,
-                "target": target.result_id,
-                "lineage": lineage.lineage_id,
-                "vertex_stencil": None
-                if vertex_stencil is None
-                else vertex_stencil.stencil_id,
-                "geometry_transition": None
-                if geometry_transition is None
-                else geometry_transition.transition_id,
-                "parents": None
-                if witnesses is None
-                else [array_tree_fingerprint(value) for value in witnesses],
-                "coarsening": None
-                if coarsened is None
-                else [array_tree_fingerprint(value) for value in coarsened],
-                "transition_kind": transition_kind.value,
-            }
+        self.coarsened_reference_homogeneous = (
+            None
+            if coarsened is None or coarsened[3] is None
+            else jax.device_put(np.asarray(coarsened[3]))
         )
+        self.transition_kind = transition_kind
+        payload: dict[str, object] = {
+            "kind": "cell-mesh-transition",
+            "source_mesh": mesh_id,
+            "source_topology": topology_id,
+            "target": target.result_id,
+            "lineage": lineage.lineage_id,
+            "vertex_stencil": None
+            if vertex_stencil is None
+            else vertex_stencil.stencil_id,
+            "geometry_transition": None
+            if geometry_transition is None
+            else geometry_transition.transition_id,
+            "parents": None
+            if witnesses is None
+            else [array_tree_fingerprint(value) for value in witnesses[:2]],
+            "coarsening": None
+            if coarsened is None
+            else [array_tree_fingerprint(value) for value in coarsened[:3]],
+            "transition_kind": transition_kind.value,
+        }
+        # Exact banks bind only when retained, so rounded transitions keep their IDs.
+        if witnesses is not None and witnesses[2] is not None:
+            payload["parent_homogeneous"] = array_tree_fingerprint(witnesses[2])
+        if coarsened is not None and coarsened[3] is not None:
+            payload["coarsening_homogeneous"] = array_tree_fingerprint(coarsened[3])
+        self.transition_id = canonical_fingerprint(payload)
+
+    def reconstruction_preparation_bounds(self) -> tuple[int, int, int]:
+        """Bound replay work, bytes and source queries of the rational-bank validation."""
+        work = storage = 0
+        for bank in (
+            self.parent_reference_homogeneous,
+            self.coarsened_reference_homogeneous,
+        ):
+            if bank is not None:
+                if bank.ndim != 3:
+                    raise ValueError(
+                        f"CellMeshTransition.reference_homogeneous must be (cells, corners, d+1) banks; got shape {bank.shape}"
+                    )
+                cells, corners, width = bank.shape
+                bank_work, bank_bytes = (
+                    transition_types_owner.reference_homogeneous_preparation_bounds(
+                        int(cells) * int(corners), int(width)
+                    )
+                )
+                work += bank_work
+                storage += bank_bytes
+        return work, storage, 0
 
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[CellMeshTransition], value: CellMeshTransition, /
+        cls: type[CellMeshTransition],
+        value: CellMeshTransition,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None,
     ) -> CellMeshTransition:
         """Rebuild retained reference banks against their target and lineage owners."""
         if cls is not CellMeshTransition or type(value) is not CellMeshTransition:
@@ -263,9 +361,12 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             )
         parents = None
         if value.parent_cell_ids is None:
-            if value.parent_reference_vertices is not None:
+            if (
+                value.parent_reference_vertices is not None
+                or value.parent_reference_homogeneous is not None
+            ):
                 raise ValueError(
-                    "CellMeshTransition.parents must retain both IDs and reference vertices; got reference vertices without parent IDs"
+                    "CellMeshTransition.parents must retain both IDs and reference vertices; got reference banks without parent IDs"
                 )
         else:
             if value.parent_reference_vertices is None:
@@ -280,10 +381,20 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             )
             parent_ids = np.asarray(value.parent_cell_ids, dtype=np.int64)
             reference = np.asarray(value.parent_reference_vertices, dtype=np.float64)
+            homogeneous = (
+                None
+                if value.parent_reference_homogeneous is None
+                else np.asarray(value.parent_reference_homogeneous, dtype=np.float64)
+            )
             if (
                 parent_ids.shape != target_ids.shape
                 or reference.ndim != 3
                 or reference.shape[0] != target_ids.size
+                or (
+                    homogeneous is not None
+                    and homogeneous.shape
+                    != (*reference.shape[:2], reference.shape[2] + 1)
+                )
             ):
                 raise ValueError(
                     "CellMeshTransition.parents must align with target concatenated block order; got incompatible parent-bank shapes"
@@ -291,16 +402,20 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             # -1 rows belong to assembled target cells, not nested witnesses.
             nested = parent_ids >= 0
             parents = transition_types_owner.NestedReferenceWitnesses(
-                target_ids[nested], parent_ids[nested], reference[nested]
+                target_ids[nested],
+                parent_ids[nested],
+                reference[nested],
+                None if homogeneous is None else homogeneous[nested],
             )
         coarsening = None
         if value.coarsened_cell_ids is None:
             if (
                 value.coarsened_into_ids is not None
                 or value.coarsened_reference_vertices is not None
+                or value.coarsened_reference_homogeneous is not None
             ):
                 raise ValueError(
-                    "CellMeshTransition.coarsening must retain fine IDs, coarse IDs, and reference vertices; got coarse IDs or reference vertices without fine IDs"
+                    "CellMeshTransition.coarsening must retain fine IDs, coarse IDs, and reference vertices; got coarse IDs or reference banks without fine IDs"
                 )
         else:
             if (
@@ -314,6 +429,9 @@ class CellMeshTransition(StrictModule, NonTrainableState):
                 np.asarray(value.coarsened_cell_ids, dtype=np.int64),
                 np.asarray(value.coarsened_into_ids, dtype=np.int64),
                 np.asarray(value.coarsened_reference_vertices, dtype=np.float64),
+                None
+                if value.coarsened_reference_homogeneous is None
+                else np.asarray(value.coarsened_reference_homogeneous, dtype=np.float64),
             )
         rebuilt = cls(
             value.source_mesh_id,
@@ -325,6 +443,7 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             geometry_transition=value.geometry_transition,
             parents=parents,
             coarsening=coarsening,
+            budget=budget,
         )
         for member in fields(value):
             if not tree_content_equal(

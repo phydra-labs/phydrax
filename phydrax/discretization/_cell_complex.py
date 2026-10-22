@@ -890,6 +890,9 @@ def _polyhedral_loop_defects(
     )
 
 
+_OPEN_SHELL_CHUNK_CELLS = 256
+
+
 def _open_shell_cells(
     loop_cells: np.ndarray,
     offsets: np.ndarray,
@@ -898,9 +901,42 @@ def _open_shell_cells(
     positions: np.ndarray,
     cell_count: int,
     /,
+    *,
+    chunk_cells: int = _OPEN_SHELL_CHUNK_CELLS,
 ) -> np.ndarray:
-    """Mark cells whose loops do not traverse each edge once in each direction."""
+    """Mark open shells with bounded, cell-local sort banks.
 
+    Cells are the primary sort key, so no edge run can cross a chunk boundary.
+    The output owns its storage; each chunk's scratch dies before the next.
+    """
+    if chunk_cells < 1:
+        raise ValueError(f"chunk_cells must be positive; got {chunk_cells}.")
+    result = np.zeros((cell_count,), dtype=np.bool_)
+    for start in range(0, cell_count, chunk_cells):
+        stop = min(start + chunk_cells, cell_count)
+        first_loop, last_loop = np.searchsorted(loop_cells, (start, stop))
+        first_entry, last_entry = offsets[first_loop], offsets[last_loop]
+        result[start:stop] = _open_shell_chunk(
+            loop_cells[first_loop:last_loop] - start,
+            offsets[first_loop : last_loop + 1] - first_entry,
+            values[first_entry:last_entry],
+            entry_loops[first_entry:last_entry] - first_loop,
+            positions[first_entry:last_entry],
+            stop - start,
+        )
+    return result
+
+
+def _open_shell_chunk(
+    loop_cells: np.ndarray,
+    offsets: np.ndarray,
+    values: np.ndarray,
+    entry_loops: np.ndarray,
+    positions: np.ndarray,
+    cell_count: int,
+    /,
+) -> np.ndarray:
+    """Evaluate one cell interval without retaining its temporary sort banks."""
     sizes = np.diff(offsets)
     stops = values[offsets[entry_loops] + (positions + 1) % sizes[entry_loops]]
     sides = np.stack(
@@ -1016,6 +1052,7 @@ def polyhedral_connectivity(
     )
     if defect is not None:
         raise ValueError(defect)
+    del loops, loop_lengths, explicit_loops, loop_values, entry_loops, entry_positions
 
     face_count = face_loops.size
     counts = np.bincount(loop_faces, minlength=face_count).astype(np.int32)
@@ -1041,6 +1078,7 @@ def polyhedral_connectivity(
     face_vertex_values = canonical[
         loop_offsets[face_loops][face_entries] + face_positions
     ]
+    del canonical, loop_offsets, loop_sizes, face_loops
     following = face_vertex_values[
         face_vertex_offsets[face_entries]
         + (face_positions + 1) % face_sizes[face_entries]
@@ -1056,6 +1094,7 @@ def polyhedral_connectivity(
     edges = side_keys[edge_sides]
     face_edge_values = face_edge_groups.astype(np.int32)
     face_edge_sign_values = np.where(face_vertex_values < following, 1.0, -1.0)
+    del side_keys, following, face_positions, face_edge_groups, edge_sides
 
     cell_face_offsets = _csr_offsets(cell_face_counts)
     loop_locals = (

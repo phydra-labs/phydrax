@@ -8,6 +8,7 @@ import pytest
 
 from phydrax._fingerprint import tree_content_equal
 from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
+from phydrax.discretization._cell_geometry import owned_coordinate_preparation
 from phydrax.lifecycle._meshing_source_records import reconstruct_stored_fields
 from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
 from phydrax.meshing import (
@@ -60,6 +61,38 @@ def coarsened(accepted: MeshAdaptationResult) -> MeshAdaptationResult:
     )
 
 
+@pytest.mark.parametrize("active", (False, True), ids=("settled-caller", "active-caller"))
+def test_preparation_preserves_actual_caller_budget(active: bool) -> None:
+    from contextlib import nullcontext
+
+    from tests._support.coordinate_references import native_meshing_request
+
+    source = proposal_source()
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+    )
+    with native_meshing_request(policy.limits) as (scope, budget, _):
+        with budget.bind_ticket(scope.ticket_view()) if active else nullcontext():
+            prior_ticket = budget.ticket
+            if active:
+                budget.reserve(1)
+            prior_work = budget.work_units
+            prepared = prepare_mesh_adaptation(
+                source, MarkedMeshAdaptation(), policy=policy, budget=budget
+            )
+            assert budget.work_units >= prior_work
+            if active:
+                assert budget.ticket is prior_ticket
+                assert not prior_ticket.settled
+                budget.reserve(1)
+            else:
+                assert budget.ticket.settled
+            assert prepared.preparation_evidence is not None
+            assert prepared.source is source
+        assert scope.remaining().remaining_work_units <= policy.limits.maximum_work_units - budget.work_units
+
+
 def test_preparation_reconstruction_preserves_binding(
     prepared: PreparedMeshAdaptation,
 ) -> None:
@@ -81,7 +114,11 @@ def test_preparation_reconstruction_refuses_changed_request(
     prepared: PreparedMeshAdaptation,
 ) -> None:
     altered = eqx.tree_at(lambda value: value.request, prepared, MarkedMeshAdaptation())
-    with pytest.raises(ValueError, match=r"PreparedMeshAdaptation\.prepared_id"):
+    # The changed request also orphans the retained preparation receipt's owner.
+    with pytest.raises(
+        ValueError,
+        match=r"PreparedMeshAdaptation\.(prepared_id|preparation_evidence\.owner_id)",
+    ):
         PreparedMeshAdaptation.from_stored_fields(altered)
 
 
@@ -137,6 +174,14 @@ def test_result_reconstruction_refuses_changed_request(
         MeshAdaptationResult.from_stored_fields(altered)
 
 
+def _bounded_replay(transition: CellMeshTransition) -> CellMeshTransition:
+    work, storage, queries = transition.reconstruction_preparation_bounds()
+    with owned_coordinate_preparation(
+        work, storage, maximum_geometry_queries=queries
+    ) as ledger:
+        return reconstruct_stored_fields(transition, bindings={"budget": ledger})
+
+
 def test_transition_reconstruction_preserves_parent_and_coarsening_banks(
     accepted: MeshAdaptationResult,
     coarsened: MeshAdaptationResult,
@@ -151,7 +196,10 @@ def test_transition_reconstruction_preserves_parent_and_coarsening_banks(
     assert coarsened.transition.coarsened_into_ids is not None
     assert coarsened.transition.coarsened_reference_vertices is not None
     for transition in (accepted.transition, coarsened.transition):
-        rebuilt = reconstruct_stored_fields(transition)
+        # Replay binds its rational-bank ledger explicitly; it cannot bypass it.
+        with pytest.raises(TypeError, match=r"CellMeshTransition\.budget"):
+            reconstruct_stored_fields(transition)
+        rebuilt = _bounded_replay(transition)
         assert rebuilt is not transition
         assert rebuilt.target is transition.target
         assert rebuilt.lineage is transition.lineage
@@ -178,4 +226,176 @@ def test_transition_reconstruction_refuses_forged_identity(
     with pytest.raises(
         ValueError, match=r"stored_fields\.CellMeshTransition.*transition_id"
     ):
-        reconstruct_stored_fields(forged)
+        _bounded_replay(forged)
+
+
+@pytest.fixture(scope="module")
+def consumed_target(accepted: MeshAdaptationResult):
+    from phydrax.meshing.qualification._native_lifecycle import execute_native_consumer
+
+    def fail(stage, message, data):
+        return ValueError(f"{stage}: {message}; {data}")
+
+    def consume(budget):
+        budget.reserve(1, 0)
+
+    return execute_native_consumer(
+        accepted.target, accepted.policy.limits, consume, failure_factory=fail
+    ).result
+
+
+def test_accepted_endpoint_rebinding_preserves_exact_science_and_nested_target(
+    accepted: MeshAdaptationResult, consumed_target, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import phydrax.meshing._adaptation as adaptation_owner
+    from phydrax.lifecycle._meshing_field_records import (
+        rebind_meshing_adaptation_execution_endpoints,
+    )
+    from phydrax.lifecycle._meshing_source_records import content_equal
+    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+
+    def refuse_helper_request(*args, **kwargs):
+        raise AssertionError("receipt-only rebinding must not prepare another request")
+
+    monkeypatch.setattr(adaptation_owner, "prepare_mesh_adaptation", refuse_helper_request)
+    assert not content_equal(
+        accepted.target, consumed_target, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+    rebound = rebind_meshing_adaptation_execution_endpoints(
+        accepted, accepted.source, consumed_target
+    )
+    assert rebound.source is accepted.source
+    assert rebound.target is consumed_target
+    assert rebound.transition is not None and accepted.transition is not None
+    assert rebound.transition.target is consumed_target
+    assert rebound.transition.transition_id == accepted.transition.transition_id
+    assert rebound.prepared_id == accepted.prepared_id
+    assert rebound.result_id == accepted.result_id
+    assert rebound.request is accepted.request and rebound.policy is accepted.policy
+    assert rebound.lineage is accepted.lineage and rebound.transfer is accepted.transfer
+    assert rebound.geometry_transition is accepted.geometry_transition
+
+
+@pytest.mark.parametrize("endpoint", ("source", "target"))
+def test_accepted_endpoint_rebinding_refuses_scientific_changes(
+    accepted: MeshAdaptationResult, consumed_target, endpoint: str
+) -> None:
+    from phydrax.lifecycle._meshing_field_records import (
+        rebind_meshing_adaptation_execution_endpoints,
+    )
+
+    original = accepted.source if endpoint == "source" else consumed_target
+    changed = eqx.tree_at(
+        lambda value: value.geometry.coordinates,
+        original,
+        original.geometry.coordinates + 0.125,
+    )
+    with pytest.raises(ValueError, match="changed scientific content"):
+        rebind_meshing_adaptation_execution_endpoints(
+            accepted,
+            changed if endpoint == "source" else accepted.source,
+            changed if endpoint == "target" else consumed_target,
+        )
+
+
+@pytest.mark.parametrize("history_only", (False, True))
+def test_accepted_endpoint_rebinding_refuses_unrelated_or_history_only_receipts(
+    accepted: MeshAdaptationResult, history_only: bool
+) -> None:
+    from phydrax.lifecycle._meshing_field_records import (
+        rebind_meshing_adaptation_execution_endpoints,
+    )
+    from phydrax.meshing._measurements import NativeExecutionRecord
+
+    previous = accepted.target.execution_evidence
+    assert previous is not None
+    with NativeExecutionScope(accepted.policy.limits.native_limits()) as scope:
+        pass
+    unrelated = NativeExecutionRecord(
+        scope.completed_evidence(),
+        owner_id=previous.owner_id,
+        history_evidence=(previous,) if history_only else (),
+    )
+    changed = accepted.target.with_execution_evidence(unrelated)
+    with pytest.raises(ValueError, match="actual preceding receipt"):
+        rebind_meshing_adaptation_execution_endpoints(
+            accepted, accepted.source, changed
+        )
+
+
+@pytest.fixture(scope="module")
+def admitted_epoch_request(accepted: MeshAdaptationResult):
+    import jax.numpy as jnp
+
+    from phydrax.discretization.fem._generic import FiniteElementFieldSpec, FiniteElementPlan
+    from phydrax.discretization.fem._reference import lagrange_element
+    from phydrax.meshing.qualification._envelope import prepare_envelope_accepted_epoch
+    from phydrax.meshing.qualification._native_lifecycle import execute_native_consumer
+
+    def admit(budget):
+        scalar = FiniteElementPlan(
+            accepted.target.mesh,
+            (FiniteElementFieldSpec("u", lagrange_element("triangle", 1)),),
+            coordinate_spec=accepted.target.geometry,
+            budget=budget,
+        ).prepare(budget=budget)
+        count = scalar.dof_maps[0].global_dof_count
+        return prepare_envelope_accepted_epoch(
+            accepted.target, scalar, jnp.zeros(count, dtype=jnp.float64),
+            (jnp.ones(count, dtype=jnp.float64), scalar.dof_maps[0].dof_coordinates[:, 0]),
+            1, part_name="domain", transition=accepted, budget=budget,
+        )
+
+    def fail(stage, message, data):
+        return ValueError(f"{stage}: {message}; {data}")
+
+    return execute_native_consumer(
+        accepted.target, accepted.policy.limits, admit, failure_factory=fail,
+    )
+
+
+def test_adaptation_epoch_receipt_sealing_preserves_admitted_banks_without_reproof(
+    admitted_epoch_request, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.lifecycle import _meshing_field_records as field_owner
+
+    epoch, carrier = admitted_epoch_request.value, admitted_epoch_request.result
+    transition = epoch.transition
+    assert isinstance(transition, MeshAdaptationResult)
+    continued = field_owner.rebind_meshing_adaptation_execution_endpoints(
+        transition, transition.source, carrier
+    )
+
+    def reproof_forbidden(*args, **kwargs):
+        pytest.fail("receipt sealing must not reprepare geometry or field owners")
+
+    monkeypatch.setattr(field_owner, "_validate_field_owner_banks", reproof_forbidden)
+    sealed = field_owner.rebind_meshing_accepted_epoch_execution(
+        epoch, carrier, transition=continued
+    )
+    assert sealed.carrier is carrier
+    assert sealed.transition is continued
+    assert sealed.declarations is epoch.declarations
+    assert sealed.fields is epoch.fields
+    assert sealed.epoch_id == epoch.epoch_id
+
+
+@pytest.mark.parametrize("defect", ("missing", "changed-request"))
+def test_adaptation_epoch_receipt_sealing_refuses_changed_history(
+    admitted_epoch_request, defect: str,
+) -> None:
+    from phydrax.lifecycle import _meshing_field_records as field_owner
+
+    epoch, carrier = admitted_epoch_request.value, admitted_epoch_request.result
+    transition = epoch.transition
+    assert isinstance(transition, MeshAdaptationResult)
+    continued = field_owner.rebind_meshing_adaptation_execution_endpoints(
+        transition, transition.source, carrier
+    )
+    changed = None if defect == "missing" else eqx.tree_at(
+        lambda value: value.request, continued, MarkedMeshAdaptation()
+    )
+    with pytest.raises(ValueError, match="transition"):
+        field_owner.rebind_meshing_accepted_epoch_execution(
+            epoch, carrier, transition=changed
+        )

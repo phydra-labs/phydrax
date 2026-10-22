@@ -15,9 +15,11 @@ import math
 import subprocess
 import sys
 import textwrap
+from collections.abc import Iterator
 from itertools import permutations
 from pathlib import Path
 from typing import Literal
+from unittest.mock import patch
 
 import equinox as eqx
 import jax
@@ -27,6 +29,12 @@ import pytest
 
 import phydrax as phx
 from phydrax._external_resource import ResourceLimits
+from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
+from phydrax.geometry.brep import _correspondence as correspondence_owner
 from phydrax.geometry.brep import BRepQueryBudget, BRepQueryResourceError
 from phydrax.geometry.brep._constructors import reversed_bspline
 from phydrax.geometry.brep._correspondence import certify_curve_surface
@@ -1036,6 +1044,259 @@ def test_closed_meridian_seam_lifts_exactly_only_with_its_closure_proof(
             tolerance=0.0,
         )
         assert (result.deviation_bound == 0.0 and not result.unresolved) is lifts
+
+
+@pytest.fixture
+def correspondence_budget() -> Iterator[CoordinateEnclosureBudget]:
+    with HostBatchTicket(100_000_000, bytes_upper=128 << 20) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=100_000_000, maximum_memory_bytes=128 << 20
+        )
+        with budget.activate():
+            yield budget
+
+
+def _correspondence_sources() -> tuple[
+    SurfaceIsoparametricCurve,
+    phx.geometry.LineCurve,
+    phx.geometry.BSplineSurfacePatch,
+    np.ndarray,
+]:
+    # A genuine nonzero source gap needs the interval proof, not a generating
+    # identity: the face's z coordinate is u*v/1024 and the edge's is zero.
+    return (
+        SurfaceIsoparametricCurve(
+            phx.geometry.PlanePatch((0, 0, 0), (1, 1, 0), (0, 0, 1)),
+            1, 0.0, parameter_range=(0.0, 1.0),
+        ),
+        phx.geometry.LineCurve((0.0, 0.0), (1.0, 1.0)),
+        phx.geometry.BSplineSurfacePatch(
+            (((0, 0, 0), (0, 1, 0)), ((1, 0, 0), (1, 1, 1 / 1024))),
+            np.ones((2, 2)),
+            (0, 0, 1, 1),
+            (0, 0, 1, 1),
+            1,
+            1,
+        ),
+        np.asarray(((0.0, 0.0), (1.0, 1.0))),
+    )
+
+
+def test_native_correspondence_reuses_only_one_budget(
+    correspondence_budget: CoordinateEnclosureBudget,
+) -> None:
+    sources = _correspondence_sources()
+    point = np.zeros(3)
+    with (
+        patch.object(
+            correspondence_owner, "_execute_correspondence_workset",
+            wraps=correspondence_owner._execute_correspondence_workset,
+        ) as execute,
+        patch.object(
+            correspondence_owner, "_generating_correspondence",
+            wraps=correspondence_owner._generating_correspondence,
+        ) as generating,
+    ):
+        original = certify_curve_surface(
+            *sources, 0.0, 1.0, point=point, tolerance=0.1,
+            budget=correspondence_budget,
+        )
+        assert original.complete and original.deviation_bound > 0.0
+        retained = correspondence_budget.retained_basis_bytes
+        repeated = certify_curve_surface(
+            *sources, 0.0, 1.0, point=point, tolerance=0.1,
+            budget=correspondence_budget,
+        )
+        assert repeated is original
+        assert correspondence_budget.retained_basis_bytes == retained
+        assert generating.call_count == 2
+        assert execute.call_count == 1
+        # Equal source data does not carry a certificate into a new request.
+        with HostBatchTicket(100_000_000, bytes_upper=128 << 20) as ticket:
+            cold = CoordinateEnclosureBudget(
+                ticket, maximum_work_units=100_000_000, maximum_memory_bytes=128 << 20
+            )
+            with cold.activate():
+                independent = certify_curve_surface(
+                    *sources, 0.0, 1.0, point=point, tolerance=0.1, budget=cold,
+                )
+        assert independent == original and independent is not original
+        assert execute.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "changed",
+    ("curve", "mutable", "pcurve", "surface", "static", "box", "point", "range",
+     "tolerance", "maximum_intervals"),
+)
+def test_native_correspondence_key_binds_live_sources_and_controls(
+    changed: str, correspondence_budget: CoordinateEnclosureBudget,
+) -> None:
+    curve, pcurve, surface, box = _correspondence_sources()
+    plane = curve.surface
+    assert isinstance(plane, phx.geometry.PlanePatch)
+    point = np.zeros(3)
+    mutable_origin = np.zeros(3)
+    if changed == "mutable":
+        mutable_plane = eqx.tree_at(lambda source: source.origin, plane, mutable_origin)
+        curve = eqx.tree_at(lambda source: source.surface, curve, mutable_plane)
+    first, last, tolerance, maximum_intervals = 0.125, 0.875, 0.1, 128
+    with patch.object(
+        correspondence_owner, "_execute_correspondence_workset",
+        wraps=correspondence_owner._execute_correspondence_workset,
+    ) as execute:
+        original = certify_curve_surface(
+            curve, pcurve, surface, box, first, last, point=point,
+            tolerance=tolerance, maximum_intervals=maximum_intervals,
+            budget=correspondence_budget,
+        )
+        assert original.complete
+        if changed == "curve":
+            changed_plane = eqx.tree_at(
+                lambda source: source.origin, plane, plane.origin.at[2].set(1 / 2048)
+            )
+            curve = eqx.tree_at(lambda source: source.surface, curve, changed_plane)
+        elif changed == "mutable":
+            mutable_origin[2] = 1 / 2048
+        elif changed == "pcurve":
+            pcurve = eqx.tree_at(lambda source: source.direction, pcurve,
+                                 pcurve.direction.at[0].set(0.99))
+        elif changed == "surface":
+            surface = eqx.tree_at(
+                lambda source: source.control_points, surface,
+                surface.control_points.at[1, 1, 2].set(1 / 512),
+            )
+        elif changed == "static":
+            curve = SurfaceIsoparametricCurve(
+                plane, 1, 1 / 2048, parameter_range=(0.0, 1.0)
+            )
+        elif changed == "box":
+            box[1, 0] = 0.99
+        elif changed == "point":
+            point[2] = 1 / 2048
+        elif changed == "range":
+            first, last = 0.25, 0.75
+        elif changed == "tolerance":
+            tolerance = 0.05
+        else:
+            maximum_intervals = 256
+        result = certify_curve_surface(
+            curve, pcurve, surface, box, first, last, point=point,
+            tolerance=tolerance, maximum_intervals=maximum_intervals,
+            budget=correspondence_budget,
+        )
+        assert result.complete and result is not original
+        assert execute.call_count == 2
+        assert len(correspondence_budget.brep_correspondence_cache) == 2
+
+
+def test_native_correspondence_does_not_reuse_incomplete_proofs(
+    correspondence_budget: CoordinateEnclosureBudget,
+) -> None:
+    sources = _correspondence_sources()
+    with patch.object(
+        correspondence_owner, "_execute_correspondence_workset",
+        wraps=correspondence_owner._execute_correspondence_workset,
+    ) as execute:
+        for _ in range(2):
+            result = certify_curve_surface(
+                *sources, 0.0, 1.0, point=np.zeros(3), tolerance=1e-12,
+                maximum_intervals=1, budget=correspondence_budget,
+            )
+            assert not result.complete and result.unresolved
+        assert execute.call_count == 2
+        assert not correspondence_budget.brep_correspondence_cache
+
+
+def test_native_correspondence_hit_preserves_control_and_range_checks(
+    correspondence_budget: CoordinateEnclosureBudget,
+) -> None:
+    curve, _, surface, box = _correspondence_sources()
+    pcurve = phx.geometry.BSplineCurve.bezier(((0, 0), (1, 1)), (1, 1))
+    original = certify_curve_surface(
+        curve, pcurve, surface, box, 0.0, 1.0, point=np.zeros(3), tolerance=0.1,
+        budget=correspondence_budget,
+    )
+    assert original.complete
+    with pytest.raises(ValueError, match="controls"):
+        certify_curve_surface(
+            curve, pcurve, surface, box, 0.0, 1.0, point=np.zeros(3), tolerance=-1.0,
+            budget=correspondence_budget,
+        )
+    with pytest.raises(ValueError):
+        certify_curve_surface(
+            curve, pcurve, surface, box, -0.1, 1.0, point=np.zeros(3), tolerance=0.1,
+            budget=correspondence_budget,
+        )
+
+
+def test_native_correspondence_hit_preserves_byte_admission(
+    correspondence_budget: CoordinateEnclosureBudget,
+) -> None:
+    sources = _correspondence_sources()
+    original = certify_curve_surface(
+        *sources, 0.0, 1.0, point=np.zeros(3), tolerance=0.1,
+        budget=correspondence_budget,
+    )
+    assert original.complete
+    with correspondence_budget.bound_stage(
+        100_000_000, correspondence_budget.retained_basis_bytes,
+    ):
+        with pytest.raises(CoordinateEnclosureResourceError):
+            certify_curve_surface(
+                *sources, 0.0, 1.0, point=np.zeros(3), tolerance=0.1,
+                budget=correspondence_budget,
+            )
+
+
+def test_native_correspondence_cold_proof_preserves_work_refusal() -> None:
+    sources = _correspondence_sources()
+    with HostBatchTicket(0, bytes_upper=128 << 20) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=0, maximum_memory_bytes=128 << 20
+        )
+        with budget.activate(), pytest.raises(CoordinateEnclosureResourceError):
+            certify_curve_surface(
+                *sources, 0.0, 1.0, point=np.zeros(3), tolerance=0.1, budget=budget,
+            )
+        assert not budget.brep_correspondence_cache
+
+
+@pytest.mark.parametrize("warm", (False, True), ids=("new-proof", "cache-hit"))
+def test_native_correspondence_polls_deadline_before_return(
+    warm: bool, correspondence_budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources = _correspondence_sources()
+    if warm:
+        assert certify_curve_surface(
+            *sources, 0.0, 1.0, point=np.zeros(3), tolerance=0.1,
+            budget=correspondence_budget,
+        ).complete
+    expired = warm
+    original_checkpoint = HostBatchTicket.checkpoint
+    original_execute = correspondence_owner._execute_correspondence_workset
+
+    def checkpoint(ticket: HostBatchTicket) -> None:
+        original_checkpoint(ticket)
+        if expired:
+            raise TimeoutError("correspondence deadline")
+
+    def execute(*args, **kwargs):
+        nonlocal expired
+        result = original_execute(*args, **kwargs)
+        expired = True
+        return result
+
+    monkeypatch.setattr(HostBatchTicket, "checkpoint", checkpoint)
+    monkeypatch.setattr(correspondence_owner, "_execute_correspondence_workset", execute)
+    with pytest.raises(TimeoutError, match="correspondence deadline"):
+        certify_curve_surface(
+            *sources, 0.0, 1.0, point=np.zeros(3), tolerance=0.1,
+            budget=correspondence_budget,
+        )
+    assert len(correspondence_budget.brep_correspondence_cache) == int(warm)
+    expired = False
 
 
 @pytest.mark.parametrize("format_name", ["step", "iges", "brep"])

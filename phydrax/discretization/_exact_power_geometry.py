@@ -424,17 +424,10 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
                     "ExactPowerCellGeometrySource.periodic_preparation must match current source leaves; got different source bytes"
                 )
         identity = self.source_id
-        cached = budget.power_witness_cache.get(identity)
+        cached = _reuse_power_witness(
+            identity, rounded, "ExactPowerCellGeometrySource", budget=budget
+        )
         if cached is not None:
-            # The full current source content owns the proof, but a caller's
-            # rounded carrier is independently checked on every reuse.
-            budget.reserve(0 if rounded is None else 6 * len(cached.vertices))
-            if rounded is not None and not np.array_equal(
-                cached.rounded_vertices.view(np.uint64), rounded.view(np.uint64)
-            ):
-                raise ValueError(
-                    "ExactPowerCellGeometrySource.rounded_vertices must equal RNE source intersections; got different coordinate bits"
-                )
             return cached
         exact_work = _ExactPowerBudget(
             self.maximum_work, self.maximum_bits, budget=budget
@@ -451,24 +444,35 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             )
             points, weights = images.points, images.weights
 
-        for row in np.asarray(self.carrier_tets).tolist():
-            matrix = tuple(
-                tuple(
-                    carrier[row[column + 1]][axis] - carrier[row[0]][axis]
+        # Full carrier rank is exactly a nonzero edge determinant; no solution
+        # is consumed, so the exact cofactor substrate charges nine differences
+        # and its fourteen operations instead of an elimination.
+        tet_rows = np.asarray(self.carrier_tets, dtype=np.int64)
+        for row in tet_rows.tolist():
+            determinant = imported_linalg__small_batched.exact_cofactor_determinant_3(
+                *(
+                    tuple(
+                        carrier[row[column + 1]][axis] - carrier[row[0]][axis]
+                        for axis in range(3)
+                    )
                     for column in range(3)
                 )
-                for axis in range(3)
             )
-            exact_work.charge(4 * 3**3)
-            rank = imported_linalg__small_batched.prepare_exact_small_linear_actions(
-                matrix, ((Fraction(0),),) * 3, budget=budget
-            )
-            exact_work.charge(0, (rank.determinant,))
-            if not rank.successful:
+            exact_work.charge(9 + 14, (determinant,))
+            if determinant == 0:
                 raise ValueError(
                     "ExactPowerCellGeometrySource.carrier_tets must have full source rank; got deficient rank"
                 )
-        tets = tuple(frozenset(row) for row in np.asarray(self.carrier_tets).tolist())
+        # Index carrier tetrahedra by corner once; a vertex simplex is authored
+        # exactly when a tetrahedron incident to its first corner contains it.
+        corners = tet_rows.reshape(-1)
+        exact_work.charge(corners.size)
+        budget.reserve(0, 8 * (3 * corners.size + len(carrier) + 1))
+        incident_order = np.argsort(corners, kind="stable")
+        incident_tets = incident_order // 4
+        incident_offsets = np.searchsorted(
+            corners[incident_order], np.arange(len(carrier) + 1)
+        )
 
         offsets, sites = (
             np.asarray(self.vertex_site_offsets),
@@ -481,8 +485,14 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             budget.reserve_geometry_queries(1)
             equal = tuple(sites[offsets[vertex] : offsets[vertex + 1]].tolist())
             indices = tuple(simplex[simplex >= 0].tolist())
-            exact_work.charge(len(tets))
-            if not any(frozenset(indices) <= tet for tet in tets):
+            first = indices[0] if indices and 0 <= indices[0] < len(carrier) else None
+            incident = (
+                incident_tets[:0]
+                if first is None
+                else incident_tets[incident_offsets[first] : incident_offsets[first + 1]]
+            )
+            exact_work.charge(len(incident) * len(indices))
+            if not any(set(indices) <= set(tet_rows[tet].tolist()) for tet in incident):
                 raise ValueError(
                     "ExactPowerCellGeometrySource.vertex_carriers must name an authored tetrahedral simplex; got a foreign simplex"
                 )
@@ -527,9 +537,60 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             rounding_error,
             tuple(conditions),
         )
-        budget.retain_basis((identity, prepared))
-        budget.power_witness_cache[identity] = prepared
-        return prepared
+        return _retain_power_witness(prepared, budget=budget)
+
+
+def _reuse_power_witness(
+    identity: str,
+    rounded: np.ndarray | None,
+    owner: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> PreparedExactPowerGeometry | None:
+    """Return this request's earned construction for the full source identity.
+
+    The identity covers every source array, parent identity and control, so the
+    retained proof is the same construction; a caller's rounded carrier is
+    still checked bitwise against it on every reuse.
+    """
+    cached = budget.power_witness_cache.get(identity)
+    if cached is None:
+        return None
+    budget.reserve(0 if rounded is None else 6 * len(cached.vertices))
+    if rounded is not None and not np.array_equal(
+        cached.rounded_vertices.view(np.uint64), rounded.view(np.uint64)
+    ):
+        raise ValueError(
+            f"{owner}.rounded_vertices must equal RNE source construction; got different coordinate bits"
+        )
+    return cached
+
+
+def _power_witness_operand_basis(
+    prepared: PreparedExactPowerGeometry, /,
+) -> tuple[object, ...]:
+    """Expose only the exact construction's immutable numerical inputs."""
+    return (
+        prepared.source_id, prepared.vertices, prepared.barycentric,
+        prepared.operation_count, prepared.maximum_integer_bits,
+        prepared.maximum_rounding_error, prepared.condition_upper_bounds,
+    )
+
+
+def _retain_power_witness(
+    prepared: PreparedExactPowerGeometry, /, *, budget: CoordinateEnclosureBudget
+) -> PreparedExactPowerGeometry:
+    if budget.capture_coordinate_operands:
+        # Earn the numeric tuple's profile before the enclosing result retains
+        # its children. No membership, coverage, or certification is captured.
+        budget.retain_basis(
+            _power_witness_operand_basis(prepared), operand=True,
+            _kernel_operands=True,
+        )
+    budget.retain_basis((prepared.source_id, prepared))
+    budget.power_witness_cache[prepared.source_id] = prepared
+    return prepared
 
 
 class _ExactPowerBudget:
@@ -545,7 +606,23 @@ class _ExactPowerBudget:
         self.work, self.bits = 0, 0
         self.enclosure = budget
 
+    def admit(self, work: int, /) -> None:
+        """Admit an owner-charged upper bound without counting it as completed."""
+        if self.work + work > self.maximum_work:
+            raise ValueError(
+                f"ExactPowerCellGeometrySource.maximum_work must admit construction work budget; got {self.work + work} > {self.maximum_work}"
+            )
+        self.enclosure.admit_work_bound(work)
+
+    def completed(self, work: int, values: tuple[Fraction, ...] = (), /) -> None:
+        """Count work its owning substrate already charged to the enclosure."""
+        self._observe(work, values)
+
     def charge(self, work: int, values: tuple[Fraction, ...] = (), /) -> None:
+        self._observe(work, values)
+        self.enclosure.reserve(work)
+
+    def _observe(self, work: int, values: tuple[Fraction, ...], /) -> None:
         self.work += work
         self.bits = (
             max(
@@ -566,7 +643,6 @@ class _ExactPowerBudget:
             raise ValueError(
                 f"ExactPowerCellGeometrySource.maximum_bits must admit construction integer-bit width; got {self.bits} > {self.maximum_bits}"
             )
-        self.enclosure.reserve(work)
 
 
 def _prepare_vertex(
@@ -613,10 +689,12 @@ def _prepare_vertex(
     for selected in combinations(range(len(planes)), size - 1):
         matrix = ((Fraction(1),) * size, *(equations[index] for index in selected))
         right = ((Fraction(1),), *((planes[index][1],) for index in selected))
-        exact_work.charge(4 * size**3)
+        exact_work.admit(4 * size**3)
+        completed = budget.work_units
         solved = imported_linalg__small_batched.prepare_exact_small_linear_actions(
             matrix, right, budget=budget
         )
+        exact_work.completed(budget.work_units - completed)
         if solved.actions is not None:
             coefficients = tuple(row[0] for row in solved.actions)
             row_scale = math.prod(max(abs(value) for value in row) for row in matrix)
@@ -749,22 +827,13 @@ def _prepare_power_images(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _PowerSites:
-    matrices = tuple(
-        tuple(rational_vector(row) for row in matrix) for matrix in preparation.generators
+    actions = _prepare_power_actions(
+        preparation, preparation.image_exponents, exact_work, budget=budget
     )
     images = []
     image_weights = []
-    for owner, exponents in zip(
-        preparation.image_sites, preparation.image_exponents, strict=True
-    ):
+    for owner, action in zip(preparation.image_sites, actions, strict=True):
         budget.reserve_geometry_queries(1)
-        action = _prepare_power_action(
-            matrices,
-            preparation.orders,
-            tuple(int(value) for value in exponents),
-            exact_work,
-            budget=budget,
-        )
         point = points[int(owner)]
         image = tuple(
             sum(
@@ -779,48 +848,49 @@ def _prepare_power_images(
     return _PowerSites(tuple(images), tuple(image_weights))
 
 
-def _prepare_power_action(
-    matrices: tuple[tuple[tuple[Fraction, ...], ...], ...],
-    orders: tuple[int, ...],
-    exponents: tuple[int, ...],
+def _prepare_power_actions(
+    preparation: PeriodicPowerPreparation,
+    exponents: ArrayLike,
     exact_work: _ExactPowerBudget,
+    /,
     *,
     budget: CoordinateEnclosureBudget,
-) -> tuple[tuple[Fraction, ...], ...]:
-    """Charge group-action term visits, including refusal prefixes."""
-
-    ledger = budget
-    start = ledger.work_units
-    visits = 16
-    for order, exponent in zip(orders, exponents, strict=True):
-        if order:
-            exponent %= order
-            visits += (
-                16 + 64 * (exponent.bit_count() + max(0, exponent.bit_length() - 1)) + 64
-            )
-        else:
-            visits += 16 + 3 + 64
+) -> tuple[periodic_exact_owner.ExactIsometry, ...]:
+    """Evaluate each distinct retained group word once, charging refusal prefixes."""
+    lattice = periodic_exact_owner.ExactPeriodicActionLattice(
+        tuple(
+            tuple(rational_vector(row) for row in matrix)
+            for matrix in preparation.generators
+        ),
+        preparation.orders,
+    )
+    start = budget.work_units
     try:
         with (
-            ledger.activate(),
-            ledger.bound_stage(
+            budget.activate(),
+            budget.bound_stage(
                 max(0, exact_work.maximum_work - exact_work.work),
-                ledger.maximum_memory_bytes,
+                budget.maximum_memory_bytes,
                 starting_work_units=start,
             ),
-            ledger.temporary_scope(),
+            budget.temporary_scope(),
         ):
-            ledger.admit_work_bound(visits)
-            ledger.reserve(0, 48 * (128 + 2 * ((exact_work.maximum_bits + 7) // 8)))
-            action = periodic_exact_owner.exact_periodic_element(
-                matrices, orders, exponents, budget=budget
+            budget.reserve(0, 48 * (128 + 2 * ((exact_work.maximum_bits + 7) // 8)))
+            actions = lattice.prepare(
+                np.asarray(exponents, dtype=np.int64).tolist(), budget=budget
             )
     finally:
-        work = ledger.work_units - start
-        exact_work.work += work
-
-    exact_work.charge(0, tuple(value for row in action for value in row))
-    return action
+        exact_work.work += budget.work_units - start
+    exact_work.charge(
+        0,
+        tuple(
+            value
+            for action in lattice.elements.values()
+            for row in action
+            for value in row
+        ),
+    )
+    return actions
 
 
 class _RestrictedPowerVertex(StrictModule):
@@ -1125,23 +1195,25 @@ class ExactPowerCellGeometryLinearActionSource(StrictModule, NonTrainableState):
             raise ValueError(
                 f"ExactPowerCellGeometryLinearActionSource.rounded_vertices must align with source rows and be finite; got {rounded.shape}"
             )
-        matrices = (
-            ()
+        cached = _reuse_power_witness(
+            self.construction_id,
+            rounded,
+            "ExactPowerCellGeometryLinearActionSource",
+            budget=budget,
+        )
+        if cached is not None:
+            return cached
+        actions = (
+            None
             if preparation is None
-            else tuple(
-                tuple(rational_vector(row) for row in matrix)
-                for matrix in preparation.generators
+            else _prepare_power_actions(
+                preparation, self.vertex_actions, exact_work, budget=budget
             )
         )
         result, conditions = [], []
         error = Fraction(0)
-        for vertex, (indices, coefficients, exponents) in enumerate(
-            zip(
-                np.asarray(self.vertex_parents),
-                self.vertex_coefficients,
-                np.asarray(self.vertex_actions),
-                strict=True,
-            )
+        for vertex, (indices, coefficients) in enumerate(
+            zip(np.asarray(self.vertex_parents), self.vertex_coefficients, strict=True)
         ):
             budget.reserve_geometry_queries(1)
             active = indices >= 0
@@ -1160,16 +1232,10 @@ class ExactPowerCellGeometryLinearActionSource(StrictModule, NonTrainableState):
                 for axis in range(3)
             )
             exact_work.charge(6 * len(indices), (*original, *coefficients))
-            if preparation is None:
+            if actions is None:
                 point = original
             else:
-                action = _prepare_power_action(
-                    matrices,
-                    preparation.orders,
-                    tuple(int(value) for value in exponents),
-                    exact_work,
-                    budget=budget,
-                )
+                action = actions[vertex]
                 point = tuple(
                     sum(
                         (action[axis][column] * original[column] for column in range(3)),
@@ -1198,15 +1264,16 @@ class ExactPowerCellGeometryLinearActionSource(StrictModule, NonTrainableState):
             conditions.append(
                 max(parent.condition_upper_bounds[int(index)] for index in indices)
             )
-        return PreparedExactPowerGeometry(
+        prepared = PreparedExactPowerGeometry(
             tuple(result),
             self.vertex_coefficients,
-            self.source_id,
+            self.construction_id,
             exact_work.work,
             exact_work.bits,
             error,
             tuple(conditions),
         )
+        return _retain_power_witness(prepared, budget=budget)
 
 
 @final
@@ -1379,6 +1446,12 @@ class ExactPowerCellGeometryRestrictionSource(StrictModule, NonTrainableState):
             raise ValueError(
                 f"ExactPowerCellGeometryRestrictionSource.rounded_vertices must align with vertex rows and be finite; got {rounded.shape}"
             )
+        identity = self.source_id
+        cached = _reuse_power_witness(
+            identity, rounded, "ExactPowerCellGeometryRestrictionSource", budget=budget
+        )
+        if cached is not None:
+            return cached
         planes = tuple(rational_vector(row) for row in np.asarray(self.planes))
         result, barycentric, conditions = [], [], []
         error = Fraction(0)
@@ -1425,15 +1498,16 @@ class ExactPowerCellGeometryRestrictionSource(StrictModule, NonTrainableState):
             result.append(point)
             barycentric.append(coefficients)
             conditions.append(condition)
-        return PreparedExactPowerGeometry(
+        prepared = PreparedExactPowerGeometry(
             tuple(result),
             tuple(barycentric),
-            self.source_id,
+            identity,
             exact_work.work,
             exact_work.bits,
             error,
             tuple(conditions),
         )
+        return _retain_power_witness(prepared, budget=budget)
 
 
 def _power_vertex_count(

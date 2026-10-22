@@ -285,6 +285,24 @@ Mesh certificate checks
     "failure_statuses": [
       "violated"
     ]
+  },
+  {
+    "owner": "phydrax.geometry._domain_coverage._execute_nested_coverage",
+    "checks": ["nested_domain_coverage"],
+    "premises": [
+      {"tag": "X", "statement": "The complete oriented source coverage was actually issued for the current full source mesh, geometry, domain, material assignment, embedding and policy, and its complete report content is authenticated."},
+      {"tag": "X", "statement": "The current explicit ledger earned the final target embedding after the existing exact contained-positive parent partition, complete lower-dimensional source stars, full facet cancellation and source-global boundary closure; reconstructed reports and other ledgers confer no authority."},
+      {"tag": "X", "statement": "Source parents have the canonical P1 corner law; every current target cell names its actual ordered source parent and inherits exactly that parent's declared region."},
+      {"tag": "N", "statement": "Every exterior or material-interface target facet is bound on all incident sides to one actual source facet. Transported source relations retain only conservative candidate upper bounds, never measured child areas or final membership verdicts."}
+    ],
+    "conclusion": "The exact closed regional partition preserves every declared region and its oriented exterior/interface boundary, so the issued source integrals and complete source cover transfer to the current target with fresh work evidence and explicit source/partition premises. Every surviving regional boundary lies on a covered source-parent facet; source-supported child-face enumeration is therefore complete without traversing canceled same-region target interiors again.",
+    "citation": {
+      "kind": "mathematical",
+      "reference": "John K. Hunter, Notes on Partial Differential Equations",
+      "locator": "Theorems 1.38 and 1.40: change of variables and cancellation of oriented internal boundaries, with the existing closed-cell parent-partition theorem",
+      "url": "https://www.math.ucdavis.edu/~hunter/m218a_09/pde_notes.pdf"
+    },
+    "failure_statuses": []
   }
 ]
 End mesh certificate checks
@@ -295,9 +313,9 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from contextlib import ExitStack
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from fractions import Fraction
-from typing import assert_never, final, Literal, Protocol, TypeAlias
+from typing import assert_never, cast, final, Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import numpy as np
@@ -328,10 +346,14 @@ from .._fingerprint import (
     canonical_fingerprint,
     tree_content_equal,
 )
+from .._issued_proofs import IssuedProofs
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, nonnegative_integer, unique_identifiers
+from ..discretization._cell_complex import POLYHEDRAL_FACE_ROUTES, TetrahedralConnectivity
 from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
@@ -365,9 +387,9 @@ from ._global_embedding import (
     cell_global_ids,
     coordinate_scope,
     degenerate_simplices,
-    exact_source_predicate_view,
     GlobalEmbeddingCertificate,
     mesh_orient2d,
+    source_bank_predicate_view,
 )
 from ._mesh_certificates import (
     active_expression_work,
@@ -424,15 +446,275 @@ type CoverageOverlapKey = tuple[
 ]
 
 
-type _CoverageOverlap = tuple[
-    int,
-    int,
-    tuple[int, ...],
-    float,
-    float,
-    CoverageOverlapSemantics,
-    CoverageCoordinateSpace,
-]
+_OVERLAP_SEMANTICS: tuple[CoverageOverlapSemantics, ...] = ("candidate", "exact")
+_COORDINATE_SPACES: tuple[CoverageCoordinateSpace, ...] = ("physical", "reference")
+_INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+
+
+def _overlap_column(value: object, dtype: type, rank: int, name: str) -> np.ndarray:
+    """Copy one exact-dtype host column into a read-only C-contiguous bank."""
+    array = np.asarray(value)
+    if array.dtype != dtype or array.ndim != rank:
+        raise TypeError(
+            f"CoverageOverlapBank.{name} must be a rank-{rank} {np.dtype(dtype).name} array; got dtype={array.dtype}, shape={array.shape}"
+        )
+    column = np.array(array, dtype=dtype, order="C", copy=True)
+    column.setflags(write=False)
+    return column
+
+
+def _overlap_dictionary[Value: str](
+    values: object, allowed: tuple[Value, ...], codes: np.ndarray, name: str
+) -> tuple[Value, ...]:
+    """Require the sorted present-value dictionary addressed by every code."""
+    if not isinstance(values, tuple) or any(type(value) is not str for value in values):
+        raise TypeError(
+            f"CoverageOverlapBank.{name} must be a tuple of value strings; got {values!r}"
+        )
+    dictionary = tuple(sorted(value for value in allowed if value in values))
+    if dictionary != values:
+        raise ValueError(
+            f"CoverageOverlapBank.{name} must list sorted unique declared values; got {values!r}"
+        )
+    if not np.array_equal(
+        np.unique(codes), np.arange(len(dictionary), dtype=codes.dtype)
+    ):
+        raise ValueError(
+            f"CoverageOverlapBank.{name} codes must address and use every present value; got unused or out-of-range codes"
+        )
+    return dictionary
+
+
+def _strictly_increasing_rows(columns: tuple[np.ndarray, ...], count: int, /) -> bool:
+    """Whether consecutive rows strictly increase in lexicographic column order."""
+    if count < 2:
+        return True
+    decided = np.zeros((count - 1,), dtype=np.bool_)
+    increasing = np.zeros((count - 1,), dtype=np.bool_)
+    for column in columns:
+        before, after = column[:-1], column[1:]
+        less = before < after
+        increasing |= ~decided & less
+        decided |= less | (before > after)
+    return bool(np.all(increasing))
+
+
+@final
+class CoverageOverlapBank(StrictModule, NonTrainableState):
+    """Canonical facet-source overlap rows of one coverage certificate.
+
+    Row ``r`` relates target facet global ID ``facets[r]`` to declared source
+    facet row ``sources[r]`` on the projection ``axes[r]`` with projected overlap
+    bounds ``lower[r] <= upper[r]``. Its ``CoverageOverlapSemantics`` is
+    ``semantic_values[semantic_codes[r]]`` and its ``CoverageCoordinateSpace``
+    ``space_values[space_codes[r]]``; each dictionary lists exactly the present
+    values in sorted order. Columns are read-only C-contiguous host arrays and
+    rows strictly increase in lexicographic (facet, source, axes, lower, upper,
+    semantics, space) order. Bounds are the binary64 reports of the exact
+    relation measures; candidate rows report a zero lower bound.
+    """
+
+    facets: np.ndarray
+    sources: np.ndarray
+    axes: np.ndarray
+    lower: np.ndarray
+    upper: np.ndarray
+    semantic_codes: np.ndarray
+    space_codes: np.ndarray
+    semantic_values: tuple[CoverageOverlapSemantics, ...] = eqx.field(static=True)
+    space_values: tuple[CoverageCoordinateSpace, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        facets: np.ndarray,
+        sources: np.ndarray,
+        axes: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        semantic_codes: np.ndarray,
+        semantic_values: tuple[CoverageOverlapSemantics, ...],
+        space_codes: np.ndarray,
+        space_values: tuple[CoverageCoordinateSpace, ...],
+    ) -> None:
+        facet_rows = _overlap_column(facets, np.int64, 1, "facets")
+        source_rows = _overlap_column(sources, np.int64, 1, "sources")
+        axis_rows = _overlap_column(axes, np.int64, 2, "axes")
+        lower_rows = _overlap_column(lower, np.float64, 1, "lower")
+        upper_rows = _overlap_column(upper, np.float64, 1, "upper")
+        semantic_rows = _overlap_column(semantic_codes, np.int32, 1, "semantic_codes")
+        space_rows = _overlap_column(space_codes, np.int32, 1, "space_codes")
+        count = facet_rows.shape[0]
+        if (
+            any(
+                column.shape != (count,)
+                for column in (
+                    source_rows,
+                    lower_rows,
+                    upper_rows,
+                    semantic_rows,
+                    space_rows,
+                )
+            )
+            or axis_rows.shape[0] != count
+            or axis_rows.shape[1] < 1
+        ):
+            raise ValueError(
+                "CoverageOverlapBank.columns must align one row per overlap with at least one projection axis; got inconsistent shapes"
+            )
+        semantic_dictionary = _overlap_dictionary(
+            semantic_values, _OVERLAP_SEMANTICS, semantic_rows, "semantic_values"
+        )
+        space_dictionary = _overlap_dictionary(
+            space_values, _COORDINATE_SPACES, space_rows, "space_values"
+        )
+        if np.any(source_rows < 0) or np.any(axis_rows < 0):
+            raise ValueError(
+                "CoverageOverlapBank.sources and axes must be nonnegative row and axis indices; got negative entries"
+            )
+        if count and np.any(np.diff(np.sort(axis_rows, axis=1), axis=1) == 0):
+            raise ValueError(
+                "CoverageOverlapBank.axes must name distinct projection axes in every row; got repeated axes"
+            )
+        if not (
+            np.all(np.isfinite(lower_rows))
+            and np.all(np.isfinite(upper_rows))
+            and np.all(lower_rows >= 0.0)
+            and np.all(lower_rows <= upper_rows)
+        ):
+            raise ValueError(
+                "CoverageOverlapBank.lower and upper must be finite ordered nonnegative bounds; got malformed bounds"
+            )
+        if not _strictly_increasing_rows(
+            (
+                facet_rows,
+                source_rows,
+                *(axis_rows[:, axis] for axis in range(axis_rows.shape[1])),
+                lower_rows,
+                upper_rows,
+                semantic_rows,
+                space_rows,
+            ),
+            count,
+        ):
+            raise ValueError(
+                "CoverageOverlapBank.rows must follow strict canonical lexicographic ordering; got unsorted or repeated overlaps"
+            )
+        self.facets = facet_rows
+        self.sources = source_rows
+        self.axes = axis_rows
+        self.lower = lower_rows
+        self.upper = upper_rows
+        self.semantic_codes = semantic_rows
+        self.space_codes = space_rows
+        self.semantic_values = semantic_dictionary
+        self.space_values = space_dictionary
+
+    @classmethod
+    def from_relations(
+        cls: type[CoverageOverlapBank],
+        relations: dict[CoverageOverlapKey, Fraction],
+        axis_count: int,
+        /,
+    ) -> CoverageOverlapBank:
+        """Report exact relation measures in canonical key order."""
+        items = sorted(relations.items())
+        count = len(items)
+        identifiers = [value for key, _ in items for value in key[:2]]
+        if identifiers and (
+            min(identifiers) < _INT64_MIN or max(identifiers) > _INT64_MAX
+        ):
+            raise ValueError(
+                "CoverageOverlapBank.facets and sources must fit int64; got an out-of-range identifier"
+            )
+        if any(len(key[2]) != axis_count for key, _ in items):
+            raise ValueError(
+                f"CoverageOverlapBank.axes must name {axis_count} projection axes per row; got another axis count"
+            )
+        semantic_values = tuple(sorted({key[3] for key, _ in items}))
+        space_values = tuple(sorted({key[4] for key, _ in items}))
+        semantic_codes = {value: code for code, value in enumerate(semantic_values)}
+        space_codes = {value: code for code, value in enumerate(space_values)}
+        bounds = [mapped_coverage_owner.enclosure(value) for _, value in items]
+        return cls(
+            np.fromiter((key[0] for key, _ in items), dtype=np.int64, count=count),
+            np.fromiter((key[1] for key, _ in items), dtype=np.int64, count=count),
+            np.asarray([key[2] for key, _ in items], dtype=np.int64).reshape(
+                count, axis_count
+            ),
+            np.fromiter(
+                (
+                    0.0 if key[3] == "candidate" else bound[0]
+                    for (key, _), bound in zip(items, bounds, strict=True)
+                ),
+                dtype=np.float64,
+                count=count,
+            ),
+            np.fromiter((bound[1] for bound in bounds), dtype=np.float64, count=count),
+            np.fromiter(
+                (semantic_codes[key[3]] for key, _ in items), dtype=np.int32, count=count
+            ),
+            semantic_values,
+            np.fromiter(
+                (space_codes[key[4]] for key, _ in items), dtype=np.int32, count=count
+            ),
+            space_values,
+        )
+
+    @classmethod
+    def from_stored_fields(
+        cls: type[CoverageOverlapBank], value: CoverageOverlapBank, /
+    ) -> CoverageOverlapBank:
+        """Rebuild stored columns through full validation and require equality."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"CoverageOverlapBank.stored_fields must match the registered type; got {type(value).__name__}"
+            )
+        rebuilt = cls(
+            value.facets,
+            value.sources,
+            value.axes,
+            value.lower,
+            value.upper,
+            value.semantic_codes,
+            value.semantic_values,
+            value.space_codes,
+            value.space_values,
+        )
+        if not tree_content_equal(rebuilt, value):
+            raise ValueError(
+                "CoverageOverlapBank.stored_fields must be the canonical bank encoding; got changed stored content"
+            )
+        return rebuilt
+
+    @property
+    def count(self) -> int:
+        return int(self.facets.shape[0])
+
+    def semantic_mask(self, value: CoverageOverlapSemantics, /) -> np.ndarray:
+        """Rows whose overlap semantics is ``value``."""
+        if value not in self.semantic_values:
+            return np.zeros((self.count,), dtype=np.bool_)
+        return self.semantic_codes == self.semantic_values.index(value)
+
+    def space_mask(self, value: CoverageCoordinateSpace, /) -> np.ndarray:
+        """Rows reported in coordinate space ``value``."""
+        if value not in self.space_values:
+            return np.zeros((self.count,), dtype=np.bool_)
+        return self.space_codes == self.space_values.index(value)
+
+    def fingerprint_record(self) -> dict[str, object]:
+        """Every bank column and dictionary for enclosing certificate identities."""
+        return {
+            "facets": self.facets,
+            "sources": self.sources,
+            "axes": self.axes,
+            "lower": self.lower,
+            "upper": self.upper,
+            "semantic_codes": self.semantic_codes,
+            "semantic_values": self.semantic_values,
+            "space_codes": self.space_codes,
+            "space_values": self.space_values,
+        }
 
 
 class _DomainVertexDim(Dim, minimum=1):
@@ -611,7 +893,7 @@ class CoverageEvidence(StrictModule):
     """Group facet relations, proof dependencies, and direct subdivision work."""
 
     covered_source_facets: int = eqx.field(static=True)
-    facet_source_overlaps: tuple[_CoverageOverlap, ...] = eqx.field(static=True)
+    facet_source_overlaps: CoverageOverlapBank
     premise_certificate_ids: tuple[str, ...] = eqx.field(static=True)
     candidate_pairs: int = eqx.field(static=True)
     subdivision_pieces: int = eqx.field(static=True)
@@ -716,38 +998,24 @@ def _validated_overlap_evidence(
     evidence: CoverageEvidence,
     domain: PiecewiseLinearDomain | mapped_reference_domain_owner.MappedReferenceDomain,
 ) -> CoverageEvidence:
-    overlaps: list[_CoverageOverlap] = []
-    for (
-        facet,
-        source,
-        axes,
-        lower,
-        upper,
-        semantics,
-        space,
-    ) in evidence.facet_source_overlaps:
-        semantics = parse(semantics, CoverageOverlapSemantics, "overlap semantics")
-        space = parse(space, CoverageCoordinateSpace, "overlap coordinate space")
-        if (
-            source < 0
-            or source >= domain.facets.shape[0]
-            or len(axes) != domain.ambient_dimension - 1
-            or len(set(axes)) != len(axes)
-            or any(axis < 0 or axis >= domain.ambient_dimension for axis in axes)
-            or not 0.0 <= lower <= upper
-        ):
-            raise ValueError(
-                "DomainCoverageCertificate.facet_source_overlaps must contain valid source rows, axes, and ordered bounds; got malformed overlap"
-            )
-        overlaps.append((facet, source, axes, lower, upper, semantics, space))
-    rows = tuple(overlaps)
-    if tuple(sorted(rows)) != rows:
+    if type(evidence.facet_source_overlaps) is not CoverageOverlapBank:
+        raise TypeError(
+            "DomainCoverageCertificate.facet_source_overlaps must be a CoverageOverlapBank; "
+            f"got {type(evidence.facet_source_overlaps).__name__}"
+        )
+    # Rebuilding revalidates columns that tree surgery may have replaced.
+    bank = CoverageOverlapBank.from_stored_fields(evidence.facet_source_overlaps)
+    if (
+        bank.axes.shape[1] != domain.ambient_dimension - 1
+        or np.any(bank.sources >= domain.facets.shape[0])
+        or np.any(bank.axes >= domain.ambient_dimension)
+    ):
         raise ValueError(
-            "DomainCoverageCertificate.facet_source_overlaps must follow canonical ordering; got unsorted overlaps"
+            "DomainCoverageCertificate.facet_source_overlaps must contain valid source rows and axes; got malformed overlap"
         )
     return CoverageEvidence(
         evidence.covered_source_facets,
-        rows,
+        bank,
         tuple(evidence.premise_certificate_ids),
         evidence.candidate_pairs,
         evidence.subdivision_pieces,
@@ -765,12 +1033,13 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
     expression) reports ``None`` for its achieved measure, achieved bounds and
     integration error: ``None`` means unknown/unbounded, never a computed zero.
 
-    ``facet_source_overlaps`` retains declared source facet row identities.
-    Rows contain target facet global ID, source row ID, projection axes, lower
-    and upper projected overlap bounds, ``CoverageOverlapSemantics``, and the
-    coordinate space. Physical rows describe planar source overlap; reference
-    rows describe the independent parameter charts of a mapped source.
-    Candidate bounds describe conservative relations rather than measured overlaps.
+    ``facet_source_overlaps`` is the ``CoverageOverlapBank`` of declared source
+    facet row identities. Rows contain target facet global ID, source row ID,
+    projection axes, lower and upper projected overlap bounds,
+    ``CoverageOverlapSemantics``, and the coordinate space. Physical rows
+    describe planar source overlap; reference rows describe the independent
+    parameter charts of a mapped source. Candidate bounds describe conservative
+    relations rather than measured overlaps.
     ``premise_certificate_ids`` binds independently computed source embedding
     and reference/root partition evidence for mapped reference domains.
     ``candidate_pair_count`` counts this owner's evaluated source-source and
@@ -808,7 +1077,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         static=True
     )
     integration_error_bounds: tuple[float | None, ...] = eqx.field(static=True)
-    facet_source_overlaps: tuple[_CoverageOverlap, ...] = eqx.field(static=True)
+    facet_source_overlaps: CoverageOverlapBank
     premise_certificate_ids: tuple[str, ...] = eqx.field(static=True)
     source_facet_count: int = eqx.field(static=True)
     covered_source_facet_count: int = eqx.field(static=True)
@@ -891,13 +1160,30 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
                 "requested_bounds": self.requested_region_measure_bounds,
                 "achieved_bounds": self.achieved_region_measure_bounds,
                 "integration_errors": self.integration_error_bounds,
-                "facet_source_overlaps": self.facet_source_overlaps,
+                "facet_source_overlaps": self.facet_source_overlaps.fingerprint_record(),
                 "premises": self.premise_certificate_ids,
                 "covered": self.covered_source_facet_count,
                 "candidate_pairs": self.candidate_pair_count,
                 "subdivision_pieces": self.subdivision_piece_count,
                 "maximum_subdivision_depth": self.maximum_subdivision_depth_reached,
             }
+        )
+
+    def scientific_payload(self) -> tuple[tuple[str, object], ...]:
+        """Return every scientific field, not invocation-local expression receipts.
+
+        This is only a renewal-comparison projection. Full-content authority
+        authentication and archived history must retain all three observations.
+        """
+        accounting = {
+            "source_expression_work_units",
+            "source_expression_required_work_units",
+            "source_expression_peak_bytes",
+        }
+        return tuple(
+            (member.name, getattr(self, member.name))
+            for member in fields(self)
+            if member.name not in accounting
         )
 
     @classmethod
@@ -936,6 +1222,16 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
                 value.source_expression_peak_bytes,
             ),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DomainCoveragePredecessor:
+    """Inputs to the existing exact root-partition theorem, never portable authority."""
+
+    geometry: CellGeometryPredecessor
+    coverage: DomainCoverageCertificate
+    cell_regions: tuple[int, ...]
+    limits: MeshCertificateLimits
 
 
 @final
@@ -1068,6 +1364,125 @@ def _coverage_rational_polygon(
     )
 
 
+def _fraction_storage_upper(bits: int, /) -> int:
+    """Declared Fraction owner and both integers, each with its traversal slot."""
+    integer = host_storage_owner.declared_integer_storage_bytes(bits) + 128
+    return 256 + 128 + 2 * integer
+
+
+def _intersection_storage_upper(
+    owner: int,
+    preparation: planar_primitives_owner.PolygonIntersectionPreparation,
+    /,
+    *extra: Fraction,
+) -> int:
+    """Bound one live intersection preparation from its declared shape.
+
+    This counts the same owners as a live-graph walk of ``(owner, preparation,
+    polygon, lower, upper, halfplanes, bits, *extra)`` but never merges shared
+    objects, so it is an upper bound. ``preparation.bits`` is the largest
+    numerator-plus-denominator bit count of its polygon and halfplane scalars,
+    which also bounds the polygon-derived coordinate bounds.
+    """
+
+    def sequence(length: int, /) -> int:
+        return 256 + 16 * length + 128
+
+    polygon, halfplanes, bits = (
+        preparation.polygon,
+        preparation.halfplanes,
+        preparation.bits,
+    )
+    width = len(preparation.lower)
+    scalars = len(polygon) * width + 2 * width + 3 * len(halfplanes)
+    return (
+        sequence(8 + len(extra))
+        + host_storage_owner.declared_integer_storage_bytes(abs(owner).bit_length())
+        + 128
+        + 256
+        + 128
+        + sequence(len(polygon))
+        + len(polygon) * sequence(width)
+        + 2 * sequence(width)
+        + sequence(len(halfplanes))
+        + len(halfplanes) * sequence(3)
+        + host_storage_owner.declared_integer_storage_bytes(bits.bit_length())
+        + 128
+        + scalars * _fraction_storage_upper(bits)
+        + sequence(len(preparation.point_membership))
+        + sum(
+            sequence(3)
+            + sequence(len(plane))
+            + len(plane) * _fraction_storage_upper(plane_bits)
+            + host_storage_owner.declared_integer_storage_bytes(plane_bits.bit_length())
+            + host_storage_owner.declared_integer_storage_bytes(abs(kind).bit_length())
+            for plane, plane_bits, kind in preparation.point_membership
+        )
+        + sum(
+            _fraction_storage_upper(
+                abs(value.numerator).bit_length() + value.denominator.bit_length()
+            )
+            for value in extra
+        )
+    )
+
+
+def _polygon_storage_upper(
+    owner: int,
+    polygon: tuple[tuple[Fraction, ...], ...],
+    bits: int,
+    /,
+    *extra: Fraction,
+) -> int:
+    """Bound one retained projected piece and its measures before preparation.
+
+    Counts ``(owner, polygon, *extra)`` like ``_intersection_storage_upper``
+    without merging shared objects; a later clipping preparation adds its own
+    complete bound. ``bits`` bounds every coordinate's numerator-plus-
+    denominator bit count, as measured when its vertex was projected.
+    """
+
+    def sequence(length: int, /) -> int:
+        return 256 + 16 * length + 128
+
+    width = len(polygon[0]) if polygon else 0
+    return (
+        sequence(2 + len(extra))
+        + host_storage_owner.declared_integer_storage_bytes(abs(owner).bit_length())
+        + 128
+        + sequence(len(polygon))
+        + len(polygon) * sequence(width)
+        + len(polygon) * width * _fraction_storage_upper(bits)
+        + sum(
+            _fraction_storage_upper(
+                abs(value.numerator).bit_length() + value.denominator.bit_length()
+            )
+            for value in extra
+        )
+    )
+
+
+def _bound_exact_plc_mesh_row(
+    index: int,
+    bank: tuple[exact_plc_geometry_owner.ExactPoint, ...],
+    points: np.ndarray,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> exact_plc_geometry_owner.ExactPoint:
+    row = bank[index]
+    if points.dtype.hasobject:
+        # Exact object views are intentionally not cached behind a reversible
+        # NumPy flag. Authenticate each actually used scalar reference instead.
+        budget.reserve(len(row))
+        if len(row) != points.shape[1] or any(
+            points[index, column] is not value for column, value in enumerate(row)
+        ):
+            raise ValueError(
+                "Exact PLC coverage rows must bind the actual prepared source scalar references."
+            )
+    return row
+
+
 def _partition_covering_pieces(
     state: EmbeddingState,
     covering: _CoveringPieces,
@@ -1077,6 +1492,7 @@ def _partition_covering_pieces(
     limits: MeshCertificateLimits,
     *,
     budget: CoordinateEnclosureBudget,
+    exact_vertex_points: tuple[exact_plc_geometry_owner.ExactPoint, ...] | None = None,
 ) -> tuple[list[Fraction], np.ndarray, bool, dict[CoverageOverlapKey, Fraction]]:
     """Partition affine facets across the independent source triangulation."""
     with budget.live_storage() as prepared_storage:
@@ -1113,16 +1529,47 @@ def _partition_covering_pieces(
         piece_preparation: dict[
             int, planar_primitives_owner.PolygonIntersectionPreparation
         ] = {}
+        piece_orientation: dict[int, int] = {}
+        # Pairwise coplanar source facets meet in zero measure when no overlap
+        # was reported, so a piece contained in one source facet meets every
+        # other facet of its group in zero measure.
+        disjoint_sources = not overlaps
+        contained: dict[int, int] = {}
+        # Covering pieces share vertices, so each vertex is classified against
+        # one source facet's clipping halfplanes once.
+        vertex_inside: dict[tuple[int, int], bool] = {}
         source_preparation: dict[
             int, planar_primitives_owner.PolygonIntersectionPreparation
         ] = {}
         target_projections: dict[int, tuple[tuple[int, ...], Fraction]] = {}
         accumulated = [Fraction(0) for _ in range(covering.pieces.shape[0])]
-        for piece, row in enumerate(covering.pieces):
+        # Covering pieces share vertices: convert each used vertex once and let
+        # every incident piece gather those same exact points.
+        used_rows, local_rows = np.unique(covering.pieces, return_inverse=True)
+        local_rows = local_rows.reshape(covering.pieces.shape)
+        prepared_bound += 128 + used_rows.size * (64 + 8 * points.shape[1])
+        prepared_storage.set_bound(prepared_bound)
+        if exact_vertex_points is None:
+            vertex_points = planar_primitives_owner.rational_points(
+                points[used_rows], budget=budget
+            )
+        else:
+            # The kernel already owns these exact Fraction rows. Only row
+            # indexing and reference gathering occur; no new scalar is formed.
+            budget.reserve(2 * used_rows.size)
+            vertex_points = tuple(
+                _bound_exact_plc_mesh_row(int(row), exact_vertex_points, points, budget)
+                for row in used_rows
+            )
+        piece_rows: list[list[int]] = local_rows.tolist()
+        # Incident pieces of one source group share each projected vertex:
+        # select its exact coordinates once per projection axes.
+        projected_vertices: dict[
+            tuple[int, tuple[int, ...]], tuple[tuple[Fraction, ...], int]
+        ] = {}
+        for piece, local in enumerate(piece_rows):
             with budget.temporary_scope():
-                polygon = planar_primitives_owner.rational_points(
-                    points[row], budget=budget
-                )
+                polygon = tuple(vertex_points[index] for index in local)
                 key = planar_primitives_owner.plane_key(polygon, budget=budget)
                 if key is None:
                     unmatched[piece] = True
@@ -1138,9 +1585,31 @@ def _partition_covering_pieces(
                     unmatched[piece] = True
                     continue
                 pair = (group.plane, group.regions)
-                polygons[piece] = _coverage_rational_polygon(
-                    planar_primitives_owner.project(polygon, group.axes, budget=budget)
-                )
+                corners: list[tuple[Fraction, ...]] = []
+                bits = 1
+                for index in local:
+                    projected = projected_vertices.get((index, group.axes))
+                    if projected is None:
+                        point = vertex_points[index]
+                        planar_primitives_owner.reserve_fraction_work(
+                            (point,), len(group.axes), len(group.axes), 1, budget=budget
+                        )
+                        coordinates = _coverage_rational_polygon(
+                            planar_primitives_owner.prepared_project((point,), group.axes)
+                        )[0]
+                        coordinate_bits = max(
+                            abs(value.numerator).bit_length()
+                            + value.denominator.bit_length()
+                            for value in coordinates
+                        )
+                        projected = (coordinates, coordinate_bits)
+                        projected_vertices[(index, group.axes)] = projected
+                        prepared_bound += 512 + len(
+                            coordinates
+                        ) * _fraction_storage_upper(coordinate_bits)
+                    corners.append(projected[0])
+                    bits = max(bits, projected[1])
+                polygons[piece] = tuple(corners)
                 signed = rational_coefficient(
                     planar_primitives_owner.signed_measure(
                         polygons[piece], budget=budget
@@ -1148,23 +1617,11 @@ def _partition_covering_pieces(
                     role="coverage.projected_measure",
                 )
                 whole[piece] = abs(signed)
-                piece_preparation[piece] = (
-                    planar_primitives_owner.prepare_polygon_intersection(
-                        polygons[piece], 1 if signed > 0 else -1, budget=budget
-                    )
-                )
+                piece_orientation[piece] = 1 if signed > 0 else -1
                 compatible.setdefault(pair, []).append(piece)
-                prepared_bound += budget.live_object_storage_upper(
-                    (
-                        piece,
-                        piece_preparation[piece],
-                        piece_preparation[piece].polygon,
-                        piece_preparation[piece].lower,
-                        piece_preparation[piece].upper,
-                        piece_preparation[piece].halfplanes,
-                        piece_preparation[piece].bits,
-                        whole[piece],
-                    )
+                budget.reserve(1)
+                prepared_bound += _polygon_storage_upper(
+                    piece, polygons[piece], bits, whole[piece]
                 )
                 prepared_storage.set_bound(prepared_bound)
             del polygon, key
@@ -1178,40 +1635,156 @@ def _partition_covering_pieces(
                 other=boxes(domain.vertices, domain.facets[source_rows]),
             )
             state.candidate_pairs += firsts.size
+            if disjoint_sources:
+                # Find each piece's containing source facet before measuring
+                # any pair; every other candidate of that piece is then zero.
+                candidates: dict[int, list[int]] = {}
+                for first, local in zip(firsts.tolist(), seconds.tolist(), strict=True):
+                    candidates.setdefault(first, []).append(local)
+                for first, locals_ in candidates.items():
+                    piece = pieces[first]
+                    for local in locals_:
+                        with budget.temporary_scope():
+                            target = group.members[local]
+                            source_polygon = group.simplices[local]
+                            piece_polygon = polygons[piece]
+                            matching_area = False
+                            if len(source_polygon) == len(piece_polygon) == 3:
+                                budget.reserve(1)
+                                matching_area = whole[piece] == group.measures[local]
+                            if matching_area:
+                                # Plane, regions, nondegeneracy and the whole
+                                # piece measure are already proved above. Exact
+                                # equality of all three projected vertices
+                                # therefore identifies the same closed triangle;
+                                # no halfplane/intersection graph is needed.
+                                budget.reserve(18, 256)
+                                identical = True
+                                for point in piece_polygon:
+                                    if point not in source_polygon:
+                                        identical = False
+                                        break
+                                if identical:
+                                    contained[piece] = target
+                                    break
+                            if target not in source_preparation:
+                                prepared = (
+                                    planar_primitives_owner.prepare_polygon_intersection(
+                                        group.simplices[local],
+                                        group.orientations[local],
+                                        budget=budget,
+                                        point_membership=True,
+                                    )
+                                )
+                                budget.reserve(1)
+                                prepared_bound += _intersection_storage_upper(
+                                    target, prepared
+                                )
+                                prepared_storage.set_bound(prepared_bound)
+                                source_preparation[target] = prepared
+                            if len(source_preparation[target].lower) != 2:
+                                break
+                            cached = budget.affine_coverage_intersection_cache.get(
+                                (
+                                    domain.domain_id,
+                                    limits.limits_id,
+                                    polygons[piece],
+                                    group.simplices[local],
+                                )
+                            )
+                            if cached is not None:
+                                # An issued measure equal to the whole piece
+                                # leaves zero measure outside this facet.
+                                if cached == whole[piece]:
+                                    contained[piece] = target
+                                    break
+                                continue
+                            inside = True
+                            for vertex, point in zip(
+                                piece_rows[piece], polygons[piece], strict=True
+                            ):
+                                decision = vertex_inside.get((vertex, target))
+                                if decision is None:
+                                    decision = (
+                                        planar_primitives_owner.prepared_point_inside(
+                                            source_preparation[target],
+                                            point,
+                                            budget=budget,
+                                        )
+                                    )
+                                    vertex_inside[(vertex, target)] = decision
+                                    prepared_bound += 512
+                                    prepared_storage.set_bound(prepared_bound)
+                                if not decision:
+                                    inside = False
+                                    break
+                            if inside:
+                                contained[piece] = target
+                                break
             for first, local in zip(firsts.tolist(), seconds.tolist(), strict=True):
                 with budget.temporary_scope():
                     piece = pieces[first]
                     target = group.members[local]
                     budget.reserve(1)
-                    if target not in source_preparation:
-                        prepared = planar_primitives_owner.prepare_polygon_intersection(
-                            group.simplices[local],
-                            group.orientations[local],
-                            budget=budget,
-                        )
-                        prepared_bound += budget.live_object_storage_upper(
-                            (
-                                target,
-                                prepared,
-                                prepared.polygon,
-                                prepared.lower,
-                                prepared.upper,
-                                prepared.halfplanes,
-                                prepared.bits,
-                            )
-                        )
-                        prepared_storage.set_bound(prepared_bound)
-                        source_preparation[target] = prepared
-                    measure = rational_coefficient(
-                        planar_primitives_owner.intersection(
-                            polygons[piece],
-                            group.simplices[local],
-                            budget=budget,
-                            subject_preparation=piece_preparation[piece],
-                            target_preparation=source_preparation[target],
-                        ),
-                        role="coverage.intersection_measure",
+                    holder = contained.get(piece)
+                    if holder is not None and holder != target:
+                        # The piece lies in another coplanar source facet,
+                        # whose intersection with this one has zero measure.
+                        continue
+                    intersection_key = (
+                        domain.domain_id,
+                        limits.limits_id,
+                        polygons[piece],
+                        group.simplices[local],
                     )
+                    measure = budget.affine_coverage_intersection_cache.get(
+                        intersection_key
+                    )
+                    if measure is None and holder == target:
+                        # Every clipping side is nonnegative: clipping returns
+                        # the piece itself, with its own measure.
+                        measure = whole[piece]
+                    if measure is None:
+                        if target not in source_preparation:
+                            prepared = (
+                                planar_primitives_owner.prepare_polygon_intersection(
+                                    group.simplices[local],
+                                    group.orientations[local],
+                                    budget=budget,
+                                )
+                            )
+                            budget.reserve(1)
+                            prepared_bound += _intersection_storage_upper(
+                                target, prepared
+                            )
+                            prepared_storage.set_bound(prepared_bound)
+                            source_preparation[target] = prepared
+                        if piece not in piece_preparation:
+                            piece_preparation[piece] = (
+                                planar_primitives_owner.prepare_polygon_intersection(
+                                    polygons[piece],
+                                    piece_orientation[piece],
+                                    budget=budget,
+                                )
+                            )
+                            prepared_bound += _intersection_storage_upper(
+                                piece, piece_preparation[piece], whole[piece]
+                            )
+                            prepared_storage.set_bound(prepared_bound)
+                        measure = rational_coefficient(
+                            planar_primitives_owner.intersection(
+                                polygons[piece],
+                                group.simplices[local],
+                                budget=budget,
+                                subject_preparation=piece_preparation[piece],
+                                target_preparation=source_preparation[target],
+                            ),
+                            role="coverage.intersection_measure",
+                        )
+                        budget.retain_basis((intersection_key, (measure,)))
+                        budget.affine_coverage_intersection_cache[intersection_key] = (
+                            measure
+                        )
                     if measure == 0:
                         continue
                     accumulated[piece] += measure
@@ -1357,22 +1930,7 @@ def coverage_result(
         ),
         evidence=CoverageEvidence(
             covered,
-            tuple(
-                (
-                    facet,
-                    source,
-                    axes,
-                    0.0
-                    if semantics == "candidate"
-                    else mapped_coverage_owner.enclosure(value)[0],
-                    mapped_coverage_owner.enclosure(value)[1],
-                    semantics,
-                    space,
-                )
-                for (facet, source, axes, semantics, space), value in sorted(
-                    overlaps.items()
-                )
-            ),
+            CoverageOverlapBank.from_relations(overlaps, domain.ambient_dimension - 1),
             premises,
             state.candidate_pairs,
             state.subdivision_pieces,
@@ -1821,7 +2379,7 @@ def _affine_root_integral(
 ) -> _CellIntegralPhase:
     root, chart_determinant = affine
     key = (
-        *coordinate_enclosure_owner.element_identity(root),
+        *coordinate_enclosure_owner.element_identity(root, budget=budget),
         controls,
     )
     if key not in cache.affine:
@@ -1875,7 +2433,7 @@ def _box_root_integral(
 ) -> _CellIntegralPhase:
     root, origin, steps = chart
     key = (
-        *coordinate_enclosure_owner.element_identity(root),
+        *coordinate_enclosure_owner.element_identity(root, budget=budget),
         controls,
     )
     if key not in cache.box:
@@ -1964,6 +2522,41 @@ def _polynomial_cell_integral(
             budget=budget,
         )
     return _CellIntegralPhase(True, measure)
+
+
+def polynomial_cell_measure(
+    element: CellGeometryElement,
+    controls: CoordinateCoefficients,
+    kind: str,
+    dimension: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Fraction | None:
+    """Reuse an exact signed source integral, never an unsigned volume bound."""
+    # Each integral consumes its expression and affine/Bernstein preparation.
+    # Only the exact integral and its source key survive to the next cell.
+    with budget.polynomial_preparation_scope():
+        coefficients, preparation = coordinate_enclosure_owner.coordinate_preparation_key(
+            element, controls, budget=budget
+        )
+        key = (preparation, kind, dimension)
+        if key in budget.mapped_cell_integral_cache:
+            return budget.mapped_cell_integral_cache[key]
+        polynomial = coordinate_enclosure_owner.coordinate_expressions(
+            element, coefficients, budget=budget
+        )
+        measure = (
+            None
+            if polynomial is None
+            or any(
+                isinstance(value, coordinate_enclosure_owner.RationalPolynomial)
+                for value in polynomial
+            )
+            else _polynomial_cell_integral(polynomial, kind, dimension, budget=budget).measure
+        )
+        budget.retain_basis((key, measure))
+        budget.mapped_cell_integral_cache[key] = measure
+        return measure
 
 
 def _rational_region_integral(
@@ -2104,10 +2697,10 @@ def _direct_cell_integral(
         return _DirectCellIntegralPhase(None, True, False)
     if not active:
         return _DirectCellIntegralPhase(None, False, False)
-    phase = _polynomial_cell_integral(
-        polynomial, block.cell_kind, dimension, budget=budget
+    measure = polynomial_cell_measure(
+        element, controls, block.cell_kind, dimension, budget=budget
     )
-    return _DirectCellIntegralPhase(phase.measure, False, False)
+    return _DirectCellIntegralPhase(measure, False, False)
 
 
 @final
@@ -2222,7 +2815,7 @@ def mapped_coverage_measures(
         )
         if cached is not None:
             return cached.totals, cached.cells
-    elements, routes, _ = geometry.resolve(mesh)
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
     coordinates = coordinate_enclosure_owner.prepared_coordinate_source_bank(
         geometry, budget=budget
     )
@@ -2339,11 +2932,13 @@ def mapped_coverage_measures(
 @checked
 def declared_coverage_measures(
     domain: PiecewiseLinearDomain | mapped_reference_domain_owner.MappedReferenceDomain,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[Fraction, ...]:
     """Return signed measures in declared region order."""
     match domain:
         case mapped_reference_domain_owner.MappedReferenceDomain():
-            return domain.exact_region_measures()
+            return domain.exact_region_measures(budget=budget)
         case PiecewiseLinearDomain():
             pass
         case invalid:
@@ -2450,6 +3045,7 @@ class _MappedChartCoveragePhase(StrictModule):
     """Retain new overlap keys after one chart's containment verdict."""
 
     retained_keys: tuple[CoverageOverlapKey, ...]
+    flux: Fraction | None
 
 
 def _prepare_mapped_coverage(
@@ -2524,6 +3120,7 @@ def _certify_mapped_chart(
     )
     facet_keys: list[CoverageOverlapKey] = []
     matched = False
+    flux: Fraction | None = None
     unresolved = exceeded
     plane = _exact_chart_plane(chart, budget=budget)
     targets = (
@@ -2553,6 +3150,27 @@ def _certify_mapped_chart(
             budget=budget,
         )
         if outcome == "proven":
+            if len(declared.axes) == 2 and len(declared.plane) == 4:
+                # On a proved plane a.x+d=0, x.(du x dv) is
+                # -d/a[k] times the kth cofactor. Its integral is already
+                # the projected oriented measure earned by containment.
+                missing = next(axis for axis in range(3) if axis not in declared.axes)
+                normal = rational_coefficient(
+                    declared.plane[missing], role="coverage.flux_normal"
+                )
+                offset = rational_coefficient(
+                    declared.plane[-1], role="coverage.flux_offset"
+                )
+                orientation = declared.orientation * (
+                    1 if own == declared.regions[0] else -1
+                )
+                planar_primitives_owner.reserve_fraction_work(
+                    ((measure, normal, offset),), 5, 1, 5, budget=budget
+                )
+                # Source projection axes are cyclic: (1,2), (2,0), (0,1).
+                # Account for their order, not the omitted axis's parity.
+                cofactor_sign = 1 if declared.axes in ((1, 2), (2, 0), (0, 1)) else -1
+                flux = -offset * measure * cofactor_sign / (3 * normal * orientation)
             covered[target] += measure
             for local in candidates:
                 member = declared.members[local]
@@ -2586,7 +3204,7 @@ def _certify_mapped_chart(
             "facet",
             (entity,),
         )
-    return _MappedChartCoveragePhase(tuple(facet_keys))
+    return _MappedChartCoveragePhase(tuple(facet_keys), flux)
 
 
 def _mapped_domain_coverage(
@@ -2603,13 +3221,36 @@ def _mapped_domain_coverage(
 ) -> DomainCoverageCertificate:
 
     facets = mesh_facets(mesh, geometry=geometry, budget=budget)
-    totals, cells = mapped_coverage_measures(
-        state, mesh, geometry, regions, embedding=embedding, facets=facets, budget=budget
+    prepared_cells = budget.prepared_cell_cache.get(coordinate_scope_key(mesh, geometry))
+    fused_boundary = (
+        mesh.topological_dimension == mesh.ambient_dimension == 3
+        and mesh.periodic_topology is None
+        and embedding.status == "certified"
+        and {"mapped_trace_continuity", "facet_pairing"}
+        <= set(embedding.evaluated_checks)
+        and prepared_cells is not None
     )
-    achieved = (
-        *totals,
-        *(Fraction(0) for _ in range(len(domain.region_ids) - len(totals))),
-    )
+    if fused_boundary and prepared_cells is not None:
+        embedding.binding.require(mesh, geometry)
+        budget.reserve(
+            len(prepared_cells.descriptors), 256 + 8 * len(prepared_cells.descriptors)
+        )
+        cells = list(prepared_cells.descriptors)
+        totals: tuple[Fraction | None, ...] = tuple(
+            Fraction(0) for _ in domain.region_ids
+        )
+    else:
+        totals, cells = mapped_coverage_measures(
+            state,
+            mesh,
+            geometry,
+            regions,
+            embedding=embedding,
+            facets=facets,
+            budget=budget,
+        )
+    boundary_totals = list(totals)
+    boundary_complete = True
     phase = _prepare_mapped_coverage(state, domain, limits, budget=budget)
     source, covered = phase.source, phase.covered
     uncertain_sources, relations = phase.uncertain_sources, phase.relations
@@ -2635,6 +3276,7 @@ def _mapped_domain_coverage(
             if charts is None:
                 state.add("mapped_boundary_source", "unresolved", "facet", (entity,))
                 uncertain_sources.update(range(len(source)))
+                boundary_complete = False
                 continue
             for chart, chart_domain in charts:
                 chart_phase = _certify_mapped_chart(
@@ -2649,6 +3291,24 @@ def _mapped_domain_coverage(
                     budget=budget,
                 )
                 facet_keys.extend(chart_phase.retained_keys)
+                if fused_boundary:
+                    if chart_phase.flux is None:
+                        boundary_complete = False
+                    else:
+                        for region, sign in ((own, 1), (other, -1)):
+                            if region >= 0:
+                                current = boundary_totals[region]
+                                if current is not None:
+                                    planar_primitives_owner.reserve_fraction_work(
+                                        ((current, chart_phase.flux),),
+                                        1,
+                                        1,
+                                        2,
+                                        budget=budget,
+                                    )
+                                    boundary_totals[region] = (
+                                        current + sign * chart_phase.flux
+                                    )
         if facet_keys:
             # Overlap relations outlive the facet workspace: their rational keys and
             # measures stay charged to this owner's storage for the whole proof.
@@ -2661,7 +3321,27 @@ def _mapped_domain_coverage(
     state.candidate_pairs = subdivision_work.candidate_pairs
     state.subdivision_pieces = subdivision_work.pieces
     state.subdivision_depth = subdivision_work.maximum_depth
-    requested = declared_coverage_measures(domain)
+    if fused_boundary:
+        if boundary_complete:
+            totals = tuple(boundary_totals)
+            state.checks.append("mapped_signed_boundary_region_measure")
+        else:
+            # Preserve independently computed achieved measures on failed
+            # containment; an unmatched source plane cannot supply its flux.
+            totals, _ = mapped_coverage_measures(
+                state,
+                mesh,
+                geometry,
+                regions,
+                embedding=embedding,
+                facets=facets,
+                budget=budget,
+            )
+    achieved = (
+        *totals,
+        *(Fraction(0) for _ in range(len(domain.region_ids) - len(totals))),
+    )
+    requested = declared_coverage_measures(domain, budget=budget)
     equal = 0
     for target, (actual, declared) in enumerate(zip(covered, source, strict=True)):
         expected = sum(declared.measures, Fraction(0))
@@ -2756,6 +3436,546 @@ def _prepare_coverage_regions(
     )
 
 
+# Certified coverage proofs issued in this process, weakly keyed by their mesh
+# carrier and weakly valued (see ``IssuedProofs``).
+_ISSUED_COVERAGE: IssuedProofs[CellMesh, DomainCoverageCertificate] = IssuedProofs()
+
+
+def _coverage_request_key(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: PiecewiseLinearDomain | mapped_reference_domain_owner.MappedReferenceDomain,
+    regions: np.ndarray,
+    embedding: GlobalEmbeddingCertificate,
+    limits: MeshCertificateLimits,
+    /,
+) -> str:
+    """Bind issued-proof reuse to current arrays, every proof input and limits."""
+    return canonical_fingerprint(
+        {
+            "kind": "domain-coverage-request",
+            "mesh": mesh.mesh_id,
+            "mesh_arrays": array_tree_fingerprint(mesh),
+            "topology": mesh.topology_id,
+            "geometry": cell_geometry_id(geometry),
+            "coordinate_scope": coordinate_scope_key(mesh, geometry),
+            "domain": domain.domain_id,
+            "domain_arrays": array_tree_fingerprint(domain),
+            "regions": array_tree_fingerprint(regions),
+            "embedding": embedding.certificate_id,
+            "limits": limits.limits_id,
+        }
+    )
+
+
+def _coverage_authority_key(
+    request_key: str,
+    certificate: DomainCoverageCertificate,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> str:
+    from ..lifecycle._meshing_source_records import stored_record_content_id
+
+    if budget is None:
+        content = stored_record_content_id(certificate, excluded="", memoize=False)
+    else:
+        # Authentication is an actual phase too: admission failures must retain
+        # the same measured resource evidence as geometric proof failures.
+        with budget.measurement(), budget.activate():
+            content = stored_record_content_id(
+                certificate, excluded="", budget=budget, memoize=False
+            )
+    return canonical_fingerprint(
+        {
+            "request": request_key,
+            "earned_content": content,
+            "issued_object": id(certificate),
+        }
+    )
+
+
+def _issue_domain_coverage(
+    mesh: CellMesh,
+    request_key: str,
+    certificate: DomainCoverageCertificate,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> DomainCoverageCertificate:
+    content_key = _coverage_authority_key(request_key, certificate, budget=budget)
+    _ISSUED_COVERAGE.record(mesh, request_key, certificate)
+    _ISSUED_COVERAGE.record(mesh, content_key, certificate)
+    return certificate
+
+
+def is_issued_domain_coverage(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: PiecewiseLinearDomain | mapped_reference_domain_owner.MappedReferenceDomain,
+    regions: np.ndarray,
+    embedding: GlobalEmbeddingCertificate,
+    limits: MeshCertificateLimits,
+    certificate: DomainCoverageCertificate,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> bool:
+    """Authenticate a complete proof earned for these exact scientific inputs.
+
+    Reconstruction of a report never issues authority. Actual limits and the
+    embedding's stored fields are canonically revalidated before lookup; cached
+    IDs alone cannot admit changed payloads. Valid nonmatching bindings return
+    False; malformed records and resource failures propagate. An absent explicit
+    budget retains the standalone contract without opening any helper quota.
+    """
+    with ExitStack() as validation:
+        if budget is not None:
+            validation.enter_context(budget.measurement())
+            validation.enter_context(budget.activate())
+            budget.reserve(1, 1024)
+        limit_fields = tuple(member for member in fields(limits) if member.init)
+        if budget is not None:
+            budget.reserve(2 * len(limit_fields), 512 + 128 * len(limit_fields))
+        current_limits = MeshCertificateLimits(
+            **{member.name: getattr(limits, member.name) for member in limit_fields}
+        )
+        embedding_fields = fields(embedding)
+        if budget is not None:
+            budget.reserve(2 * len(embedding_fields), 1024 + 256 * len(embedding_fields))
+        current_embedding = GlobalEmbeddingCertificate.from_stored_fields(
+            embedding, budget=budget
+        )
+        if (
+            current_limits.limits_id != limits.limits_id
+            or certificate.binding.limits_id != current_limits.limits_id
+            or current_embedding.status != "certified"
+        ):
+            return False
+        # Coverage and embedding are independent proofs and may have different
+        # resource limits. Only the supplied coverage limits bind this report.
+        request_key = _coverage_request_key(
+            mesh, geometry, domain, regions, embedding, limits
+        )
+        if not current_embedding.binding.matches(mesh, geometry):
+            return False
+        return (
+            certificate.status == "certified"
+            and _ISSUED_COVERAGE.get(
+                mesh, _coverage_authority_key(request_key, certificate, budget=budget)
+            )
+            is certificate
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _CoverageScientificFields:
+    """A one-shot comparison projection, never a proof or authority key."""
+
+    payload: tuple[tuple[str, object], ...]
+
+
+def authenticate_issued_domain_coverage(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: PiecewiseLinearDomain | mapped_reference_domain_owner.MappedReferenceDomain,
+    regions: np.ndarray,
+    embedding: GlobalEmbeddingCertificate,
+    limits: MeshCertificateLimits,
+    reference: DomainCoverageCertificate,
+    candidate: DomainCoverageCertificate,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> DomainCoverageCertificate | None:
+    """Authenticate an explicit actual issued owner, never an archive alias.
+
+    The caller supplies a genuinely earned current proof and its actual request
+    receipt. No owner is guessed or constructed here. Historical receipts stay
+    on ``reference``; only its three documented invocation-local observations
+    are excluded from science equality, never from candidate authentication.
+    """
+    from ..lifecycle._meshing_source_records import stored_record_content_id
+
+    with budget.measurement(), budget.activate():
+        budget.reserve(1, 1024)
+        if not is_issued_domain_coverage(
+            mesh, geometry, domain, regions, embedding, limits, candidate, budget=budget
+        ):
+            return None
+        members = fields(DomainCoverageCertificate)
+        budget.reserve(4 * len(members), 1024 + 256 * len(members))
+        historical = _CoverageScientificFields(reference.scientific_payload())
+        renewed = _CoverageScientificFields(candidate.scientific_payload())
+        first = stored_record_content_id(
+            historical, excluded="", budget=budget, memoize=False
+        )
+        second = stored_record_content_id(
+            renewed, excluded="", budget=budget, memoize=False
+        )
+        return candidate if first == second else None
+
+
+def _indexed_tetrahedral_facet_ids(
+    mesh: CellMesh,
+    cells: np.ndarray,
+    omitted: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Gather actual canonical facet IDs for proved local tetrahedral faces."""
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, TetrahedralConnectivity):
+        raise TypeError("Indexed tetrahedral facets require tetrahedral connectivity.")
+    count = cells.size
+    entities = mesh.entity_set(2).entity_ids
+    budget.reserve(
+        connectivity.cell_faces.size + entities.size + 4 * count + 16,
+        512 + 8 * (connectivity.cell_faces.size + entities.size + 4 * count),
+    )
+    routes = POLYHEDRAL_FACE_ROUTES["tetrahedron"]
+    local = np.asarray(
+        [
+            next(index for index, route in enumerate(routes) if axis not in route)
+            for axis in range(4)
+        ],
+        dtype=np.int64,
+    )
+    faces = np.asarray(connectivity.cell_faces)
+    identifiers = np.asarray(entities, dtype=np.int64)
+    return identifiers[faces[cells, local[omitted]]]
+
+
+def _metered_coverage_facet_ids(
+    mesh: CellMesh,
+    rows: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Retain the generic mapper and charge its complete known-facet index."""
+    known = mesh.entity_set(mesh.topological_dimension - 1).entity_ids.size
+    query = rows.shape[0]
+    width = max(mesh.topological_dimension, rows.shape[1])
+    depth = max(1, (int(known) - 1).bit_length())
+    budget.reserve(
+        (known + query) * (width + depth),
+        512 + 64 * width * (known + query),
+    )
+    return facet_entity_ids(mesh, rows)
+
+
+def _nested_coverage_relations(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    regions: np.ndarray,
+    predecessor: DomainCoveragePredecessor,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> dict[CoverageOverlapKey, Fraction] | None:
+    """Transport candidates only on supported source facets of an earned partition.
+
+    The caller first authenticates complete source coverage and a fresh closed
+    target partition. Every actual child label is checked below before any
+    filtering. Interior child faces cancel, and adjacent source parents with
+    the same region create no regional boundary. Consequently every exterior
+    or material-interface child face lies on one of the source certificate's
+    covered facets. Exact reference-face support enumerates those occurrences
+    on both sides; actual global target facet IDs detect conflicting parents.
+    No skipped interior contributes membership or measured area evidence.
+    """
+    parent = predecessor.geometry
+    record = geometry.restriction_source
+    if record is None:
+        return None
+    width = mesh.topological_dimension + 1
+    source_mesh = parent.source_mesh
+    source_count = sum(block.cell_count for block in source_mesh.blocks)
+    budget.reserve(
+        2 * source_count + 3 * regions.size,
+        1024 + 64 * source_count + 32 * regions.size,
+    )
+    source_ids = cell_global_ids(source_mesh)
+    source_rows = {int(identifier): row for row, identifier in enumerate(source_ids)}
+    source_corners = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in source_mesh.blocks]
+    )
+    source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
+    parents: list[np.ndarray] = []
+    face_patterns: list[tuple[tuple[int, int], ...]] = []
+    prepared_patterns: dict[tuple[str, str], tuple[tuple[int, int], ...]] = {}
+    elements = dict(zip(geometry.block_names, geometry.elements, strict=True))
+    for block in mesh.blocks:
+        identifiers = record.block_parent_cell_ids.get(block.name)
+        declared = record.block_parent_vertex_ids.get(block.name)
+        element = elements.get(block.name)
+        if identifiers is None or declared is None or element is None:
+            return None
+        rows = np.asarray(
+            [source_rows.get(int(value), -1) for value in identifiers], dtype=np.int64
+        )
+        if (
+            rows.shape != (block.cell_count,)
+            or np.any(rows < 0)
+            or not np.array_equal(declared, source_vertex_ids[source_corners[rows]])
+        ):
+            return None
+        prepared = coordinate_enclosure_owner._prepare_coordinate_corner_weights(
+            element, budget=budget
+        )
+        if prepared is None or len(prepared[1]) != width:
+            return None
+        pattern = prepared_patterns.get(prepared[0])
+        if pattern is None:
+            dense = []
+            for sparse in prepared[1]:
+                row = [Fraction(0)] * width
+                for column, value in sparse:
+                    if column >= width or not isinstance(value, Fraction):
+                        return None
+                    row[column] = value
+                if sum(row, Fraction(0)) != 1 or any(value < 0 for value in row):
+                    return None
+                dense.append(tuple(row))
+            budget.reserve(width**3, 256 + 64 * width * width)
+            faces = []
+            for omitted in range(width):
+                axes = [
+                    axis
+                    for axis in range(width)
+                    if all(
+                        dense[corner][axis] == 0
+                        for corner in range(width)
+                        if corner != omitted
+                    )
+                ]
+                if len(axes) > 1:
+                    return None
+                if axes:
+                    faces.append((omitted, axes[0]))
+            pattern = tuple(faces)
+            prepared_patterns[prepared[0]] = pattern
+        face_patterns.append(pattern)
+        parents.append(rows)
+    parent_rows = np.concatenate(parents)
+    source_regions = np.asarray(predecessor.cell_regions, dtype=np.int64)
+    if source_regions.shape != source_ids.shape or not np.array_equal(
+        regions, source_regions[parent_rows]
+    ):
+        return None
+    source_connectivity = source_mesh.connectivity
+    overlap = predecessor.coverage.facet_source_overlaps
+    source_relations: dict[int, list[tuple[int, tuple[int, ...], Fraction]]] = {}
+    for index in range(overlap.facets.size):
+        if overlap.space_values[int(overlap.space_codes[index])] != "physical":
+            return None
+        source_relations.setdefault(int(overlap.facets[index]), []).append(
+            (
+                int(overlap.sources[index]),
+                tuple(int(axis) for axis in overlap.axes[index]),
+                Fraction(float(overlap.upper[index])),
+            )
+        )
+    if isinstance(source_connectivity, TetrahedralConnectivity):
+        entities = source_mesh.entity_set(2).entity_ids
+        budget.reserve(
+            2 * source_connectivity.cell_faces.size + entities.size + 16,
+            512 + 8 * (source_connectivity.cell_faces.size + entities.size + 4),
+        )
+        routes = POLYHEDRAL_FACE_ROUTES["tetrahedron"]
+        local_omitted = np.asarray(
+            [
+                next(axis for axis in range(width) if axis not in route)
+                for route in routes
+            ],
+            dtype=np.int64,
+        )
+        # Canonical (cell, local face) order needs no repeated cell/axis
+        # selectors: gather its actual IDs once, then select supported faces.
+        source_facet_ids = np.asarray(entities, dtype=np.int64)[
+            np.asarray(source_connectivity.cell_faces)
+        ].reshape(-1)
+    else:
+        source_facets = mesh_facets(
+            source_mesh, geometry=parent.source_geometry, budget=budget
+        )
+        source_facet_ids = _metered_coverage_facet_ids(
+            source_mesh, source_facets.rows, budget=budget
+        )
+    selected = np.flatnonzero(np.isin(source_facet_ids, tuple(source_relations)))
+    if isinstance(source_connectivity, TetrahedralConnectivity):
+        owners = selected // width
+        excluded = local_omitted[selected % width]
+    else:
+        owners = source_facets.cells[selected]
+        missing = np.sum(source_corners[owners], axis=1) - np.sum(
+            np.where(source_facets.rows[selected] >= 0, source_facets.rows[selected], 0),
+            axis=1,
+        )
+        excluded = np.argmax(source_corners[owners] == missing[:, None], axis=1)
+    source_faces = {
+        (int(owner), int(axis)): int(identifier)
+        for owner, axis, identifier in zip(
+            owners, excluded, source_facet_ids[selected], strict=True
+        )
+    }
+    budget.reserve(
+        source_facet_ids.size + selected.size * (width + 1) + overlap.facets.size,
+        1024 + 128 * (selected.size + overlap.facets.size),
+    )
+    target_faces: list[np.ndarray] = []
+    target_cells: list[np.ndarray] = []
+    target_omitted: list[np.ndarray] = []
+    inherited_sources: list[np.ndarray] = []
+    # Exact closed regional coverage was already proved above. A target exterior
+    # or material-interface face is therefore exactly a child face on a supported
+    # source face; same-region parent interiors need no second facet traversal.
+    cursor = 0
+    for block, parent_table, pattern in zip(
+        mesh.blocks, parents, face_patterns, strict=True
+    ):
+        block_corners = np.asarray(block.vertices, dtype=np.int64)
+        for omitted, axis in pattern:
+            budget.reserve(2 * parent_table.size, 256 + 40 * parent_table.size)
+            source_table = np.asarray(
+                [
+                    source_faces.get((int(parent_row), axis), -1)
+                    for parent_row in parent_table
+                ],
+                dtype=np.int64,
+            )
+            used = np.flatnonzero(source_table >= 0)
+            if not used.size:
+                continue
+            budget.reserve(2 * used.size, 256 + 16 * used.size)
+            columns = [corner for corner in range(width) if corner != omitted]
+            target_faces.append(block_corners[used][:, columns])
+            target_cells.append(used + cursor)
+            target_omitted.append(np.full(used.size, omitted, dtype=np.int64))
+            inherited_sources.append(source_table[used])
+        cursor += block.cell_count
+    if not target_faces:
+        return None
+    rows = np.concatenate(target_faces)
+    source_table = np.concatenate(inherited_sources)
+    count = rows.shape[0]
+    sorting = count * max(1, (int(count) - 1).bit_length())
+    budget.reserve(
+        rows.size + count + sorting,
+        512 + 128 * count,
+    )
+    if isinstance(mesh.connectivity, TetrahedralConnectivity):
+        identifiers = _indexed_tetrahedral_facet_ids(
+            mesh,
+            np.concatenate(target_cells),
+            np.concatenate(target_omitted),
+            budget=budget,
+        )
+    else:
+        identifiers = _metered_coverage_facet_ids(mesh, rows, budget=budget)
+    pairs = np.unique(np.column_stack((identifiers, source_table)), axis=0)
+    # The same physical target facet may be visited from both regional sides,
+    # but both must name the same actual source facet.
+    if pairs.shape[0] > 1 and np.any(pairs[1:, 0] == pairs[:-1, 0]):
+        return None
+    relations: dict[CoverageOverlapKey, Fraction] = {}
+    for index in range(pairs.shape[0]):
+        target, inherited = int(pairs[index, 0]), int(pairs[index, 1])
+        for source, axes, upper in source_relations[inherited]:
+            relations[(target, source, axes, "candidate", "physical")] = upper
+    return relations
+
+
+def _execute_nested_coverage(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: PiecewiseLinearDomain,
+    regions: np.ndarray,
+    limits: MeshCertificateLimits,
+    binding: MeshCertificateBinding,
+    embedding: GlobalEmbeddingCertificate,
+    predecessor: DomainCoveragePredecessor,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _CoverageExecutionPhase | None:
+    from ._global_embedding import is_issued_current_nested_partition
+
+    parent = predecessor.geometry
+    source_embedding = parent.source_embedding
+    coverage = predecessor.coverage
+    if (
+        source_embedding is None
+        or geometry.restriction_source is None
+        or mesh.topological_dimension not in (2, 3)
+        or parent.source_geometry.restriction_source is not None
+        or coverage.findings
+        or coverage.region_ids != domain.region_ids
+        or coverage.domain_id != domain.domain_id
+        or coverage.binding.source_id != domain.source_id
+        or coverage.binding.source_revision != domain.source_revision
+        or coverage.covered_source_facet_count != coverage.source_facet_count
+        or coverage.source_facet_count != domain.facets.shape[0]
+    ):
+        return None
+    with budget.measurement() as measurement, budget.activate():
+        if not is_issued_domain_coverage(
+            parent.source_mesh,
+            parent.source_geometry,
+            domain,
+            np.asarray(predecessor.cell_regions, dtype=np.int64),
+            source_embedding,
+            predecessor.limits,
+            coverage,
+            budget=budget,
+        ) or not is_issued_current_nested_partition(
+            mesh, geometry, parent, embedding, limits, budget=budget
+        ):
+            return None
+        coverage.binding.require(parent.source_mesh, parent.source_geometry)
+        for element in parent.source_geometry.elements:
+            budget.reserve(element.local_dof_count**2)
+            try:
+                cell_geometry_owner.require_p1_cardinal_source(element)
+            except (TypeError, ValueError):
+                return None
+        relations = _nested_coverage_relations(
+            mesh, geometry, regions, predecessor, budget=budget
+        )
+        if relations is None:
+            return None
+    return _CoverageExecutionPhase(
+        DomainCoverageCertificate(
+            binding,
+            embedding.certificate_id,
+            domain,
+            (),
+            measures=CoverageMeasures(
+                coverage.requested_region_measures,
+                coverage.achieved_region_measures,
+                coverage.requested_region_measure_bounds,
+                coverage.achieved_region_measure_bounds,
+                coverage.integration_error_bounds,
+            ),
+            evidence=CoverageEvidence(
+                coverage.covered_source_facet_count,
+                CoverageOverlapBank.from_relations(
+                    relations, domain.ambient_dimension - 1
+                ),
+                (
+                    coverage.certificate_id,
+                    source_embedding.certificate_id,
+                    embedding.certificate_id,
+                ),
+                0,
+                0,
+                0,
+            ),
+            expression_work=CoverageExpressionWork(
+                measurement.work_units,
+                measurement.required_work_units,
+                measurement.peak_bytes_upper,
+            ),
+        )
+    )
+
+
 def _prepare_coverage_scope(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -2794,6 +4014,10 @@ def _coverage_resource_refusal(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _CoverageExecutionPhase:
+    if isinstance(domain, mapped_reference_domain_owner.MappedReferenceDomain):
+        # The requested physical measure was not retained by this caller.
+        # Re-entering source integration after refusal would renew its ledger.
+        raise error
     state.add(
         "mapped_coverage_resource_budget",
         "unresolved",
@@ -2807,7 +4031,7 @@ def _coverage_resource_refusal(
             embedding,
             domain,
             state,
-            declared_coverage_measures(domain),
+            declared_coverage_measures(domain, budget=budget),
             tuple(None for _ in domain.region_ids),
             0,
             {},
@@ -2888,6 +4112,7 @@ def _execute_affine_coverage(
             terms = _affine_coverage_terms(
                 state,
                 mesh,
+                geometry,
                 domain,
                 regions,
                 np.asarray(mesh.coordinates, dtype=np.float64),
@@ -2916,18 +4141,27 @@ def _execute_affine_coverage(
             # The same request ledger owns source vertices and the proof.
             try:
                 with budget.measurement(), budget.activate():
-                    exact_points = np.asarray(prepared_source, dtype=object)
-                    predicate_points, _ = exact_source_predicate_view(
-                        exact_points, budget=budget
+                    predicate_points, _ = source_bank_predicate_view(
+                        prepared_source, budget=budget
                     )
                     terms = _affine_coverage_terms(
                         state,
                         mesh,
+                        geometry,
                         domain,
                         regions,
                         predicate_points,
                         limits_,
                         budget=budget,
+                        exact_vertex_points=prepared_source
+                        if isinstance(
+                            geometry.exact_source,
+                            (
+                                exact_plc_geometry_owner.ExactPlcCellGeometrySource,
+                                exact_plc_geometry_owner.ExactPlcCellGeometryConvexSource,
+                            ),
+                        )
+                        else None,
                     )
             except CoordinateEnclosureResourceError as error:
                 return _coverage_resource_refusal(
@@ -2963,12 +4197,25 @@ def certify_domain_coverage(
     embedding: GlobalEmbeddingCertificate,
     limits: MeshCertificateLimits | None = None,
     budget: CoordinateEnclosureBudget | None = None,
+    predecessor: DomainCoveragePredecessor | None = None,
 ) -> DomainCoverageCertificate:
     """Certify coverage of an independently declared planar or mapped volume.
 
     ``cell_regions`` assigns every cell (mesh block order) exclusively to one
     index of ``domain.region_ids``; ``-1`` marks an unassigned cell. The
     embedding certificate establishes the required interior disjointness.
+
+    A certified proof already issued in this process for the same mesh object
+    and identical arrays, geometry, domain, assignment, embedding and limits is
+    returned while another owner still retains it. The current request then
+    admits and retains its bytes instead of repeating the proof; its expression
+    receipts remain those of the issuing invocation.
+
+    ``predecessor`` may transfer a complete issued source cover only through
+    this ledger's freshly earned exact closed parent partition and identical
+    inherited material labels. Facet relations remain conservative candidates.
+    Reconstructed reports or a different ledger cannot provide that premise;
+    an absent or unsupported premise retains the full independent proof.
     """
 
     embedding.binding.require(mesh, geometry)
@@ -2994,7 +4241,7 @@ def certify_domain_coverage(
             embedding,
             domain,
             state,
-            declared_coverage_measures(domain),
+            declared_coverage_measures(domain, budget=budget),
             tuple(None for _ in domain.region_ids),
             0,
             {},
@@ -3003,7 +4250,42 @@ def certify_domain_coverage(
         )
     assignment = _prepare_coverage_regions(mesh, cell_regions, len(domain.region_ids))
     regions, cell_ids = assignment.regions, assignment.cell_ids
+    request_key = _coverage_request_key(
+        mesh, geometry, domain, regions, embedding, limits_
+    )
     with coordinate_certificate_request(limits_, budget=budget) as budget:
+        issued = _ISSUED_COVERAGE.get(mesh, request_key)
+        try:
+            reusable = issued is not None and is_issued_domain_coverage(
+                mesh, geometry, domain, regions, embedding, limits_, issued, budget=budget
+            )
+        except CoordinateEnclosureResourceError as error:
+            refused_binding = MeshCertificateBinding(
+                mesh,
+                geometry,
+                embedding.binding.coordinate_scope,
+                limits_,
+                source_id=domain.source_id,
+                source_revision=domain.source_revision,
+            )
+            return _coverage_resource_refusal(
+                EmbeddingState([], ["domain_coverage"]),
+                refused_binding,
+                embedding,
+                domain,
+                error,
+                budget=budget,
+            ).certificate
+        if issued is not None and reusable:
+            issued.binding.require(mesh, geometry)
+            try:
+                # The reusing request admits and retains the issued proof's bytes.
+                budget.retain_owner(issued)
+            except CoordinateEnclosureResourceError:
+                # Without capacity to hold it, the request proves afresh.
+                pass
+            else:
+                return issued
         with ExitStack() as preparation:
             phase = _prepare_coverage_scope(
                 mesh, geometry, embedding, limits_, preparation, budget=budget
@@ -3031,6 +4313,32 @@ def certify_domain_coverage(
             unassigned = regions < 0
             if np.any(unassigned):
                 state.add("unassigned_cell", "violated", "cell", cell_ids[unassigned])
+            if (
+                predecessor is not None
+                and state.clean
+                and isinstance(domain, PiecewiseLinearDomain)
+                and phase.scope == "affine"
+            ):
+                try:
+                    inherited = _execute_nested_coverage(
+                        mesh,
+                        geometry,
+                        domain,
+                        regions,
+                        limits_,
+                        binding,
+                        embedding,
+                        predecessor,
+                        budget=budget,
+                    )
+                    if inherited is not None:
+                        return _issue_domain_coverage(
+                            mesh, request_key, inherited.certificate, budget=budget
+                        )
+                except CoordinateEnclosureResourceError as error:
+                    return _coverage_resource_refusal(
+                        state, binding, embedding, domain, error, budget=budget
+                    ).certificate
             match domain:
                 case mapped_reference_domain_owner.MappedReferenceDomain():
                     result = _execute_mapped_coverage(
@@ -3075,12 +4383,21 @@ def certify_domain_coverage(
                             assert_never(invalid_scope)
                 case invalid:
                     assert_never(invalid)
-            return result.certificate
+            certificate = result.certificate
+            if certificate.status == "certified":
+                try:
+                    _issue_domain_coverage(mesh, request_key, certificate, budget=budget)
+                except CoordinateEnclosureResourceError as error:
+                    return _coverage_resource_refusal(
+                        state, binding, embedding, domain, error, budget=budget
+                    ).certificate
+            return certificate
 
 
 def _affine_coverage_terms(
     state: EmbeddingState,
     mesh: CellMesh,
+    geometry: CellGeometrySpec,
     domain: PiecewiseLinearDomain,
     regions: np.ndarray,
     points: np.ndarray,
@@ -3088,6 +4405,7 @@ def _affine_coverage_terms(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    exact_vertex_points: CoordinateSourceBank | None = None,
 ) -> _AffineCoveragePhase:
     """Compute affine coverage of binary64 or rational source points.
 
@@ -3095,8 +4413,47 @@ def _affine_coverage_terms(
     Returns requested and achieved region measures, covered source facets and
     overlap relations.
     """
+    rational_points = None
+    if exact_vertex_points is not None:
+        budget.reserve(2, 256)
+        current_scope = coordinate_scope(mesh, geometry, budget=budget)
+        predicate = budget.source_predicate_view_cache.get(id(exact_vertex_points))
+        if (
+            not isinstance(
+                geometry.exact_source,
+                (
+                    exact_plc_geometry_owner.ExactPlcCellGeometrySource,
+                    exact_plc_geometry_owner.ExactPlcCellGeometryConvexSource,
+                ),
+            )
+            or current_scope.coordinate_scope != "affine"
+            or current_scope.source_values is not exact_vertex_points
+            or (
+                not points.dtype.hasobject
+                and (
+                    predicate is None
+                    or predicate[0] is not exact_vertex_points
+                    or predicate[1] is not points
+                    or predicate[2] is not True
+                )
+            )
+            or points.shape != (len(exact_vertex_points), mesh.ambient_dimension)
+        ):
+            raise ValueError(
+                "Exact PLC coverage rows must bind the actual prepared source and its exact predicate view; "
+                f"source_kind={type(geometry.exact_source).__name__}, "
+                f"scope={current_scope.coordinate_scope}, "
+                f"mesh_bank={current_scope.source_values is exact_vertex_points}, "
+                f"predicate_bank={predicate is not None and predicate[0] is exact_vertex_points}, "
+                f"predicate_points={predicate is not None and predicate[1] is points}, "
+                f"rows={len(exact_vertex_points)}/{points.shape[0]}."
+            )
+        rational_points = cast(
+            "tuple[exact_plc_geometry_owner.ExactPoint, ...]", exact_vertex_points
+        )
     dimension = mesh.topological_dimension
-    facets = mesh_facets(mesh, budget=budget)
+    # The embedding certificate built these geometry-bound facets in this request.
+    facets = mesh_facets(mesh, geometry=geometry, budget=budget)
     covering = _covering_pieces(
         state, mesh, points, facets, regions, limits, budget=budget
     )
@@ -3110,7 +4467,14 @@ def _affine_coverage_terms(
             np.flatnonzero(~certain),
         )
     covered, unmatched, incomplete, relations = _partition_covering_pieces(
-        state, covering, points, domain, axes, limits, budget=budget
+        state,
+        covering,
+        points,
+        domain,
+        axes,
+        limits,
+        budget=budget,
+        exact_vertex_points=rational_points,
     )
     interface = covering.other_region >= 0
     for check, rows in (
@@ -3196,6 +4560,7 @@ __all__ = [
     "CoverageEvidence",
     "CoverageExpressionWork",
     "CoverageMeasures",
+    "CoverageOverlapBank",
     "CoverageOverlapKey",
     "CoverageOverlapSemantics",
     "DomainCoverageCertificate",

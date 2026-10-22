@@ -183,10 +183,18 @@ class FiniteElementDiagonalData(StrictModule, NonTrainableState):
         method_ = str(method)
         operator = str(operator_id)
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
-        if method_ not in ("sparse-coordinate", "workset", "coordinate-linearization"):
+        if method_ not in (
+            "sparse-coordinate",
+            "workset",
+            "constrained-workset",
+            "coordinate-linearization",
+        ):
             raise ValueError("Unknown finite-element diagonal construction method.")
-        if not operator or version.shape != () or version < 0:
+        if not operator or version.shape != ():
             raise ValueError("Diagonal operator identity/version are invalid.")
+        version = eqx.error_if(
+            version, version < 0, "Diagonal numeric version must be non-negative."
+        )
         leaves = jax.tree.leaves(diagonal)
         if not leaves or any(
             not jnp.issubdtype(jnp.asarray(value).dtype, jnp.inexact) for value in leaves

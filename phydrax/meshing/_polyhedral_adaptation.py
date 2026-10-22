@@ -35,7 +35,9 @@ import phydrax.geometry._planar_primitives as planar_primitives_owner
 import phydrax.geometry._polygon_triangulation as _owner_phydrax_geometry__mesh_certificates
 import phydrax.geometry._supermesh as _dependency_phydrax_geometry__supermesh
 import phydrax.meshing._association_state as association_state_owner
+import phydrax.meshing._contracts as contracts_owner
 import phydrax.meshing._entity_keys as entity_keys_owner
+import phydrax.meshing._host_banks as host_banks_owner
 import phydrax.meshing._lineage_records as _dependency_phydrax_meshing__lineage
 import phydrax.meshing._periodic as _owner_phydrax_meshing__periodic
 import phydrax.meshing._periodic_constraint as periodic_constraint_owner
@@ -58,6 +60,7 @@ from .._meshcore import (
     MeshcoreStatus,
     NativeExecutionLimits,
     NativeExecutionScope,
+    NativeHostStorageWorkspace,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -345,6 +348,8 @@ def regenerated_polyhedral_associations(
     construction: _dependency_phydrax_meshing__polyhedral_generation.PolyhedralConstruction,
     target: CellMesh,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[association_state_owner.GeometryAssociation, ...]:
     """Reissue source strata from restricted-diagram carrier evidence."""
 
@@ -402,6 +407,7 @@ def regenerated_polyhedral_associations(
             None,
             replace(construction, mesh=target),
             request.schedule.feature_tolerance,
+            budget=budget,
         )
     ).associations
     return associations
@@ -416,39 +422,99 @@ def _stratum_overlap(
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
+    # Only the Boolean decision escapes. Coordinate gathers, triangulation
+    # lists and exact predicate intermediates end at this boundary.
+    with budget.temporary_scope():
+        budget.reserve(
+            0, 16 * 256 + 512 * (len(source_points) + len(target_points))
+        )
+        bits = max(
+            (value.numerator.bit_length() + value.denominator.bit_length()
+             if isinstance(value, Fraction)
+             else planar_primitives_owner.binary64_fraction_bits(float(value))
+             for points in (source_points, target_points)
+             for row in points for value in row),
+            default=1,
+        )
+        _dependency_phydrax_discretization__coordinate_budget.reserve_polynomial(
+            0, 16, 0, 8 * bits + 4, budget=budget
+        )
+        return _decide_stratum_overlap(
+            source_points, target_points, dimension, work, bits=bits, budget=budget
+        )
+
+
+def _decide_stratum_overlap(
+    source_points: np.ndarray,
+    target_points: np.ndarray,
+    dimension: int,
+    work: list[int],
+    /,
+    *,
+    bits: int,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> bool:
     """Deciding surface/curve ancestry requires positive physical overlap."""
+    exact_comparisons = source_points.dtype == object or target_points.dtype == object
     if dimension == 0:
+        if exact_comparisons and source_points.shape == target_points.shape:
+            budget.reserve(2 * source_points.size)
         return np.array_equal(source_points, target_points)
+    if exact_comparisons:
+        # polygon_bounds charges two coefficient units per scalar comparison.
+        # These are the actual two min/max reductions for each input and the
+        # three componentwise comparisons of their resulting bounding boxes.
+        comparisons = source_points.shape[1] * (
+            2 * (len(source_points) - 1) + 2 * (len(target_points) - 1) + 3
+        )
+        budget.reserve(2 * comparisons)
     if np.any(
         np.maximum(np.min(source_points, axis=0), np.min(target_points, axis=0))
         > np.minimum(np.max(source_points, axis=0), np.max(target_points, axis=0))
     ):
         return False
     if dimension == 1:
+        _dependency_phydrax_discretization__coordinate_budget.reserve_polynomial(
+            0, 48, 0, 16 * bits + 5, budget=budget
+        )
         a, b = source_points
+        # rational_points' existing traversal/lift rate is two per coefficient;
+        # each direction/delta difference adds one coefficient operation.
+        budget.reserve(2 * len(a))
         origin = tuple(
             value if isinstance(value, Fraction) else Fraction(float(value))
             for value in a
         )
+        budget.reserve(3 * len(b))
         direction = tuple(
             (value if isinstance(value, Fraction) else Fraction(float(value))) - previous
             for value, previous in zip(b, origin, strict=True)
         )
-        axis = next(index for index, value in enumerate(direction) if value != 0)
+        for axis, component in enumerate(direction):
+            budget.reserve(1)  # The existing exact scalar zero-test unit.
+            if component != 0:
+                break
+        else:
+            raise StopIteration
         parameters = []
         for point in target_points:
+            budget.reserve(3 * len(point))
             delta = tuple(
                 (value if isinstance(value, Fraction) else Fraction(float(value)))
                 - previous
                 for value, previous in zip(point, origin, strict=True)
             )
+            budget.reserve(1)
             parameter = delta[axis] / direction[axis]
-            if any(
-                value != parameter * component
-                for value, component in zip(delta, direction, strict=True)
-            ):
-                return False
+            for value, component in zip(delta, direction, strict=True):
+                # One product and the canonical two-unit exact comparison.
+                budget.reserve(3)
+                if value != parameter * component:
+                    return False
             parameters.append(parameter)
+        # Each parameter min/max visits N-1 comparisons, followed by the two
+        # endpoint comparisons and the final positive-overlap comparison.
+        budget.reserve(2 * (2 * (len(parameters) - 1) + 3))
         return max(Fraction(0), min(parameters)) < min(Fraction(1), max(parameters))
 
     triangles = []
@@ -474,6 +540,7 @@ def _stratum_overlap(
     if source_points.dtype == object or target_points.dtype == object:
         for first in triangles[0]:
             for second in triangles[1]:
+                budget.reserve_geometry_queries(1)
                 a, b = (
                     planar_primitives_owner.rational_points(first, budget=budget),
                     planar_primitives_owner.rational_points(second, budget=budget),
@@ -555,6 +622,47 @@ def regenerated_polyhedral_relations(
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _dependency_phydrax_meshing__topology_edit.CellTopologyEdit:
+    with _polyhedral_exact_phase(
+        scope, budget, maximum_work_units, budget.maximum_memory_bytes
+    ):
+        with _polyhedral_topology_phase(
+            scope, target, periodic_source=source.mesh
+        ) as (storage, bound):
+            source_bound = _polyhedral_adaptation_storage_bound(
+                _polyhedral_incidence(source.mesh, scope=scope)._replace(rank=0)
+            )
+            base = bound.construction + source_bound.construction
+            storage.workspace.set_bound(base)
+            result, relation_bytes = _build_regenerated_relations(
+                source, target, edit, associations, maximum_work_units,
+                maximum_geometry_queries=maximum_geometry_queries,
+                target_geometry=target_geometry, scope=scope, budget=budget,
+                storage=storage.workspace, base=base,
+            )
+            storage.retain(
+                relation_bytes,
+                *(leaf for leaf in jax.tree_util.tree_leaves(result)
+                  if eqx.is_array(leaf)),
+                record_count_upper=bound.records + source_bound.records,
+            )
+            return result
+
+
+def _build_regenerated_relations(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    target: CellMesh,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    associations: tuple[association_state_owner.GeometryAssociation, ...],
+    maximum_work_units: int,
+    /,
+    *,
+    maximum_geometry_queries: int,
+    target_geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    storage: NativeHostStorageWorkspace,
+    base: int,
+) -> tuple[_dependency_phydrax_meshing__topology_edit.CellTopologyEdit, int]:
     """Carry stratum membership and refuse inconsistent partial scopes.
 
     Regenerated cells use measured physical overlap. Lower strata use source-entity
@@ -566,6 +674,8 @@ def regenerated_polyhedral_relations(
     ):
         relations = list(edit.relations)
         work = 0
+        relation_bytes = 3 * 4 * 256
+        relation_storage = 0
         queries = [min(maximum_work_units, maximum_geometry_queries)]
         with _polyhedral_exact_phase(
             scope, budget, maximum_work_units, budget.maximum_memory_bytes
@@ -624,10 +734,20 @@ def regenerated_polyhedral_relations(
                 old.source_entities.entity_ids(), old_positions.tolist(), strict=True
             ):
                 bank.setdefault(identity, []).append(position)
+            new_identities = new.source_entities.entity_ids()
+            matched = sum(len(bank.get(identity, ())) for identity in new_identities)
+            # Exact same-stratum identity multiplicities bound every possible
+            # accepted relation before overlap predicates or list growth.
+            relation_storage += matched * (
+                512 + 16 * (old_keys.shape[1] + new_keys.shape[1])
+            )
+            storage.set_bound(base + relation_storage)
             work += old_positions.size + new_positions.size
-            for row, identity in enumerate(new.source_entities.entity_ids()):
+            budget.reserve(old_positions.size + new_positions.size)
+            for row, identity in enumerate(new_identities):
                 parents = bank.get(identity, [])
                 work += len(parents)
+                budget.reserve(len(parents))
                 if work > maximum_work_units:
                     raise polyhedral_shared_owner.PolyhedralAdaptationError(
                         "polyhedral_adaptation.maximum_work_units must admit stratum lineage; got a work budget refusal",
@@ -642,6 +762,7 @@ def regenerated_polyhedral_relations(
                             category=MeshingFailureCategory.RESOURCE_EXHAUSTED,
                         )
                     queries[0] -= 1
+                    budget.reserve_geometry_queries(1)
                     if _stratum_overlap(
                         source_coordinates[source_vertices[parent]],
                         target_points,
@@ -651,6 +772,9 @@ def regenerated_polyhedral_relations(
                     ):
                         parent_rows.append(parent)
                         child_rows.append(child)
+            relation_bytes += len(parent_rows) * (
+                8 * (old_keys.shape[1] + new_keys.shape[1]) + 4
+            )
             relations[dimension] = (
                 _dependency_phydrax_meshing__topology_edit.EntityRelations(
                     dimension,
@@ -665,7 +789,220 @@ def regenerated_polyhedral_relations(
                     ),
                 )
             )
-        return edit._replace(relations=tuple(relations))
+        return edit._replace(relations=tuple(relations)), relation_bytes
+
+
+class _PolyhedralIncidence(NamedTuple):
+    vertices: int
+    cells: int
+    loops: int
+    corners: int
+    squared_arities: int
+    edges: int
+    rank: int
+    face_key_slots: int
+    maximum_face_arity: int
+    maximum_cell_corners: int
+    split_squared_arities: int
+
+
+def _polyhedral_incidence(
+    mesh: CellMesh, /, *, scope: NativeExecutionScope
+) -> _PolyhedralIncidence:
+    """Read concrete packed incidence only after admitting its host copies."""
+    c = _dependency_phydrax_meshing__polyhedral_generation.require_polyhedral_connectivity(mesh)
+    with NativeHostStorageWorkspace(scope) as storage:
+        storage.set_bound(
+            4 * 256 + 8 * (
+                c.cell_face_offsets.size + c.cell_face_values.size
+                + c.face_vertex_offsets.size
+                + c.cell_vertex_offsets.size
+            )
+        )
+        scope.charge(work=c.cell_count + c.cell_face_values.size + c.face_count)
+        co = np.asarray(c.cell_face_offsets)
+        cf = np.asarray(c.cell_face_values)
+        fo = np.asarray(c.face_vertex_offsets)
+        vo = np.asarray(c.cell_vertex_offsets)
+        corners = 0
+        squares = 4 * c.edges.shape[0]
+        maximum_face_arity = maximum_cell_corners = 0
+        split_squares = 0
+        for cell, (begin, end) in enumerate(zip(co[:-1], co[1:], strict=True)):
+            cell_corners = 0
+            for face in cf[int(begin):int(end)]:
+                arity = int(fo[int(face) + 1]) - int(fo[int(face)])
+                corners += arity
+                cell_corners += arity
+                split_squares += 8 * arity * arity
+                maximum_face_arity = max(maximum_face_arity, arity)
+            vertices = int(vo[cell + 1]) - int(vo[cell])
+            squares += vertices * vertices
+            cell_edges_upper = cell_corners // 2
+            split_squares += 2 * (
+                (vertices + cell_edges_upper) ** 2 + cell_edges_upper ** 2
+            )
+            maximum_cell_corners = max(maximum_cell_corners, cell_corners)
+        for begin, end in zip(fo[:-1], fo[1:], strict=True):
+            squares += (int(end) - int(begin)) ** 2
+        split_squares += 24 * corners
+        periodic = mesh.periodic_topology
+        rank = 0 if periodic is None else periodic.vertex_shifts.shape[1]
+        return _PolyhedralIncidence(
+            mesh.coordinates.shape[0], c.cell_count, cf.size, corners,
+            squares, c.edges.shape[0], rank,
+            c.face_count * maximum_face_arity,
+            maximum_face_arity, maximum_cell_corners,
+            split_squares,
+        )
+
+
+class _PolyhedralStorageBound(NamedTuple):
+    construction: int
+    retained: int
+    records: int
+
+
+def _polyhedral_adaptation_storage_bound(
+    incidence: _PolyhedralIncidence, /, *, split: bool = False
+) -> _PolyhedralStorageBound:
+    """Bound one concrete edit, not schedule-wide maximum-arity padding.
+
+    A plane adds at most one vertex per source edge, two children per cell,
+    two clipped copies per face occurrence and two section loops per cell.
+    Clipping a loop has at most twice its original corners; both section loops
+    together have at most twice the cell's original corner occurrences.
+    """
+    (v, c, f, k, q, e, rank, key_slots, face_arity, cell_corners,
+     split_squares) = incidence
+    if split:
+        v, c, f, k, q = v + e, 2 * c, 2 * f + 2 * c, 6 * k, split_squares
+        key_slots = f * max(2 * face_arity, cell_corners)
+    construction, retained = (
+        _dependency_phydrax_meshing__polyhedral_generation._polyhedral_mesh_storage_bound(
+            v, c, f, k
+        )
+    )
+    records = 512 + 64 * c
+    if rank:
+        periodic, periodic_retained = (
+            _dependency_phydrax_meshing__polyhedral_generation._periodic_topology_storage_bound(
+                v, c, f, k, q, rank
+            )
+        )
+        construction += periodic
+        retained += periodic_retained
+        records += 16 * (v + k + f + c)
+    # Source topology copies, loop tuples/views, identity/support mappings,
+    # normal/offset rows, remapping banks, and per-loop assembly lists/sets.
+    # Python index payload permits full signed-int64 scientific identities.
+    construction += 256 * (32 + 8 * c + 4 * f) + 320 * (v + c + f + k)
+    # entity_keys materializes padded, sorted and selected face-key banks.
+    # Use the real face count and width, not the sum of corners as a proxy.
+    construction += 8 * 8 * key_slots
+    return _PolyhedralStorageBound(construction, retained, records)
+
+
+def _polyhedral_geometry_aliases(
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+) -> tuple[object, ...]:
+    """Retain newly authored geometry banks, not an entire provenance ancestry.
+
+    Power witnesses own their exact vertices and coefficients through the same
+    coordinate ledger. Parent recipe banks already retain their producer
+    storage; only a new restriction head adds arrays on this edit.
+    """
+    source = polyhedral_shared_owner.bound_power_source(geometry)
+    banks: tuple[object, ...] = (geometry.coordinates, *geometry.geometry_dofs)
+    if isinstance(
+        source,
+        _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryRestrictionSource,
+    ):
+        banks += (source.planes, source.vertex_parents, source.vertex_plane_ids)
+    return banks
+
+
+def _polyhedral_cross_key_storage(source: CellMesh, target: CellMesh, /) -> int:
+    """Bound source/target face keys after their actual widths are unified.
+
+    ID assignment and lineage concatenate, pad, unique-sort and select these
+    banks. Sixteen simultaneous scalar banks cover both input sorts, both pads,
+    combined rows, structured lexical sorting, uniqueness and lookup operands.
+    """
+    first = _dependency_phydrax_meshing__polyhedral_generation.require_polyhedral_connectivity(source)
+    second = _dependency_phydrax_meshing__polyhedral_generation.require_polyhedral_connectivity(target)
+    return (
+        8 * 16 * max(first.maximum_face_arity, second.maximum_face_arity)
+        * (first.face_count + second.face_count)
+    )
+
+
+@contextmanager
+def _polyhedral_topology_phase(
+    scope: NativeExecutionScope,
+    mesh: CellMesh,
+    /,
+    *,
+    split: bool = False,
+    periodic_source: CellMesh | None = None,
+    periodic_topology: bool = True,
+    limits: contracts_owner.MeshingLimits | None = None,
+) -> Iterator[tuple[
+    _dependency_phydrax_meshing__polyhedral_generation._PolyhedralTopologyStorage,
+    _PolyhedralStorageBound,
+]]:
+    incidence = _polyhedral_incidence(mesh, scope=scope)
+    if periodic_source is not None and periodic_source.periodic_topology is not None:
+        incidence = incidence._replace(
+            rank=periodic_source.periodic_topology.vertex_shifts.shape[1]
+        )
+    if not periodic_topology:
+        incidence = incidence._replace(rank=0)
+    bound = _polyhedral_adaptation_storage_bound(incidence, split=split)
+    # A periodic descriptor retains its exact source ancestry. Each restriction
+    # adds three array leaves; a linear-action node plus its preparation has
+    # fewer than 64 schema leaves. Admit finalizer/traversal records from the
+    # actual chain depth rather than assuming one generation epoch.
+    depth = 0
+    for owner in (mesh, periodic_source):
+        if owner is None or owner.periodic_topology is None:
+            continue
+        geometry = owner.periodic_topology._actual_geometry
+        if geometry is None:
+            continue
+        node = polyhedral_shared_owner.bound_power_source(geometry)
+        current_depth = 0
+        while isinstance(node, (
+            _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryRestrictionSource,
+            _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryLinearActionSource,
+        )):
+            scope.charge(work=1)
+            current_depth += 1
+            node = node.parent
+        depth = max(depth, current_depth + int(split))
+    extra_records = 64 * depth
+    bound = bound._replace(
+        construction=bound.construction + 512 * extra_records,
+        records=bound.records + extra_records,
+    )
+    with _dependency_phydrax_meshing__polyhedral_generation._PolyhedralTopologyStorage(scope) as storage:
+        storage.workspace.set_bound(bound.construction)
+        vertices, cells, loops, corners = (
+            incidence.vertices, incidence.cells, incidence.loops, incidence.corners
+        )
+        if split:
+            vertices += incidence.edges
+            cells, loops, corners = 2 * cells, 2 * loops + 2 * cells, 6 * corners
+        if limits is not None:
+            _dependency_phydrax_meshing__polyhedral_generation._admit_polyhedral_mesh_capacity(
+                vertices, cells, loops, corners, limits
+            )
+        scope.charge(
+            work=_dependency_phydrax_meshing__polyhedral_generation._polyhedral_mesh_work_bound(
+                vertices, cells, loops, corners
+            )
+        )
+        yield storage, bound
 
 
 class _PlaneSplitResult(StrictModule):
@@ -690,6 +1027,8 @@ def _prepare_plane_split(
     protected: set[int],
     tolerance: float,
     maximum_cells: int,
+    *,
+    scope: NativeExecutionScope,
 ) -> _PlaneSplitPreparation:
     connectivity = mesh.connectivity
     match connectivity:
@@ -719,6 +1058,11 @@ def _prepare_plane_split(
             "polyhedral_adaptation.maximum_cells must admit every plane-split child; got a cell budget refusal",
             category=MeshingFailureCategory.RESOURCE_EXHAUSTED,
         )
+    # Each plane acts on the current candidate, not the original source. Later
+    # planes can touch more descendants than the source-wide touched-cell union.
+    # Refuse before constructing halfspaces or invoking the clipping kernel.
+    with scope.batch(0, cavity_upper=len(cut)) as ticket:
+        ticket.consume(cavity_cells=len(cut))
     for index in cut:
         for local, face in enumerate(loops[index]):
             if (
@@ -755,6 +1099,21 @@ def _prepare_plane_split(
 
 
 def _clip_plane_split(
+    preparation: _PlaneSplitPreparation,
+    *,
+    scope: NativeExecutionScope,
+) -> _owner_phydrax__meshcore.BoxHalfspaceClip:
+    with NativeHostStorageWorkspace(scope) as storage:
+        # The implementation pads the *actual* cut-cell halfspaces. This term
+        # cannot be replaced by an incidence sum for mixed cell arities.
+        storage.set_bound(
+            12 * 256 + 32 * len(preparation.normals) * max(preparation.counts)
+            + 8 * len(preparation.counts) + 256
+        )
+        return _build_plane_clip(preparation)
+
+
+def _build_plane_clip(
     preparation: _PlaneSplitPreparation,
 ) -> _owner_phydrax__meshcore.BoxHalfspaceClip:
     normals, offsets, counts = (
@@ -803,6 +1162,8 @@ def _map_plane_cut_vertex(
     tolerance: float,
     maximum_vertices: int,
     next_vertex: int,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _PlaneCutPoint:
     coordinates, vertex_ids = preparation.coordinates, preparation.vertex_ids
     global_points, global_ids, point_keys = (
@@ -826,12 +1187,32 @@ def _map_plane_cut_vertex(
     elif len(support) == 2 and len(original) in labels:
         key = tuple(sorted(int(vertex_ids[value]) for value in support))
         first, second = sorted(support)
-        origin = rational_vector(coordinates[first])
-        direction = tuple(
-            Fraction(float(value)) - start
-            for value, start in zip(coordinates[second], origin, strict=True)
+        bits = max(
+            planar_primitives_owner.binary64_fraction_bits(float(value))
+            for row in (coordinates[first], coordinates[second], plane)
+            for value in row
         )
+        budget.reserve(0, 32 * (128 + 2 * ((bits + 7) // 8)))
+        # rational_points' canonical conversion/traversal rate: two visits
+        # for each of the nine binary64 coefficients, with no helper copy.
+        budget.reserve(18)
+        origin = rational_vector(coordinates[first])
+        endpoint = rational_vector(coordinates[second])
         normal = rational_vector(plane[:3])
+        plane_restriction_owner._reserve_fraction_storage(
+            (origin, endpoint), 3, 2, 1, budget=budget
+        )
+        # Coefficient-operation units match plane_key's explicit difference /
+        # product circuit and _line's one unit per normalization division.
+        budget.reserve(3)  # Three direction differences.
+        direction = tuple(
+            value - start
+            for value, start in zip(endpoint, origin, strict=True)
+        )
+        plane_restriction_owner._reserve_fraction_storage(
+            (normal, direction), 1, 6, 3, budget=budget
+        )
+        budget.reserve(6)  # Three products and three sum additions.
         denominator = sum(
             value * delta for value, delta in zip(normal, direction, strict=True)
         )
@@ -839,23 +1220,51 @@ def _map_plane_cut_vertex(
             raise polyhedral_shared_owner.PolyhedralAdaptationError(
                 "polyhedral_adaptation.clip_edge must intersect its plane; got an exactly parallel edge"
             )
+        budget.reserve(2)  # The storage-bound operand's binary64 lift.
+        plane_restriction_owner._reserve_fraction_storage(
+            (normal, origin, (Fraction(float(plane[3])), denominator)),
+            1, 8, 4, budget=budget,
+        )
+        # Repeat the original offset conversion, then evaluate exactly the
+        # original dot/subtraction/division circuit (3 + 3 + 1 + 1).
+        budget.reserve(2 + 8)
         parameter = (
             Fraction(float(plane[3]))
             - sum(value * start for value, start in zip(normal, origin, strict=True))
         ) / denominator
+        plane_restriction_owner._reserve_fraction_storage(
+            (origin, direction, (parameter,)), 3, 3, 2, budget=budget
+        )
+        budget.reserve(6)  # Three products and three coordinate additions.
         exact = tuple(
             start + parameter * delta
             for start, delta in zip(origin, direction, strict=True)
         )
+        budget.reserve(6)  # Three binary64 lifts for the storage operands.
+        plane_restriction_owner._reserve_fraction_storage(
+            (tuple(Fraction(float(value)) for value in point), exact),
+            3, 2, 1, budget=budget,
+        )
+        # Three repeated binary64 lifts, three differences and three magnitudes.
+        # _exact_polyhedral_geometry._polyhedron_measure's 12+14 circuit
+        # prices nine differences, the 14-operation determinant, magnitude,
+        # division and zero test in the same coefficient-operation units.
+        budget.reserve(6 + 3 + 3)
         construction_error = max(
             abs(Fraction(float(value)) - expected)
             for value, expected in zip(point, exact, strict=True)
         )
+        budget.reserve(2)  # Original tolerance conversion.
         if construction_error > Fraction(tolerance):
             raise polyhedral_shared_owner.PolyhedralAdaptationError(
                 "PolyhedralMeshAdaptation.coordinate_tolerance must bound source-edge construction; got excess rational construction error"
             )
+        # binary64_polygon_bounds pays one directed-rounding primitive per
+        # coefficient, covering float conversion and its outward nextafter.
+        # Preserve this kernel's original conditional-nextafter numerical order.
+        budget.reserve(1)
         construction_bound = float(construction_error)
+        budget.reserve(2)  # Original rounded-bound conversion.
         if Fraction(construction_bound) < construction_error:
             construction_bound = float(np.nextafter(construction_bound, np.inf))
         if key not in point_keys:
@@ -891,11 +1300,45 @@ def _split(
     maximum_cells: int,
     maximum_vertices: int,
     vertex_support: dict[int, set[int]],
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _PlaneSplitResult:
-    preparation = _prepare_plane_split(mesh, plane, protected, tolerance, maximum_cells)
+    with _polyhedral_topology_phase(
+        scope, mesh, split=True, periodic_topology=False
+    ) as (storage, bound):
+        with _polyhedral_exact_phase(
+            scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+        ):
+            result = _build_plane_split(
+                mesh, plane, protected, tolerance, maximum_cells, maximum_vertices,
+                vertex_support, scope=scope, budget=budget,
+            )
+        if result.mesh is not mesh:
+            storage.retain(
+                bound.retained, result.mesh, record_count_upper=bound.records
+            )
+        return result
+
+
+def _build_plane_split(
+    mesh: CellMesh,
+    plane: np.ndarray,
+    protected: set[int],
+    tolerance: float,
+    maximum_cells: int,
+    maximum_vertices: int,
+    vertex_support: dict[int, set[int]],
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PlaneSplitResult:
+    preparation = _prepare_plane_split(
+        mesh, plane, protected, tolerance, maximum_cells, scope=scope
+    )
     if not preparation.cut:
         return _PlaneSplitResult(mesh, 0.0)
-    native = _clip_plane_split(preparation)
+    native = _clip_plane_split(preparation, scope=scope)
     points, point_counts = native.vertices, native.vertex_counts
     face_offsets, face_labels = native.face_offsets, native.face_labels
     face_vertices, face_counts = native.face_vertices, native.face_counts
@@ -941,6 +1384,7 @@ def _split(
                     tolerance,
                     maximum_vertices,
                     next_vertex,
+                    budget=budget,
                 )
                 next_vertex = mapped.next_vertex
                 residual = max(residual, mapped.error)
@@ -1094,6 +1538,26 @@ def _agglomerate(
     groups: tuple[tuple[int, ...], ...],
     classes: np.ndarray,
     protected: set[int],
+    *,
+    scope: NativeExecutionScope,
+) -> CellMesh:
+    # Groups are disjoint by request validation; all replacements coexist in
+    # this candidate. Admission precedes topology planning and allocation.
+    with scope.batch(0, cavity_upper=sum(len(group) for group in groups)) as ticket:
+        ticket.consume(cavity_cells=ticket.cavity_upper)
+    with _polyhedral_topology_phase(
+        scope, mesh, periodic_topology=False
+    ) as (storage, bound):
+        target = _build_agglomeration(mesh, groups, classes, protected)
+        storage.retain(bound.retained, target, record_count_upper=bound.records)
+        return target
+
+
+def _build_agglomeration(
+    mesh: CellMesh,
+    groups: tuple[tuple[int, ...], ...],
+    classes: np.ndarray,
+    protected: set[int],
 ) -> CellMesh:
     preparation = _prepare_agglomeration(mesh, groups, classes, protected)
     cells, cell_ids, next_cell = (
@@ -1122,7 +1586,38 @@ def _topology_edit(
     target: CellMesh,
     refinement: _dependency_phydrax_geometry__supermesh.PreparedCommonRefinement | None,
     vertex_support: dict[int, set[int]],
+    *,
+    scope: NativeExecutionScope,
 ) -> _dependency_phydrax_meshing__topology_edit.CellTopologyEdit:
+    with _polyhedral_topology_phase(scope, target) as (storage, bound):
+        source_bound = _polyhedral_adaptation_storage_bound(
+            _polyhedral_incidence(source, scope=scope)._replace(rank=0)
+        )
+        base = bound.construction + source_bound.construction
+        overlap_rows = 0 if refinement is None else refinement.source_cells.size
+        base += 256 + 64 * overlap_rows
+        storage.workspace.set_bound(base)
+        edit, relation_bytes = _build_topology_edit(
+            source, target, refinement, vertex_support,
+            storage=storage.workspace, base=base,
+        )
+        storage.retain(
+            bound.retained + relation_bytes + 64 * overlap_rows,
+            *(leaf for leaf in jax.tree_util.tree_leaves(edit) if eqx.is_array(leaf)),
+            record_count_upper=bound.records,
+        )
+        return edit
+
+
+def _build_topology_edit(
+    source: CellMesh,
+    target: CellMesh,
+    refinement: _dependency_phydrax_geometry__supermesh.PreparedCommonRefinement | None,
+    vertex_support: dict[int, set[int]],
+    *,
+    storage: NativeHostStorageWorkspace,
+    base: int,
+) -> tuple[_dependency_phydrax_meshing__topology_edit.CellTopologyEdit, int]:
     loops = polyhedral_shared_owner.polyhedral_face_loops(target)
     blocks = []
     offset = 0
@@ -1154,6 +1649,7 @@ def _topology_edit(
         else np.asarray(refinement.target_cell_global_ids, dtype=np.int64)
     )
     relations = []
+    relation_bytes = 0
     for dimension in range(4):
         keys = entity_keys_owner.entity_keys(source, dimension)
         if dimension == 3:
@@ -1198,6 +1694,13 @@ def _topology_edit(
                         ) and set(values) != set(
                             int(value) for value in source_key if value >= 0
                         ):
+                            # Admit each matched relation before its two retained
+                            # NumPy views/list slots and the eventual key banks.
+                            relation_bytes += (
+                                2 * 256 + 64
+                                + 16 * (keys.shape[1] + target_keys.shape[1])
+                            )
+                            storage.set_bound(base + relation_bytes)
                             parents.append(source_key)
                             children.append(target_key)
             relations.append(
@@ -1231,7 +1734,7 @@ def _topology_edit(
         valid,
         tuple(relations),
         target_periodic_topology=target.periodic_topology,
-    )
+    ), relation_bytes
 
 
 class _PolyhedralAllowance(NamedTuple):
@@ -1263,7 +1766,7 @@ def _polyhedral_exact_phase(
     _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
 ]:
     if not budget.ticket.settled:
-        with budget.bound_stage(maximum_work, maximum_bytes):
+        with budget.bound_stage(maximum_work, maximum_bytes), budget.temporary_scope():
             yield budget
         return
     remaining = scope.remaining()
@@ -1273,7 +1776,7 @@ def _polyhedral_exact_phase(
         bytes_upper=min(maximum_bytes, remaining.remaining_managed_bytes),
         cavity_upper=remaining.remaining_cavity_cells,
     )
-    with budget.bind_ticket(ticket), ticket.native_target():
+    with budget.bind_ticket(ticket), ticket.native_target(), budget.temporary_scope():
         yield budget
 
 
@@ -1344,6 +1847,7 @@ def _prepare_edge_trace_stencil(
     source_ids: np.ndarray,
     actions: list[dict[int, Fraction]],
     *,
+    scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _EdgeTraceStencil:
     if len(actions) != target.coordinates.shape[0]:
@@ -1359,17 +1863,39 @@ def _prepare_edge_trace_stencil(
     edges = {frozenset(int(value) for value in edge) for edge in edge_rows}
     if any(len(row) != 1 and frozenset(row) not in edges for row in actions):
         return _EdgeTraceStencil(None, None)
-    budget.reserve(len(actions), 64 * len(actions))
-    sources = np.full((len(actions), 2), -1, dtype=np.int64)
-    weights = np.zeros((len(actions), 2), dtype=np.float64)
+    budget.reserve(len(actions))
+    sources = host_banks_owner.family_host_array(
+        (len(actions), 2), np.int64, scope=scope
+    )
+    weights = host_banks_owner.family_host_array(
+        (len(actions), 2), np.float64, scope=scope
+    )
+    sources.fill(-1)
+    weights.fill(0)
     for target_row, row in enumerate(actions):
-        if sum(row.values(), Fraction(0)) != 1 or min(row.values()) < 0:
-            raise ValueError(
-                "polyhedral_adaptation.edge_trace.actions must be convex unit functionals; got invalid coefficients"
+        with budget.temporary_scope():
+            budget.reserve(0, 64 + 16 * len(row))
+            coefficients = tuple(row.values())
+            # Existing coefficient arithmetic and exact scalar comparisons:
+            # N sum additions, one unit-value test, then min and zero tests.
+            planar_primitives_owner.reserve_fraction_work(
+                (coefficients,), len(row) + 1, 2, max(len(row), 1), budget=budget
             )
-        for slot, (origin, coefficient) in enumerate(sorted(row.items())):
-            sources[target_row, slot] = source_ids[origin]
-            weights[target_row, slot] = float(coefficient)
+            if sum(coefficients, Fraction(0)) != 1:
+                raise ValueError(
+                    "polyhedral_adaptation.edge_trace.actions must be convex unit functionals; got invalid coefficients"
+                )
+            budget.reserve(2 * (len(row) - 1) + 1)
+            if min(coefficients) < 0:
+                raise ValueError(
+                    "polyhedral_adaptation.edge_trace.actions must be convex unit functionals; got invalid coefficients"
+                )
+            for slot, (origin, coefficient) in enumerate(sorted(row.items())):
+                sources[target_row, slot] = source_ids[origin]
+                # The existing binary64 export primitive costs one unit.
+                budget.reserve(1)
+                weights[target_row, slot] = float(coefficient)
+            del coefficients
     return _EdgeTraceStencil(sources, weights)
 
 
@@ -1420,14 +1946,19 @@ def _edge_trace_stencil(
             target,
             composed.source_ids,
             composed.actions,
+            scope=scope,
             budget=budget,
         )
         if stencil.sources is None or stencil.weights is None:
             return edit
+        valid = host_banks_owner.family_host_array(
+            stencil.sources.shape, np.bool_, scope=scope
+        )
+        np.greater_equal(stencil.sources, 0, out=valid)
         return edit._replace(
             stencil_sources=stencil.sources,
             stencil_weights=stencil.weights,
-            stencil_valid=stencil.sources >= 0,
+            stencil_valid=valid,
         )
 
 
@@ -1461,6 +1992,15 @@ def _periodic_source_target(
         points = geometry.rational_source_coordinates(budget=budget)
         budget.reserve(0, 256 + 128 * len(points))
         lookup = {point: row for row, point in enumerate(points)}
+        generator_bits = max(
+            (planar_primitives_owner.binary64_fraction_bits(float(value))
+             for value in preparation.generators.flat),
+            default=1,
+        )
+        _dependency_phydrax_discretization__coordinate_budget.reserve_polynomial(
+            2 * preparation.generators.size, preparation.generators.size, 0,
+            generator_bits, budget=budget
+        )
         matrices = tuple(
             tuple(rational_vector(row) for row in matrix)
             for matrix in preparation.generators
@@ -1510,10 +2050,42 @@ def _periodic_source_target(
         ),
         periodic_topology=descriptor,
         numeric_version=target.numeric_version,
+        budget=budget,
     )
 
 
 def _stage_polyhedral_target(
+    source: CellMesh,
+    target: CellMesh,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    support: dict[int, set[int]],
+    *,
+    numeric_version: str,
+    maximum_work: int,
+    maximum_bytes: int,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> CellMesh:
+    with _polyhedral_topology_phase(
+        scope, target, periodic_source=source
+    ) as (storage, bound):
+        source_bound = _polyhedral_adaptation_storage_bound(
+            _polyhedral_incidence(source, scope=scope)._replace(rank=0)
+        )
+        storage.workspace.set_bound(
+            bound.construction + source_bound.construction
+            + _polyhedral_cross_key_storage(source, target)
+        )
+        staged = _build_polyhedral_target(
+            source, target, geometry, support,
+            numeric_version=numeric_version, maximum_work=maximum_work,
+            maximum_bytes=maximum_bytes, scope=scope, budget=budget,
+        )
+        storage.retain(bound.retained, staged, record_count_upper=bound.records)
+        return staged
+
+
+def _build_polyhedral_target(
     source: CellMesh,
     target: CellMesh,
     geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
@@ -1538,7 +2110,7 @@ def _stage_polyhedral_target(
             )
         target = _owner_phydrax_meshing__topology_edit.prepare_topology_edit_target(
             source,
-            _topology_edit(source, target, None, support),
+            _topology_edit(source, target, None, support, scope=scope),
             numeric_version=numeric_version,
             budget=budget,
         )
@@ -1589,6 +2161,28 @@ def _periodic_polyhedral_edit(
 
 
 def _regenerated_target(
+    source: CellMesh,
+    construction: _dependency_phydrax_meshing__polyhedral_generation.PolyhedralConstruction,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[CellMesh, _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec]:
+    with _polyhedral_topology_phase(scope, construction.mesh) as (storage, bound):
+        storage.workspace.set_bound(
+            bound.construction + 2 * 256
+            + 8 * (source.coordinates.shape[0] + source.connectivity.cell_count)
+        )
+        target, geometry = _build_regenerated_target(
+            source, construction, scope=scope, budget=budget
+        )
+        storage.retain(
+            bound.retained, target, *_polyhedral_geometry_aliases(geometry),
+            record_count_upper=bound.records,
+        )
+        return target, geometry
+
+
+def _build_regenerated_target(
     source: CellMesh,
     construction: _dependency_phydrax_meshing__polyhedral_generation.PolyhedralConstruction,
     *,
@@ -1663,6 +2257,7 @@ def _regenerated_target(
                     target
                 ),
                 periodic_topology=descriptor,
+                budget=budget,
             )
             geometry = (
                 _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.power(
@@ -1692,6 +2287,7 @@ def adapt_polyhedral_mesh(
     scope: NativeExecutionScope | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     | None = None,
+    limits: contracts_owner.MeshingLimits | None = None,
 ) -> PolyhedralAdaptationOutcome:
     """Prepare polyhedral source, orbit, and overlap data on one coordinate ledger."""
     try:
@@ -1734,19 +2330,23 @@ def adapt_polyhedral_mesh(
                     numeric_version=numeric_version,
                     scope=execution,
                     budget=budget,
+                    limits=limits,
                 )
-    except _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError as error:
-        raise polyhedral_shared_owner.PolyhedralAdaptationError(
-            str(error), category=MeshingFailureCategory.RESOURCE_EXHAUSTED
-        ) from error
-    except MeshcoreError as error:
-        if error.status not in (MeshcoreStatus.CAPACITY_EXCEEDED, MeshcoreStatus.TIMEOUT):
+    except (
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
+        MeshcoreError,
+    ) as error:
+        if isinstance(error, MeshcoreError) and error.status not in (
+            MeshcoreStatus.CAPACITY_EXCEEDED, MeshcoreStatus.TIMEOUT
+        ):
             raise
+        failure = _owner_phydrax_meshing_providers__native_polyhedral.construction_failure(
+            error, "polyhedral_adaptation"
+        )
         raise polyhedral_shared_owner.PolyhedralAdaptationError(
-            str(error),
-            category=MeshingFailureCategory.TIMED_OUT
-            if error.status is MeshcoreStatus.TIMEOUT
-            else MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            str(error), category=failure.category,
+            requested=failure.evidence.requested,
+            achieved=failure.evidence.achieved,
         ) from error
 
 
@@ -1766,6 +2366,7 @@ class _PolyhedralExecution(StrictModule):
     budget: (
         _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     )
+    limits: contracts_owner.MeshingLimits | None
 
 
 class _PolyhedralSource(StrictModule):
@@ -1862,6 +2463,42 @@ def _execute_polyhedral_plane(
     state: _PolyhedralCandidate,
     plane: np.ndarray,
 ) -> _PolyhedralCandidate:
+    with _polyhedral_topology_phase(
+        execution.scope, state.target, split=True,
+        periodic_topology=False,
+        limits=execution.limits,
+    ) as (storage, bound):
+        ids = np.asarray(state.target.vertex_global_ids)
+        edges = np.asarray(
+            _dependency_phydrax_meshing__polyhedral_generation.require_polyhedral_connectivity(
+                state.target
+            ).edges
+        )
+        # One new support set per intersected edge; the union has no more
+        # entries than its two actual predecessor sets together.
+        support_slots = sum(len(values) for values in source.vertex_support.values())
+        for first, second in edges:
+            support_slots += (
+                len(source.vertex_support[int(ids[first])])
+                + len(source.vertex_support[int(ids[second])])
+            )
+        support_bytes = 256 * support_slots
+        storage.workspace.set_bound(bound.construction + support_bytes)
+        candidate = _build_polyhedral_plane(execution, source, state, plane)
+        storage.retain(
+            bound.retained + support_bytes, candidate.target,
+            *_polyhedral_geometry_aliases(candidate.target_geometry),
+            record_count_upper=bound.records,
+        )
+        return candidate
+
+
+def _build_polyhedral_plane(
+    execution: _PolyhedralExecution,
+    source: _PolyhedralSource,
+    state: _PolyhedralCandidate,
+    plane: np.ndarray,
+) -> _PolyhedralCandidate:
     request = execution.request
     maximum_cells = execution.maximum_cells
     maximum_vertices = execution.maximum_vertices
@@ -1884,6 +2521,8 @@ def _execute_polyhedral_plane(
             maximum_cells,
             maximum_vertices,
             vertex_support,
+            scope=scope,
+            budget=budget,
         )
         candidate = split.mesh
         target_geometry = (
@@ -1928,19 +2567,15 @@ def _execute_polyhedral_plane(
     candidate_edit = _periodic_polyhedral_edit(
         target,
         staged,
-        _topology_edit(target, staged, None, support),
+        _topology_edit(target, staged, None, support, scope=scope),
         scope=scope,
         budget=budget,
     )
-    with _polyhedral_exact_phase(
-        scope, budget, maximum_work_units, maximum_scratch_bytes
-    ):
-        target, _, _ = _dependency_phydrax_meshing__topology_edit.assemble_topology_edit(
-            target,
-            candidate_edit,
-            numeric_version="polyhedral-plane-candidate",
-            budget=budget,
-        )
+    target = _assemble_polyhedral_candidate(
+        target, staged, candidate_edit,
+        numeric_version="polyhedral-plane-candidate",
+        scope=scope, budget=budget,
+    )
     return _PolyhedralCandidate(
         target=target,
         target_geometry=target_geometry,
@@ -1949,7 +2584,61 @@ def _execute_polyhedral_plane(
     )
 
 
+def _assemble_polyhedral_candidate(
+    source: CellMesh,
+    staged: CellMesh,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    *,
+    numeric_version: str,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> CellMesh:
+    with _polyhedral_topology_phase(
+        scope, staged, periodic_source=source
+    ) as (storage, bound):
+        source_bound = _polyhedral_adaptation_storage_bound(
+            _polyhedral_incidence(source, scope=scope)._replace(rank=0)
+        )
+        # Lineage may have many more overlap relations than target cells.
+        # Bound its merged keys, sort/gather/mask banks and Python row records
+        # from the actual input edit, not from the mesh's cell count.
+        relation_storage = sum(
+            24 * 8 * (row.source_keys.size + row.target_keys.size + row.kinds.size)
+            + 512 * row.kinds.size
+            for row in edit.relations
+        )
+        storage.workspace.set_bound(
+            bound.construction + source_bound.construction + relation_storage
+            + _polyhedral_cross_key_storage(source, staged)
+        )
+        with _polyhedral_exact_phase(
+            scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+        ):
+            target, _, _ = _dependency_phydrax_meshing__topology_edit.assemble_topology_edit(
+                source, edit, numeric_version=numeric_version, budget=budget
+            )
+        storage.retain(bound.retained, target, record_count_upper=bound.records)
+        return target
+
+
 def _execute_polyhedral_agglomeration(
+    execution: _PolyhedralExecution,
+    prepared_source: _PolyhedralSource,
+) -> _PolyhedralCandidate:
+    with _polyhedral_topology_phase(
+        execution.scope, execution.mesh, periodic_topology=False,
+        limits=execution.limits,
+    ) as (storage, bound):
+        candidate = _build_polyhedral_agglomeration(execution, prepared_source)
+        storage.retain(
+            bound.retained, candidate.target,
+            *_polyhedral_geometry_aliases(candidate.target_geometry),
+            record_count_upper=bound.records,
+        )
+        return candidate
+
+
+def _build_polyhedral_agglomeration(
     execution: _PolyhedralExecution,
     prepared_source: _PolyhedralSource,
 ) -> _PolyhedralCandidate:
@@ -1962,7 +2651,9 @@ def _execute_polyhedral_agglomeration(
     classes = prepared_source.classes
     protected = prepared_source.protected
     source_power = prepared_source.source_power
-    target = _agglomerate(mesh, request.agglomerations, classes, protected)
+    target = _agglomerate(
+        mesh, request.agglomerations, classes, protected, scope=scope
+    )
     if source_power is None:
         target_geometry = (
             _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.affine(
@@ -2051,6 +2742,10 @@ def _execute_polyhedral_regeneration(
         raise polyhedral_shared_owner.PolyhedralAdaptationError(
             "polyhedral_adaptation.protected_face_ids must be empty for site regeneration; got protected faces"
         )
+    # Regeneration replaces the complete source, even when its sites happen to
+    # reproduce the same topology. It is not a zero-cell local edit.
+    with scope.batch(0, cavity_upper=source.count) as ticket:
+        ticket.consume(cavity_cells=source.count)
     schedule = replace(
         request.schedule,
         maximum_cells=min(maximum_cells, request.schedule.maximum_cells),
@@ -2071,6 +2766,8 @@ def _execute_polyhedral_regeneration(
                 source_id=source_id,
                 periodic_constraints=request.periodic_constraints,
                 scope=scope,
+                budget=budget,
+                limits=execution.limits,
             )
     except (
         MeshcoreError,
@@ -2184,19 +2881,32 @@ def _certify_polyhedral_candidate(
         != _dependency_phydrax_geometry__supermesh.CommonRefinementStatus.SUCCESS
     ):
         raise polyhedral_shared_owner.PolyhedralAdaptationError(
-            f"polyhedral_adaptation.common_refinement.status must report success; got {common.status.name}",
+            "polyhedral_adaptation.common_refinement.status must report success; "
+            f"got {common.status.name}; reason={common.evidence.reason}; "
+            f"retained_bytes={common.evidence.retained_bytes}, "
+            f"working_bytes={common.evidence.working_bytes}",
             category=MeshingFailureCategory.RESOURCE_EXHAUSTED
             if common.status
             is _dependency_phydrax_geometry__supermesh.CommonRefinementStatus.RESOURCE_LIMIT
             else MeshingFailureCategory.AUDIT_FAILED,
         )
-    for row in range(common.target_cell_count):
-        begin, end = np.asarray(common.target_offsets)[row : row + 2]
-        owners = np.asarray(common.source_cells)[begin:end]
-        if np.unique(classes[owners]).size != 1:
-            raise polyhedral_shared_owner.PolyhedralAdaptationError(
-                "polyhedral_adaptation.cell_classes must agree on each target overlap; got mixed predecessor classes"
+    with NativeHostStorageWorkspace(scope) as class_storage:
+        # Imported overlap indices, class gather, unique-sort banks and masks.
+        # The actual accepted overlap count bounds every target row.
+        class_storage.set_bound(
+            12 * 256 + 8 * (
+                common.target_offsets.size + 6 * common.source_cells.size
             )
+        )
+        offsets = np.asarray(common.target_offsets)
+        source_cells = np.asarray(common.source_cells)
+        for row in range(common.target_cell_count):
+            begin, end = offsets[row:row + 2]
+            owners = source_cells[begin:end]
+            if np.unique(classes[owners]).size != 1:
+                raise polyhedral_shared_owner.PolyhedralAdaptationError(
+                    "polyhedral_adaptation.cell_classes must agree on each target overlap; got mixed predecessor classes"
+                )
     return _PolyhedralCoverage(
         target=target,
         target_geometry=target_geometry,
@@ -2205,6 +2915,36 @@ def _certify_polyhedral_candidate(
 
 
 def _publish_polyhedral_candidate(
+    execution: _PolyhedralExecution,
+    source: _PolyhedralSource,
+    candidate: _PolyhedralCandidate,
+    coverage: _PolyhedralCoverage,
+) -> PolyhedralAdaptationOutcome:
+    with _polyhedral_topology_phase(
+        execution.scope, coverage.target, periodic_source=execution.mesh
+    ) as (storage, bound):
+        # Accepted periodic assembly, identity differences and orbit/authority
+        # records coexist with the certified target, but never mutate it.
+        source_count = execution.mesh.connectivity.cell_count
+        source_bound = _polyhedral_adaptation_storage_bound(
+            _polyhedral_incidence(execution.mesh, scope=execution.scope)._replace(rank=0)
+        )
+        storage.workspace.set_bound(
+            bound.construction + source_bound.construction + 128 * source_count + 256
+        )
+        outcome = _build_polyhedral_publication(
+            execution, source, candidate, coverage
+        )
+        storage.retain(
+            bound.retained + 8 * source_count,
+            *(leaf for leaf in jax.tree_util.tree_leaves((outcome.edit, outcome.evidence))
+              if eqx.is_array(leaf)),
+            record_count_upper=bound.records,
+        )
+        return outcome
+
+
+def _build_polyhedral_publication(
     execution: _PolyhedralExecution,
     source: _PolyhedralSource,
     candidate: _PolyhedralCandidate,
@@ -2226,7 +2966,7 @@ def _publish_polyhedral_candidate(
     residual = candidate.residual
     construction = candidate.construction
     common = coverage.common
-    edit = _topology_edit(mesh, target, common, vertex_support)
+    edit = _topology_edit(mesh, target, common, vertex_support, scope=scope)
     edit = _edge_trace_stencil(
         mesh,
         target,
@@ -2257,14 +2997,10 @@ def _publish_polyhedral_candidate(
         edit = _periodic_polyhedral_edit(
             mesh, target, edit, authority, scope=scope, budget=budget
         )
-        with _polyhedral_exact_phase(
-            scope, budget, maximum_work_units, maximum_scratch_bytes
-        ):
-            accepted, _, _ = (
-                _dependency_phydrax_meshing__topology_edit.assemble_topology_edit(
-                    mesh, edit, numeric_version=numeric_version, budget=budget
-                )
-            )
+        accepted = _assemble_polyhedral_candidate(
+            mesh, target, edit, numeric_version=numeric_version,
+            scope=scope, budget=budget,
+        )
         if accepted.mesh_id != target.mesh_id:
             raise ValueError(
                 "polyhedral_adaptation.target.mesh_id must retain the certified overlap identity; got a changed publication"
@@ -2319,6 +3055,7 @@ def _adapt_polyhedral_mesh(
     numeric_version: str,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    limits: contracts_owner.MeshingLimits | None,
 ) -> PolyhedralAdaptationOutcome:
     """Prepare, execute, certify, and publish one bounded polyhedral candidate."""
     execution = _PolyhedralExecution(
@@ -2333,14 +3070,40 @@ def _adapt_polyhedral_mesh(
         numeric_version=numeric_version,
         scope=scope,
         budget=budget,
+        limits=limits,
     )
+    with NativeHostStorageWorkspace(scope) as source_storage:
+        # Imported class/identity copies and Python source-control banks remain
+        # live through every candidate, but do not escape in the published edit.
+        def input_count(value: object) -> int:
+            if isinstance(value, (tuple, list)):
+                return sum(input_count(item) for item in value)
+            shape = getattr(value, "shape", ())
+            return math.prod(shape)
+
+        source_storage.set_bound(
+            16 * 256 + 768 * mesh.coordinates.shape[0]
+            + 256 * input_count(protected_face_ids)
+            + 64 * mesh.connectivity.cell_count + 8 * request.planes.size
+        )
+        return _run_polyhedral_execution(
+            execution, source_geometry, cell_classes, protected_face_ids
+        )
+
+
+def _run_polyhedral_execution(
+    execution: _PolyhedralExecution,
+    source_geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec | None,
+    cell_classes: ConvertibleToArray | None,
+    protected_face_ids: ConvertibleToArray,
+) -> PolyhedralAdaptationOutcome:
     source = _admit_polyhedral_source(
         execution, source_geometry, cell_classes, protected_face_ids
     )
-    match request.operation:
+    match execution.request.operation:
         case PolyhedralAdaptationOperation.PLANE_SPLIT:
-            candidate = _PolyhedralCandidate(mesh, source.source_geometry, 0.0, None)
-            for plane in np.asarray(request.planes):
+            candidate = _PolyhedralCandidate(execution.mesh, source.source_geometry, 0.0, None)
+            for plane in np.asarray(execution.request.planes):
                 candidate = _execute_polyhedral_plane(execution, source, candidate, plane)
         case PolyhedralAdaptationOperation.AGGLOMERATE:
             candidate = _execute_polyhedral_agglomeration(execution, source)

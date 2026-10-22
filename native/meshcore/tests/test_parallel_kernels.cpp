@@ -2,10 +2,12 @@
 // Batch-level equivalence: scalar predicate tests own the numerical oracle.
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <thread>
 #include <vector>
 
 #include "check.hpp"
@@ -15,6 +17,13 @@
 namespace {
 constexpr std::size_t kCount = 193;  // Three full chunks and one partial chunk.
 constexpr std::array<uint32_t, 4> kThreads{1, 2, 7, 64};
+// Validation polls the scope once per fixed 64-row chunk; the large batch
+// spans more than 1024 chunks plus a partial one.
+constexpr std::size_t kChunkRows = 64;
+constexpr std::size_t kLargeCount = 1100 * kChunkRows + 17;
+// A deadline that a scope meets on entry and misses after the sleep.
+constexpr double kDeadlineSeconds = 0.05;
+constexpr auto kPastDeadline = std::chrono::milliseconds(80);
 
 struct Receipt {
   std::array<uint64_t, PHX_MC_EXECUTION_COUNTERS> counters{};
@@ -24,8 +33,8 @@ struct Receipt {
 
 class Execution final {
  public:
-  explicit Execution(uint64_t bytes = UINT64_MAX) {
-    PHX_CHECK(phx_mc_execution_begin(0, 0, 0, bytes, INFINITY, nullptr, &scope_) == PHX_MC_OK);
+  explicit Execution(uint64_t bytes = UINT64_MAX, double seconds = INFINITY) {
+    PHX_CHECK(phx_mc_execution_begin(0, 0, 0, bytes, seconds, nullptr, &scope_) == PHX_MC_OK);
   }
   Receipt finish(int32_t status = PHX_MC_OK) {
     Receipt receipt;
@@ -76,8 +85,8 @@ enum class Predicate {
 };
 
 int32_t batch(Predicate kind, const std::array<std::vector<double>, 5>& p,
-              const std::vector<int64_t>& ids, int8_t* output) {
-  const auto n = static_cast<int64_t>(kCount);
+              const std::vector<int64_t>& ids, int8_t* output, std::size_t count = kCount) {
+  const auto n = static_cast<int64_t>(count);
   switch (kind) {
     case Predicate::Orient2d:
       return phx_mc_orient2d(n, p[0].data(), p[1].data(), p[2].data(), output);
@@ -406,6 +415,245 @@ void finite_scratch_batch_is_admitted() {
       PHX_CHECK(receipt == reference);
   }
 }
+
+struct Kind {
+  Predicate predicate;
+  int width;
+  int arity;
+  bool symbolic;
+};
+constexpr std::array<Kind, 8> kKinds{{{Predicate::Orient2d, 2, 3, false},
+                                      {Predicate::Orient3d, 3, 4, false},
+                                      {Predicate::Incircle, 2, 4, false},
+                                      {Predicate::Insphere, 3, 5, false},
+                                      {Predicate::Orient2dSos, 2, 3, true},
+                                      {Predicate::Orient3dSos, 3, 4, true},
+                                      {Predicate::IncircleSos, 2, 4, true},
+                                      {Predicate::InsphereSos, 3, 5, true}}};
+
+// Finite in-domain coordinates (small integers, zero included), distinct row IDs.
+struct BatchInput {
+  BatchInput(const Kind& kind, std::size_t count) : ids(count * kind.arity) {
+    for (int point = 0; point < kind.arity; ++point) {
+      p[point].resize(count * kind.width);
+      for (std::size_t index = 0; index < p[point].size(); ++index) {
+        p[point][index] = static_cast<double>(static_cast<int>((index * 7 + point * 3) % 17) - 8);
+      }
+    }
+    for (std::size_t row = 0; row < count; ++row) {
+      for (int point = 0; point < kind.arity; ++point) ids[kind.arity * row + point] = point;
+    }
+  }
+  std::array<std::vector<double>, 5> p;
+  std::vector<int64_t> ids;
+};
+
+bool untouched(const std::vector<int8_t>& output) {
+  return std::all_of(output.begin(), output.end(), [](int8_t s) { return s == 9; });
+}
+
+// No work, query or memory trace beyond the scope's own limit.
+bool unconsumed(const Receipt& receipt) {
+  bool memory = true;
+  for (int slot = 0; slot < PHX_MC_EXECUTION_MEMORY_VALUES; ++slot) {
+    memory = memory && (slot == PHX_MC_EXECUTION_MEMORY_LIMIT_BYTES || receipt.memory[slot] == 0);
+  }
+  return receipt.counters == decltype(receipt.counters){} && memory;
+}
+
+// Runs `call` in a scope refused by an expired deadline or by an earlier
+// capacity refusal.
+template <class Call>
+Receipt in_refused_scope(int32_t refusal, Call&& call) {
+  Execution execution(UINT64_MAX, refusal == PHX_MC_TIMEOUT ? 0.0 : INFINITY);
+  if (refusal == PHX_MC_CAPACITY_EXCEEDED) {
+    PHX_CHECK(phx_mc_execution_charge(execution.scope(), 1, 0) == PHX_MC_CAPACITY_EXCEEDED);
+  }
+  call();
+  return execution.finish(refusal);
+}
+
+// Every coordinate and row ID is validated at near and far chunk edges and in
+// the final partial chunk. Refused input publishes no output and leaves no
+// work, query or memory trace on the scope.
+void validation_covers_chunk_boundaries() {
+  constexpr std::array<std::size_t, 7> rows{0, kChunkRows - 1, kChunkRows, 2 * kChunkRows - 1,
+                                            1024 * kChunkRows - 1, 1024 * kChunkRows,
+                                            kLargeCount - 1};
+  constexpr std::array<double, 3> nonfinite{NAN, INFINITY, -INFINITY};
+  constexpr std::array<double, 2> outside{0x1p121, -0x1p-121};
+  for (const Kind& kind : kKinds) {
+    BatchInput input(kind, kLargeCount);
+    std::vector<int8_t> output(kLargeCount, 9);
+    const auto expect = [&](int32_t status) {
+      PHX_CHECK(batch(kind.predicate, input.p, input.ids, output.data(), kLargeCount) == status);
+      PHX_CHECK(untouched(output));
+    };
+    {
+      Execution execution;
+      for (std::size_t row : rows) {
+        for (int point = 0; point < kind.arity; ++point) {
+          for (int axis : {0, kind.width - 1}) {
+            double& slot = input.p[point][kind.width * row + axis];
+            const double saved = slot;
+            for (double value : nonfinite) {
+              slot = value;
+              expect(PHX_MC_NONFINITE_INPUT);
+            }
+            for (double value : outside) {
+              slot = value;
+              expect(PHX_MC_RANGE_ERROR);
+            }
+            slot = saved;
+          }
+        }
+      }
+      // An earlier domain violation never masks a later nonfinite coordinate.
+      double& first = input.p[0].front();
+      double& last = input.p[kind.arity - 1].back();
+      const double saved_first = first, saved_last = last;
+      first = 0x1p121;
+      last = NAN;
+      expect(PHX_MC_NONFINITE_INPUT);
+      last = saved_last;
+      expect(PHX_MC_RANGE_ERROR);
+      first = saved_first;
+      if (kind.symbolic) {
+        for (std::size_t row : rows) {
+          int64_t& id = input.ids[kind.arity * row + kind.arity - 1];
+          const int64_t saved = id;
+          id = input.ids[kind.arity * row];
+          expect(PHX_MC_INVALID_INPUT);
+          // Any coordinate error outranks a repeated row ID.
+          last = 0x1p121;
+          expect(PHX_MC_RANGE_ERROR);
+          last = NAN;
+          expect(PHX_MC_NONFINITE_INPUT);
+          last = saved_last;
+          id = saved;
+        }
+      }
+      PHX_CHECK(unconsumed(execution.finish()));
+    }
+    // The restored batch is admitted and matches the scalar oracle in every chunk.
+    Policy policy(7);
+    PHX_CHECK(batch(kind.predicate, input.p, input.ids, output.data(), kLargeCount) == PHX_MC_OK);
+    bool matches = true;
+    for (std::size_t row = 0; row < kLargeCount; ++row) {
+      matches = matches && output[row] == scalar(kind.predicate, input.p,
+                                                 input.ids.data() + kind.arity * row, row,
+                                                 kind.width);
+    }
+    PHX_CHECK(matches);
+  }
+}
+
+// The checkpoint before the first chunk observes a refused scope before any
+// input is read, so the refusal outranks even a nonfinite first coordinate.
+// The refused call publishes nothing and leaves the scope's receipt unchanged.
+void refused_scope_precedes_validation() {
+  for (const Kind& kind : kKinds) {
+    BatchInput input(kind, kLargeCount);
+    const double saved = input.p[0].front();
+    for (bool invalid : {false, true}) {
+      input.p[0].front() = invalid ? NAN : saved;
+      for (int32_t refusal : {PHX_MC_TIMEOUT, PHX_MC_CAPACITY_EXCEEDED}) {
+        std::vector<int8_t> output(kLargeCount, 9);
+        const Receipt receipt = in_refused_scope(refusal, [&] {
+          PHX_CHECK(batch(kind.predicate, input.p, input.ids, output.data(), kLargeCount) ==
+                    refusal);
+        });
+        PHX_CHECK(untouched(output));
+        PHX_CHECK(receipt == in_refused_scope(refusal, [] {}));
+      }
+    }
+    input.p[0].front() = saved;
+  }
+}
+
+// A scope that has already been charged and whose deadline has then passed:
+// the next predicate call refuses with TIMEOUT before reporting any input
+// error, whatever the logical charge cadence, and publishes nothing. The
+// timeout consumes no work, queries or memory.
+template <class Call>
+Receipt after_deadline(Call&& call) {
+  Execution execution(UINT64_MAX, kDeadlineSeconds);
+  PHX_CHECK(phx_mc_execution_charge(execution.scope(), 0, 0) == PHX_MC_OK);
+  std::this_thread::sleep_for(kPastDeadline);
+  call();
+  return execution.finish(PHX_MC_TIMEOUT);
+}
+
+void expired_deadline_outranks_input_errors() {
+  for (const Kind& kind : kKinds) {
+    BatchInput input(kind, kCount);
+    const auto timed_out = [&] {
+      std::vector<int8_t> output(kCount, 9);
+      const Receipt receipt = after_deadline([&] {
+        PHX_CHECK(batch(kind.predicate, input.p, input.ids, output.data()) == PHX_MC_TIMEOUT);
+      });
+      PHX_CHECK(untouched(output));
+      PHX_CHECK(unconsumed(receipt));
+    };
+    timed_out();
+    double& first = input.p[0].front();
+    const double saved = first;
+    first = NAN;
+    timed_out();
+    first = 0x1p121;
+    timed_out();
+    first = saved;
+    if (kind.symbolic) {
+      input.ids[kind.arity - 1] = input.ids[0];
+      timed_out();
+    }
+  }
+}
+
+struct TargetTimeout {
+  int32_t call = PHX_MC_OK, target_end = PHX_MC_OK, settle = PHX_MC_OK, refusal_status = PHX_MC_OK;
+  std::array<uint64_t, PHX_MC_EXECUTION_BATCH_REFUSAL_VALUES> refusal{};
+  Receipt receipt;
+  bool operator==(const TargetTimeout&) const = default;
+};
+
+// Runs `call` under an active native target after the scope's deadline passed.
+template <class Call>
+TargetTimeout target_timeout(Call&& call) {
+  TargetTimeout out;
+  Execution execution(UINT64_MAX, kDeadlineSeconds);
+  void* ticket = nullptr;
+  PHX_CHECK(phx_mc_execution_batch_admit(execution.scope(), nullptr, 0, 0, 0, 1 << 20, &ticket) ==
+            PHX_MC_OK);
+  void* target = nullptr;
+  phx_mc_execution_usage* usage = nullptr;
+  PHX_CHECK(phx_mc_execution_target_begin(ticket, &target, &usage) == PHX_MC_OK);
+  std::this_thread::sleep_for(kPastDeadline);
+  out.call = call(execution.scope());
+  out.target_end = phx_mc_execution_target_end(target);
+  out.settle = phx_mc_execution_batch_settle(ticket, 0, 0, 0, 0);
+  out.refusal_status = phx_mc_execution_batch_refusal(execution.scope(), out.refusal.data());
+  out.receipt = execution.finish(PHX_MC_TIMEOUT);
+  return out;
+}
+
+// Under an active target, a predicate refused by the deadline leaves the same
+// target refusal evidence, statuses and receipt as a zero charge refused by
+// that deadline, and publishes nothing.
+void target_timeout_keeps_refusal_evidence() {
+  const Kind& kind = kKinds[7];  // InsphereSos: coordinates and row IDs.
+  BatchInput input(kind, kCount);
+  input.p[0].front() = NAN;
+  std::vector<int8_t> output(kCount, 9);
+  const TargetTimeout predicate = target_timeout([&](void*) {
+    return batch(kind.predicate, input.p, input.ids, output.data());
+  });
+  PHX_CHECK(untouched(output));
+  PHX_CHECK(predicate.call == PHX_MC_TIMEOUT && predicate.refusal_status == PHX_MC_OK);
+  const TargetTimeout reference =
+      target_timeout([](void* scope) { return phx_mc_execution_charge(scope, 0, 0); });
+  PHX_CHECK(predicate == reference);
+}
 }  // namespace
 
 int main() {
@@ -423,5 +671,9 @@ int main() {
   validation_precedes_reservation();
   batch_borrows_host_ticket_once();
   finite_scratch_batch_is_admitted();
+  validation_covers_chunk_boundaries();
+  refused_scope_precedes_validation();
+  expired_deadline_outranks_input_errors();
+  target_timeout_keeps_refusal_evidence();
   return phx::mc::test::finish("test_parallel_kernels");
 }

@@ -4,6 +4,7 @@
 """Test selected CAD source fidelity across independent native chart chains."""
 
 from fractions import Fraction
+from typing import Any
 
 import numpy as np
 import pytest
@@ -191,18 +192,25 @@ def test_full_original_facet_fidelity_prepared_cold_and_one_under_caps(
     assert cold.mesh_to_source_upper == warm.mesh_to_source_upper
     assert cold.source_to_mesh_upper == warm.source_to_mesh_upper
     assert cold.chart_coverage is not None
-    counts = {name: used for name, used, _ in cold.chart_coverage.resource_counts}
+    target_owner, = {
+        row.owner_id for row in cold.chart_coverage.affine_chain_resources
+        if row.role == "target"
+    }
+    counts = {
+        row.metric: row.used for row in cold.chart_coverage.affine_chain_resources
+        if row.role == "target" and row.owner_id == target_owner
+    }
     assert (
-        counts["affine_chain_total_work"] >= counts["affine_chain_coefficient_work"] > 0
+        counts["total_work"] >= counts["coefficient_work"] > 0
     )
-    assert counts["affine_chain_native_peak_bytes"] > 0
-    assert counts["affine_chain_native_clip_work"] > 0
+    assert counts["native_peak_bytes"] == 0
+    assert counts["native_clip_work"] == 0
     for limits in (
         p.geometry.MeshCertificateLimits(
-            maximum_work_units=counts["affine_chain_total_work"] - 1
+            maximum_work_units=counts["total_work"] - 1
         ),
         p.geometry.MeshCertificateLimits(
-            maximum_scratch_bytes=counts["affine_chain_coefficient_bytes_upper"] - 1
+            maximum_scratch_bytes=counts["coefficient_bytes_upper"] - 1
         ),
     ):
         refused = p.geometry.certify_source_fidelity(
@@ -312,24 +320,29 @@ def test_independent_affine_tilings_keep_exact_contact_and_refusal_decisions(
     )
     proxies = [(triangle, 0.0, 0.0) for triangle in target_rows]
     bound, proved, separation = prove_affine_chart_chain(
-        proxies, cover, p.geometry.MeshCertificateLimits(), 0.0
+        proxies, cover, p.geometry.MeshCertificateLimits(), 0.0,
+        source_identity=(cover.source_id, cover.source_revision),
     )
     assert bound == (0.0 if change == "none" else None)
     assert separation is None
     assert proved.source_id == cover.source_id
     assert proved.source_revision == cover.source_revision
     np.testing.assert_array_equal(proved.simplices, cover.simplices)
-    counts = {name: used for name, used, _ in proved.resource_counts}
-    assert counts["affine_chain_total_work"] > 0
+    counts = {
+        row.metric: row.used for row in proved.affine_chain_resources
+        if row.role == "target" and row.owner_id == cover.cover_id
+    }
+    assert counts["total_work"] > 0
     if change == "none":
         with pytest.raises((CoordinateEnclosureResourceError, MeshcoreError)):
             prove_affine_chart_chain(
                 proxies,
                 cover,
                 p.geometry.MeshCertificateLimits(
-                    maximum_work_units=counts["affine_chain_total_work"] - 1
+                    maximum_work_units=counts["total_work"] - 1
                 ),
                 0.0,
+                source_identity=(cover.source_id, cover.source_revision),
             )
 
 
@@ -365,71 +378,102 @@ def test_independent_affine_grid_tiles_under_inherited_request_allowance() -> No
         parent.charge(work=parent_work)
         initial = parent.remaining().remaining_work_units
         bound, proved, separation = prove_affine_chart_chain(
-            [(triangle, 0.0, 0.0) for triangle in target_rows], cover, limits, 0.0
+            [(triangle, 0.0, 0.0) for triangle in target_rows], cover, limits, 0.0,
+            source_identity=(cover.source_id, cover.source_revision),
         )
         consumed = initial - parent.remaining().remaining_work_units
-    counts = {name: used for name, used, _ in proved.resource_counts}
+    counts = {
+        row.metric: row.used for row in proved.affine_chain_resources
+        if row.role == "target" and row.owner_id == cover.cover_id
+    }
     assert bound == 0.0
     assert separation is None
     assert proved.complete
     assert proved.source_id == cover.source_id
     assert proved.source_revision == cover.source_revision
     np.testing.assert_array_equal(proved.simplices, source_rows)
-    assert 0 < counts["affine_chain_total_work"] == consumed
-    assert counts["affine_chain_total_work"] <= limits.maximum_work_units - parent_work
+    assert 0 < counts["total_work"] == consumed
+    assert counts["total_work"] <= limits.maximum_work_units - parent_work
     assert parent.evidence is not None
     assert parent.evidence.work_counters.construction_work == parent_work + consumed
 
 
-def test_affine_exact_actions_reuse_full_inputs_and_preserve_singular_status() -> None:
-    limits = p.geometry.MeshCertificateLimits(
-        maximum_work_units=2000, maximum_scratch_bytes=128_000
+def test_request_proved_chain_areas_reuse_exact_pairs_without_changing_decisions() -> None:
+    points = np.asarray(
+        ((0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2), (0.5, 0.5, 2)),
+        dtype=np.float64,
     )
-    matrix = ((Fraction(2), Fraction(0)), (Fraction(0), Fraction(3)))
-    right = ((Fraction(1),), (Fraction(1),))
-    with NativeExecutionScope(limits.native_limits()) as native:
-        ticket = native.batch(
-            limits.maximum_work_units, bytes_upper=limits.maximum_scratch_bytes
-        )
-        budget = CoordinateEnclosureBudget(
-            ticket,
-            maximum_work_units=limits.maximum_work_units,
-            maximum_memory_bytes=limits.maximum_scratch_bytes,
-        )
-        with (
-            ticket,
-            ticket.native_target(),
-            budget.activate(),
-            budget.live_storage() as cache_storage,
-            budget.live_storage() as side_storage,
-        ):
-            preparation = _Preparation(
-                ticket,
-                budget=budget,
-                cache_storage=cache_storage,
-                side_storage=side_storage,
-            )
-            solved = preparation.exact_actions(matrix, right)
-            assert solved.actions == ((Fraction(1, 2),), (Fraction(1, 3),))
-            assert solved.determinant == 6
-            assert solved.rank == 2
-            assert solved.status == "exact"
+    source_rows = points[np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64)]
+    target_rows = points[
+        np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int64)
+    ]
+    cover = SourceBoundaryChartCover(
+        source_rows,
+        np.zeros(source_rows.shape[0], dtype=np.float64),
+        "certified",
+        True,
+        "independent-square",
+        "original-square",
+    )
+    proxies = [(triangle, 0.0, 0.0) for triangle in target_rows]
+    limits = p.geometry.MeshCertificateLimits()
+    earned: dict = {}
+    first, first_cover, first_separation = prove_affine_chart_chain(
+        proxies, cover, limits, 0.0, earned_areas=earned,
+        source_identity=(cover.source_id, cover.source_revision),
+    )
+    assert first == 0.0 and first_separation is None
+    assert earned and all(area >= 0 for area in earned.values())
+    replayed: dict = {}
+    second, second_cover, second_separation = prove_affine_chart_chain(
+        proxies, cover, limits, 0.0, areas=earned, earned_areas=replayed,
+        source_identity=(cover.source_id, cover.source_revision),
+    )
+    assert (second, second_separation) == (first, first_separation)
+    assert not replayed
+    work = {
+        name: {
+            row.metric: row.used for row in proved.affine_chain_resources
+            if row.role == "target" and row.owner_id == cover.cover_id
+        }
+        for name, proved in (("first", first_cover), ("second", second_cover))
+    }
+    assert work["second"]["exact_clip_calls"] == 0
+    assert work["second"]["total_work"] < work["first"]["total_work"]
+    # Reused areas never mask a changed tiling: the gap still refuses.
+    gap, _, _ = prove_affine_chart_chain(
+        proxies[:-1], cover, limits, 0.0, areas=earned,
+        source_identity=(cover.source_id, cover.source_revision),
+    )
+    assert gap is None
+
+
+def test_affine_plane_profile_reuse_preserves_first_arithmetic() -> None:
+    from phydrax.geometry._affine_chart_coverage import _plane
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    points = (
+        (Fraction(0), Fraction(0), Fraction(0)),
+        (Fraction(2), Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(3), Fraction(0)),
+    )
+    results = []
+    charges = []
+    for prepared in (False, True):
+        with coordinate_reference_budget() as budget, budget.live_storage() as cache, budget.live_storage() as sides:
+            preparation = _Preparation(budget=budget, cache_storage=cache, side_storage=sides)
+            for point in points:
+                preparation.prepare_points(point)
+            if prepared:
+                preparation.prepare_points(points)
             before = budget.work_units
-            repeated = preparation.exact_actions(
-                tuple(tuple(Fraction(value) for value in row) for row in matrix),
-                tuple(tuple(Fraction(value) for value in row) for row in right),
-            )
-            assert repeated == solved
-            assert budget.work_units - before == 1
-            changed = preparation.exact_actions(matrix, ((Fraction(1),), (Fraction(2),)))
-            assert changed.actions == ((Fraction(1, 2),), (Fraction(2, 3),))
-            assert changed.input_id != solved.input_id
-            singular = preparation.exact_actions(
-                ((Fraction(2), Fraction(0)), (Fraction(0), Fraction(0))), right
-            )
-            assert singular.actions is None
-            assert singular.rank == 1
-            assert singular.status == "singular"
+            results.append(_plane(points, preparation))
+            charges.append(budget.work_units - before)
+            before = budget.work_units
+            assert _plane(points, preparation) == results[-1]
+            assert budget.work_units - before == charges[-1]
+    assert results[0] == results[1]
+    assert charges[0] - charges[1] == 2
 
 
 def test_affine_vertex_preparation_reuses_full_binary64_content() -> None:
@@ -454,7 +498,6 @@ def test_affine_vertex_preparation_reuses_full_binary64_content() -> None:
             budget.live_storage() as side_storage,
         ):
             preparation = _Preparation(
-                ticket,
                 budget=budget,
                 cache_storage=cache_storage,
                 side_storage=side_storage,
@@ -469,3 +512,324 @@ def test_affine_vertex_preparation_reuses_full_binary64_content() -> None:
             changed = preparation.vertex(row, 64)
             assert changed == (Fraction.from_float(0.2), Fraction(1, 4), Fraction(1, 2))
             assert point[0] == Fraction.from_float(0.1)
+
+
+@pytest.mark.parametrize("change", ("none", "duplicate", "owner", "revision", "sampled"))
+def test_exact_chain_identity_is_local_to_authenticated_scope(change: str) -> None:
+    square = np.asarray(((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)), dtype=float)
+    rows = square[np.asarray(((0, 1, 2), (0, 2, 3)))]
+    if change == "duplicate":
+        rows = np.asarray((rows[0], rows[0]))
+    cover = SourceBoundaryChartCover(
+        rows, np.zeros(2), "sampled" if change == "sampled" else "certified",
+        True, "scoped-material-a", "revision-a", restriction_ids=("restriction-a",),
+    )
+    proxies = [(row[::-1].copy(), 0.0, 0.0) for row in reversed(rows)]
+    identity = (
+        "scoped-material-b" if change == "owner" else cover.source_id,
+        "revision-b" if change == "revision" else cover.source_revision,
+    )
+    if change in ("owner", "revision"):
+        with pytest.raises(ValueError, match="authenticated scoped source owner"):
+            prove_affine_chart_chain(
+                proxies, cover, p.geometry.MeshCertificateLimits(), 0.0,
+                source_identity=identity,
+            )
+        return
+    bound, proved, separation = prove_affine_chart_chain(
+        proxies, cover, p.geometry.MeshCertificateLimits(), 0.0,
+        source_identity=identity,
+    )
+    assert bound == (0.0 if change == "none" else None)
+    assert separation is None
+    assert proved.restriction_ids == cover.restriction_ids
+    if change == "none":
+        counts = {
+            row.metric: row.used for row in proved.affine_chain_resources
+            if row.role == "target" and row.owner_id == cover.cover_id
+        }
+        assert counts["identity_rows"] == 2
+        assert counts["identity_key_bytes_upper"] > 0
+        assert counts["total_work"] > 0
+
+
+def test_exact_chain_identity_preserves_candidate_capacity() -> None:
+    rows = np.asarray((
+        ((0, 0, 0), (1, 0, 0), (1, 1, 0)),
+        ((0, 0, 0), (1, 1, 0), (0, 1, 0)),
+    ), dtype=float)
+    cover = SourceBoundaryChartCover(
+        rows, np.zeros(2), "certified", True, "scoped-material", "revision",
+    )
+    bound, proved, separation = prove_affine_chart_chain(
+        [(row, 0.0, 0.0) for row in rows], cover,
+        p.geometry.MeshCertificateLimits(maximum_candidate_pairs=1), 0.0,
+        source_identity=(cover.source_id, cover.source_revision),
+    )
+    assert bound is None and separation is None
+    assert proved is cover
+
+
+def test_completed_source_topology_import_matches_fresh_and_exact_work_cap(
+    native_box_source: _NativeBoxSource, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from copy import copy
+
+    from phydrax.geometry import _affine_chart_coverage as affine
+    from phydrax.geometry._domain_boundary import _authenticated_chart_topology
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    domain, construction, _, _ = native_box_source
+    source = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches))),
+        chart_triangulations=construction.chart_triangulations,
+    )
+    limits = p.geometry.MeshCertificateLimits()
+    cover = source.boundary_chart_cover(limits.maximum_source_samples)
+    assert cover.complete
+    raw_cover = copy(cover)
+    with coordinate_reference_budget() as budget:
+        topology = _authenticated_chart_topology(cover, budget)
+        assert topology is not None
+        assert _authenticated_chart_topology(raw_cover, budget) is None
+    # A subsequent cover still earns its own source proof; only numeric
+    # connectivity survives the completed ancestor request.
+    next_cover = source.boundary_chart_cover(limits.maximum_source_samples)
+    with coordinate_reference_budget() as budget:
+        assert _authenticated_chart_topology(next_cover, budget) is topology
+    proxies = [(row[::-1].copy(), 0.0, 0.0) for row in reversed(cover.simplices)]
+    mapping_results = []
+    key_imports = []
+    mapping = affine._chain_identity_mapping
+
+    def observe_mapping(*args: Any, **kwargs: Any) -> tuple[int, ...] | None:
+        key_imports.append(kwargs.get("source_keys") is not None)
+        result = mapping(*args, **kwargs)
+        mapping_results.append(result)
+        return result
+
+    monkeypatch.setattr(affine, "_chain_identity_mapping", observe_mapping)
+    results = [
+        prove_affine_chart_chain(
+            proxies, candidate, limits, 1.0,
+            source_identity=(source.source_id, source.source_revision),
+        )
+        for candidate in (raw_cover, next_cover)
+    ]
+    assert key_imports == [False, True]
+    assert mapping_results[0] == mapping_results[1]
+    raw, prepared = results
+    assert raw[0] == prepared[0]
+    assert raw[2] == prepared[2]
+    assert raw[0] is not None
+    for field in ("complete", "semantics", "restriction_ids", "findings"):
+        assert getattr(raw[1], field) == getattr(prepared[1], field)
+    counts = [
+        {
+            row.metric: row.used for row in result[1].affine_chain_resources
+            if row.role == "target" and row.owner_id == candidate.cover_id
+        }
+        for result, candidate in zip(results, (raw_cover, next_cover), strict=True)
+    ]
+    for name in (
+        "embedding_obligations", "embedding_components",
+        "embedding_holes", "embedding_boundary_edges",
+    ):
+        assert counts[0][name] == counts[1][name]
+    work = counts[1]["total_work"]
+    assert work < counts[0]["total_work"]
+    # Dry admission may reserve a larger arithmetic bound than the completed
+    # work it ultimately charges; the exact cap must cover that requirement.
+    work = int(counts[1]["required_work"])
+    exact = prove_affine_chart_chain(
+        proxies, next_cover, p.geometry.MeshCertificateLimits(maximum_work_units=work), 1.0,
+        source_identity=(source.source_id, source.source_revision),
+    )
+    assert exact[0] == prepared[0]
+    with pytest.raises((CoordinateEnclosureResourceError, MeshcoreError)):
+        prove_affine_chart_chain(
+            proxies, next_cover,
+            p.geometry.MeshCertificateLimits(maximum_work_units=work - 1), 1.0,
+            source_identity=(source.source_id, source.source_revision),
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    ("source-owner", "source-bytes", "source-order", "source-metadata",
+     "cover-owner", "cover-bytes", "cover-order", "cover-metadata"),
+)
+def test_source_topology_issue_reauthenticates_live_arrays(
+    native_box_source: _NativeBoxSource, change: str,
+) -> None:
+    from phydrax.geometry._domain_boundary import _authenticated_chart_topology
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    domain, construction, _, _ = native_box_source
+    source = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches))),
+        chart_triangulations=construction.chart_triangulations,
+    )
+    cover = source.boundary_chart_cover(p.geometry.MeshCertificateLimits().maximum_source_samples)
+    with coordinate_reference_budget() as budget:
+        assert _authenticated_chart_topology(cover, budget) is not None
+    if change == "source-metadata":
+        object.__setattr__(source, "resolution", source.resolution + 1)
+    elif change == "cover-metadata":
+        object.__setattr__(cover, "restriction_ids", ("foreign-restriction",))
+    elif change == "source-order":
+        object.__setattr__(source, "chart_triangulations", tuple(reversed(source.chart_triangulations)))
+    elif change == "cover-order":
+        object.__setattr__(cover, "simplices", cover.simplices[::-1])
+    elif change.startswith("source"):
+        records = list(source.chart_triangulations)
+        record = records[0]
+        points = np.array(record[2], copy=True)
+        if change == "source-bytes":
+            points[0, 0] += 0.125
+        points.setflags(write=False)
+        records[0] = (
+            record[0], record[1], points, record[3], record[4], record[5],
+            record[6], record[7], record[8], record[9],
+        )
+        object.__setattr__(source, "chart_triangulations", tuple(records))
+    else:
+        simplices = np.array(cover.simplices, copy=True)
+        if change == "cover-bytes":
+            simplices[0, 0, 0] += 0.125
+        simplices.setflags(write=False)
+        object.__setattr__(cover, "simplices", simplices)
+    with coordinate_reference_budget() as budget:
+        assert _authenticated_chart_topology(cover, budget) is None
+
+
+def test_source_topology_archive_and_clone_reissue_only_after_cold_proof(
+    native_box_source: _NativeBoxSource,
+) -> None:
+    from copy import copy
+
+    from phydrax._model._structure import (
+        model_from_array_recipe,
+        model_recipe_array_values,
+        model_structure_recipe,
+    )
+    from phydrax.geometry._domain_boundary import (
+        _authenticated_chart_topology,
+        _SOURCE_TOPOLOGY,
+    )
+    from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    domain, construction, _, _ = native_box_source
+    source = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches))),
+        chart_triangulations=construction.chart_triangulations,
+    )
+    limits = p.geometry.MeshCertificateLimits()
+    cover = source.boundary_chart_cover(limits.maximum_source_samples)
+    with coordinate_reference_budget() as budget:
+        original = _authenticated_chart_topology(cover, budget)
+    assert original is not None
+    register_meshing_source_artifacts()
+    recipe = model_structure_recipe((source, cover))
+    archived = model_from_array_recipe(
+        recipe, model_recipe_array_values((source, cover), recipe, prefix="topology"),
+        prefix="topology",
+    )
+    restored_source, restored_cover = archived
+    assert isinstance(restored_source, MeshingDomainBoundarySource)
+    assert isinstance(restored_cover, SourceBoundaryChartCover)
+    with coordinate_reference_budget() as budget:
+        assert _authenticated_chart_topology(restored_cover, budget) is None
+    for candidate in (copy(source), restored_source):
+        assert id(candidate) not in _SOURCE_TOPOLOGY
+        cold_cover = candidate.boundary_chart_cover(limits.maximum_source_samples)
+        assert cold_cover.complete
+        with coordinate_reference_budget() as budget:
+            cold = _authenticated_chart_topology(cold_cover, budget)
+        assert cold is not None and cold is not original
+        np.testing.assert_array_equal(cold_cover.simplices, cover.simplices)
+
+
+def test_source_topology_issuers_follow_source_and_cover_alias_lifetimes(
+    native_box_source: _NativeBoxSource,
+) -> None:
+    import gc
+    import weakref
+
+    from phydrax.geometry._domain_boundary import (
+        _authenticated_chart_topology,
+        _COVER_TOPOLOGY,
+        _SOURCE_TOPOLOGY,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    domain, construction, _, _ = native_box_source
+    source = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches))),
+        chart_triangulations=construction.chart_triangulations,
+    )
+    cover = source.boundary_chart_cover(p.geometry.MeshCertificateLimits().maximum_source_samples)
+    source_id, cover_id = id(source), id(cover)
+    source_ref, cover_ref = weakref.ref(source), weakref.ref(cover)
+    issue_ref = weakref.ref(_SOURCE_TOPOLOGY[source_id])
+    bank_ref = weakref.ref(_SOURCE_TOPOLOGY[source_id].topology.planes[0].rows)
+    source_alias, cover_alias = source, cover
+    del source, cover
+    gc.collect()
+    assert source_ref() is source_alias and cover_ref() is cover_alias
+    assert issue_ref() is not None and bank_ref() is not None
+    del source_alias
+    gc.collect()
+    assert source_ref() is None and source_id not in _SOURCE_TOPOLOGY
+    # Keeping the cover alive must not keep a dead source's schedule alive.
+    assert issue_ref() is None and bank_ref() is None
+    with coordinate_reference_budget() as budget:
+        assert _authenticated_chart_topology(cover_alias, budget) is None
+    del cover_alias
+    gc.collect()
+    assert cover_ref() is None and cover_id not in _COVER_TOPOLOGY
+
+
+@pytest.mark.parametrize("stage", ("binding", "exporter"))
+def test_source_topology_failed_issue_publishes_no_partial_owner(
+    native_box_source: _NativeBoxSource, stage: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from copy import copy
+
+    from phydrax.geometry import (
+        _affine_chart_coverage as affine,
+        _domain_boundary as issuer,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    domain, construction, _, _ = native_box_source
+    source = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches))),
+        chart_triangulations=construction.chart_triangulations,
+    )
+    original = source.boundary_chart_cover(p.geometry.MeshCertificateLimits().maximum_source_samples)
+    source, cover = copy(source), copy(original)
+    definition = issuer._topology_definition
+
+    def fail_binding(
+        value: MeshingDomainBoundarySource | SourceBoundaryChartCover,
+        budget: CoordinateEnclosureBudget,
+    ) -> str:
+        if value is cover:
+            raise ValueError("cover binding refused")
+        return definition(value, budget)
+
+    def fail_exporter(*args: object, **kwargs: object) -> None:
+        raise ValueError("source exporter refused")
+
+    if stage == "binding":
+        monkeypatch.setattr(issuer, "_topology_definition", fail_binding)
+    else:
+        monkeypatch.setattr(affine, "_prepare_source_planar_topology", fail_exporter)
+    with coordinate_reference_budget() as budget:
+        with pytest.raises(ValueError, match="refused"):
+            issuer._issue_chart_topology(source, cover, budget)
+        assert id(source) not in issuer._SOURCE_TOPOLOGY
+        assert id(cover) not in issuer._COVER_TOPOLOGY
+        assert not budget.retained_owner_objects

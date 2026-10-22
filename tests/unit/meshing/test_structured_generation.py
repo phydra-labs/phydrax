@@ -31,6 +31,125 @@ CURVED_BOUNDARY_ATOL = 1.0e-13
 TENSOR_CENTER_ATOL = 1.0e-14
 
 
+@pytest.mark.parametrize(
+    "shape",
+    ((2, 2), (2, 9), (7, 3), (2, 2, 2), (2, 7, 3), (5, 2, 9),
+     (65, 65), (2, 4098), (66, 67), (18, 19, 20)),
+)
+def test_logical_cell_bank_streams_c_order_rows_and_charges_every_index(
+    shape: tuple[int, ...],
+) -> None:
+    from itertools import product
+    from math import prod
+
+    from phydrax._meshcore import MeshcoreError
+    from phydrax.meshing._structured import logical_cell_bank
+    from tests._support.coordinate_references import native_meshing_request
+
+    count = prod(value - 1 for value in shape)
+    corners = (
+        ((0, 0), (1, 0), (1, 1), (0, 1))
+        if len(shape) == 2 else
+        ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+         (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))
+    )
+    rows = min(count, 4096)
+    work = (
+        (4 * len(shape) + len(corners)) * count + count - rows
+        + 2 * len(shape) * len(corners)
+    )
+    limits = phx.meshing.MeshingLimits(
+        maximum_work_units=work,
+        maximum_scratch_bytes=count * len(corners) * 4 + 3 * rows * 8 + 8192,
+    )
+    with native_meshing_request(limits) as (scope, _, _):
+        before = scope.remaining().remaining_work_units
+        actual = logical_cell_bank(shape, scope=scope)
+        assert before - scope.remaining().remaining_work_units == work
+        assert actual.dtype == np.int32
+        expected = np.asarray([
+            [np.ravel_multi_index(tuple(a + b for a, b in zip(index, corner, strict=True)), shape)
+             for corner in corners]
+            for index in product(*(range(value - 1) for value in shape))
+        ])
+        np.testing.assert_array_equal(actual, expected)
+    refused = phx.meshing.MeshingLimits(
+        maximum_work_units=work - 1,
+        maximum_scratch_bytes=limits.maximum_scratch_bytes,
+    )
+    with pytest.raises(MeshcoreError, match="CAPACITY_EXCEEDED"):
+        with native_meshing_request(refused) as (scope, _, _):
+            logical_cell_bank(shape, scope=scope)
+
+
+@pytest.mark.parametrize("shape", ((2, 9), (3, 4, 5), (2, 4098)))
+def test_logical_cell_bank_exact_storage_boundary(
+    shape: tuple[int, ...], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typing import Any
+
+    from phydrax._meshcore import MeshcoreError
+    from phydrax.meshing import _host_banks
+    from phydrax.meshing._structured import logical_cell_bank
+    from tests._support.coordinate_references import native_meshing_request
+
+    allocate = _host_banks.family_host_array
+    observations: list[int] = []
+
+    def observed(*args: Any, **kwargs: Any) -> np.ndarray:
+        array = allocate(*args, **kwargs)
+        scope = kwargs["scope"]
+        # All three native banks coexist immediately after the last allocation,
+        # beside the admitted flat-index workspace. Do not sum separate peaks.
+        observations.append(
+            scope.limits.maximum_managed_bytes
+            - scope.remaining().remaining_managed_bytes
+        )
+        return array
+
+    monkeypatch.setattr(_host_banks, "family_host_array", observed)
+
+    def construct(storage: int) -> tuple[np.ndarray, int]:
+        limits = phx.meshing.MeshingLimits(maximum_scratch_bytes=storage)
+        observations.clear()
+        with native_meshing_request(limits) as (scope, _, _):
+            actual = logical_cell_bank(shape, scope=scope)
+        return actual.copy(), max(observations)
+
+    expected, required = construct(1_000_000)
+    actual, repeated = construct(required)
+    assert repeated == required
+    np.testing.assert_array_equal(actual, expected)
+    with pytest.raises(MeshcoreError, match="CAPACITY_EXCEEDED"):
+        construct(required - 1)
+
+
+@pytest.mark.parametrize("shape", ((), (2,), (2, 2, 2, 2), (0, 2), (-1, 3), (2, 1)))
+def test_logical_cell_bank_rejects_invalid_extents(shape: tuple[int, ...]) -> None:
+    from phydrax.meshing._structured import logical_cell_bank
+    from tests._support.coordinate_references import native_meshing_request
+
+    with native_meshing_request(phx.meshing.MeshingLimits()) as (scope, _, _):
+        with pytest.raises(ValueError, match="structured.logical_shape"):
+            logical_cell_bank(shape, scope=scope)
+
+
+def test_logical_cell_bank_preserves_int32_overflow_boundary() -> None:
+    from phydrax._meshcore import MeshcoreError
+    from phydrax.meshing._structured import logical_cell_bank
+    from tests._support.coordinate_references import native_meshing_request
+
+    # The largest representable node index passes the overflow gate, then
+    # refuses work before allocating the enormous output. One more node fails
+    # the original typed topology check instead.
+    with pytest.raises(MeshcoreError, match="CAPACITY_EXCEEDED"):
+        with native_meshing_request(phx.meshing.MeshingLimits()) as (scope, _, _):
+            logical_cell_bank((2, 2**30), scope=scope)
+    with native_meshing_request(phx.meshing.MeshingLimits()) as (scope, _, _):
+        with pytest.raises(MeshingFailure, match="int32 node range"):
+            logical_cell_bank((2, 2**30 + 1), scope=scope)
+
+
 def test_native_route_cannot_substitute_quads_for_required_triangles() -> None:
     block = square(4)
     controls = tuple(

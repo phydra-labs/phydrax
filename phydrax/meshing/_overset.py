@@ -50,6 +50,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import Tracer
 from jax.typing import ArrayLike
 
 import phydrax.discretization._cell_geometry as cell_geometry_owner
@@ -84,6 +85,7 @@ from .._geometry_predicates import (
     segment_intersections_2d,
 )
 from .._meshcore import (
+    current_native_execution_scope,
     MeshcoreError,
     MeshcoreStatus,
     NativeExecutionLimits,
@@ -114,7 +116,7 @@ from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._mapped_locator import PreparedMappedCellLocator
 from ..discretization._polyhedral_locator import PreparedPolyhedralCellLocator
 from ..discretization._reference_cell import reference_cell_topology
-from ..discretization._simplicial_locator import LocatedCellMap
+from ..discretization._simplicial_locator import LocatedCellMap, mapped_physical_points
 from ..discretization._view_support import (
     mapped_mesh_support_query,
     MappedCellBoundaryMap,
@@ -131,6 +133,7 @@ from ..discretization.fem import (
     prepare_finite_element_field_reconstruction,
     PreparedFiniteElementCellMap,
 )
+from ..discretization.fem._cell_map import NumericalFiniteElementCellMap
 from ..discretization.finite_volume._field_view import (
     UnstructuredFiniteVolumeFieldReconstructionKernel,
 )
@@ -147,6 +150,8 @@ from ..lifecycle import (
     CompositionRebindReceipt,
     CompositionTransport,
 )
+from .. import linalg as linalg_owner
+from ..nonlinear import implicit_root_output
 from ..linalg import SmallLinearSolvePlan, solve_small_linear
 from ..linalg._small_batched import (
     exact_small_linear_action_bounds,
@@ -882,11 +887,16 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
     `points` are donor-source query sites, `target_points` are receptor sites in the
     target's stored source chart, and `receptor_points` are registered-world sites.
     `rotation`/`translation` map donor-source into target-source axes.
+    `reference_coordinates` retain the actually selected inverse, not a new search
+    guess. Consumers authenticate the packet and current source, reevaluate chart
+    containment/residual/admissibility, and retain native implicit point/geometry
+    derivatives. A changed site or source cannot silently reuse this inverse.
     """
 
     receptor_ids: Array
     receptor_slots: Array
     points: Array
+    reference_coordinates: Array
     receptor_points: Array
     target_points: Array
     rotation: Array | None
@@ -912,6 +922,7 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
         points: np.ndarray,
         donor_cells: np.ndarray,
         donor_cell_rows: np.ndarray,
+        reference_coordinates: np.ndarray,
         /,
         *,
         budget: CoordinateEnclosureBudget,
@@ -921,12 +932,16 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
         receptor_points: np.ndarray | None = None,
         target_points: np.ndarray | None = None,
     ) -> None:
+        # Admit the new retained bank and a possible dtype-conversion copy before
+        # either allocation; caller-owned inputs are not counted as new work.
+        budget.reserve(0, 2 * reference_coordinates.size * np.dtype(np.float64).itemsize)
         arrays = (
             np.asarray(receptor_ids, dtype=np.int64),
             np.asarray(receptor_slots, dtype=np.int32),
             np.asarray(points, dtype=np.float64),
             np.asarray(donor_cells, dtype=np.int64),
             np.asarray(donor_cell_rows, dtype=np.int32),
+            np.asarray(reference_coordinates, dtype=np.float64),
         )
         count = arrays[0].shape[0]
         if (
@@ -936,6 +951,9 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
             or arrays[2].shape[0] != count
             or arrays[3].shape != (count,)
             or arrays[4].shape != (count,)
+            or arrays[5].ndim != 2
+            or arrays[5].shape[0] != count
+            or not 1 <= arrays[5].shape[1] <= arrays[2].shape[1]
         ):
             raise ValueError(
                 "OversetDonorPacket.records must contain at least one served receptor and one aligned record in every packet array; got an empty packet or mismatched array shape."
@@ -948,6 +966,7 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
             or np.any(arrays[3] < 0)
             or np.any(arrays[4] < 0)
             or not np.all(np.isfinite(arrays[2]))
+            or not np.all(np.isfinite(arrays[5]))
             or not receptor_revision
             or not donor_revision
         ):
@@ -996,6 +1015,7 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
             self.points,
             self.donor_cells,
             self.donor_cell_rows,
+            self.reference_coordinates,
         ) = (jax.device_put(np.asarray(value)) for value in arrays)
         self.donor_block = str(donor_block)
         if not self.donor_block:
@@ -1008,20 +1028,39 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
         self.donor_rank = donor_part.owner_rank
         self.receptor_revision = str(receptor_revision)
         self.donor_revision = str(donor_revision)
-        self.packet_id = canonical_fingerprint(
-            {
-                "kind": "overset-donor-packet",
-                "receptor": receptor_part.part_name,
-                "donor": donor_part.part_name,
-                "donor_block": self.donor_block,
-                "ranks": [receptor_part.owner_rank, donor_part.owner_rank],
-                "receptor_revision": self.receptor_revision,
-                "donor_revision": self.donor_revision,
-                "specs": [receptor_part.spec_id, donor_part.spec_id],
-                "arrays": array_tree_fingerprint(arrays),
-                "world_target_points": array_tree_fingerprint((world, target)),
-            }
-        )
+        self.packet_id = _donor_packet_id(self, receptor_part, donor_part)
+
+def _donor_packet_id(
+    packet: OversetDonorPacket,
+    receptor: OversetPartSpec,
+    donor: OversetPartSpec,
+    /,
+) -> str:
+    """Bind every retained inverse to its selected cell, sites and source revisions."""
+    return canonical_fingerprint(
+        {
+            "kind": "overset-donor-packet",
+            "receptor": packet.receptor_part,
+            "donor": packet.donor_part,
+            "donor_block": packet.donor_block,
+            "ranks": [packet.receptor_rank, packet.donor_rank],
+            "receptor_revision": packet.receptor_revision,
+            "donor_revision": packet.donor_revision,
+            "specs": [receptor.spec_id, donor.spec_id],
+            "arrays": array_tree_fingerprint(
+                (
+                    packet.receptor_ids, packet.receptor_slots, packet.points,
+                    packet.donor_cells, packet.donor_cell_rows,
+                    packet.reference_coordinates,
+                )
+            ),
+            "world_target_points": array_tree_fingerprint(
+                (packet.receptor_points, packet.target_points)
+            ),
+            "image_action": array_tree_fingerprint((packet.rotation, packet.translation)),
+        }
+    )
+
 
 
 @final
@@ -1069,10 +1108,16 @@ class OversetConnectivityError(ValueError):
 def _field_packet_coordinate_phase(
     connectivity: OversetConnectivity, /
 ) -> Iterator[CoordinateEnclosureBudget]:
-    """Bound every potential packet image solve from its authored coefficients."""
+    """Bound image solves and inverse-bank storage without adding work proxies."""
     work_upper = bytes_upper = 0
     for receptor, part in enumerate(connectivity.assembly.parts):
         dimension = _cell_result(part).mesh.ambient_dimension
+        # Each receptor belongs to one donor packet, even with multiple blocks.
+        # One host selection plus conversion/device retention bounds the new bank.
+        bytes_upper += (
+            3 * _cell_result(part).mesh.coordinates.shape[0] * dimension
+            * np.dtype(np.float64).itemsize
+        )
         for donor, geometry in enumerate(connectivity.geometries):
             if donor == receptor:
                 continue
@@ -2270,7 +2315,7 @@ class _Donors(StrictModule, NonTrainableState):
     candidates: np.ndarray
     residuals: np.ndarray
     measures: np.ndarray
-    barycentric: np.ndarray
+    reference_coordinates: np.ndarray
 
 
 def _admissible(blanking: OversetPartBlanking, /) -> Array:
@@ -2339,7 +2384,7 @@ def resolve_donors(
     scale = np.full((count, parts), np.inf)
     cells = np.full((count, parts), -1, dtype=np.int64)
     residual = np.full((count, parts), np.inf)
-    barycentric = np.zeros((count, parts, dimension + 1))
+    references = np.zeros((count, parts, dimension), dtype=np.float64)
     for index, geometry in enumerate(geometries):
         if index == receptor_index or count == 0:
             continue
@@ -2388,16 +2433,18 @@ def resolve_donors(
             cells[better, index] = flat[better]
             scale[better, index] = candidate_scale[better]
             reference = np.asarray(located.candidate_reference)[np.arange(count), slot]
+            references[better, index, :reference.shape[1]] = reference[better]
             match locator:
                 case PreparedPolyhedralCellLocator():
-                    selected = locator.cell_map.evaluate(
+                    selected_points = locator.cell_map.evaluate(
                         locator.coordinates,
                         jnp.asarray(np.maximum(rows, 0)),
                         jnp.asarray(reference),
                         budget=budget if budget.ticket.native_accounting else None,
-                    )
+                    ).physical_points
                 case PreparedMappedCellLocator():
-                    selected = locator.cell_map.evaluate(
+                    selected_points = mapped_physical_points(
+                        locator.cell_map.numerical,
                         locator.coordinates,
                         jnp.asarray(np.maximum(rows, 0)),
                         jnp.asarray(reference),
@@ -2405,20 +2452,9 @@ def resolve_donors(
                 case unknown:
                     assert_never(unknown)
             residual[better, index] = np.linalg.norm(
-                np.asarray(selected.physical_points)[better] - donor_points[better],
+                np.asarray(selected_points)[better] - donor_points[better],
                 axis=1,
             )
-            if (
-                isinstance(locator, PreparedMappedCellLocator)
-                and locator.cell_map.coordinate_element.cell_kind in _SIMPLICES.values()
-            ):
-                barycentric[better, index] = np.concatenate(
-                    (
-                        1.0 - np.sum(reference[better], axis=1, keepdims=True),
-                        reference[better],
-                    ),
-                    axis=1,
-                )
     priority = np.broadcast_to(
         -np.asarray([spec.priority for spec in specs], dtype=np.int64), (count, parts)
     )
@@ -2497,7 +2533,7 @@ def resolve_donors(
         np.sum(~missing, axis=1).astype(np.int32),
         np.where(found, residual[rows, chosen], np.inf),
         np.where(found, scale[rows, chosen], np.inf),
-        np.where(found[:, None], barycentric[rows, chosen], 0.0),
+        np.where(found[:, None], references[rows, chosen], 0.0),
     )
 
 
@@ -2592,6 +2628,11 @@ def _donor_packets(
                 (donors.parts == donor) & (donors.cells >= start) & (donors.cells < stop)
             )
             if slots.size:
+                budget.reserve(
+                    0,
+                    slots.size * geometry.locators[block].cell_map.reference_dimension
+                    * np.dtype(np.float64).itemsize,
+                )
                 packets.append(
                     OversetDonorPacket(
                         specs[index],
@@ -2601,6 +2642,9 @@ def _donor_packets(
                         _relative_points(specs[index], specs[donor], target_sites[slots]),
                         np.asarray(geometry.cell_ids)[donors.cells[slots]],
                         donors.cells[slots] - start,
+                        donors.reference_coordinates[
+                            slots, :geometry.locators[block].cell_map.reference_dimension
+                        ],
                         donor_block=name,
                         budget=budget,
                         receptor_revision=parts[index].part_id,
@@ -2653,7 +2697,13 @@ def _packets_and_overlays(
         donor_mesh = _cell_result(parts[donor]).mesh
         # The published stencil is the clipped, renormalized barycentric
         # partition of unity of the selected admissible donor cell.
-        weights = np.maximum(donors.barycentric[slots], 0.0)
+        reference = np.asarray(packet.reference_coordinates)
+        weights = np.maximum(
+            np.concatenate(
+                (1.0 - np.sum(reference, axis=1, keepdims=True), reference), axis=1
+            ),
+            0.0,
+        )
         weights = weights / np.sum(weights, axis=1, keepdims=True)
         vertex_ids = np.asarray(donor_mesh.vertex_global_ids, dtype=np.int64)
         corners = vertex_ids[np.asarray(block.vertices)[donor_rows]]
@@ -3354,6 +3404,121 @@ def prepare_overset_connectivity(
         )
 
 
+def _retained_inverse_derivative(
+    cell_map: NumericalFiniteElementCellMap,
+    coordinates: Array,
+    cells: Array,
+    points: Array,
+    reference: Array,
+    successful: Array,
+    /,
+) -> Array:
+    """Attach native implicit known-cell derivatives to an evaluated inverse receipt."""
+    dimension = cell_map.reference_dimension
+    space = linalg_owner.ArraySpace(
+        (dimension,), dtype=reference.dtype,
+        space_id=f"cell-inverse-reference:dimension-{dimension}",
+    )
+
+    def equations(
+        state: Array, arguments: tuple[NumericalFiniteElementCellMap, Array, Array, Array]
+    ) -> tuple[Array, None]:
+        mapping, source_coordinates, point, cell = arguments
+        evaluated = mapping.evaluate(source_coordinates, cell[None], state[None])
+        defect = evaluated.physical_points[0] - point
+        # Embedded cells use closest-point stationarity; square charts use the
+        # inverse-map equation. Neither treats the retained root as constant.
+        residual = (
+            defect if mapping.reference_dimension == mapping.ambient_dimension
+            else evaluated.jacobian[0].T @ defect
+        )
+        return residual, None
+
+    def prepare_tangent(
+        operator: linalg_owner.AbstractLinearOperator,
+    ) -> linalg_owner.PreparedLinearSolve:
+        return linalg_owner.prepare(
+            linalg_owner.LinearSystem(operator),
+            linalg_owner.LinearSolvePolicy(linalg_owner.DenseLU()),
+            rhs_layout=linalg_owner.RHSLayout((1,)),
+        )
+
+    def attach(state: Array, point: Array, cell: Array, admitted: Array) -> Array:
+        implicit, _ = implicit_root_output(
+            state, (cell_map, coordinates, point, cell), None, admitted,
+            residual_and_output=equations, root_space=space,
+            prepare_linear_solve=prepare_tangent,
+        )
+        return implicit
+
+    return jax.vmap(attach)(reference, points, cells, successful)
+
+
+@eqx.filter_jit
+def _verified_packet_cells(
+    inverse: simplicial_locator_owner.AbstractNewtonInverse,
+    cell_map: NumericalFiniteElementCellMap,
+    coordinates: Array,
+    selected_cells: Array,
+    reference: Array,
+    targets: Array,
+    mask: Array,
+    /,
+) -> simplicial_locator_owner.CellLocationArrays:
+    """Reevaluate one retained inverse from identity-free source numerics."""
+    evaluation = cell_map.evaluate(coordinates, selected_cells, reference)
+    finite = jnp.all(jnp.isfinite(reference), axis=1) & jnp.all(
+        jnp.isfinite(targets), axis=1
+    )
+    residual = jnp.linalg.norm(evaluation.physical_points - targets, axis=1)
+    converged = residual <= inverse.policy.residual_tolerance
+    inside = inverse.contains_reference(reference)
+    allowed = mask[selected_cells]
+    found = finite & evaluation.valid & converged & inside & allowed
+    reference = _retained_inverse_derivative(
+        cell_map, coordinates, selected_cells, targets, reference, found,
+    )
+    evaluation = cell_map.evaluate(coordinates, selected_cells, reference)
+    residual = jnp.linalg.norm(evaluation.physical_points - targets, axis=1)
+    status = jnp.where(
+        ~finite, int(simplicial_locator_owner.CellLocationStatus.NONFINITE),
+        jnp.where(
+            ~evaluation.valid,
+            int(simplicial_locator_owner.CellLocationStatus.DEGENERATE_CELL),
+            jnp.where(
+                ~converged,
+                int(simplicial_locator_owner.CellLocationStatus.INVERSE_MAP_EXHAUSTED),
+                jnp.where(
+                    found, int(simplicial_locator_owner.CellLocationStatus.LOCATED),
+                    int(simplicial_locator_owner.CellLocationStatus.OUTSIDE),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+    cells = jnp.where(found, selected_cells, -1)
+    capacity = min(inverse.policy.maximum_candidates, cell_map.cell_count)
+    candidates = jnp.full((cells.size, capacity), -1, dtype=cells.dtype).at[:, 0].set(cells)
+    references = jnp.zeros(
+        (cells.size, capacity, reference.shape[1]), dtype=reference.dtype
+    ).at[:, 0].set(jnp.where(found[:, None], reference, 0.0))
+    return simplicial_locator_owner.CellLocationArrays(
+        cell_ids=cells,
+        reference_coordinates=jnp.where(found[:, None], reference, 0.0),
+        barycentric=jnp.where(found[:, None], inverse.reference_weights(reference), 0.0),
+        geometry_residual=residual,
+        iterations=jnp.zeros(found.shape, dtype=jnp.int32),
+        jacobian_condition=jnp.linalg.cond(evaluation.jacobian),
+        inside=found,
+        used_fallback=jnp.zeros(found.shape, dtype=jnp.bool_),
+        candidate_count=found.astype(jnp.int32),
+        status=status,
+        successful=found,
+        candidate_cells=candidates,
+        candidate_reference=references,
+        candidates_complete=finite & evaluation.valid & converged,
+    )
+
+
 @final
 class _PacketLocator(simplicial_locator_owner.AbstractCellLocator, NonTrainableState):
     """Retain the chosen donor side at the packet's fixed receptor points."""
@@ -3364,11 +3529,14 @@ class _PacketLocator(simplicial_locator_owner.AbstractCellLocator, NonTrainableS
         | PreparedPolyhedralCellLocator
     )
     points: Array
+    reference_coordinates: Array
+    admissible_cells: Array
     selected_cells: Array
     cell_map: LocatedCellMap
     coordinates: Array
     policy: simplicial_locator_owner.SimplicialLocationPolicy
     locator_id: str = eqx.field(static=True)
+    reuse_reference: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -3377,6 +3545,8 @@ class _PacketLocator(simplicial_locator_owner.AbstractCellLocator, NonTrainableS
         /,
         *,
         cell_offset: int = 0,
+        admissible_cells: Array,
+        reference_chart: LocatedCellMap,
     ) -> None:
         match base:
             case (
@@ -3389,24 +3559,57 @@ class _PacketLocator(simplicial_locator_owner.AbstractCellLocator, NonTrainableS
                 raise TypeError(
                     "_PacketLocator.source_locator must be bound to the packet source cells; got an unsupported or unbound cell locator."
                 )
+        selected = np.asarray(packet.donor_cell_rows) + cell_offset
+        reference = np.asarray(packet.reference_coordinates)
+        admissible = np.asarray(admissible_cells)
+        reference_binding = (
+            reference_chart.topology_id, reference_chart.geometry_layout_id,
+            reference_chart.block_name,
+        )
+        target_binding = (
+            base.cell_map.topology_id, base.cell_map.geometry_layout_id,
+            base.cell_map.block_name,
+        )
+        reuse_reference = reference_binding == target_binding and not isinstance(
+            base, PreparedPolyhedralCellLocator
+        )
+        if (
+            (reuse_reference and reference.shape != (selected.size, base.cell_map.reference_dimension))
+            or np.any(selected < 0)
+            or np.any(selected >= base.cell_map.cell_count)
+            or admissible.shape != (base.cell_map.cell_count,)
+            or admissible.dtype != np.bool_
+        ):
+            raise ValueError(
+                "_PacketLocator.inverse must bind in-range source cells, reference coordinates and the source admissibility mask."
+            )
         self.base = base
         self.policy = base.policy
         self.points = packet.points
+        self.reference_coordinates = packet.reference_coordinates
+        self.admissible_cells = jnp.asarray(admissible)
         self.selected_cells = packet.donor_cell_rows + cell_offset
         self.cell_map = base.cell_map
         self.coordinates = base.coordinates
+        self.reuse_reference = reuse_reference
         self.locator_id = canonical_fingerprint(
             {
                 "kind": "overset-packet-locator",
                 "base": base.locator_id,
                 "packet": packet.packet_id,
                 "cell_offset": cell_offset,
+                "admissible": array_tree_fingerprint(admissible),
+                "reference_chart": reference_binding,
             }
         )
 
     def support_cells(self, points: Array, /) -> Array:
-        """Return the packet's selected donor cells without repeating location."""
-        return self.selected_cells
+        """Restrict only the packet's exact sites to their selected source side."""
+        if isinstance(points, Tracer):
+            return self.locate(points).candidate_cells
+        if np.array_equal(np.asarray(points), np.asarray(self.points)):
+            return self.selected_cells
+        return self.base.support_cells(points)
 
     @property
     def canonical_locator(
@@ -3421,12 +3624,72 @@ class _PacketLocator(simplicial_locator_owner.AbstractCellLocator, NonTrainableS
     def locate(
         self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
     ) -> simplicial_locator_owner.CellLocationResult:
-        result = self.base.locate(points, cell_mask=cell_mask)
-        # Support preparation queries other points. Only this packet's sites
-        # carry a donor-side selection; those sites must retain the selected side.
-        if not np.array_equal(np.asarray(points), np.asarray(self.points)):
-            return result
-        return self._select_packet_location(result)
+        values = jnp.asarray(points, dtype=self.points.dtype)
+        if values.shape != self.points.shape:
+            return self.base.locate(values, cell_mask=cell_mask)
+        traced = isinstance(values, Tracer) or isinstance(self.points, Tracer)
+        if not traced and not np.array_equal(np.asarray(values), np.asarray(self.points)):
+            return self.base.locate(values, cell_mask=cell_mask)
+        mask = self.admissible_cells
+        if cell_mask is not None:
+            requested = jnp.asarray(cell_mask)
+            if requested.shape != mask.shape or requested.dtype != jnp.bool_:
+                raise ValueError("_PacketLocator.cell_mask must match the source cell mask.")
+            mask = mask & requested
+        if not self.reuse_reference:
+            # A field owner may use another chart of the same authenticated
+            # physical source (notably FV Cartesian charts). Explicitly renew
+            # its native inverse; never reinterpret stored chart coordinates.
+            renewed = self.base.locate(values, cell_mask=mask)
+            if traced:
+                return jax.lax.cond(
+                    jnp.all(values == self.points),
+                    self._select_packet_location, lambda result: result, renewed,
+                )
+            return self._select_packet_location(renewed)
+        if traced:
+            inverse = self._base_inverse()
+            return jax.lax.cond(
+                jnp.all(values == self.points),
+                lambda query: self._verified_cells(mask, query),
+                lambda query: simplicial_locator_owner.locate_rows(
+                    inverse, query, cell_mask
+                ),
+                values,
+            ).identified(self.base.locator_id)
+        return self._verify_retained_inverse(mask, values)
+
+    def _base_inverse(self) -> simplicial_locator_owner.AbstractNewtonInverse:
+        base = self.base
+        if isinstance(base, PreparedPolyhedralCellLocator):
+            raise TypeError("Polyhedral packet inverses require their native containment query.")
+        return base.numerical_inverse()
+
+    def _verified_cells(
+        self, mask: Array, points: Array | None = None, /
+    ) -> simplicial_locator_owner.CellLocationArrays:
+        cell_map = self.cell_map
+        if not isinstance(cell_map, PreparedFiniteElementCellMap):
+            raise TypeError("Polyhedral packet inverses require their native containment query.")
+        return simplicial_locator_owner.row_blocked(
+            _verified_packet_cells,
+            (
+                self._base_inverse(),
+                cell_map.numerical,
+                self.coordinates,
+                self.selected_cells,
+                self.reference_coordinates,
+                self.points if points is None else points,
+                mask,
+            ),
+            (3, 4, 5),
+        )
+
+    def _verify_retained_inverse(
+        self, mask: Array, points: Array | None = None, /
+    ) -> simplicial_locator_owner.CellLocationResult:
+        """Reevaluate a source-bound inverse, never infer validity from its packet ID."""
+        return self._verified_cells(mask, points).identified(self.base.locator_id)
 
     @eqx.filter_jit
     def _select_packet_location(
@@ -3555,6 +3818,23 @@ class _DonorFieldBindings(StrictModule, NonTrainableState):
     value_shape: tuple[int, ...] = eqx.field(static=True)
 
 
+def _reusable_donor_inverses(
+    connectivity: OversetConnectivity, reuse: PreparedOversetFieldTransfer | None, /
+) -> dict[str, simplicial_locator_owner.AbstractPreparedNewtonCellLocator]:
+    """Prepared FE donor inverses of an earlier transfer under this location policy."""
+    if reuse is None or reuse.connectivity.policy.policy_id != connectivity.policy.policy_id:
+        return {}
+    inverses = {}
+    for query in reuse.queries:
+        kernel = query.reconstruction.kernel
+        if not isinstance(kernel, FiniteElementFieldReconstructionKernel):
+            continue
+        base = kernel.locator.canonical_locator
+        if isinstance(base, simplicial_locator_owner.AbstractPreparedNewtonCellLocator):
+            inverses.setdefault(base.cell_map.cell_map_id, base)
+    return inverses
+
+
 def _prepare_fe_donor(
     connectivity: OversetConnectivity,
     result: CellMeshingResult,
@@ -3562,6 +3842,7 @@ def _prepare_fe_donor(
     binding: FiniteElementDiscretization,
     field_name: str,
     packets: tuple[OversetDonorPacket, ...],
+    reusable: Mapping[str, simplicial_locator_owner.AbstractPreparedNewtonCellLocator],
     /,
 ) -> dict[tuple[str, str], views_owner.PreparedFieldReconstruction]:
     if binding.mesh.mesh_id != result.mesh.mesh_id:
@@ -3590,8 +3871,18 @@ def _prepare_fe_donor(
             block
         )
         cell_map = PreparedFiniteElementCellMap(binding, block_index)
-        locator = None
-        if isinstance(cell_map.coordinate_element, RestrictedCellGeometryElement):
+        # An earlier inverse of this exact cell map, coordinate revision and
+        # overset location policy is the one this block would prepare again;
+        # the reconstruction still revalidates its map and runtime binding.
+        locator = reusable.get(cell_map.cell_map_id)
+        if locator is not None and not np.array_equal(
+            np.asarray(locator.coordinates),
+            np.asarray(binding.default_runtime.coordinates),
+        ):
+            locator = None
+        if locator is None and isinstance(
+            cell_map.coordinate_element, RestrictedCellGeometryElement
+        ):
             geometry = connectivity.geometries[connectivity.part_index(name)]
             policy = geometry.locators[geometry.block_names.index(block)].policy
             locator = PreparedMappedCellLocator(
@@ -3650,6 +3941,7 @@ def _prepare_donor_fields(
     ],
     field_name: str,
     packets: tuple[OversetDonorPacket, ...],
+    reusable: Mapping[str, simplicial_locator_owner.AbstractPreparedNewtonCellLocator],
     /,
 ) -> _DonorFieldBindings:
     if not isinstance(discretizations, Mapping):
@@ -3672,7 +3964,7 @@ def _prepare_donor_fields(
         match discretizations[name]:
             case FiniteElementDiscretization() as binding:
                 fields = _prepare_fe_donor(
-                    connectivity, result, name, binding, field_name, packets
+                    connectivity, result, name, binding, field_name, packets, reusable
                 )
                 reconstructions.update(fields)
                 layouts[name] = next(reversed(fields.values()))
@@ -3729,18 +4021,47 @@ def _prepare_packet_field_route(
     target = connectivity.assembly.part(packet.receptor_part)
     donor_index = connectivity.part_index(packet.donor_part)
     target_index = connectivity.part_index(packet.receptor_part)
+    if (
+        packet.donor_revision != donor.part_id
+        or packet.receptor_revision != target.part_id
+        or packet.packet_id != _donor_packet_id(
+            packet, connectivity.specs[target_index], connectivity.specs[donor_index]
+        )
+    ):
+        raise ValueError(
+            "overset_field_transfer.packet must retain its exact sites, inverse, and current source revisions."
+        )
     geometry = connectivity.geometries[donor_index]
+    block_index = geometry.block_names.index(packet.donor_block)
+    start, stop = geometry.block_offsets[block_index:block_index + 2]
+    packet_rows = np.asarray(packet.donor_cell_rows)
+    if (
+        np.any(packet_rows < 0) or np.any(packet_rows >= stop - start)
+        or not np.array_equal(
+            np.asarray(geometry.cell_ids)[start + packet_rows],
+            np.asarray(packet.donor_cells),
+        )
+    ):
+        raise ValueError("overset_field_transfer.packet must bind the selected source cell IDs.")
     offset = (
         geometry.block_offsets[geometry.block_names.index(packet.donor_block)]
         if isinstance(kernel, UnstructuredFiniteVolumeFieldReconstructionKernel)
         else 0
     )
-    locator = _PacketLocator(kernel.locator, packet, cell_offset=offset)
     admissible = np.array(_admissible(connectivity.blanking[donor_index]), copy=True)
     if previous is not None:
         admissible &= np.asarray(previous.blanking[donor_index].cell_status) != int(
             OversetCellStatus.HOLE
         )
+    locator = _PacketLocator(
+        kernel.locator, packet, cell_offset=offset,
+        reference_chart=geometry.locators[block_index].cell_map,
+        admissible_cells=jnp.asarray(
+            admissible[start:stop]
+            if isinstance(kernel, FiniteElementFieldReconstructionKernel)
+            else admissible
+        ),
+    )
     match kernel:
         case FiniteElementFieldReconstructionKernel():
             match binding:
@@ -3805,6 +4126,9 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
     numeric affine maps. Vector outputs are in each target's stored source chart;
     applying that target's image rotation yields registered-world components. The donor
     field basis and source coordinate certificate are never replaced by an image mesh.
+    ``reuse`` names an earlier transfer whose prepared FE donor inverses are reused only
+    for blocks with the identical cell map, coordinates and overset location policy;
+    every packet, route and query of this transfer is still prepared and verified.
     """
 
     connectivity: OversetConnectivity
@@ -3835,6 +4159,7 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         previous: OversetConnectivity | None = None,
         record_phase: NativeMeshingPhaseRecorder | None = None,
         value_action: OversetValueAction | None = None,
+        reuse: PreparedOversetFieldTransfer | None = None,
     ) -> None:
 
         action = (
@@ -3858,7 +4183,13 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         connectivity.require_complete()
         targets = _prepare_field_targets(connectivity, previous)
         receptors, packets = targets.receptors, targets.packets
-        fields = _prepare_donor_fields(connectivity, discretizations, field_name, packets)
+        fields = _prepare_donor_fields(
+            connectivity,
+            discretizations,
+            field_name,
+            packets,
+            _reusable_donor_inverses(connectivity, reuse),
+        )
         names, shapes = fields.names, fields.coefficient_shapes
         queries, overlays = [], []
         for packet in packets:
@@ -4050,6 +4381,7 @@ def prepare_overset_field_transfer(
     previous: OversetConnectivity | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
     value_action: OversetValueAction | None = None,
+    reuse: PreparedOversetFieldTransfer | None = None,
 ) -> PreparedOversetFieldTransfer:
     """Bind FE fields or explicit FV reconstruction owners and query overlays."""
     return PreparedOversetFieldTransfer(
@@ -4059,6 +4391,7 @@ def prepare_overset_field_transfer(
         previous=previous,
         record_phase=record_phase,
         value_action=value_action,
+        reuse=reuse,
     )
 
 
@@ -4159,11 +4492,12 @@ def _select_overlap_cells(
 
 
 def _prepare_overlap_domain(
-    part: MeshPart, scope: MeshingScope | None, /
+    part: MeshPart, scope: MeshingScope | None, /,
+    *, budget: CoordinateEnclosureBudget | None = None,
 ) -> _OverlapDomain:
     result = _cell_result(part)
     mesh = result.mesh
-    elements, routes, coordinates = result.geometry.resolve(mesh)
+    elements, routes, coordinates = result.geometry.resolve(mesh, budget=budget)
     if (
         not np.array_equal(np.asarray(coordinates), np.asarray(mesh.coordinates))
         or any(
@@ -4191,24 +4525,31 @@ def prepare_overset_conservative_remap(
     target_cells: MeshingScope | None = None,
     policy: supermesh_owner.CommonRefinementPolicy | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> remap_evidence_owner.PreparedUnstructuredConservativeRemap:
     """Prepare a separate certified overlap remap of explicitly selected cell averages.
 
     Coverage of every requested cell is the default. Partial overlap requires an
     explicit common-refinement policy and retains that owner's uncovered-content ledger;
     neither this route nor interpolation invents values in uncovered volume.
+    A receiving request forwards its explicit ledger through source inspection,
+    both FV owners and common refinement; this never opens a helper allowance.
     """
 
     with measure_phase(record_phase, "common_refinement"):
         remap = automatic_remap_owner.prepare_unstructured_conservative_remap(
             unstructured_owner.UnstructuredFiniteVolumePlan.from_cell_mesh(
-                _prepare_overlap_domain(source, source_cells).mesh
-            ).prepare(),
+                _prepare_overlap_domain(source, source_cells, budget=budget).mesh,
+                budget=budget,
+            ).prepare(budget=budget),
             unstructured_owner.UnstructuredFiniteVolumePlan.from_cell_mesh(
-                _prepare_overlap_domain(target, target_cells).mesh
-            ).prepare(),
+                _prepare_overlap_domain(target, target_cells, budget=budget).mesh,
+                budget=budget,
+            ).prepare(budget=budget),
             provenance="native-overset-certified-cell-overlap",
             policy=policy,
+            budget=budget,
+            scope=None if budget is None else current_native_execution_scope(),
         )
         if record_phase is not None:
             jax.block_until_ready(remap)
@@ -4225,6 +4566,7 @@ def prepare_overset_conservative_state_transport(
     content_tolerance: float,
     policy: supermesh_owner.CommonRefinementPolicy | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     remap_evidence_owner.PreparedUnstructuredConservativeRemap,
     tuple[CompositionTransport, ...],
@@ -4293,6 +4635,7 @@ def prepare_overset_conservative_state_transport(
         new,
         policy=policy,
         record_phase=record_phase,
+        budget=budget,
     )
     remap = prepared.plan
     if not prepared.succeeded or remap is None:

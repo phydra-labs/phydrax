@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Iterator
+from contextlib import contextmanager
 from fractions import Fraction
 
 import equinox as eqx
@@ -120,6 +122,30 @@ def _plc_source(
     )
 
 
+def test_plain_source_factors_equal_binary64_scalars_without_repricing(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh = CellMesh.from_triangles(
+        np.asarray(((0.0, -0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64),
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    identity = cell_geometry_id(geometry)
+    before = budget.work_units
+    bank = geometry.source_coordinates(budget=budget)
+    assert budget.work_units - before == geometry.coordinates.size
+    assert bank == (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    assert bank[0][0] is bank[1][1] is bank[2][0]
+    assert bank[1][0] is bank[2][1]
+    assert bank[0][0] is not bank[0][1]
+    assert np.signbit(np.asarray(geometry.coordinates)[0, 1])
+    assert cell_geometry_id(geometry) == identity
+
+
 def test_exact_plc_source_host_banks_preserve_identity_without_compiles(
     budget: CoordinateEnclosureBudget,
 ) -> None:
@@ -160,6 +186,125 @@ def _plc_mesh() -> CellMesh:
         dtype=np.float64,
     )
     return CellMesh.from_tetrahedra(carrier, np.asarray([[0, 1, 2, 3]], dtype=np.int64))
+
+
+def test_plc_identity_transition_selects_exact_source_roots_without_polynomials(
+    budget: CoordinateEnclosureBudget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.discretization import _cell_geometry_transfer as transfer
+    from phydrax.discretization._cell_geometry_transition_types import (
+        CellGeometryTransitionPolicy,
+        NestedReferenceWitnesses,
+    )
+    from phydrax.discretization._reference_cell import reference_cell_topology
+
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source)
+    blocks = transfer.simplex_blocks(mesh, geometry, "source", budget=budget)
+    roots = geometry.source_coordinates(budget=budget)
+    assert roots[1] == _STEINER
+    assert roots[1] != tuple(Fraction(float(value)) for value in mesh.coordinates[1])
+    reference = np.asarray(
+        (reference_cell_topology("tetrahedron").vertices,), dtype=np.float64
+    )
+    witnesses = NestedReferenceWitnesses(
+        blocks[0].cell_ids, blocks[0].cell_ids, reference
+    )
+
+    def unexpected_polynomials(*args: object, **kwargs: object) -> None:
+        pytest.fail("cardinal root selection must not prepare coordinate polynomials")
+
+    monkeypatch.setattr(transfer, "_plc_parent_polynomials", unexpected_polynomials)
+    placed, restricted, successor = transfer._plc_nested_coordinates(
+        mesh,
+        geometry,
+        mesh,
+        blocks,
+        blocks,
+        witnesses,
+        source,
+        CellGeometryTransitionPolicy(),
+        budget=budget,
+    )
+    np.testing.assert_array_equal(
+        placed.coordinates.view(np.uint64),
+        np.asarray(mesh.coordinates).view(np.uint64),
+    )
+    assert successor.prepare(placed.coordinates, budget=budget).vertices == roots
+    assert restricted.evaluations == 0
+    for name in ("vertex_strata", "vertex_rows", "vertex_parameters"):
+        np.testing.assert_array_equal(getattr(successor, name), getattr(source, name))
+    assert successor.vertex_parameter_ratios == source.vertex_parameter_ratios
+
+
+@pytest.mark.parametrize("affine_proof", (True, False), ids=("affine", "general"))
+def test_plc_noncorner_transition_uses_only_proven_affine_source(
+    budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+    affine_proof: bool,
+) -> None:
+    from phydrax.discretization import _cell_geometry_transfer as transfer
+    from phydrax.discretization._cell_geometry_transition_types import (
+        CellGeometryTransitionPolicy,
+        NestedReferenceWitnesses,
+    )
+    from phydrax.discretization._reference_cell import reference_cell_topology
+
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source)
+    blocks = transfer.simplex_blocks(mesh, geometry, "source", budget=budget)
+    roots = geometry.source_coordinates(budget=budget)
+    target_coordinates = np.asarray(mesh.coordinates).copy()
+    target_coordinates[1] /= 2
+    target_ids = np.asarray(mesh.vertex_global_ids).copy()
+    target_ids[1] = np.max(target_ids) + 1
+    target = CellMesh.from_tetrahedra(
+        target_coordinates,
+        np.asarray(((0, 1, 2, 3),), dtype=np.int64),
+        vertex_global_ids=target_ids,
+    )
+    target_layout = CellGeometrySpec.affine(target, budget=budget)
+    target_blocks = transfer.simplex_blocks(
+        target, target_layout, "target", budget=budget
+    )
+    reference = np.asarray(
+        (reference_cell_topology("tetrahedron").vertices,), dtype=np.float64
+    )
+    reference[0, 1] /= 2
+    witnesses = NestedReferenceWitnesses(
+        target_blocks[0].cell_ids, blocks[0].cell_ids, reference
+    )
+    if affine_proof:
+        def unexpected_polynomials(*args: object, **kwargs: object) -> None:
+            pytest.fail("proven affine evaluation must not prepare parent polynomials")
+
+        monkeypatch.setattr(transfer, "_plc_parent_polynomials", unexpected_polynomials)
+    else:
+        # Withhold the proof, requiring the unchanged real polynomial fallback.
+        monkeypatch.setattr(
+            transfer.imported_coordinate_enclosure,
+            "affine_simplex_source",
+            lambda element, *, budget: False,
+        )
+    placed, _, successor = transfer._plc_nested_coordinates(
+        mesh,
+        geometry,
+        target,
+        blocks,
+        target_blocks,
+        witnesses,
+        source,
+        CellGeometryTransitionPolicy(),
+        budget=budget,
+    )
+    expected = (roots[0], tuple(value / 2 for value in roots[1]), *roots[2:])
+    assert successor.prepare(placed.coordinates, budget=budget).vertices == expected
+    np.testing.assert_array_equal(placed.coordinates, np.asarray(expected, dtype=np.float64))
+    np.testing.assert_array_equal(successor.vertex_strata, source.vertex_strata)
+    np.testing.assert_array_equal(successor.vertex_rows, source.vertex_rows)
+    parameters = np.asarray(source.vertex_parameters).copy()
+    parameters[1, 0] /= 2
+    np.testing.assert_array_equal(successor.vertex_parameters, parameters)
 
 
 def test_periodic_exact_power_source_retains_image_axis_and_original_law(
@@ -423,6 +568,54 @@ def test_exact_plc_geometry_keeps_source_coordinates_distinct_from_carrier(
     assert geometry.geometry_layout_id != affine.geometry_layout_id
 
 
+@contextmanager
+def _request_ledger() -> Iterator[CoordinateEnclosureBudget]:
+    from phydrax.geometry._embedding_state import MeshCertificateLimits
+
+    limits = MeshCertificateLimits()
+    with HostBatchTicket(
+        limits.maximum_work_units, bytes_upper=limits.maximum_scratch_bytes
+    ) as ticket:
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        with ledger.activate():
+            yield ledger
+
+
+def test_issued_plc_witness_bank_is_reused_only_while_owned(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    rounded = np.asarray(mesh.coordinates)
+    with _request_ledger() as issuing:
+        prepared = source.prepare(rounded, budget=issuing)
+        issued_work = issuing.work_units
+        with _request_ledger() as reusing:
+            assert source.prepare(rounded, budget=reusing) is prepared
+            # The reusing request admits and retains the bank, not the proof.
+            assert any(value is prepared for value in reusing.plc_witness_cache.values())
+            assert 0 < reusing.retained_basis_bytes <= issuing.retained_basis_bytes
+            assert 0 < reusing.work_units < issued_work
+        # The registry is weakly keyed by the source object, not its content.
+        equal = _plc_source(budget=budget)
+        with _request_ledger() as other:
+            separate = equal.prepare(rounded, budget=other)
+            assert separate is not prepared and separate == prepared
+            assert other.work_units == issued_work
+        vertices = prepared.vertices
+    # Once every owner, including each request ledger, releases the bank, the
+    # same source proves it again.
+    del prepared, separate, issuing, reusing, other
+    gc.collect()
+    with _request_ledger() as fresh:
+        assert source.prepare(rounded, budget=fresh).vertices == vertices
+        assert fresh.work_units == issued_work
+
+
+
 def test_exact_plc_witness_bank_refuses_before_storage_allocation(
     budget: CoordinateEnclosureBudget,
 ) -> None:
@@ -555,6 +748,54 @@ def test_exact_source_slot_refuses_wrong_kind_family_and_foreign_authority(
         prepare_common_refinement(
             mesh, mesh, source_geometry=geometry, target_geometry=geometry
         )
+
+
+@pytest.mark.parametrize("drift", ("carrier", "routes"))
+def test_exact_plc_carrier_proof_reuses_only_current_source_binding(
+    budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    import phydrax.discretization._cell_geometry as owner
+
+    mesh = _plc_mesh()
+    geometry = CellGeometrySpec.plc(mesh, _plc_source(budget=budget), budget=budget)
+    budget.plc_carrier_binding_cache.clear()
+    original = owner._cardinal_corner_nodes
+    evaluations = 0
+
+    def corners(
+        element: owner.CellGeometryElement,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[int, ...] | None:
+        nonlocal evaluations
+        evaluations += 1
+        return original(element, budget=budget)
+
+    monkeypatch.setattr(owner, "_cardinal_corner_nodes", corners)
+    geometry.resolve(mesh, budget=budget)
+    first = evaluations
+    assert first > 0
+    geometry.resolve(mesh, budget=budget)
+    assert evaluations == first
+    if drift == "carrier":
+        values = np.asarray(mesh.coordinates).copy()
+        values[1, 0] = np.nextafter(values[1, 0], np.inf)
+        # Keep the authored IDs stale deliberately: the current numerical
+        # carrier, not an unchanged declared ID, must invalidate the proof.
+        changed_mesh = eqx.tree_at(lambda value: value.coordinates, mesh, values)
+        changed_geometry = geometry
+    else:
+        changed_mesh = mesh
+        changed_geometry = eqx.tree_at(
+            lambda value: value.geometry_dofs,
+            geometry,
+            (geometry.geometry_dofs[0][:, (1, 0, 2, 3)],),
+        )
+    with pytest.raises(ValueError, match=r"CellGeometrySpec\.resolve\.inputs"):
+        changed_geometry.resolve(changed_mesh, budget=budget)
 
 
 def test_unbounded_integer_reference_chart_keeps_exact_measure_and_archive_identity(
@@ -1098,10 +1339,14 @@ def test_full_barycentric_p1_source_preserves_every_offsum_weight(
 
 @pytest.mark.parametrize("kind", ("triangle", "tetrahedron"))
 def test_nested_full_coefficient_action_retains_exact_nonbinary_composition(
-    kind: str, budget: CoordinateEnclosureBudget
+    kind: str, budget: CoordinateEnclosureBudget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
-    from phydrax.discretization._coordinate_enclosure import evaluate, source_basis
+    from phydrax.discretization import _coordinate_enclosure as algebra
+    from phydrax.discretization._coordinate_enclosure import (
+        coordinate_vertex_images, evaluate, source_basis,
+    )
+    from phydrax.discretization._reference_cell import reference_cell_topology
 
     original = coordinate_lagrange_element(kind, 1)
     width = original.local_dof_count
@@ -1133,6 +1378,28 @@ def test_nested_full_coefficient_action_retains_exact_nonbinary_composition(
             for column in range(width)
         )
         assert tuple(evaluate(term, origin, budget=ledger) for term in basis) == exact
+        controls = tuple(
+            tuple(Fraction(3 + 7 * node + axis) for axis in range(original.topological_dimension))
+            for node in range(width)
+        )
+
+        def refuse_polynomial_corner_expansion(*args: object, **kwargs: object) -> None:
+            raise AssertionError("Cardinal full-action corners must use their exact action rows.")
+
+        monkeypatch.setattr(algebra, "_reference_basis_values", refuse_polynomial_corner_expansion)
+        rows = np.arange(width, dtype=np.int64)[None, :]
+        images = coordinate_vertex_images(
+            ((action, rows, rows),), controls, width,
+            mismatch="nonbinary full-action corner mismatch", budget=ledger,
+        )
+        assert images is not None
+        for vertex, point in enumerate(reference_cell_topology(kind).vertices):
+            corner = tuple(Fraction(value) for value in point)
+            values = tuple(evaluate(term, corner, budget=ledger) for term in basis)
+            assert images[vertex] == tuple(
+                sum((value * controls[node][axis] for node, value in enumerate(values)), Fraction(0))
+                for axis in range(original.topological_dimension)
+            )
     # This input cannot be replaced by its binary64 matrix product.
     assert exact[0] != Fraction(float((outer @ inner)[0, 0]))
     points = np.zeros((1, original.topological_dimension), dtype=np.float64)
@@ -1397,8 +1664,10 @@ def test_rational_plc_pyramid_source_refusals_preserve_original_resource_and_law
 
 def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
     budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
+    from phydrax.discretization import _coordinate_enclosure as enclosure
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_corner_images,
         reference_composition_arguments,
@@ -1441,9 +1710,19 @@ def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
         original = source_expressions(element, budget=ledger)
         chart = reference_composition_arguments(element, budget=ledger)
         work = ledger.work_units
-        assert source_expressions(element, budget=ledger) is original
-        assert reference_composition_arguments(element, budget=ledger) is chart
-        assert ledger.work_units == work
+        def reject_repeated_preparation(*args, **kwargs):
+            raise AssertionError("An authenticated cache hit must not repeat source/chart preparation")
+
+        with monkeypatch.context() as repeated:
+            repeated.setattr(enclosure, "_prepare_source_expressions", reject_repeated_preparation)
+            repeated.setattr(
+                enclosure, "_prepare_reference_composition_arguments", reject_repeated_preparation
+            )
+            assert source_expressions(element, budget=ledger) is original
+            assert reference_composition_arguments(element, budget=ledger) is chart
+        # Complete current-owner/JAX authentication is real paid work; the
+        # source expressions and chart arithmetic above must still never rerun.
+        assert ledger.work_units > work
         changed = eqx.tree_at(
             lambda value: value.source_element.barycentric_weights,
             element,
@@ -2220,3 +2499,106 @@ def test_structural_coordinate_bank_bound_preserves_large_object_array_fractions
         )
     assert ledger.work_units <= estimate.work_upper
     assert ledger.peak_bytes_upper <= estimate.bytes_upper
+
+
+@pytest.mark.parametrize("kind", ("triangle", "tetrahedron"))
+def test_full_action_corner_rows_retain_exact_homogeneous_source_weights(
+    kind: str, budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
+    from phydrax.discretization._coordinate_enclosure import coordinate_vertex_images
+    from phydrax.discretization._reference_cell import reference_cell_topology
+
+    root = coordinate_lagrange_element(kind, 1)
+    width = root.local_dof_count
+    weights = np.eye(width)
+    weights[0, :3] = 1.0 / 3.0
+    homogeneous = np.zeros((width, width))
+    homogeneous[0, :3] = 1.0
+    action = BarycentricCellGeometryElement(
+        root, weights, barycentric_homogeneous=homogeneous
+    )
+    controls = tuple(
+        tuple(Fraction(value) for value in point)
+        for point in reference_cell_topology(kind).vertices
+    )
+    rows = np.arange(width, dtype=np.int64)[None, :]
+    images = coordinate_vertex_images(
+        ((action, rows, rows),), controls, width,
+        mismatch="homogeneous full-action corner mismatch", budget=budget,
+    )
+    assert images is not None
+    assert images[0] == tuple(
+        sum((controls[node][axis] for node in range(3)), Fraction(0)) / 3
+        for axis in range(root.topological_dimension)
+    )
+    assert images[0][0] == Fraction(1, 3)
+    assert images[0][0] != Fraction(float(1.0 / 3.0))
+
+
+def test_unbound_plc_entity_preparation_keeps_original_whole_row_tariff(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    budget.capture_coordinate_operands = False
+    before = budget.work_units
+    source = _plc_source(budget=budget)
+    assert budget.work_units - before == 2 * 64
+    before = budget.work_units
+    renewed = source.with_witnesses(
+        source.vertex_strata, source.vertex_rows, source.vertex_parameters, budget=budget
+    )
+    assert budget.work_units - before == 2 * 64
+    assert renewed.domain_source_id == source.domain_source_id
+
+
+def test_plc_entity_numeric_frame_seal_binds_actual_source_and_nested_rows() -> None:
+    import pickle
+
+    from phydrax.discretization import _coordinate_operands as operands
+    from phydrax.discretization import _exact_plc_geometry as owner
+    from phydrax.meshing import MeshingLimits
+    from tests._support.coordinate_references import native_meshing_request
+
+    with native_meshing_request(MeshingLimits(
+        maximum_work_units=1_000_000, maximum_scratch_bytes=4_000_000
+    )) as (scope, budget, _), budget.bind_ticket(scope.ticket_view()):
+        budget.capture_coordinate_operands = True
+        source = _plc_source(budget=budget)
+        frames = operands._ISSUED_PLC_ENTITIES[budget][id(source)].frames
+        owner._require_plc_entity_frame_source(frames, source)
+        assert frames.triangles[0].normal == (Fraction(1), Fraction(0), Fraction(0))
+        assert frames.segments[0].edges == ((Fraction(3), Fraction(1), Fraction(0)),)
+        budget.capture_coordinate_operands = False
+        equal_valued_other_source = _plc_source(budget=budget)
+        with pytest.raises(ValueError, match="actual original source"):
+            owner._require_plc_entity_frame_source(frames, equal_valued_other_source)
+        forged = owner._PreparedPlcEntityFrames(
+            frames.triangles, frames.segments, frames.storage_bytes_upper
+        )
+        with pytest.raises(ValueError, match="actual producer binding"):
+            owner._plc_entity_frame_basis(forged)
+        with pytest.raises(TypeError, match="archive and cold"):
+            pickle.dumps(frames)
+        object.__setattr__(frames.triangles[0], "normal", (Fraction(7), Fraction(0), Fraction(0)))
+        with pytest.raises(ValueError, match="numeric rows changed"):
+            owner._plc_entity_frame_basis(frames, source=source)
+
+
+def test_captured_plc_entity_constructor_has_actual_work_r_and_r_minus_one() -> None:
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+    from phydrax.meshing import MeshingLimits
+    from tests._support.coordinate_references import native_meshing_request
+
+    def prepare(work: int) -> int:
+        with native_meshing_request(MeshingLimits(
+            maximum_work_units=work, maximum_scratch_bytes=4_000_000
+        )) as (scope, budget, _), budget.bind_ticket(scope.ticket_view()):
+            budget.capture_coordinate_operands = True
+            _plc_source(budget=budget)
+            return work - int(scope.remaining().remaining_work_units)
+
+    required = prepare(1_000_000)
+    assert required >= 2 * 64
+    assert prepare(required) == required
+    with pytest.raises(CoordinateEnclosureResourceError):
+        prepare(required - 1)

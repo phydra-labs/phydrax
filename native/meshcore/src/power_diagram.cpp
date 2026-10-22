@@ -60,9 +60,9 @@ namespace phx::mc {
 struct PowerCellsResult {
   NativeVector<double> vertices;
   NativeVector<int32_t> vertex_carriers;
-  NativeVector<int64_t> vertex_site_offsets{0};
+  NativeVector<int64_t> vertex_site_offsets;
   NativeVector<int32_t> vertex_sites;
-  NativeVector<int64_t> face_offsets{0};
+  NativeVector<int64_t> face_offsets;
   NativeVector<int32_t> face_vertices;
   NativeVector<int32_t> face_cells;
   NativeVector<int32_t> face_facets;
@@ -79,6 +79,8 @@ struct PowerCellsResult {
   PowerFailure failure;
   double phase_seconds[4] = {-1.0, -1.0, -1.0, -1.0};
   int64_t source_work_units = 0;
+  std::array<int64_t, PHX_MC_POWER_CELLS_PREFLIGHT> preflight{};
+  std::array<int64_t, PHX_MC_POWER_CELLS_CAPACITY> capacity{};
 };
 
 namespace {
@@ -95,6 +97,8 @@ enum Failure : int64_t {
   kClipFailure = 8,
   kSeedFailure = 9,
   kImageSourceDomain = 10,
+  kOutputCapacity = 11,
+  kOutputCountOverflow = 12,
 };
 
 
@@ -117,8 +121,24 @@ struct Input {
   int64_t max_vertices;
   int64_t work_limit;
   int8_t record_phases;
+  std::array<int64_t, PHX_MC_POWER_CELLS_PREFLIGHT> output_limits;
   const ExactPowerCoordinates* exact_coordinates = nullptr;
 };
+
+template <class Request>
+std::array<int64_t, PHX_MC_POWER_CELLS_PREFLIGHT> output_limits(const Request& in) {
+  return {in.max_vertices, in.max_edges, in.max_faces, in.max_face_entries,
+          in.max_cells, in.max_pieces, in.max_site_witnesses,
+          in.max_sided_loop_occurrences, in.max_sided_corner_occurrences, INT64_MAX,
+          in.max_connectivity_entries, in.max_data_bytes};
+}
+
+bool add_count(int64_t& total, int64_t count, int64_t width = 1) {
+  if (count < 0 || width < 0 || (width != 0 && count > (INT64_MAX - total) / width))
+    return false;
+  total += count * width;
+  return true;
+}
 
 using Key = NativeVector<int32_t>;
 
@@ -166,6 +186,9 @@ int32_t validate_layout(const Input& in) {
       !addressable(in.point_count, 3, sizeof(double)) ||
       !addressable(in.tet_count, 4, sizeof(int32_t))) {
     return PHX_MC_INVALID_ARGUMENT;
+  }
+  for (const int64_t limit : in.output_limits) {
+    if (limit < 0) return PHX_MC_INVALID_ARGUMENT;
   }
   if ((in.sites == nullptr && in.exact_coordinates == nullptr) || in.weights == nullptr || in.neighbor_offsets == nullptr ||
       in.split_sites == nullptr || in.points == nullptr || in.tets == nullptr ||
@@ -338,6 +361,7 @@ class Builder {
   NativeUnorderedMap<int64_t, int32_t> piece_index_;
   NativeVector<int8_t> split_;
   NativeVector<int32_t> piece_cell_;
+  NativeVector<int32_t> cell_roots_;
   int32_t cell_count_ = 0;
   NativeVector<int64_t> identity_stamp_;
   int64_t identity_epoch_ = 0;
@@ -840,24 +864,12 @@ class Builder {
       }
       cell_count_ = static_cast<int32_t>(roots.size());
       piece_cell_.assign(static_cast<std::size_t>(count), -1);
-      out_.cell_sites.assign(roots.size(), -1);
-      out_.cell_regions.assign(roots.size(), -1);
-      out_.cell_volumes.assign(roots.size(), 0.0);
-      out_.cell_moments.assign(3 * roots.size(), 0.0);
-      out_.cell_second_moments.assign(roots.size(), 0.0);
+      cell_roots_ = std::move(roots);
       for (int32_t p = 0; p < count; ++p) {
         native_execution_charge(0);
         const int32_t cell = cell_of_root[
             topology::find_root(parent, p, [] { native_execution_charge(0); })];
-        const Piece& piece = pieces_[p];
         piece_cell_[p] = cell;
-        out_.cell_sites[cell] = piece.site;
-        out_.cell_regions[cell] = in_.tet_regions[piece.tet];
-        out_.cell_volumes[cell] += piece.volume;
-        for (int axis = 0; axis < 3; ++axis) {
-          out_.cell_moments[3 * cell + axis] += piece.moment[axis];
-        }
-        out_.cell_second_moments[cell] += piece.second;
       }
       return PHX_MC_OK;
     }
@@ -1000,7 +1012,7 @@ class Builder {
       if (other >= 0) {
         const auto reverse = groups.find({other, cell, facet});
         if (reverse == groups.end()) {
-          return fail(kMissingPiece, out_.cell_sites[cell], -1, PHX_MC_OK,
+          return fail(kMissingPiece, pieces_[cell_roots_[cell]].site, -1, PHX_MC_OK,
                       PHX_MC_DEGENERATE_INPUT);
         }
         NativeVector<Edge> mirrored = boundary_edges(reverse->second);
@@ -1013,7 +1025,7 @@ class Builder {
           return a < b;
         });
         if (mirrored != edges) {
-          return fail(kInconsistentFace, out_.cell_sites[cell], -1, PHX_MC_OK,
+          return fail(kInconsistentFace, pieces_[cell_roots_[cell]].site, -1, PHX_MC_OK,
                       PHX_MC_DEGENERATE_INPUT);
         }
       }
@@ -1035,6 +1047,117 @@ class Builder {
       }
     }
     return publish(loops, loop_owners);
+  }
+
+  int32_t preflight(const NativeVector<NativeVector<int32_t>>& loops,
+                    const NativeVector<std::array<int32_t, 3>>& owners,
+                    const NativeVector<uint8_t>& removable,
+                    const NativeVector<int32_t>& index,
+                    const NativeVector<const Key*>& ordered_keys) {
+    auto& counts = out_.preflight;
+    const auto overflow = [&] {
+      return fail(kOutputCountOverflow, -1, -1, PHX_MC_INVALID_ARGUMENT,
+                  PHX_MC_INVALID_ARGUMENT);
+    };
+    counts[2] = static_cast<int64_t>(loops.size());
+    counts[4] = cell_count_;
+    counts[5] = static_cast<int64_t>(pieces_.size());
+    for (std::size_t vertex = 0; vertex < index.size(); ++vertex) {
+      native_execution_charge(0);
+      if (index[vertex] < 0) continue;
+      const Key& key = *ordered_keys[vertex];
+      const auto separator = std::find(key.begin(), key.end(), -1);
+      if (!add_count(counts[0], 1) ||
+          !add_count(counts[6], static_cast<int64_t>(separator - key.begin())))
+        return overflow();
+    }
+    // NativeSet uses the active managed allocator: count scratch is admitted
+    // before each node allocation, never hidden behind an unbounded std::set.
+    NativeSet<Edge> edges;
+    for (std::size_t face = 0; face < loops.size(); ++face) {
+      int32_t first = -1;
+      int32_t previous = -1;
+      int64_t corners = 0;
+      for (const int32_t vertex : loops[face]) {
+        native_execution_charge(0);
+        if (removable[vertex] != 0) continue;
+        if (first < 0) first = vertex;
+        if (previous >= 0) edges.emplace(std::minmax(previous, vertex));
+        previous = vertex;
+        if (!add_count(corners, 1)) return overflow();
+      }
+      if (first >= 0) edges.emplace(std::minmax(previous, first));
+      const int64_t copies = owners[face][1] >= 0 ? 2 : 1;
+      if (!add_count(counts[3], corners) || !add_count(counts[7], copies) ||
+          !add_count(counts[8], corners, copies))
+        return overflow();
+    }
+    counts[1] = static_cast<int64_t>(edges.size());
+    // Exactly the seventeen exported numeric payloads, including both CSR
+    // terminal offsets. Python records/headers belong to host export admission.
+    counts[9] = 16;
+    if (!add_count(counts[9], counts[0], 48) ||
+        !add_count(counts[9], counts[2], 20) ||
+        !add_count(counts[9], counts[3], 4) ||
+        !add_count(counts[9], counts[4], 48) ||
+        !add_count(counts[9], counts[5], 20) ||
+        !add_count(counts[9], counts[6], 4))
+      return overflow();
+    // Port of _admit_polyhedral_mesh_capacity's explicit-loop topology
+    // envelope. It is not the adaptation lineage/organization storage owner.
+    counts[10] = 16;
+    if (!add_count(counts[10], counts[7], 64) ||
+        !add_count(counts[10], counts[8], 64) ||
+        !add_count(counts[10], counts[0], 16) ||
+        !add_count(counts[10], counts[4], 16) ||
+        !add_count(counts[11], counts[10], 8))
+      return overflow();
+    for (std::size_t axis = 0; axis < counts.size(); ++axis) {
+      if (counts[axis] > in_.output_limits[axis]) {
+        out_.capacity = {static_cast<int64_t>(axis + 1), counts[axis],
+                         in_.output_limits[axis]};
+        return fail(kOutputCapacity, -1, -1, PHX_MC_CAPACITY_EXCEEDED,
+                    PHX_MC_CAPACITY_EXCEEDED);
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  void allocate_output() {
+    const auto& counts = out_.preflight;
+    // Reserve the exact admitted payloads once, avoiding geometric growth and
+    // transient old/new output copies under the shared managed cap.
+    out_.vertices.reserve(static_cast<std::size_t>(3 * counts[0]));
+    out_.vertex_carriers.reserve(static_cast<std::size_t>(4 * counts[0]));
+    out_.vertex_site_offsets.reserve(static_cast<std::size_t>(counts[0] + 1));
+    out_.vertex_sites.reserve(static_cast<std::size_t>(counts[6]));
+    out_.face_offsets.reserve(static_cast<std::size_t>(counts[2] + 1));
+    out_.face_vertices.reserve(static_cast<std::size_t>(counts[3]));
+    out_.face_cells.reserve(static_cast<std::size_t>(2 * counts[2]));
+    out_.face_facets.reserve(static_cast<std::size_t>(counts[2]));
+    out_.piece_sites.reserve(static_cast<std::size_t>(counts[5]));
+    out_.piece_tets.reserve(static_cast<std::size_t>(counts[5]));
+    out_.piece_cells.reserve(static_cast<std::size_t>(counts[5]));
+    out_.piece_volumes.reserve(static_cast<std::size_t>(counts[5]));
+    out_.vertex_site_offsets.push_back(0);
+    out_.face_offsets.push_back(0);
+    out_.cell_sites.assign(static_cast<std::size_t>(cell_count_), -1);
+    out_.cell_regions.assign(static_cast<std::size_t>(cell_count_), -1);
+    out_.cell_volumes.assign(static_cast<std::size_t>(cell_count_), 0.0);
+    out_.cell_moments.assign(3 * static_cast<std::size_t>(cell_count_), 0.0);
+    out_.cell_second_moments.assign(static_cast<std::size_t>(cell_count_), 0.0);
+    // Preserve the original components() piece-order floating-point reduction.
+    for (std::size_t p = 0; p < pieces_.size(); ++p) {
+      native_execution_charge(0);
+      const int32_t cell = piece_cell_[p];
+      const Piece& piece = pieces_[p];
+      out_.cell_sites[cell] = piece.site;
+      out_.cell_regions[cell] = in_.tet_regions[piece.tet];
+      out_.cell_volumes[cell] += piece.volume;
+      for (int axis = 0; axis < 3; ++axis)
+        out_.cell_moments[3 * cell + axis] += piece.moment[axis];
+      out_.cell_second_moments[cell] += piece.second;
+    }
   }
 
   // Removes vertices on exactly two edges (never shrinking a loop below a
@@ -1103,6 +1226,9 @@ class Builder {
       native_execution_charge(0);
       ordered_keys[vertex] = &key;
     }
+    const int32_t admission = preflight(loops, owners, removable, index, ordered_keys);
+    if (admission != PHX_MC_OK) return admission;
+    allocate_output();
     int32_t used = 0;
     for (std::size_t v = 0; v < vertex_total; ++v) {
       native_execution_charge(0);
@@ -1186,6 +1312,11 @@ int32_t validate_exact_image_layout(const phx_mc_restricted_power_cells_exact_re
       !addressable(in.original_site_count, 3, sizeof(double)) ||
       !addressable(in.image_count, 3, sizeof(int64_t)) ||
       !addressable(in.component_count, 1, sizeof(double))) return PHX_MC_INVALID_ARGUMENT;
+  // Reject malformed allowances before source validation charges work or
+  // decodes/allocates exact image coordinates, just as the ordinary path does.
+  for (const int64_t limit : output_limits(in)) {
+    if (limit < 0) return PHX_MC_INVALID_ARGUMENT;
+  }
   return PHX_MC_OK;
 }
 
@@ -1335,7 +1466,8 @@ int32_t phx_mc_restricted_power_cells(
     const phx::mc::Input input{site_count, sites,      weights,       neighbor_offsets,
                                neighbors,  split_sites, point_count,  points,
                                tet_count,  tets,        tet_regions,  tet_face_facets,
-                               max_pieces, max_vertices, work_limit, record_phases};
+                               max_pieces, max_vertices, work_limit, record_phases,
+                               phx::mc::output_limits(*request)};
     int32_t status = phx::mc::validate_layout(input);
     if (status != PHX_MC_OK) {
       return status;
@@ -1385,7 +1517,7 @@ int32_t phx_mc_restricted_power_cells_exact(
                       in.neighbors, in.split_sites, in.point_count, in.points,
                       in.tet_count, in.tets, in.tet_regions, in.tet_face_facets,
                       in.max_pieces, in.max_vertices, in.work_limit - source_work.units,
-                      in.record_phases, images.coordinates.data()};
+                      in.record_phases, output_limits(in), images.coordinates.data()};
     status = validate_layout(input);
     if (status != PHX_MC_OK) return status;
     status = execute_power_builder(input, handle->result);
@@ -1408,6 +1540,22 @@ int32_t phx_mc_power_cells_sizes(const phx_mc_power_cells* result, int64_t* size
     sizes[2] = static_cast<int64_t>(r.face_vertices.size());
     sizes[3] = static_cast<int64_t>(r.cell_sites.size());
     sizes[4] = static_cast<int64_t>(r.piece_sites.size());
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_power_cells_preflight(const phx_mc_power_cells* result, int64_t* counts) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || counts == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    std::copy(result->result.preflight.begin(), result->result.preflight.end(), counts);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_power_cells_capacity(const phx_mc_power_cells* result, int64_t* evidence) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || evidence == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    std::copy(result->result.capacity.begin(), result->result.capacity.end(), evidence);
     return PHX_MC_OK;
   });
 }

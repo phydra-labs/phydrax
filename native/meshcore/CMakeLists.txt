@@ -88,6 +88,7 @@ set(PHX_MC_HEADERS
   src/boundary_policy.hpp
   src/counter_records.hpp
   src/cavity.hpp
+  src/dyadic.hpp
   src/clip_common.hpp
   src/clip3d.hpp
   src/exact_line.hpp
@@ -163,7 +164,7 @@ target_compile_definitions(phydrax_meshcore_objects PUBLIC
   PHX_MC_VERSION="${PROJECT_VERSION}"
   PHX_MC_BUILD_HASH="${PHX_MC_BUILD_HASH}"
   PHX_MC_ABI_CONTRACT="${PHX_MC_ABI_CONTRACT}"
-  PHX_MC_BUILD_CONFIGURATION="${PHX_MC_CONFIGURATION}|config=$<CONFIG>")
+  PHX_MC_BUILD_CONFIGURATION="${PHX_MC_CONFIGURATION}|execution_clocks=request-preparation+absolute-workflow|config=$<CONFIG>")
 target_compile_options(phydrax_meshcore_objects PUBLIC ${PHX_MC_FP_FLAGS}
   PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -220,6 +221,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_plc3d)
   phx_mc_add_test(test_refine3d)
   phx_mc_add_test(test_improve3d)
+  phx_mc_add_test(test_curved_collapse)
   phx_mc_add_test(test_power_diagram)
   phx_mc_add_test(test_mixed_refinement)
   add_executable(test_getters tests/test_getters.cpp)
@@ -238,7 +240,7 @@ if(PHX_MC_BUILD_TESTS)
       nested_isolation nested_refusal native_work native_queries native_cavity native_bytes
       settlement_retry nested_overestimate_retry live_ticket_lifetime exception_settlement
       concurrent_admission nested_scope_reservation timeout_admission checkpoint_and_invalid_arguments
-      refusal_consumption_evidence)
+      refusal_consumption_evidence live_child_refusal live_child_refusal_limited_by_ancestor)
     add_test(NAME test_execution_batch_${case} COMMAND test_execution_batch ${case})
   endforeach()
   add_executable(test_parallel_budget tests/test_parallel_budget.cpp)
@@ -257,7 +259,10 @@ if(PHX_MC_BUILD_TESTS)
   add_executable(test_parallel_policy tests/test_parallel_policy.cpp)
   target_include_directories(test_parallel_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_link_libraries(test_parallel_policy PRIVATE phydrax_meshcore_objects Threads::Threads)
-  foreach(case IN ITEMS invalid_arguments nested_restore creating_thread expired_restore)
+  foreach(case IN ITEMS invalid_arguments nested_restore creating_thread expired_restore
+      preparation_clock_independence request_clock_still_debited preparation_exhausts_request
+      preparation_cannot_renew_expired_workflow policy_entered_after_scope
+      nested_scope_preparation_clock)
     add_test(NAME test_parallel_policy_${case} COMMAND test_parallel_policy ${case})
   endforeach()
   add_executable(test_execution_target tests/test_execution_target.cpp)

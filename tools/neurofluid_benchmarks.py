@@ -151,6 +151,7 @@ def _transport_worker(connection: Connection, args: argparse.Namespace) -> None:
 
     try:
         record = native_transport(
+            case=args.case,
             size=args.size,
             repeats=args.repeats,
             steps=args.steps,
@@ -214,6 +215,7 @@ def _native_attempt(args: argparse.Namespace, attempt: int) -> dict[str, Any]:
     if record is None:
         record = {
             "scenario": "native-generated-transport",
+            "case": args.case,
             "successful": False,
             "status": "timeout" if timed_out else "failed",
             "failure": {

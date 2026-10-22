@@ -20,6 +20,7 @@ from ..typing import checked
 from . import _cell_geometry as cell_geometry_owner, _cell_mesh as cell_mesh_owner
 from ._coordinate_budget import CoordinateEnclosureBudget
 from ._coordinate_enclosure import (
+    affine_simplex_source,
     coordinate_corner_images,
     coordinate_expressions,
     prepared_coordinate_source_bank,
@@ -84,17 +85,21 @@ def _exact_affine_orbit_measures(
             raise ValueError(
                 f"periodic_orbit_measures.cell_kind must be a full-dimensional simplex; got {block.cell_kind!r}"
             )
+        # A degree-one simplex root proves every restricted/barycentric row
+        # affine once; only other elements need per-row expression proofs.
+        structural = affine_simplex_source(element, budget=budget)
         for row in np.asarray(route):
             local = tuple(source[int(index)] for index in row if index >= 0)
-            expressions = coordinate_expressions(element, local, budget=budget)
-            if expressions is None or any(
-                isinstance(value, RationalPolynomial)
-                or any(sum(index) > 1 for index in value)
-                for value in expressions
-            ):
-                raise ValueError(
-                    "periodic_orbit_measures.geometry must use affine coordinate maps; got a nonaffine source"
-                )
+            if not structural:
+                expressions = coordinate_expressions(element, local, budget=budget)
+                if expressions is None or any(
+                    isinstance(value, RationalPolynomial)
+                    or any(sum(index) > 1 for index in value)
+                    for value in expressions
+                ):
+                    raise ValueError(
+                        "periodic_orbit_measures.geometry must use affine coordinate maps; got a nonaffine source"
+                    )
             corners = coordinate_corner_images(element, local, budget=budget)
             if corners is None:
                 raise ValueError(

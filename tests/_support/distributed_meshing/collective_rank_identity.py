@@ -73,12 +73,8 @@ def consecutive_epochs() -> dict[str, Any]:
         assert partitioned.layout.vertex_capacity == 64
         assert partitioned.layout.cell_capacity == 64
         witness = _require_present(partitioned.source_witness)
-        update = phx.discretization.refine_adaptive_simplex_parts(
-            partitioned.layout,
-            partitioned.parts,
-            partitioned.states,
-            partitioned.states.mesh.cell_active,
-        )
+        update = phx.discretization.refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states,
+        partitioned.states.mesh.cell_active,)
         for shard in update.report.status.addressable_shards:
             np.testing.assert_array_equal(
                 np.asarray(shard.data), np.zeros(shard.data.shape, dtype=np.int32)

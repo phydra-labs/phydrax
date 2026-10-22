@@ -123,6 +123,7 @@ void test_unaddressable_counts_are_invalid_arguments() {
       .keep_convex_hull = 1,
       .min_angle_degrees = 0.0,
       .max_area = std::numeric_limits<double>::infinity(),
+      .max_edge_length = std::numeric_limits<double>::infinity(),
       .max_steiner = 0,
       .max_triangles = 100,
       .max_cavity_cells = INT64_MAX,

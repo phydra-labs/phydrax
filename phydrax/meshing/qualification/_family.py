@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, final
@@ -24,7 +25,7 @@ from phydrax._array_archive import (
     write_array_archive,
 )
 from phydrax._frozendict import frozendict
-from phydrax._meshcore import NativeExecutionScope
+from phydrax._meshcore import NativeBatchTicket, NativeExecutionScope, NativeScopeTicket
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import coordinate_lagrange_element, FieldTracePolicy
 from phydrax.discretization._cell_geometry import (
@@ -60,6 +61,7 @@ from phydrax.meshing.providers._native_planar_domain import source_arrays
 from phydrax.meshing.providers._native_publication import (
     coordinate_budget,
     coordinate_phase,
+    derived_certificate_limits,
 )
 from phydrax.meshing.providers._native_structured import mapped_edge_evidence
 from phydrax.meshing.providers._native_surface import quad_edge_evidence
@@ -301,12 +303,18 @@ def prepare_family_finite_volume_bindings(
     fv: phx.discretization.UnstructuredFiniteVolumeDiscretization,
     content: jax.Array,
     epoch: int,
+    *,
+    scalar_quadrature: bool = False,
 ) -> FamilyFieldBindings:
-    """Bind stationary Euler intensive state and extensive accepted history."""
+    """Bind accepted Euler or intrinsic scalar FV content and extensive history."""
     declarations: list[MeshingFieldDeclaration] = []
     arrays: dict[str, jax.Array | np.ndarray] = {}
-    system = phx.equations.EulerSystem(result.mesh.ambient_dimension)
-    template = family_finite_volume_field_templates(system.dimension)[0]
+    system = None if scalar_quadrature else phx.equations.EulerSystem(
+        result.mesh.ambient_dimension
+    )
+    template = family_finite_volume_field_templates(
+        result.mesh.topological_dimension, scalar_quadrature=scalar_quadrature
+    )[0]
     field = fv.field_spaces[0]
     binding = prepare_meshing_field_index_binding(
         result, "field/global_coefficient_ids", field_space=field
@@ -320,16 +328,36 @@ def prepare_family_finite_volume_bindings(
         "kg*m/s",
         ((phx.units.KILOGRAM, 1), (phx.units.METER, 1), (phx.units.SECOND, -1)),
     )
-    intensive_units = (
-        phx.units.KILOGRAM_PER_CUBIC_METER,
-        *((momentum_density,) * system.dimension),
-        phx.units.PASCAL,
-    )
-    content_units = (
-        phx.units.KILOGRAM,
-        *((momentum,) * system.dimension),
-        phx.units.JOULE,
-    )
+    if system is None:
+        intensive_units = (phx.units.ONE,)
+        content_units = (
+            phx.units.derived_unit("m2", ((phx.units.METER, 2),)),
+        )
+    else:
+        intensive_units = (
+            phx.units.KILOGRAM_PER_CUBIC_METER,
+            *((momentum_density,) * system.dimension),
+            phx.units.PASCAL,
+        )
+        content_units = (
+            phx.units.KILOGRAM,
+            *((momentum,) * system.dimension),
+            phx.units.JOULE,
+        )
+        if result.mesh.topological_dimension == 2:
+            # A planar Euler carrier integrates over area: these extensive
+            # quantities are per unit out-of-plane length, not 3-D cell totals.
+            content_units = (
+                phx.units.derived_unit(
+                    "kg/m", ((phx.units.KILOGRAM, 1), (phx.units.METER, -1))
+                ),
+                *((phx.units.derived_unit(
+                    "kg/s", ((phx.units.KILOGRAM, 1), (phx.units.SECOND, -1))
+                ),) * system.dimension),
+                phx.units.derived_unit(
+                    "J/m", ((phx.units.JOULE, 1), (phx.units.METER, -1))
+                ),
+            )
     arrays.update(
         {
             "FV/state/coefficients": state,
@@ -381,9 +409,12 @@ def prepare_family_finite_volume_bindings(
             reconstruction_policy=reconstruction,
             reconstruction_policy_id=reconstruction.plan_id,
             finite_volume_system=system,
-            finite_volume_flux_policy=phx.discretization.RusanovFluxPlan(),
+            finite_volume_flux_policy=None
+            if system is None else phx.discretization.RusanovFluxPlan(),
             finite_volume_boundaries=frozendict(
-                {
+                {}
+                if system is None
+                else {
                     name: phx.discretization.SlipWallBoundary()
                     for name in fv.boundary_patch_names
                 }
@@ -708,6 +739,7 @@ def _frame_sweep_atlas(
         np.zeros(root_cells.shape[0], dtype=np.int64),
         source_id="curved-frame-source",
         source_revision=revision,
+        certificate_limits=derived_certificate_limits(limits),
     )
     query = MappedDomainBoundarySource(
         domain, np.zeros(root_cells.shape[0], dtype=np.int64)
@@ -971,27 +1003,54 @@ def prepare_family_association_transfer(
     | None,
     limits: phx.meshing.MeshingLimits,
     record_phase: Callable[[phx.meshing.NativeMeshingPhaseMeasurement], None],
+    budget: CoordinateEnclosureBudget | None = None,
+    scope: NativeExecutionScope | None = None,
 ) -> FamilyAssociationTransfer:
     """Prepare source-table association transfer without inferring IDs from generated coordinates."""
+    if (budget is None) != (scope is None):
+        raise ValueError("Family request-owned association preparation requires its explicit scope and budget together")
+    if limits.limits_id != request.limits.limits_id:
+        raise ValueError("Family association limits must match the authored request")
+    if budget is None:
+        with NativeExecutionScope(limits.native_limits()) as owned_scope:
+            with owned_scope.ticket_view() as ticket:
+                owned_budget = CoordinateEnclosureBudget(
+                    ticket,
+                    maximum_work_units=limits.maximum_work_units,
+                    maximum_memory_bytes=limits.maximum_scratch_bytes,
+                )
+                return prepare_family_association_transfer(
+                    source, result, request, domain=domain, limits=limits,
+                    record_phase=record_phase, budget=owned_budget, scope=owned_scope,
+                )
+    if (
+        scope is None
+        or not eqx.tree_equal(scope.limits, limits.native_limits())
+        or budget.maximum_memory_bytes != limits.maximum_scratch_bytes
+        or budget.maximum_work_units != limits.maximum_work_units
+        or not isinstance(budget.ticket, (NativeBatchTicket, NativeScopeTicket))
+        or budget.ticket.scope is not scope
+        or budget.ticket.settled
+    ):
+        raise ValueError("Family association budget must use the authored request's live scope and limits")
     if not result.associations:
         return None
     match source:
         case phx.meshing.NativePlcSource():
             # Recovery owns source edge and triangle identity ordering.
-            with NativeExecutionScope(limits.native_limits()) as scope:
-                match request:
-                    case phx.meshing.VolumeMeshingSpec():
-                        recovered = recover(
-                            source.complex,
-                            request,
-                            scope=scope,
-                            record_phase=record_phase,
-                        )
-                    case _:
-                        raise ValueError(
-                            "qualification.family.request must be a volume specification for PLC association recovery; "
-                            f"got {type(request).__name__}"
-                        )
+            match request:
+                case phx.meshing.VolumeMeshingSpec():
+                    recovered = recover(
+                        source.complex,
+                        request,
+                        scope=scope,
+                        record_phase=record_phase,
+                    )
+                case _:
+                    raise ValueError(
+                        "qualification.family.request must be a volume specification for PLC association recovery; "
+                        f"got {type(request).__name__}"
+                    )
             match domain:
                 case phx.geometry.PiecewiseLinearDomain():
                     transfer = PlcAssociationTransfer(
@@ -1018,23 +1077,23 @@ def prepare_family_association_transfer(
                 raise AttributeError(
                     "family.result.certification must expose request; got None"
                 )
-            domain = certification.request.domain
-            match domain:
+            planar_domain = certification.request.domain
+            match planar_domain:
                 case phx.geometry.PiecewiseLinearDomain():
                     transfer = PlcAssociationTransfer(
-                        domain,
+                        planar_domain,
                         result.coordinate_contract,
                         source.source_revision,
                         edge_vertices=edges,
                         triangle_vertices=np.empty((0, 3), dtype=np.int64),
                         triangle_facets=np.empty((0,), dtype=np.int64),
-                        facet_regions=domain.facet_regions,
+                        facet_regions=planar_domain.facet_regions,
                         maximum_support_queries=limits.maximum_geometry_queries,
                     )
                 case _:
                     raise TypeError(
                         "result.certification.request.domain must be PiecewiseLinearDomain; "
-                        f"got {type(domain).__name__}"
+                        f"got {type(planar_domain).__name__}"
                     )
         case phx.meshing.NativeSurfaceSource():
             certification = result.certification
@@ -1064,7 +1123,7 @@ def prepare_family_association_transfer(
             raise ValueError(
                 f"family.source must support source-table association transfer; got {type(source).__name__}"
             )
-    transfer.source_associations(result)
+    transfer.source_associations(result, budget=budget)
     return transfer
 
 
@@ -1093,15 +1152,21 @@ def prepare_family_quality_measurements(
     *,
     profile: str,
     limits: phx.meshing.MeshingLimits,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> FamilyQualityMeasurements:
     """Prepare independent cell-quality and physical-edge evidence under declared domain limits."""
     mesh = result.mesh
+    receiving_budget = budget
     with (
         NativeExecutionScope(limits.native_limits()) as scope,
         scope.host_workspace(),
     ):
-        budget = coordinate_budget(limits)
-        with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+        budget = coordinate_budget(limits) if budget is None else budget
+        with (
+            budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size))
+            if receiving_budget is None
+            else nullcontext()
+        ):
             values = phx.meshing.evaluate_cell_quality(
                 mesh,
                 geometry=result.geometry
@@ -1131,7 +1196,11 @@ def prepare_family_quality_measurements(
                             f"family.quad_request must retain a surface specification; got {type(request).__name__}",
                             {"request": request},
                         )
-                with coordinate_phase(scope, limits, budget):
+                with (
+                    coordinate_phase(scope, limits, budget)
+                    if receiving_budget is None
+                    else nullcontext(budget)
+                ):
                     _, lengths, edge_lower, edge_upper = quad_edge_evidence(
                         mesh, result.geometry, request, budget=budget
                     )
@@ -1145,7 +1214,11 @@ def prepare_family_quality_measurements(
                     )
             elif profile == "curved-frame-sweep-hex":
                 _, lengths, edge_lower, edge_upper = mapped_edge_evidence(
-                    mesh, result.geometry, request, scope=scope
+                    mesh,
+                    result.geometry,
+                    request,
+                    scope=scope,
+                    budget=receiving_budget,
                 )
             else:
                 edges = _family_mesh_edges(mesh)

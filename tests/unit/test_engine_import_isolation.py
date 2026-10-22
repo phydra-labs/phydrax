@@ -248,17 +248,104 @@ def test_installed_wheel_authentication_refuses_checkout_origin(
         isolation._authenticate_wheels((wheel,))
 
 
+_ENGINE_REFUSAL = "must exclude external engines"
+_UNSUPPORTED_LAUNCH = "must use a supported inspectable form"
+
+
 @pytest.mark.parametrize(
-    ("event", "arguments"),
+    ("event", "arguments", "refusal"),
     [
-        ("subprocess.Popen", ("/usr/local/bin/gmsh", ["gmsh", "input.geo"])),
-        ("os.posix_spawn", ("/usr/local/bin/mmg3d", ["mmg3d", "input.mesh"])),
-        ("os.system", ("tetgen input.poly",)),
-        ("subprocess.Popen", ("/bin/sh", ["/bin/sh", "-c", "gmsh input.geo"])),
+        (
+            "subprocess.Popen",
+            ("/usr/local/bin/gmsh", ["gmsh", "input.geo"]),
+            _ENGINE_REFUSAL,
+        ),
+        (
+            "os.posix_spawn",
+            ("/usr/local/bin/mmg3d", ["mmg3d", "input.mesh"]),
+            _ENGINE_REFUSAL,
+        ),
+        ("os.system", ("tetgen input.poly",), _ENGINE_REFUSAL),
+        (
+            "subprocess.Popen",
+            ("/bin/sh", ["/bin/sh", "-c", "gmsh input.geo"]),
+            _ENGINE_REFUSAL,
+        ),
+        (
+            "subprocess.Popen",
+            ("/usr/bin/env", ["env", "gmsh", "input.geo"]),
+            _ENGINE_REFUSAL,
+        ),
+        (
+            "subprocess.Popen",
+            (
+                "/usr/bin/env",
+                [
+                    "env",
+                    "-i",
+                    "-uHOME",
+                    "--chdir=/tmp",
+                    "--",
+                    "PATH=/opt/engines",
+                    "mmg3d",
+                    "input.mesh",
+                ],
+            ),
+            _ENGINE_REFUSAL,
+        ),
+        (
+            "os.posix_spawn",
+            ("/usr/bin/env", ["env", "-C", "/tmp", "/opt/bin/tetgen", "input.poly"]),
+            _ENGINE_REFUSAL,
+        ),
+        (
+            "subprocess.Popen",
+            (
+                "/usr/bin/env",
+                ["env", "bash", "--norc", "-ec", "exec gmsh input.geo"],
+            ),
+            _ENGINE_REFUSAL,
+        ),
+        (
+            "subprocess.Popen",
+            (
+                "/bin/sh",
+                ["/bin/sh", "-o", "errexit", "-c", "FOO=1 command gmsh input.geo"],
+            ),
+            _ENGINE_REFUSAL,
+        ),
+        (
+            "subprocess.Popen",
+            ("/usr/bin/nice", ["nice", "-n", "5", "gmsh", "input.geo"]),
+            _ENGINE_REFUSAL,
+        ),
+        ("os.system", ("env -i gmsh input.geo",), _ENGINE_REFUSAL),
+        (
+            "subprocess.Popen",
+            ("/usr/bin/env", ["env", "-S", "gmsh input.geo"]),
+            _UNSUPPORTED_LAUNCH,
+        ),
+        (
+            "subprocess.Popen",
+            ("/bin/sh", ["/bin/sh", "-c", "$PHYDRAX_ENGINE input.geo"]),
+            _UNSUPPORTED_LAUNCH,
+        ),
+        (
+            "subprocess.Popen",
+            ("/bin/sh", ["/bin/sh", "-c", "~/bin/mesher input.geo"]),
+            _UNSUPPORTED_LAUNCH,
+        ),
+        ("os.system", ("~engines/bin/mmg3d-alias input.mesh",), _UNSUPPORTED_LAUNCH),
+        ("subprocess.Popen", ("/bin/sh", ["/bin/sh", "-s"]), _UNSUPPORTED_LAUNCH),
+        (
+            "subprocess.Popen",
+            ("/usr/bin/nice", ["nice", "sh", "-c", "true"]),
+            _UNSUPPORTED_LAUNCH,
+        ),
     ],
 )
 def test_native_execution_audit_refuses_external_engine_process(
-    event: str, arguments: tuple[object, ...]
+    event: str, arguments: tuple[object, ...], refusal: str
 ) -> None:
     code = textwrap.dedent(
         """
@@ -267,7 +354,7 @@ def test_native_execution_audit_refuses_external_engine_process(
         from tools.check_native_dependency_isolation import _refuse_external_process
         event, arguments = json.loads(sys.argv[1])
         sys.addaudithook(_refuse_external_process)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match=sys.argv[2]):
             if event == "subprocess.Popen":
                 subprocess.run(arguments[1], executable=arguments[0], check=True)
             elif event == "os.posix_spawn":
@@ -277,7 +364,7 @@ def test_native_execution_audit_refuses_external_engine_process(
         """
     )
     result = subprocess.run(
-        [sys.executable, "-c", code, json.dumps((event, arguments))],
+        [sys.executable, "-c", code, json.dumps((event, arguments)), refusal],
         capture_output=True,
         text=True,
         check=False,
@@ -286,18 +373,66 @@ def test_native_execution_audit_refuses_external_engine_process(
     assert result.returncode == 0, result.stderr
 
 
-def test_native_execution_audit_allows_real_python_worker_arguments() -> None:
+def test_native_execution_audit_resolves_renamed_engine_executables(
+    tmp_path: Path,
+) -> None:
+    engine = tmp_path / "gmsh"
+    engine.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    engine.chmod(0o755)
+    (tmp_path / "mesher").symlink_to(engine)
+    code = textwrap.dedent(
+        """
+        import os, subprocess, sys
+        from pathlib import Path
+        import pytest
+        from tools.check_native_dependency_isolation import _refuse_external_process
+        directory = Path(sys.argv[1])
+        sys.addaudithook(_refuse_external_process)
+        launches = [
+            {"args": [str(directory / "mesher"), "input.geo"]},
+            {"args": ["mesher", "input.geo"], "env": {"PATH": str(directory)}},
+        ]
+        descriptor = os.open(directory / "gmsh", os.O_RDONLY)
+        # Pinned executables run through their descriptor where the host has one.
+        if Path("/proc/self/fd").is_dir():
+            launches.append(
+                {
+                    "args": ["mesher", "input.geo"],
+                    "executable": f"/proc/self/fd/{descriptor}",
+                    "pass_fds": (descriptor,),
+                }
+            )
+        for launch in launches:
+            with pytest.raises(RuntimeError, match="must exclude external engines"):
+                subprocess.run(**launch, check=True)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_native_execution_audit_admits_ordinary_launches_and_their_data() -> None:
     code = textwrap.dedent(
         """
         import subprocess, sys
         from tools.check_native_dependency_isolation import _refuse_external_process
         sys.addaudithook(_refuse_external_process)
-        result = subprocess.run(
-            [sys.executable, "-c", "print('native')", "gmsh"],
-            capture_output=True, text=True, check=True,
-        )
-        if result.stdout.strip() != "native":
-            raise SystemExit("Native Python worker did not execute.")
+        worker = [sys.executable, "-c", "print('native')", "gmsh"]
+        for command in (
+            worker,
+            ["env", "-i", "PHYDRAX_PROBE=gmsh", *worker],
+            ["nice", "-n", "1", sys.executable, "-c", "print('native')"],
+            ["sh", "-ec", "printf native"],
+        ):
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            if result.stdout.strip() != "native":
+                raise SystemExit(f"Ordinary launch did not execute: {command!r}")
         """
     )
     result = subprocess.run(
@@ -374,11 +509,22 @@ def _installed_source_build_tree(tmp_path: Path) -> tuple[Path, Path]:
         source = source_root / relative
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(payload)
-        if relative.startswith("phydrax/"):
-            installed = site_packages / relative
+        # The wheel installs the package and force-includes the provider tree in it.
+        if relative.startswith(("phydrax/", "native/providers/")):
+            installed = site_packages / (
+                relative if relative.startswith("phydrax/") else f"phydrax/{relative}"
+            )
             installed.parent.mkdir(parents=True, exist_ok=True)
             installed.write_bytes(payload)
     return source_root, site_packages
+
+
+def _wheel_owned_bytes(site_packages: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(site_packages).as_posix(): path.read_bytes()
+        for path in (site_packages / "phydrax").rglob("*")
+        if path.is_file()
+    }
 
 
 def test_installed_harness_authenticates_complete_source_build_inputs(
@@ -404,7 +550,6 @@ def test_installed_harness_authenticates_complete_source_build_inputs(
         "native/meshcore/tests/test_kernel.cpp",
         "native/meshcore/python/phydrax_meshcore/__init__.py",
         "native/meshcore/NOTICE",
-        "native/providers/example/worker.cpp",
     }
     for relative, digest in evidence.items():
         staged = site_packages / relative
@@ -412,6 +557,9 @@ def test_installed_harness_authenticates_complete_source_build_inputs(
         assert hashlib.sha256(staged.read_bytes()).hexdigest() == digest
         assert staged.stat().st_mode & 0o222 == 0
     assert not (site_packages / "native/meshcore/build").exists()
+    # Provider bytes are authenticated where runtime lookup reads them, in the
+    # wheel-owned package tree; no parallel checkout-layout copy is staged.
+    assert not (site_packages / "native/providers").exists()
     assert (site_packages / "phydrax/model.py").read_bytes() == b"MODEL = 2\n"
     assert source_build_fingerprint(site_packages) == expected
     assert json.loads(capsys.readouterr().out) == {
@@ -421,29 +569,63 @@ def test_installed_harness_authenticates_complete_source_build_inputs(
 
 
 @pytest.mark.parametrize("mutation", ["changed", "missing", "extra"])
+@pytest.mark.parametrize(
+    "member", ["phydrax/model.py", "phydrax/native/providers/example/worker.cpp"]
+)
 def test_installed_harness_refuses_mismatched_package_source_inventory(
-    mutation: str, tmp_path: Path
+    member: str, mutation: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from tools import check_native_dependency_isolation as isolation
 
     source_root, site_packages = _installed_source_build_tree(tmp_path)
-    installed = site_packages / "phydrax/model.py"
+    installed = site_packages / member
     if mutation == "changed":
-        installed.write_bytes(b"MODEL = 3\n")
+        installed.write_bytes(b"stale wheel payload\n")
     elif mutation == "missing":
         installed.unlink()
     else:
-        (site_packages / "phydrax/extra.py").write_bytes(b"EXTRA = 1\n")
-    before = {
-        path.relative_to(site_packages).as_posix(): path.read_bytes()
-        for path in (site_packages / "phydrax").rglob("*.py")
-    }
+        installed.with_name(f"extra{installed.suffix}").write_bytes(b"extra\n")
+    before = _wheel_owned_bytes(site_packages)
     with pytest.raises(SystemExit):
         isolation._stage_source_build_inputs(source_root, site_packages)
-    assert {
-        path.relative_to(site_packages).as_posix(): path.read_bytes()
-        for path in (site_packages / "phydrax").rglob("*.py")
-    } == before
+    assert _wheel_owned_bytes(site_packages) == before
+    assert not (site_packages / "native/providers").exists()
+    assert "authenticated_harness_source_build_fingerprint" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("layout", ["dual", "non-directory"])
+def test_installed_harness_refuses_invalid_provider_layout_before_staging(
+    layout: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import shutil
+
+    from tools import check_native_dependency_isolation as isolation
+
+    source_root, site_packages = _installed_source_build_tree(tmp_path)
+    installed = site_packages / "phydrax/native/providers"
+    if layout == "dual":
+        (installed / "example/worker.cpp").write_bytes(b"int worker() { return 1; }\n")
+        # Current bytes beside the package are not what provider lookup reads.
+        current = site_packages / "native/providers/example/worker.cpp"
+        current.parent.mkdir(parents=True)
+        current.write_bytes(
+            (source_root / "native/providers/example/worker.cpp").read_bytes()
+        )
+        refusal: type[Exception] = RuntimeError
+        message = "one installation layout"
+    else:
+        # A file where the wheel's provider tree belongs is not a source tree.
+        shutil.rmtree(installed)
+        installed.write_bytes(b"not a provider source tree\n")
+        refusal = NotADirectoryError
+        message = "must be a provider source directory"
+    before = _wheel_owned_bytes(site_packages)
+    with pytest.raises(refusal, match=message):
+        isolation._stage_source_build_inputs(source_root, site_packages)
+    assert _wheel_owned_bytes(site_packages) == before
+    for staged in ("pyproject.toml", "uv.lock", "native/meshcore"):
+        assert not (site_packages / staged).exists()
+    assert "authenticated_harness_source_build_fingerprint" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("missing", ["pyproject.toml", "uv.lock"])

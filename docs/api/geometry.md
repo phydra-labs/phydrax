@@ -546,10 +546,13 @@ imply a supported derivative.
 
 `brep_offset` returns **`BRepOffsetResult`**, not `BRepModel`; consume `.model`
 explicitly. Planar solids, including affine degree-one extrusion charts and
-admitted concave prisms, use rational incident-plane solves with local edge-sign
-and nonadjacent-face separation proofs. Vanishing/reversed edges, collisions,
-irrational unit normals, and sharp curved adjacencies refuse instead of
-approximating a displacement.
+admitted concave prisms, use rational incident-plane solves, local edge-sign
+checks, and continuous vertex-face and edge-edge contact proofs over the whole
+requested displacement. These proofs include adjacent faces and holes and
+account for trim vertices moving farther than the normal plane offset.
+Vanishing/reversed edges, collisions, irrational unit normals, and sharp curved
+adjacencies refuse instead of approximating a displacement. Rational work and
+temporary storage are admitted before each proof stage.
 
 Planar `.evidence` retains canonical `face_rounding_bounds`,
 `vertex_rounding_bounds`, and a `volume_enclosure` enclosing rational intent and
@@ -668,9 +671,11 @@ Fillets, chamfers, offsets, tubes, and deformations accept
 refusals retain it without opt-in, either on their result or through
 `refusal_parameter_range(error)` for existing `ValueError` boundaries.
 Chamfer ranges describe dimensionless `setback_scale` at the fixed authored
-setback ratio; tube ranges are `(0, reach)`. Planar offsets distinguish exact
-edge-vanishing roots from inner collision bounds. Unsupported whole-source
-proofs report unknown rather than an estimate. Resource errors propagate.
+setback ratio; tube ranges are `(0, reach)`. Planar offsets distinguish
+edge-vanishing roots from the first verified contact in either direction.
+Representable endpoints retain the attained rational root; other finite
+endpoints round inward. Unsupported whole-source proofs report unknown rather
+than an estimate. Resource errors propagate.
 `deformation_feasibility_scale` certifies space and the whole scale interval,
 not only endpoint samples; determinant singular suprema are not admitted.
 
@@ -970,6 +975,17 @@ See [tube and range workflow](../guides_differentiable_geometry.md#certified-tub
 `discover_implicit_surface` creates a host-side `ImplicitSurfacePlan` whose JAX
 runtime preserves triangle connectivity and reports sign, root, QEF, orientation,
 and intersection evidence.
+The plan retains the full accepted initial realization evidence as dynamic
+numerical leaves, including projection, QEF, finiteness and status checks.
+The proof identity binds every leaf to the exact initial design state, source,
+topology and realized coordinates, and participates in the plan identity.
+The original `base_vertices` fallback and `faces` remain unchanged: because
+projection/QEF coordinates can differ from that fallback, initial execution
+still recomputes and meters them rather than retaining a second coordinate bank.
+It reuses only the bound proof; changed or traced states execute the full
+differentiable realization. Stored-plan reconstruction rederives and checks the
+complete proof against the restored source state; edited proof leaves or
+incompatible bindings refuse rather than receiving a historical identity.
 
 `discover_adaptive_implicit_surface(geometry, domain=..., policy=...)` refines a
 2:1-balanced octree over `domain` and never treats a leaf as empty unless its
@@ -988,6 +1004,20 @@ as inside, outside or unknown. Budget exhaustion stops refinement and reports
 the remaining boxes as unresolved. Tangential zeros, near-zero gradients and
 sharp creases whose wedge an axis direction crosses remain unresolved rather
 than certified; the adaptive product is not differentiable.
+`AdaptiveImplicitSurfacePolicy.flatness_tolerance` bounds each surface leaf's
+diagonal times its gradient-direction spread. For an exact three-dimensional
+ball kernel or a full torus kernel, that spread is the smaller of the enclosure
+spread and an analytic cone over the leaf box. The cone comes from the closed-form
+distance gradients, with outward-rounded box and meridional-rectangle corners.
+Leaves that reach the ball center, the torus axis or the core circle keep the
+unit spread. Other kernels, transformed sources and partial tori use the
+enclosure spread alone. With a rigorous value enclosure, the same exact kernels
+refine only their support box, `c +- r` or `c +- (R + r, R + r, r)`, padded by a
+quarter of the reach and clipped to `domain`. The rest of the authored domain is
+tiled exactly by at most six slabs, and each slab joins the cover only after its
+value enclosure excludes zero. If any slab fails, discovery refines the whole
+domain. `cover.domain` and `volume.domain` remain the authored domain. Volume
+queries evaluate points outside the refined box with the bound source.
 
 `NeuralImplicitRegion` is the region `{x in B : phi(x; w) <= 0}` of a scalar
 network over declared axis-aligned bounds `B`. The network's PARAMETER arrays are
@@ -1210,6 +1240,27 @@ differs from its measure `m_i` by at most
 double-coverage counts, candidate/accepted/piece-pair counts, and retained and
 working bytes. Finite-volume remap, block-AMR cut-cell transitions, and
 finite-element L2 projection transfers consume this one artifact.
+
+Host storage is admitted before constructing decomposition, BVH/traversal,
+candidate, clipping/reduction, and publication banks, and released when its
+last temporary consumer expires. Retained output aliases survive call-scratch
+cleanup. A memory refusal after both decompositions may return `RESOURCE_LIMIT`
+with empty overlaps and the **real** per-cell measures and first moments.
+If even the canonical negative artifact cannot fit, preparation instead raises
+`CoordinateEnclosureResourceError` **before allocation**, carrying the resource,
+original limit, requested bytes, and completed bytes; it never substitutes zero
+scientific columns. Static mesh-kind and dimension errors retain precedence.
+
+Passing a live native `CoordinateEnclosureBudget` uses that same ticket and
+native pool for host admissions and actual native clipping, with the policy
+tightening (not renewing) its native allowance. Native predicates preserve the
+uncached decomposition query schedule. Standalone live `HostBatchTicket`
+budgets remain supported, including their existing zero host-source-query
+allowance, but provide **PARTIAL native resource coverage**: they account host
+preparation/storage, while native execution is bounded by the existing finite
+`CommonRefinementPolicy` and any supplied native scope. They are not a
+same-ledger complete-request qualification, and preparation does not mint an
+extra host/native work, query, or storage allowance.
 
 ## Triangle-surface arrangements and Booleans
 
@@ -1554,6 +1605,9 @@ external shape into native source authority.
         - ParametricCurveBoundarySource
         - CompartmentImageInterpretation
         - CompartmentMeshingSource
+        - AffineChainResourceEvidence
+        - AffineChainResourceMetric
+        - AffineChainResourceRole
         - SourceBoundaryChartCover
         - SourceBoundaryChartQuery
         - boolean_brep

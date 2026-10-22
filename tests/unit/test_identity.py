@@ -168,6 +168,82 @@ def test_identity_scenario_2() -> None:
     assert first.semantic_id != second.semantic_id
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    (
+        pytest.param(
+            {"kind": "source-owner", "child": {"kind": "nested-owner"}},
+            "source-owner",
+            id="declared-root",
+        ),
+        pytest.param({"child": {"kind": "nested-owner"}}, None, id="nested-only"),
+        pytest.param({"kind": 3}, None, id="non-string-kind"),
+        pytest.param("source-owner", None, id="display-string"),
+    ),
+)
+def test_semantic_provenance_dispatch_uses_only_authored_root_kind(
+    content: object, expected: str | None
+) -> None:
+    provenance = SemanticProvenance(content)
+    assert provenance.content_kind == expected
+    restored = SemanticProvenance.from_stored_fields(provenance)
+    assert restored.content_kind == expected
+    assert restored.content_id == provenance.content_id
+    assert restored.semantic_id == provenance.semantic_id
+
+
+def test_semantic_provenance_restore_refuses_a_foreign_dispatch_kind() -> None:
+    from phydrax.lifecycle._meshing_source_records import reconstruct_stored_fields
+    from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
+    from tests._support.recipes import restore_with_identity
+
+    register_meshing_source_artifacts()
+    provenance = SemanticProvenance({"kind": "source-owner", "source": "authored"})
+    forged = restore_with_identity(provenance, "content_kind", "foreign-owner")
+    with pytest.raises(ValueError, match=r"SemanticProvenance\.content_kind"):
+        reconstruct_stored_fields(forged)
+
+
+@pytest.mark.parametrize("duplicate", (False, True), ids=("unordered", "duplicate"))
+def test_semantic_provenance_restore_refuses_ambiguous_rehashed_kind(
+    duplicate: bool,
+) -> None:
+    from phydrax._fingerprint import canonical_fingerprint, canonical_json
+    from phydrax._model._structure import (
+        model_from_logical_array_recipe,
+        model_structure_recipe,
+    )
+    from phydrax.lifecycle._meshing_source_records import reconstruct_stored_fields
+    from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
+    from tests._support.recipes import recipe_field_position
+
+    register_meshing_source_artifacts()
+    provenance = SemanticProvenance({"kind": "source-owner", "source": "authored"})
+    items = (
+        [["kind", "foreign-owner"], ["kind", "source-owner"]]
+        if duplicate
+        else [["source", "authored"], ["kind", "source-owner"]]
+    )
+    payload = {"kind": "mapping", "items": items}
+    content_id = canonical_fingerprint({"kind": "semantic-content", "payload": payload})
+    fields = {
+        "content_json": canonical_json(payload),
+        "content_id": content_id,
+        "semantic_id": canonical_fingerprint(
+            {"kind": "semantic-provenance", "content_id": content_id, "resource_ids": []}
+        ),
+    }
+    recipe = model_structure_recipe(provenance)
+    for name, value in fields.items():
+        recipe["items"][recipe_field_position(recipe, name)] = {
+            "kind": "literal",
+            "value": value,
+        }
+    forged = model_from_logical_array_recipe(recipe, {}, prefix="rehashed-kind")
+    with pytest.raises(ValueError, match=r"SemanticProvenance\.content.items"):
+        reconstruct_stored_fields(forged)
+
+
 def test_identity_scenario_3() -> None:
     with pytest.raises(TypeError, match="integer sequences"):
         ExecutableSignature(shapes={"state": jnp.asarray([2])})

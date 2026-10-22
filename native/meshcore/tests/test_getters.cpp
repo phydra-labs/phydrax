@@ -21,6 +21,8 @@ void mesh_null() {
 
 void power_null() {
   PHX_CHECK(phx_mc_power_cells_sizes(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_power_cells_preflight(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_power_cells_capacity(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_power_cells_counters(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_power_cells_failure(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_power_cells_export(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,

@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from enum import StrEnum
-from typing import final
+from typing import final, overload
 
 import equinox as eqx
 import jax
@@ -26,20 +27,25 @@ from .._validation import canonical_identifier
 from ..geometry._compartments import CompartmentComplex, complete_interface_definitions
 from ..geometry._domain_coverage import DomainCoverageCertificate, PiecewiseLinearDomain
 from ..geometry._embedding_state import MeshCertificateLimits
+from ..geometry._mapped_reference_domain import MappedReferenceDomain
 from ..typing import checked
 from ..units import UnitDefinition
-
+from ._collective_failure import agreed_local_step
 # Module references defer symbol resolution across mutually dependent execution owners.
 from ._scope import (
     local_logical_lookup,
     MeshingEntityKind,
     MeshingScope,
+    MeshingScopeBank,
     MeshScopeProjection,
     overlapping_ids,
     resolve_mesh_scope,
     selected_ids,
     unique_ids,
 )
+
+type RegionSourceDomain = PiecewiseLinearDomain | MappedReferenceDomain
+
 
 
 class MeshZoneRole(StrEnum):
@@ -144,6 +150,127 @@ class MeshPatch(StrictModule, NonTrainableState):
         )
 
 
+@final
+class MeshPatchBank(StrictModule, NonTrainableState):
+    """Ordered patches of one publication stored once as columns.
+
+    Names keep their order; connectivity is a boolean column; zone adjacency
+    and ordered source-region sides index static dictionaries of their distinct
+    values in first-use order (``-1`` marks absent sides); scopes are one
+    ``MeshingScopeBank``. Each row is the ``MeshPatch`` its columns construct,
+    so patch identities are recomputed rather than stored.
+    """
+
+    names: tuple[str, ...] = eqx.field(static=True)
+    connected: np.ndarray
+    adjacency: tuple[tuple[str, ...], ...] = eqx.field(static=True)
+    adjacency_codes: np.ndarray
+    source_sides: tuple[tuple[str | None, str | None], ...] = eqx.field(static=True)
+    source_side_codes: np.ndarray
+    scopes: MeshingScopeBank
+
+    @checked
+    def __init__(self, patches: tuple[MeshPatch, ...] = (), /) -> None:
+        if any(type(patch) is not MeshPatch for patch in patches):
+            raise TypeError(
+                "MeshPatchBank.patches must contain MeshPatch rows; got another record kind"
+            )
+        adjacency: dict[tuple[str, ...], int] = {}
+        sides: dict[tuple[str | None, str | None], int] = {}
+        adjacency_codes, side_codes = [], []
+        for patch in patches:
+            adjacency_codes.append(
+                adjacency.setdefault(patch.adjacent_zone_ids, len(adjacency))
+            )
+            pair = patch.source_adjacent_region_ids
+            side_codes.append(-1 if pair is None else sides.setdefault(pair, len(sides)))
+        self.names = tuple(patch.name for patch in patches)
+        self.connected = _read_only_bank(
+            np.asarray([patch.connected for patch in patches], dtype=np.bool_)
+        )
+        self.adjacency = tuple(adjacency)
+        self.adjacency_codes = _read_only_bank(
+            np.asarray(adjacency_codes, dtype=np.int32)
+        )
+        self.source_sides = tuple(sides)
+        self.source_side_codes = _read_only_bank(np.asarray(side_codes, dtype=np.int32))
+        self.scopes = MeshingScopeBank(tuple(patch.scope for patch in patches))
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: MeshPatchBank, /) -> MeshPatchBank:
+        """Rebuild every row through ``MeshPatch``; replay compares the content."""
+        return cls(tuple(value))
+
+    def __len__(self) -> int:
+        return len(self.names)
+
+    def __iter__(self) -> Iterator[MeshPatch]:
+        self._require_columns()
+        return (self.patch(index) for index in range(len(self)))
+
+    @overload
+    def __getitem__(self, index: int, /) -> MeshPatch: ...
+
+    @overload
+    def __getitem__(self, index: slice, /) -> tuple[MeshPatch, ...]: ...
+
+    def __getitem__(self, index: int | slice, /) -> MeshPatch | tuple[MeshPatch, ...]:
+        if isinstance(index, slice):
+            return tuple(self.patch(row) for row in range(len(self))[index])
+        if type(index) is not int:
+            raise TypeError(
+                f"MeshPatchBank.index must be an integer or slice; got {type(index).__name__}"
+            )
+        return self.patch(index if index >= 0 else len(self) + index)
+
+    def patch(self, index: int, /) -> MeshPatch:
+        """Construct row ``index``; rows are built on demand and never retained."""
+        if type(index) is not int or not 0 <= index < len(self):
+            raise IndexError(
+                f"MeshPatchBank.index must be in [0, {len(self)}); got {index!r}"
+            )
+        side = int(self.source_side_codes[index])
+        return MeshPatch(
+            self.names[index],
+            self.scopes.scope(index),
+            connected=bool(self.connected[index]),
+            adjacent_zone_ids=self.adjacency[int(self.adjacency_codes[index])],
+            source_adjacent_region_ids=None if side < 0 else self.source_sides[side],
+        )
+
+    def index(self, name: str, /) -> int:
+        """Return the row of the patch named ``name``."""
+        try:
+            return self.names.index(name)
+        except ValueError:
+            raise KeyError(f"MeshPatchBank.name must name a patch; got {name!r}") from None
+
+    def _require_columns(self) -> None:
+        count = len(self.names)
+        if (
+            self.connected.shape != (count,)
+            or self.connected.dtype != np.bool_
+            or self.adjacency_codes.shape != (count,)
+            or self.source_side_codes.shape != (count,)
+            or len(self.scopes) != count
+            or np.any(self.adjacency_codes < 0)
+            or np.any(self.adjacency_codes >= len(self.adjacency))
+            or np.any(self.source_side_codes < -1)
+            or np.any(self.source_side_codes >= len(self.source_sides))
+        ):
+            raise ValueError(
+                "MeshPatchBank.columns must align names, flags, dictionaries and scopes; got inconsistent columns"
+            )
+        self.scopes.require_columns()
+
+
+def _read_only_bank(value: np.ndarray, /) -> np.ndarray:
+    value = np.ascontiguousarray(value)
+    value.flags.writeable = False
+    return value
+
+
 class MeshZone(StrictModule, NonTrainableState):
     """Named exclusive semantic assignment on one entity set."""
 
@@ -237,47 +364,51 @@ class MeshAttributeProjection(StrictModule, NonTrainableState):
 
     @checked
     def __init__(self, scope_projection: MeshScopeProjection, /) -> None:
-        name = scope_projection.membership_name
-        if not name.startswith("organization/attribute/") or not name.endswith(
-            "/membership"
-        ):
-            raise ValueError(
-                "MeshAttributeProjection.scope_projection must identify attribute membership; got a different membership bank"
-            )
-        value_name = name.removesuffix("/membership") + "/values"
-        publication = scope_projection.publication
-        values = dict(publication.source_arrays)[value_name]
-        count = scope_projection.global_ids.shape[0]
-        ids = publication.entity_ids[scope_projection.dimension][:count]
-        if (
-            values.ndim == 0
-            or values.shape[0]
-            != publication.entity_ids[scope_projection.dimension].shape[0]
-        ):
-            raise ValueError(
-                "MeshAttributeProjection.global_values must match the entity axis; got incompatible value axes"
-            )
-        if values.dtype.kind not in "biuf":
-            raise TypeError(
-                "MeshAttributeProjection.global_values must be real numeric arrays; got a non-real dtype"
-            )
+        with agreed_local_step():
+            name = scope_projection.membership_name
+            if not name.startswith("organization/attribute/") or not name.endswith(
+                "/membership"
+            ):
+                raise ValueError(
+                    "MeshAttributeProjection.scope_projection must identify attribute membership; got a different membership bank"
+                )
+            value_name = name.removesuffix("/membership") + "/values"
+            publication = scope_projection.publication
+            values = dict(publication.source_arrays)[value_name]
+            count = scope_projection.global_ids.shape[0]
+            ids = publication.entity_ids[scope_projection.dimension][:count]
+            if (
+                values.ndim == 0
+                or values.shape[0]
+                != publication.entity_ids[scope_projection.dimension].shape[0]
+            ):
+                raise ValueError(
+                    "MeshAttributeProjection.global_values must match the entity axis; got incompatible value axes"
+                )
+            if values.dtype.kind not in "biuf":
+                raise TypeError(
+                    "MeshAttributeProjection.global_values must be real numeric arrays; got a non-real dtype"
+                )
         rows = jnp.argsort(ids, stable=True)
         positions = jnp.searchsorted(ids[rows], scope_projection.members)
         scoped_values = values[rows[positions]]
-        if scoped_values.dtype.kind == "f" and not bool(
+        finite = scoped_values.dtype.kind != "f" or bool(
             jax.device_get(jnp.all(jnp.isfinite(scoped_values)))
-        ):
-            raise ValueError(
-                "MeshAttributeProjection.global_values must be finite; got nonfinite values"
-            )
-        packet_values = dict(publication.projected_arrays)[value_name]
-        if (
-            packet_values.shape != (*scope_projection.packet_ids.shape, *values.shape[1:])
-            or packet_values.dtype != values.dtype
-        ):
-            raise ValueError(
-                "MeshAttributeProjection.packet_values must match part-leading component axes; got incompatible packet axes"
-            )
+        )
+        with agreed_local_step():
+            if not finite:
+                raise ValueError(
+                    "MeshAttributeProjection.global_values must be finite; got nonfinite values"
+                )
+        with agreed_local_step():
+            packet_values = dict(publication.projected_arrays)[value_name]
+            if (
+                packet_values.shape != (*scope_projection.packet_ids.shape, *values.shape[1:])
+                or packet_values.dtype != values.dtype
+            ):
+                raise ValueError(
+                    "MeshAttributeProjection.packet_values must match part-leading component axes; got incompatible packet axes"
+                )
         packet_rows = jnp.minimum(
             jnp.searchsorted(ids[rows], scope_projection.packet_ids), count - 1
         )
@@ -285,16 +416,19 @@ class MeshAttributeProjection(StrictModule, NonTrainableState):
         valid = scope_projection.packet_valid.reshape(
             (*scope_projection.packet_valid.shape, *((1,) * (values.ndim - 1)))
         )
-        if not bool(jax.device_get(jnp.all(~valid | (packet_values == expected)))):
-            raise ValueError(
-                "MeshAttributeProjection.packet_values must match accepted values; got different packet values"
-            )
+        accepted = bool(jax.device_get(jnp.all(~valid | (packet_values == expected))))
+        with agreed_local_step():
+            if not accepted:
+                raise ValueError(
+                    "MeshAttributeProjection.packet_values must match accepted values; got different packet values"
+                )
         content_id = logical_array_value_collection_digest({"values": scoped_values})
-        self.scope_projection = scope_projection
-        self.global_values = scoped_values
-        self.packet_values = packet_values
-        self.value_name = value_name
-        self.values_content_id = content_id
+        with agreed_local_step():
+            self.scope_projection = scope_projection
+            self.global_values = scoped_values
+            self.packet_values = packet_values
+            self.value_name = value_name
+            self.values_content_id = content_id
 
     @checked
     def local_values(self, scope: MeshingScope, /) -> Array:
@@ -569,7 +703,7 @@ class RegionBoundaryEvidence(StrictModule, NonTrainableState):
         self,
         mesh: cell_mesh_owner.CellMesh,
         labels: tuple[MeshLabel, ...],
-        patches: tuple[MeshPatch, ...],
+        patches: tuple[MeshPatch, ...] | MeshPatchBank,
         /,
     ) -> None:
         if (
@@ -618,7 +752,7 @@ class _RegionInventory(StrictModule):
 
 def _prepare_host_region_inventory(
     mesh: cell_mesh_owner.CellMesh,
-    domain: PiecewiseLinearDomain,
+    domain: RegionSourceDomain,
     ids: tuple[int, ...],
     regions: tuple[str, ...],
     definitions: tuple[tuple[str, str, str, bool], ...],
@@ -657,7 +791,7 @@ def _prepare_host_region_inventory(
 
 def _prepare_region_inventory(
     mesh: cell_mesh_owner.CellMesh,
-    domain: PiecewiseLinearDomain,
+    domain: RegionSourceDomain,
     ids: tuple[int, ...],
     regions: tuple[str, ...],
     definitions: tuple[tuple[str, str, str, bool], ...],
@@ -751,7 +885,7 @@ class RegionMeshingEvidence(StrictModule, NonTrainableState):
     interface_definitions: tuple[tuple[str, str, str, bool], ...] = eqx.field(static=True)
     interface_facets: tuple[tuple[str, int, int, str, str], ...] = eqx.field(static=True)
     adjacency_pairs: tuple[tuple[str, str], ...] = eqx.field(static=True)
-    domain: PiecewiseLinearDomain
+    domain: RegionSourceDomain
     coverage: DomainCoverageCertificate
     certificate_limits: MeshCertificateLimits
     evidence_id: str = eqx.field(static=True)
@@ -768,7 +902,7 @@ class RegionMeshingEvidence(StrictModule, NonTrainableState):
         interface_patch_ids: tuple[tuple[str, str], ...],
         interface_definitions: tuple[tuple[str, str, str, bool], ...],
         interface_facets: tuple[tuple[str, int, int, str, str], ...],
-        domain: PiecewiseLinearDomain,
+        domain: RegionSourceDomain,
         coverage: DomainCoverageCertificate,
         /,
         *,
@@ -918,7 +1052,7 @@ class RegionMeshingEvidence(StrictModule, NonTrainableState):
         self,
         mesh: cell_mesh_owner.CellMesh,
         zones: tuple[MeshZone, ...],
-        patches: tuple[MeshPatch, ...],
+        patches: tuple[MeshPatch, ...] | MeshPatchBank,
         /,
         *,
         geometry: cell_geometry_owner.CellGeometrySpec | None = None,
@@ -1056,7 +1190,7 @@ class RegionMeshingEvidence(StrictModule, NonTrainableState):
 
 def _logical_region_inventory(
     mesh: cell_mesh_owner.CellMesh,
-    domain: PiecewiseLinearDomain,
+    domain: RegionSourceDomain,
     definitions: tuple[tuple[str, str, str, bool], ...],
     /,
 ) -> tuple[Array, Array, Array, Array, Array]:
@@ -1380,6 +1514,7 @@ __all__ = [
     "MeshAttributeRole",
     "MeshLabel",
     "MeshPatch",
+    "MeshPatchBank",
     "MeshZone",
     "MeshZoneRole",
     "RegionRole",

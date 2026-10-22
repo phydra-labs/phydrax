@@ -496,3 +496,154 @@ def test_lowering_reuses_fused_programs_and_rechecks_changed_values(
         with pytest.raises(ValueError, match="original source coefficients"):
             _require_predicate_case(logical_predicate_case, changed)
     assert compiler.count == 0
+
+
+def test_logical_selected_rows_preserve_local_payload_bits_and_warm_program() -> None:
+    subnormal = np.nextafter(np.float64(0), np.float64(1))
+    weights = np.asarray(
+        ((np.nan, -0.0, subnormal, np.inf), (0.0, -subnormal, -np.inf, 1.0))
+    )
+    counts = np.asarray((2, 1), dtype=np.int32)
+    rows = jax.device_put(np.asarray((1, 0, 1), dtype=np.int64))
+    tables = (jax.device_put(weights), jax.device_put(counts))
+    geometry_owner._logical_selected_rows(tables, rows)
+    with CompileCounter() as compiler:
+        selected_weights, selected_counts = jax.device_get(
+            geometry_owner._logical_selected_rows(tables, rows)
+        )
+    assert compiler.count == 0
+    np.testing.assert_array_equal(
+        selected_weights.view(np.uint64), weights[[1, 0, 1]].view(np.uint64)
+    )
+    np.testing.assert_array_equal(selected_counts, counts[[1, 0, 1]])
+
+
+@pytest.mark.parametrize(
+    "depth,message",
+    (
+        (-1, "geometry.action_stack"),
+        (3, "geometry.action_stack"),
+        (1, "identity action depth"),
+    ),
+)
+def test_logical_identity_actions_reauthenticate_selected_depths(
+    depth: int, message: str
+) -> None:
+    root = coordinate_lagrange_element("triangle", 1)
+    # Unused nonfinite weights have always been irrelevant to an identity path.
+    weights = jax.device_put(np.full((2, 2, 3, 3), np.nan, dtype=np.float64))
+    rows = jax.device_put(np.asarray((1,), dtype=np.int64))
+    counts = jax.device_put(np.asarray((-7, 0), dtype=np.int32))
+    geometry_owner._require_logical_actions(root, root, weights, counts, 1, rows)
+    changed = jax.device_put(np.asarray((-7, depth), dtype=np.int32))
+    with CompileCounter() as compiler:
+        geometry_owner._require_logical_actions(root, root, weights, counts, 1, rows)
+        with pytest.raises(ValueError, match=message):
+            geometry_owner._require_logical_actions(
+                root, root, weights, changed, 1, rows
+            )
+    assert compiler.count == 0
+
+
+@pytest.mark.parametrize(
+    "weight_dtype,count_dtype",
+    ((np.float32, np.int32), (np.float64, np.int64)),
+)
+def test_logical_identity_actions_keep_layout_dtype_refusals(
+    weight_dtype: type, count_dtype: type
+) -> None:
+    root = coordinate_lagrange_element("triangle", 1)
+    weights = jax.device_put(np.zeros((1, 0, 3, 3), dtype=weight_dtype))
+    counts = jax.device_put(np.zeros((1,), dtype=count_dtype))
+    rows = jax.device_put(np.asarray((0,), dtype=np.int64))
+    with pytest.raises(ValueError, match="geometry.action_stack"):
+        geometry_owner._require_logical_actions(root, root, weights, counts, 1, rows)
+
+
+@pytest.mark.parametrize(
+    "corruption,message",
+    (
+        ("nonfinite", "finite nonempty source paths"),
+        ("nonbinary", "dyadic simplex midpoint rows"),
+        ("different_action", "composed binary coefficient action"),
+        ("empty", "finite nonempty source paths"),
+        ("excess_depth", "geometry.action_stack"),
+    ),
+)
+def test_logical_composed_action_gathers_keep_each_selected_refusal(
+    corruption: str, message: str
+) -> None:
+    root = coordinate_lagrange_element("triangle", 1)
+    element = geometry_owner.BarycentricCellGeometryElement(root, np.eye(3))
+    weights = np.broadcast_to(np.eye(3), (2, 1, 3, 3)).copy()
+    weights[0] = np.nan
+    counts = np.asarray((0, 1), dtype=np.int32)
+    rows = jax.device_put(np.asarray((1,), dtype=np.int64))
+    geometry_owner._require_logical_actions(
+        element, root, jax.device_put(weights), jax.device_put(counts), 1, rows
+    )
+    if corruption == "nonfinite":
+        weights[1, 0, 0, 0] = np.nan
+    elif corruption == "nonbinary":
+        weights[1, 0, 0] = (0.75, 0.25, 0.0)
+    elif corruption == "different_action":
+        weights[1, 0, 0] = (0.5, 0.5, 0.0)
+    elif corruption == "empty":
+        counts[1] = 0
+    else:
+        counts[1] = 2
+    with pytest.raises(ValueError, match=message):
+        geometry_owner._require_logical_actions(
+            element, root, jax.device_put(weights), jax.device_put(counts), 1, rows
+        )
+
+
+def test_logical_source_basis_refusal_precedes_action_authentication(
+    logical_predicate_case: tuple[CellMesh, CellGeometrySpec, CellMeshStorage],
+) -> None:
+    storage = logical_predicate_case[2]
+    bank = dict(storage.geometry_source_blocks)["nested"]
+    arrays = dict(storage.logical_arrays)
+    basis = np.asarray(arrays[f"geometry/source_basis/{bank}"]).copy()
+    basis.flat[0] ^= np.uint8(1)
+    arrays[f"geometry/source_basis/{bank}"] = jax.device_put(basis)
+    arrays[f"geometry/action_weights/{bank}"] = jax.device_put(
+        np.full((1, 1, 3, 3), np.nan)
+    )
+    arrays[f"geometry/action_counts/{bank}"] = jax.device_put(
+        np.asarray((-1,), dtype=np.int32)
+    )
+    with pytest.raises(ValueError, match="logical_source_basis.inputs"):
+        _require_predicate_case(logical_predicate_case, arrays)
+
+
+@pytest.mark.parametrize("empty", (False, True))
+@pytest.mark.parametrize("replicated", (False, True))
+def test_collective_geometry_places_committed_dense_operands_exactly(
+    empty: bool, replicated: bool
+) -> None:
+    from jax.sharding import Mesh, NamedSharding, PartitionSpec
+
+    from phydrax.meshing._collective_geometry import _place_geometry_operands
+
+    devices = np.asarray(jax.devices()[::-1])
+    mesh = Mesh(devices, ("owner",))
+    placement = NamedSharding(
+        mesh, PartitionSpec() if replicated else PartitionSpec("owner")
+    )
+    rows = 0 if empty else 2 * devices.size
+    bits = np.resize(
+        np.asarray((0, 1 << 63, 1, 0x3FE0000000000000), dtype=np.uint64),
+        (rows, 4),
+    )
+    ids = np.arange(rows, dtype=np.int64)[::-1].copy()
+    local = tuple(
+        jax.device_put(value, jax.devices()[0])
+        for value in (bits.view(np.float64), ids)
+    )
+    assert all(value.committed and value.is_fully_addressable for value in local)
+    coefficients, scientific_ids = _place_geometry_operands(local, placement)
+    np.testing.assert_array_equal(np.asarray(coefficients).view(np.uint64), bits)
+    np.testing.assert_array_equal(np.asarray(scientific_ids), ids)
+    assert coefficients.sharding == placement
+    assert scientific_ids.sharding == placement

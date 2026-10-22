@@ -162,10 +162,12 @@ def _execute(
 
 
 def _region_measure_array(evidence: phx.meshing.RegionMeshingEvidence) -> np.ndarray:
-    """Require actual affine material measures before comparing their values."""
+    """Require affine material measures before comparing their values."""
     measures: list[float] = []
     for value in evidence.coverage.achieved_region_measures:
         if value is None:
-            raise ValueError("The affine image fixture has no achieved region measure.")
+            raise ValueError(
+                "image_fixture.region_measure must retain an achieved measure; got None."
+            )
         measures.append(value)
     return np.asarray(measures, dtype=np.float64)

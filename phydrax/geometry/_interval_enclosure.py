@@ -23,6 +23,7 @@ retains JAX numerical leaves and admits known input intervals for rounding error
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from ..typing import checked, Float, VariadicDim
 
 type HostTensor = npt.NDArray[np.number | np.bool_]
 type HostArray = HostTensor | np.number | np.bool_
+type HostMask = npt.NDArray[np.bool_] | np.bool_
 type Interval = tuple[HostArray, HostArray]
 type DotDimensions = tuple[
     tuple[Sequence[int], Sequence[int]],
@@ -77,17 +79,84 @@ def _floating(value: HostArray, /) -> bool:
     return np.issubdtype(value.dtype, np.floating)
 
 
+@functools.cache
+def _largest_finite(dtype: np.dtype, /) -> np.floating:
+    return np.finfo(dtype).max
+
+
+def _step(value: HostArray, direction: float, /) -> HostArray:
+    """Return the adjacent float toward ``direction``.
+
+    The largest finite magnitude steps to the infinity of its sign, exactly as
+    ``nextafter`` rounds it, without raising the IEEE overflow flag.
+    """
+    edge = np.equal(value, np.copysign(_largest_finite(value.dtype), direction))
+    if not edge.any():
+        return np.nextafter(value, direction)
+    result = np.full(np.shape(value), direction, dtype=value.dtype)
+    np.nextafter(value, direction, out=result, where=np.logical_not(edge))
+    return result[()]
+
+
 def _round_out(lower: HostArray, upper: HostArray, steps: int = 1, /) -> Interval:
     if not _floating(lower):
         return lower, upper
     for _ in range(steps):
-        lower = np.nextafter(lower, -np.inf)
-        upper = np.nextafter(upper, np.inf)
+        lower = _step(lower, -np.inf)
+        upper = _step(upper, np.inf)
     return lower, upper
 
 
+def _halved_sum_lanes(first: HostArray, second: HostArray, /) -> HostMask:
+    """Finite same-sign lanes whose sum may exceed the largest finite value."""
+    half = 0.5 * np.finfo(np.result_type(first, second)).max
+    return (
+        np.isfinite(first)
+        & np.isfinite(second)
+        & np.equal(np.signbit(first), np.signbit(second))
+        & ((np.abs(first) > half) | (np.abs(second) > half))
+    )
+
+
+def _halves(first: HostArray, second: HostArray, lanes: HostMask, /) -> HostArray:
+    """Round-to-nearest ``first / 2 + second / 2`` on ``lanes``; zero elsewhere.
+
+    On halved-sum lanes one operand exceeds half the largest finite value, so its
+    half is exactly representable and an inexactly halved subnormal partner lies
+    far below one ulp of the result: this is the rounded midpoint, and ``2``
+    times it is the rounded sum whenever that sum is finite.
+    """
+    dtype = np.result_type(first, second)
+    shape = np.broadcast_shapes(np.shape(first), np.shape(second))
+    first_half = np.multiply(first, 0.5, out=np.zeros(shape, dtype), where=lanes)
+    second_half = np.multiply(second, 0.5, out=np.zeros(shape, dtype), where=lanes)
+    return np.add(first_half, second_half, out=first_half, where=lanes)
+
+
+def _sum(first: HostArray, second: HostArray, /) -> HostArray:
+    """IEEE round-to-nearest ``first + second`` without an overflowing intermediate.
+
+    Operands are real and finite or infinite, never opposite infinities. A
+    halved-sum lane overflows exactly when its rounded half exceeds half the
+    largest finite value; it then takes the infinity of its sign, as IEEE
+    addition does.
+    """
+    lanes = _halved_sum_lanes(first, second)
+    if not np.any(lanes):
+        return np.add(first, second)
+    dtype = np.result_type(first, second)
+    shape = np.broadcast_shapes(np.shape(first), np.shape(second))
+    result = np.zeros(shape, dtype)
+    np.add(first, second, out=result, where=np.logical_not(lanes))
+    halves = _halves(first, second, lanes)
+    overflow = lanes & (np.abs(halves) > 0.5 * np.finfo(dtype).max)
+    np.multiply(halves, 2, out=result, where=lanes & np.logical_not(overflow))
+    np.copyto(result, np.copysign(dtype.type(np.inf), halves), where=overflow)
+    return result[()]
+
+
 def _clean(lower: HostArray, upper: HostArray, /) -> Interval:
-    """Replace NaN bounds, which arise from ``0 * inf``, by the unbounded hull."""
+    """Replace NaN bounds of invalid operands by the unbounded hull."""
     if not _floating(lower):
         return lower, upper
     return np.where(np.isnan(lower), -np.inf, lower), np.where(
@@ -126,17 +195,38 @@ def interval_subtract(first: Interval, second: Interval, /) -> Interval:
     return _replace_proved_zero(lower, zero), _replace_proved_zero(upper, zero)
 
 
-def interval_multiply(first: Interval, second: Interval, /) -> Interval:
-    products = np.stack(
-        np.broadcast_arrays(
-            np.multiply(first[0], second[0]),
-            np.multiply(first[0], second[1]),
-            np.multiply(first[1], second[0]),
-            np.multiply(first[1], second[1]),
-        )
+def _endpoint_product(first: HostArray, second: HostArray, /) -> HostArray:
+    # Finite operands cannot form zero times an unbounded endpoint.
+    if np.isfinite(first).all() and np.isfinite(second).all():
+        return np.multiply(first, second)
+    zero_infinity = np.logical_or(
+        np.logical_and(np.equal(first, 0), np.isinf(second)),
+        np.logical_and(np.equal(second, 0), np.isinf(first)),
     )
-    products = np.where(np.isnan(products), 0.0, products)
-    return _round_out(np.min(products, axis=0), np.max(products, axis=0))
+    result = np.zeros(
+        np.broadcast_shapes(first.shape, second.shape),
+        dtype=np.result_type(first.dtype, second.dtype),
+    )
+    # The extended interval product defines zero times an unbounded endpoint
+    # as zero. Other invalid operands must remain invalid, not become zero.
+    np.multiply(first, second, out=result, where=np.logical_not(zero_infinity))
+    return result
+
+
+def interval_multiply(first: Interval, second: Interval, /) -> Interval:
+    lower_lower = _endpoint_product(first[0], second[0])
+    lower_upper = _endpoint_product(first[0], second[1])
+    upper_lower = _endpoint_product(first[1], second[0])
+    upper_upper = _endpoint_product(first[1], second[1])
+    # Elementwise minimum/maximum propagate NaN exactly as the reductions did.
+    return _round_out(
+        np.minimum(
+            np.minimum(lower_lower, lower_upper), np.minimum(upper_lower, upper_upper)
+        ),
+        np.maximum(
+            np.maximum(lower_lower, lower_upper), np.maximum(upper_lower, upper_upper)
+        ),
+    )
 
 
 def interval_dot(first: Interval, second: Interval, /) -> Interval:
@@ -148,12 +238,39 @@ def interval_dot(first: Interval, second: Interval, /) -> Interval:
     return lower, upper
 
 
+def _reciprocal_endpoint(
+    value: HostArray, straddles: npt.NDArray[np.bool_] | np.bool_, unbounded: float, /
+) -> HostArray:
+    scalar_type = value.dtype.type
+    if issubclass(scalar_type, np.complexfloating):
+        raise IntervalExtensionError(
+            f"interval.reciprocal must have real bounds; got {value.dtype}"
+        )
+    if not issubclass(scalar_type, np.floating):
+        scalar_type = np.float64
+    values = np.asarray(value, dtype=scalar_type)
+    # For an IEEE binary format, 1/max lies strictly between 2**-maxexp and
+    # its next representable neighbor. Smaller nonzero endpoints overflow.
+    threshold = np.ldexp(scalar_type(1), -np.finfo(scalar_type).maxexp)
+    result = np.full(
+        np.broadcast_shapes(values.shape, straddles.shape), np.inf, dtype=scalar_type
+    )
+    np.copysign(result, values, out=result)
+    np.divide(
+        scalar_type(1),
+        values,
+        out=result,
+        where=(~straddles) & (np.abs(values) > threshold),
+    )
+    np.copyto(result, scalar_type(unbounded), where=straddles)
+    return result
+
+
 def _reciprocal(value: Interval, /) -> Interval:
     lower, upper = value
     straddles = (lower <= 0.0) & (upper >= 0.0)
-    with np.errstate(divide="ignore"):
-        low = np.where(straddles, -np.inf, np.divide(1.0, upper))
-        high = np.where(straddles, np.inf, np.divide(1.0, lower))
+    low = _reciprocal_endpoint(upper, straddles, -np.inf)
+    high = _reciprocal_endpoint(lower, straddles, np.inf)
     return _round_out(low, high)
 
 
@@ -260,18 +377,67 @@ def _interval_abs(value: Interval, /) -> Interval:
     return low, np.maximum(np.abs(lower), np.abs(upper))
 
 
+def _float64_endpoint(value: HostArray, direction: float, /) -> HostArray:
+    """Convert an integer endpoint outward; integers beyond ``2**53`` may round."""
+    converted = np.asarray(value, dtype=np.float64)
+    return np.where(
+        np.abs(converted) >= 2.0**53, np.nextafter(converted, direction), converted
+    )
+
+
 def interval_midpoint_radius(value: Interval, /) -> Interval:
-    """Return the midpoint and outward radius in the source addition order."""
+    """Return a finite midpoint and outward radius of an extended-real interval.
+
+    Bounded intervals keep the source midpoint ``0.5 * (lower + upper)``; a
+    same-sign sum that may exceed the largest finite value adds exactly
+    representable halves, the same rounded midpoint without the overflowing
+    intermediate. A radius beyond the largest finite value is ``+inf``. An
+    unbounded interval has an infinite radius about its finite endpoint, or
+    about zero when both endpoints are infinite. NaN endpoints give a NaN
+    midpoint and radius.
+    """
     lower, upper = value
-    middle = 0.5 * np.add(lower, upper)
-    radius = np.nextafter(np.maximum(middle - lower, upper - middle), np.inf)
-    return middle, radius
+    dtype = np.result_type(lower, upper)
+    if np.issubdtype(dtype, np.complexfloating):
+        raise IntervalExtensionError(
+            f"interval.midpoint must have real bounds; got {dtype}"
+        )
+    if not np.issubdtype(dtype, np.floating):
+        lower = _float64_endpoint(lower, -np.inf)
+        upper = _float64_endpoint(upper, np.inf)
+        dtype = np.dtype(np.float64)
+    shape = np.broadcast_shapes(np.shape(lower), np.shape(upper))
+    finite = np.isfinite(lower) & np.isfinite(upper)
+    invalid = np.isnan(lower) | np.isnan(upper)
+    unbounded = np.logical_not(finite | invalid)
+    halved = _halved_sum_lanes(lower, upper)
+    middle = np.add(
+        lower, upper, out=np.zeros(shape, dtype), where=finite & np.logical_not(halved)
+    )
+    np.multiply(middle, 0.5, out=middle)
+    if np.any(halved):
+        np.copyto(middle, _halves(lower, upper, halved), where=halved)
+    np.copyto(middle, lower, where=unbounded & np.isfinite(lower))
+    np.copyto(middle, upper, where=unbounded & np.isfinite(upper))
+    np.copyto(middle, dtype.type(np.nan), where=invalid)
+    # The midpoint lies between finite endpoints, so neither distance overflows.
+    below = np.subtract(middle, lower, out=np.zeros(shape, dtype), where=finite)
+    above = np.subtract(upper, middle, out=np.zeros(shape, dtype), where=finite)
+    radius = np.asarray(_step(np.maximum(below, above), np.inf))
+    np.copyto(radius, dtype.type(np.inf), where=unbounded)
+    np.copyto(radius, dtype.type(np.nan), where=invalid)
+    return middle[()], radius[()]
 
 
 def interval_dot_general(
     first: Interval, second: Interval, dimension_numbers: DotDimensions, /
 ) -> Interval:
-    """Midpoint-radius enclosure of a general tensor contraction."""
+    """Midpoint-radius enclosure of a general tensor contraction.
+
+    An exactly zero magnitude times an infinite radius contributes zero, as in
+    the extended interval product. An overflowing midpoint carries no finite
+    location and, like NaN from invalid operands, yields the unbounded hull.
+    """
     first_mid, first_rad = interval_midpoint_radius(first)
     second_mid, second_rad = interval_midpoint_radius(second)
 
@@ -298,14 +464,29 @@ def interval_dot_general(
         )
         return np.einsum(left, left_labels, right, right_labels, output_labels)
 
+    def contract_bound(left: HostArray, right: HostArray) -> HostArray:
+        """Contract nonnegative factors where ``+inf`` meets only nonzero factors."""
+        left_unbounded = np.isinf(left)
+        right_unbounded = np.isinf(right)
+        if not (np.any(left_unbounded) or np.any(right_unbounded)):
+            return contract(left, right)
+        bounded = contract(
+            np.where(left_unbounded, 0, left), np.where(right_unbounded, 0, right)
+        )
+        unbounded = np.logical_or(
+            contract(left_unbounded, np.greater(right, 0)),
+            contract(np.greater(left, 0), right_unbounded),
+        )
+        return np.where(unbounded & np.logical_not(np.isnan(bounded)), np.inf, bounded)
+
     middle = contract(first_mid, second_mid)
     magnitude = contract(np.abs(first_mid), np.abs(second_mid))
-    radius = np.add(
-        np.add(
-            contract(np.abs(first_mid), second_rad),
-            contract(first_rad, np.abs(second_mid)),
+    radius = _sum(
+        _sum(
+            contract_bound(np.abs(first_mid), second_rad),
+            contract_bound(first_rad, np.abs(second_mid)),
         ),
-        contract(first_rad, second_rad),
+        contract_bound(first_rad, second_rad),
     )
     (contracting, _), _ = dimension_numbers
     length = 1 + math.prod(first_mid.shape[axis] for axis in contracting)
@@ -316,10 +497,14 @@ def interval_dot_general(
     # JAX backends may flush subnormal products; include the normal-threshold
     # allowance rather than assuming gradual underflow in a tensor contraction.
     tiny = np.finfo(middle.dtype.str).tiny
-    radius = np.nextafter(
-        radius + gamma * (magnitude + radius) + 4 * length * tiny, np.inf
+    radius = _step(
+        _sum(_sum(radius, gamma * _sum(magnitude, radius)), 4 * length * tiny), np.inf
     )
-    return _clean(*_round_out(middle - radius, middle + radius))
+    located = np.isfinite(middle)
+    centre = np.where(located, middle, 0)
+    lower = np.where(located, _sum(centre, np.negative(radius)), -np.inf)
+    upper = np.where(located, _sum(centre, radius), np.inf)
+    return _clean(*_round_out(lower, upper))
 
 
 def _reduce_sum(value: Interval, axes: Sequence[int], /) -> Interval:

@@ -2471,6 +2471,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "SpectralViscosityKernel": ".spectral._vanishing_viscosity",
     "SpectrumClassification": "._spectral",
     "SpecularAdiabaticD2VBoundaryPlan": ".discrete_velocity._spatial_boundary",
+    "SphereChartPieceBank": "._sphere_chart_records",
     "SphereClumpTemplatePlan": ".particle._sphere_clump",
     "SphereContactGeometry": ".contact._implicit_geometry",
     "SphereGeometryReconstruction": "._sphere_chart_records",
@@ -2559,6 +2560,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "SurfaceGeometryEvaluation": ".meshfree._surface_geometry",
     "SurfaceGeometryEvidence": ".meshfree._surface_geometry",
     "SurfaceGeometryProvider": ".meshfree._motion",
+    "SurfaceGeometryReconstruction": "._chart_reconstruction",
     "SurfaceGeometrySource": ".meshfree",
     "SurfaceGeometryStatus": ".meshfree._surface_geometry",
     "SurfaceIntrinsicDim": ".meshfree._surface_geometry",
@@ -3520,6 +3522,9 @@ if TYPE_CHECKING:
         CellMeshStorage as CellMeshStorage,
         SimplicialConnectivity as SimplicialConnectivity,
     )
+    from ._chart_reconstruction import (
+        SurfaceGeometryReconstruction as SurfaceGeometryReconstruction,
+    )
     from ._cochain import CochainDiscretization as CochainDiscretization
     from ._cochain_distribution import (
         CochainHaloExchange as CochainHaloExchange,
@@ -3850,6 +3855,7 @@ if TYPE_CHECKING:
         PreparedSphereChartDeformation as PreparedSphereChartDeformation,
         PreparedSphereChartOccurrence as PreparedSphereChartOccurrence,
         PreparedSphereChartPiece as PreparedSphereChartPiece,
+        SphereChartPieceBank as SphereChartPieceBank,
         SphereGeometryReconstruction as SphereGeometryReconstruction,
     )
     from ._state_transfer import (
@@ -10381,6 +10387,7 @@ __all__ = [
     "SpectralViscosityKernel",
     "SpectrumClassification",
     "SpecularAdiabaticD2VBoundaryPlan",
+    "SphereChartPieceBank",
     "SphereClumpTemplatePlan",
     "SphereContactGeometry",
     "SphereGeometryReconstruction",
@@ -10469,6 +10476,7 @@ __all__ = [
     "SurfaceGeometryEvaluation",
     "SurfaceGeometryEvidence",
     "SurfaceGeometryProvider",
+    "SurfaceGeometryReconstruction",
     "SurfaceGeometrySource",
     "SurfaceGeometryStatus",
     "SurfaceIntrinsicDim",

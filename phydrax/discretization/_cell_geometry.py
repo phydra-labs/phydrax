@@ -5,10 +5,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from copy import copy
+from dataclasses import dataclass, fields, is_dataclass
+from enum import Enum
 from fractions import Fraction
 from itertools import product
-from typing import assert_never, cast, final, Literal, NamedTuple, Protocol, TypeAlias
+from typing import (
+    Any,
+    assert_never,
+    cast,
+    final,
+    Literal,
+    NamedTuple,
+    Protocol,
+    TypeAlias,
+)
 
 import equinox as eqx
 import jax
@@ -17,6 +29,7 @@ import numpy as np
 from jax import Array, core as jax_core
 from jax.sharding import NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
+from numpy.typing import NDArray
 
 import phydrax.discretization._periodic_exact as periodic_exact_owner
 import phydrax.discretization._reference_cell_types as reference_cell_types_owner
@@ -52,6 +65,7 @@ from . import (
 )
 from ._coordinate_budget import CoordinateEnclosureBudget
 from ._coordinate_enclosure import CoordinateSourceBank, Expression
+from ._coordinate_identity import coordinate_scope_key
 from ._coordinate_source_snapshot import BarycentricSourceSnapshot, SplineSourceSnapshot
 from ._reference_cell_types import CellGeometryElement
 
@@ -641,15 +655,21 @@ class LayerColumnCellGeometryElement(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls, value: LayerColumnCellGeometryElement, /
+        cls,
+        value: LayerColumnCellGeometryElement,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> LayerColumnCellGeometryElement:
         estimate = coordinate_enclosure_owner.source_basis_estimate(value.wall_element)
         if estimate is None:
             raise ValueError(
                 "LayerColumnCellGeometryElement.from_stored_fields.inputs must provide a scalar H1 polynomial profile; got incompatible inputs."
             )
-        with owned_coordinate_preparation(
-            estimate.work_upper, estimate.bytes_upper
+        with (
+            nullcontext(budget)
+            if budget is not None
+            else owned_coordinate_preparation(estimate.work_upper, estimate.bytes_upper)
         ) as budget:
             fresh = cls(value.wall_element, fiber_graph=value.fiber_graph, budget=budget)
         for name in (
@@ -867,10 +887,20 @@ def require_p1_cardinal_source(
 
 @final
 class BarycentricCellGeometryElement(StrictModule, NonTrainableState):
-    """Retained full coefficient actions over one affine P1 source."""
+    """Retained full coefficient actions over one affine P1 source.
+
+    Row ``i`` of ``barycentric_weights`` holds the source-corner weights of target
+    corner ``i``. ``barycentric_homogeneous`` optionally retains the unrounded
+    source-owned action: a nonzero row holds finite nonnegative binary64
+    homogeneous weights with positive exact rational sum, the exact row is
+    ``h / sum(h)`` and the binary64 row must be its round-to-nearest execution
+    view. Zero rows, and an absent bank, declare the binary64 row itself
+    exactly representable.
+    """
 
     source_element: FiniteElementSpec | BarycentricCellGeometryElement
     barycentric_weights: Array
+    barycentric_homogeneous: Array | None
     cell_kind: str = eqx.field(static=True)
     conformity: str = eqx.field(static=True)
     local_dof_count: int = eqx.field(static=True)
@@ -884,6 +914,7 @@ class BarycentricCellGeometryElement(StrictModule, NonTrainableState):
         source_element: FiniteElementSpec | BarycentricCellGeometryElement,
         barycentric_weights: ArrayLike,
         /,
+        barycentric_homogeneous: ArrayLike | None = None,
     ) -> None:
         root = source_element
         while isinstance(root, BarycentricCellGeometryElement):
@@ -895,20 +926,28 @@ class BarycentricCellGeometryElement(StrictModule, NonTrainableState):
             raise ValueError(
                 "BarycentricCellGeometryElement.inputs must bind every target and source vertex; got incompatible inputs."
             )
+        homogeneous = _require_barycentric_homogeneous(weights, barycentric_homogeneous)
         self.source_element = source_element
         self.barycentric_weights = jnp.asarray(weights)
+        self.barycentric_homogeneous = (
+            None if homogeneous is None else jnp.asarray(homogeneous)
+        )
         self.cell_kind = source_element.cell_kind
         self.conformity = "H1"
         self.local_dof_count = width
         self.degree = 1
         self.topological_dimension = source_element.topological_dimension
-        self.element_id = canonical_fingerprint(
-            {
-                "kind": "full-barycentric-cell-geometry",
-                "source": source_element.element_id,
-                "weights": array_tree_fingerprint(weights),
-            }
-        )
+        # Fingerprint records are the JSON payloads of `array_tree_fingerprint`.
+        identity: dict[str, str | dict[str, Any]] = {
+            "kind": "full-barycentric-cell-geometry",
+            "source": source_element.element_id,
+            "weights": array_tree_fingerprint(weights),
+        }
+        if homogeneous is not None:
+            # Exact source-owned actions are a distinct identity; dyadic
+            # actions keep their previous identity.
+            identity["homogeneous"] = array_tree_fingerprint(homogeneous)
+        self.element_id = canonical_fingerprint(identity)
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
         root = self.source_element
@@ -937,6 +976,131 @@ def _apply_barycentric_actions(
     return values, gradients
 
 
+def _require_barycentric_homogeneous(
+    weights: NDArray[np.float64], homogeneous: ArrayLike | None, /
+) -> NDArray[np.float64] | None:
+    """Validate an unrounded homogeneous action bank against its execution rows."""
+    if homogeneous is None:
+        return None
+    bank = np.array(homogeneous, dtype=np.float64, copy=True)
+    if (
+        bank.shape != weights.shape
+        or not np.all(np.isfinite(bank))
+        or np.any(np.signbit(bank))
+        or not np.any(bank != 0.0)
+    ):
+        raise ValueError(
+            "BarycentricCellGeometryElement.barycentric_homogeneous must be finite nonnegative rows aligned with the action and name a rational row; got incompatible bank"
+        )
+    for index in range(bank.shape[0]):
+        row = bank[index, :]
+        if not np.any(row != 0.0):
+            continue
+        exact = _homogeneous_row(row)
+        if [float(value) for value in exact] != weights[index, :].tolist():
+            raise ValueError(
+                "BarycentricCellGeometryElement.barycentric_weights must be the round-to-nearest view of the exact homogeneous action; got unequal binary64 row"
+            )
+    bank.setflags(write=False)
+    return bank
+
+
+# One exact homogeneous action entry is a quotient of sums of finite binary64
+# values: numerator and denominator each stay below 2 * 1076 + 64 bits, plus
+# Python object headers.
+_EXACT_ACTION_ENTRY_BYTES = 2 * ((2 * 1076 + 64 + 7) // 8) + 256
+
+
+def _homogeneous_row(row: NDArray[np.float64], /) -> tuple[Fraction, ...]:
+    values = tuple(Fraction(float(value)) for value in row.tolist())
+    total = sum(values, Fraction(0))
+    return tuple(value / total for value in values)
+
+
+def exact_barycentric_action(
+    element: BarycentricCellGeometryElement, /
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Exact rational rows of one retained action; binary64 rows are execution views."""
+    weights = np.asarray(jax.device_get(element.barycentric_weights), dtype=np.float64)
+    bank = (
+        None
+        if element.barycentric_homogeneous is None
+        else np.asarray(jax.device_get(element.barycentric_homogeneous), dtype=np.float64)
+    )
+    return tuple(
+        _homogeneous_row(bank[index, :])
+        if bank is not None and np.any(bank[index, :] != 0.0)
+        else tuple(Fraction(float(value)) for value in weights[index, :].tolist())
+        for index in range(weights.shape[0])
+    )
+
+
+def barycentric_homogeneous_preparation_bounds(width: int, /) -> tuple[int, int]:
+    """``(work, bytes)`` of one rational ``width x width`` action pass.
+
+    Covers `exact_homogeneous_action` or the constructor's round-to-nearest
+    check: one Fraction lift, one exact sum and one quotient per entry.
+    """
+    if width < 2:
+        raise ValueError(
+            f"barycentric_homogeneous.width must be at least 2; got {width!r}"
+        )
+    return 4 * width * width, width * width * _EXACT_ACTION_ENTRY_BYTES
+
+
+def exact_homogeneous_action(
+    homogeneous: ArrayLike,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Exact rows ``h / sum(h)`` of a full homogeneous action with positive rows.
+
+    A supplied ``budget`` admits the rational pass and the retained rows before
+    they are formed; ``None`` declares an unbounded standalone call.
+    """
+    bank = np.asarray(homogeneous, dtype=np.float64)
+    if (
+        bank.ndim != 2
+        or bank.shape[0] != bank.shape[1]
+        or not np.all(np.isfinite(bank))
+        or np.any(np.signbit(bank))
+        or not np.all(np.any(bank != 0.0, axis=1))
+    ):
+        raise ValueError(
+            "exact_homogeneous_action.homogeneous must be a square finite positive-signed bank with positive rows; got incompatible bank"
+        )
+    if budget is not None:
+        budget.reserve(*barycentric_homogeneous_preparation_bounds(bank.shape[0]))
+    return tuple(_homogeneous_row(bank[index, :]) for index in range(bank.shape[0]))
+
+
+@checked
+def homogeneous_barycentric_element(
+    source_element: FiniteElementSpec | BarycentricCellGeometryElement,
+    homogeneous: ArrayLike,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> BarycentricCellGeometryElement:
+    """Author one exact source-owned P1 action with its rounded execution rows.
+
+    A supplied ``budget`` admits both rational passes (authoring and the
+    constructor's round-to-nearest check); the authored rows are temporary.
+    """
+    with nullcontext() if budget is None else budget.temporary_scope():
+        exact = exact_homogeneous_action(homogeneous, budget=budget)
+        if budget is not None:
+            budget.reserve(*barycentric_homogeneous_preparation_bounds(len(exact)))
+        return BarycentricCellGeometryElement(
+            source_element,
+            np.asarray(
+                [[float(value) for value in row] for row in exact], dtype=np.float64
+            ),
+            homogeneous,
+        )
+
+
 @final
 class _BarycentricCoordinateTabulation(StrictModule, NonTrainableState):
     source_tabulator: Callable[[Array], tuple[ArrayLike, ArrayLike]]
@@ -961,6 +1125,84 @@ class _BarycentricCoordinateTabulation(StrictModule, NonTrainableState):
                 "FiniteElementSpec.tabulator.gradients must match the value leading axes; got incompatible axes"
             )
         return _apply_barycentric_actions(values_, gradients_, self.actions)
+
+
+_POLYNOMIAL_COMPOSED_REFUSAL = "PolynomialComposedCellGeometryElement.tabulate.inputs must match the target reference; got incompatible inputs."
+_RATIONAL_COMPOSED_REFUSAL = "RationalComposedCellGeometryElement.tabulate.inputs must match the pyramid reference; got incompatible inputs."
+
+
+def _restricted_tabulation(
+    source: ScalarCoordinateTabulation,
+    matrix: Array,
+    offset: Array,
+    dimension: int,
+    points: ArrayLike,
+    /,
+) -> tuple[Array, Array]:
+    """Pull a source basis back through ``source_xi = A @ target_xi + b``."""
+    reference = jnp.asarray(points, dtype=jnp.float64)
+    if reference.ndim != 2 or reference.shape[1] != dimension:
+        raise ValueError(
+            "RestrictedCellGeometryElement.tabulate.inputs must match the target reference; got incompatible inputs."
+        )
+    values, gradients = source.tabulate(reference @ matrix.T + offset[None, :])
+    return values, gradients @ matrix
+
+
+@eqx.filter_jit
+def _composed_tabulation(
+    source: ScalarCoordinateTabulation,
+    chart: FiniteElementSpec,
+    chart_coordinates: Array,
+    dimension: int,
+    refusal: str,
+    points: ArrayLike,
+    /,
+) -> tuple[Array, Array]:
+    """Pull a source basis back through rounded chart node coordinates."""
+    reference = jnp.asarray(points, dtype=jnp.float64)
+    if reference.ndim != 2 or reference.shape[1] != dimension:
+        raise ValueError(refusal)
+    chart_values, chart_gradients = chart.tabulate(reference)
+    source_points = chart_values @ chart_coordinates
+    chart_jacobian = jnp.swapaxes(
+        jnp.swapaxes(chart_gradients, -1, -2) @ chart_coordinates, -1, -2
+    )
+    values, gradients = source.tabulate(source_points)
+    return values, gradients @ chart_jacobian
+
+
+@final
+class _RestrictedCoordinateTabulation(StrictModule, NonTrainableState):
+    source: ScalarCoordinateTabulation
+    matrix: Array
+    offset: Array
+    topological_dimension: int = eqx.field(static=True)
+
+    def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
+        return _restricted_tabulation(
+            self.source, self.matrix, self.offset, self.topological_dimension, points
+        )
+
+
+@final
+class _ComposedCoordinateTabulation(StrictModule, NonTrainableState):
+    source: ScalarCoordinateTabulation
+    chart: FiniteElementSpec
+    chart_coordinates: Array
+    topological_dimension: int = eqx.field(static=True)
+    # One family constant, never chart data: rational coefficients stay with the owner.
+    refusal: str = eqx.field(static=True)
+
+    def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
+        return _composed_tabulation(
+            self.source,
+            self.chart,
+            self.chart_coordinates,
+            self.topological_dimension,
+            self.refusal,
+            points,
+        )
 
 
 def require_full_p1_source(
@@ -1068,15 +1310,13 @@ class RestrictedCellGeometryElement(StrictModule, NonTrainableState):
         )
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
-        reference = jnp.asarray(points, dtype=jnp.float64)
-        if reference.ndim != 2 or reference.shape[1] != self.topological_dimension:
-            raise ValueError(
-                "RestrictedCellGeometryElement.tabulate.inputs must match the target reference; got incompatible inputs."
-            )
-        values, gradients = self.source_element.tabulate(
-            reference @ self.matrix.T + self.offset[None, :]
+        return _restricted_tabulation(
+            self.source_element,
+            self.matrix,
+            self.offset,
+            self.topological_dimension,
+            points,
         )
-        return values, gradients @ self.matrix
 
 
 class PolynomialComposedCellGeometryElement(StrictModule, NonTrainableState):
@@ -1109,7 +1349,11 @@ class PolynomialComposedCellGeometryElement(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls, value: PolynomialComposedCellGeometryElement, /
+        cls,
+        value: PolynomialComposedCellGeometryElement,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PolynomialComposedCellGeometryElement:
         numerators = np.asarray(
             [[a for a, _ in row] for row in value.chart_coefficients], dtype=object
@@ -1130,9 +1374,13 @@ class PolynomialComposedCellGeometryElement(StrictModule, NonTrainableState):
             raise ValueError(
                 "PolynomialComposedCellGeometryElement.from_stored_fields.inputs must provide source expressions and a polynomial chart; got incompatible inputs."
             )
-        with owned_coordinate_preparation(
-            source_estimate.work_upper + chart_estimate.work_upper,
-            source_estimate.bytes_upper + chart_estimate.bytes_upper,
+        with (
+            nullcontext(budget)
+            if budget is not None
+            else owned_coordinate_preparation(
+                source_estimate.work_upper + chart_estimate.work_upper,
+                source_estimate.bytes_upper + chart_estimate.bytes_upper,
+            )
         ) as budget:
             return cls(
                 value.source_element,
@@ -1222,6 +1470,7 @@ class PolynomialComposedCellGeometryElement(StrictModule, NonTrainableState):
             coefficients,
             source.topological_dimension,
             budget=budget,
+            retain=False,
         )
         if chart.cell_kind in (
             "triangle",
@@ -1243,18 +1492,49 @@ class PolynomialComposedCellGeometryElement(StrictModule, NonTrainableState):
         # Count source-space powers per target axis. A diagonal/permuted
         # tensor chart therefore preserves its authored per-axis order, while
         # mixed-axis composition raises the bound without inspecting physical controls.
-        self.degree = max(
-            (
-                sum(power * degree for power, degree in zip(index, degrees, strict=True))
-                for degrees in chart_degrees
-                for term in source_basis_
-                for polynomial in coordinate_enclosure_owner.expression_parts(
-                    term, source.topological_dimension, budget=budget
+        budget.reserve(1, 128)
+        source_key = coordinate_enclosure_owner.element_identity(source, budget=budget)
+        powers = budget.source_exponent_cache.get(source_key)
+        if powers is None:
+            # A polynomial's unit denominator adds no exponent. Inspect the
+            # actual numerator/denominator supports once, without allocating a
+            # unit polynomial for every term and target-axis group.
+            with budget.temporary_scope():
+                budget.reserve(len(source_basis_), 256 + 32 * len(source_basis_))
+                parts = tuple(
+                    polynomial
+                    for term in source_basis_
+                    for polynomial in (
+                        (term.numerator, term.denominator)
+                        if isinstance(term, coordinate_enclosure_owner.RationalPolynomial)
+                        else (term,)
+                    )
                 )
-                for index in polynomial
-            ),
-            default=0,
-        )
+                terms = sum(len(polynomial) for polynomial in parts)
+                budget.reserve(terms, 256 + 96 * terms)
+                powers = tuple(
+                    sorted({index for polynomial in parts for index in polynomial})
+                )
+                budget.retain_basis((source_key, powers))
+                budget.source_exponent_cache[source_key] = powers
+                del parts
+        degree_key = (source_key, chart_degrees)
+        degree = budget.source_composition_degree_cache.get(degree_key)
+        if degree is None:
+            budget.reserve(
+                len(chart_degrees) * len(powers) * source.topological_dimension
+            )
+            degree = max(
+                (
+                    sum(power * degree for power, degree in zip(index, degrees, strict=True))
+                    for degrees in chart_degrees
+                    for index in powers
+                ),
+                default=0,
+            )
+            budget.retain_basis((degree_key, degree))
+            budget.source_composition_degree_cache[degree_key] = degree
+        self.degree = degree
         self.topological_dimension = chart.topological_dimension
         self.element_id = canonical_fingerprint(
             {
@@ -1266,20 +1546,99 @@ class PolynomialComposedCellGeometryElement(StrictModule, NonTrainableState):
         )
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
-        reference = jnp.asarray(points, dtype=jnp.float64)
-        if reference.ndim != 2 or reference.shape[1] != self.topological_dimension:
-            raise ValueError(
-                "PolynomialComposedCellGeometryElement.tabulate.inputs must match the target reference; got incompatible inputs."
-            )
-        chart_values, chart_gradients = self.chart_element.tabulate(reference)
-        source_points = chart_values @ self.chart_coordinates
-        chart_jacobian = jnp.swapaxes(
-            jnp.swapaxes(chart_gradients, -1, -2) @ self.chart_coordinates,
-            -1,
-            -2,
+        return _composed_tabulation(
+            self.source_element,
+            self.chart_element,
+            self.chart_coordinates,
+            self.topological_dimension,
+            _POLYNOMIAL_COMPOSED_REFUSAL,
+            points,
         )
-        values, gradients = self.source_element.tabulate(source_points)
-        return values, gradients @ chart_jacobian
+
+
+@dataclass(frozen=True)
+class _TensorGridChartFamily:
+    """Closed-construction family of canonical translated tensor charts.
+
+    The ordinary prototype earns the source law and the composition degree.
+    Translating a positive diagonal Q1 chart preserves its per-axis degrees;
+    only its exact coefficients, rounded execution bank and identity change.
+    This private owner is never stored in geometry or publication records.
+    """
+
+    prototype: PolynomialComposedCellGeometryElement
+    counts: tuple[int, int, int]
+    axes: tuple[tuple[tuple[int, int], ...], ...]
+    nodes: tuple[int, ...]
+
+    @classmethod
+    def prepare(
+        cls,
+        source: ScalarCoordinateElement,
+        counts: tuple[int, int, int],
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> _TensorGridChartFamily:
+        if source.topological_dimension != 3 or len(counts) != 3 or any(
+            type(n) is not int or n <= 0 for n in counts
+        ):
+            raise ValueError("tensor_grid.chart_family requires three positive exact counts")
+        count = sum(n + 1 for n in counts)
+        budget.reserve(2 * count + 48, 8192 + 256 * count)
+        axes = tuple(
+            tuple(
+                (value.numerator, value.denominator)
+                for value in (Fraction(i, n) for i in range(n + 1))
+            )
+            for n in counts
+        )
+        chart = coordinate_lagrange_element("hexahedron", 1)
+        nodes = _cardinal_corner_nodes(chart, budget=budget)
+        if nodes is None:
+            raise ValueError("tensor_grid.chart_family requires cardinal Q1 corners")
+        numerators = np.empty((8, 3), dtype=np.int64)
+        denominators = np.empty((8, 3), dtype=np.int64)
+        for corner, node in zip(
+            reference_cell_owner.reference_cell_topology("hexahedron").vertices,
+            nodes, strict=True,
+        ):
+            numerators[node] = corner
+            denominators[node] = counts
+        prototype = PolynomialComposedCellGeometryElement(
+            source, chart, numerators, denominators, budget=budget
+        )
+        return cls(prototype, counts, axes, nodes)
+
+    def element(
+        self, integer: tuple[int, int, int], *, budget: CoordinateEnclosureBudget
+    ) -> PolynomialComposedCellGeometryElement:
+        budget.reserve(51, 8192)
+        if any(type(i) is not int or i < 0 or i >= n for i, n in zip(integer, self.counts, strict=True)):
+            raise ValueError("tensor_grid.chart must belong to its exact axis partition")
+        coefficients: list[tuple[tuple[int, int], ...]] = [((0, 1),) * 3] * 8
+        for corner, node in zip(
+            reference_cell_owner.reference_cell_topology("hexahedron").vertices,
+            self.nodes, strict=True,
+        ):
+            coefficients[node] = tuple(
+                self.axes[axis][integer[axis] + int(corner[axis])]
+                for axis in range(3)
+            )
+        exact = tuple(coefficients)
+        # Copying an already admitted immutable module preserves every source
+        # and chart field; it does not invoke arbitrary user constructors.
+        result = copy(self.prototype)
+        object.__setattr__(result, "chart_coefficients", exact)
+        object.__setattr__(result, "chart_coordinates", jnp.asarray(
+            [[a / b for a, b in row] for row in exact], dtype=jnp.float64
+        ))
+        object.__setattr__(result, "element_id", canonical_fingerprint({
+            "kind": "polynomial-composed-cell-geometry",
+            "source": result.source_element.element_id,
+            "chart": result.chart_element.element_id,
+            "chart_coefficients": exact,
+        }))
+        return result
 
 
 class RationalComposedCellGeometryElement(StrictModule, NonTrainableState):
@@ -1414,18 +1773,14 @@ class RationalComposedCellGeometryElement(StrictModule, NonTrainableState):
         return ~apex | affine
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
-        reference = jnp.asarray(points, dtype=jnp.float64)
-        if reference.ndim != 2 or reference.shape[1] != 3:
-            raise ValueError(
-                "RationalComposedCellGeometryElement.tabulate.inputs must match the pyramid reference; got incompatible inputs."
-            )
-        chart_values, chart_gradients = self.chart_element.tabulate(reference)
-        source_points = chart_values @ self.chart_coordinates
-        chart_jacobian = jnp.swapaxes(
-            jnp.swapaxes(chart_gradients, -1, -2) @ self.chart_coordinates, -1, -2
+        return _composed_tabulation(
+            self.source_element,
+            self.chart_element,
+            self.chart_coordinates,
+            3,
+            _RATIONAL_COMPOSED_REFUSAL,
+            points,
         )
-        values, gradients = self.source_element.tabulate(source_points)
-        return values, gradients @ chart_jacobian
 
 
 type ScalarCoordinateElement = (
@@ -1443,7 +1798,11 @@ type ScalarCoordinateElement = (
 def coordinate_tabulation(
     element: ScalarCoordinateElement, /
 ) -> ScalarCoordinateTabulation:
-    """Project full P1 actions to dynamic arrays without their scientific IDs."""
+    """Project P1 actions, restrictions and chart pullbacks to dynamic arrays.
+
+    Scientific IDs and rational chart coefficients stay with the owner, so one
+    compiled program serves every chart of the same family and capacity.
+    """
     match element:
         case BarycentricCellGeometryElement():
             actions: list[Array] = []
@@ -1461,6 +1820,29 @@ def coordinate_tabulation(
                 current.topological_dimension,
                 current.local_dof_count,
                 tuple(actions),
+            )
+        case RestrictedCellGeometryElement():
+            return _RestrictedCoordinateTabulation(
+                coordinate_tabulation(element.source_element),
+                element.matrix,
+                element.offset,
+                element.topological_dimension,
+            )
+        case PolynomialComposedCellGeometryElement():
+            return _ComposedCoordinateTabulation(
+                coordinate_tabulation(element.source_element),
+                element.chart_element,
+                element.chart_coordinates,
+                element.topological_dimension,
+                _POLYNOMIAL_COMPOSED_REFUSAL,
+            )
+        case RationalComposedCellGeometryElement():
+            return _ComposedCoordinateTabulation(
+                coordinate_tabulation(element.source_element),
+                element.chart_element,
+                element.chart_coordinates,
+                3,
+                _RATIONAL_COMPOSED_REFUSAL,
             )
         case _:
             return element
@@ -1717,78 +2099,81 @@ def _prepare_projection_inputs(
     global_coordinate_count: int,
     source_elements: Mapping[str, CellGeometryElement] | None,
 ) -> _ProjectionInputs:
-    entries = tuple(logical_arrays)
+    from ..meshing._collective_failure import agreed_local_step
 
-    names = tuple(name for name, _ in entries)
-    if names != tuple(sorted(names)) or len(set(names)) != len(names):
-        raise ValueError(
-            "prepare_projection_inputs.inputs must provide unique names; got incompatible inputs."
+    with agreed_local_step():
+        entries = tuple(logical_arrays)
+
+        names = tuple(name for name, _ in entries)
+        if names != tuple(sorted(names)) or len(set(names)) != len(names):
+            raise ValueError(
+                "prepare_projection_inputs.inputs must provide unique names; got incompatible inputs."
+            )
+        if any(not isinstance(value, Array) for _, value in entries):
+            raise TypeError(
+                "prepare_projection_inputs.inputs must provide logical JAX arrays; got incompatible inputs."
+            )
+        if (
+            not isinstance(logical_coordinate_geometry_id, str)
+            or len(logical_coordinate_geometry_id) != 64
+            or any(
+                value not in "0123456789abcdef" for value in logical_coordinate_geometry_id
+            )
+        ):
+            raise ValueError(
+                "prepare_projection_inputs.inputs must provide its scientific coordinate-map digest; got incompatible inputs."
+            )
+        arrays = dict(entries)
+        queries = arrays["closure/cell_ids"]
+        valid = arrays["closure/cell_valid"]
+        if (
+            queries.ndim != 2
+            or queries.dtype != jnp.int64
+            or valid.shape != queries.shape
+            or valid.dtype != jnp.bool_
+            or isinstance(global_coordinate_count, bool)
+            or global_coordinate_count <= 0
+        ):
+            raise ValueError(
+                "prepare_projection_inputs.inputs must provide fixed-capacity scientific cell queries; got incompatible inputs."
+            )
+        source = {
+            name: value for name, value in arrays.items() if name.startswith("geometry/")
+        }
+        banks = tuple(
+            sorted(
+                name.removeprefix("geometry/cell_ids/")
+                for name in source
+                if name.startswith("geometry/cell_ids/")
+            )
         )
-    if any(not isinstance(value, Array) for _, value in entries):
-        raise TypeError(
-            "prepare_projection_inputs.inputs must provide logical JAX arrays; got incompatible inputs."
-        )
-    if (
-        not isinstance(logical_coordinate_geometry_id, str)
-        or len(logical_coordinate_geometry_id) != 64
-        or any(
-            value not in "0123456789abcdef" for value in logical_coordinate_geometry_id
-        )
-    ):
-        raise ValueError(
-            "prepare_projection_inputs.inputs must provide its scientific coordinate-map digest; got incompatible inputs."
-        )
-    arrays = dict(entries)
-    queries = arrays["closure/cell_ids"]
-    valid = arrays["closure/cell_valid"]
-    if (
-        queries.ndim != 2
-        or queries.dtype != jnp.int64
-        or valid.shape != queries.shape
-        or valid.dtype != jnp.bool_
-        or isinstance(global_coordinate_count, bool)
-        or global_coordinate_count <= 0
-    ):
-        raise ValueError(
-            "prepare_projection_inputs.inputs must provide fixed-capacity scientific cell queries; got incompatible inputs."
-        )
-    source = {
-        name: value for name, value in arrays.items() if name.startswith("geometry/")
-    }
-    banks = tuple(
-        sorted(
-            name.removeprefix("geometry/cell_ids/")
-            for name in source
-            if name.startswith("geometry/cell_ids/")
-        )
-    )
-    if not banks:
-        raise ValueError(
-            "prepare_projection_inputs.inputs must provide scientific source banks; got incompatible inputs."
-        )
-    coordinate_ids = source["geometry/coordinate_ids"]
-    coordinates = source["geometry/coordinates"]
-    owners = source["geometry/coordinate_owners"]
-    if (
-        coordinate_ids.ndim != 1
-        or coordinate_ids.dtype != jnp.int64
-        or coordinate_ids.shape[0] < global_coordinate_count
-        or coordinates.ndim != 2
-        or coordinates.dtype != jnp.float64
-        or coordinates.shape[0] != coordinate_ids.shape[0]
-        or owners.shape != coordinate_ids.shape
-        or owners.dtype != jnp.int32
-    ):
-        raise ValueError(
-            "prepare_projection_inputs.inputs must satisfy the condition: Collective source coordinate banks have inconsistent scientific axes; got incompatible inputs."
-        )
+        if not banks:
+            raise ValueError(
+                "prepare_projection_inputs.inputs must provide scientific source banks; got incompatible inputs."
+            )
+        coordinate_ids = source["geometry/coordinate_ids"]
+        coordinates = source["geometry/coordinates"]
+        owners = source["geometry/coordinate_owners"]
+        if (
+            coordinate_ids.ndim != 1
+            or coordinate_ids.dtype != jnp.int64
+            or coordinate_ids.shape[0] < global_coordinate_count
+            or coordinates.ndim != 2
+            or coordinates.dtype != jnp.float64
+            or coordinates.shape[0] != coordinate_ids.shape[0]
+            or owners.shape != coordinate_ids.shape
+            or owners.dtype != jnp.int32
+        ):
+            raise ValueError(
+                "prepare_projection_inputs.inputs must satisfy the condition: Collective source coordinate banks have inconsistent scientific axes; got incompatible inputs."
+            )
     coordinate_table = jnp.where(
         jnp.arange(coordinate_ids.shape[0]) < global_coordinate_count,
         coordinate_ids,
         jnp.iinfo(jnp.int64).max,
     )
     coordinate_active = jnp.arange(coordinate_ids.shape[0]) < global_coordinate_count
-    if not bool(
+    accepted = bool(
         jax.device_get(
             jnp.all(
                 (
@@ -1803,30 +2188,33 @@ def _prepare_projection_inputs(
                 (coordinate_table[1:] > coordinate_table[:-1]) | ~coordinate_active[1:]
             )
         )
-    ):
-        raise ValueError(
-            "prepare_projection_inputs.inputs must provide unique ordered IDs, finite values, and valid owners; got incompatible inputs."
-        )
-    declared = {} if source_elements is None else dict(source_elements)
-    if declared and set(declared) != set(banks):
-        raise ValueError(
-            "prepare_projection_inputs.inputs must name every logical root bank; got incompatible inputs."
-        )
-    if any(not isinstance(value, CellGeometryElement) for value in declared.values()):
-        raise TypeError(
-            "prepare_projection_inputs.inputs must provide CellGeometryElement values; got incompatible inputs."
-        )
-    return _ProjectionInputs(
-        arrays,
-        queries,
-        valid,
-        source,
-        banks,
-        coordinate_table,
-        coordinates,
-        owners,
-        declared,
     )
+    with agreed_local_step():
+        if not accepted:
+            raise ValueError(
+                "prepare_projection_inputs.inputs must provide unique ordered IDs, finite values, and valid owners; got incompatible inputs."
+            )
+    with agreed_local_step():
+        declared = {} if source_elements is None else dict(source_elements)
+        if declared and set(declared) != set(banks):
+            raise ValueError(
+                "prepare_projection_inputs.inputs must name every logical root bank; got incompatible inputs."
+            )
+        if any(not isinstance(value, CellGeometryElement) for value in declared.values()):
+            raise TypeError(
+                "prepare_projection_inputs.inputs must provide CellGeometryElement values; got incompatible inputs."
+            )
+        return _ProjectionInputs(
+            arrays,
+            queries,
+            valid,
+            source,
+            banks,
+            coordinate_table,
+            coordinates,
+            owners,
+            declared,
+        )
 
 
 class _ProjectedBank(StrictModule):
@@ -1841,28 +2229,32 @@ def _require_projection_actions(
     source_routes: Array,
     source_active: Array,
 ) -> None:
-    action_name = f"geometry/action_weights/{bank}"
-    count_name = f"geometry/action_counts/{bank}"
-    if (action_name in source) != (count_name in source):
-        raise ValueError(
-            "require_projection_actions.inputs must provide their row counts; got incompatible inputs."
-        )
-    if action_name in source:
-        actions, counts = source[action_name], source[count_name]
-        width = source_routes.shape[1]
-        if (
-            actions.ndim != 4
-            or actions.shape[0] != cell_ids.shape[0]
-            or actions.shape[2:] != (width, width)
-            or actions.dtype != jnp.float64
-            or counts.shape != cell_ids.shape
-            or counts.dtype != jnp.int32
-        ):
+    from ..meshing._collective_failure import agreed_local_step
+
+    with agreed_local_step():
+        action_name = f"geometry/action_weights/{bank}"
+        count_name = f"geometry/action_counts/{bank}"
+        if (action_name in source) != (count_name in source):
             raise ValueError(
-                "require_projection_actions.inputs must bind their scientific cell and coefficient axes; got incompatible inputs."
+                "require_projection_actions.inputs must provide their row counts; got incompatible inputs."
             )
+    if action_name in source:
+        with agreed_local_step():
+            actions, counts = source[action_name], source[count_name]
+            width = source_routes.shape[1]
+            if (
+                actions.ndim != 4
+                or actions.shape[0] != cell_ids.shape[0]
+                or actions.shape[2:] != (width, width)
+                or actions.dtype != jnp.float64
+                or counts.shape != cell_ids.shape
+                or counts.dtype != jnp.int32
+            ):
+                raise ValueError(
+                    "require_projection_actions.inputs must bind their scientific cell and coefficient axes; got incompatible inputs."
+                )
         selected = jnp.arange(actions.shape[1])[None, :] < counts[:, None]
-        if not bool(
+        accepted = bool(
             jax.device_get(
                 jnp.all(((counts >= 0) & (counts <= actions.shape[1])) | ~source_active)
                 & jnp.all(
@@ -1871,10 +2263,12 @@ def _require_projection_actions(
                     | ~source_active[:, None]
                 )
             )
-        ):
-            raise ValueError(
-                "require_projection_actions.inputs must provide finite weights and valid stack counts; got incompatible inputs."
-            )
+        )
+        with agreed_local_step():
+            if not accepted:
+                raise ValueError(
+                    "require_projection_actions.inputs must provide finite weights and valid stack counts; got incompatible inputs."
+                )
 
 
 @jax.jit
@@ -1956,63 +2350,73 @@ def _project_geometry_bank(
     projected: dict[str, Array],
     placed: Callable[[Array], Array],
 ) -> _ProjectedBank:
-    source, queries, valid = prepared.source, prepared.queries, prepared.valid
-    coordinate_table, declared = prepared.coordinate_table, prepared.declared
-    coordinates, owners = prepared.coordinates, prepared.owners
-    cell_ids = source[f"geometry/cell_ids/{bank}"]
-    if cell_ids.ndim != 1 or cell_ids.dtype != jnp.int64 or cell_ids.shape[0] == 0:
-        raise ValueError(
-            "project_geometry_bank.inputs must provide nonzero-capacity int64 identities; got incompatible inputs."
-        )
-    source_routes = source[f"geometry/routes/{bank}"]
-    if (
-        source_routes.ndim != 2
-        or source_routes.shape[0] != cell_ids.shape[0]
-        or source_routes.dtype != jnp.int64
-    ):
-        raise ValueError(
-            "project_geometry_bank.inputs must align with global cells; got incompatible inputs."
-        )
+    from ..meshing._collective_failure import agreed_local_step
+
+    with agreed_local_step():
+        source, queries, valid = prepared.source, prepared.queries, prepared.valid
+        coordinate_table, declared = prepared.coordinate_table, prepared.declared
+        coordinates, owners = prepared.coordinates, prepared.owners
+        cell_ids = source[f"geometry/cell_ids/{bank}"]
+        if cell_ids.ndim != 1 or cell_ids.dtype != jnp.int64 or cell_ids.shape[0] == 0:
+            raise ValueError(
+                "project_geometry_bank.inputs must provide nonzero-capacity int64 identities; got incompatible inputs."
+            )
+        source_routes = source[f"geometry/routes/{bank}"]
+        if (
+            source_routes.ndim != 2
+            or source_routes.shape[0] != cell_ids.shape[0]
+            or source_routes.dtype != jnp.int64
+        ):
+            raise ValueError(
+                "project_geometry_bank.inputs must align with global cells; got incompatible inputs."
+            )
     source_active, source_cell_count, source_found = _projection_source_values(
         cell_ids, source_routes, coordinate_table, global_coordinate_count
     )
-    if not bool(jax.device_get(source_found)):
-        raise ValueError(
-            "project_geometry_bank.inputs must satisfy the condition: global source cells reference absent scientific coordinate DOFs; got incompatible inputs."
-        )
+    accepted = bool(jax.device_get(source_found))
+    with agreed_local_step():
+        if not accepted:
+            raise ValueError(
+                "project_geometry_bank.inputs must satisfy the condition: global source cells reference absent scientific coordinate DOFs; got incompatible inputs."
+            )
     _require_projection_actions(source, bank, cell_ids, source_routes, source_active)
     if bank in declared:
-        element = declared[bank]
-        if (
-            element.local_dof_count != source_routes.shape[1]
-            or element.conformity != "H1"
-        ):
-            raise ValueError(
-                "project_geometry_bank.inputs must match their declared coordinate basis; got incompatible inputs."
-            )
+        with agreed_local_step():
+            element = declared[bank]
+            if (
+                element.local_dof_count != source_routes.shape[1]
+                or element.conformity != "H1"
+            ):
+                raise ValueError(
+                    "project_geometry_bank.inputs must match their declared coordinate basis; got incompatible inputs."
+                )
+            basis = source[f"geometry/source_basis/{bank}"]
+            if basis.shape != (cell_ids.shape[0], 32):
+                raise ValueError(
+                    "project_geometry_bank.inputs must match its source element; got incompatible inputs."
+                )
         signature = canonical_fingerprint(
             {
-                "signature": coordinate_enclosure_owner.coordinate_source_signature(
-                    element
-                ),
+                "signature": coordinate_enclosure_owner.coordinate_source_signature(element),
                 "arrays": array_tree_fingerprint(element),
             }
         )
-        basis = source[f"geometry/source_basis/{bank}"]
         digest = jnp.asarray(np.frombuffer(bytes.fromhex(signature), dtype=np.uint8))
-        if basis.shape != (cell_ids.shape[0], 32) or not bool(
-            jax.device_get(_projection_basis_valid(basis, digest, source_active))
-        ):
-            raise ValueError(
-                "project_geometry_bank.inputs must match its source element; got incompatible inputs."
-            )
+        accepted = bool(jax.device_get(_projection_basis_valid(basis, digest, source_active)))
+        with agreed_local_step():
+            if not accepted:
+                raise ValueError(
+                    "project_geometry_bank.inputs must match its source element; got incompatible inputs."
+                )
     if owner_keys is not None:
-        if not bool(
+        accepted = bool(
             jax.device_get(_projection_owners_valid(owner_keys, cell_ids, source_active))
-        ):
-            raise ValueError(
-                "project_geometry_bank.inputs must provide exactly one owned closure occurrence; got incompatible inputs."
-            )
+        )
+        with agreed_local_step():
+            if not accepted:
+                raise ValueError(
+                    "project_geometry_bank.inputs must provide exactly one owned closure occurrence; got incompatible inputs."
+                )
     field_names = tuple(
         f"geometry/{field}/{bank}"
         for field in (
@@ -2041,13 +2445,15 @@ def _project_geometry_bank(
             tuple(source[name] for name in field_names),
         )
     )
+    accepted = bool(jax.device_get(found))
+    with agreed_local_step():
+        if not accepted:
+            raise ValueError(
+                "project_geometry_bank.inputs must satisfy the condition: Collective source routes reference absent scientific coordinate DOFs; got incompatible inputs."
+            )
     projected[f"geometry/cell_ids/{bank}"] = placed(cell_values)
     for name, value in zip(field_names, fields, strict=True):
         projected[name] = placed(value)
-    if not bool(jax.device_get(found)):
-        raise ValueError(
-            "project_geometry_bank.inputs must satisfy the condition: Collective source routes reference absent scientific coordinate DOFs; got incompatible inputs."
-        )
     projected[f"geometry/coefficient_values/{bank}"] = placed(coefficient_values)
     projected[f"geometry/coefficient_owners/{bank}"] = placed(coefficient_owners)
     return _ProjectedBank(source_cell_count, coverage)
@@ -2080,6 +2486,8 @@ class CellGeometryStorageProjection(StrictModule, NonTrainableState):
         *,
         source_elements: Mapping[str, CellGeometryElement] | None = None,
     ) -> None:
+        from ..meshing._collective_failure import agreed_local_step
+
         prepared = _prepare_projection_inputs(
             logical_arrays,
             logical_coordinate_geometry_id,
@@ -2106,30 +2514,34 @@ class CellGeometryStorageProjection(StrictModule, NonTrainableState):
         owned = None
         owner_keys = None
         if cell_owner is not None:
-            if cell_owner.shape != queries.shape or cell_owner.dtype != jnp.int32:
-                raise ValueError(
-                    "CellGeometryStorageProjection.inputs must align with the global query layout; got incompatible inputs."
-                )
-            if not bool(
+            with agreed_local_step():
+                if cell_owner.shape != queries.shape or cell_owner.dtype != jnp.int32:
+                    raise ValueError(
+                        "CellGeometryStorageProjection.inputs must align with the global query layout; got incompatible inputs."
+                    )
+            accepted = bool(
                 jax.device_get(
                     jnp.all(
                         ((cell_owner >= 0) & (cell_owner < queries.shape[0])) | ~valid
                     )
                 )
-            ):
-                raise ValueError(
-                    "CellGeometryStorageProjection.inputs must provide valid scientific owners; got incompatible inputs."
-                )
+            )
+            with agreed_local_step():
+                if not accepted:
+                    raise ValueError(
+                        "CellGeometryStorageProjection.inputs must provide valid scientific owners; got incompatible inputs."
+                    )
             owned = valid & (
                 cell_owner == jnp.arange(queries.shape[0], dtype=jnp.int32)[:, None]
             )
             owner_keys = jnp.sort(
                 jnp.where(owned, queries, jnp.iinfo(jnp.int64).max).reshape(-1)
             )
-            if owner_keys.shape[0] == 0:
-                raise ValueError(
-                    "CellGeometryStorageProjection.inputs must provide owned closure cells; got incompatible inputs."
-                )
+            with agreed_local_step():
+                if owner_keys.shape[0] == 0:
+                    raise ValueError(
+                        "CellGeometryStorageProjection.inputs must provide owned closure cells; got incompatible inputs."
+                    )
             projected["geometry/owned_cell_count"] = placed(
                 jnp.sum(owned, axis=1, dtype=jnp.int64)
             )
@@ -2145,30 +2557,37 @@ class CellGeometryStorageProjection(StrictModule, NonTrainableState):
             )
             source_cell_count = source_cell_count + projected_bank.source_cell_count
             coverage = coverage + projected_bank.coverage
-        if not bool(jax.device_get(jnp.all(coverage == valid.astype(jnp.int32)))):
-            raise ValueError(
-                "CellGeometryStorageProjection.inputs must provide one unique scientific source chart; got incompatible inputs."
-            )
-        if owned is not None and not bool(
+        accepted = bool(jax.device_get(jnp.all(coverage == valid.astype(jnp.int32))))
+        with agreed_local_step():
+            if not accepted:
+                raise ValueError(
+                    "CellGeometryStorageProjection.inputs must provide one unique scientific source chart; got incompatible inputs."
+                )
+        complete = owned is None or bool(
             jax.device_get(jnp.sum(owned, dtype=jnp.int64) == source_cell_count)
-        ):
-            raise ValueError(
-                "CellGeometryStorageProjection.inputs must completely cover the global source cells; got incompatible inputs."
-            )
+        )
+        with agreed_local_step():
+            if not complete:
+                raise ValueError(
+                    "CellGeometryStorageProjection.inputs must completely cover the global source cells; got incompatible inputs."
+                )
         for field in ("source_geometry_id", "source_topology_id"):
             name = f"geometry/{field}"
             if name in source:
                 projected[name] = placed(
                     jnp.broadcast_to(source[name], (queries.shape[0], 32))
                 )
-        self.source_arrays = tuple(sorted(source.items()))
-        self.projected_arrays = tuple(sorted(projected.items()))
-        self.logical_coordinate_geometry_id = logical_coordinate_geometry_id
-        self.global_coordinate_count = global_coordinate_count
-        self.partition_count = queries.shape[0]
+        with agreed_local_step():
+            self.source_arrays = tuple(sorted(source.items()))
+            self.projected_arrays = tuple(sorted(projected.items()))
+            self.logical_coordinate_geometry_id = logical_coordinate_geometry_id
+            self.global_coordinate_count = global_coordinate_count
+            self.partition_count = queries.shape[0]
         self.source_content_id = logical_array_value_collection_digest(source)
-        self.source_elements = tuple(sorted(declared.items()))
-        self.global_cell_count = int(jax.device_get(source_cell_count))
+        global_cell_count = int(jax.device_get(source_cell_count))
+        with agreed_local_step():
+            self.source_elements = tuple(sorted(declared.items()))
+            self.global_cell_count = global_cell_count
 
     def require_source(
         self,
@@ -2404,7 +2823,18 @@ def coordinate_source_snapshot_preparation_bounds(
         current = pending.pop()
         match current:
             case BarycentricCellGeometryElement():
-                arrays = (current.barycentric_weights,)
+                if current.barycentric_homogeneous is None:
+                    arrays = (current.barycentric_weights,)
+                else:
+                    arrays = (
+                        current.barycentric_weights,
+                        current.barycentric_homogeneous,
+                    )
+                    exact_work, exact_bytes = barycentric_homogeneous_preparation_bounds(
+                        current.local_dof_count
+                    )
+                    work += exact_work
+                    memory += exact_bytes
                 pending.append(current.source_element)
             case SplineCellGeometryElement():
                 arrays = (current.u_knots, current.v_knots, current.weights)
@@ -2422,24 +2852,70 @@ def coordinate_source_snapshot_preparation_bounds(
                 continue
             case _:
                 continue
+        authentication_work = 0
+        authentication_memory = 512 + 16
+        mutable_banks = 0
+        largest_mutable_bank = 0
+
+        def authentication_owner(owner: object) -> None:
+            nonlocal authentication_work, authentication_memory
+            nonlocal mutable_banks, largest_mutable_bank
+            # The same unique current owner graph used by source retention
+            # bounds the one-shot authentication walk. A view's retained base
+            # may add owners, so this remains an upper bound for logical scans.
+            authentication_work += 1
+            authentication_memory += 128
+            if owner is None or type(owner) in (bool, int, float, complex, str, bytes):
+                return
+            if isinstance(owner, Array):
+                authentication_work += 1  # current JAX liveness
+                return
+            if isinstance(owner, np.ndarray):
+                authentication_work += 1 + owner.size
+                mutable_banks += 1
+                largest_mutable_bank = max(largest_mutable_bank, owner.nbytes)
+                return
+            if isinstance(owner, (tuple, list)):
+                authentication_memory += 64 + 16 * len(owner)
+                if isinstance(owner, list):
+                    authentication_work += len(owner)
+                return
+            if isinstance(owner, Mapping):
+                members = len(owner)
+            elif isinstance(owner, (Fraction, Enum)):
+                members = 2
+            elif is_dataclass(owner) and not isinstance(owner, type):
+                members = len(fields(owner))
+            elif hasattr(owner, "__dict__") and not isinstance(owner, type):
+                members = len(vars(owner))
+            else:
+                return
+            authentication_work += members
+            authentication_memory += 128 + 32 * members
+
         _, storage, logical, visits = retained_host_storage_profile(
-            current, {}, is_native_host_buffer
+            current, {}, is_native_host_buffer, admit_owner=authentication_owner
         )
-        work += visits + 128
-        memory += storage + logical + 3 * sum(value.nbytes for value in arrays) + 16384
+        # The existing source/snapshot shells and normalization remain covered;
+        # add only the actual structural and logical-bank authentication bound,
+        # never an authored scientific limit or an empirical helper allowance.
+        work += visits + 128 + authentication_work
+        memory += (
+            storage + logical + 3 * sum(value.nbytes for value in arrays) + 16384
+            + authentication_memory + 256 + 128 * mutable_banks
+            + 2 * largest_mutable_bank
+        )
     return work, memory
 
 
 def _coordinate_snapshot_identity(
     element: CellGeometryElement, budget: CoordinateEnclosureBudget
 ) -> str:
-    identifier = id(element)
-    if identifier not in budget.source_snapshot_identity_cache:
-        budget.retain_owner(element)
-        identity = canonical_fingerprint(array_tree_fingerprint(element))
-        budget.source_snapshot_identity_cache[identifier] = identity
-        return identity
-    return budget.source_snapshot_identity_cache[identifier]
+    # Host action snapshots follow the same complete current-field/array
+    # authentication as coordinate algebra; an object's address is not a seal.
+    return coordinate_enclosure_owner._authenticated_element_identity(
+        element, budget, retain_admission=False
+    )[1]
 
 
 @checked
@@ -2455,12 +2931,22 @@ def prepare_barycentric_source_snapshot(
         with budget.temporary_scope():
             # The device-get view and one host-owned copy coexist. Retained
             # snapshots must not keep a backend capsule as their storage owner.
+            homogeneous = element.barycentric_homogeneous
             budget.reserve(0, 2 * element.barycentric_weights.nbytes + 4096)
+            if homogeneous is not None:
+                # Admit the rational normalization pass before any Fraction exists.
+                exact_work, exact_bytes = barycentric_homogeneous_preparation_bounds(
+                    element.local_dof_count
+                )
+                budget.reserve(exact_work, 2 * homogeneous.nbytes + exact_bytes)
             weights = np.array(
                 jax.device_get(element.barycentric_weights), dtype=np.float64, copy=True
             )
             weights.setflags(write=False)
-            snapshot = BarycentricSourceSnapshot(weights)
+            snapshot = BarycentricSourceSnapshot(
+                weights,
+                None if homogeneous is None else exact_barycentric_action(element),
+            )
             budget.retain_owner(snapshot)
             budget.barycentric_source_snapshot_cache[key] = snapshot
     return budget.barycentric_source_snapshot_cache[key]
@@ -2491,6 +2977,11 @@ def prepare_spline_source_snapshot(
     return budget.spline_source_snapshot_cache[key]
 
 
+def _coordinate_source_cache_storage_bound(entries: int, /) -> int:
+    """Bound the exact binary64 cache's structural owner and scalar entries."""
+    return 1024 + 256 * entries
+
+
 @checked
 def cell_geometry_preparation_bounds(
     geometry: CellGeometrySpec,
@@ -2504,6 +2995,8 @@ def cell_geometry_preparation_bounds(
     work = geometry.coordinates.size
     memory = geometry.coordinates.size * 512
     source = geometry.exact_source
+    if source is None and geometry.periodic_source is None:
+        memory += _coordinate_source_cache_storage_bound(geometry.coordinates.size)
     coefficient_bits = None if source is None else max(source.maximum_bits, 1075)
     if geometry.periodic_source is not None:
         periodic_work, periodic_memory, periodic_bits = (
@@ -2723,7 +3216,13 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
 
     @classmethod
     @checked
-    def from_stored_fields(cls, value: CellGeometrySpec, /) -> CellGeometrySpec:
+    def from_stored_fields(
+        cls,
+        value: CellGeometrySpec,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> CellGeometrySpec:
         return cls(
             dict(zip(value.block_names, value.elements, strict=True)),
             dict(zip(value.block_names, value.geometry_dofs, strict=True)),
@@ -2732,6 +3231,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             restriction_source=value.restriction_source,
             exact_source=value.exact_source,
             periodic_source=value.periodic_source,
+            budget=budget,
         )
 
     @checked
@@ -2917,10 +3417,32 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         elif self.exact_source is not None:
             bank = self.exact_source.prepare(self.coordinates, budget=budget).vertices
         else:
-            bank = tuple(
-                tuple(Fraction(float(value)) for value in row)
-                for row in np.asarray(jax.device_get(self.coordinates), dtype=np.float64)
-            )
+            with budget.live_storage() as cache_storage:
+                cache_storage.set_bound(_coordinate_source_cache_storage_bound(0))
+                scalars: dict[str, Fraction] = {}
+
+                def exact_binary64(value: np.float64) -> Fraction:
+                    numeric = float(value)
+                    # Preserve every binary64 input's representation, including
+                    # signed zero. Only the newly computed numerical operands
+                    # share owners; the live source identity remains unchanged.
+                    key = numeric.hex()
+                    cached = scalars.get(key)
+                    if cached is None:
+                        cache_storage.set_bound(
+                            _coordinate_source_cache_storage_bound(len(scalars) + 1)
+                        )
+                        cached = Fraction(numeric)
+                        scalars[key] = cached
+                    return cached
+
+                bank = tuple(
+                    tuple(exact_binary64(value) for value in row)
+                    for row in np.asarray(jax.device_get(self.coordinates), dtype=np.float64)
+                )
+                # No cache or closure survives its admitted construction
+                # workspace. The complete returned bank owns the exact values.
+                del exact_binary64, scalars
         if indices is None:
             return bank
         route = np.asarray(indices)
@@ -3668,7 +4190,7 @@ def prepared_published_affine_root_bank(
         tuple(Fraction(float(value)) for value in values[row])
         for row in range(values.shape[0])
     )
-    budget.retain_basis((key, bank))
+    budget.retain_basis((key, bank), operand=True, _kernel_operands=True)
     budget.source_bank_cache[key] = bank
     return bank
 
@@ -3684,7 +4206,18 @@ def _require_affine_root_publication(
                 PolynomialComposedCellGeometryElement()
                 | RationalComposedCellGeometryElement() as simplex
             ):
-                require_full_p1_source(simplex.source_element)
+                # Repeated nested actions (bisection charts, unrounded level-set
+                # roots) compose rational charts over one P1 root owner.
+                root = simplex.source_element
+                while isinstance(
+                    root,
+                    (
+                        PolynomialComposedCellGeometryElement,
+                        RationalComposedCellGeometryElement,
+                    ),
+                ):
+                    root = root.source_element
+                require_full_p1_source(root)
             case _:
                 raise ValueError(
                     "CellGeometryRestrictionSource.carrier_publication must use affine simplex maps for published_affine_roots; got non-affine source cells"
@@ -3704,6 +4237,14 @@ def require_published_affine_carrier(
     budget: CoordinateEnclosureBudget,
 ) -> None:
     """Verify retained root bytes and once-rounded ideal affine descendant images."""
+    # Predecessor keys, validity, audit and embedding each resolve this carrier
+    # within one request. Reuse only the completed check, bound to the full live
+    # geometry and mesh banks by the canonical scope identity.
+    with budget.temporary_scope():
+        budget.reserve(0, 4096)
+        key = coordinate_scope_key(mesh, geometry)
+        if key in budget.published_affine_carrier_cache:
+            return
     restriction = geometry.restriction_source
     if restriction is None or restriction.carrier_geometry is None:
         raise ValueError(
@@ -3721,6 +4262,29 @@ def require_published_affine_carrier(
     root_values = np.asarray(publication.coordinates, dtype=np.float64)
     carrier = np.asarray(mesh.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    carrier_bits = carrier.view(np.uint64)
+    root_bits = root_values.view(np.uint64)
+    dimension = carrier.shape[1]
+    images = budget.coordinate_vertex_image_cache.get(
+        coordinate_scope_key(mesh, publication)
+    )
+    rounded_images: np.ndarray | None = None
+    rounded_bits: np.ndarray | None = None
+    available: np.ndarray | None = None
+    if images is not None:
+        if len(images) != carrier.shape[0]:
+            raise ValueError(
+                "CellGeometrySpec.carrier_geometry images must bind the complete current vertex bank."
+            )
+        # The target factory already evaluated these exact publication maps.
+        # Admit the real global rounding bank, then perform each RNE conversion
+        # once instead of re-expanding every incident root operation.
+        budget.reserve(
+            0, 4096 + (32 + 16 * dimension) * len(images)
+        )
+        rounded_images = np.empty(carrier.shape, dtype=np.float64)
+        rounded_bits = rounded_images.view(np.uint64)
+        available = np.zeros((len(images),), dtype=np.bool_)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         width = element.local_dof_count
         weights = coordinate_enclosure_owner.coordinate_corner_images(
@@ -3736,99 +4300,246 @@ def require_published_affine_carrier(
                 "CellGeometrySpec.carrier_geometry.elements must expose their rational affine corner actions; got unsupported basis"
             )
         root_ids = np.asarray(origin.block_parent_vertex_ids[block.name], dtype=np.int64)
-        for row, (vertices, coefficients) in enumerate(
-            zip(np.asarray(block.vertices), np.asarray(route), strict=True)
+        vertices = np.asarray(block.vertices, dtype=np.int64)
+        coefficients = np.asarray(route, dtype=np.int64)
+        if coefficients.shape != (vertices.shape[0], width) or vertices.shape[1] != len(
+            weights
         ):
-            images = coordinate_enclosure_owner.coordinate_corner_images(
-                element, tuple(bank[int(index)] for index in coefficients), budget=budget
+            raise ValueError(
+                "coordinate_enclosure.coefficients must include every source degree of freedom; got unequal row count."
             )
-            if images is None:
-                raise ValueError(
-                    "CellGeometrySpec.carrier_geometry.elements must expose their rational affine corner images; got unsupported basis"
-                )
-            for corner, (vertex, image) in enumerate(zip(vertices, images, strict=True)):
-                support = tuple(
-                    index for index, weight in enumerate(weights[corner]) if weight
-                )
-                root = (
-                    len(support) == 1
-                    and weights[corner][support[0]] == 1
-                    and vertex_ids[vertex] == root_ids[row, support[0]]
-                )
-                expected = (
-                    root_values[coefficients[support[0]]]
-                    if root
-                    else np.asarray(
-                        coordinate_enclosure_owner.rounded_point(image), dtype=np.float64
-                    )
-                )
-                if not np.array_equal(
-                    carrier[vertex].view(np.uint64), expected.view(np.uint64)
-                ):
+        with budget.temporary_scope():
+            # One pass over every routed corner. Each distinct descendant
+            # operation (corner action, routed root rows) is evaluated and
+            # rounded once; every incidence compares its carrier bytes.
+            budget.reserve(
+                vertices.size + coefficients.size,
+                1024 + 64 * vertices.size + 16 * coefficients.size,
+            )
+            for corner, row in enumerate(weights):
+                support = tuple(index for index, weight in enumerate(row) if weight)
+                column = vertices[:, corner]
+                if images is not None and any(images[int(vertex)] is None for vertex in column):
                     raise ValueError(
-                        f"CellGeometrySpec.carrier_geometry must reproduce retained root bytes and rounded ideal descendants; got vertex={int(vertex_ids[vertex])}"
+                        "CellGeometrySpec.carrier_geometry images must include every routed corner."
                     )
+                root = np.zeros(column.shape, dtype=np.bool_)
+                if len(support) == 1 and row[support[0]] == 1:
+                    root = vertex_ids[column] == root_ids[:, support[0]]
+                    mismatch = ~np.all(
+                        carrier_bits[column[root]]
+                        == root_bits[coefficients[root, support[0]]],
+                        axis=1,
+                    )
+                    if np.any(mismatch):
+                        raise ValueError(
+                            f"CellGeometrySpec.carrier_geometry must reproduce retained root bytes and rounded ideal descendants; got vertex={int(vertex_ids[column[root][mismatch][0]])}"
+                        )
+                descendant = ~root
+                if not np.any(descendant):
+                    continue
+                if rounded_images is not None:
+                    assert available is not None and images is not None and rounded_bits is not None
+                    for vertex in column[descendant].tolist():
+                        if available[vertex]:
+                            continue
+                        image = images[vertex]
+                        if image is None or len(image) != dimension:
+                            raise ValueError(
+                                "CellGeometrySpec.carrier_geometry images must retain every routed ambient coordinate."
+                            )
+                        budget.reserve(dimension + 1)
+                        rounded_images[vertex] = coordinate_enclosure_owner.rounded_point(image)
+                        available[vertex] = True
+                    mismatch = ~np.all(
+                        carrier_bits[column[descendant]]
+                        == rounded_bits[column[descendant]],
+                        axis=1,
+                    )
+                    if np.any(mismatch):
+                        raise ValueError(
+                            f"CellGeometrySpec.carrier_geometry must reproduce retained root bytes and rounded ideal descendants; got vertex={int(vertex_ids[column[descendant][mismatch][0]])}"
+                        )
+                    continue
+                operations, inverse = np.unique(
+                    coefficients[descendant][:, list(support)],
+                    axis=0,
+                    return_inverse=True,
+                )
+                budget.reserve(
+                    dimension * len(support) * operations.shape[0],
+                    256 + (512 + 64 * dimension) * operations.shape[0],
+                )
+                rounded = np.asarray(
+                    [
+                        coordinate_enclosure_owner.rounded_point(
+                            tuple(
+                                sum(
+                                    (
+                                        row[node] * bank[index][axis]
+                                        for node, index in zip(
+                                            support, indices, strict=True
+                                        )
+                                    ),
+                                    Fraction(0),
+                                )
+                                for axis in range(dimension)
+                            )
+                        )
+                        for indices in operations.tolist()
+                    ],
+                    dtype=np.float64,
+                ).reshape((-1, dimension))
+                mismatch = ~np.all(
+                    carrier_bits[column[descendant]]
+                    == rounded.view(np.uint64)[inverse.reshape(-1)],
+                    axis=1,
+                )
+                if np.any(mismatch):
+                    raise ValueError(
+                        f"CellGeometrySpec.carrier_geometry must reproduce retained root bytes and rounded ideal descendants; got vertex={int(vertex_ids[column[descendant][mismatch][0]])}"
+                    )
+    budget.retain_basis((key,))
+    budget.published_affine_carrier_cache.add(key)
 
 
-def _require_exact_plc_carrier(
-    geometry: CellGeometrySpec,
-    mesh: cell_mesh_owner.CellMesh,
-    elements: tuple[CellGeometryElement, ...],
-    routes: tuple[Array, ...],
-    /,
-    *,
-    budget: CoordinateEnclosureBudget,
-) -> None:
+def _cardinal_corner_nodes(
+    element: CellGeometryElement, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[int, ...] | None:
+    """Coefficient row whose value is each reference-corner image, if all are nodal.
+
+    A unit cardinal weight row ``((node, 1),)`` is the canonical rule by which
+    exact corner preparation returns ``coefficients[node]`` itself. The rows are
+    the request's shared corner-weight preparation, keyed as the image owner keys it.
+    """
+    key = coordinate_enclosure_owner.element_identity(element, budget=budget)
+    prepared = budget.corner_weight_cache.get(key)
+    if prepared is None:
+        prepared = coordinate_enclosure_owner._prepare_coordinate_corner_weights(
+            element, budget=budget
+        )
+        if prepared is None:
+            return None
+        budget.corner_weight_cache[key] = prepared
+    _, weights = prepared
+    if not weights or not all(len(row) == 1 and row[0][1] == 1 for row in weights):
+        return None
+    return tuple(row[0][0] for row in weights)
+
+
+def _require_exact_plc_carrier(geometry: CellGeometrySpec,
+mesh: cell_mesh_owner.CellMesh,
+elements: tuple[CellGeometryElement, ...],
+routes: tuple[Array, ...],
+/,
+*,
+budget: CoordinateEnclosureBudget,) -> None:
     """Bind each carrier corner to the retained P1 coefficient law."""
-    restriction = geometry.restriction_source
-    if (
-        restriction is not None
-        and restriction.carrier_publication == "published_affine_roots"
-    ):
-        coordinate_enclosure_owner.prepared_coordinate_source_bank(
+    with budget.temporary_scope():
+        # Resolution may be requested by quality, validity, audit and embedding in
+        # one publication. Reuse only the completed source/carrier proof, bound to
+        # the full live geometry and mesh banks by the canonical scope identity.
+        with budget.temporary_scope():
+            budget.reserve(0, 4096)
+            key = coordinate_scope_key(mesh, geometry)
+            if key in budget.plc_carrier_binding_cache:
+                return
+        restriction = geometry.restriction_source
+        if (
+            restriction is not None
+            and restriction.carrier_publication == "published_affine_roots"
+        ):
+            coordinate_enclosure_owner.prepared_coordinate_source_bank(
+                geometry, budget=budget
+            )
+            require_published_affine_carrier(geometry, mesh, budget=budget)
+            budget.retain_basis((key,))
+            budget.plc_carrier_binding_cache.add(key)
+            return
+    
+        bank = coordinate_enclosure_owner.prepared_coordinate_source_bank(
             geometry, budget=budget
         )
-        require_published_affine_carrier(geometry, mesh, budget=budget)
-        return
-
-    bank = coordinate_enclosure_owner.prepared_coordinate_source_bank(
-        geometry, budget=budget
-    )
-    carrier = np.asarray(mesh.coordinates, dtype=np.float64)
-    approved_carrier = np.asarray(geometry.coordinates, dtype=np.float64)
-    publication_bank = bank
-    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-        for vertices, coefficients in zip(
-            np.asarray(block.vertices), np.asarray(route), strict=True
-        ):
-            images = coordinate_enclosure_owner.coordinate_corner_images(
-                element,
-                tuple(publication_bank[int(index)] for index in coefficients),
-                budget=budget,
-            )
-            if images is None:
-                raise ValueError(
-                    "require_exact_plc_carrier.inputs must provide their P1 source law; got incompatible inputs."
+        carrier = np.asarray(mesh.coordinates, dtype=np.float64)
+        approved_carrier = np.asarray(geometry.coordinates, dtype=np.float64)
+        carrier_bits = carrier.view(np.uint64)
+        approved_bits = approved_carrier.view(np.uint64)
+        publication_bank = bank
+        retained_rows = min(len(bank), approved_bits.shape[0], carrier_bits.shape[0])
+        budget.reserve(0, 256 + 2 * retained_rows)
+        checked_vertices = np.zeros(retained_rows, dtype=np.bool_)
+        matching_vertices = np.zeros(retained_rows, dtype=np.bool_)
+        identity_corners = len(bank) == carrier.shape[0] == retained_rows
+        for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+            cell_vertices = np.asarray(block.vertices)
+            cell_coefficients = np.asarray(route)
+            pending: Sequence[int] = range(cell_vertices.shape[0])
+            nodes = _cardinal_corner_nodes(element, budget=budget)
+            if (
+                nodes is not None
+                and retained_rows > 0
+                and cell_vertices.ndim == 2
+                and cell_vertices.shape[1] == len(nodes)
+                and cell_coefficients.shape
+                == (cell_vertices.shape[0], element.local_dof_count)
+            ):
+                # Check each actual source/carrier vertex image once, then share
+                # that equality across its incidences. Every corner route is
+                # still checked; a foreign coefficient row takes the full rule.
+                budget.reserve(0, 1024 + 64 * cell_vertices.size)
+                retained = (cell_coefficients[:, list(nodes)] == cell_vertices) & (
+                    cell_vertices < retained_rows
                 )
-            for vertex, image in zip(vertices, images, strict=True):
-                if (
-                    vertex < len(bank)
-                    and image == bank[int(vertex)]
-                    and np.array_equal(
-                        carrier[vertex].view(np.uint64),
-                        approved_carrier[vertex].view(np.uint64),
-                    )
-                ):
-                    continue
-                if not np.array_equal(
-                    carrier[vertex].view(np.uint64),
-                    np.asarray(
-                        coordinate_enclosure_owner.rounded_point(image), dtype=np.float64
-                    ).view(np.uint64),
-                ):
+                fresh = np.unique(cell_vertices[retained])
+                fresh = fresh[~checked_vertices[fresh]]
+                budget.reserve(
+                    fresh.size, 256 + fresh.size * 17 * carrier_bits.shape[1]
+                )
+                matching_vertices[fresh] = np.all(
+                    carrier_bits[fresh] == approved_bits[fresh], axis=-1
+                )
+                checked_vertices[fresh] = True
+                indices = np.where(retained, cell_vertices, 0)
+                retained &= matching_vertices[indices]
+                pending = np.flatnonzero(~np.all(retained, axis=1)).tolist()
+            identity_corners = identity_corners and not pending
+            for row in pending:
+                vertices, coefficients = cell_vertices[row], cell_coefficients[row]
+                images = coordinate_enclosure_owner.coordinate_corner_images(
+                    element,
+                    tuple(publication_bank[int(index)] for index in coefficients),
+                    budget=budget,
+                )
+                if images is None:
                     raise ValueError(
-                        "CellGeometrySpec.resolve.inputs must match the bound mesh; got incompatible inputs."
+                        "require_exact_plc_carrier.inputs must provide their P1 source law; got incompatible inputs."
                     )
+                for vertex, image in zip(vertices, images, strict=True):
+                    if (
+                        vertex < len(bank)
+                        and image == bank[int(vertex)]
+                        and np.array_equal(
+                            carrier[vertex].view(np.uint64),
+                            approved_carrier[vertex].view(np.uint64),
+                        )
+                    ):
+                        continue
+                    if not np.array_equal(
+                        carrier[vertex].view(np.uint64),
+                        np.asarray(
+                            coordinate_enclosure_owner.rounded_point(image), dtype=np.float64
+                        ).view(np.uint64),
+                    ):
+                        raise ValueError(
+                            "CellGeometrySpec.resolve.inputs must match the bound mesh; got incompatible inputs."
+                        )
+        budget.retain_basis((key,))
+        budget.plc_carrier_binding_cache.add(key)
+        if identity_corners and bool(np.all(checked_vertices)):
+            # Every corner selects its own exact source row, and every mesh
+            # vertex was admitted above. This is a source-bank image proof,
+            # not a rounded-coordinate equality shortcut.
+            budget.plc_identity_corner_cache.add(key)
 
 
 @jax.jit
@@ -3870,6 +4581,22 @@ def _logical_routed_values_equal(
     table: Array, rows: Array, identifiers: Array, routes: Array
 ) -> Array:
     return _logical_values_equal(table[rows], identifiers[routes])
+
+
+@jax.jit
+def _logical_selected_rows(tables: tuple[Array, ...], rows: Array) -> tuple[Array, ...]:
+    """Gather only the admitted local rows in one numerical dispatch."""
+    return tuple(table[rows] for table in tables)
+
+
+@jax.jit
+def _logical_identity_action_values(
+    counts: Array, rows: Array, maximum_depth: int
+) -> Array:
+    depths = counts[rows]
+    return jnp.stack(
+        (jnp.all((depths >= 0) & (depths <= maximum_depth)), jnp.all(depths == 0))
+    )
 
 
 def _require_logical_selection_equal(
@@ -3980,11 +4707,39 @@ def _require_logical_actions(
     stored: Array,
     counts: Array,
     cell_count: int,
+    rows: Array,
     /,
 ) -> None:
     """Authenticate one composed chart against every retained raw source path."""
-    weights, depths = np.asarray(stored), np.asarray(counts)
     width = root.local_dof_count
+    if (
+        element is root
+        and stored.ndim == 4
+        and stored.shape[0] > 0
+        and stored.shape[2:] == (width, width)
+        and stored.dtype == np.float64
+        and counts.ndim == 1
+        and counts.shape[0] > 0
+        and counts.dtype == np.int32
+        and rows.shape == (cell_count,)
+    ):
+        # Identity paths authenticate the complete layout and every selected
+        # count, but never inspect unused weights. Do not materialize that
+        # potentially deep local stack merely to prove its zero action depth.
+        valid, identity = jax.device_get(
+            _logical_identity_action_values(counts, rows, stored.shape[1])
+        )
+        if not bool(valid):
+            raise ValueError(
+                "geometry.action_stack must retain its cell, source, and depth axes; "
+                "got incompatible weights or counts"
+            )
+        if not bool(identity):
+            raise ValueError(
+                "CellGeometrySpec.logical_values must match logical identity action depth; got different local values."
+            )
+        return
+    weights, depths = jax.device_get(_logical_selected_rows((stored, counts), rows))
     if (
         weights.ndim != 4
         or weights.shape[0] != cell_count
@@ -4095,7 +4850,7 @@ def _require_logical_geometry_block(
         )
     root, matrix, offset = _logical_source_basis(
         element,
-        required(f"geometry/source_basis/{bank}")[cell_rows],
+        _logical_selected_rows((required(f"geometry/source_basis/{bank}"),), cell_rows)[0],
         block.topological_dimension,
     )
     action_name = f"geometry/action_weights/{bank}"
@@ -4109,9 +4864,10 @@ def _require_logical_geometry_block(
             _require_logical_actions(
                 element,
                 root,
-                required(action_name)[cell_rows],
-                required(count_name)[cell_rows],
+                required(action_name),
+                required(count_name),
                 block.cell_count,
+                cell_rows,
             )
         case CellVertexGeometryElement():
             pass
@@ -4573,6 +5329,69 @@ def require_storage_geometry(
             raise ValueError(
                 "require_storage_geometry.inputs must match its coordinate routes; got incompatible inputs."
             )
+
+
+def affine_geometry_construction_bounds(
+    vertex_count: int,
+    ambient_dimension: int,
+    blocks: Sequence[tuple[str, int, int]],
+    /,
+) -> int:
+    """Return the temporary bytes admitting ``CellGeometrySpec.affine``.
+
+    ``blocks`` holds each mesh block's ``(cell_kind, cell_count, arity)``;
+    the bound holds with or without periodic topology or storage. Every
+    block's element stays live until the spec is built (256 bytes per Python
+    entry). The constructor holds host copies of coordinates and routes (``16 V d + 8 K``, a second copy covering float32 device
+    coordinates) with one finiteness mask, two route masks, one route
+    fingerprint copy or one rebuilt expected element and host block-row
+    comparison (``5 K``) at a time; a coordinate-lattice cache miss holds its
+    tables and declared preparation bytes. Hashing streams; device copies of
+    retained arrays are not counted.
+    """
+    vertices = int(vertex_count)
+    ambient = positive_integer(ambient_dimension, "ambient_dimension")
+    shapes = tuple((str(kind), int(count), int(arity)) for kind, count, arity in blocks)
+    # A zero-resident storage view has no local vertices or blocks.
+    if vertices < 0 or any(count < 0 or arity < 1 for _, count, arity in shapes):
+        raise ValueError(
+            f"affine_geometry_construction_bounds.counts must be nonnegative with positive arities; got {(vertices, shapes)}."
+        )
+    entry = 256
+    points = vertices * ambient
+    corners = sum(count * arity for _, count, arity in shapes)
+    elements = 0
+    largest = 0
+    preparation = 0
+    prepared: set[str] = set()
+    for kind, _, _ in shapes:
+        if kind in ("polygon", "polyhedron"):
+            element = 4096
+        else:
+            topology = reference_cell_owner.reference_cell_topology(kind)
+            local = len(topology.vertices)
+            entities = sum(len(level) for level in topology.entities)
+            element = entry * (entities + 2 * local) + 4096
+            if kind not in prepared:
+                prepared.add(kind)
+                miss_bytes = (
+                    entry * (local * topology.dimension + 3 * entities + local)
+                    + 8 * local * local
+                )
+                if kind not in ("interval", "quadrilateral", "hexahedron") and not (
+                    kind.startswith("tensor:")
+                ):
+                    miss_bytes += coordinate_enclosure_owner.coordinate_lattice_estimate(
+                        kind, 1
+                    ).bytes_upper
+                preparation = max(preparation, miss_bytes)
+        elements += element
+        largest = max(largest, element)
+    return (
+        elements
+        + max(preparation, 17 * points + 13 * corners + largest)
+        + (1 << 20)
+    )
 
 
 __all__ = [

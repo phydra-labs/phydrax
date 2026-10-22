@@ -30,8 +30,10 @@ from jax import Array
 from jax.core import Tracer
 from jax.typing import ArrayLike
 
+import phydrax.geometry.brep._analytic_carrier_closest as analytic_carrier_closest_owner
 import phydrax.geometry.brep._analytic_cylinder_closest as analytic_cylinder_closest_owner
 import phydrax.geometry.brep._analytic_disk_closest as analytic_disk_closest_owner
+import phydrax.geometry.brep._analytic_edge_closest as analytic_edge_closest_owner
 import phydrax.geometry.brep._analytic_source_regions as analytic_source_regions_owner
 import phydrax.geometry.brep._placement as placement_owner
 import phydrax.geometry.brep._stationary_isolation as stationary_isolation_owner
@@ -1687,36 +1689,103 @@ def certified_edge_query(
         )
     # This certified host boundary normalizes dynamic range leaves once.
     first_host, last_host = float(edge.first), float(edge.last)
-    hit = _project_edge(edge, points, tol)
     curve = edge.curve
     if curve is None:
-        return hit
-    host_points = np.asarray(points)
-    parameters = np.array(hit.parameter, dtype=np.float64)
-    distances = np.array(hit.distance, dtype=np.float64)
-    lower_bounds = np.array(hit.lower_bound, dtype=np.float64)
-    parameter_bounds = np.array(hit.parameter_bound, dtype=np.float64)
-    analytic_bounds = _host_edge_carrier_lower(edge, host_points, float(tol.scale))
-    evaluator = _CurvePointEvaluator(curve=curve)
-    point_plan = prepare_curve_host(evaluator, batch_capacity=1, budget=budget)
-    box = (
-        curve.bounding_box(
-            first_host,
-            last_host,
-            endpoint_roots=endpoint_roots,
-            preparations=preparations,
-            budget=budget,
-        )
-        if isinstance(curve, IntersectionCurve)
-        else curve.bounding_box(
-            first_host,
-            last_host,
-            preparations=preparations,
-            budget=budget,
-        )
+        return _project_edge(edge, points, tol)
+    hit = _project_edge(edge, points, tol)
+    # Padded or repeated queries are certified once and scattered back.
+    _, representatives, inverse = np.unique(
+        np.asarray(points, dtype=np.float64),
+        axis=0,
+        return_index=True,
+        return_inverse=True,
     )
-    source_box = np.asarray(box)
-    for row, point in enumerate(host_points):
+    inverse = inverse.reshape(-1)
+    host_points = np.asarray(points, dtype=np.float64)[representatives]
+    parameters = np.array(hit.parameter, dtype=np.float64)[representatives]
+    distances = np.array(hit.distance, dtype=np.float64)[representatives]
+    lower_bounds = np.array(hit.lower_bound, dtype=np.float64)[representatives]
+    parameter_bounds = np.array(hit.parameter_bound, dtype=np.float64)[representatives]
+    evaluator = _CurvePointEvaluator(curve=curve)
+    pending = np.ones((host_points.shape[0],), dtype=np.bool_)
+    carriers = analytic_edge_closest_owner.edge_carriers(curve)
+    if carriers is not None and isinstance(curve, IntersectionCurve):
+        # Any arc end is a candidate; a whole closed branch has none.
+        whole = (
+            edge.closed
+            and curve.closed
+            and last_host - first_host == float(curve.num_charts)
+        )
+        end_boxes = (
+            np.zeros((0, 2, 3), dtype=np.float64)
+            if whole
+            else np.stack(
+                [
+                    np.asarray(
+                        curve.bounding_box(
+                            parameter,
+                            parameter,
+                            endpoint_roots=endpoint_roots,
+                            preparations=preparations,
+                            budget=budget,
+                        ),
+                        dtype=np.float64,
+                    )
+                    for parameter in (first_host, last_host)
+                ]
+            )
+        )
+        certified = analytic_edge_closest_owner.edge_distance_lower_bounds(
+            carriers,
+            host_points,
+            np.asarray(hit.point, dtype=np.float64)[representatives],
+            distances,
+            float(tol.distance),
+            end_boxes=end_boxes,
+            maximum_boxes=policy.maximum_subdivisions,
+            maximum_depth=policy.maximum_depth,
+            budget=budget,
+        )
+        lower_bounds = np.where(certified.decided, certified.lower, lower_bounds)
+        pending = ~certified.decided
+        decided = np.flatnonzero(certified.decided)
+        if decided.size:
+            # The traced proposal bounds coupled parameters by whole chart
+            # boxes; decided rows take the concrete host chart enclosure.
+            parameter_bounds[decided] = np.asarray(
+                curve.evaluate(
+                    jnp.asarray(parameters[decided], dtype=jnp.float64),
+                    preparations=preparations,
+                    budget=budget,
+                ).parameter_bound,
+                dtype=np.float64,
+            )
+    fallback = np.flatnonzero(pending)
+    if fallback.size:
+        point_plan = prepare_curve_host(evaluator, batch_capacity=1, budget=budget)
+        analytic_bounds = _host_edge_carrier_lower(edge, host_points, float(tol.scale))
+        box = (
+            curve.bounding_box(
+                first_host,
+                last_host,
+                endpoint_roots=endpoint_roots,
+                preparations=preparations,
+                budget=budget,
+            )
+            if isinstance(curve, IntersectionCurve)
+            else curve.bounding_box(
+                first_host,
+                last_host,
+                preparations=preparations,
+                budget=budget,
+            )
+        )
+        source_box = np.asarray(box)
+    else:
+        point_plan, analytic_bounds, source_box = None, lower_bounds, lower_bounds
+    for row in fallback:
+        assert point_plan is not None
+        point = host_points[row]
         analytic = float(analytic_bounds[row])
         queue: list[_EdgeIntervalEntry] = []
         lower = max(
@@ -1795,25 +1864,23 @@ def certified_edge_query(
                     jnp.asarray(parameters[row], dtype=jnp.float64)
                 ).parameter_bound
             )
-    values = jnp.asarray(parameters, dtype=jnp.float64)
     host_projected, host_tangent = curve_value_and_derivative_host(evaluator, parameters)
-    projected, tangent = jnp.asarray(host_projected), jnp.asarray(host_tangent)
     unresolved = (
         (distances - lower_bounds > tol.distance)
         | (parameter_bounds > tol.parametric)
         | ~np.isfinite(parameter_bounds)
-    )
+    )[inverse]
     return EdgeHit(
-        point=projected,
-        parameter=values,
-        distance=jnp.asarray(distances),
+        point=jnp.asarray(host_projected[inverse]),
+        parameter=jnp.asarray(parameters[inverse], dtype=jnp.float64),
+        distance=jnp.asarray(distances[inverse]),
         status=jnp.where(jnp.asarray(unresolved), _FAILED, hit.proposal_status).astype(
             jnp.int8
         ),
-        tangent=tangent,
-        lower_bound=jnp.asarray(lower_bounds),
+        tangent=jnp.asarray(host_tangent[inverse]),
+        lower_bound=jnp.asarray(lower_bounds[inverse]),
         unresolved=jnp.asarray(unresolved),
-        parameter_bound=jnp.asarray(parameter_bounds),
+        parameter_bound=jnp.asarray(parameter_bounds[inverse]),
         proposal_status=hit.proposal_status,
     )
 
@@ -2081,6 +2148,7 @@ def _prepare_face(
         patch,
         tolerance=float(np.max(box[1] - box[0])) / resolution,
         budget=budget,
+        preparations=preparations,
     )
     coedges = tuple(c for loop in geometry.face_loops[face] for c in loop)
     edges = tuple(geometry.coedge_edges[c] for c in coedges)
@@ -2175,7 +2243,11 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[PreparedBRepQuery], value: PreparedBRepQuery, /
+        cls: type[PreparedBRepQuery],
+        value: PreparedBRepQuery,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PreparedBRepQuery:
         """Rebuild prepared query data through its source and policy preparation."""
         rebuilt = cls(
@@ -2183,6 +2255,7 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
             value.policy,
             value.projection_policy,
             certify_on_host=value.certify_on_host,
+            budget=budget,
         )
         if (
             rebuilt.query_id != value.query_id
@@ -2875,6 +2948,78 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
             hits.append(hit)
         return self._merge_analytic_closest(hits)
 
+    def _carrier_closest(
+        self,
+        points: np.ndarray,
+        faces: tuple[int, ...],
+        budget: BRepQueryBudget,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None,
+        coordinate_budget: CoordinateEnclosureBudget,
+    ) -> tuple[BRepSurfaceQueryResult, np.ndarray] | None:
+        """Certify interior minimizers of analytic faces from their exact carriers.
+
+        Returns the merged result and the rows that still need stationary-root
+        isolation, or ``None`` when a selected face has no closed-form carrier.
+        Every row is charged as one dispatch plus its executed face and trim work;
+        only decided rows are charged as completed points here.
+        """
+        if not all(
+            analytic_carrier_closest_owner.carrier_supported(self.model.patches[face])
+            for face in faces
+        ):
+            return None
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        source_bytes = 4096 * (len(faces) + self.face_bvh.node_count)
+        per_point = 1024 * (1 + len(faces))
+        chunk_size = self._query_chunk_size(
+            budget, source_bytes + 16384, per_point_bytes=per_point
+        )
+        merged, pending = [], []
+        for start in range(0, len(points), chunk_size):
+            chunk = points[start : start + chunk_size]
+            budget.admit(
+                len(chunk) * (1 + len(faces)),
+                len(chunk),
+                source_bytes
+                + len(faces)
+                * analytic_carrier_closest_owner.carrier_workspace_bytes(len(chunk)),
+            )
+            hits = []
+            for face in faces:
+                hit = analytic_carrier_closest_owner.closest_carrier_face(
+                    self.model,
+                    face,
+                    self.faces[face],
+                    chunk,
+                    self.tolerances,
+                    maximum_depth=self.policy.maximum_depth,
+                    preparations=preparations,
+                    coordinate_budget=coordinate_budget,
+                )
+                if hit is None:
+                    raise RuntimeError(
+                        "PreparedBRepQuery.carrier_source must retain its admitted analytic carrier; "
+                        f"got unsupported face {face}."
+                    )
+                hits.append(hit)
+            result = self._merge_analytic_closest(hits)
+            unresolved = np.asarray(result.unresolved, dtype=np.bool_)
+            budget.consume(
+                len(chunk) + int(np.sum(np.asarray(result.query_operations))),
+                points=int(np.count_nonzero(~unresolved)),
+            )
+            merged.append(result)
+            pending.append(unresolved)
+        result = (
+            merged[0]
+            if len(merged) == 1
+            else jax.tree.map(lambda *values: jnp.concatenate(values), *merged)
+        )
+        return result, np.concatenate(pending)
+
     def _merge_analytic_closest(
         self, hits: list[AnalyticClosestBatch], /
     ) -> BRepSurfaceQueryResult:
@@ -2988,6 +3133,7 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
             )
         host = self.certify_on_host and not isinstance(points, Tracer)
         prepared = None
+        carrier: tuple[BRepSurfaceQueryResult, np.ndarray] | None = None
         if host:
             if budget is None:
                 budget = BRepQueryBudget(
@@ -3005,6 +3151,20 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
                 if affine_preparation is None
                 else affine_preparation[0]
             )
+            if prepared is None:
+                carrier = self._carrier_closest(
+                    np.asarray(points),
+                    faces,
+                    budget,
+                    preparations=preparations,
+                    coordinate_budget=coordinate_budget,
+                )
+                if carrier is not None:
+                    if not np.any(carrier[1]):
+                        return carrier[0]
+                    # Only rows without a certified carrier decision continue
+                    # to stationary-root isolation.
+                    points = jnp.asarray(np.asarray(points)[carrier[1]])
             edges = len(
                 {edge for face in faces for edge in self.faces[face].coedge_edges}
             )
@@ -3097,9 +3257,25 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
             )
         # Closest-point refinement is traced; interval certification and its host
         # coordinate accounting happen afterwards in `_certify_definition`.
-        result = _compiled_closest_chunks(
-            self, points, faces, min(self.policy.chunk_size, points.shape[0])
-        )
+        count = points.shape[0]
+        if carrier is None:
+            result = _compiled_closest_chunks(
+                self, points, faces, min(self.policy.chunk_size, count)
+            )
+        else:
+            # Power-of-two padding bounds recompilation across residual subsets.
+            padded = 1 << max(0, (count - 1).bit_length())
+            result = jax.tree.map(
+                lambda value: value[:count],
+                _compiled_closest_chunks(
+                    self,
+                    jnp.concatenate(
+                        (points, jnp.broadcast_to(points[:1], (padded - count, 3)))
+                    ),
+                    faces,
+                    min(self.policy.chunk_size, padded),
+                ),
+            )
         if not host:
             return result
         result = self._certify_definition(
@@ -3115,6 +3291,11 @@ class PreparedBRepQuery(StrictModule, NonTrainableState):
             budget.consume(
                 int(np.sum(np.asarray(result.query_operations))) - points.shape[0],
                 subdivisions=refinements,
+            )
+        if carrier is not None:
+            rows = jnp.asarray(np.flatnonzero(carrier[1]))
+            result = jax.tree.map(
+                lambda whole, part: whole.at[rows].set(part), carrier[0], result
             )
         return result
 

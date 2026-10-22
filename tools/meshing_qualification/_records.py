@@ -1,35 +1,64 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 from collections.abc import Mapping
-from typing import Any, final
+from dataclasses import replace
+from subprocess import TimeoutExpired
+from typing import Any, assert_never, final
 
 import equinox as eqx
 
 import phydrax as phx
 from phydrax import canonical_fingerprint
 from phydrax._meshcore import MeshcoreError
-from phydrax.meshing import BisectionCompatibility, NativeMeshingPhaseMeasurement
+from phydrax.meshing import (
+    BisectionCompatibility,
+    MeshcoreStatus,
+    NativeMeshingPhaseMeasurement,
+)
+from phydrax.meshing._measurements import (
+    native_publication_resource_binding,
+    NATIVE_RUNTIME_MEASUREMENT_REQUIREMENTS,
+    validate_native_execution_interchange,
+)
+from phydrax.typing import parse
 from tools._meshing_cases import (
     CORPUS,
     corpus_identity,
+    frozen_request_record,
     load_cad_fixture,
     load_corpus_registration,
     load_curved_periodic_source_registration,
     meshing_case,
     POLYHEDRAL_CASE_NAMES,
     polyhedral_identity,
+    prepare_polyhedral_case,
 )
 from tools.meshing_qualification._controls import (
     _cad_qualification_requirements,
     _corpus_contract_choices,
     _family_qualification_requirements,
     _hybrid_qualification_requirements,
+    _periodic_qualification_profile_contracts,
     _periodic_qualification_requirements,
     _surface_qualification_requirements,
-    CORPUS_SCENARIO_WORKFLOWS,
+    authored_resource_envelope,
+    CAD_CASES,
+    CadCase,
+    CORPUS_SCENARIOS,
+    DESIGN_CASES,
+    IMAGE_CASES,
+    IMPLICIT_CASES,
+    meshing_limit_values,
+    MeshingLimitControls,
+    OVERSET_PROFILES,
     QualificationControls,
+    RECONSTRUCTION_CASES,
     SCENARIO_WORKFLOWS,
+    with_meshing_limits,
 )
 from tools.meshing_qualification._runtime import qualification_failure
 
@@ -94,9 +123,25 @@ class FailureRecord(phx.StrictModule):
         return record
 
 
-def record_failure(record: dict[str, Any], failure: Exception, phase: str) -> None:
-    """Attach the shared exception identity and native failure evidence."""
-    record.update(FailureRecord.from_exception(failure, phase).to_record())
+def record_failure(
+    record: dict[str, Any], failure: Exception, phase: str
+) -> dict[str, object]:
+    """Attach and return the classified exception identity and native evidence."""
+    detail = FailureRecord.from_exception(failure, phase).to_record()
+    match failure:
+        case (
+            TimeoutError()
+            | TimeoutExpired()
+            | MeshcoreError(status=MeshcoreStatus.TIMEOUT)
+            | phx.meshing.MeshingFailure(
+                category=phx.meshing.MeshingFailureCategory.TIMED_OUT
+            )
+        ):
+            detail["status"] = "timeout"
+        case _:
+            detail["status"] = "failed"
+    record.update(detail)
+    return detail
 
 
 def _record_mapping(value: object, name: str) -> dict[str, object]:
@@ -155,12 +200,510 @@ def _result_identity(result: phx.meshing.CellMeshingResult, /) -> dict[str, obje
             "enforced": list(result.runtime.enforced_limits),
             "unenforced": list(result.runtime.unenforced_limits),
         },
+        "resource_binding": native_publication_resource_binding(
+            result.result_id, result.runtime.runtime_id, result.execution_evidence,
+            enforced_limits=result.runtime.enforced_limits,
+            unenforced_limits=result.runtime.unenforced_limits,
+        ),
         "execution_evidence": (
             None
             if result.execution_evidence is None
             else result.execution_evidence.to_record()
         ),
     }
+
+
+def _publication_receipt_gaps(
+    publication: dict[str, Any], prefix: str, runtime: object
+) -> list[str]:
+    try:
+        observation = validate_native_execution_interchange(
+            publication["execution_evidence"]
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return [prefix + "invalid-native-receipt"]
+    gaps = []
+    phases = publication["execution_evidence"]["phases"]
+    if any(
+        phases[index]["status_name"] != "OK"
+        for index in observation["current_phase_indexes"]
+    ):
+        gaps.append(prefix + "native-phase-status")
+    if not observation["preparation_complete"]:
+        gaps.append(prefix + "incomplete-native-preparation-receipt")
+    if observation["managed_admission_peak_bytes_upper"] is None:
+        gaps.append(prefix + "unobserved-managed-admission-envelope")
+    binding = publication.get("resource_binding")
+    if not isinstance(binding, dict) or set(binding) != {
+        "kind",
+        "result_id",
+        "request_id",
+        "runtime_id",
+        "native_build",
+        "root_receipt_id",
+        "binding_id",
+        "native_managed_claim",
+        "outside_admission_measurement_requirements",
+    }:
+        return gaps + [prefix + "actual-publication-resource-binding"]
+    body = {name: value for name, value in binding.items() if name != "binding_id"}
+    if (
+        binding["kind"] != "native-publication-resource-binding"
+        or binding["result_id"] != publication.get("result_id")
+        or any(
+            not isinstance(binding[name], str) or not binding[name]
+            for name in ("result_id", "request_id", "runtime_id")
+        )
+        or binding["request_id"] != observation["owner_id"]
+        or binding["root_receipt_id"] != observation["root_receipt_id"]
+        or binding["binding_id"] != canonical_fingerprint(body)
+    ):
+        gaps.append(prefix + "actual-publication-resource-binding")
+    guarantees = publication.get("resource_guarantees")
+    if (
+        not isinstance(guarantees, dict)
+        or binding["native_managed_claim"]
+        != {
+            "scope": "native-managed-request",
+            "enforced": guarantees.get("enforced"),
+            "unenforced": guarantees.get("unenforced"),
+        }
+        or binding["outside_admission_measurement_requirements"]
+        != list(NATIVE_RUNTIME_MEASUREMENT_REQUIREMENTS)
+    ):
+        gaps.append(prefix + "publication-resource-scope-binding")
+    native = binding["native_build"]
+    measured_native = runtime.get("meshcore_build") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(native, dict)
+        or not isinstance(measured_native, dict)
+        or any(
+            not isinstance(native.get(name), str)
+            or not native[name]
+            or native[name] != measured_native.get(name)
+            for name in ("release", "source_digest", "binary_digest", "configuration")
+        )
+    ):
+        gaps.append(prefix + "publication-native-build-binding")
+    return gaps
+
+
+def _source_prefix_boundary_limits(
+    limits: phx.meshing.MeshingLimits,
+    control: str,
+    observed: int | float,
+) -> phx.meshing.MeshingLimits:
+    """Own the original integer R−1 and elapsed-time half-boundary probe policy."""
+    declared = meshing_limit_values(limits)
+    if control not in declared:
+        raise ValueError(f"Unknown source-prefix resource control {control!r}.")
+    if (
+        isinstance(observed, bool)
+        or not math.isfinite(observed)
+        or observed > declared[control]
+    ):
+        raise ValueError(
+            "Source-prefix boundary observation must fit its original limit."
+        )
+    if control == "maximum_wall_seconds":
+        if observed <= 0:
+            raise ValueError("Source-prefix elapsed boundary must be positive.")
+        reduced = observed * 0.5
+    else:
+        if not isinstance(observed, int) or observed <= 1:
+            raise ValueError("Source-prefix integer boundary must exceed one.")
+        reduced = observed - 1
+    return replace(
+        MeshingLimitControls.from_limits(limits),
+        **{control: reduced},
+    ).to_limits()
+
+
+def _require_source_prefix_request(
+    value: object,
+    expected: dict[str, object],
+) -> None:
+    actual = _record_mapping(value, "source-prefix frozen request")
+    if canonical_fingerprint(actual) != canonical_fingerprint(expected):
+        raise ValueError(
+            "Source-prefix trial must retain its actual frozen source and controls."
+        )
+
+
+def _source_prefix_observations(
+    positive: dict[str, Any],
+    limits: phx.meshing.MeshingLimits,
+) -> dict[str, int | float]:
+    declared = meshing_limit_values(limits)
+    bounds = _record_mapping(positive.get("bounds"), "source-prefix bounds")
+    if set(bounds) != set(declared):
+        raise ValueError(
+            "Source-prefix evidence must retain all original resource bounds."
+        )
+    observed = {}
+    for control, limit in declared.items():
+        bound = _record_mapping(bounds[control], f"source-prefix {control}")
+        value = bound.get("observed")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 <= value <= limit
+            or control != "maximum_wall_seconds"
+            and not isinstance(value, int)
+            or bound.get("original_limit") != limit
+            or bound.get("runtime_enforced") is not True
+            or bound.get("within_original_bound") is not True
+        ):
+            raise ValueError(
+                f"Source-prefix {control} must have an actual enforced observation."
+            )
+        observed[control] = value
+    return observed
+
+
+def _source_prefix_quantities(
+    value: object,
+    name: str,
+) -> tuple[tuple[str, int | float], ...]:
+    record = _record_mapping(value, name)
+    quantities = []
+    for key, quantity in sorted(record.items()):
+        if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+            raise TypeError(f"{name}.{key} must be a serialized numeric quantity.")
+        quantities.append((key, quantity))
+    return tuple(quantities)
+
+
+def _require_source_prefix_refusal(
+    refusal: dict[str, Any],
+    control: str,
+) -> None:
+    expected = (
+        phx.meshing.MeshingFailureCategory.TIMED_OUT
+        if control == "maximum_wall_seconds"
+        else phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    )
+    if (
+        refusal.get("failure_type") != "MeshingFailure"
+        or refusal.get("failure_category") != expected.value
+        or type(refusal.get("logical_findings_count")) is not int
+        or refusal["logical_findings_count"] != 0
+    ):
+        raise ValueError(
+            "Source-prefix refusal must retain complete typed failure evidence."
+        )
+    requested = _source_prefix_quantities(
+        refusal.get("requested"),
+        "source-prefix refusal requested",
+    )
+    achieved = _source_prefix_quantities(
+        refusal.get("achieved"),
+        "source-prefix refusal achieved",
+    )
+    if not requested or not achieved:
+        raise ValueError(
+            "Source-prefix refusal must retain requested and achieved quantities."
+        )
+    evidence = phx.meshing.MeshingFailureEvidence(
+        expected,
+        refusal["failure"],
+        provider_code=refusal["provider_code"],
+        stage=refusal["native_stage"],
+        entity_ids=tuple(refusal["failing_entities"]),
+        locations=tuple(tuple(point) for point in refusal["locations"]),
+        requested=requested,
+        achieved=achieved,
+        checkpoint_id=refusal["checkpoint_id"],
+    )
+    if evidence.evidence_id != refusal.get("failure_evidence_id"):
+        raise ValueError(
+            "Source-prefix refusal must match its owning failure evidence identity."
+        )
+
+
+def _source_prefix_work_graph(publication: dict[str, Any]) -> str:
+    """Compare charged work and graph edges, not freshly earned clocks/receipt IDs."""
+    receipt = publication["execution_evidence"]
+    validate_native_execution_interchange(receipt)
+    return canonical_fingerprint([
+        {
+            name: phase[name]
+            for name in (
+                "owner_id", "status_name", "work_counters",
+                "source_preparation_work_units", "source_preparation_geometry_queries",
+                "total_work_units", "total_geometry_queries",
+                "preparation_evidence", "consumer_evidence", "history_evidence",
+            )
+        }
+        for phase in receipt["phases"]
+    ])
+
+
+def _require_source_prefix_trial(
+    refusal: dict[str, Any],
+    observed: int | float,
+    source: Any,
+    request: phx.meshing.VolumeMeshingSpec,
+    options: phx.meshing.NativeMeshingOptions,
+    positive: dict[str, Any],
+    runtime: object,
+) -> None:
+    control = refusal["control"]
+    reduced = _source_prefix_boundary_limits(request.limits, control, observed)
+    reduced_values = meshing_limit_values(reduced)
+    if (
+        refusal.get("original_limit") != meshing_limit_values(request.limits)[control]
+        or refusal.get("reduced_limit") != reduced_values[control]
+        or refusal.get("limits_id") != reduced.limits_id
+    ):
+        raise ValueError(
+            "Source-prefix refusal must use the owning reduced resource boundary."
+        )
+    _require_source_prefix_request(
+        refusal.get("frozen_request"),
+        frozen_request_record(
+            source, request if control == "maximum_work_units"
+            else with_meshing_limits(request, reduced), options,
+        ),
+    )
+    _require_source_prefix_refusal(refusal, control)
+    if control == "maximum_work_units":
+        _require_source_prefix_work_trial(
+            refusal, observed, source, request, options, positive, reduced
+        )
+        return
+    sharp = refusal.get("measured_R_positive")
+    if control != "maximum_scratch_bytes":
+        if sharp is not None:
+            raise ValueError(
+                "Only the managed-storage probe declares a sharp R-positive replay."
+            )
+        return
+    sharp = _record_mapping(sharp, "source-prefix sharp R")
+    sharp_limits = replace(
+        MeshingLimitControls.from_limits(request.limits),
+        maximum_scratch_bytes=observed,
+    ).to_limits()
+    _require_source_prefix_request(
+        sharp.get("frozen_request"),
+        frozen_request_record(
+            source, with_meshing_limits(request, sharp_limits), options
+        ),
+    )
+    publication: dict[str, Any] = _record_mapping(
+        sharp.get("result"), "source-prefix R result"
+    )
+    gaps = _publication_receipt_gaps(publication, "source-prefix-R:", runtime)
+    if gaps:
+        raise ValueError(f"Source-prefix R publication is incomplete: {gaps}.")
+    observation = validate_native_execution_interchange(publication["execution_evidence"])
+    if (
+        sharp.get("limit") != observed
+        or sharp.get("limits_id") != sharp_limits.limits_id
+        or sharp.get("observed_managed_admission_envelope") != observed
+        or observation["managed_admission_peak_bytes_upper"] != observed
+        or sharp.get("mesh_and_geometry_bitwise_preserved") is not True
+    ):
+        raise ValueError(
+            "Source-prefix R must admit its actually measured managed envelope."
+        )
+    for name in ("mesh_fingerprint", "geometry_fingerprint"):
+        original = _record_mapping(positive.get(name), f"source-prefix original {name}")
+        current = _record_mapping(sharp.get(name), f"source-prefix R {name}")
+        if not original or canonical_fingerprint(original) != canonical_fingerprint(
+            current
+        ):
+            raise ValueError(
+                "Source-prefix R must preserve the original numerical mesh and geometry."
+            )
+
+def _require_source_prefix_work_trial(
+    refusal: dict[str, Any],
+    observed: int | float,
+    source: Any,
+    request: phx.meshing.VolumeMeshingSpec,
+    options: phx.meshing.NativeMeshingOptions,
+    positive: dict[str, Any],
+    reduced: phx.meshing.MeshingLimits,
+) -> None:
+    sharp = _record_mapping(refusal.get("measured_R_positive"), "source-prefix work R")
+    sharp_limits = replace(
+        MeshingLimitControls.from_limits(request.limits), maximum_work_units=int(observed)
+    ).to_limits()
+    _require_source_prefix_request(
+        sharp.get("frozen_request"), frozen_request_record(source, request, options)
+    )
+    original: dict[str, Any] = _record_mapping(positive.get("result"), "original work result")
+    replay: dict[str, Any] = _record_mapping(sharp.get("result"), "replayed work result")
+    original_receipt = original["execution_evidence"]
+    replay_receipt = replay["execution_evidence"]
+    original_observation = validate_native_execution_interchange(original_receipt)
+    replay_observation = validate_native_execution_interchange(replay_receipt)
+    if (
+        original_observation["managed_admission_peak_bytes_upper"] is None
+        or replay_observation["managed_admission_peak_bytes_upper"] is None
+    ):
+        raise ValueError("Work boundary requires a genuine managed admission envelope for original and replay.")
+    original_root = original_receipt["phases"][0]
+    replay_root = replay_receipt["phases"][0]
+    preparation_index = original_root["preparation_evidence"]
+    if preparation_index is None:
+        raise ValueError("Work boundary requires the original preparation receipt.")
+    preparation = original_receipt["phases"][preparation_index]["receipt_id"]
+    for trial, limits in ((refusal, reduced), (sharp, sharp_limits)):
+        if (
+            trial.get("mechanical_admission") != meshing_limit_values(limits)
+            or trial.get("plan_id") != original_root["owner_id"]
+            or trial.get("preparation_receipt_id") != preparation
+        ):
+            raise ValueError("Work boundary must retain its original plan and preparation, separate from mechanical admission.")
+    if (
+        sharp.get("limit") != observed
+        or sharp.get("limits_id") != sharp_limits.limits_id
+        or sharp.get("observed_work_units") != observed
+        or replay_root["total_work_units"] != observed
+        or original_root["total_work_units"] != observed
+        or replay_root["receipt_id"] == original_root["receipt_id"]
+        or replay_root["status_name"] != "OK"
+        or replay["result_id"] != original["result_id"]
+        or replay["topology_id"] != original["topology_id"]
+        or replay.get("audit_passed") is not True
+        or _source_prefix_work_graph(replay) != _source_prefix_work_graph(original)
+        or replay_receipt["phases"][replay_root["preparation_evidence"]]["receipt_id"] != preparation
+        or sharp.get("mesh_and_geometry_bitwise_preserved") is not True
+    ):
+        raise ValueError("Work R must be a fresh replay of the original publication and phase graph, not copied or replanned evidence.")
+    for name in ("mesh_fingerprint", "geometry_fingerprint"):
+        if not positive.get(name) or sharp.get(name) != positive[name]:
+            raise ValueError("Work R must preserve the original mesh and geometry bytes.")
+
+
+
+def _bound_source_prefix_resources(
+    record: Mapping[str, Any],
+    warm_publication: dict[str, Any],
+    /,
+) -> dict[str, Any]:
+    """Validate original-prefix trials, never substitute them for a complete request."""
+    prefix: dict[str, Any] = _record_mapping(
+        record.get("source_prefix_resources"),
+        "source-prefix resources",
+    )
+    disposition = {
+        "status": "passed",
+        "mandatory_capacity_gate": "complete",
+        "admitted_scope": "SOURCEPREFIX",
+        "complete_request_R_claimed": False,
+        "original_source_and_controls_preserved": True,
+        "unobserved_enforcement_claimed": False,
+    }
+    if (
+        any(
+            type(prefix.get(name)) is not type(value) or prefix.get(name) != value
+            for name, value in disposition.items()
+        )
+        or prefix.get("unobserved_or_unenforced_original_bounds") != []
+    ):
+        raise ValueError(
+            "Source-prefix disposition must preserve its original limited scope."
+        )
+    controls: dict[str, Any] = _record_mapping(
+        record.get("qualification_controls"),
+        "source-prefix qualification controls",
+    )
+    source, request, options = prepare_polyhedral_case(
+        controls["polyhedral_source"],
+        controls["resolution"],
+        controls["capacity"],
+        controls["timeout"],
+        source=True,
+    )
+    _require_source_prefix_request(
+        prefix.get("frozen_request"),
+        frozen_request_record(source, request, options),
+    )
+    positive: dict[str, Any] = _record_mapping(
+        prefix.get("positive"), "source-prefix positive"
+    )
+    publication: dict[str, Any] = _record_mapping(
+        positive.get("result"), "source-prefix result"
+    )
+    for label, value in (
+        ("source-prefix:", publication),
+        ("warm-source:", warm_publication),
+    ):
+        gaps = _publication_receipt_gaps(value, label, record.get("runtime"))
+        if gaps:
+            raise ValueError(f"Source-prefix publication binding is incomplete: {gaps}.")
+    original = validate_native_execution_interchange(publication["execution_evidence"])
+    warm = validate_native_execution_interchange(warm_publication["execution_evidence"])
+    original_phases = publication["execution_evidence"]["phases"]
+    warm_phases = warm_publication["execution_evidence"]["phases"]
+    original_ids = {
+        original_phases[index]["receipt_id"]
+        for index in original["current_phase_indexes"]
+    }
+    warm_ids = {
+        warm_phases[index]["receipt_id"] for index in warm["current_phase_indexes"]
+    }
+    if (
+        not original_ids <= warm_ids
+        or publication["result_id"] != warm_publication["result_id"]
+        or publication["topology_id"] != warm_publication["topology_id"]
+        or publication.get("audit_passed") is not True
+    ):
+        raise ValueError(
+            "Original source-prefix work must be paid in the actual warm source request."
+        )
+    observed = _source_prefix_observations(positive, request.limits)
+    root = original_phases[0]
+    recorded = {
+        "maximum_work_units": root["total_work_units"],
+        "maximum_geometry_queries": root["total_geometry_queries"],
+        "maximum_wall_seconds": root["total_elapsed_seconds"],
+        "maximum_scratch_bytes": original["managed_admission_peak_bytes_upper"],
+        "maximum_cavity_cells": max(
+            original_phases[index]["work_counters"]["peak_cavity_cells"]
+            for index in original["current_phase_indexes"]
+        ),
+        "maximum_cells": publication["cells"],
+        "maximum_vertices": publication["vertices"],
+    }
+    if any(observed[name] != value for name, value in recorded.items()):
+        raise ValueError(
+            "Source-prefix observations must match their actual publication and receipt."
+        )
+    refusals = prefix.get("refusals")
+    if not isinstance(refusals, list) or any(
+        not isinstance(item, dict) for item in refusals
+    ):
+        raise TypeError("Source-prefix refusals must be actual trial records.")
+    expected = {
+        name
+        for name, value in observed.items()
+        if value > (0 if name == "maximum_wall_seconds" else 1)
+    }
+    names = [item.get("control") for item in refusals]
+    if (
+        any(not isinstance(name, str) for name in names)
+        or len(names) != len(set(names))
+        or set(names) != expected
+    ):
+        raise ValueError(
+            "Source-prefix trials must cover every observed reducible original limit once."
+        )
+    for refusal in refusals:
+        _require_source_prefix_trial(
+            refusal,
+            observed[refusal["control"]],
+            source,
+            request,
+            options,
+            positive,
+            record.get("runtime"),
+        )
+    return prefix
 
 
 def _mandatory_result(
@@ -201,10 +744,19 @@ def _mandatory_result(
         "scientific_certification": assessment["scientific_certification"],
         "phase_measurement_gaps": assessment.get("phase_measurement_gaps", []),
         "resource_evidence_gaps": assessment.get("resource_evidence_gaps", []),
+        "qualification_limitations": assessment.get("qualification_limitations", []),
         "blocking_status": assessment["blocking_status"],
         "release": assessment["release"],
         "leadership": assessment["leadership"],
         "source_reference_id": canonical_fingerprint(profile["source_reference"]),
+        "profile_controls_id": canonical_fingerprint(
+            {
+                "scenario_controls": profile["controls"],
+                "resolution_scale": profile["resolution_scale"],
+                "minimum_adaptation_rounds": profile["minimum_adaptation_rounds"],
+            }
+        ),
+        "sample_binding": assessment["sample_binding"],
     }
     if positive and refusal:
         raise qualification_failure(
@@ -221,171 +773,151 @@ def _mandatory_result(
     return {**body, "result_id": canonical_fingerprint(body)}
 
 
-_MANDATORY_WORKFLOW_RESULT_FIELDS = frozenset(
-    {
-        "kind",
-        "workflow",
-        "scenario",
-        "expected_admission",
-        "observed_status",
-        "status",
-        "positive_completion",
-        "refusal_certified",
-        "refusals_count_as_positive_completion",
-        "scientific_certification",
-        "mandatory_workflow_completion",
-        "release",
-        "leadership",
-        "result_id",
+def _record_evidence_id(record: Mapping[str, object], /) -> str:
+    """Fingerprint a scientific record exactly as its JSON consumer decodes it.
+
+    The child emits JSON and the campaign consumer parses it, so both sides hash
+    the same decoded value. Non-finite values cannot reach a consumer (the parser
+    rejects them), so they are hashed by their JSON tokens only for the producer.
+    """
+    decoded = json.loads(json.dumps(dict(record)))
+    canonical = json.dumps(
+        decoded, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _scenario_workflow(controls: Mapping[str, Any], /) -> str | None:
+    """Return the mandatory workflow a child scenario's verdict certifies."""
+    scenario = controls["scenario"]
+    if scenario == "native-corpus":
+        return None
+    if scenario == "native-lifecycle":
+        return meshing_case(controls["corpus_case"]).workflow
+    return SCENARIO_WORKFLOWS.get(scenario)
+
+
+def _workflow_outcome(record: Mapping[str, Any], /) -> dict[str, object]:
+    """Derive admission, case and mandatory completion from one scientific record."""
+    expected = record.get("expected_admission", "positive")
+    if expected not in ("positive", "refusal"):
+        raise ValueError(
+            f"_workflow_outcome.expected_admission must be 'positive' or 'refusal'; got {expected!r}."
+        )
+    observed = record.get("status", "failed")
+    scientific = record.get("independent_scientific_certification", "unassessed")
+    mandatory = record.get("mandatory_workflow_completion", "incomplete")
+    case_contract = record.get("case_contract_completion", mandatory)
+    scientific_case = (
+        expected == "positive" and observed == "passed" and scientific == "passed"
+    )
+    positive = scientific_case and mandatory == "complete"
+    refusal = expected == "refusal" and observed == "expected-refusal"
+    return {
+        "expected_admission": expected,
+        "observed_status": observed,
+        "status": "positive-complete"
+        if positive
+        else "refusal-certified"
+        if refusal
+        else "blocked",
+        "positive_completion": positive,
+        "case_accepted": positive or scientific_case and case_contract == "complete",
+        "refusal_certified": refusal,
+        "refusals_count_as_positive_completion": False,
+        "scientific_certification": scientific,
+        "mandatory_workflow_completion": mandatory,
+        "case_contract_completion": case_contract,
+        "release": record.get("release_evidence", "unassessed"),
+        "leadership": record.get("leadership_evidence", "unassessed"),
     }
-)
 
 
-def _validate_mandatory_workflow_result(value: object, /) -> dict[str, object]:
-    """Validate the fail-closed result emitted by every mandatory driver."""
-    result = _record_mapping(value, "Mandatory meshing workflow result")
-    missing = sorted(_MANDATORY_WORKFLOW_RESULT_FIELDS - set(result))
-    unknown = sorted(set(result) - _MANDATORY_WORKFLOW_RESULT_FIELDS)
-    if missing or unknown:
-        details = []
-        if missing:
-            details.append(f"missing fields: {', '.join(missing)}")
-        if unknown:
-            details.append(f"unknown fields: {', '.join(unknown)}")
-        raise ValueError(
-            f"_validate_mandatory_workflow_result.fields must equal the mandatory workflow field set; got {(missing, unknown)!r}."
-        )
-    for field in (
-        "kind",
-        "workflow",
-        "scenario",
-        "expected_admission",
-        "observed_status",
-        "status",
-        "scientific_certification",
-        "mandatory_workflow_completion",
-        "release",
-        "leadership",
-        "result_id",
-    ):
-        if not isinstance(result[field], str) or not result[field]:
-            raise TypeError(
-                f"_validate_mandatory_workflow_result.{field} must be a nonempty string; got {result[field]!r}."
-            )
-    for field in (
-        "positive_completion",
-        "refusal_certified",
-        "refusals_count_as_positive_completion",
-    ):
-        if type(result[field]) is not bool:
-            raise TypeError(
-                f"_validate_mandatory_workflow_result.{field} must be a boolean; got {result[field]!r}."
-            )
-    if result["kind"] != "mandatory-meshing-workflow-result":
-        raise ValueError(
-            f"_validate_mandatory_workflow_result.kind must be 'mandatory-meshing-workflow-result'; got {result['kind']!r}."
-        )
-    if result["expected_admission"] not in ("positive", "refusal"):
-        raise ValueError(
-            f"_validate_mandatory_workflow_result.expected_admission must be 'positive' or 'refusal'; got {result['expected_admission']!r}."
-        )
-    if result["status"] not in ("positive-complete", "refusal-certified", "blocked"):
-        raise ValueError(
-            f"_validate_mandatory_workflow_result.status must represent a positive workflow, a certified refusal or a blocked workflow; got {result['status']!r}."
-        )
-    if result["refusals_count_as_positive_completion"] is not False:
-        raise ValueError(
-            f"_validate_mandatory_workflow_result.refusals_count_as_positive_completion must be False; got {result['refusals_count_as_positive_completion']!r}."
-        )
-    positive = (
-        result["expected_admission"] == "positive"
-        and result["observed_status"] == "passed"
-        and result["scientific_certification"] == "passed"
-        and result["mandatory_workflow_completion"] == "complete"
-    )
-    refusal = (
-        result["expected_admission"] == "refusal"
-        and result["observed_status"] == "expected-refusal"
-    )
-    expected_status = (
-        "positive-complete" if positive else "refusal-certified" if refusal else "blocked"
-    )
-    if (
-        result["positive_completion"] is not positive
-        or result["refusal_certified"] is not refusal
-        or result["status"] != expected_status
-    ):
-        raise ValueError(
-            f"_validate_mandatory_workflow_result.completion must agree with admission, outcome and expected status; got {result!r}."
-        )
-    body = {name: field for name, field in result.items() if name != "result_id"}
-    if result["result_id"] != canonical_fingerprint(body):
-        raise ValueError(
-            f"_validate_mandatory_workflow_result.result_id must equal the workflow body fingerprint; got {result['result_id']!r}."
-        )
-    return result
+def _workflow_verdict(
+    controls: Mapping[str, Any], evidence: Mapping[str, Any], /
+) -> dict[str, object] | None:
+    """Derive the verdict bound to its controls, request, runtime and record.
+
+    ``evidence`` is the full emitted record without ``workflow_result``. The
+    producer and every consumer call this function; a verdict is accepted only
+    when it equals the one derived from its enclosing record.
+    """
+    workflow = _scenario_workflow(controls)
+    if workflow is None:
+        return None
+    request = evidence.get("request_id")
+    runtime = evidence.get("runtime")
+    body: dict[str, object] = {
+        "kind": "mandatory-meshing-workflow-result",
+        "workflow": workflow,
+        "scenario": controls["scenario"],
+        **_workflow_outcome(evidence),
+        "controls_id": canonical_fingerprint(dict(controls)),
+        "request_id": request if isinstance(request, str) else None,
+        "runtime_id": None if runtime is None else canonical_fingerprint(runtime),
+        "evidence_id": _record_evidence_id(evidence),
+    }
+    return {**body, "result_id": canonical_fingerprint(body)}
 
 
 def _finalize_mandatory_cli_record(
     args: QualificationControls,
     record: dict[str, Any],
 ) -> dict[str, Any]:
-    """Attach the fail-closed outcome schema at the scenario JSON boundary."""
-    if args.scenario == "native-corpus":
+    """Attach the fail-closed verdict bound to this specific scenario record."""
+    controls = args.to_record()
+    if _scenario_workflow(controls) is None:
         return record
-    workflow = SCENARIO_WORKFLOWS.get(args.scenario)
-    if args.scenario == "native-lifecycle":
-        workflow = meshing_case(args.corpus_case).workflow
-    if workflow is None:
-        return record
-    expected_value = record.get("expected_admission", "positive")
-    if expected_value not in ("positive", "refusal"):
-        raise ValueError(
-            f"_finalize_mandatory_cli_record.expected_admission must be 'positive' or 'refusal'; got {expected_value!r}."
-        )
-    observed = record.get("status", "failed")
-    scientific = record.get("independent_scientific_certification", "unassessed")
-    refusal = expected_value == "refusal" and observed == "expected-refusal"
-    positive = (
-        expected_value == "positive"
-        and observed == "passed"
-        and scientific == "passed"
-        and record.get("mandatory_workflow_completion") == "complete"
-    )
-    result_body: dict[str, object] = {
-        "kind": "mandatory-meshing-workflow-result",
-        "workflow": workflow,
-        "scenario": args.scenario,
-        "expected_admission": expected_value,
-        "observed_status": observed,
-        "status": (
-            "positive-complete"
-            if positive
-            else "refusal-certified"
-            if refusal
-            else "blocked"
-        ),
-        "positive_completion": positive,
-        "refusal_certified": refusal,
-        "refusals_count_as_positive_completion": False,
-        "scientific_certification": scientific,
-        "mandatory_workflow_completion": record.get(
-            "mandatory_workflow_completion", "incomplete"
-        ),
-        "release": record.get("release_evidence", "unassessed"),
-        "leadership": record.get("leadership_evidence", "unassessed"),
-    }
-    workflow_result = {
-        **result_body,
-        "result_id": canonical_fingerprint(result_body),
-    }
-    return {
+    outcome = _workflow_outcome(record)
+    evidence = {
         **record,
         "kind": "native-meshing-qualification-result",
-        "positive_completion": positive,
-        "refusal_certified": refusal,
-        "workflow_result": workflow_result,
+        "qualification_controls": controls,
+        "positive_completion": outcome["positive_completion"],
+        "refusal_certified": outcome["refusal_certified"],
     }
+    return {**evidence, "workflow_result": _workflow_verdict(controls, evidence)}
+
+
+def _bound_workflow_verdict(
+    record: Mapping[str, Any],
+    expected_controls: Mapping[str, object],
+    expected_build_id: str,
+    /,
+) -> dict[str, object]:
+    """Accept a child verdict only if it is the one its record and launch derive."""
+    controls = _record_mapping(record.get("qualification_controls"), "controls")
+    mismatched = sorted(
+        name
+        for name, value in expected_controls.items()
+        if name not in controls
+        or canonical_fingerprint(controls[name]) != canonical_fingerprint(value)
+    )
+    if mismatched:
+        raise ValueError(
+            f"_bound_workflow_verdict.qualification_controls must equal the launched controls; got mismatched {mismatched!r}."
+        )
+    runtime = _record_mapping(record.get("runtime"), "runtime")
+    if runtime.get("build_id") != expected_build_id:
+        raise ValueError(
+            f"_bound_workflow_verdict.runtime.build_id must equal the launcher's loaded build; got {runtime.get('build_id')!r}."
+        )
+    evidence = {
+        name: value for name, value in record.items() if name != "workflow_result"
+    }
+    verdict = _workflow_verdict(controls, evidence)
+    if verdict is None or record.get("workflow_result") != verdict:
+        raise ValueError(
+            f"_bound_workflow_verdict.workflow_result must equal the verdict derived from its enclosing record; got {record.get('workflow_result')!r}."
+        )
+    if (
+        record.get("positive_completion") is not verdict["positive_completion"]
+        or record.get("refusal_certified") is not verdict["refusal_certified"]
+    ):
+        raise ValueError(
+            f"_bound_workflow_verdict.completion must equal the bound verdict; got positive={record.get('positive_completion')!r}, refusal={record.get('refusal_certified')!r}."
+        )
+    return verdict
 
 
 def _field_template_identity(
@@ -424,55 +956,60 @@ def _family_field_template_identities(
     templates = []
     for kind in sorted(set(kinds)):
         templates.extend(phx.meshing.qualification.family_solver_field_templates(kind))
-        if profile["dimension"] == 3:
-            for field_kind in phx.meshing.qualification.LAYER_CORE_FIELD_KINDS:
-                templates.extend(
-                    phx.meshing.qualification.family_transport_field_templates(
-                        kind, kind=field_kind
-                    )
+        for field_kind in phx.meshing.qualification.LAYER_CORE_FIELD_KINDS:
+            templates.extend(
+                phx.meshing.qualification.family_transport_field_templates(
+                    kind, kind=field_kind
                 )
+            )
     identities = [_field_template_identity(role, field) for role, field in templates]
     scalar_quadrature = name == "curved-quarter-extrusion-quad"
-    if (
-        scalar_quadrature
-        or profile["dimension"] == 3
-        or profile["route"] in ("sweep", "structured_transfinite")
-    ):
-        identities.extend(
-            dict(template)
-            for template in phx.meshing.qualification.family_finite_volume_field_templates(
-                profile.get("ambient_dimension", profile["dimension"]),
-                scalar_quadrature=scalar_quadrature,
-            )
+    identities.extend(
+        dict(template)
+        for template in phx.meshing.qualification.family_finite_volume_field_templates(
+            profile.get("ambient_dimension", profile["dimension"]),
+            scalar_quadrature=scalar_quadrature,
         )
+    )
     return identities
 
 
 def _hybrid_field_template_identities(
     controls: dict[str, str | int | float | tuple[float, ...]],
 ) -> list[dict[str, Any]]:
-    from tools.meshing_qualification.scenarios.hybrid import (
-        hybrid_solver_field_templates,
-    )
 
     name = controls.get("hybrid_profile", QualificationControls().hybrid_profile)
     templates = []
-    if name == "unit-box":
-        for kind in ("prism", "tetrahedron"):
-            templates.extend(hybrid_solver_field_templates(kind))
-    elif name in ("concave-box-core-lifecycle", "archived-layer-core"):
+    if name in (
+        "unit-box",
+        "concave-box-core-lifecycle",
+        "archived-layer-core",
+        "curved-periodic-layer-core",
+    ):
         kinds = (
-            ("prism", "tetrahedron")
-            if name == "concave-box-core-lifecycle"
-            else ("hexahedron", "prism", "pyramid", "tetrahedron")
+            ("hexahedron", "prism", "pyramid", "tetrahedron")
+            if name == "archived-layer-core"
+            else ("prism", "tetrahedron")
         )
         for kind in kinds:
             templates.extend(phx.meshing.qualification.layer_core_field_templates(kind))
             templates.extend(
                 phx.meshing.qualification.layer_core_history_field_templates(kind)
             )
+            if name == "unit-box":
+                from phydrax.meshing.qualification._layer_continuation import (
+                    layer_core_original_scalar_field_template,
+                )
+                templates.append(
+                    ("solve:intensive", layer_core_original_scalar_field_template(kind))
+                )
     identities = [_field_template_identity(role, field) for role, field in templates]
-    if name in ("concave-box-core-lifecycle", "archived-layer-core"):
+    if name in (
+        "unit-box",
+        "concave-box-core-lifecycle",
+        "archived-layer-core",
+        "curved-periodic-layer-core",
+    ):
         identities.extend(
             dict(template)
             for template in phx.meshing.qualification.layer_core_finite_volume_field_templates()
@@ -540,27 +1077,99 @@ def _scenario_field_template_identities(
     )
 
 
+def _cad_source_reference(
+    controls: Mapping[str, str | int | float | tuple[float, ...]],
+) -> dict[str, object]:
+    """Bind each CAD operation to its authored data and independent reference."""
+    case = parse(controls.get("cad_case", "planar-box"), CadCase, "cad_case")
+    external_artifact: dict[str, object] | None = None
+    match case:
+        case "planar-box":
+            fixture = load_cad_fixture()
+            locator = "tests/data/cad/native_authored_boxes.json"
+            operation = None
+        case "quadric-routine" | "quadric-larger":
+            from tools.meshing_qualification.scenarios.cad import load_cad_quadric_fixture
+
+            fixture = load_cad_quadric_fixture()
+            locator = "tests/data/cad/native_authored_quadrics.json"
+            operation = "intersection"
+        case "external-routine" | "external-combined":
+            from tools.meshing_qualification.scenarios.cad import (
+                load_cad_external_fixture,
+            )
+
+            fixture = load_cad_external_fixture()
+            locator = "tests/data/cad/nist_ftc_11_external.json"
+            operation = (
+                "import"
+                if case == "external-routine"
+                else "subtract-authored-radial-hole"
+            )
+            external_artifact = {
+                "locator": f"tests/data/cad/{fixture['source_file']}",
+                "media_type": "model/step",
+                "sha256": fixture["source_sha256"],
+            }
+        case _:
+            assert_never(case)
+    digest = fixture["file_sha256"]
+    revision = fixture["record_id"]
+    if operation is not None:
+        descriptor = {
+            "fixture_digest": digest,
+            "fixture_id": revision,
+            "operation": operation,
+        }
+        digest = canonical_fingerprint(descriptor)
+        revision = digest
+    record: dict[str, object] = {
+        "kind": "reviewed-cad-corpus-source",
+        "source_digest": digest,
+        "source_revision": revision,
+        "source_artifact": {
+            "locator": locator,
+            "media_type": "application/json",
+            "sha256": fixture["file_sha256"],
+            "record_id": fixture["record_id"],
+            "license": fixture["license"],
+        },
+        "source_provenance": fixture["provenance"],
+        "independent_reference": fixture["independent_reference"],
+    }
+    if operation is not None:
+        record["operation"] = operation
+    if external_artifact is not None:
+        record["external_source_artifact"] = external_artifact
+    return record
+
+
 def _scenario_source_reference(
     scenario: str,
     controls: dict[str, str | int | float | tuple[float, ...]],
+    *,
+    resolution: int | None = None,
 ) -> dict[str, object]:
-    """Identify the generated source descriptor rather tha generated mesh output."""
+    """Identify the authored source descriptor rather than generated mesh output."""
     if scenario == "native-cad-lifecycle":
-        fixture = load_cad_fixture()
-        return {
-            "kind": "reviewed-cad-corpus-source",
-            "source_digest": fixture["file_sha256"],
-            "source_revision": fixture["record_id"],
-            "source_artifact": {
-                "locator": "tests/data/cad/native_authored_boxes.json",
-                "media_type": "application/json",
-                "sha256": fixture["file_sha256"],
-                "record_id": fixture["record_id"],
-                "license": fixture["license"],
-            },
-            "source_provenance": fixture["provenance"],
-            "independent_reference": fixture["independent_reference"],
-        }
+        return _cad_source_reference(controls)
+    if scenario == "native-periodic-lifecycle":
+        from tools.meshing_qualification.scenarios.periodic import (
+            _periodic_qualification_source_reference,
+        )
+
+        defaults = QualificationControls()
+        profile = controls.get("periodic_case", defaults.periodic_case)
+        source_resolution = (
+            controls.get("resolution", defaults.resolution)
+            if resolution is None
+            else resolution
+        )
+        if not isinstance(profile, str) or not isinstance(source_resolution, int):
+            raise TypeError(
+                "periodic source registration requires a profile and integer resolution"
+            )
+        return _periodic_qualification_source_reference(profile, source_resolution)
     if scenario == "native-hybrid-lifecycle":
         profile = controls.get("hybrid_profile")
         roles = {
@@ -636,7 +1245,7 @@ def _scenario_source_reference(
     }
 
 
-def _corpus_profiles() -> dict[str, dict[str, Any]]:
+def _corpus_profiles(resolution: int | None = None) -> dict[str, dict[str, Any]]:
     """Enumerate real routes; selection never removes mandatory obligations."""
 
     load_corpus_registration()
@@ -646,7 +1255,7 @@ def _corpus_profiles() -> dict[str, dict[str, Any]]:
             "workflow": case.workflow,
             "scenario": None,
             "controls": {},
-            "full_workflow": False,
+            "full_workflow": case.expected_admission == "positive",
             "expected_outcome": "passed"
             if case.expected_admission == "positive"
             else "expected-refusal",
@@ -673,9 +1282,16 @@ def _corpus_profiles() -> dict[str, dict[str, Any]]:
             "full_workflow": True,
             "source_reference": polyhedral_identity(name),
         }
-    workflows = CORPUS_SCENARIO_WORKFLOWS
     surface_contract = _surface_qualification_requirements()
     hybrid_contract = _hybrid_qualification_requirements()
+    periodic_contracts = _periodic_qualification_profile_contracts()
+    defaults = QualificationControls()
+    routine_selectors = {
+        "native-implicit-lifecycle": ("implicit_case", defaults.implicit_case),
+        "native-image-lifecycle": ("image_case", defaults.image_case),
+        "native-design-lifecycle": ("design_case", defaults.design_case),
+        "native-overset-lifecycle": ("overset_profile", defaults.overset_profile),
+    }
     choices: dict[str, tuple[str, tuple[str, ...]]] = {
         "native-cad-lifecycle": (
             "cad_format",
@@ -699,24 +1315,55 @@ def _corpus_profiles() -> dict[str, dict[str, Any]]:
             "hybrid_profile",
             _corpus_contract_choices(hybrid_contract, "hybrid_profile"),
         ),
+        "native-implicit-lifecycle": ("implicit_case", IMPLICIT_CASES),
+        "native-image-lifecycle": ("image_case", IMAGE_CASES),
+        "native-design-lifecycle": ("design_case", DESIGN_CASES),
+        "native-overset-lifecycle": ("overset_profile", OVERSET_PROFILES),
+        "native-reconstruction-lifecycle": ("reconstruction_case", RECONSTRUCTION_CASES),
     }
-    for workflow, scenario in workflows.items():
+    for entry in CORPUS_SCENARIOS:
+        workflow, scenario = entry.workflow, entry.name
         variants = choices.get(scenario)
         selections: tuple[dict[str, str | int | float | tuple[float, ...]], ...] = (
             ({},)
             if variants is None
             else tuple({variants[0]: value} for value in variants[1])
         )
-        for controls in selections:
-            name = (
-                scenario
-                if not controls
-                else f"{scenario}:{next(iter(controls.values()))}"
+        if scenario == "native-cad-lifecycle":
+            selections = tuple(
+                {**selection, "cad_case": case}
+                for selection in selections
+                for case in CAD_CASES
             )
+        for controls in selections:
+            if scenario == "native-cad-lifecycle":
+                name = f"{scenario}:{controls['cad_format']}"
+                if controls["cad_case"] != defaults.cad_case:
+                    name += f":{controls['cad_case']}"
+            elif scenario in routine_selectors:
+                selector, default = routine_selectors[scenario]
+                name = (
+                    scenario
+                    if controls[selector] == default
+                    else f"{scenario}:{controls[selector]}"
+                )
+            else:
+                name = (
+                    scenario
+                    if not controls
+                    else f"{scenario}:{next(iter(controls.values()))}"
+                )
             if scenario == "native-surface-pde" and controls["surface_case"] == "sphere":
                 name = "sphere-feature-surface"
             contract: Mapping[str, object] = {}
-            if scenario == "native-hybrid-lifecycle":
+            if scenario == "native-periodic-lifecycle":
+                profile_name = controls["periodic_case"]
+                if not isinstance(profile_name, str):
+                    raise TypeError(
+                        "periodic profile must be a declared string identifier"
+                    )
+                contract = periodic_contracts[profile_name]
+            elif scenario == "native-hybrid-lifecycle":
                 profile_name = controls.get("hybrid_profile")
                 if not isinstance(profile_name, str):
                     raise TypeError(
@@ -731,7 +1378,7 @@ def _corpus_profiles() -> dict[str, dict[str, Any]]:
                         "layer_growth": 1.0,
                         "geometry_order": 2,
                     }
-                elif profile_name == "concave-box-core-lifecycle":
+                elif profile_name in ("unit-box", "concave-box-core-lifecycle"):
                     # The closed container authors one fluid material across
                     # both the boundary-layer cells and the remaining core.
                     controls = {
@@ -739,6 +1386,11 @@ def _corpus_profiles() -> dict[str, dict[str, Any]]:
                         "hybrid_region_densities": (2.0,),
                         "hybrid_material_site": "fluid-density",
                     }
+            elif (
+                scenario == "native-image-lifecycle"
+                and controls["image_case"] == "oblique-junction-transport"
+            ):
+                controls = {**controls, "image_size": 6}
             elif scenario == "native-distributed-lifecycle":
                 controls = {
                     **controls,
@@ -758,4 +1410,116 @@ def _corpus_profiles() -> dict[str, dict[str, Any]]:
                 "source_reference": source_reference,
                 **contract,
             }
-    return profiles
+    return _corpus_request_profiles(
+        profiles, defaults.resolution if resolution is None else resolution
+    )
+
+
+def _corpus_request_profiles(
+    profiles: dict[str, dict[str, Any]],
+    base_resolution: int,
+) -> dict[str, dict[str, Any]]:
+    """Register distinct routine/larger requests, independent of one global size."""
+    expanded: dict[str, dict[str, Any]] = {}
+    larger_cases = {
+        "planar-hole-feature": 8,
+        "plc-material-cavity": 2,
+        **{name: 2 for name in POLYHEDRAL_CASE_NAMES},
+    }
+    for name, original in sorted(profiles.items()):
+        profile = {
+            **original,
+            "controls": dict(original["controls"]),
+            "resolution_scale": 1,
+            "minimum_adaptation_rounds": 0,
+        }
+        scenario = profile["scenario"]
+        controls = profile["controls"]
+        if (
+            scenario == "native-implicit-lifecycle"
+            and controls["implicit_case"] != "sphere"
+        ):
+            profile["minimum_adaptation_rounds"] = 2
+        if scenario == "native-distributed-lifecycle":
+            controls.update(distributed_parts=4, restart_parts=2, distributed_processes=4)
+        expanded[name] = profile
+        if scenario == "native-periodic-lifecycle":
+            profile["source_reference"] = _scenario_source_reference(
+                scenario, controls, resolution=base_resolution
+            )
+        if (
+            profile["expected_outcome"] != "passed"
+            and scenario != "native-periodic-lifecycle"
+        ):
+            continue
+        scale = larger_cases.get(name)
+        if scenario in (
+            "native-surface-pde",
+            "native-reconstruction-lifecycle",
+            "native-periodic-lifecycle",
+            "native-distributed-lifecycle",
+        ):
+            scale = 2
+        elif scenario == "native-family-lifecycle" and controls["family_case"] in (
+            "curved-cavity-hex",
+            "curved-material-hex",
+        ):
+            scale = 2
+        elif scenario == "native-hybrid-lifecycle" and controls["hybrid_profile"] in (
+            "concave-box-core-lifecycle",
+            "curved-periodic-layer-core",
+        ):
+            scale = 2
+        if scale is None:
+            continue
+        larger_controls = dict(controls)
+        if scenario == "native-distributed-lifecycle":
+            larger_controls.update(
+                distributed_parts=6, restart_parts=3, distributed_processes=6
+            )
+        expanded[f"{name}:larger"] = {
+            **profile,
+            "controls": larger_controls,
+            "resolution_scale": scale,
+        }
+        if scenario == "native-hybrid-lifecycle":
+            expanded[f"{name}:larger"]["minimum_adaptation_rounds"] = 2
+        if scenario == "native-periodic-lifecycle":
+            expanded[f"{name}:larger"]["source_reference"] = _scenario_source_reference(
+                scenario, larger_controls, resolution=base_resolution * scale
+            )
+    for name, profile in expanded.items():
+        envelope = authored_resource_envelope(
+            profile["scenario"],
+            profile["case_name"],
+            profile["controls"],
+            larger=name.endswith(":larger"),
+        )
+        if envelope is not None:
+            profile["controls"].update(envelope["effective"])
+            profile["resource_envelope"] = envelope
+    return dict(sorted(expanded.items()))
+
+
+def _corpus_request_dimensions(
+    profile: Mapping[str, Any], resolution: int, adaptation_rounds: int
+) -> tuple[int, int]:
+    """Apply the same registered size and lifecycle depth in both launchers."""
+    scale = profile["resolution_scale"]
+    minimum_rounds = profile["minimum_adaptation_rounds"]
+    if (
+        type(scale) is not int
+        or scale < 1
+        or type(minimum_rounds) is not int
+        or minimum_rounds < 0
+    ):
+        raise ValueError(
+            "corpus.profile must declare positive size scaling and nonnegative lifecycle depth"
+        )
+    case_name = profile["case_name"]
+    rounds = (
+        0
+        if case_name in POLYHEDRAL_CASE_NAMES and case_name != "polyhedral-periodic-cube"
+        else max(adaptation_rounds, minimum_rounds)
+    )
+    return resolution * scale, rounds

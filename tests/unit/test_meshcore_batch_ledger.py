@@ -8,6 +8,7 @@ import gc
 import math
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
@@ -18,21 +19,29 @@ import pytest
 from phydrax._meshcore import (
     _ClipReferenceTetrahedronExactRequest,
     current_native_execution_scope,
+    exact_insphere,
     exact_orient3d,
     load_meshcore,
     MeshcoreError,
     MeshcoreLibrary,
     MeshcoreStatus,
     NativeBatchTicket,
+    NativeExecutionEvidence,
     NativeExecutionLimits,
     NativeExecutionScope,
+    NativeParallelExecution,
     surface_envelope,
     TetMesh3D,
 )
-from phydrax._resource_ticket import BatchTicket, ManagedBytesContributor
+from phydrax._resource_ticket import (
+    BatchTicket,
+    HostBatchTicket,
+    ManagedBytesContributor,
+)
 from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
 )
 
 
@@ -671,6 +680,8 @@ def test_native_target_foreign_host_write_is_rejected_before_mapped_store() -> N
                         ticket.consume(1, geometry_queries=1, managed_bytes=128)
                     with pytest.raises(RuntimeError):
                         contributor.set_bound(64)
+                    with pytest.raises(RuntimeError):
+                        contributor.set_bound(32)
 
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     executor.submit(execute).result(timeout=10)
@@ -1011,11 +1022,14 @@ def test_managed_contributor_close_after_settle_is_bookkeeping_only(
             return original(library, name)
 
         monkeypatch.setattr(MeshcoreLibrary, "__getitem__", observed)
+        contributor.set_bound(64)
         with pytest.raises(RuntimeError):
             contributor.set_bound(65)
         contributor.set_bound(32)
         contributor.close()
         contributor.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            contributor.set_bound(0)
         assert contributor.bound == 0
         assert ticket.work_units == 2
         assert ticket.managed_bytes == 64
@@ -1035,10 +1049,53 @@ def test_managed_contributor_identity_cannot_cross_tickets() -> None:
                     ValueError, match="managed_storage must belong to this ticket"
                 ):
                     second.set_managed_storage(contributor, 128)
+                with pytest.raises(
+                    ValueError, match="managed_storage must belong to this ticket"
+                ):
+                    second.set_managed_storage(contributor, 64)
                 assert contributor.bound == 64
                 assert first.managed_bytes == 64
                 assert second.managed_bytes == 0
             contributor.close()
+
+
+def test_host_equal_managed_bound_preserves_lifecycle_and_owner_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations: list[HostBatchTicket] = []
+    original = HostBatchTicket._observe_capacity
+
+    def observed(ticket: HostBatchTicket) -> None:
+        observations.append(ticket)
+        original(ticket)
+
+    monkeypatch.setattr(HostBatchTicket, "_observe_capacity", observed)
+    with HostBatchTicket(8, bytes_upper=128) as ticket:
+        contributor = ticket.managed_storage()
+        contributor.set_bound(64)
+        before = len(observations)
+        contributor.set_bound(64)
+        assert len(observations) == before
+        assert contributor.bound == ticket.managed_bytes == 64
+        zero = ticket.managed_storage()
+        zero.set_bound(0)
+        assert zero in ticket._managed_components
+        zero.close()
+        assert zero not in ticket._managed_components
+        with ticket.batch(0, bytes_upper=64) as other:
+            with pytest.raises(ValueError, match="owner.ticket"):
+                other.set_managed_storage(contributor, 64)
+        ticket.consume(2)
+    contributor.set_bound(64)
+    with pytest.raises(RuntimeError, match="only release"):
+        contributor.set_bound(65)
+    contributor.set_bound(32)
+    contributor.close()
+    assert contributor.bound == 0
+    assert ticket.managed_bytes == 64
+    assert ticket.work_units == 2
+    with pytest.raises(RuntimeError, match="closed"):
+        contributor.set_bound(0)
 
 
 def test_native_accounting_is_read_only_protocol_capability() -> None:
@@ -1337,6 +1394,7 @@ def test_single_ffi_native_scratch_peak_combines_only_simultaneous_host_storage(
                 # All native payload allocations and frees occur in this call.
                 # No Python peak read observes its temporary live allocations.
                 _native_clip_scratch()
+                contributor.set_bound(contributor.bound)
                 expected_peak = native_peak + 1024 if overlap else max(native_peak, 1024)
                 assert ticket.managed_bytes == expected_peak
                 assert ticket.remaining_managed_bytes == 900000 - (1024 if overlap else 0)
@@ -1522,3 +1580,735 @@ def test_parent_context_retires_retained_child_without_changing_success_counters
     assert scope.evidence.work_counters.construction_work == 3
     assert scope.evidence.externally_charged_work == 3
     assert scope.evidence.host_storage_live_bytes_upper == 0
+
+
+def test_parent_refusal_with_live_child_keeps_native_prefix_until_child_settles() -> None:
+    scope = _scope(10)
+    captured: list[MeshcoreError] = []
+    with pytest.raises(MeshcoreError) as surfaced:
+        with scope:
+            baseline = _bookkeeping(scope)
+            with scope.batch(10, bytes_upper=4096) as root:
+                budget = CoordinateEnclosureBudget(
+                    root, maximum_work_units=100, maximum_memory_bytes=4096
+                )
+                with budget.activate():
+                    budget.reserve(1)
+                    with root.batch(8) as child:
+                        child.consume(3)
+                        with pytest.raises(MeshcoreError) as refused:
+                            budget.reserve(5)
+                        captured.append(refused.value)
+                        assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+                        assert refused.value.batch_admitted_upper == (10, 0, 0, 4096)
+                        assert refused.value.batch_requested_upper == (5, 0, 0, 0)
+                        evidence = refused.value.batch_refusal_evidence
+                        assert evidence is not None and not evidence.flags.writeable
+                        np.testing.assert_array_equal(evidence[[0, 4]], (1, 1))
+                        assert budget.work_units == root.work_units == 1
+                        assert not root.settled and not child.settled
+                        with pytest.raises(RuntimeError, match="refused"):
+                            root.batch(1)
+                        child.consume(1)
+                    assert child.settled and root.settled
+                assert root.consumed_work_units == 5
+            assert _bookkeeping(scope) == baseline
+            raise captured[0]
+    assert surfaced.value is captured[0]
+    assert scope.evidence is not None
+    assert scope.evidence.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert scope.evidence.work_counters.construction_work == 5
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+def test_released_cross_phase_storage_keeps_native_work_refusal_typed() -> None:
+    scope = NativeExecutionScope(NativeExecutionLimits(1, 100, 20, 65536, math.inf))
+    captured: list[MeshcoreError] = []
+    with pytest.raises(MeshcoreError) as surfaced:
+        with scope:
+            first = scope.batch(1)
+            first.settle()
+            budget = CoordinateEnclosureBudget(
+                first, maximum_work_units=100, maximum_memory_bytes=4096
+            )
+            with budget.retained_storage(lambda upper: scope.batch(0, bytes_upper=upper)):
+                lease = CoordinateLiveStorage(budget)
+                with budget.bind_ticket(scope.batch(1, bytes_upper=2048)):
+                    lease.set_bound(1000)
+                retained = budget.storage_ticket
+                assert retained is not None and retained.bytes_upper == 1000
+                lease.close()
+                stage = scope.batch(1, bytes_upper=2048)
+                with pytest.raises(MeshcoreError) as refused:
+                    with budget.bind_ticket(stage):
+                        budget.reserve(2)
+                captured.append(refused.value)
+            assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+            assert refused.value.batch_admitted_upper == (1, 0, 0, 2048)
+            assert refused.value.batch_requested_upper == (2, 0, 0, 0)
+            evidence = refused.value.batch_refusal_evidence
+            assert evidence is not None
+            np.testing.assert_array_equal(evidence[[0, 4]], (1, 0))
+            assert stage.settled and retained.settled
+            assert budget.work_units == 0 and budget.temporary_bytes_upper == 0
+            raise captured[0]
+    assert surfaced.value is captured[0]
+    assert scope.evidence is not None
+    assert scope.evidence.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert scope.evidence.work_counters.construction_work == 0
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+def test_direct_scope_refusal_carries_first_refusal_snapshot_and_request() -> None:
+    corners = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (0.25, 0.25, 0.25),
+        ),
+        dtype=np.float64,
+    )
+    scope = NativeExecutionScope(NativeExecutionLimits(0, 0, 0, 1024, 120.0))
+    with pytest.raises(MeshcoreError) as refused:
+        with scope:
+            exact_insphere(*(corners[index : index + 1] for index in range(5)))
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    requested = refused.value.batch_requested_upper
+    evidence = refused.value.batch_refusal_evidence
+    assert requested is not None and evidence is not None
+    assert evidence.shape == (8,) and not evidence.flags.writeable
+    assert requested[3] > int(evidence[3])
+    assert scope.evidence is not None
+    assert scope.evidence.status is MeshcoreStatus.CAPACITY_EXCEEDED
+
+
+def test_actual_scope_view_leaves_native_headroom_and_counts_host_work_once() -> None:
+    scope = _target_scope()
+    with scope:
+        before = scope.remaining()
+        with scope.ticket_view() as view:
+            assert scope.remaining() == before
+            budget = CoordinateEnclosureBudget(
+                view, maximum_work_units=10000, maximum_memory_bytes=1024 * 1024
+            )
+            with budget.activate(), budget.live_storage() as storage:
+                budget.reserve(3)
+                budget.reserve_geometry_queries(2)
+                storage.set_bound(1024)
+                with NativeExecutionScope(scope.limits) as child:
+                    # A direct native owner and an explicitly bounded host
+                    # phase both share the actual root, not a full reservation.
+                    _native_mesh_work()
+                    with child.batch(7, queries_upper=3, cavity_upper=6) as ticket:
+                        ticket.consume(4, geometry_queries=1, cavity_cells=6)
+                    budget.reserve(2)
+                budget.reserve(1)
+                assert child.evidence is not None
+                child_work = child.evidence.work_counters.construction_work
+                assert child_work > 6
+                assert view.work_units == budget.native_charged_work_units == 6
+                assert view.geometry_queries == 2
+                assert scope.remaining().remaining_work_units == 10000 - child_work - 4
+                assert scope.remaining().remaining_geometry_queries == 97
+                assert view.managed_bytes == 1024
+                assert scope.remaining().remaining_cavity_cells == 100
+        assert view.settled
+    assert scope.evidence is not None
+    assert scope.evidence.work_counters.construction_work == child_work + 4
+    assert scope.evidence.externally_charged_work == 10
+    assert scope.evidence.host_storage_peak_bytes_upper == 1024
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+@pytest.mark.parametrize("resource", ("work", "queries", "cavity"))
+@pytest.mark.parametrize("slack", (0, -1), ids=("R", "R-1"))
+def test_actual_scope_view_exact_resource_boundary(resource: str, slack: int) -> None:
+    limits = NativeExecutionLimits(
+        7 + (slack if resource == "work" else 0),
+        5 + (slack if resource == "queries" else 0),
+        3 + (slack if resource == "cavity" else 0),
+        65536,
+        math.inf,
+    )
+    scope = NativeExecutionScope(limits)
+
+    def run() -> None:
+        with scope:
+            scope.import_preparation(work=2, geometry_queries=1, elapsed_seconds=0.0)
+            with scope.ticket_view() as view:
+                view.consume(2, geometry_queries=1)
+                with NativeExecutionScope(limits) as child:
+                    child.charge(work=1, geometry_queries=1)
+                    view.consume(2, geometry_queries=2, cavity_cells=3)
+
+    if slack:
+        with pytest.raises(MeshcoreError) as refused:
+            run()
+        assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    else:
+        run()
+    assert scope.evidence is not None
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+    if not slack:
+        assert scope.evidence.work_counters.construction_work == 7
+        assert scope.evidence.work_counters.source_queries == 5
+        assert scope.evidence.work_counters.peak_cavity_cells == 3
+
+
+@pytest.mark.parametrize("overlap", (False, True), ids=("disjoint", "overlap"))
+def test_actual_scope_view_managed_contributors_preserve_live_sum(overlap: bool) -> None:
+    with _scope() as scope:
+        with scope.ticket_view() as view:
+            with view.managed_storage() as first, view.managed_storage() as second:
+                first.set_bound(512)
+                second.set_bound(256)
+                first.set_bound(128)
+                if not overlap:
+                    second.set_bound(0)
+                first.set_bound(1024)
+                assert view.managed_bytes == (1280 if overlap else 1024)
+                assert scope.remaining().remaining_work_units == 100
+                first.close()
+                assert second.bound == (256 if overlap else 0)
+    assert scope.evidence is not None
+    assert scope.evidence.host_storage_peak_bytes_upper == (1280 if overlap else 1024)
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+@pytest.mark.parametrize("slack", (0, -1), ids=("R", "R-1"))
+def test_actual_scope_view_scratch_coexists_with_native_allocation(slack: int) -> None:
+    def run(cap: int) -> int:
+        with NativeExecutionScope(NativeExecutionLimits(0, 0, 0, cap, math.inf)) as scope:
+            with scope.ticket_view() as view, view.managed_storage() as storage:
+                storage.set_bound(1024)
+                array = scope.allocate_host_array((512,), np.uint8)
+                used = cap - scope.remaining().remaining_managed_bytes
+                del array
+        assert scope.evidence is not None
+        assert scope.evidence.memory_counters.live_bytes == 0
+        assert scope.evidence.host_storage_live_bytes_upper == 0
+        return used
+
+    required = run(65536)
+    if slack:
+        with pytest.raises(MeshcoreError) as refused:
+            run(required + slack)
+        assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    else:
+        assert run(required) == required
+
+
+def test_actual_scope_view_refusal_and_foreign_scope_are_nonmutating() -> None:
+    with _scope() as scope:
+        with scope.ticket_view() as view:
+            view.consume(3)
+            with pytest.raises(RuntimeError, match="fitting estimate"):
+                view.refuse(1)
+            assert view.work_units == 3
+            assert view.remaining_work_units == 97
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                with pytest.raises(RuntimeError, match="foreign scope"):
+                    pool.submit(view.consume, 1).result()
+            assert scope.remaining().remaining_work_units == 97
+        with pytest.raises(RuntimeError, match="settled"):
+            view.consume(1)
+
+
+def test_child_estimate_error_remains_internal_when_actual_root_has_headroom() -> None:
+    with _scope(20) as scope:
+        with scope.batch(4) as parent:
+            parent.consume(1)
+            with pytest.raises(RuntimeError, match="estimate defect"):
+                parent.batch(4)
+            assert not parent.settled
+            assert parent.work_units == 1
+        assert scope.remaining().remaining_work_units == 19
+
+
+def test_child_actual_root_shortage_is_typed_and_preserves_prefix() -> None:
+    scope = _scope(4)
+    with pytest.raises(MeshcoreError) as refused:
+        with scope:
+            with scope.batch(4) as parent:
+                parent.consume(1)
+                parent.batch(4)
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert scope.evidence is not None
+    assert scope.evidence.work_counters.construction_work == 1
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+def test_actual_scope_view_owner_cleanup_preserves_error_and_deadline() -> None:
+    scope = _scope()
+    primary = ValueError("injected coordinate callback failure")
+    with pytest.raises(ValueError) as raised:
+        with scope:
+            started = scope.operation_started
+            scope.import_preparation(work=2, geometry_queries=1, elapsed_seconds=3.0)
+            view = scope.ticket_view()
+            contributor = view.managed_storage()
+            contributor.set_bound(1024)
+            view.consume(1)
+            with NativeExecutionScope(scope.limits) as child:
+                view.checkpoint()
+                assert child.operation_started == started - 3.0
+                assert scope.operation_started == started - 3.0
+            raise primary
+    assert raised.value is primary
+    assert view.settled
+    contributor.close()
+    view.__exit__(ValueError, primary, None)
+    assert scope.evidence is not None
+    assert scope.evidence.work_counters.construction_work == 3
+    assert scope.evidence.prior_elapsed_seconds == 3.0
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+def test_actual_scope_view_headroom_includes_real_workspace_metadata() -> None:
+    scope = _scope()
+    with pytest.raises(MeshcoreError) as refused:
+        with scope:
+            with scope.ticket_view() as view, view.managed_storage() as owner:
+                before = scope.remaining().remaining_managed_bytes
+                headroom = owner.headroom()
+                assert headroom is not None and 0 < headroom < before
+                owner.set_bound(headroom)
+                assert owner.headroom() == headroom
+                assert scope.remaining().remaining_managed_bytes == 0
+                with pytest.raises(MeshcoreError) as admission:
+                    owner.set_bound(headroom + 1)
+                assert owner.bound == headroom
+                assert view.managed_bytes == headroom
+                raise admission.value
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert scope.evidence is not None
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+def test_actual_scope_view_combined_work_refusal_does_not_admit_capacity() -> None:
+    scope = _scope(1)
+    with pytest.raises(MeshcoreError) as refused:
+        with scope:
+            with scope.ticket_view() as view:
+                view.consume(2, cavity_cells=3, managed_bytes=1024)
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert scope.evidence is not None
+    assert scope.evidence.work_counters.construction_work == 0
+    assert scope.evidence.work_counters.peak_cavity_cells == 0
+    assert scope.evidence.host_storage_peak_bytes_upper == 0
+    assert scope.evidence.memory_counters.peak_bytes == 0
+
+
+def test_actual_scope_view_target_cannot_escape_to_an_unscoped_worker() -> None:
+    dispatched: list[str] = []
+    with _scope() as scope:
+        with scope.ticket_view() as view:
+            target = view.native_target()
+
+            def worker() -> None:
+                with target:
+                    dispatched.append("unscoped native dispatch")
+                    _native_mesh_work()
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                with pytest.raises(RuntimeError, match="foreign scope"):
+                    pool.submit(worker).result()
+            assert dispatched == []
+            assert view.remaining_work_units == 100
+
+
+def test_actual_scope_view_uses_live_target_escrow_and_nested_local_limits() -> None:
+    limits = NativeExecutionLimits(10, 5, 3, 65536, math.inf)
+    with NativeExecutionScope(limits) as scope:
+        with (
+            scope.batch(10, queries_upper=5, cavity_upper=3, bytes_upper=4096) as ticket,
+            ticket.native_target(),
+        ):
+            assert scope.remaining().remaining_work_units == 0
+            assert scope.remaining().remaining_geometry_queries == 0
+            with scope.ticket_view() as view:
+                assert view.remaining_work_units == 10
+                assert view.remaining_geometry_queries == 5
+                view.consume(2, geometry_queries=1)
+                with NativeExecutionScope(
+                    NativeExecutionLimits(3, 2, 2, 2048, math.inf)
+                ) as child:
+                    assert view.remaining_work_units == 3
+                    assert view.remaining_geometry_queries == 2
+                    view.consume(1, geometry_queries=1)
+                    with (
+                        child.batch(
+                            2, queries_upper=1, cavity_upper=2, bytes_upper=1024
+                        ) as inner,
+                        inner.native_target(),
+                    ):
+                        assert child.remaining().remaining_work_units == 0
+                        assert view.remaining_work_units == 2
+                        view.consume(2, geometry_queries=1, cavity_cells=2)
+                        # Cavity admission replaces the current native cavity.
+                        view.consume(cavity_cells=2)
+                assert child.evidence is not None
+                assert child.evidence.work_counters.construction_work == 3
+                assert view.remaining_work_units == 5
+                assert view.remaining_geometry_queries == 2
+                view.consume(5, geometry_queries=2)
+                assert view.remaining_work_units == 0
+                assert view.work_units == 10
+    assert scope.evidence is not None
+    assert scope.evidence.work_counters.construction_work == 10
+    assert scope.evidence.work_counters.source_queries == 5
+    assert scope.evidence.work_counters.peak_cavity_cells == 2
+    assert scope.evidence.externally_charged_work == 10
+
+
+def test_actual_scope_view_storage_growth_borrows_only_current_phase_delta() -> None:
+    with _scope() as scope:
+        with scope.ticket_view() as view, view.managed_storage() as owner:
+            owner.set_bound(512)
+            with scope.batch(0, bytes_upper=4096) as first, first.native_target():
+                owner.set_bound(768)
+                assert owner.headroom() is not None
+                assert view.managed_bytes == 768
+            assert first.settled
+            with scope.batch(0, bytes_upper=4096) as second, second.native_target():
+                owner.set_bound(1024)
+                assert view.managed_bytes == 1024
+                owner.set_bound(400)
+                assert owner.bound == 400
+                assert scope.remaining().remaining_work_units == 100
+            owner.set_bound(600)
+            assert view.managed_bytes == 1024
+    assert scope.evidence is not None
+    assert scope.evidence.host_storage_peak_bytes_upper == 1024
+    assert scope.evidence.host_storage_live_bytes_upper == 0
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+@pytest.mark.parametrize("slack", (0, -1), ids=("R", "R-1"))
+def test_actual_scope_view_target_work_boundary_preserves_prefix(slack: int) -> None:
+    scope = _scope(5 + slack)
+
+    def run() -> None:
+        with scope:
+            with scope.batch(5 + slack) as ticket, ticket.native_target():
+                with scope.ticket_view() as view:
+                    view.consume(2)
+                    view.consume(3)
+
+    if slack:
+        with pytest.raises(MeshcoreError) as refused:
+            run()
+        assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    else:
+        run()
+    assert scope.evidence is not None
+    assert scope.evidence.work_counters.construction_work == (2 if slack else 5)
+    assert scope.evidence.memory_counters.live_bytes == 0
+
+
+def test_actual_scope_view_target_estimate_defect_remains_nonmutating() -> None:
+    with _scope(20) as scope:
+        with scope.batch(4) as ticket, ticket.native_target():
+            with scope.ticket_view() as view:
+                view.consume(1)
+                with pytest.raises(RuntimeError, match="estimate defect"):
+                    view.consume(4)
+                assert view.work_units == 1
+        assert scope.remaining().remaining_work_units == 19
+
+
+@pytest.fixture(scope="module")
+def ended_preparation_clock_evidence() -> NativeExecutionEvidence:
+    """Retain actual ended elapsed time longer than the next workflow remainder."""
+    with NativeExecutionScope(NativeExecutionLimits(2, 1, 0, 65536, 5.0)) as preparation:
+        preparation.charge(work=2, geometry_queries=1)
+        time.sleep(1.25)
+    evidence = preparation.completed_evidence()
+    assert evidence.elapsed_seconds >= 1.25
+    return evidence
+
+
+@pytest.mark.parametrize("nested", (False, True), ids=("root", "nested"))
+def test_real_ended_preparation_keeps_shorter_absolute_workflow_expiry(
+    ended_preparation_clock_evidence: NativeExecutionEvidence, nested: bool
+) -> None:
+    preparation = ended_preparation_clock_evidence
+    limits = NativeExecutionLimits(10, 10, 0, 65536, 10.0)
+    workflow = NativeParallelExecution(1, 1.0)
+    with workflow, NativeExecutionScope(limits) as parent:
+        before = workflow.remaining_seconds()
+        with NativeExecutionScope(limits) if nested else nullcontext(parent) as scope:
+            scope.import_preparation(
+                work=preparation.work_counters.construction_work,
+                geometry_queries=preparation.work_counters.source_queries,
+                elapsed_seconds=preparation.elapsed_seconds,
+            )
+            remaining = scope.remaining().remaining_seconds
+            assert 0.0 < remaining <= 1.0 < preparation.elapsed_seconds
+            assert workflow.remaining_seconds() <= before
+            scope.charge(work=1, geometry_queries=1)
+        assert workflow.remaining_seconds() > 0.0
+    assert parent.evidence is not None
+    assert parent.evidence.prior_elapsed_seconds == preparation.elapsed_seconds
+    assert parent.evidence.work_counters.construction_work == 3
+    assert parent.evidence.work_counters.source_queries == 2
+    assert parent.evidence.externally_charged_work == 3
+    assert scope.evidence is not None
+    assert scope.evidence.prior_elapsed_seconds == preparation.elapsed_seconds
+
+
+def test_real_ended_preparation_still_exhausts_its_original_request_clock(
+    ended_preparation_clock_evidence: NativeExecutionEvidence,
+) -> None:
+    preparation = ended_preparation_clock_evidence
+    scope = NativeExecutionScope(NativeExecutionLimits(10, 10, 0, 65536, 1.0))
+    with pytest.raises(MeshcoreError) as refused:
+        with NativeParallelExecution(1, 10.0), scope:
+            scope.import_preparation(
+                work=preparation.work_counters.construction_work,
+                geometry_queries=preparation.work_counters.source_queries,
+                elapsed_seconds=preparation.elapsed_seconds,
+            )
+    assert refused.value.status is MeshcoreStatus.TIMEOUT
+    assert scope.evidence is not None
+    assert scope.evidence.prior_elapsed_seconds == 0.0
+    assert scope.evidence.work_counters.construction_work == 0
+
+
+def test_preparation_import_cannot_extend_absolute_workflow_expiry(
+    ended_preparation_clock_evidence: NativeExecutionEvidence,
+) -> None:
+    preparation = ended_preparation_clock_evidence
+    scope = NativeExecutionScope(NativeExecutionLimits(10, 10, 0, 65536, 10.0))
+    with pytest.raises(MeshcoreError) as refused:
+        with NativeParallelExecution(1, 0.1), scope:
+            scope.import_preparation(
+                work=preparation.work_counters.construction_work,
+                geometry_queries=preparation.work_counters.source_queries,
+                elapsed_seconds=preparation.elapsed_seconds,
+            )
+            time.sleep(0.11)
+            scope.admit_work_bound(0)
+    assert refused.value.status is MeshcoreStatus.TIMEOUT
+    assert scope.evidence is not None
+    assert scope.evidence.prior_elapsed_seconds == preparation.elapsed_seconds
+    assert scope.evidence.work_counters.construction_work == 2
+
+
+def test_absolute_policy_entered_after_scope_still_binds_native_work() -> None:
+    scope = NativeExecutionScope(NativeExecutionLimits(1, 0, 0, 65536, 10.0))
+    with pytest.raises(MeshcoreError) as refused:
+        with scope, NativeParallelExecution(1, 0.0):
+            scope.admit_work_bound(0)
+    assert refused.value.status is MeshcoreStatus.TIMEOUT
+    assert scope.evidence is not None
+    assert scope.evidence.work_counters.construction_work == 0
+
+
+def test_private_scope_scalar_queries_read_fresh_without_public_module_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._meshcore import RemainingAllowance
+
+    observed: list[RemainingAllowance] = []
+    original = NativeExecutionScope.remaining
+
+    def public(scope: NativeExecutionScope) -> RemainingAllowance:
+        value = original(scope)
+        observed.append(value)
+        return value
+
+    monkeypatch.setattr(NativeExecutionScope, "remaining", public)
+    with _scope(11) as scope:
+        first = scope.remaining()
+        assert type(first) is RemainingAllowance
+        with scope.ticket_view() as view:
+            assert view.remaining_work_units == 11
+            assert view.remaining_geometry_queries == 100
+            assert view.bytes_upper == first.remaining_managed_bytes
+            view.consume(3, geometry_queries=2)
+            assert view.remaining_work_units == 8
+            assert view.remaining_geometry_queries == 98
+            assert view._remaining().status is MeshcoreStatus.OK
+            assert len(observed) == 1
+        last = scope.remaining()
+        assert last.remaining_work_units == 8
+        assert last.remaining_geometry_queries == 98
+        assert len(observed) == 2
+
+
+def test_private_remaining_observation_preserves_actual_absolute_timeout() -> None:
+    scope = _scope()
+    with pytest.raises(MeshcoreError) as refused:
+        with NativeParallelExecution(None, 0.05), scope:
+            with scope.ticket_view() as view:
+                first = view._remaining()
+                assert first.status is MeshcoreStatus.OK
+                time.sleep(0.06)
+                expired = view._remaining()
+                assert expired.status is MeshcoreStatus.TIMEOUT
+                assert expired.remaining_seconds == 0.0
+                assert expired.remaining_work_units == first.remaining_work_units
+                view.checkpoint()
+    assert refused.value.status is MeshcoreStatus.TIMEOUT
+    assert scope.evidence is not None
+    assert scope.evidence.status is MeshcoreStatus.TIMEOUT
+
+
+def test_private_remaining_snapshots_are_isolated_between_creating_threads() -> None:
+    barrier = threading.Barrier(4)
+
+    def worker(limit: int) -> int:
+        with _scope(limit) as scope, scope.ticket_view() as view:
+            for step in range(16):
+                barrier.wait()
+                snapshot = view._remaining()
+                assert snapshot.remaining_work_units == limit - step
+                assert snapshot.remaining_geometry_queries == 100 - step
+                assert snapshot.status is MeshcoreStatus.OK
+                view.consume(1, geometry_queries=1)
+            assert view.remaining_work_units == limit - 16
+            return view.remaining_geometry_queries
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert tuple(pool.map(worker, (23, 29, 31, 37))) == (84, 84, 84, 84)
+
+
+class _PublishedMetadataRoot:
+    pass
+
+
+def test_source_metadata_exact_capacity_and_one_byte_refusal() -> None:
+    def run(capacity: int) -> int:
+        scope = NativeExecutionScope(NativeExecutionLimits(3, 0, 0, capacity, math.inf))
+        with scope:
+            lease = scope.admit_source_metadata(4096, 3)
+            required = capacity - scope.remaining().remaining_managed_bytes
+        assert scope.completed_evidence().host_storage_live_bytes_upper == 4096
+        assert scope.completed_evidence().externally_charged_work == 3
+        source = _PublishedMetadataRoot()
+        lease.retain_source_metadata(source)
+        return required
+
+    required = run(65536)
+    assert run(required) == required
+    with pytest.raises(MeshcoreError) as refused:
+        run(required - 1)
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+
+
+def test_source_metadata_handover_has_no_release_or_readmission_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    original = MeshcoreLibrary.__getitem__
+
+    def observed(library: MeshcoreLibrary, name: str) -> object:
+        if name in (
+            "phx_mc_execution_reserve_host_storage",
+            "phx_mc_execution_release_host_storage",
+        ):
+            calls.append(name)
+        return original(library, name)
+
+    monkeypatch.setattr(MeshcoreLibrary, "__getitem__", observed)
+    scope = _scope()
+    with scope:
+        lease = scope.admit_source_metadata(4096, 1)
+    calls.clear()
+    source = _PublishedMetadataRoot()
+    source_ref, scope_ref, lease_ref = (
+        weakref.ref(source),
+        weakref.ref(scope),
+        weakref.ref(lease),
+    )
+    finalizer = lease.retain_source_metadata(source)
+    assert finalizer.alive
+    assert calls == []
+    lease.close()
+    assert calls == []
+    del lease, scope
+    gc.collect()
+    assert lease_ref() is None and scope_ref() is None
+    assert source_ref() is source
+    assert calls == []
+    del source
+    gc.collect()
+    assert source_ref() is None
+    assert not finalizer.alive
+    assert calls == ["phx_mc_execution_release_host_storage"]
+
+
+def test_source_metadata_refuses_foreign_live_and_post_ended_admission() -> None:
+    scope = _scope()
+    with scope:
+        lease = scope.admit_source_metadata(4096, 1)
+        with pytest.raises(RuntimeError, match="completed metadata-only"):
+            lease.retain_source_metadata(_PublishedMetadataRoot())
+        with _scope() as child:
+            with pytest.raises(RuntimeError, match="live request root"):
+                scope.admit_source_metadata(1, 0)
+            with pytest.raises(RuntimeError, match="live request root"):
+                child.admit_source_metadata(1, 0)
+    with pytest.raises(RuntimeError, match="live request root"):
+        scope.admit_source_metadata(1, 0)
+    with pytest.raises(RuntimeError, match="inactive or foreign"):
+        lease.set_bound(4096)
+    with _scope():
+        with pytest.raises(RuntimeError, match="inactive or foreign"):
+            lease.set_bound(4096)
+        with pytest.raises(RuntimeError, match="completed metadata-only"):
+            lease.retain_source_metadata(_PublishedMetadataRoot())
+    lease.close()
+
+
+@pytest.mark.parametrize("native_failure", (False, True))
+def test_source_metadata_failed_completion_releases_lease(native_failure: bool) -> None:
+    scope = _scope(1)
+    with pytest.raises((ValueError, MeshcoreError)):
+        with scope:
+            lease = scope.admit_source_metadata(4096, 1)
+            if native_failure:
+                scope.charge(work=1)
+            else:
+                raise ValueError("injected publication failure")
+    assert lease.bound == 0
+    assert scope.completed_evidence().host_storage_live_bytes_upper == 0
+    with pytest.raises(RuntimeError, match="completed metadata-only"):
+        lease.retain_source_metadata(_PublishedMetadataRoot())
+
+
+def test_source_metadata_failed_binding_keeps_original_reservation() -> None:
+    scope = _scope()
+    with scope:
+        lease = scope.admit_source_metadata(4096, 1)
+    finalizer = lease._finalizer
+    with pytest.raises(TypeError):
+        lease.retain_source_metadata(object())
+    assert lease.bound == 4096 and finalizer is not None and finalizer.alive
+    source = _PublishedMetadataRoot()
+    lease.retain_source_metadata(source)
+    assert not finalizer.alive
+    with pytest.raises(RuntimeError, match="completed metadata-only"):
+        lease.retain_source_metadata(source)
+
+
+def test_source_metadata_unpublished_lease_gc_releases_live_capacity() -> None:
+    with _scope() as scope:
+        baseline = scope.remaining().remaining_managed_bytes
+        lease = scope.admit_source_metadata(4096, 0)
+        finalizer = lease._finalizer
+        assert scope.remaining().remaining_managed_bytes < baseline - 4096
+        del lease
+        gc.collect()
+        assert finalizer is not None and not finalizer.alive
+        assert scope.remaining().remaining_managed_bytes == baseline

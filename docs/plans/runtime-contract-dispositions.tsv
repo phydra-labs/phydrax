@@ -7461,10 +7461,13 @@ phydrax/meshing/_metric_execution.py	validate_metric_operation_controls	relocati
 phydrax/meshing/_metric_execution.py	validate_metric_operation_controls	topology_operations	bool	retained	Builtin Boolean signatures are static-only; operation schedules validate explicit topology editing authorization before execution.
 phydrax/meshing/_mixed_adaptation.py	MixedAdaptationHierarchy.from_stored_fields	value	MixedAdaptationHierarchy	retained	Requires the exact registered class before replaying constructor validation on decoded hierarchy state.
 phydrax/meshing/_mixed_adaptation.py	MixedLayerColumns.from_stored_fields	value	MixedLayerColumns	retained	Requires the exact registered class before replaying constructor validation on decoded layer ancestry.
+phydrax/meshing/_mixed_adaptation.py	MixedRetiredEntityBank.from_stored_fields	value	MixedRetiredEntityBank	retained	Requires the exact registered class before validating restored padded key columns and replaying constructor validation.
+phydrax/meshing/_mixed_adaptation.py	MixedSiblingBank.from_stored_fields	value	MixedSiblingBank	retained	Requires the exact registered class before validating restored padded sibling columns and replaying constructor validation.
 phydrax/meshing/_mixed_adaptation.py	adapt_mixed_mesh	maximum_scratch_bytes	int	retained	Builtin integer annotations are static-only; the explicit guard preserves scratch-bound ValueError semantics.
 phydrax/meshing/_motion.py	MeshMotionMonitor.__init__	reference	CellMesh	migrated	checked-signature
 phydrax/meshing/_motion.py	MeshMotionMonitorPolicy.__init__	accept_valid_nonconverged_relocation	bool	retained	Builtin Boolean annotations are static-only; require explicit Boolean authorization before recording acceptance of a valid nonconverged relocation.
 phydrax/meshing/_motion.py	MeshMotionMonitorPolicy.__init__	relocation_objective	MeshQualityObjective	retained	Enum annotations are static-only; require the relocation objective kind before rejecting metric alignment and fingerprinting the selected shape objective.
+phydrax/meshing/_motion.py	_carried_in_scope	transfer	PeriodicAssociationTransfer	retained	Periodic transfers propagate under the whole-advance request scope and budget with the moved geometry; every other transfer family revalidates through _propagated_associations under its own adaptation phase, so this branch selects a distinct request contract, not a restated annotation.
 phydrax/meshing/_motion.py	advance_mesh_motion	monitor	MeshMotionMonitor	migrated	checked-signature
 phydrax/meshing/_motion.py	advance_mesh_motion	source	CellMeshingResult	migrated	checked-signature
 phydrax/meshing/_optimization.py	CellGeometryOptimizationResult.__init__	minimization	MinimizationResult	migrated	checked-signature
@@ -7603,6 +7606,7 @@ phydrax/meshing/providers/_poisson.py	OrientedPointCloud.__init__	coordinate_con
 phydrax/meshing/providers/_poisson.py	PoissonProvider.execute	source	OrientedPointCloud	migrated	checked-signature
 phydrax/meshing/providers/_poisson.py	PoissonProvider.execute	specification	PoissonReconstructionSpec	migrated	checked-signature
 phydrax/meshing/providers/_poisson.py	PoissonReconstructionSpec.__init__	boundary	PoissonBoundaryCondition	retained	static-only-annotation
+phydrax/meshing/providers/_sources.py	native_provider_source_root	package	Path	migrated	checked-signature
 phydrax/meshing/providers/_tioga.py	TiogaProvider.execute	assembly	MeshAssembly	migrated	checked-signature
 phydrax/meshing/providers/_tioga.py	TiogaProvider.move	coordinates	Mapping[str, ArrayLike]	retained	Mapping containers are static-only; motion requires a nonempty part-name map before validating resident registration names and converting coordinates.
 phydrax/meshing/providers/_tioga.py	TiogaProvider.move	previous	TiogaAssemblyResult	migrated	checked-signature

@@ -12,6 +12,7 @@ from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureResourceError,
 )
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometryConvexSource
+from phydrax.discretization._coordinate_enclosure import CoordinateSourceBank
 from phydrax.discretization._reference_cell_types import CellBlock
 from tests._support.coordinate_references import coordinate_reference_budget
 
@@ -401,4 +402,126 @@ def test_original_parent_inverse_has_real_canonical_receipt_and_refusal() -> Non
         ):
             convex_parent_inverse(
                 matrix, ExactPlcBudget(10000, 16384, budget=ledger), budget=ledger
+            )
+
+
+def _coverage_row_occurrence(
+    layout: str, budget: CoordinateEnclosureBudget,
+) -> tuple[CellMesh, CellGeometrySpec, np.ndarray, CoordinateSourceBank]:
+    from phydrax.geometry._global_embedding import coordinate_scope, source_bank_predicate_view
+    from phydrax.discretization._coordinate_enclosure import prepared_coordinate_source_bank
+
+    args, _ = _fixture(budget=budget)
+    if layout == "convex":
+        mesh = CellMesh.from_tetrahedra(
+            np.asarray(((0., 0., 0.), (.75, .25, 0.), (0., 1., 0.), (0., 0., 1.))),
+            np.asarray(((0, 1, 2, 3),)),
+        )
+        source = ExactPlcCellGeometryConvexSource(
+            args[0], args[1], np.asarray((0, 1, 3, 4, 5)),
+            np.asarray((0, 1, 0, 2, 3)),
+            (Fraction(1), Fraction(3, 4), Fraction(1, 4), Fraction(1), Fraction(1)),
+            mesh, args[6], budget=budget,
+        )
+        geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
+    else:
+        mesh, geometry = args[:2]
+        if layout == "permuted":
+            order = np.asarray((1, 0, 2, 3), dtype=np.int64)
+            inverse = np.argsort(order)
+            mesh = CellMesh.from_tetrahedra(
+                np.asarray(mesh.coordinates)[order],
+                inverse[np.asarray(mesh.blocks[0].vertices)],
+            )
+    prepared = coordinate_scope(mesh, geometry, budget=budget)
+    assert prepared.coordinate_scope == "affine"
+    bank = prepared.source_values
+    points, represented = source_bank_predicate_view(bank, budget=budget)
+    assert represented is (layout == "convex")
+    if layout == "permuted":
+        assert bank is not prepared_coordinate_source_bank(geometry, budget=budget)
+    return mesh, geometry, points, bank
+
+
+@pytest.mark.parametrize("layout", ("root", "permuted", "convex"))
+def test_coverage_gathers_actual_nonbinary_plc_mesh_rows_without_reconversion(layout: str) -> None:
+    from phydrax.geometry import _domain_coverage as coverage_owner
+    from phydrax.geometry._embedding_state import EmbeddingState, MeshCertificateLimits
+
+    values = []
+    findings = []
+    work = []
+    for gather in (False, True):
+        with coordinate_reference_budget(queries_upper=256) as budget:
+            mesh, geometry, points, bank = _coverage_row_occurrence(layout, budget)
+            domain = coverage_owner.PiecewiseLinearDomain(
+                np.asarray(((0., 0., 0.), (3., 1., 0.), (0., 1., 0.), (0., 0., 1.))),
+                np.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))),
+                np.tile(np.asarray((0, -1)), (4, 1)), ("material",),
+                source_id="exact-plc-bank-coverage",
+            )
+            state = EmbeddingState([], ["domain_coverage"])
+            before = budget.work_units
+            phase = coverage_owner._affine_coverage_terms(
+                state, mesh, geometry, domain, np.zeros(1, dtype=np.int64),
+                points, MeshCertificateLimits(), budget=budget,
+                exact_vertex_points=bank if gather else None,
+            )
+            work.append(budget.work_units - before)
+            values.append((phase.requested, phase.achieved, phase.covered, phase.relations))
+            findings.append(state.findings)
+    assert values[0] == values[1]
+    assert eqx.tree_equal(findings[0], findings[1])
+    assert work[1] < work[0]
+
+
+@pytest.mark.parametrize("fault", ("foreign-bank", "coincident-rounded", "foreign-view", "mapped-bank"))
+def test_coverage_exact_rows_refuse_foreign_or_rounded_bank_occurrences(fault: str) -> None:
+    from phydrax.geometry import _domain_coverage as coverage_owner
+    from phydrax.geometry._embedding_state import EmbeddingState, MeshCertificateLimits
+    from phydrax.geometry._global_embedding import coordinate_scope, source_bank_predicate_view
+
+    with coordinate_reference_budget(queries_upper=256) as budget:
+        if fault == "mapped-bank":
+            args, _ = _fixture(budget=budget)
+            source = ExactPlcCellGeometryConvexSource(*args, budget=budget)
+            mesh = args[5]
+            geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
+            prepared = coordinate_scope(mesh, geometry, budget=budget)
+            assert prepared.coordinate_scope == "mapped"
+            bank = prepared.source_values
+            points, _ = source_bank_predicate_view(bank, budget=budget)
+        else:
+            mesh, geometry, points, bank = _coverage_row_occurrence("permuted", budget)
+        if fault == "foreign-view":
+            points = points.copy()
+            value = points[0, 1]
+            assert type(value) is Fraction
+            points[0, 1] = Fraction(value.numerator, value.denominator)
+            assert points[0, 1] is not value
+            points.flags.writeable = False
+        elif fault != "mapped-bank":
+            foreign = tuple(
+                tuple(Fraction(float(value)) if fault == "coincident-rounded" else value for value in row)
+                for row in bank
+            )
+            assert foreign is not bank
+            if fault == "coincident-rounded":
+                assert foreign != bank
+                assert np.array_equal(
+                    np.asarray(foreign, dtype=np.float64), np.asarray(bank, dtype=np.float64)
+                )
+            bank = foreign
+            points, _ = source_bank_predicate_view(bank, budget=budget)
+        domain = coverage_owner.PiecewiseLinearDomain(
+            np.asarray(((0., 0., 0.), (3., 1., 0.), (0., 1., 0.), (0., 0., 1.))),
+            np.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))),
+            np.tile(np.asarray((0, -1)), (4, 1)), ("material",),
+            source_id="exact-plc-bank-coverage",
+        )
+        with pytest.raises(ValueError, match="actual prepared source"):
+            coverage_owner._affine_coverage_terms(
+                EmbeddingState([], ["domain_coverage"]), mesh, geometry, domain,
+                np.zeros(1, dtype=np.int64), points, MeshCertificateLimits(),
+                budget=budget, exact_vertex_points=bank,
             )

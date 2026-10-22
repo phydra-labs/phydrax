@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from hashlib import sha256
@@ -401,6 +402,30 @@ class SparseFactorizationSolveResult(StrictModule):
         return self.status == int(SparseFactorizationStatus.SUCCESS)
 
 
+def _map_value_banks[**P, R](function: Callable[P, R], /) -> Callable[P, R]:
+    """Map one value-bank function over the flattened leading batch axis.
+
+    A one-bank batch is the same map evaluated directly: batching a single bank
+    would turn every conditional of the triangular schedules into evaluation of
+    both branches followed by a select, which only adds work.
+    """
+    batched = jax.vmap(function)
+
+    def mapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        leaves = jax.tree_util.tree_leaves((args, kwargs))
+        if leaves and all(jnp.shape(leaf)[:1] == (1,) for leaf in leaves):
+            single_args, single_kwargs = jax.tree_util.tree_map(
+                lambda leaf: leaf[0], (args, kwargs)
+            )
+            return jax.tree_util.tree_map(
+                lambda leaf: jnp.expand_dims(leaf, 0),
+                function(*single_args, **single_kwargs),
+            )
+        return batched(*args, **kwargs)
+
+    return mapped
+
+
 class PreparedSparseFactorization(StrictModule):
     """Refreshable sparse factor values paired with immutable symbolic analysis."""
 
@@ -583,7 +608,7 @@ class PreparedSparseFactorization(StrictModule):
             ).astype(jnp.int32)
             return solution, result_status, lower.status, upper.status
 
-        value, status, lower_status, upper_status = jax.vmap(solve_one)(
+        value, status, lower_status, upper_status = _map_value_banks(solve_one)(
             self.lower_substitution,
             self.upper_substitution,
             factors,
@@ -727,7 +752,7 @@ class PreparedSparseFactorCongruence(StrictModule):
                 None,
             )
 
-        value, status, lower_status, upper_status = jax.vmap(solve_one)(
+        value, status, lower_status, upper_status = _map_value_banks(solve_one)(
             factor.lower_substitution,
             self.lower_adjoint_substitution,
             self.inverse_absolute_diagonal.reshape((count, size)),
@@ -809,7 +834,7 @@ def prepare_sparse_factor_congruence(
             pivot_tolerance=forward.pivot_tolerance,
         )
 
-    adjoint = jax.vmap(prepare_one)(
+    adjoint = _map_value_banks(prepare_one)(
         factorization.factor_values.reshape((count, plan.factor_nnz)),
         factorization.lower_substitution,
     )
@@ -1932,7 +1957,37 @@ def refresh_sparse_factorization_values(
             "Sparse factorization refresh requires an unchanged value dtype "
             f"({plan.value_dtype}); got {numeric_values.dtype.name}."
         )
+    (
+        factor_values,
+        status,
+        diagnostics,
+        lower_substitution,
+        upper_substitution,
+    ) = _refreshed_sparse_factor_values(plan, numeric_values)
+    return PreparedSparseFactorization(
+        plan=plan,
+        factor_values=factor_values,
+        status=status,
+        diagnostics=diagnostics,
+        lower_substitution=lower_substitution,
+        upper_substitution=upper_substitution,
+        factorization_id=f"{plan.plan_id}/numeric",
+    )
 
+
+@eqx.filter_jit
+def _refreshed_sparse_factor_values(
+    plan: SparseFactorizationPlan,
+    numeric_values: Array,
+    /,
+) -> tuple[
+    Array,
+    Array,
+    SparseFactorizationDiagnostics,
+    _PreparedTriangularSubstitution,
+    _PreparedTriangularSubstitution,
+]:
+    """Factor every value bank in one compiled program, not one eager primitive at a time."""
     batch_count = prod(plan.batch_shape)
     flattened_input = numeric_values.reshape((batch_count, plan.input_nnz))
     (
@@ -1943,12 +1998,12 @@ def refresh_sparse_factorization_values(
         dropped,
         factor_nonzeros,
         finite,
-    ) = jax.vmap(lambda input_values: _factor_sparse_values_one(plan, input_values))(
+    ) = _map_value_banks(lambda input_values: _factor_sparse_values_one(plan, input_values))(
         flattened_input
     )
     factor_size = plan.factor_indices.size
 
-    lower_substitution, upper_substitution = jax.vmap(
+    lower_substitution, upper_substitution = _map_value_banks(
         lambda factor_values: _prepare_factor_substitutions(plan, factor_values)
     )(values)
     values = values.reshape(plan.batch_shape + (factor_size,))
@@ -1971,15 +2026,7 @@ def refresh_sparse_factorization_values(
         fill_ratio=factor_nonzeros / max(plan.input_nnz, 1),
         finite=finite,
     )
-    return PreparedSparseFactorization(
-        plan=plan,
-        factor_values=values,
-        status=status,
-        diagnostics=diagnostics,
-        lower_substitution=lower_substitution,
-        upper_substitution=upper_substitution,
-        factorization_id=f"{plan.plan_id}/numeric",
-    )
+    return values, status, diagnostics, lower_substitution, upper_substitution
 
 
 def factorize_sparse(

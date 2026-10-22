@@ -23,6 +23,7 @@ from ._spaces import DiscreteFieldSpace
 TransferSemantics: TypeAlias = Literal[
     "unspecified",
     "interpolation",
+    "reconstruction",
     "nested-interpolation",
     "l2-projection",
     "conservative-remap",
@@ -38,7 +39,9 @@ functionals to the source field; ``nested-interpolation`` does so on a target
 mesh nested in the source through exact coordinate-map restriction, reproducing
 every source field exactly. ``l2-projection`` is a Galerkin projection,
 ``conservative-remap`` an overlap-measure content remap, and ``restriction`` a
-fine-to-coarse state restriction. ``covariant-piola`` and
+fine-to-coarse state restriction. ``reconstruction`` applies target functionals
+to an explicitly owned source H1 reconstruction; it does not claim evaluation
+of unknown virtual interiors. ``covariant-piola`` and
 ``contravariant-piola`` are compatible H(curl) and H(div) transfers through the
 oriented edge/face moment functionals of the target space.
 ``material-pullback`` transports a scalar under an explicitly certified material
@@ -92,6 +95,15 @@ def _check_semantics(
             if semantics == "interpolation" and source.conformity in ("Hcurl", "Hdiv"):
                 raise ValueError(
                     "FieldTransfer.semantics must use Piola moment transfer for Hcurl or Hdiv fields; got nodal interpolation"
+                )
+        case "reconstruction":
+            if source.conformity != "H1" or target.conformity != "H1":
+                raise ValueError(
+                    "FieldTransfer.reconstruction must retain scalar H1 conformity; got another field interpretation"
+                )
+            if properties.nested or geometry is None:
+                raise ValueError(
+                    "FieldTransfer.reconstruction must bind its source/target geometry without a nested equality claim"
                 )
         case "nested-interpolation":
             if not _compatible_conformity(source, target) or source.conformity in (

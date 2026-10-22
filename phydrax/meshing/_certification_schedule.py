@@ -30,6 +30,7 @@ MeshCertificationRoute: TypeAlias = Literal[
     "volume_plc",
     "volume_implicit",
     "volume_layer",
+    "volume_cad",
     "mapped_volume",
     "surface",
     "curve",
@@ -59,7 +60,7 @@ def route_checks(
     match route:
         case "volume_plc":
             return (*common, "domain_coverage"), (*welded, *manifold, "open_boundary")
-        case "volume_implicit" | "volume_layer" | "mapped_volume":
+        case "volume_implicit" | "volume_layer" | "volume_cad" | "mapped_volume":
             return (
                 (*common, "domain_coverage", "source_fidelity"),
                 (*welded, *manifold, "open_boundary"),

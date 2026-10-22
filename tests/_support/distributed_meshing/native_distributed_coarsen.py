@@ -321,7 +321,9 @@ def complete_family_coarsening(device_count: str) -> dict[str, Any]:
             )
         )
     else:
-        raise AssertionError("bounded isolated forest did not finish")
+        raise AssertionError(
+            "coarsening_fixture.forest must finish within eight rounds; got unfinished state."
+        )
     _record_array(
         checks,
         "coarsen_107",

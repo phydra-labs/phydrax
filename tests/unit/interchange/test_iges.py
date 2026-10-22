@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -25,9 +27,11 @@ from phydrax.geometry.brep import (
     prepare_brep_query,
 )
 from phydrax.interchange import (
+    _iges,
     AdapterStatus,
     CadCurveFitPolicy,
     CadExportPolicy,
+    CadExportResult,
     CadImportPolicy,
     CadInterchangeError,
     decode_iges_bytes,
@@ -37,6 +41,7 @@ from phydrax.interchange import (
     save_brep_archive,
     write_iges,
 )
+from phydrax.interchange._cad import decode_bounded_approximation_descriptor
 from phydrax.units import MILLIMETER
 from tests._support.cad_models import (
     CONTRACT,
@@ -76,6 +81,80 @@ _OFFSET_COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-14
 _MILLIMETER_COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-18
 
 
+def _independent_iges(
+    title: str, global_record: str, entities: Sequence[tuple[int, int, str]]
+) -> bytes:
+    """Lay out handwritten ``(type, form, parameters)`` entities as fixed IGES 5.3."""
+    global_lines = [
+        f"{global_record[start : start + 72]:72s}G{index + 1:7d}"
+        for index, start in enumerate(range(0, len(global_record), 72))
+    ]
+    directory_lines = []
+    parameter_lines = []
+    for index, (kind, form, parameters) in enumerate(entities):
+        directory = 2 * index + 1
+        pointer = index + 1
+        first = (kind, pointer, 0, 0, 0, 0, 0, 0, 0)
+        second = (kind, 0, 0, 1, form, 0, 0)
+        directory_lines.extend(
+            (
+                "".join(f"{value:8d}" for value in first) + f"D{directory:7d}",
+                "".join(f"{value:8d}" for value in second)
+                + f"{'SOURCE':8s}{0:8d}D{directory + 1:7d}",
+            )
+        )
+        parameter_lines.append(f"{parameters:64s}{directory:8d}P{pointer:7d}")
+    termination = f"S{1:7d}G{len(global_lines):7d}D{len(directory_lines):7d}P{len(parameter_lines):7d}"
+    records = [
+        f"{title:72s}S{1:7d}",
+        *global_lines,
+        *directory_lines,
+        *parameter_lines,
+        f"{termination:72s}T{1:7d}",
+    ]
+    return ("\n".join(records) + "\n").encode("ascii")
+
+
+# IGES 5.3 section 4.30 planar offset source: an offset plane and four lines
+# of a 2 m x 1 m rectangle at directory pointers D11, D13, D15 and D17.
+_OFFSET_SUPPORT = (
+    (116, 0, "116,0,0,0.5;"),
+    (123, 0, "123,0,0,1;"),
+    (123, 0, "123,1,0,0;"),
+    (190, 1, "190,1,3,5;"),
+    (140, 0, "140,0,0,1,0.25,7;"),
+    (110, 0, "110,0,0,0.75,2,0,0.75;"),
+    (110, 0, "110,2,0,0.75,2,1,0.75;"),
+    (110, 0, "110,2,1,0.75,0,1,0.75;"),
+    (110, 0, "110,0,1,0.75,0,0,0.75;"),
+)
+_OFFSET_GLOBAL = (
+    "1H,,1H;,6HPHYDRA,11Hoffset.iges,6HPHYDRA,7Hfixture,"
+    "32,38,6,308,15,6HPHYDRA,1.0,6,1HM,1,0.01,"
+    "15H20261004.000000,0.000001,2.0,6HPHYDRA,6HPHYDRA,"
+    "11,0,15H20261004.000000;"
+)
+
+
+def _offset_face(composites: Sequence[str], *, millimeters: bool = False) -> bytes:
+    """Bound the offset plane by the last of ``composites`` (from D19 onward)."""
+    boundary = 19 + 2 * (len(composites) - 1)
+    entities = (
+        *_OFFSET_SUPPORT,
+        *((102, 0, composite) for composite in composites),
+        (142, 0, f"142,0,9,0,{boundary},1;"),
+        (144, 0, f"144,9,1,0,{boundary + 2};"),
+    )
+    global_record = (
+        _OFFSET_GLOBAL.replace("1.0,6,1HM,", "1.0,2,2HMM,")
+        if millimeters
+        else _OFFSET_GLOBAL
+    )
+    return _independent_iges(
+        "Independent IGES5.3 offset surface source", global_record, entities
+    )
+
+
 @pytest.mark.parametrize("name", SOLIDS)
 def test_native_solid_retains_topology_and_pcurves(name: str, tmp_path: Path) -> None:
     model = native_solid(name)
@@ -91,6 +170,49 @@ def test_native_solid_retains_topology_and_pcurves(name: str, tmp_path: Path) ->
         EXACT_VOLUMES[name], rel=_VOLUME_RELATIVE_TOLERANCE
     )
     assert not result.report.losses
+
+
+def test_cylinder_seam_pcurves_retain_trimmed_knot_domain_and_edge_use_sense() -> None:
+    """Retain the quadric loop pattern: trimmed spline plus oppositely used seam."""
+    model = native_solid("cylinder")
+    writer = _iges._IgesWriter(model, CadExportPolicy())
+    writer.encode()
+    changed: set[int] = set()
+    for entity in writer.entities:
+        if entity.entity_type != 126 or entity.parameters[:2] != ["1", "1"]:
+            continue
+        values = entity.parameters
+        points = np.asarray([float(value) for value in values[12:18]]).reshape(2, 3)
+        if points[0, 0] != points[1, 0] or points[0, 1] == points[1, 1]:
+            continue
+        lower, upper = float(values[18]), float(values[19])
+        # As in the earned quadric artifact, the IGES 126 active interval
+        # selects only the last portion of a larger, perfectly valid spline.
+        # Prepend exact linear continuation without changing that interval.
+        extended = np.concatenate(((2.0 * points[0] - points[1])[None], points))
+        entity.parameters = [
+            "2", *values[1:6],
+            *writer.reals((2.0 * lower - upper, 2.0 * lower - upper, lower, upper, upper)),
+            "1", "1", "1",
+            *writer.reals(extended),
+            *values[18:],
+        ]
+        changed.add(entity.number)
+    assert changed
+    senses = set()
+    for entity in writer.entities:
+        if entity.entity_type == 508:
+            for position in range(1, len(entity.parameters), 7):
+                if int(entity.parameters[position + 6]) in changed:
+                    senses.add(entity.parameters[position + 3])
+    assert senses == {"0", "1"}
+    result = decode_iges_bytes(writer._text(2.0), POLICY)
+    assert result.model.topology.num_faces == model.topology.num_faces
+    assert result.coverage.pcurves_honored == len(geometry_of(model).pcurves)
+    assert result.coverage.pcurves_fitted == 0
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        EXACT_VOLUMES["cylinder"], rel=_VOLUME_RELATIVE_TOLERANCE
+    )
 
 
 @pytest.mark.parametrize(
@@ -160,10 +282,52 @@ def test_repeated_definition_retains_independent_nested_occurrences(
     }
 
 
+def _replace_iges_section(data: bytes, section: str, text: Sequence[str]) -> bytes:
+    sections = _iges._lines(data, "test")
+    sections[section] = [
+        f"{value:72s}{section}{index + 1:7d}"
+        for index, value in enumerate(text)
+    ]
+    termination = "".join(
+        f"{letter}{len(sections[letter]):7d}" for letter in "SGDP"
+    )
+    sections["T"] = [f"{termination:72s}T{1:7d}"]
+    return (
+        "\n".join(line for letter in "SGDPT" for line in sections[letter]) + "\n"
+    ).encode("ascii")
+
+
+def _with_bounded_descriptor(data: bytes, descriptor: str) -> bytes:
+    return _replace_iges_section(
+        data, "S",
+        [
+            "Independent descriptive metadata",
+            f"PhydraxBoundedApproximation:{len(descriptor)}",
+            *(descriptor[index:index + 72] for index in range(0, len(descriptor), 72)),
+        ],
+    )
+
+
+@pytest.fixture(scope="module")
+def bounded_iges_export(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[BRepModel, CadExportResult, Path]:
+    model = native_intersection_cap()
+    path = tmp_path_factory.mktemp("bounded-iges") / "approximated.igs"
+    fit = CadCurveFitPolicy(
+        tolerance=1.0e-7, maximum_control_points=512, check_samples=1025
+    )
+    result = write_iges(
+        model, path, policy=CadExportPolicy(intersection_approximation=fit)
+    )
+    return model, result, path
+
+
 def test_explicit_branch_approximation_emits_coupled_geometry(
     tmp_path: Path,
+    bounded_iges_export: tuple[BRepModel, CadExportResult, Path],
 ) -> None:
-    model = native_intersection_cap()
+    model, result, path = bounded_iges_export
     exact = tmp_path / "exact.igs"
     with pytest.raises(CadInterchangeError) as refused:
         write_iges(model, exact)
@@ -171,10 +335,6 @@ def test_explicit_branch_approximation_emits_coupled_geometry(
     assert not exact.exists()
     fit = CadCurveFitPolicy(
         tolerance=1.0e-7, maximum_control_points=512, check_samples=1025
-    )
-    path = tmp_path / "approximated.igs"
-    result = write_iges(
-        model, path, policy=CadExportPolicy(intersection_approximation=fit)
     )
     assert result.report.status == AdapterStatus.DECLARED_LOSS
     approximation = result.approximations[0]
@@ -199,7 +359,27 @@ def test_explicit_branch_approximation_emits_coupled_geometry(
             "fixture.cap_curve must be a coupled intersection; got another carrier"
         )
     assert result.approximations[0].branch_id == source_branch.branch_id
-    restored = read_iges(path, POLICY, trusted_root=tmp_path).model
+    imported = read_iges(path, POLICY, trusted_root=path.parent)
+    restored = imported.model
+    assert restored.model_id != model.model_id
+    assert imported.source_digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert result.report.target_profile is not None
+    qualifiers = dict(result.report.target_profile.qualifiers)
+    assert qualifiers["artifact-sha256"] == result.receipt.content_sha256
+    assert qualifiers["representation"] == "bounded-coupled-approximation"
+    descriptor = _iges._decode(path.read_bytes(), POLICY).bounded_descriptor
+    assert descriptor == qualifiers["bounded-approximation-descriptor"]
+    assert descriptor is not None
+    gap = decode_bounded_approximation_descriptor(descriptor)
+    assert gap > 0.0
+    assert imported.report.status == AdapterStatus.DECLARED_LOSS
+    assert imported.report.source_profile is not None
+    assert (
+        dict(imported.report.source_profile.qualifiers)["bounded-representation-id"]
+        == qualifiers["bounded-representation-id"]
+    )
+    assert imported.source_digest in imported.report.losses[0].rationale
+    assert qualifiers["bounded-representation-id"] in imported.report.losses[0].rationale
     restored_geometry = geometry_of(restored)
     edge = restored_geometry.curves[restored_geometry.edge_curves[0]]
     if not isinstance(edge, BSplineCurve):
@@ -218,6 +398,128 @@ def test_explicit_branch_approximation_emits_coupled_geometry(
     np.testing.assert_allclose(points[:, 2], 0.3, atol=sample_tolerance)
 
 
+def test_bounded_representation_gap_scales_to_target_length_unit(
+    bounded_iges_export: tuple[BRepModel, CadExportResult, Path],
+) -> None:
+    _, _, path = bounded_iges_export
+    data = path.read_bytes()
+    descriptor = _iges._decode(data, POLICY).bounded_descriptor
+    assert descriptor is not None
+    source_gap = decode_bounded_approximation_descriptor(descriptor)
+    target_gap = decode_bounded_approximation_descriptor(
+        descriptor, length_factor=1000.0
+    )
+    assert target_gap >= 1000.0 * source_gap
+    assert target_gap == pytest.approx(
+        1000.0 * source_gap, rel=4.0 * np.finfo(np.float64).eps
+    )
+    imported = decode_iges_bytes(
+        data, CadImportPolicy(SpatialCoordinateContract(MILLIMETER), LIMITS)
+    )
+    assert imported.source_length_unit_meters == 1.0
+    assert imported.model.coordinate_contract.length_unit == MILLIMETER
+    assert imported.report.status == AdapterStatus.DECLARED_LOSS
+    assert imported.report.valid
+    bounded_loss = next(
+        loss for loss in imported.report.losses
+        if loss.path == "bounded-coupled-approximation"
+    )
+    assert not bounded_loss.changes_interpretation
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    (
+        '{"representation":"bounded-coupled-approximation"}',
+        '{"representation":"bounded-coupled-approximation","gap_bound":1.0}',
+    ),
+    ids=("marker-only", "forged-gap-only"),
+)
+def test_incomplete_bounded_metadata_never_grants_gap_allowance(
+    descriptor: str, tmp_path: Path,
+) -> None:
+    path = tmp_path / "exact.igs"
+    write_iges(native_solid("box"), path)
+    data = _with_bounded_descriptor(path.read_bytes(), descriptor)
+    with pytest.raises(CadInterchangeError):
+        decode_iges_bytes(data, POLICY)
+
+
+@pytest.mark.parametrize("change", ("law", "stored-carrier", "truncated"))
+def test_bounded_descriptor_and_actual_carrier_tampering_refuse(
+    change: str,
+    bounded_iges_export: tuple[BRepModel, CadExportResult, Path],
+) -> None:
+    _, _, path = bounded_iges_export
+    data = path.read_bytes()
+    decoded = _iges._decode(data, POLICY)
+    assert decoded.bounded_descriptor is not None
+    if change == "law":
+        descriptor = json.loads(decoded.bounded_descriptor)
+        descriptor["gap_bound"] = 1.0e6
+        data = _with_bounded_descriptor(
+            data, json.dumps(descriptor, sort_keys=True, separators=(",", ":"))
+        )
+    elif change == "truncated":
+        sections = _iges._lines(data, "test")
+        data = _replace_iges_section(
+            data, "S", [line[:72] for line in sections["S"][:-1]]
+        )
+    else:
+        # Corrupt only an interior 3D control point: the endpoints, valid
+        # descriptor and declared bound remain untouched. Admission must prove
+        # the stored carrier, not trust this descriptor's provenance.
+        edge_list = next(e for e in decoded.entries.values() if e.entity_type == 504)
+        curve_number = int(_iges._string(edge_list.parameters[1]))
+        curve = decoded.entries[curve_number]
+        assert curve.entity_type == 126
+        count = int(_iges._string(curve.parameters[0])) + 1
+        degree = int(_iges._string(curve.parameters[1]))
+        assert count > 2
+        sections = _iges._lines(data, "test")
+        first = sections["D"][curve_number - 1]
+        second = sections["D"][curve_number]
+        pointer = int(first[8:16]) - 1
+        records = int(second[24:32])
+        text = "".join(line[:64] for line in sections["P"][pointer:pointer + records])
+        tokens = text.split(",")
+        coordinate = 1 + 6 + count + degree + 1 + count + 3 * (count // 2) + 2
+        token = tokens[coordinate]
+        tokens[coordinate] = "9" + " " * (len(token) - 1)
+        changed = ",".join(tokens)
+        for index in range(records):
+            old = sections["P"][pointer + index]
+            sections["P"][pointer + index] = changed[index * 64:(index + 1) * 64] + old[64:]
+        data = ("\n".join(
+            line for letter in "SGDPT" for line in sections[letter]
+        ) + "\n").encode("ascii")
+    with pytest.raises(CadInterchangeError):
+        decode_iges_bytes(data, POLICY)
+
+
+def test_global_resolution_is_not_a_bounded_gap_allowance() -> None:
+    # A handwritten ordinary source: all boundary curves are 0.01 m above
+    # their plane, while still forming an exactly closed spatial loop.
+    data = _offset_face(["102,4,11,13,15,17;"]).replace(b"0.75", b"0.76")
+    sections = _iges._lines(data, "test")
+    _, _, values = _iges._global(sections["G"], LIMITS.max_attributes)
+    assert _iges._real(values[18], "G19") == 1.0e-6
+    # G19 is a coordinate coincidence/discernibility scalar (§2.2.4.3.19),
+    # not uncertainty on an edge/surface pair. Even a resolution larger than
+    # the actual 0.01 m gap must not weaken the original source policy.
+    global_text = "".join(line[:72] for line in sections["G"])
+    global_text = global_text.replace(",0.000001,", ",1.0,", 1).rstrip()
+    data = _replace_iges_section(
+        data, "G",
+        [global_text[index:index + 72] for index in range(0, len(global_text), 72)],
+    )
+    data = _replace_iges_section(data, "S", ["Ordinary independent IGES source"])
+    assert _iges._decode(data, POLICY).bounded_descriptor is None
+    assert POLICY.relative_geometric_tolerance == 1.0e-8
+    with pytest.raises(CadInterchangeError):
+        decode_iges_bytes(data, POLICY)
+
+
 def test_declared_iges_units_scale_geometry_and_preserve_pcurves(tmp_path: Path) -> None:
     model = brep_box(
         (0, 0, 0), (1, 2, 3), coordinate_contract=SpatialCoordinateContract(MILLIMETER)
@@ -226,6 +528,14 @@ def test_declared_iges_units_scale_geometry_and_preserve_pcurves(tmp_path: Path)
     write_iges(model, path)
     result = read_iges(path, POLICY, trusted_root=tmp_path)
     assert result.source_length_unit_meters == 1.0e-3
+    assert result.report.source_profile is not None
+    qualifiers = dict(result.report.source_profile.qualifiers)
+    assert qualifiers["minimum-coordinate-discernibility-source-units"] == "1.0E-07"
+    assert float(
+        qualifiers["minimum-coordinate-discernibility-target-units"]
+    ) == pytest.approx(1.0e-10)
+    assert _iges._decode(path.read_bytes(), POLICY).bounded_descriptor is None
+    assert POLICY.relative_geometric_tolerance == 1.0e-8
     np.testing.assert_allclose(
         np.max(np.asarray(geometry_of(result.model).vertex_points), axis=0),
         [1.0e-3, 2.0e-3, 3.0e-3],
@@ -479,57 +789,10 @@ def test_independent_offset_surface_source_retains_tree_without_fitted_pcurves(
     tmp_path: Path,
 ) -> None:
     """IGES5.3 section4.30 source; no native writer or external kernel."""
-    entities = (
-        (116, 0, "116,0,0,0.5;"),
-        (123, 0, "123,0,0,1;"),
-        (123, 0, "123,1,0,0;"),
-        (190, 1, "190,1,3,5;"),
-        (140, 0, "140,0,0,1,0.25,7;"),
-        (110, 0, "110,0,0,0.75,2,0,0.75;"),
-        (110, 0, "110,2,0,0.75,2,1,0.75;"),
-        (110, 0, "110,2,1,0.75,0,1,0.75;"),
-        (110, 0, "110,0,1,0.75,0,0,0.75;"),
-        (102, 0, "102,4,11,13,15,17;"),
-        (142, 0, "142,0,9,0,19,1;"),
-        (144, 0, "144,9,1,0,21;"),
-    )
-    global_record = (
-        "1H,,1H;,6HPHYDRA,11Hoffset.iges,6HPHYDRA,7Hfixture,"
-        "32,38,6,308,15,6HPHYDRA,1.0,6,1HM,1,0.01,"
-        "15H20261004.000000,0.000001,2.0,6HPHYDRA,6HPHYDRA,"
-        "11,0,15H20261004.000000;"
-    )
-    if millimeters:
-        global_record = global_record.replace("1.0,6,1HM,", "1.0,2,2HMM,")
     factor = 1.0e-3 if millimeters else 1.0
-    global_lines = [
-        f"{global_record[start : start + 72]:72s}G{index + 1:7d}"
-        for index, start in enumerate(range(0, len(global_record), 72))
-    ]
-    directory_lines = []
-    parameter_lines = []
-    for index, (kind, form, parameters) in enumerate(entities):
-        directory = 2 * index + 1
-        pointer = index + 1
-        first = (kind, pointer, 0, 0, 0, 0, 0, 0, 0)
-        second = (kind, 0, 0, 1, form, 0, 0)
-        directory_lines.extend(
-            (
-                "".join(f"{value:8d}" for value in first) + f"D{directory:7d}",
-                "".join(f"{value:8d}" for value in second)
-                + f"{'SOURCE':8s}{0:8d}D{directory + 1:7d}",
-            )
-        )
-        parameter_lines.append(f"{parameters:64s}{directory:8d}P{pointer:7d}")
-    termination = f"S{1:7d}G{len(global_lines):7d}D{len(directory_lines):7d}P{len(parameter_lines):7d}"
-    records = [
-        f"{'Independent IGES5.3 offset surface source':72s}S{1:7d}",
-        *global_lines,
-        *directory_lines,
-        *parameter_lines,
-        f"{termination:72s}T{1:7d}",
-    ]
-    imported = decode_iges_bytes(("\n".join(records) + "\n").encode("ascii"), POLICY)
+    imported = decode_iges_bytes(
+        _offset_face(("102,4,11,13,15,17;",), millimeters=millimeters), POLICY
+    )
     assert imported.report.valid
     assert imported.coverage.pcurves_fitted == 0
     (patch,) = imported.model.patches
@@ -558,6 +821,46 @@ def test_independent_offset_surface_source_retains_tree_without_fitted_pcurves(
         restored.patches[0].evaluate(jnp.asarray([0.3, 0.4], dtype=jnp.float64) * factor),
         patch.evaluate(jnp.asarray([0.3, 0.4], dtype=jnp.float64) * factor),
     )
+
+
+def test_nested_composite_boundary_keeps_flat_segment_order() -> None:
+    flat = decode_iges_bytes(_offset_face(("102,4,11,13,15,17;",)), POLICY)
+    nested = decode_iges_bytes(
+        _offset_face(("102,2,11,13;", "102,2,15,17;", "102,2,19,21;")), POLICY
+    )
+    assert nested.report.valid
+    assert nested.model.topology.num_faces == 1
+    assert nested.model.topology.num_edges == 4
+    np.testing.assert_array_equal(
+        np.asarray(nested.model.require_geometry().vertex_points),
+        np.asarray(flat.model.require_geometry().vertex_points),
+    )
+    area = prepare_brep_query(nested.model).measures.face_areas[0]
+    assert float(area) == pytest.approx(2.0, rel=_OFFSET_AREA_RELATIVE_TOLERANCE)
+
+
+@pytest.mark.parametrize(
+    ("depth", "reason", "message"),
+    (
+        # Sixteen uses of one line stay sixteen segments, so the loop is
+        # disconnected rather than a deduplicated open boundary.
+        (4, "inconsistent-geometry", "disconnected"),
+        # 2046 unfolded references exceed the 256-attribute import limit.
+        (10, "limit", "unfolded_references"),
+    ),
+)
+def test_shared_composite_references_are_admitted_before_expansion(
+    depth: int, reason: str, message: str
+) -> None:
+    composites = ["102,2,11,11;"]
+    for level in range(1, depth):
+        previous = 19 + 2 * (level - 1)
+        composites.append(f"102,2,{previous},{previous};")
+    policy = CadImportPolicy(CONTRACT, replace(LIMITS, max_attributes=256))
+    with pytest.raises(CadInterchangeError) as refused:
+        decode_iges_bytes(_offset_face(composites), policy)
+    assert refused.value.refusal.reason == reason
+    assert message in refused.value.refusal.message
 
 
 @pytest.mark.parametrize(

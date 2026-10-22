@@ -7,6 +7,7 @@ import math
 import sys
 from fractions import Fraction
 from itertools import permutations, product
+from typing import cast
 
 import jax
 import numpy as np
@@ -23,7 +24,10 @@ from phydrax.discretization._cell_geometry import (
     RestrictedCellGeometryElement,
     SplineCellGeometryElement,
 )
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from phydrax.discretization._coordinate_enclosure import (
     _accumulate,
     _bernstein_preparation_key,
@@ -46,6 +50,7 @@ from phydrax.discretization._coordinate_enclosure import (
     coordinate_source_signature,
     determinant,
     evaluate,
+    Expression,
     expression_control_net,
     expression_derivative,
     expression_evaluate,
@@ -178,14 +183,14 @@ def test_barycentric_snapshot_reuse_preserves_dynamic_source_leaf(
     leaves = jax.tree_util.tree_leaves(barycentric_source)
     signature = coordinate_source_signature(barycentric_source)
     work, memory = coordinate_source_snapshot_preparation_bounds(barycentric_source)
-    with owned_coordinate_preparation(work, memory) as budget:
+    with owned_coordinate_preparation(2 * work, memory) as budget:
         snapshot = prepare_barycentric_source_snapshot(barycentric_source, budget=budget)
         completed = budget.work_units
         assert (
             prepare_barycentric_source_snapshot(barycentric_source, budget=budget)
             is snapshot
         )
-        assert budget.work_units == completed
+        assert budget.work_units > completed
         assert not snapshot.barycentric_weights.flags.writeable
     restored_leaves = jax.tree_util.tree_leaves(barycentric_source)
     assert len(restored_leaves) == len(leaves)
@@ -203,11 +208,11 @@ def test_spline_snapshot_reuse_preserves_dynamic_source_leaves(
     leaves = jax.tree_util.tree_leaves(spline_source)
     signature = coordinate_source_signature(spline_source)
     work, memory = coordinate_source_snapshot_preparation_bounds(spline_source)
-    with owned_coordinate_preparation(work, memory) as budget:
+    with owned_coordinate_preparation(2 * work, memory) as budget:
         snapshot = prepare_spline_source_snapshot(spline_source, budget=budget)
         completed = budget.work_units
         assert prepare_spline_source_snapshot(spline_source, budget=budget) is snapshot
-        assert budget.work_units == completed
+        assert budget.work_units > completed
         assert not snapshot.u_knots.flags.writeable
         assert not snapshot.v_knots.flags.writeable
         assert not snapshot.weights.flags.writeable
@@ -240,8 +245,9 @@ def test_restricted_affine_simplex_reuses_full_source_law_under_original_budget(
             coordinate_corner_images(restriction, coefficients, budget=expanded)
             is not None
         )
+        _, key = coordinate_preparation_key(restriction, coefficients, budget=expanded)
         expected = _prepare_coordinate_polynomials(
-            restriction, coefficients, budget=expanded
+            restriction, coefficients, identity=(key[0], key[1]), budget=expanded
         )
     with coordinate_reference_budget() as reduced:
         assert (
@@ -1434,3 +1440,874 @@ def test_zero_constant_preserves_noncanonical_subclass_and_dimension_admission()
         with owned_coordinate_preparation(1, 256) as budget:
             assert constant(value, dimension, budget=budget) == {}
             assert budget.work_units == 1
+
+
+@pytest.mark.parametrize("radical_first", (False, True))
+def test_composed_q1_corners_reuse_exact_polynomial_source_points(
+    radical_first: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+    from phydrax.discretization._cell_geometry import (
+        PolynomialComposedCellGeometryElement,
+    )
+    from phydrax.discretization._reference_cell import reference_cell_topology
+
+    root = coordinate_lagrange_element("hexahedron", 2)
+    chart = coordinate_lagrange_element("hexahedron", 1)
+    root_nodes = tuple(tuple(Fraction(float(v)) for v in row) for row in root.reference_nodes)
+    rational = tuple(
+        (x + Fraction(1, 3), y + Fraction(2, 7), z + x * x * y / 64 + Fraction(1, 11))
+        for x, y, z in root_nodes
+    )
+    radical = tuple(tuple(RadicalElement(value) for value in row) for row in rational)
+    banks = (radical, rational) if radical_first else (rational, radical)
+    elements = []
+    with coordinate_reference_budget() as budget:
+        for offset in (Fraction(0), Fraction(1, 2)):
+            points = tuple(
+                (offset + Fraction(float(x)) / 2, Fraction(float(y)), Fraction(float(z)))
+                for x, y, z in chart.reference_nodes
+            )
+            elements.append(
+                PolynomialComposedCellGeometryElement(
+                    root,
+                    chart,
+                    np.asarray([[v.numerator for v in row] for row in points]),
+                    np.asarray([[v.denominator for v in row] for row in points]),
+                    budget=budget,
+                )
+            )
+    fast_images = []
+    with coordinate_reference_budget() as budget:
+        for bank_index, bank in enumerate(banks):
+            scalar_type = type(bank[0][0])
+            for element, offset in zip(elements, (Fraction(0), Fraction(1, 2)), strict=True):
+                images = coordinate_corner_images(element, bank, budget=budget)
+                assert images is not None
+                expected = []
+                for u, v, w in reference_cell_topology("hexahedron").vertices:
+                    x, y, z = offset + Fraction(float(u)) / 2, Fraction(float(v)), Fraction(float(w))
+                    expected.append(
+                        (x + Fraction(1, 3), y + Fraction(2, 7), z + x * x * y / 64 + Fraction(1, 11))
+                    )
+                assert images == tuple(expected)
+                assert all(type(value) is scalar_type for row in images for value in row)
+                fast_images.append(images)
+            # The two charts share four source-reference points; equal-valued
+            # rational and radical source laws retain distinct field bindings.
+            assert len(budget.polynomial_reference_image_cache) == 12 * (bank_index + 1)
+        changed = tuple((x + Fraction(1, 13), y, z) for x, y, z in rational)
+        changed_images = coordinate_corner_images(elements[0], changed, budget=budget)
+        assert changed_images is not None
+        assert changed_images != fast_images[0]
+        assert len(budget.polynomial_reference_image_cache) == 32
+    monkeypatch.setattr(enclosure, "_composed_polynomial_corner_images", lambda *args, **kwargs: None)
+    with coordinate_reference_budget() as budget:
+        generic = [
+            coordinate_corner_images(element, bank, budget=budget)
+            for bank in banks for element in elements
+        ]
+    assert generic == fast_images
+
+
+def test_composed_degree_reuses_actual_source_support_without_unit_denominators() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+    from phydrax.discretization._cell_geometry import (
+        PolynomialComposedCellGeometryElement,
+    )
+
+    root = coordinate_lagrange_element("hexahedron", 2)
+    chart = coordinate_lagrange_element("hexahedron", 1)
+    with coordinate_reference_budget() as budget:
+        retained = None
+        for mixed, expected in ((False, 2), (True, 4)):
+            controls = tuple(
+                (
+                    (Fraction(float(u)) + Fraction(float(v))) / 2
+                    if mixed else Fraction(float(u)) / 2,
+                    Fraction(float(v)) / 2,
+                    Fraction(float(w)) / 2,
+                )
+                for u, v, w in chart.reference_nodes
+            )
+            previous_work = budget.work_units
+            element = PolynomialComposedCellGeometryElement(
+                root,
+                chart,
+                np.asarray([[value.numerator for value in row] for row in controls]),
+                np.asarray([[value.denominator for value in row] for row in controls]),
+                budget=budget,
+            )
+            assert element.degree == expected
+            assert budget.work_units > previous_work
+            powers = budget.source_exponent_cache[enclosure.element_identity(root)]
+            assert len(budget.source_exponent_cache) == 1
+            assert len(powers) == 27
+            if retained is not None:
+                assert powers is retained
+            retained = powers
+    with coordinate_reference_budget() as cold:
+        assert not cold.source_exponent_cache
+
+
+def test_mutable_coefficient_banks_reearn_current_normalization() -> None:
+    source = coordinate_lagrange_element("triangle", 1)
+    bank = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
+    with coordinate_reference_budget() as budget:
+        first, first_key = coordinate_preparation_key(source, bank, budget=budget)
+        bank[-1, -1] = 0.5
+        second, second_key = coordinate_preparation_key(source, bank, budget=budget)
+        assert first != second
+        assert first_key != second_key
+
+
+@pytest.mark.parametrize("retain", (False, True))
+def test_reference_chart_expansion_consumes_one_shared_basis_profile(
+    retain: bool,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    chart = coordinate_lagrange_element("hexahedron", 1)
+    controls = tuple(
+        (u / 2 + u * v / 8, v / 2, w / 2)
+        for u, v, w in (
+            tuple(Fraction(float(value)) for value in row)
+            for row in chart.reference_nodes
+        )
+    )
+    coefficients = tuple(
+        tuple((value.numerator, value.denominator) for value in row)
+        for row in controls
+    )
+    expected = (
+        {(1, 0, 0): Fraction(1, 2), (1, 1, 0): Fraction(1, 8)},
+        {(0, 1, 0): Fraction(1, 2)},
+        {(0, 0, 1): Fraction(1, 2)},
+    )
+    with coordinate_reference_budget() as budget:
+        before_temporary = budget.temporary_bytes_upper
+        with budget.temporary_scope():
+            actual = enclosure.prepare_reference_chart_arguments(
+                chart, coefficients, 3, budget=budget, retain=retain
+            )
+            assert actual == expected
+        assert budget.temporary_bytes_upper == before_temporary
+        assert bool(budget.reference_composition_cache) is retain
+
+
+def test_composed_degree_does_not_retain_constructor_only_chart_expansion() -> None:
+    from phydrax.discretization._cell_geometry import (
+        PolynomialComposedCellGeometryElement,
+    )
+
+    source = coordinate_lagrange_element("hexahedron", 2)
+    chart = coordinate_lagrange_element("hexahedron", 1)
+    numerators = np.asarray(chart.reference_nodes, dtype=np.int64)
+    denominators = np.full(numerators.shape, 2, dtype=np.int64)
+    with coordinate_reference_budget() as budget:
+        before_temporary = budget.temporary_bytes_upper
+        with budget.temporary_scope():
+            element = PolynomialComposedCellGeometryElement(
+                source, chart, numerators, denominators, budget=budget
+            )
+        assert element.degree == 2
+        assert not budget.reference_composition_cache
+        assert budget.temporary_bytes_upper == before_temporary
+
+
+def test_element_identity_budget_preserves_full_original_formula_and_wrappers(
+    barycentric_source: BarycentricCellGeometryElement,
+) -> None:
+    from phydrax import _fingerprint
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    elements = (
+        coordinate_lagrange_element("triangle", 1),
+        coordinate_lagrange_element("hexahedron", 2),
+        barycentric_source,
+        barycentric_source.source_element,
+    )
+    with coordinate_reference_budget() as budget:
+        for element in elements:
+            expected = (
+                element.element_id,
+                _fingerprint.canonical_fingerprint(
+                    _fingerprint.array_tree_fingerprint(element)
+                ),
+            )
+            assert enclosure.element_identity(element) == expected
+            assert enclosure.element_identity(element, budget=budget) == expected
+            assert enclosure.element_identity(element, budget=budget) == expected
+        assert enclosure.element_identity(barycentric_source, budget=budget) != (
+            enclosure.element_identity(barycentric_source.source_element, budget=budget)
+        )
+
+
+def test_element_identity_memo_is_owned_by_actual_budget_and_repeated_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    element = coordinate_lagrange_element("triangle", 2)
+    coefficients = tuple(
+        tuple(Fraction(float(value)) for value in row)
+        for row in np.asarray(element.reference_nodes)
+    )
+    original = enclosure.imported_fingerprint.array_tree_fingerprint
+    scans: list[object] = []
+
+    def counted(tree: object) -> object:
+        if tree is element:
+            scans.append(tree)
+        return original(tree)
+
+    monkeypatch.setattr(enclosure.imported_fingerprint, "array_tree_fingerprint", counted)
+    with coordinate_reference_budget() as budget:
+        first = coordinate_polynomials(element, coefficients, budget=budget)
+        assert first is not None
+        before = budget.work_units
+        second = coordinate_polynomials(element, coefficients, budget=budget)
+        assert second is first
+        assert budget.work_units > before  # Actual owner authentication still executes.
+        assert scans == [element]
+        assert budget.element_identity_admission_cache[id(element)].owner is element
+        enclosure.element_identity(element)
+        assert len(scans) == 2  # An unbudgeted consumer retains its original full scan.
+    with coordinate_reference_budget() as cold:
+        assert not cold.element_identity_admission_cache
+        assert enclosure.element_identity(element, budget=cold) == (
+            enclosure.element_identity(element)
+        )
+        assert len(scans) == 4
+
+
+def test_element_identity_reauthenticates_actual_readonly_strided_numpy_bytes(
+    barycentric_source: BarycentricCellGeometryElement,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    backing = np.zeros((3, 6), dtype=np.float64)
+    bank = backing[:, ::2]
+    bank[:] = np.eye(3)
+    bank.setflags(write=False)
+    object.__setattr__(barycentric_source, "barycentric_weights", bank)
+    with coordinate_reference_budget() as budget:
+        first = enclosure.element_identity(barycentric_source, budget=budget)
+        admission = budget.element_identity_admission_cache[id(barycentric_source)]
+        backing[0, 2] = 0.25  # The readonly view's actual owner remains mutable.
+        second = enclosure.element_identity(barycentric_source, budget=budget)
+        assert first != second
+        assert second == enclosure.element_identity(barycentric_source)
+        assert budget.element_identity_admission_cache[id(barycentric_source)] is not admission
+        admission = budget.element_identity_admission_cache[id(barycentric_source)]
+        bank.setflags(write=True)
+        assert enclosure.element_identity(barycentric_source, budget=budget) == second
+        assert budget.element_identity_admission_cache[id(barycentric_source)] is not admission
+        setattr(bank, "shape", (1, 9))
+        reshaped = enclosure.element_identity(barycentric_source, budget=budget)
+        assert reshaped != second
+        assert reshaped == enclosure.element_identity(barycentric_source)
+        setattr(bank, "dtype", np.dtype(np.int64))
+        assert enclosure.element_identity(barycentric_source, budget=budget) == (
+            enclosure.element_identity(barycentric_source)
+        )
+        assert enclosure.element_identity(barycentric_source, budget=budget) != reshaped
+
+
+def test_coordinate_identity_authenticates_actual_nested_dict_and_list_edges() -> None:
+    from phydrax.discretization._coordinate_identity import (
+        coordinate_identity_inputs,
+        require_coordinate_identity_inputs,
+    )
+
+    bank = np.arange(6, dtype=np.float64).reshape(2, 3)
+    nested: dict[str, list[np.ndarray]] = {"banks": [bank]}
+    with coordinate_reference_budget() as budget:
+        admission = coordinate_identity_inputs((nested,), budget)
+        assert admission is not None
+        assert require_coordinate_identity_inputs(admission, budget)
+        nested["banks"].append(np.ones(2))
+        assert not require_coordinate_identity_inputs(admission, budget)
+        admission = coordinate_identity_inputs((nested,), budget)
+        assert admission is not None
+        nested["banks"][0] = bank.copy()
+        assert not require_coordinate_identity_inputs(admission, budget)
+        admission = coordinate_identity_inputs((nested,), budget)
+        assert admission is not None
+        nested["banks"] = list(nested["banks"])
+        assert not require_coordinate_identity_inputs(admission, budget)
+        admission = coordinate_identity_inputs((nested,), budget)
+        assert admission is not None
+        nested["other"] = nested.pop("banks")
+        assert not require_coordinate_identity_inputs(admission, budget)
+
+
+def test_element_identity_reauthenticates_actual_field_replacement(
+    barycentric_source: BarycentricCellGeometryElement,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    with coordinate_reference_budget() as budget:
+        first = enclosure.element_identity(barycentric_source, budget=budget)
+        replacement = np.asarray(barycentric_source.barycentric_weights).copy()
+        replacement[0, 0] = 0.5
+        object.__setattr__(barycentric_source, "barycentric_weights", jax.device_put(replacement))
+        assert enclosure.element_identity(barycentric_source, budget=budget) != first
+        assert enclosure.element_identity(barycentric_source, budget=budget) == (
+            enclosure.element_identity(barycentric_source)
+        )
+        object.__setattr__(barycentric_source, "element_id", "changed-declared-source")
+        assert enclosure.element_identity(barycentric_source, budget=budget)[0] == (
+            "changed-declared-source"
+        )
+
+
+def test_element_identity_memo_refuses_deleted_actual_jax_bank() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    element = coordinate_lagrange_element("triangle", 1)
+    with coordinate_reference_budget() as budget:
+        enclosure.element_identity(element, budget=budget)
+        assert id(element) in budget.element_identity_admission_cache
+        element.reference_nodes.delete()
+        with pytest.raises(ValueError, match="live actual JAX"):
+            enclosure.element_identity(element, budget=budget)
+
+
+def test_element_identity_unsupported_owner_keeps_original_full_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    element = coordinate_lagrange_element("triangle", 1)
+    # A foreign callable may close over changing numerical data. Its declaration
+    # is not a transparent or immutable owner, even with a stable source ID.
+    object.__setattr__(element, "tabulator", lambda points: points)
+    original = enclosure.imported_fingerprint.array_tree_fingerprint
+    scans: list[object] = []
+
+    def counted(tree: object) -> object:
+        scans.append(tree)
+        return original(tree)
+
+    expected = enclosure.element_identity(element)
+    monkeypatch.setattr(enclosure.imported_fingerprint, "array_tree_fingerprint", counted)
+    with coordinate_reference_budget() as budget:
+        assert enclosure.element_identity(element, budget=budget) == expected
+        assert enclosure.element_identity(element, budget=budget) == expected
+        assert scans == [element, element]
+        assert id(element) not in budget.element_identity_admission_cache
+
+
+def test_exact_rational_restriction_arguments_reuse_actual_numeric_preparation() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    origin = np.asarray((Fraction(1, 7), Fraction(0)), dtype=object)
+    matrix = np.asarray(
+        ((Fraction(1, 2), Fraction(-1, 3)), (Fraction(0), Fraction(1, 2))),
+        dtype=object,
+    )
+    inputs: tuple[tuple[Polynomial, ...], ...] = tuple(
+        (
+            {(0, 0): Fraction(index), (2, 0): Fraction(2), (0, 1): Fraction(3)},
+            {(0, 2): Fraction(1), (1, 1): Fraction(index + 1)},
+        )
+        for index in range(12)
+    )
+    with coordinate_reference_budget() as expanded:
+        expected = []
+        for coordinates in inputs:
+            chart = enclosure.chart_arguments("triangle", 2, budget=expanded)
+            arguments = tuple(
+                enclosure.compose(value, chart, budget=expanded)
+                for value in enclosure.affine_arguments(origin, matrix, budget=expanded)
+            )
+            composition = enclosure.ExpressionComposition(arguments, budget=expanded)
+            expected.append(tuple(composition(value, budget=expanded) for value in coordinates))
+        expanded_work = expanded.work_units
+    with coordinate_reference_budget() as shared:
+        actual = [
+            enclosure.restrict_chart_expressions(
+                coordinates, "triangle", "triangle", origin, matrix, budget=shared
+            )
+            for coordinates in inputs
+        ]
+        assert actual == expected
+        assert len(shared.prepared_reference_cache) == 1
+        assert shared.work_units < expanded_work
+
+
+def test_exact_restriction_arguments_rescan_readonly_banks_and_own_fraction_atoms() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    origin = np.asarray((Fraction(1, 7), Fraction(0)), dtype=object)
+    borrowed = Fraction(1, 2)
+    matrix = np.asarray(
+        ((borrowed, Fraction(-1, 3)), (Fraction(0), Fraction(1, 2))),
+        dtype=object,
+    )
+    matrix.setflags(write=False)
+    with coordinate_reference_budget() as budget:
+        first = enclosure.restriction_chart_arguments("triangle", origin, matrix, budget=budget)
+        assert isinstance(first, enclosure.PreparedPolynomialArguments)
+        before = budget.work_units
+        assert enclosure.restriction_chart_arguments("triangle", origin.copy(), matrix.copy(), budget=budget) is first
+        assert budget.work_units > before
+        object.__setattr__(borrowed, "_numerator", 3)
+        changed = enclosure.restriction_chart_arguments("triangle", origin, matrix, budget=budget)
+        assert changed is not first
+        matrix.setflags(write=True)
+        matrix[0, 0] = Fraction(1, 2)
+        matrix.setflags(write=False)
+        restored = enclosure.restriction_chart_arguments("triangle", origin, matrix, budget=budget)
+        assert restored is first
+        assert first.arguments[0][(1, 0)] == Fraction(1, 2)
+        assert len(budget.prepared_reference_cache) == 2
+
+
+def _composition_bank_inputs() -> tuple[tuple[Polynomial, ...], tuple[Polynomial, ...]]:
+    arguments: tuple[Polynomial, ...] = (
+        {(0, 0): Fraction(1, 5), (1, 0): Fraction(1), (0, 1): Fraction(1, 3)},
+        {(0, 0): Fraction(-1, 7), (1, 0): Fraction(-2, 5),
+         (0, 1): Fraction(1), (1, 1): Fraction(1, 11)},
+    )
+    support = ((2, 0), (1, 1), (0, 0), (0, 2))
+    values: tuple[Polynomial, ...] = tuple(
+        dict(zip(support, map(Fraction, row), strict=True))
+        for row in ((1, 2, -2, 0), (-1, 0, 1, 3), (1, 0, 0, -1))
+    )
+    return arguments, values
+
+
+def test_composition_bank_shares_only_identical_ordered_profile() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    arguments, values = _composition_bank_inputs()
+    with coordinate_reference_budget() as scalar:
+        composition = enclosure.ArgumentComposition(arguments, budget=scalar)
+        expected = tuple(composition(value, budget=scalar) for value in values)
+        scalar_work = scalar.work_units
+    with coordinate_reference_budget() as bank:
+        composition = enclosure.ArgumentComposition(arguments, budget=bank)
+        actual = composition.compose_many(values, budget=bank)
+        assert tuple(tuple(value.items()) for value in actual) == tuple(
+            tuple(value.items()) for value in expected
+        )
+        assert bank.work_units < scalar_work
+        assert len({id(value) for value in actual}) == len(values)
+        changed = tuple(dict(value) for value in values)
+        changed[1][(2, 0)] = Fraction(7, 13)
+        recomputed = composition.compose_many(changed, budget=bank)
+        assert recomputed[1] != actual[1]
+    reordered = (values[0], dict(reversed(tuple(values[1].items()))), values[2])
+    with coordinate_reference_budget() as scalar:
+        composition = enclosure.ArgumentComposition(arguments, budget=scalar)
+        expected = tuple(composition(value, budget=scalar) for value in reordered)
+    with coordinate_reference_budget() as bank:
+        composition = enclosure.ArgumentComposition(arguments, budget=bank)
+        actual = composition.compose_many(reordered, budget=bank)
+        assert tuple(tuple(value.items()) for value in actual) == tuple(
+            tuple(value.items()) for value in expected
+        )
+
+
+def test_composition_bank_preserves_axis_affine_and_rational_routes() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    arguments, values = _composition_bank_inputs()
+    with coordinate_reference_budget() as scalar:
+        affine = enclosure.axes(2, budget=scalar)
+        composition = enclosure.ArgumentComposition(affine, budget=scalar)
+        expected = tuple(composition(value, budget=scalar) for value in values)
+    with coordinate_reference_budget() as bank:
+        affine = enclosure.axes(2, budget=bank)
+        composition = enclosure.ArgumentComposition(affine, budget=bank)
+        assert composition.compose_many(values, budget=bank) == expected
+    with coordinate_reference_budget() as budget:
+        rational = enclosure.RationalPolynomial(
+            {(1, 0): Fraction(1)}, {(0, 0): Fraction(1), (0, 1): Fraction(1, 7)}
+        )
+        inputs = (values[0], rational, values[2])
+        scalar = enclosure.ExpressionComposition(arguments, budget=budget)
+        expected = tuple(scalar(value, budget=budget) for value in inputs)
+        bank = enclosure.ExpressionComposition(arguments, budget=budget)
+        actual = bank.compose_many(inputs, budget=budget)
+        assert enclosure.expression_sequence_equal(actual, expected, budget=budget)
+
+
+def test_composition_bank_preserves_annihilation_and_invalid_rank() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    with coordinate_reference_budget() as budget:
+        arguments: tuple[Polynomial, ...] = ({}, {(1, 0): Fraction(1), (0, 1): Fraction(1)})
+        composition = enclosure.ArgumentComposition(arguments, budget=budget)
+        values: tuple[Polynomial, ...] = (
+            {(1, 0): Fraction(1 << 3000), (0, 1): Fraction(-1)},
+            {(1, 0): Fraction(-(1 << 3000)), (0, 1): Fraction(2)},
+        )
+        expected = tuple(composition(value, budget=budget) for value in values)
+        assert composition.compose_many(values, budget=budget) == expected
+        bad: tuple[Polynomial, ...] = ({(1, 0, 0): Fraction(1)},) * 2
+        with pytest.raises(ValueError, match="unequal exponent ranks"):
+            composition.compose_many(bad, budget=budget)
+
+
+@pytest.mark.parametrize("resource", ("work", "storage"))
+def test_composition_bank_obeys_complete_original_admission(resource: str) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    arguments, values = _composition_bank_inputs()
+
+    def execute(budget: CoordinateEnclosureBudget) -> tuple[Polynomial, ...]:
+        return enclosure.ArgumentComposition(arguments, budget=budget).compose_many(
+            values, budget=budget
+        )
+
+    with owned_coordinate_preparation(1_000_000, 64 * 1024**2) as observed:
+        expected = execute(observed)
+        work, storage = observed.work_units, observed.peak_bytes_upper
+    with owned_coordinate_preparation(
+        work if resource == "work" else 1_000_000,
+        storage if resource == "storage" else 64 * 1024**2,
+    ) as admitted:
+        assert execute(admitted) == expected
+    with pytest.raises(CoordinateEnclosureResourceError):
+        with owned_coordinate_preparation(
+            work - 1 if resource == "work" else 1_000_000,
+            storage - 1 if resource == "storage" else 64 * 1024**2,
+        ) as refused:
+            execute(refused)
+
+
+@pytest.mark.parametrize("kind", ("barycentric", "tetrahedron", "spline"))
+def test_one_shot_source_snapshot_fits_derived_bound_without_unused_identity_memo(
+    kind: str,
+    barycentric_source: BarycentricCellGeometryElement,
+    spline_source: SplineCellGeometryElement,
+) -> None:
+    from phydrax._host_storage import retained_host_storage_profile
+    from phydrax._meshcore import is_native_host_buffer
+
+    element = (
+        BarycentricCellGeometryElement(
+            coordinate_lagrange_element("tetrahedron", 1), np.eye(4)
+        )
+        if kind == "tetrahedron" else
+        barycentric_source if kind == "barycentric" else spline_source
+    )
+    work, memory = coordinate_source_snapshot_preparation_bounds(element)
+    legacy_work = retained_host_storage_profile(element, {}, is_native_host_buffer)[3] + 128
+    with owned_coordinate_preparation(work, memory) as budget:
+        if isinstance(element, BarycentricCellGeometryElement):
+            barycentric_snapshot = prepare_barycentric_source_snapshot(element, budget=budget)
+            np.testing.assert_array_equal(
+                barycentric_snapshot.barycentric_weights, np.asarray(element.barycentric_weights)
+            )
+        else:
+            spline_snapshot = prepare_spline_source_snapshot(spline_source, budget=budget)
+            np.testing.assert_array_equal(spline_snapshot.weights, np.asarray(spline_source.weights))
+        assert id(element) not in budget.element_identity_admission_cache
+        assert budget.retained_owner_objects[id(element)] is element
+        assert 0 < budget.work_units <= work
+        if kind == "tetrahedron":
+            assert budget.work_units > legacy_work
+
+
+def _expanded_expression_determinant(
+    matrix: tuple[tuple[Expression, ...], ...], variables: int, budget: CoordinateEnclosureBudget
+) -> Expression:
+    from itertools import permutations
+
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    for row in matrix:
+        for value in row:
+            numerator, denominator = enclosure.expression_parts(value, variables, budget=budget)
+            assert all(len(index) == variables for value in (numerator, denominator) for index in value)
+    result: Expression = {}
+    for permutation in permutations(range(len(matrix))):
+        if any(not matrix[row][column] for row, column in enumerate(permutation)):
+            continue
+        term: Expression = enclosure.constant(1, variables, budget=budget)
+        for row, column in enumerate(permutation):
+            term = enclosure.expression_multiply(term, matrix[row][column], budget=budget)
+        sign = (-1) ** sum(
+            permutation[i] > permutation[j]
+            for i in range(len(matrix)) for j in range(i + 1, len(matrix))
+        )
+        result = enclosure.expression_add(
+            result, enclosure.expression_scale(term, sign, budget=budget), budget=budget
+        )
+    return result
+
+
+@pytest.mark.parametrize("size", (0, 1, 2, 3))
+@pytest.mark.parametrize("rational", (False, True))
+def test_expression_determinant_removes_only_unused_identity_work(
+    size: int, rational: bool,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    first: Expression = {(0, 0): Fraction(1), (1, 0): Fraction(1, 7), (0, 1): Fraction(1, 5)}
+    if rational:
+        first = RationalPolynomial(first, {(0, 0): Fraction(1), (0, 1): Fraction(1, 11)})
+    second: Polynomial = {(1, 0): Fraction(1), (0, 1): Fraction(1), (0, 0): Fraction(1, 3)}
+    third: Polynomial = {(1, 1): Fraction(1)}
+    full: tuple[tuple[Expression, ...], ...] = (
+        (first, second, {}),
+        ({}, third, {(0, 0): Fraction(2)}),
+        ({(0, 0): Fraction(-3)}, {}, first),
+    )
+    matrix = tuple(tuple(row[:size]) for row in full[:size])
+    with coordinate_reference_budget() as original:
+        expected = _expanded_expression_determinant(matrix, 2, original)
+        original_work = original.work_units
+    with coordinate_reference_budget() as current:
+        actual = enclosure.expression_determinant(matrix, variable_dimension=2, budget=current)
+        assert current.work_units < original_work
+    with coordinate_reference_budget() as comparison:
+        assert enclosure.expression_equal(actual, expected, budget=comparison)
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        assert tuple(actual.items()) == tuple(expected.items())
+
+
+def test_expression_determinant_scalar_result_owns_both_mutable_supports() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    numerator: Polynomial = {(1,): Fraction(1)}
+    denominator: Polynomial = {(0,): Fraction(1), (1,): Fraction(1, 7)}
+    source = RationalPolynomial(numerator, denominator)
+    with coordinate_reference_budget() as budget:
+        actual = enclosure.expression_determinant(((source,),), budget=budget)
+    assert isinstance(actual, RationalPolynomial)
+    assert actual.numerator is not numerator
+    assert actual.denominator is not denominator
+    actual.numerator[(0,)] = Fraction(3)
+    actual.denominator[(0,)] = Fraction(4)
+    assert numerator == {(1,): Fraction(1)}
+    assert denominator == {(0,): Fraction(1), (1,): Fraction(1, 7)}
+
+
+@pytest.mark.parametrize("resource", ("work", "storage"))
+def test_expression_determinant_identity_elision_preserves_original_admission(resource: str) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    first: Polynomial = {(0, 0): Fraction(1 << 3000), (1, 0): Fraction(1)}
+    second: Polynomial = {(0, 0): Fraction(1), (0, 1): Fraction(1, 3)}
+    matrix = ((first, second), (second, first))
+
+    def execute(budget: CoordinateEnclosureBudget) -> Expression:
+        return enclosure.expression_determinant(matrix, budget=budget)
+
+    with owned_coordinate_preparation(1_000_000, 64 * 1024**2) as observed:
+        expected = execute(observed)
+        work, storage = observed.work_units, observed.peak_bytes_upper
+    with owned_coordinate_preparation(
+        work if resource == "work" else 1_000_000,
+        storage if resource == "storage" else 64 * 1024**2,
+    ) as admitted:
+        assert execute(admitted) == expected
+    with pytest.raises(CoordinateEnclosureResourceError):
+        with owned_coordinate_preparation(
+            work - 1 if resource == "work" else 1_000_000,
+            storage - 1 if resource == "storage" else 64 * 1024**2,
+        ) as refused:
+            execute(refused)
+
+
+@pytest.mark.parametrize("kind", ("interval", "triangle", "quadrilateral", "tetrahedron", "hexahedron"))
+@pytest.mark.parametrize("denominator", (1, 7, 1 << 70))
+def test_separable_reference_chart_matches_ordered_generic_arguments(
+    kind: str, denominator: int,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    chart = coordinate_lagrange_element(kind, 1)
+    dimension = chart.topological_dimension
+    for permutation in permutations(range(dimension)):
+        for sign, offset in product((-1, 1), (0, 2)):
+            coefficients = tuple(
+                tuple(
+                    (sign * int(vertex[axis]) + offset, denominator)
+                    for axis in permutation
+                )
+                for vertex in chart.reference_nodes
+            )
+            with coordinate_reference_budget() as generic:
+                basis = source_basis(chart, budget=generic)
+                assert basis is not None
+                expected = linear_combinations(
+                    basis,
+                    tuple(tuple(Fraction(*row[a]) for row in coefficients)
+                          for a in range(dimension)),
+                    budget=generic,
+                )
+            with coordinate_reference_budget() as fast:
+                actual = enclosure.prepare_reference_chart_arguments(
+                    chart, coefficients, dimension, budget=fast, retain=False
+                )
+                assert tuple(tuple(p.items()) for p in actual) == tuple(
+                    tuple(p.items()) for p in expected
+                )
+                prepared = enclosure._retain_prepared_arguments(
+                    ("test-chart", str(permutation)), actual, budget=fast
+                )
+                assert isinstance(prepared, enclosure.PreparedPolynomialArguments)
+                assert prepared.ordered_key == tuple(tuple(p.items()) for p in expected)
+                assert prepared.axis_affine == enclosure._axis_affine_arguments(
+                    expected, dimension, budget=fast
+                )
+                polynomial = {
+                    (0,) * dimension: Fraction(2, 11),
+                    tuple(range(1, dimension + 1)): Fraction(-3, 13),
+                }
+                assert tuple(compose(polynomial, prepared, budget=fast).items()) == tuple(
+                    compose(polynomial, expected, budget=fast).items()
+                )
+
+
+@pytest.mark.parametrize("fault", ("nonlinear", "mixed", "order", "dtype", "source"))
+def test_separable_reference_chart_faults_keep_generic_source(
+    fault: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    chart = coordinate_lagrange_element("hexahedron", 2 if fault == "source" else 1)
+    controls = [
+        [Fraction(float(value)) / 7 for value in vertex]
+        for vertex in chart.reference_nodes
+    ]
+    if fault == "nonlinear":
+        controls[-1][0] += Fraction(1, 17)
+    elif fault == "mixed":
+        for row in controls:
+            row[0] += row[1]
+    elif fault == "order":
+        controls[0], controls[-1] = controls[-1], controls[0]
+    coefficients = tuple(
+        tuple((value.numerator, value.denominator) for value in row) for row in controls
+    )
+    if fault == "dtype":
+        coefficients = cast(
+            tuple[tuple[tuple[int, int], ...], ...],
+            tuple(tuple((np.int64(a), np.int64(b)) for a, b in row) for row in coefficients),
+        )
+        for specialized in (True, False):
+            if not specialized:
+                monkeypatch.setattr(enclosure, "_separable_linear_chart_arguments", lambda *a, **k: None)
+            with coordinate_reference_budget() as budget:
+                with pytest.raises(AttributeError, match="bit_length"):
+                    enclosure.prepare_reference_chart_arguments(
+                        chart, coefficients, 3, budget=budget, retain=False
+                    )
+        return
+    with coordinate_reference_budget() as budget:
+        assert enclosure._separable_linear_chart_arguments(
+            chart, coefficients, 3, budget=budget
+        ) is None
+        actual = enclosure.prepare_reference_chart_arguments(
+            chart, coefficients, 3, budget=budget, retain=False
+        )
+    monkeypatch.setattr(enclosure, "_separable_linear_chart_arguments", lambda *a, **k: None)
+    with coordinate_reference_budget() as budget:
+        expected = enclosure.prepare_reference_chart_arguments(
+            chart, coefficients, 3, budget=budget, retain=False
+        )
+    assert tuple(tuple(p.items()) for p in actual) == tuple(tuple(p.items()) for p in expected)
+
+
+def test_separable_reference_chart_mutation_reearns_coefficients_and_identity() -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    chart = coordinate_lagrange_element("hexahedron", 1)
+    coefficients = tuple(
+        tuple((int(value), 7) for value in vertex) for vertex in chart.reference_nodes
+    )
+    with coordinate_reference_budget() as budget:
+        first = enclosure.prepare_reference_chart_arguments(chart, coefficients, 3, budget=budget)
+        changed = tuple(
+            tuple((a + 1 if axis == 0 else a, b) for axis, (a, b) in enumerate(row))
+            for row in coefficients
+        )
+        second = enclosure.prepare_reference_chart_arguments(chart, changed, 3, budget=budget)
+        assert first != second
+        assert len(budget.reference_composition_cache) == 2
+        first_key = enclosure.element_identity(chart, budget=budget)
+        object.__setattr__(chart, "reference_nodes", np.asarray(chart.reference_nodes, dtype=np.float32))
+        second_key = enclosure.element_identity(chart, budget=budget)
+        assert first_key != second_key
+        assert enclosure.prepare_reference_chart_arguments(
+            chart, changed, 3, budget=budget
+        ) == second
+        assert len(budget.reference_composition_cache) == 3
+
+
+def test_separable_reference_chart_735_group_work_and_bounded_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    chart = coordinate_lagrange_element("hexahedron", 1)
+    helper = enclosure._separable_linear_chart_arguments
+    groups = 0
+    with coordinate_reference_budget() as generic, coordinate_reference_budget() as fast:
+        for shape in ((7, 7, 7), (7, 7, 8)):
+            for base in product(*(range(n) for n in shape)):
+                controls = tuple(
+                    tuple(Fraction(base[a] + int(value), shape[a]) for a, value in enumerate(vertex))
+                    for vertex in chart.reference_nodes
+                )
+                coefficients = tuple(
+                    tuple((value.numerator, value.denominator) for value in row)
+                    for row in controls
+                )
+                with generic.temporary_scope(), fast.temporary_scope():
+                    monkeypatch.setattr(enclosure, "_separable_linear_chart_arguments", lambda *a, **k: None)
+                    expected = enclosure.prepare_reference_chart_arguments(
+                        chart, coefficients, 3, budget=generic, retain=False
+                    )
+                    monkeypatch.setattr(enclosure, "_separable_linear_chart_arguments", helper)
+                    actual = enclosure.prepare_reference_chart_arguments(
+                        chart, coefficients, 3, budget=fast, retain=False
+                    )
+                    assert tuple(tuple(p.items()) for p in actual) == tuple(
+                        tuple(p.items()) for p in expected
+                    )
+                groups += 1
+        assert groups == 735
+        assert generic.work_units - fast.work_units > 71_603
+        assert fast.peak_bytes_upper < 64 * 1024
+        assert fast.temporary_bytes_upper == 0
+        assert not fast.reference_composition_cache
+        assert not fast.basis_cache
+
+
+@pytest.mark.parametrize("resource", ("work", "storage"))
+def test_separable_reference_chart_exact_resource_boundary(resource: str) -> None:
+    from phydrax.discretization import _coordinate_enclosure as enclosure
+
+    chart = coordinate_lagrange_element("hexahedron", 1)
+    coefficients = tuple(
+        tuple((1 + int(value), 7) for value in vertex) for vertex in chart.reference_nodes
+    )
+
+    def execute(budget: CoordinateEnclosureBudget) -> tuple[Polynomial, ...]:
+        with budget.temporary_scope():
+            return enclosure.prepare_reference_chart_arguments(
+                chart, coefficients, 3, budget=budget, retain=False
+            )
+
+    with owned_coordinate_preparation(1_000_000, 64 * 1024**2) as observed:
+        expected = execute(observed)
+        work, storage = observed.work_units, observed.peak_bytes_upper
+    with owned_coordinate_preparation(
+        work if resource == "work" else 1_000_000,
+        storage if resource == "storage" else 64 * 1024**2,
+    ) as admitted:
+        assert execute(admitted) == expected
+    with pytest.raises(CoordinateEnclosureResourceError):
+        with owned_coordinate_preparation(
+            work - 1 if resource == "work" else 1_000_000,
+            storage - 1 if resource == "storage" else 64 * 1024**2,
+        ) as refused:
+            execute(refused)

@@ -15,6 +15,7 @@ from tools.meshing_qualification._runtime import (
     _measured,
     _runtime_identity,
     qualification_failure,
+    StageMeasurement,
 )
 from tools.meshing_qualification.scenarios.providers import _mesh_scope
 
@@ -49,7 +50,7 @@ class _MetricAdaptationExecution(TypedDict):
     relocation: phx.meshing.MeshAdaptationResult
     prepared: phx.meshing.PreparedDeviceMetricAdaptation
     report: phx.meshing.DeviceMetricReport
-    resources: dict[str, dict[str, float]]
+    resources: dict[str, StageMeasurement]
 
 
 class _MetricAdaptationMeasurements(TypedDict):

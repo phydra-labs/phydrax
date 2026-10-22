@@ -222,12 +222,8 @@ def test_partitioned_protected_conflict_retains_clocks_and_refuses_commit() -> N
         prepare_adaptive_simplex(source, policy=policy)
     )
     # Parts have no per-mark admissibility: the union closure splits the edge.
-    update = refine_adaptive_simplex_parts(
-        partitioned.layout,
-        partitioned.parts,
-        partitioned.states,
-        partitioned.cell_marks(_cell_ids(source.mesh)),
-    )
+    update = refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states,
+    partitioned.cell_marks(_cell_ids(source.mesh)),)
     conflict = int(AdaptiveSimplexStatus.PROTECTED_CONFLICT)
     assert np.all(np.asarray(update.report.status) & conflict)
     assert np.all(np.asarray(update.state.status_flags) & conflict)
@@ -385,11 +381,16 @@ def test_device_commit_refuses_foreign_and_changed_preparation_receipts() -> Non
         prepared,
         jnp.asarray(1, dtype=jnp.uint64),
     )
-    with pytest.raises(ValueError, match=r"NativeExecutionRecord\.receipt_id must bind"):
+    # The chained host preparation makes the forged aggregate fail first.
+    with pytest.raises(
+        ValueError,
+        match=r"NativeExecutionRecord\.(receipt_id must bind|preparation_aggregates must match)",
+    ):
         commit_adaptive_simplex(forged, prepared.state)
     original = prepared.execution_evidence
     assert original is not None
-    assert original.preparation_evidence is None
+    # The host preparation is this request's chained phase, not an alias.
+    assert original.preparation_evidence is prepared.adaptation.preparation_evidence
     assert original.consumer_evidence is None
     assert int(np.asarray(original.imported_preparation_count)) == 0
     changed = NativeExecutionRecord(

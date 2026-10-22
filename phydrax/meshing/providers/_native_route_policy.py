@@ -26,6 +26,7 @@ PublicationRoute = Literal[
     "parametric_surface",
     "source_quads",
     "implicit",
+    "implicit_adaptive",
     "volume",
     "compartment",
     "periodic",
@@ -114,33 +115,38 @@ def publication_policy(
                 "cells",
                 "connectivity_entries",
                 "work_units",
-                "wall_seconds",
-            )
-            unenforced = (
                 "cavity_cells",
                 "geometry_queries",
                 "scratch_bytes",
                 "data_bytes",
+                "wall_seconds",
             )
+            # Native allocations and the concrete bounded host owners share
+            # one request pool, including source preparation and publication.
+            # This is not a claim to cap process RSS or compiler/device memory.
+            unenforced = ("scratch_bytes:unmanaged_host_device_compiler",)
             audit = CellMeshAuditPolicy(
                 require_complete_association=True,
                 watertight_boundary=CellMeshAuditDisposition.REJECT,
             )
         case "structured_surface" | "structured_volume":
+            # Preflight and publication check entity and data capacities and
+            # deadlines. Work, scratch and query tickets cover only edge-arc
+            # certification, so those limits are not declared route-wide.
             enforced = (
-                "maximum_vertices",
-                "maximum_cells",
-                "maximum_edges",
-                "maximum_faces",
-                "maximum_connectivity_entries",
-                "maximum_data_bytes",
-                "maximum_wall_seconds",
+                "vertices",
+                "cells",
+                "edges",
+                "faces",
+                "connectivity_entries",
+                "data_bytes",
+                "wall_seconds",
             )
             unenforced = (
-                "maximum_work_units",
-                "maximum_cavity_cells",
-                "maximum_geometry_queries",
-                "maximum_scratch_bytes",
+                "work_units",
+                "cavity_cells",
+                "geometry_queries",
+                "scratch_bytes",
             )
             audit = CellMeshAuditPolicy(
                 watertight_boundary=CellMeshAuditDisposition.REJECT
@@ -155,9 +161,16 @@ def publication_policy(
                 "cells",
                 "connectivity_entries",
                 "data_bytes",
-                "wall_time",
+                "wall_seconds",
             )
-            unenforced = ("native_workspace",)
+            # Work and scratch tickets meter source-seam preparation only; no
+            # route-wide work, cavity, query or scratch enforcement is claimed.
+            unenforced = (
+                "work_units",
+                "cavity_cells",
+                "geometry_queries",
+                "scratch_bytes",
+            )
             audit = CellMeshAuditPolicy(
                 require_complete_association=True,
                 watertight_boundary=CellMeshAuditDisposition.REJECT,
@@ -175,10 +188,10 @@ def publication_policy(
                 "wall_seconds",
             )
             match route:
-                case "curve":
+                case "curve" | "planar":
+                    # Host coordinate ledgers are bounded; no route-wide scratch
+                    # proof covers native construction storage.
                     unenforced = ("cavity_cells", "scratch_bytes")
-                case "planar":
-                    unenforced = ("cavity_cells",)
                 case "parametric_surface":
                     enforced += ("cavity_cells", "scratch_bytes")
                     unenforced = ()
@@ -209,7 +222,7 @@ def publication_policy(
                 require_complete_association=True,
                 watertight_boundary=CellMeshAuditDisposition.REJECT,
             )
-        case "implicit":
+        case "implicit" | "implicit_adaptive":
             enforced = (
                 "vertices",
                 "edges",
@@ -218,13 +231,21 @@ def publication_policy(
                 "connectivity_entries",
                 "data_bytes",
                 "geometry_queries",
+                "cavity_cells",
                 "scratch_bytes",
                 "wall_seconds",
                 "grid_capacity",
                 "surface_capacity",
                 "projection",
             )
-            unenforced = ("work_units", "cavity_cells")
+            match route:
+                case "implicit":
+                    enforced += ("work_units",)
+                    unenforced = ()
+                case "implicit_adaptive":
+                    unenforced = ("work_units",)
+                case invalid:
+                    assert_never(invalid)
             audit = CellMeshAuditPolicy(
                 require_complete_association=True,
                 watertight_boundary=CellMeshAuditDisposition.REJECT,

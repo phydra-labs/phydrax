@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "fdd9554b0bfab0ca0171938f90a767b8e4a4c5f6a145af1d9cd8a511ee0d8f2d",
+  "manifest_id": "7a5c6ec6e62eeb1bcf9f8b3610199355edf9f92e7bbf988d35a486859a0344b3",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -25946,6 +25946,7 @@
       "phydrax.meshing.GeometryAssociationKind",
       "phydrax.meshing.GeometryAssociationProvenance",
       "phydrax.meshing.GeometryAssociationSourceBank",
+      "phydrax.meshing.GeometryAssociationSourceIdentities",
       "phydrax.meshing.GeometryRealizationMeshAdaptation",
       "phydrax.meshing.GeometrySourceEntityRole",
       "phydrax.meshing.GmshHighOrderOptimization",
@@ -26390,7 +26391,8 @@
       "phydrax.meshing.providers.TiogaRegistration",
       "phydrax.meshing.providers.VoroCrustOptions",
       "phydrax.meshing.providers.VoroCrustProvider",
-      "phydrax.meshing.providers.native_provider_source_path"
+      "phydrax.meshing.providers.native_provider_source_path",
+      "phydrax.meshing.providers.native_provider_source_root"
     ],
     "phydrax.meshing.qualification": [
       "phydrax.meshing.qualification.AnalyticSurface",

@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._fingerprint import tree_content_equal
 from phydrax.discretization import _coordinate_enclosure as algebra
 from phydrax.discretization._cell_geometry import (
     BarycentricCellGeometryElement,
@@ -60,6 +61,120 @@ from tests._support.mesh_certificate_fixtures import (
     split_square_variant,
 )
 from tests._support.meshing_fixtures import finding_checks
+
+
+def test_planar_mapped_coverage_reuses_boundary_measure(
+    monkeypatch: pytest.MonkeyPatch,
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry import _domain_coverage as owner
+
+    mesh, geometry, domain = cube_with_independent_boundary_triangulation(True)
+    validity = phx.discretization.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=reference_budget
+    )
+    embedded = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity, budget=reference_budget
+    )
+
+    def redundant_integral(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("planar coverage must reuse its earned boundary measures")
+
+    monkeypatch.setattr(owner, "mapped_coverage_measures", redundant_integral)
+    certificate = phx.geometry.certify_domain_coverage(
+        mesh, geometry, domain, np.zeros(2, dtype=np.int64),
+        embedding=embedded, budget=reference_budget,
+    )
+    assert certificate.status == "certified"
+    assert certificate.achieved_region_measures == (1.0,)
+    assert certificate.source_expression_work_units is not None
+    assert certificate.source_expression_work_units > 0
+
+
+def test_signed_polynomial_integral_is_reused_only_for_identical_controls(
+    monkeypatch: pytest.MonkeyPatch,
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry import _domain_coverage as owner
+
+    element = coordinate_lagrange_element("hexahedron", 1)
+    controls = np.asarray(element.reference_nodes, dtype=np.float64)
+    assert owner.polynomial_cell_measure(
+        element, controls, "hexahedron", 3, budget=reference_budget
+    ) == 1
+    original = owner._polynomial_cell_integral
+    calls = []
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, "_polynomial_cell_integral", counted)
+    assert owner.polynomial_cell_measure(
+        element, controls, "hexahedron", 3, budget=reference_budget
+    ) == 1
+    assert not calls
+    changed = controls.copy()
+    changed[:, 0] *= -1
+    assert owner.polynomial_cell_measure(
+        element, changed, "hexahedron", 3, budget=reference_budget
+    ) == -1
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("count", (1, 4))
+@pytest.mark.parametrize("dtype", (np.float32, np.float64))
+@pytest.mark.parametrize("restricted", (False, True))
+def test_polynomial_integral_workspace_has_cell_lifetime_and_exact_boundary(
+    count: int,
+    dtype: type[np.float32] | type[np.float64],
+    restricted: bool,
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+) -> None:
+    from phydrax.geometry import _domain_coverage as owner
+
+    element = coordinate_lagrange_element("hexahedron", 1)
+    nodes = np.asarray(element.reference_nodes, dtype=dtype)
+    controls = tuple(nodes + dtype(index / 8) for index in range(count))
+    if restricted:
+        element = RestrictedCellGeometryElement(
+            element, "hexahedron", np.eye(3) / 2, np.zeros(3)
+        )
+
+    def integrate(ledger: CoordinateEnclosureBudget) -> tuple[Fraction | None, ...]:
+        ledger.reserve(0, 64)
+        values = []
+        with ledger.activate(), ledger.live_storage() as enclosing:
+            enclosing.set_bound(128)
+            for points in controls:
+                values.append(owner.polynomial_cell_measure(
+                    element, points, "hexahedron", 3, budget=ledger
+                ))
+                assert ledger.temporary_bytes_upper == 192
+                assert ledger._polynomial_preparation_storage is None
+                assert not ledger.axis_affine_polynomial_cache
+                assert not ledger.bernstein_coefficient_cache
+            assert len(ledger.mapped_cell_integral_cache) == count
+        assert ledger.temporary_bytes_upper == 64
+        return tuple(values)
+
+    baseline = coordinate_budget(2_000_000, 64 * 1024**2)
+    expected = integrate(baseline)
+    assert expected == (Fraction(1, 8) if restricted else Fraction(1),) * count
+    required = baseline.peak_bytes_upper
+    exact = coordinate_budget(2_000_000, required)
+    assert integrate(exact) == expected
+    assert exact.peak_bytes_upper == required
+    larger = coordinate_budget(2_000_000, 2 * required)
+    assert integrate(larger) == expected
+    assert larger.peak_bytes_upper == required
+    short = coordinate_budget(2_000_000, required - 1)
+    with pytest.raises(CoordinateEnclosureResourceError):
+        integrate(short)
+    assert short.temporary_bytes_upper == 64
+    assert short._polynomial_preparation_storage is None
+    assert not short.axis_affine_polynomial_cache
+    assert not short.bernstein_coefficient_cache
 
 
 def test_conforming_two_region_mesh_covers_domain_and_interface_exactly() -> None:
@@ -474,19 +589,20 @@ def test_independent_source_diagonals_do_not_constrain_target_facets(
     assert certificate.covered_source_facet_count == 12
     assert certificate.achieved_region_measures == (1.0,)
     relations = certificate.facet_source_overlaps
-    assert {row[1] for row in relations} == set(range(12))
-    assert {row[5] for row in relations} == {"candidate" if mapped else "exact"}
+    sources = relations.sources
+    assert set(sources.tolist()) == set(range(12))
+    assert relations.semantic_values == ("candidate" if mapped else "exact",)
+    assert relations.space_values == ("physical",)
+    assert relations.axes.shape == (relations.count, 2)
+    assert np.all((relations.lower >= 0.0) & (relations.lower <= relations.upper))
     target_fragments: dict[int, set[int]] = {}
-    for facet, source, axes, lower, upper, _, space in relations:
+    for facet, source in zip(relations.facets.tolist(), sources.tolist(), strict=True):
         target_fragments.setdefault(facet, set()).add(source)
-        assert len(axes) == 2
-        assert 0.0 <= lower <= upper
-        assert space == "physical"
     assert any(len(rows) > 1 for rows in target_fragments.values())
     if not mapped:
         for source in range(12):
-            assert sum(row[3] for row in relations if row[1] == source) == 0.5
-            assert sum(row[4] for row in relations if row[1] == source) == 0.5
+            assert sum(relations.lower[sources == source].tolist()) == 0.5
+            assert sum(relations.upper[sources == source].tolist()) == 0.5
 
 
 @pytest.mark.parametrize("mapped", [False, True], ids=["affine", "mapped"])
@@ -526,10 +642,12 @@ def test_exact_root_restrictions_cover_an_independent_nonplanar_mapped_source() 
     assert certificate.achieved_region_measures == (1.0,)
     assert certificate.integration_error_bounds == (0.0,)
     assert certificate.covered_source_facet_count == 12
-    assert {row[1] for row in certificate.facet_source_overlaps} == set(range(12))
-    assert {row[5:] for row in certificate.facet_source_overlaps} == {
-        ("candidate", "reference")
-    }
+    overlaps = certificate.facet_source_overlaps
+    assert set(overlaps.sources.tolist()) == set(range(12))
+    assert (overlaps.semantic_values, overlaps.space_values) == (
+        ("candidate",),
+        ("reference",),
+    )
 
 
 def test_mapped_source_identity_does_not_substitute_for_actual_root_coefficients() -> (
@@ -648,8 +766,9 @@ def test_selected_planar_source_scope_proves_complete_fragment_union(
     coverage = phx.geometry.certify_domain_coverage(
         mesh, geometry, domain, np.asarray((0, 0), dtype=np.int64), embedding=embedding
     )
+    overlaps = coverage.facet_source_overlaps
     facets = tuple(
-        sorted({row[0] for row in coverage.facet_source_overlaps if row[1] in (0, 1)})
+        sorted(set(overlaps.facets[np.isin(overlaps.sources, (0, 1))].tolist()))
     )
     certificate = certify_planar_facet_source_scope(
         mesh,
@@ -681,8 +800,9 @@ def test_whole_domain_coverage_does_not_fill_a_selected_facet_scope_gap(
     coverage = phx.geometry.certify_domain_coverage(
         mesh, geometry, domain, np.asarray((0, 0), dtype=np.int64), embedding=embedding
     )
+    overlaps = coverage.facet_source_overlaps
     facets = tuple(
-        sorted({row[0] for row in coverage.facet_source_overlaps if row[1] in (0, 1)})
+        sorted(set(overlaps.facets[np.isin(overlaps.sources, (0, 1))].tolist()))
     )
     certificate = certify_planar_facet_source_scope(
         mesh,
@@ -715,7 +835,7 @@ def test_generated_caps_reject_negative_source_face_tags(
             mesh,
             geometry,
             domain,
-            np.asarray((coverage.facet_source_overlaps[0][0],), dtype=np.int64),
+            np.asarray((int(coverage.facet_source_overlaps.facets[0]),), dtype=np.int64),
             {-1: (0,)},
             source_face_entity_set_id="original-source-faces",
             coverage=coverage,
@@ -818,13 +938,15 @@ def test_mapped_coverage_is_invariant_under_equivalent_source_facet_orientation(
         # Analytic areas: the interior bulge moves the interface, not the outer boundary.
         assert certificate.achieved_region_measures == (0.5, 0.5)
         assert certificate.covered_source_facet_count == 7
-        assert {row[1] for row in certificate.facet_source_overlaps} == set(range(7))
+        assert set(certificate.facet_source_overlaps.sources.tolist()) == set(range(7))
         work = certificate.source_expression_work_units
         assert (
             work is not None
             and 0 < work <= phx.geometry.MeshCertificateLimits().maximum_work_units
         )
-    assert reversed_.facet_source_overlaps == declared.facet_source_overlaps
+    assert tree_content_equal(
+        reversed_.facet_source_overlaps, declared.facet_source_overlaps
+    )
 
 
 def test_mapped_coverage_never_assigns_a_facet_to_a_parallel_source_plane() -> None:
@@ -843,7 +965,7 @@ def test_mapped_coverage_never_assigns_a_facet_to_a_parallel_source_plane() -> N
         certificate, "violated"
     )
     # The mesh edge x = 1 is parallel to the declared x = 1.25 facet, never covering it.
-    assert 2 not in {row[1] for row in certificate.facet_source_overlaps}
+    assert 2 not in set(certificate.facet_source_overlaps.sources.tolist())
     assert certificate.achieved_region_measures == (0.5, 0.5)
     assert certificate.requested_region_measures == (0.5, 0.75)
 
@@ -865,7 +987,7 @@ def test_curved_boundary_charts_match_no_declared_plane_and_keep_their_exact_mea
     assert embedding.status == "certified"
     assert certificate.status == "violated"
     assert "unmatched_boundary_facet" in finding_checks(certificate, "violated")
-    assert 2 not in {row[1] for row in certificate.facet_source_overlaps}
+    assert 2 not in set(certificate.facet_source_overlaps.sources.tolist())
     # A quadratic edge with midpoint offset d encloses 2d/3 beyond its chord.
     assert certificate.achieved_region_measures == (
         0.5,
@@ -1228,7 +1350,7 @@ def test_exact_boundary_region_integral_refuses_below_actual_work_without_renewa
         ("hexahedron", (0, 1, 5, 4)),
         ("pyramid", (0, 1, 4)),
     ),
-    ids=("triangle-face", "full-quad-triangles", "pyramid-cube-side"),
+    ids=("triangle-face", "full-quad-box", "pyramid-cube-side"),
 )
 @pytest.mark.parametrize(
     "rational", (False, True), ids=("complete-polynomial", "complete-rational")
@@ -1294,11 +1416,12 @@ def test_shared_face_composition_preserves_every_physical_source_component(
     corners = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)[
         np.asarray(face)
     ]
-    pieces = (corners,) if len(face) == 3 else (corners[[0, 1, 2]], corners[[0, 2, 3]])
+    pieces = (corners,) if len(face) == 3 else (corners[[0, 1, 3]],)
     # Seven rational nodes per axis determine the cross-multiplied degree-six
     # identity; this checks the polynomial functions, not a few corner samples.
     for chart_index, (chart, domain) in enumerate(charts):
-        assert domain == ("box" if kind == "pyramid" else "simplex")
+        assert len(charts) == 1
+        assert domain == ("simplex" if kind == "tetrahedron" else "box")
         for first in range(7):
             for second in range(7):
                 u, v = Fraction(first, 12), Fraction(second, 12)
@@ -1490,3 +1613,634 @@ def test_constant_coordinate_flux_integrates_before_scalar_density_expansion(
     # The parameter rectangle maps to [0, 3] x [0, 4] at height 7/11.
     assert actual == expected == Fraction(28, 11)
     assert reduced.work_units < expanded.work_units
+
+
+@pytest.mark.parametrize(
+    "target_endpoints",
+    ((-2, -1), (-1, 0), (0, 1), (1, 2), (2, 1)),
+)
+def test_prepared_interval_intersection_reuses_earned_bounds(
+    target_endpoints: tuple[int, int],
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._planar_primitives import prepare_polygon_intersection
+
+    subject = ((Fraction(-1, 3),), (Fraction(1),))
+    target = tuple((Fraction(value),) for value in target_endpoints)
+    subject_preparation = prepare_polygon_intersection(subject, 1, budget=reference_budget)
+    target_preparation = prepare_polygon_intersection(
+        target,
+        1 if target_endpoints[1] > target_endpoints[0] else -1,
+        budget=reference_budget,
+    )
+    before = reference_budget.work_units
+    expected = intersection(subject, target, budget=reference_budget)
+    cold_work = reference_budget.work_units - before
+    before = reference_budget.work_units
+    actual = intersection(
+        subject,
+        target,
+        budget=reference_budget,
+        subject_preparation=subject_preparation,
+        target_preparation=target_preparation,
+    )
+    assert actual == expected
+    assert reference_budget.work_units - before < cold_work
+
+
+def _independent_affine_tetrahedra(
+    budget: CoordinateEnclosureBudget,
+    *,
+    materials: bool = False,
+    reflected: bool = False,
+) -> tuple[Any, Any, MappedReferenceDomain, np.ndarray]:
+    from itertools import permutations, product
+
+    from phydrax.discretization._exact_rational_geometry import (
+        ExactRationalCellGeometrySource,
+        rational_source_layouts,
+    )
+
+    matrix = np.asarray(((1.0, 0.1, 0.0), (0.0, 1.0, 0.2), (0.0, 0.0, 1.0)))
+    if reflected:
+        matrix[0] *= -1
+    offset = np.asarray((0.3, -0.1, 0.2))
+    frame = np.vstack((offset, matrix.T, np.zeros((1, 3))))
+    parent = phx.discretization.CellGeometrySpec(
+        {"authored": coordinate_lagrange_element("tetrahedron", 1)},
+        {"authored": np.asarray(((0, 1, 2, 3),), dtype=np.int32)},
+        frame,
+        budget=budget,
+    )
+
+    def geometry(mesh: Any) -> Any:
+        points = tuple(
+            tuple(Fraction(float(value)) for value in row)
+            for row in np.asarray(mesh.coordinates)
+        )
+        elements = {
+            block.name: coordinate_lagrange_element(block.cell_kind, 1)
+            for block in mesh.blocks
+        }
+        routes = {block.name: block.vertices for block in mesh.blocks}
+        actions = tuple(
+            tuple(
+                (index, value.numerator, value.denominator)
+                for index, value in enumerate(
+                    (Fraction(1), *point, -sum(point, Fraction(0)))
+                )
+                if value
+            )
+            for point in points
+        )
+        exact = ExactRationalCellGeometrySource(
+            parent, actions, rational_source_layouts(elements, routes),
+            maximum_work=budget.maximum_work_units, maximum_bits=4096, budget=budget,
+        )
+        rational_frame = tuple(
+            tuple(Fraction(float(value)) for value in row) for row in frame
+        )
+        actual = tuple(
+            tuple(
+                sum(
+                    (Fraction(n, d) * rational_frame[index][axis] for index, n, d in row),
+                    Fraction(0),
+                )
+                for axis in range(3)
+            )
+            for row in actions
+        )
+        return phx.discretization.CellGeometrySpec(
+            elements, routes,
+            np.asarray(tuple(tuple(float(value) for value in row) for row in actual)),
+            exact_source=exact, budget=budget,
+        )
+
+    cuts = (0.0, 0.25, 0.5, 1.0) if materials else (0.0, 1.0)
+    points = np.asarray(tuple(product(cuts, (0.0, 1.0), (0.0, 1.0))))
+    index = {tuple(point): row for row, point in enumerate(points)}
+    corners = np.asarray(reference_cell_topology("hexahedron").vertices)
+    cells = np.asarray(
+        tuple(
+            tuple(
+                index[tuple(point * (right - left, 1.0, 1.0) + (left, 0.0, 0.0))]
+                for point in corners
+            )
+            for left, right in zip(cuts[:-1], cuts[1:], strict=True)
+        ), dtype=np.int32,
+    )
+    reference = phx.discretization.CellMesh(
+        points,
+        (phx.discretization.CellBlock(
+            "voxel-roots", "hexahedron", cells,
+            global_ids=np.arange(len(cells), dtype=np.int64) + 73,
+        ),),
+    )
+    source_regions = np.asarray((0, 0, 1) if materials else (0,), dtype=np.int64)
+    faces: dict[tuple[int, ...], list[tuple[tuple[int, ...], int]]] = {}
+    for cell, region in zip(cells, source_regions, strict=True):
+        for local in reference_cell_topology("hexahedron").entities[2]:
+            face = tuple(int(cell[vertex]) for vertex in local)
+            faces.setdefault(tuple(sorted(face)), []).append((face, int(region)))
+    triangles, facet_regions = [], []
+    for owners in faces.values():
+        face, region = owners[0]
+        other = -1 if len(owners) == 1 else owners[1][1]
+        if region == other:
+            continue
+        for triangle in ((face[0], face[1], face[2]), (face[0], face[2], face[3])):
+            triangles.append(triangle)
+            facet_regions.append((region, other))
+    declared = phx.geometry.PiecewiseLinearDomain(
+        points, np.asarray(triangles), np.asarray(facet_regions),
+        ("left", "right") if materials else ("body",),
+        source_id="independent-affine-index-plc",
+    )
+    domain = MappedReferenceDomain(
+        declared, reference, geometry(reference), source_regions,
+        source_id="authored-nondyadic-binary64-affine",
+        source_revision="exact-affine-not-rounded", budget=budget,
+    )
+    target_cuts = (0.0, 0.5, 1.0) if materials else (0.0, 1.0)
+    target_points = np.asarray(tuple(product(target_cuts, (0.0, 1.0), (0.0, 1.0))))
+    target_index = {tuple(point): row for row, point in enumerate(target_points)}
+    tetrahedra, regions = [], []
+    for slab, (left, right) in enumerate(zip(target_cuts[:-1], target_cuts[1:], strict=True)):
+        for order in permutations(range(3)):
+            chain = [np.zeros(3)]
+            for axis in order:
+                point = chain[-1].copy()
+                point[axis] = 1
+                chain.append(point)
+            row = [
+                target_index[tuple(point * (right - left, 1.0, 1.0) + (left, 0.0, 0.0))]
+                for point in chain
+            ]
+            if sum(order[i] > order[j] for i in range(3) for j in range(i + 1, 3)) % 2:
+                row[1], row[2] = row[2], row[1]
+            tetrahedra.append(row)
+            regions.append(slab if materials else 0)
+    target = phx.discretization.CellMesh(
+        target_points,
+        (phx.discretization.CellBlock(
+            "independent-tetrahedra", "tetrahedron", np.asarray(tetrahedra),
+            global_ids=5000 + 13 * np.arange(len(tetrahedra), dtype=np.int64),
+        ),),
+        vertex_global_ids=1000 + 17 * np.arange(len(target_points), dtype=np.int64),
+    )
+    target_geometry = geometry(target)
+    target = target.with_coordinates(target_geometry.coordinates, numeric_version="physical-rne")
+    return target, target_geometry, domain, np.asarray(regions, dtype=np.int64)
+
+
+@pytest.mark.parametrize("materials", [False, True], ids=["one-hexa-six-tets", "cross-root-materials"])
+def test_independent_exact_affine_target_covers_canonical_mapped_domain(
+    materials: bool, reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, geometry, domain, regions = _independent_affine_tetrahedra(
+        reference_budget, materials=materials
+    )
+    validity = phx.discretization.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=reference_budget
+    )
+    embedded = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity, budget=reference_budget
+    )
+    certificate = phx.geometry.certify_domain_coverage(
+        mesh, geometry, domain, regions, embedding=embedded, budget=reference_budget
+    )
+    assert geometry.restriction_source is None
+    assert certificate.status == "certified"
+    assert certificate.domain_id == domain.domain_id
+    assert certificate.binding.source_id == domain.source_id
+    assert certificate.achieved_region_measures == ((0.5, 0.5) if materials else (1.0,))
+    assert certificate.integration_error_bounds == ((0.0, 0.0) if materials else (0.0,))
+    assert certificate.covered_source_facet_count == len(domain.facets)
+    assert certificate.facet_source_overlaps.space_values == ("reference",)
+    assert embedded.certificate_id in certificate.premise_certificate_ids
+    assert len(certificate.premise_certificate_ids) >= 5
+
+
+def test_affine_pullback_retains_actual_rational_images_and_scientific_ids(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+    from phydrax.geometry._mapped_reference_coverage import (
+        _common_affine_source,
+        _inverse_affine_target,
+        source_roots,
+    )
+
+    mesh, geometry, domain, _ = _independent_affine_tetrahedra(reference_budget)
+    bank = geometry.source_coordinates(budget=reference_budget)
+    assert any(
+        value != Fraction(float(value)) for point in bank for value in point
+    )
+    common = _common_affine_source(
+        domain, source_roots(domain, budget=reference_budget), budget=reference_budget
+    )
+    assert common is not None
+    inverse, determinant = common
+    target = _inverse_affine_target(
+        mesh, geometry, domain, inverse,
+        limits=phx.geometry.MeshCertificateLimits(), budget=reference_budget,
+    )
+    assert target is not None
+    pulled_mesh, pulled_geometry = target
+    assert determinant == 1
+    assert cell_geometry_id(pulled_geometry) != cell_geometry_id(geometry)
+    assert pulled_mesh.topology_id == mesh.topology_id
+    np.testing.assert_array_equal(pulled_mesh.vertex_global_ids, mesh.vertex_global_ids)
+    np.testing.assert_array_equal(pulled_mesh.blocks[0].global_ids, mesh.blocks[0].global_ids)
+    assert pulled_geometry.exact_source is not None
+    assert pulled_geometry.source_coordinates(budget=reference_budget) == tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in np.asarray(pulled_mesh.coordinates)
+    )
+
+
+def test_affine_coverage_science_is_independent_of_caller_work_allowance() -> None:
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    limits = phx.geometry.MeshCertificateLimits()
+    certificates = []
+    sources = []
+    for maximum_work in (limits.maximum_work_units, 5 * limits.maximum_work_units):
+        # Distinct authored owners force independent proofs, not same-object
+        # issued-certificate reuse. Only the receiving ledger allowance varies.
+        with coordinate_reference_budget(limits) as author_budget:
+            mesh, geometry, domain, regions = _independent_affine_tetrahedra(
+                author_budget, materials=True
+            )
+        sources.append((mesh, geometry, domain, regions))
+        caller_limits = phx.geometry.MeshCertificateLimits(maximum_work_units=maximum_work)
+        with coordinate_reference_budget(caller_limits) as budget:
+            validity = phx.discretization.certify_cell_geometry_validity(
+                geometry, mesh=mesh, budget=budget
+            )
+            embedded = phx.geometry.certify_global_embedding(
+                mesh, geometry, validity, limits=limits, budget=budget
+            )
+            certificate = phx.geometry.certify_domain_coverage(
+                mesh, geometry, domain, regions,
+                embedding=embedded, limits=limits, budget=budget,
+            )
+            assert certificate.status == "certified"
+            assert budget.work_units > 0
+            assert len(certificate.premise_certificate_ids) == 5
+            certificates.append(certificate)
+    assert tree_content_equal(*sources)
+    first, second = certificates
+    assert first is not second
+    assert tree_content_equal(first.scientific_payload(), second.scientific_payload())
+    assert first.premise_certificate_ids == second.premise_certificate_ids
+    assert first.certificate_id == second.certificate_id
+
+
+@pytest.mark.parametrize("target_kind", ["tetrahedron", "hexahedron"])
+def test_affine_pullback_bank_identity_matches_full_polynomial_proof(
+    monkeypatch: pytest.MonkeyPatch, reference_budget: CoordinateEnclosureBudget,
+    target_kind: str,
+) -> None:
+    from phydrax.geometry import _mapped_reference_coverage as owner
+
+    mesh, geometry, domain, _ = _independent_affine_tetrahedra(reference_budget)
+    common = owner._common_affine_source(
+        domain, owner.source_roots(domain, budget=reference_budget),
+        budget=reference_budget,
+    )
+    assert common is not None
+    if target_kind == "hexahedron":
+        mesh = owner.physical_source_mesh(domain, budget=reference_budget)
+        geometry = domain.source_geometry
+    original_image = owner._affine_polynomial_image
+
+    declared_geometry = owner.CellGeometrySpec.affine(
+        domain.reference_mesh, budget=reference_budget
+    )
+    declared_elements, declared_routes, _ = declared_geometry.resolve(
+        domain.reference_mesh, budget=reference_budget
+    )
+    declared_bank = algebra.prepared_coordinate_source_bank(
+        declared_geometry, budget=reference_budget
+    )
+    roots = owner.source_roots(domain, budget=reference_budget)
+    for block, element, route in zip(
+        domain.reference_mesh.blocks, declared_elements, declared_routes, strict=True
+    ):
+        for cell_id, indices in zip(np.asarray(block.global_ids), np.asarray(route), strict=True):
+            declared = algebra.coordinate_polynomials(
+                element, tuple(declared_bank[int(index)] for index in indices),
+                budget=reference_budget,
+            )
+            assert original_image(
+                roots[int(cell_id)].polynomial, common[0], budget=reference_budget
+            ) == declared
+
+    def forbidden_image(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Standard simplex P1 must use the full-bank identity")
+
+    monkeypatch.setattr(owner, "_affine_polynomial_image", forbidden_image)
+    target = owner._inverse_affine_target(
+        mesh, geometry, domain, common[0],
+        limits=phx.geometry.MeshCertificateLimits(), budget=reference_budget,
+    )
+    assert target is not None
+
+    elements, routes, _ = geometry.resolve(mesh, budget=reference_budget)
+    original_bank = algebra.prepared_coordinate_source_bank(geometry, budget=reference_budget)
+    pulled_bank = algebra.prepared_coordinate_source_bank(target[1], budget=reference_budget)
+    for element, route in zip(elements, routes, strict=True):
+        for indices in np.asarray(route):
+            original = algebra.coordinate_polynomials(
+                element, tuple(original_bank[int(index)] for index in indices),
+                budget=reference_budget,
+            )
+            transformed = algebra.coordinate_polynomials(
+                element, tuple(pulled_bank[int(index)] for index in indices),
+                budget=reference_budget,
+            )
+            assert original is not None
+            assert transformed == original_image(original, common[0], budget=reference_budget)
+    pulled_mesh, pulled_geometry = target
+    # The bank proof retains all exact output rows without cell-polynomial graphs.
+    assert pulled_geometry.source_coordinates(budget=reference_budget) == tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in np.asarray(pulled_mesh.coordinates)
+    )
+
+
+@pytest.mark.parametrize("mutation", ["source", "target", "interface", "source-interface"])
+def test_independent_affine_coverage_rejects_mutated_actual_inputs(
+    mutation: str, reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, geometry, domain, regions = _independent_affine_tetrahedra(
+        reference_budget, materials=True
+    )
+    if mutation == "source":
+        source = domain.source_geometry
+        values = np.asarray(source.coordinates).copy()
+        values[-1, 2] += 0.125
+        changed = phx.discretization.CellGeometrySpec(
+            dict(zip(source.block_names, source.elements, strict=True)),
+            dict(zip(source.block_names, source.geometry_dofs, strict=True)), values,
+        )
+        domain = MappedReferenceDomain(
+            domain.reference_domain, domain.reference_mesh, changed, domain.cell_regions,
+            source_id=domain.source_id, source_revision=domain.source_revision,
+            budget=reference_budget,
+        )
+    elif mutation == "target":
+        values = np.asarray(geometry.coordinates).copy()
+        values[0, 2] += 0.125
+        geometry = phx.discretization.CellGeometrySpec(
+            dict(zip(geometry.block_names, geometry.elements, strict=True)),
+            dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)), values,
+        )
+        mesh = mesh.with_coordinates(values, numeric_version="mutated-physical")
+    elif mutation == "source-interface":
+        declared = domain.reference_domain
+        vertices = np.asarray(declared.vertices).copy()
+        vertices[vertices[:, 0] == 0.5, 0] += 0.0625
+        changed_domain = phx.geometry.PiecewiseLinearDomain(
+            vertices, declared.facets, declared.facet_regions, declared.region_ids,
+            source_id=declared.source_id,
+        )
+        domain = MappedReferenceDomain(
+            changed_domain, domain.reference_mesh, domain.source_geometry, domain.cell_regions,
+            source_id=domain.source_id, source_revision=domain.source_revision,
+            budget=reference_budget,
+        )
+    else:
+        regions[0] = 1
+    validity = phx.discretization.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=reference_budget
+    )
+    embedded = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity, budget=reference_budget
+    )
+    certificate = phx.geometry.certify_domain_coverage(
+        mesh, geometry, domain, regions, embedding=embedded, budget=reference_budget
+    )
+    assert certificate.status != "certified"
+    assert certificate.findings
+
+
+def test_reflected_common_affine_inverse_does_not_weaken_source_orientation(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._mapped_reference_coverage import (
+        _common_affine_source,
+        source_roots,
+    )
+
+    mesh, geometry, domain, regions = _independent_affine_tetrahedra(
+        reference_budget, reflected=True
+    )
+    common = _common_affine_source(
+        domain, source_roots(domain, budget=reference_budget), budget=reference_budget
+    )
+    assert common is not None
+    inverse, absolute_determinant = common
+    assert absolute_determinant == 1
+    assert inverse.matrix[0][0] == -1
+    validity = phx.discretization.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=reference_budget
+    )
+    embedded = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity, budget=reference_budget
+    )
+    certificate = phx.geometry.certify_domain_coverage(
+        mesh, geometry, domain, regions, embedding=embedded, budget=reference_budget
+    )
+    assert certificate.status != "certified"
+    assert "mapped_domain_source_embedding_premise" in finding_checks(certificate, "violated")
+
+
+def test_independent_affine_pullback_resource_refusal_is_atomic_on_caller_ledger(
+    monkeypatch: pytest.MonkeyPatch, reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry import _mapped_reference_coverage as owner
+
+    mesh, geometry, domain, regions = _independent_affine_tetrahedra(reference_budget)
+    validity = phx.discretization.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=reference_budget
+    )
+    embedded = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity, budget=reference_budget
+    )
+    before = np.asarray(geometry.coordinates).tobytes()
+    refusal: list[CoordinateEnclosureResourceError] = []
+
+    def r_minus_one(*args: Any, budget: CoordinateEnclosureBudget, **kwargs: Any) -> Any:
+        assert budget is reference_budget
+        # Request R on the actual remaining R-1 allowance, before any pullback
+        # can publish an inverse geometry or alter the original target.
+        remaining = budget.maximum_work_units - budget.work_units
+        completed = budget.work_units
+        try:
+            budget.reserve(remaining + 1)
+        except CoordinateEnclosureResourceError as error:
+            assert budget.work_units == completed
+            assert error.requested == error.limit + 1
+            refusal.append(error)
+            raise
+        raise AssertionError("R work must not fit the caller's R-1 remaining allowance")
+
+    monkeypatch.setattr(owner, "_inverse_affine_target", r_minus_one)
+    certificate = phx.geometry.certify_domain_coverage(
+        mesh, geometry, domain, regions, embedding=embedded, budget=reference_budget
+    )
+    assert len(refusal) == 1
+    assert refusal[0].phase_evidence is not None
+    assert 0 < refusal[0].phase_evidence.work_units <= reference_budget.work_units
+    finding = next(
+        value for value in certificate.findings if value.check == "mapped_coverage_resource_budget"
+    )
+    assert dict(finding.achieved)["source_expression_work_units"] == (
+        refusal[0].phase_evidence.work_units
+    )
+    assert certificate.status == "unresolved"
+    assert certificate.achieved_region_measures == (None,)
+    assert certificate.covered_source_facet_count == 0
+    assert "mapped_coverage_resource_budget" in finding_checks(certificate, "unresolved")
+    assert reference_budget.work_units <= reference_budget.maximum_work_units
+    assert np.asarray(geometry.coordinates).tobytes() == before
+    assert geometry.restriction_source is None
+
+
+def test_unearned_mapped_measure_propagates_original_resource_refusal_without_reentry(
+    monkeypatch: pytest.MonkeyPatch,
+    reference_budget: CoordinateEnclosureBudget,
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+) -> None:
+    from phydrax.geometry import _domain_coverage as owner
+
+    mesh, geometry, domain, _ = _independent_affine_tetrahedra(reference_budget)
+    validity = phx.discretization.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=reference_budget
+    )
+    embedded = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity, budget=reference_budget
+    )
+    short = coordinate_budget(99, reference_budget.maximum_memory_bytes)
+    with pytest.raises(CoordinateEnclosureResourceError) as refused:
+        short.reserve(100)
+    original = refused.value
+
+    def forbidden_reentry(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("resource reporting must not enter a fresh source integration")
+
+    monkeypatch.setattr(owner, "declared_coverage_measures", forbidden_reentry)
+    with pytest.raises(CoordinateEnclosureResourceError) as propagated:
+        owner._coverage_resource_refusal(
+            EmbeddingState([], ["domain_coverage"]), embedded.binding, embedded,
+            domain, original, budget=short,
+        )
+    assert propagated.value is original
+    assert original.limit == 99
+    assert original.requested == 100
+    assert original.completed == short.work_units == 0
+
+
+def test_common_affine_source_rejects_nonaffine_polynomial_with_identical_corners(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._mapped_corners import mapped_source_corner_coordinates
+    from phydrax.geometry._mapped_reference_coverage import (
+        _common_affine_source,
+        source_roots,
+    )
+
+    reference, geometry, declared = mapped_reference_domain("hexahedron", curved=True)
+    domain = MappedReferenceDomain(
+        declared, reference, geometry, np.asarray((0,), dtype=np.int64),
+        source_id="same-corners-nonaffine-interior", source_revision="actual-q2",
+        budget=reference_budget,
+    )
+    np.testing.assert_array_equal(
+        mapped_source_corner_coordinates(reference, geometry, budget=reference_budget),
+        reference.coordinates,
+    )
+    assert _common_affine_source(
+        domain, source_roots(domain, budget=reference_budget), budget=reference_budget
+    ) is None
+
+
+def test_affine_pullback_cold_exact_resource_boundary(
+    reference_budget: CoordinateEnclosureBudget,
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+) -> None:
+    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+    from phydrax.discretization._exact_rational_geometry import (
+        ExactRationalCellGeometrySource,
+    )
+    from phydrax.geometry._mapped_reference_coverage import (
+        _common_affine_source,
+        _inverse_affine_target,
+        source_roots,
+    )
+
+    # Source authoring and the common-law theorem are prerequisites of this
+    # isolated pullback-stage contract, not work silently omitted from a complete
+    # coverage request. Each trial below is a distinct request with a cold ledger.
+    mesh, geometry, domain, _ = _independent_affine_tetrahedra(reference_budget)
+    common = _common_affine_source(
+        domain, source_roots(domain, budget=reference_budget), budget=reference_budget
+    )
+    assert common is not None
+    inverse, _ = common
+    original = canonical_fingerprint(array_tree_fingerprint((mesh, geometry, domain)))
+    memory = reference_budget.maximum_memory_bytes
+    limits = phx.geometry.MeshCertificateLimits()
+    baseline_budget = coordinate_budget(reference_budget.maximum_work_units, memory)
+    baseline = _inverse_affine_target(
+        mesh, geometry, domain, inverse, limits=limits, budget=baseline_budget
+    )
+    assert baseline is not None
+    # R includes conservative pre-operation admissions as well as completed
+    # work. Charging only completed work would understate the genuine boundary.
+    required = baseline_budget.required_work_units
+    assert required >= baseline_budget.work_units > 0
+    exact_budget = coordinate_budget(required, memory)
+    exact = _inverse_affine_target(
+        mesh, geometry, domain, inverse, limits=limits, budget=exact_budget
+    )
+    assert exact is not None
+    assert exact_budget.required_work_units == required
+    assert exact_budget.work_units == baseline_budget.work_units
+    for baseline_value, exact_value in zip(baseline, exact, strict=True):
+        np.testing.assert_array_equal(
+            np.asarray(baseline_value.coordinates).view(np.uint64),
+            np.asarray(exact_value.coordinates).view(np.uint64),
+        )
+    baseline_mesh, baseline_geometry = baseline
+    exact_mesh, exact_geometry = exact
+    np.testing.assert_array_equal(baseline_mesh.vertex_global_ids, exact_mesh.vertex_global_ids)
+    np.testing.assert_array_equal(
+        baseline_mesh.blocks[0].global_ids, exact_mesh.blocks[0].global_ids
+    )
+    assert isinstance(baseline_geometry.exact_source, ExactRationalCellGeometrySource)
+    assert isinstance(exact_geometry.exact_source, ExactRationalCellGeometrySource)
+    assert (
+        baseline_geometry.exact_source.action_rows()
+        == exact_geometry.exact_source.action_rows()
+    )
+    assert (
+        baseline_geometry.exact_source.parent_binding
+        == exact_geometry.exact_source.parent_binding
+    )
+    assert tree_content_equal(baseline, exact)
+    short_budget = coordinate_budget(required - 1, memory)
+    with pytest.raises(CoordinateEnclosureResourceError) as refused:
+        _inverse_affine_target(
+            mesh, geometry, domain, inverse, limits=limits, budget=short_budget
+        )
+    error = refused.value
+    assert error.resource == "coefficient_work"
+    assert error.limit == required - 1
+    assert error.requested == required
+    assert error.completed == short_budget.work_units <= error.limit
+    assert short_budget.retained_basis_bytes <= memory
+    assert short_budget.temporary_bytes_upper <= memory
+    assert canonical_fingerprint(array_tree_fingerprint((mesh, geometry, domain))) == original

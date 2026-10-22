@@ -428,7 +428,7 @@ Mesh certificate checks
     "premises": [
       {
         "tag": "X",
-        "statement": "Every rational source coordinate equals Fraction(float(source_coordinate))."
+        "statement": "Every rational coordinate in the predicate input bank equals Fraction(float(source_coordinate))."
       }
     ],
     "conclusion": "The exported binary64 predicate view represents the same source values.",
@@ -536,7 +536,7 @@ import sys
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import assert_never, final, Literal
+from typing import assert_never, cast, final, Literal
 
 import equinox as eqx
 import jax
@@ -557,7 +557,8 @@ import phydrax.geometry._exact_polyhedral_geometry as exact_polyhedral_geometry_
 import phydrax.geometry._exact_power_certificates as exact_power_certificates_owner
 import phydrax.meshing._audit_topology as audit_topology_owner
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._issued_proofs import IssuedProofs
 from .._geometry_predicates import (
     bigint_bytes,
     exact_bits,
@@ -581,6 +582,7 @@ from ..discretization._cell_geometry import (
 )
 from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
 from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
     CellValidityCertificate,
     CellValidityStatus,
 )
@@ -611,6 +613,8 @@ from ._embedding_state import (
     MeshCertificateLimits,
     padded_facet_rows,
     PeriodicAffineQuotientEvidence,
+    PeriodicAffineTorusDegreeEvidence,
+    PeriodicRestrictionPartitionEvidence,
 )
 from ._mesh_certificates import (
     certificate_status,
@@ -618,8 +622,12 @@ from ._mesh_certificates import (
     MeshCertificateStatus,
 )
 from ._mesh_check_names import MeshCertificateCheck
+from ._periodic_mapped_restriction import PeriodicMappedRestrictionEvidence
+from ._periodic_restriction import PeriodicRestrictionPremise
 from ._polygon_triangulation import loop_triangles
 from ._rational import dyadic_integers, rational_vector
+
+from ._source_boundary_records import CadBoundaryClosureEvidence
 
 
 type MappedBoundaryDegreeStatus = Literal["embedded", "violated", "premise_unproven"]
@@ -635,8 +643,8 @@ class MappedBoundaryDegreeEvidence(StrictModule, NonTrainableState):
     polynomial coordinate map. Suppose
 
     (a) ``det DF_c > 0`` on every closed reference cell (the bound validity
-        certificate) and every cell map is injective on its closed cell (the
-        fixed-projection local injectivity proof);
+        certificate), so each polynomial map extends to an orientation-preserving
+        local diffeomorphism near each point of its closed reference cell;
     (b) cells that share a vertex, an edge or a facet have identical
         restricted expressions in rational arithmetic, so ``F`` is well defined on ``|M|``;
     (c) ``F`` is injective on the union of boundary facets;
@@ -650,19 +658,26 @@ class MappedBoundaryDegreeEvidence(StrictModule, NonTrainableState):
     and closed cells meet only on combinatorially shared entities.
 
     Proof outline. Off the image of the facet skeleton, the preimage count is
-    the sum of per-cell degrees, which is the winding number of the oriented
-    boundary cycle because identical interior facet traces cancel. Every
-    complement component of the embedded boundary borders some shell, the
-    winding number jumps by exactly one into the side covered by the adjacent
-    cell, and that side carries ``a_j + c_j = e_j + 1``; so (d) bounds the
-    preimage count by one almost everywhere. A local-degree argument at
-    interior points of ``|M|`` and (c) at boundary points turn this into
-    injectivity. A single shell has ``a_j = 0`` and its covered side already
-    carries degree at least one, so (d) holds without further work. Several
-    shells take ``a_j`` from symbolic-ray winding counts of an affine proxy shell
-    (vertex images, triangulated faces) joined to the curved shell by a
-    straight homotopy whose certified deviation stays strictly away from the
-    query point, and ``c_j`` from the sign of the rational signed shell measure.
+    the sum of positive per-cell local degrees, even if a cell is not known
+    injective on its whole closed reference domain. Interior facet traces
+    cancel, so this count equals the winding of the oriented boundary cycle.
+    Every complement component of the embedded boundary borders some shell;
+    (d) bounds this nonnegative count by one almost everywhere.
+    To include exceptional skeleton images, take a sufficiently small closed
+    star about an interior source point. Its oriented facets cancel locally,
+    and its remaining boundary avoids that point's image. Its local degree is
+    positive: one incident cell contributes an open sector by (a), all regular
+    contributions are nonnegative, and degree is constant in the avoiding ball.
+    Two distinct interior preimages would therefore give count at least two
+    on an open set. An interior preimage of a boundary image would give positive
+    count on the degree-zero exterior side. Both contradict the same bound.
+    Boundary preimages are unique by (c). Thus no separate closed-cell
+    injectivity premise is necessary. Generic callers additionally prove it;
+    the CAD route instead imports an independently proved whole-boundary isotopy.
+    Several shells take ``a_j`` from exact symbolic-ray winding of affine
+    proxies, with certified query-avoiding deviation homotopies, and ``c_j``
+    from exact signed shell measures. A single embedded shell has exterior
+    degree zero because its adjacent positive cell occupies its covered side.
 
     ``status`` is ``embedded`` when every hypothesis is proved, ``violated`` when
     proved hypotheses imply a nonconforming map, a boundary self-contact or a
@@ -831,7 +846,9 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
     mapped boundary-degree theorem whenever a mapped volume proof attempted it.
     ``restriction_root_embedding`` binds an imported predecessor theorem after
     full root-map correspondence; child-domain and child-contact proofs remain
-    independent obligations of this certificate.
+    independent obligations of this certificate. ``periodic_restriction``
+    records the exact parent partition that transfers a complete periodic
+    source embedding; every target premise is proved by this certificate.
     ``certificate_id`` binds the proof hypotheses and verdict, excluding the
     source-expression work and storage measurements reported by this invocation.
     """
@@ -852,7 +869,11 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
     source_expression_peak_bytes: int = eqx.field(static=True)
     boundary_degree: MappedBoundaryDegreeEvidence | None
     periodic_affine: PeriodicAffineQuotientEvidence | None
+    periodic_affine_degree: PeriodicAffineTorusDegreeEvidence | None
+    periodic_restriction: PeriodicRestrictionPartitionEvidence | None
+    periodic_mapped_restriction: PeriodicMappedRestrictionEvidence | None
     restriction_root_embedding: MappedRestrictionRootEmbeddingEvidence | None
+    cad_boundary_closure: CadBoundaryClosureEvidence | None
     certificate_id: str = eqx.field(static=True)
 
     @checked
@@ -868,7 +889,12 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         expression_work: EmbeddingExpressionWork | None = None,
         boundary_degree: MappedBoundaryDegreeEvidence | None = None,
         periodic_affine: PeriodicAffineQuotientEvidence | None = None,
+        periodic_affine_degree: PeriodicAffineTorusDegreeEvidence | None = None,
+        periodic_restriction: PeriodicRestrictionPartitionEvidence | None = None,
+        periodic_mapped_restriction: PeriodicMappedRestrictionEvidence | None = None,
         restriction_root_embedding: MappedRestrictionRootEmbeddingEvidence | None = None,
+        cad_boundary_closure: CadBoundaryClosureEvidence | None = None,
+        _periodic_mapped_budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         if not all(isinstance(value, MeshCertificateFinding) for value in findings):
             raise TypeError(
@@ -887,6 +913,76 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 f"geometry={periodic_affine.geometry_id!r}, "
                 f"validity={periodic_affine.validity_certificate_id!r}"
             )
+        degree_checks = {
+            "periodic_affine_torus_manifold", "periodic_affine_torus_trace",
+            "periodic_affine_torus_orientation", "periodic_affine_torus_degree_one",
+        }
+        if periodic_affine_degree is not None:
+            if (
+                (periodic_affine_degree.mesh_id, periodic_affine_degree.geometry_id)
+                != (binding.mesh_id, binding.geometry_id)
+                or not degree_checks <= set(evaluated_checks)
+            ):
+                raise ValueError(
+                    "GlobalEmbeddingCertificate.periodic_affine_degree must bind its current mesh, geometry and every decided theorem premise"
+                )
+            PeriodicAffineTorusDegreeEvidence.from_stored_fields(periodic_affine_degree)
+        elif not findings and "periodic_affine_torus_degree_one" in evaluated_checks:
+            raise ValueError(
+                "GlobalEmbeddingCertificate.periodic_affine_degree must retain the successful exact degree evidence"
+            )
+        restriction_checks = {
+            "periodic_authored_group_identity",
+            "periodic_mapped_trace_equivariance",
+            "periodic_restriction_source_embedding",
+            "periodic_restriction_parent_partition",
+            "periodic_restriction_boundary_subdivision",
+        }
+        if periodic_restriction is not None:
+            if (
+                periodic_restriction.mesh_id,
+                periodic_restriction.geometry_id,
+                periodic_restriction.validity_certificate_id,
+            ) != (
+                binding.mesh_id,
+                binding.geometry_id,
+                validity_certificate_id,
+            ) or not restriction_checks <= set(evaluated_checks):
+                raise ValueError(
+                    "GlobalEmbeddingCertificate.periodic_restriction must bind its current mesh, geometry, validity and every decided theorem premise"
+                )
+            PeriodicRestrictionPartitionEvidence.from_stored_fields(periodic_restriction)
+        elif "periodic_restriction_parent_partition" in evaluated_checks:
+            raise ValueError(
+                "GlobalEmbeddingCertificate.periodic_restriction must retain the evaluated exact partition evidence"
+            )
+        mapped_checks = {
+            "periodic_authored_group_identity",
+            "periodic_mapped_trace_equivariance",
+            "periodic_mapped_restriction_source_embedding",
+            "periodic_mapped_restriction_parent_partition",
+            "periodic_mapped_restriction_common_subcomplex",
+            "periodic_mapped_restriction_derived_region_assignment",
+        }
+        if periodic_mapped_restriction is not None:
+            retained = PeriodicMappedRestrictionEvidence.from_stored_fields(
+                periodic_mapped_restriction, budget=_periodic_mapped_budget
+            )
+            if (
+                retained.predecessor.target_mesh.mesh_id != binding.mesh_id
+                or cell_geometry_id(retained.predecessor.target_geometry) != binding.geometry_id
+                or retained.validity.certificate_id != validity_certificate_id
+                or not mapped_checks <= set(evaluated_checks)
+            ):
+                raise ValueError(
+                    "GlobalEmbeddingCertificate.periodic_mapped_restriction must bind every current target and theorem premise"
+                )
+        elif mapped_checks & set(evaluated_checks) - {
+            "periodic_authored_group_identity", "periodic_mapped_trace_equivariance"
+        }:
+            raise ValueError(
+                "GlobalEmbeddingCertificate.periodic_mapped_restriction must retain its exact mapped partition"
+            )
         has_root_import = "mapped_restriction_root_embedding_reuse" in evaluated_checks
         if has_root_import != (restriction_root_embedding is not None):
             raise ValueError(
@@ -902,6 +998,26 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 f"got binding={restriction_root_embedding.target_binding_id!r}, "
                 f"validity={restriction_root_embedding.validity_certificate_id!r}"
             )
+        has_cad_import = "mapped_cad_boundary_homotopy_reuse" in evaluated_checks
+        if has_cad_import != (cad_boundary_closure is not None):
+            raise ValueError(
+                "GlobalEmbeddingCertificate.cad_boundary_closure must retain its "
+                "evaluated whole-boundary homotopy import"
+            )
+        if cad_boundary_closure is not None:
+            CadBoundaryClosureEvidence.from_stored_fields(cad_boundary_closure)
+            source = cad_boundary_closure.binding
+            if (
+                source.mesh_id, source.topology_id, source.geometry_layout_id,
+                source.geometry_id, source.coordinate_scope, source.limits_id,
+            ) != (
+                binding.mesh_id, binding.topology_id, binding.geometry_layout_id,
+                binding.geometry_id, binding.coordinate_scope, binding.limits_id,
+            ):
+                raise ValueError(
+                    "GlobalEmbeddingCertificate.cad_boundary_closure must bind "
+                    "the current target mesh, geometry, topology and proof limits"
+                )
         work = EmbeddingExpressionWork() if expression_work is None else expression_work
         cell_count, boundary_facet_count, shell_count = (
             counts.cell_count,
@@ -936,7 +1052,11 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         self.source_expression_peak_bytes = source_expression_peak_bytes
         self.boundary_degree = boundary_degree
         self.periodic_affine = periodic_affine
+        self.periodic_affine_degree = periodic_affine_degree
+        self.periodic_restriction = periodic_restriction
+        self.periodic_mapped_restriction = periodic_mapped_restriction
         self.restriction_root_embedding = restriction_root_embedding
+        self.cad_boundary_closure = cad_boundary_closure
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "global-embedding-certificate",
@@ -947,6 +1067,19 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 "checks": self.evaluated_checks,
                 "periodic_affine": (
                     None if periodic_affine is None else periodic_affine.evidence_id
+                ),
+                "periodic_affine_degree": (
+                    None if periodic_affine_degree is None else periodic_affine_degree.evidence_id
+                ),
+                **(
+                    {}
+                    if periodic_restriction is None
+                    else {"periodic_restriction": periodic_restriction.evidence_id}
+                ),
+                **(
+                    {}
+                    if periodic_mapped_restriction is None
+                    else {"periodic_mapped_restriction": periodic_mapped_restriction.evidence_id}
                 ),
                 "counts": (
                     cell_count,
@@ -982,13 +1115,22 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                         "restriction_root_embedding": restriction_root_embedding.evidence_id
                     }
                 ),
+                **(
+                    {}
+                    if cad_boundary_closure is None
+                    else {"cad_boundary_closure": cad_boundary_closure.evidence_id}
+                ),
             }
         )
 
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[GlobalEmbeddingCertificate], value: GlobalEmbeddingCertificate, /
+        cls: type[GlobalEmbeddingCertificate],
+        value: GlobalEmbeddingCertificate,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> GlobalEmbeddingCertificate:
         """Reconstruct a certificate through the validated evidence phases.
 
@@ -999,6 +1141,20 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             None
             if value.periodic_affine is None
             else PeriodicAffineQuotientEvidence.from_stored_fields(value.periodic_affine)
+        )
+        periodic_affine_degree = (
+            None
+            if value.periodic_affine_degree is None
+            else PeriodicAffineTorusDegreeEvidence.from_stored_fields(
+                value.periodic_affine_degree
+            )
+        )
+        periodic_restriction = (
+            None
+            if value.periodic_restriction is None
+            else PeriodicRestrictionPartitionEvidence.from_stored_fields(
+                value.periodic_restriction
+            )
         )
         restriction_root_embedding = (
             None
@@ -1027,7 +1183,12 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             ),
             boundary_degree=value.boundary_degree,
             periodic_affine=periodic_affine,
+            periodic_affine_degree=periodic_affine_degree,
+            periodic_restriction=periodic_restriction,
+            periodic_mapped_restriction=value.periodic_mapped_restriction,
             restriction_root_embedding=restriction_root_embedding,
+            cad_boundary_closure=value.cad_boundary_closure,
+            _periodic_mapped_budget=budget,
         )
         if (
             rebuilt.certificate_id != value.certificate_id
@@ -1129,6 +1290,9 @@ class _CoordinateScopeInputs(StrictModule):
     source_values: CoordinateSourceBank
     vertices: tuple[np.ndarray, ...]
     vertex_valid: tuple[np.ndarray, ...]
+    corner_images: tuple[
+        tuple[coordinate_enclosure_owner.ExactScalar, ...] | None, ...
+    ] | None = None
 
 
 @final
@@ -1138,6 +1302,43 @@ class _CoordinateCellMap(StrictModule):
     simplex_images: CoordinateSourceBank | None
     prepared_images: CoordinateSourceBank | None
     polynomials: tuple[Polynomial, ...]
+
+
+@final
+class _CornerBindings:
+    """Rational target-vertex images bound so far by one coordinate-scope proof.
+
+    A cardinal corner routed to its own source row binds exactly that retained
+    row, so it is recorded in ``identity`` without forming a dictionary entry or
+    a later bank copy. Every other binding keeps its image in ``images``; the two
+    sets are disjoint and together are the scope's target corners.
+    """
+
+    __slots__ = ("identity", "images", "source_values")
+
+    def __init__(
+        self,
+        source_values: CoordinateSourceBank,
+        count: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> None:
+        budget.reserve(0, 256 + count)
+        self.source_values = source_values
+        self.identity = np.zeros((count,), dtype=np.bool_)
+        self.images: dict[int, tuple[coordinate_enclosure_owner.ExactScalar, ...]] = {}
+
+    def get(
+        self, vertex: int, /
+    ) -> tuple[coordinate_enclosure_owner.ExactScalar, ...] | None:
+        if self.identity[vertex]:
+            return self.source_values[vertex]
+        return self.images.get(vertex)
+
+    def __len__(self) -> int:
+        return int(np.count_nonzero(self.identity)) + len(self.images)
+
 
 
 def _prepare_coordinate_scope_inputs(
@@ -1162,6 +1363,25 @@ def _prepare_coordinate_scope_inputs(
             tuple(block.vertex_valid for block in mesh.blocks),
         )
     )
+    images = None
+    if (
+        coordinate_identity_owner.coordinate_scope_key(mesh, geometry)
+        in budget.coordinate_vertex_image_cache
+        or any(
+            not isinstance(element, reference_types_owner.FiniteElementSpec)
+            for element in elements
+        )
+    ) and all(
+        block.cell_kind in ("interval", "triangle", "tetrahedron")
+        and coordinate_enclosure_owner.affine_simplex_source(element, budget=budget)
+        for block, element in zip(mesh.blocks, elements, strict=True)
+    ):
+        images = coordinate_enclosure_owner.prepared_coordinate_vertex_images(
+            mesh,
+            geometry,
+            mismatch="coordinate_scope.shared_vertex must have one rational image; got conflicting affine chart images",
+            budget=budget,
+        )
     return _CoordinateScopeInputs(
         tuple(elements),
         tuple(np.asarray(route, dtype=np.int64) for route in host_routes),
@@ -1170,6 +1390,7 @@ def _prepare_coordinate_scope_inputs(
         source_values,
         tuple(np.asarray(row, dtype=np.int64) for row in vertices),
         tuple(np.asarray(row, dtype=np.bool_) for row in valid),
+        images,
     )
 
 
@@ -1212,7 +1433,7 @@ def _bind_coordinate_cell_corners(
     vertices: np.ndarray,
     reference: CoordinateSourceBank,
     inputs: _CoordinateScopeInputs,
-    target_corners: dict[int, tuple[coordinate_enclosure_owner.ExactScalar, ...]],
+    target_corners: _CornerBindings,
     geometry: CellGeometrySpec,
     /,
     *,
@@ -1272,7 +1493,7 @@ def _bind_coordinate_cell_corners(
             )
         if prior is None:
             budget.reserve(1, 256 + 128 * len(image))
-        target_corners[int(vertex)] = image
+            target_corners.images[int(vertex)] = image
         nonbinary_corner |= any(Fraction(float(value)) != value for value in image)
     return nonbinary_corner
 
@@ -1285,12 +1506,21 @@ def _coordinate_cell_is_mapped(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    element: CellGeometryElement | None = None,
 ) -> bool:
     if prepared.simplex_images is not None:
         if nonbinary_corner:
             match geometry.exact_source:
                 case exact_plc_geometry_owner.ExactPlcCellGeometrySource():
-                    return False
+                    restriction = geometry.restriction_source
+                    return not (
+                        isinstance(element, reference_types_owner.FiniteElementSpec)
+                        or (
+                            restriction is not None
+                            and restriction.carrier_publication
+                            == "published_affine_roots"
+                        )
+                    )
                 case _:
                     return True
         return False
@@ -1314,6 +1544,303 @@ def _coordinate_cell_is_mapped(
     )
 
 
+def _bind_cardinal_simplex_block(
+    element: reference_types_owner.FiniteElementSpec,
+    kind: str,
+    route: np.ndarray,
+    vertices: np.ndarray,
+    inputs: _CoordinateScopeInputs,
+    target_corners: _CornerBindings,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray | None:
+    """Bind a degree-one simplex block whose corners are cardinal coefficient rows.
+
+    Each corner image is the source-bank row its unit corner weight selects, so
+    every bank row whose rounding can decide a refusal or classification is
+    rounded and classified once, and each such corner is compared with its
+    carrier vertex bits. A PLC corner routed to its own row is its certified
+    source point, so its rounding decides nothing: PLC refusals require another
+    row and PLC cells are never mapped. Source-image work is charged once per
+    unique row actually classified; newly bound vertices retain their creation
+    charge, and a vertex bound to its own row forms no image entry.
+    Mismatch/shared-vertex refusals and the affine/mapped classification match
+    the per-cell rule. Returns mapped cells, or ``None`` where the cardinal rule does not
+    describe the block.
+    """
+    count = route.shape[0]
+    if (
+        kind not in ("interval", "triangle", "tetrahedron")
+        or element.cell_kind != kind
+        or count == 0
+        or route.ndim != 2
+        or route.shape[1] != element.local_dof_count
+        or vertices.shape != (count, element.local_dof_count)
+    ):
+        return None
+    nodes = cell_geometry_owner._cardinal_corner_nodes(element, budget=budget)
+    ambient = inputs.points.shape[1]
+    source_values = inputs.source_values
+    if nodes is None or len(nodes) != vertices.shape[1]:
+        return None
+    corner_rows = route[:, list(nodes)].reshape(-1)
+    corner_vertices = vertices.reshape(-1)
+    used, images = np.unique(corner_rows, return_inverse=True)
+    if np.any(used < 0) or np.any(used >= len(source_values)) or any(
+        len(source_values[row]) != ambient for row in used.tolist()
+    ):
+        return None
+    restriction = geometry.restriction_source
+    published = (
+        restriction is not None
+        and restriction.carrier_publication == "published_affine_roots"
+    )
+    plc = isinstance(
+        geometry.exact_source, exact_plc_geometry_owner.ExactPlcCellGeometrySource
+    )
+    identity_corners = corner_rows == corner_vertices
+    with budget.temporary_scope():
+        if not plc:
+            classified = np.ones((used.size,), dtype=np.bool_)
+        else:
+            classified = np.zeros((used.size,), dtype=np.bool_)
+            if not published:
+                classified[images[~identity_corners]] = True
+        rows = np.flatnonzero(classified)
+        budget.reserve(rows.size * ambient)
+        rounded = np.zeros((used.size, ambient), dtype=np.float64)
+        nonbinary = np.zeros((used.size,), dtype=np.bool_)
+        for position in rows.tolist():
+            image = source_values[int(used[position])]
+            rounded[position] = tuple(float(value) for value in image)
+            nonbinary[position] = any(Fraction(float(value)) != value for value in image)
+        compared = classified[images]
+        mismatched = np.zeros((corner_rows.size,), dtype=np.bool_)
+        mismatched[compared] = ~np.all(
+            rounded.view(np.uint64)[images[compared]]
+            == inputs.points[corner_vertices[compared]].view(np.uint64),
+            axis=1,
+        )
+        _, first, local_vertices = np.unique(
+            corner_vertices, return_index=True, return_inverse=True
+        )
+        first_rows = corner_rows[first][local_vertices]
+        prebound = target_corners.identity[corner_vertices]
+        if target_corners.images:
+            prebound |= np.fromiter(
+                (
+                    int(vertex) in target_corners.images
+                    for vertex in corner_vertices.tolist()
+                ),
+                dtype=np.bool_,
+                count=corner_vertices.size,
+            )
+        for position in np.flatnonzero(
+            mismatched | prebound | (corner_rows != first_rows)
+        ).tolist():
+            vertex = int(corner_vertices[position])
+            image = source_values[int(corner_rows[position])]
+            if mismatched[position] and not published:
+                if not plc:
+                    raise ValueError(
+                        "coordinate_scope.carrier must be the correctly rounded source image; "
+                        f"got vertex {vertex}"
+                    )
+                if image != source_values[vertex]:
+                    raise ValueError(
+                        "coordinate_scope.PLC_image must agree with its certified source point; "
+                        f"got vertex {vertex}"
+                    )
+            prior = (
+                target_corners.get(vertex)
+                if prebound[position]
+                else source_values[int(first_rows[position])]
+            )
+            if prior != image:
+                raise ValueError(
+                    "coordinate_scope.shared_vertex must have one rational image; "
+                    f"got conflicting images at vertex {vertex}"
+                )
+        # The per-cell rule admits each newly bound vertex in its cell's
+        # transient scope; the largest cell bound is that rule's peak.
+        bound = ~prebound & (np.arange(corner_vertices.size) == first[local_vertices])
+        per_cell = np.count_nonzero(bound.reshape(count, -1), axis=1)
+        foreign = bound & ~identity_corners
+        budget.reserve(
+            int(np.count_nonzero(foreign)),
+            int(np.max(per_cell, initial=0)) * (256 + 128 * ambient),
+        )
+        target_corners.identity[corner_vertices[bound & identity_corners]] = True
+        for vertex, row in zip(
+            corner_vertices[foreign].tolist(), corner_rows[foreign].tolist(), strict=True
+        ):
+            target_corners.images[vertex] = source_values[row]
+        mapped = np.any(nonbinary[images].reshape(count, -1), axis=1)
+        if plc:
+            mapped[:] = False
+    return np.flatnonzero(mapped).astype(np.int64)
+
+
+def _bind_affine_simplex_block(
+    element: CellGeometryElement,
+    kind: str,
+    route: np.ndarray,
+    vertices: np.ndarray,
+    inputs: _CoordinateScopeInputs,
+    target_corners: _CornerBindings,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray | None:
+    """Classify a proven affine simplex chart on its shared exact vertex images.
+
+    The corner evaluator checks every routed corner, including distinct
+    operations naming a shared vertex. Rounding and nonbinary classification
+    then depend only on that vertex image, not on its incident-cell count.
+    """
+    if kind not in ("interval", "triangle", "tetrahedron") or not (
+        coordinate_enclosure_owner.affine_simplex_source(element, budget=budget)
+    ):
+        return None
+    if vertices.shape[0] == 0:
+        return np.empty((0,), dtype=np.int64)
+    images = inputs.corner_images
+    if images is None:
+        images = coordinate_enclosure_owner.coordinate_vertex_images(
+            ((element, route, vertices),),
+            inputs.source_values,
+            inputs.points.shape[0],
+            mismatch="coordinate_scope.shared_vertex must have one rational image; got conflicting affine chart images",
+            budget=budget,
+        )
+    if images is None:
+        return None
+    used = np.unique(vertices)
+    ambient = inputs.points.shape[1]
+    budget.reserve(
+        used.size * ambient,
+        1024 + used.size * (32 + 8 * ambient) + inputs.points.shape[0],
+    )
+    bound = []
+    for vertex in used.tolist():
+        image = images[vertex]
+        if image is None:
+            raise ValueError(
+                f"coordinate_scope.exact_charts must bind each affine corner; got vertex {vertex}"
+            )
+        bound.append(image)
+    rounded = np.asarray(
+        [tuple(float(value) for value in image) for image in bound],
+        dtype=np.float64,
+    )
+    mismatched = ~np.all(
+        rounded.view(np.uint64) == inputs.points[used].view(np.uint64), axis=1
+    )
+    restriction = geometry.restriction_source
+    published = (
+        restriction is not None
+        and restriction.carrier_publication == "published_affine_roots"
+    )
+    plc = isinstance(
+        geometry.exact_source, exact_plc_geometry_owner.ExactPlcCellGeometrySource
+    )
+    nonbinary = np.zeros((inputs.points.shape[0],), dtype=np.bool_)
+    priors = [target_corners.get(vertex) for vertex in used.tolist()]
+    new = sum(prior is None for prior in priors)
+    budget.reserve(new, new * (256 + 128 * ambient))
+    for position, (vertex, image, prior) in enumerate(
+        zip(used.tolist(), bound, priors, strict=True)
+    ):
+        if mismatched[position] and not published:
+            if not plc:
+                raise ValueError(
+                    "coordinate_scope.carrier must be the correctly rounded source image; "
+                    f"got vertex {vertex}"
+                )
+            if image != inputs.source_values[vertex]:
+                raise ValueError(
+                    "coordinate_scope.PLC_image must agree with its certified source point; "
+                    f"got vertex {vertex}"
+                )
+        if prior is not None and prior != image:
+            raise ValueError(
+                "coordinate_scope.shared_vertex must have one rational image; "
+                f"got conflicting images at vertex {vertex}"
+            )
+        if prior is None:
+            target_corners.images[vertex] = image
+        nonbinary[vertex] = any(
+            Fraction(value) != exact
+            for value, exact in zip(rounded[position], image, strict=True)
+        )
+    return (
+        np.empty((0,), dtype=np.int64)
+        if plc and (
+            published or isinstance(element, reference_types_owner.FiniteElementSpec)
+        )
+        else np.flatnonzero(np.any(nonbinary[vertices], axis=1)).astype(np.int64)
+    )
+
+
+def _classify_coordinate_cells(
+    element: CellGeometryElement,
+    kind: str,
+    route: np.ndarray,
+    vertices: np.ndarray,
+    cursor: int,
+    inputs: _CoordinateScopeInputs,
+    target_corners: _CornerBindings,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> list[np.ndarray]:
+    """Bind each cell's exact corners and return the cells that stay mapped."""
+    with budget.temporary_scope():
+        affine = _bind_affine_simplex_block(
+            element,
+            kind,
+            route,
+            vertices,
+            inputs,
+            target_corners,
+            geometry,
+            budget=budget,
+        )
+    if affine is not None:
+        return [cursor + affine] if affine.size else []
+    mapped: list[np.ndarray] = []
+    reference = tuple(
+        rational_vector(point) for point in reference_cell_topology(kind).vertices
+    )
+    for cell, row in enumerate(route):
+        local = tuple(inputs.source_values[index] for index in row)
+        # Only classification workspace is temporary; corner bindings remain live.
+        with budget.temporary_scope():
+            prepared = _prepare_coordinate_cell_map(element, kind, local, budget=budget)
+            if prepared is None:
+                mapped.append(np.asarray((cursor + cell,), dtype=np.int64))
+                continue
+            nonbinary = _bind_coordinate_cell_corners(
+                prepared,
+                kind,
+                vertices[cell],
+                reference,
+                inputs,
+                target_corners,
+                geometry,
+                budget=budget,
+            )
+            if _coordinate_cell_is_mapped(
+                prepared, kind, nonbinary, geometry, budget=budget, element=element
+            ):
+                mapped.append(np.asarray((cursor + cell,), dtype=np.int64))
+    return mapped
+
+
 def _coordinate_scope_active(
     mesh: CellMesh, geometry: CellGeometrySpec, /, *, budget: CoordinateEnclosureBudget
 ) -> CoordinateScope:
@@ -1326,7 +1853,41 @@ def _coordinate_scope_active(
         return CoordinateScope("mapped" if has_mapped else "affine", cells, source_values)
     inputs = _prepare_coordinate_scope_inputs(mesh, geometry, budget=budget)
     mapped: list[np.ndarray] = []
-    target_corners: dict[int, tuple[coordinate_enclosure_owner.ExactScalar, ...]] = {}
+    target_corners = _CornerBindings(
+        inputs.source_values, inputs.points.shape[0], budget=budget
+    )
+    restriction = geometry.restriction_source
+    if (
+        inputs.corner_images is not None
+        and isinstance(
+            geometry.exact_source, exact_plc_geometry_owner.ExactPlcCellGeometrySource
+        )
+        and restriction is not None
+        and restriction.carrier_publication == "published_affine_roots"
+    ):
+        # resolve admitted the published carrier law; the all-affine image
+        # bank proved every routed corner and every shared-vertex equality.
+        # PLC simplex images are affine even when their exact corners are not
+        # binary64. Neither rounding nor nonbinary tests can change this rule.
+        budget.reserve(0, 256 + 80 * len(inputs.corner_images))
+        foreign = []
+        for vertex, image in enumerate(inputs.corner_images):
+            if image is None:
+                continue
+            if (
+                vertex < len(inputs.source_values)
+                and image is inputs.source_values[vertex]
+            ):
+                target_corners.identity[vertex] = True
+            else:
+                foreign.append((vertex, image))
+        budget.reserve(
+            len(foreign), sum(256 + 128 * len(image) for _, image in foreign)
+        )
+        target_corners.images.update(foreign)
+        return _commit_coordinate_scope(
+            mesh, geometry, scope_key, inputs, mapped, target_corners, budget=budget
+        )
     cursor = 0
     for block, element, route, vertices, valid in zip(
         mesh.blocks,
@@ -1351,36 +1912,59 @@ def _coordinate_scope_active(
                         f"got differing corner values in block {block.name!r}"
                     )
             case reference_types_owner.FiniteElementSpec() if element.degree == 1:
-                reference = tuple(
-                    rational_vector(point)
-                    for point in reference_cell_topology(block.cell_kind).vertices
+                cardinal = _bind_cardinal_simplex_block(
+                    element,
+                    block.cell_kind,
+                    route,
+                    vertices,
+                    inputs,
+                    target_corners,
+                    geometry,
+                    budget=budget,
                 )
-                local_values = tuple(
-                    tuple(inputs.source_values[index] for index in row) for row in route
+                if cardinal is not None:
+                    if cardinal.size:
+                        mapped.append(cursor + cardinal)
+                    cursor += block.cell_count
+                    continue
+                mapped.extend(
+                    _classify_coordinate_cells(
+                        element,
+                        block.cell_kind,
+                        route,
+                        vertices,
+                        cursor,
+                        inputs,
+                        target_corners,
+                        geometry,
+                        budget=budget,
+                    )
                 )
-                for cell, local in enumerate(local_values):
-                    # Only classification workspace is temporary; corner bindings remain live.
-                    with budget.temporary_scope():
-                        prepared = _prepare_coordinate_cell_map(
-                            element, block.cell_kind, local, budget=budget
-                        )
-                        if prepared is None:
-                            mapped.append(np.asarray((cursor + cell,), dtype=np.int64))
-                            continue
-                        nonbinary = _bind_coordinate_cell_corners(
-                            prepared,
-                            block.cell_kind,
-                            vertices[cell],
-                            reference,
-                            inputs,
-                            target_corners,
-                            geometry,
-                            budget=budget,
-                        )
-                        if _coordinate_cell_is_mapped(
-                            prepared, block.cell_kind, nonbinary, geometry, budget=budget
-                        ):
-                            mapped.append(np.asarray((cursor + cell,), dtype=np.int64))
+            case (
+                cell_geometry_owner.BarycentricCellGeometryElement()
+                | cell_geometry_owner.PolynomialComposedCellGeometryElement()
+            ) if block.cell_kind in (
+                "interval",
+                "triangle",
+                "tetrahedron",
+            ) and coordinate_enclosure_owner.affine_simplex_source(
+                element, budget=budget
+            ):
+                # A proven affine chart chain is classified by its exact corner
+                # images under the same rule as a degree-one Lagrange block.
+                mapped.extend(
+                    _classify_coordinate_cells(
+                        element,
+                        block.cell_kind,
+                        route,
+                        vertices,
+                        cursor,
+                        inputs,
+                        target_corners,
+                        geometry,
+                        budget=budget,
+                    )
+                )
             case _:
                 mapped.append(
                     np.arange(cursor, cursor + block.cell_count, dtype=np.int64)
@@ -1397,7 +1981,7 @@ def _commit_coordinate_scope(
     scope_key: tuple[str, str, str],
     inputs: _CoordinateScopeInputs,
     mapped: list[np.ndarray],
-    target_corners: dict[int, tuple[coordinate_enclosure_owner.ExactScalar, ...]],
+    target_corners: _CornerBindings,
     /,
     *,
     budget: CoordinateEnclosureBudget,
@@ -1411,11 +1995,26 @@ def _commit_coordinate_scope(
                 "coordinate_scope.exact_charts must bind every target vertex; "
                 f"got {len(target_corners)} bindings for {inputs.points.shape[0]} vertices"
             )
-        source_values = tuple(
-            target_corners[index] for index in range(inputs.points.shape[0])
-        )
-        budget.reserve(inputs.points.size, 128 + 8 * inputs.points.size)
-        budget.retain_basis(source_values)
+        identity = target_corners.identity
+        if not (
+            len(inputs.source_values) == identity.size and bool(np.all(identity))
+        ):
+            if inputs.corner_images is not None:
+                # This mesh-bound bank already checked every routed corner;
+                # the complete target binding above proves none is unbound.
+                # Preserve that exact immutable bank, not another per-vertex
+                # packing/profile of the identical source images.
+                source_values = cast(CoordinateSourceBank, inputs.corner_images)
+            else:
+                images = target_corners.images
+                source_values = tuple(
+                    inputs.source_values[index] if identity[index] else images[index]
+                    for index in range(inputs.points.shape[0])
+                )
+                budget.reserve(inputs.points.size, 128 + 8 * inputs.points.size)
+                budget.retain_basis(source_values)
+        # Otherwise every target vertex is bound to its own source row, so the
+        # target bank is the request-retained source bank itself; no copy forms.
     cells.flags.writeable = False
     prepared_scope = (bool(cells.size), cells, source_values)
     budget.retain_basis((scope_key, prepared_scope))
@@ -1489,6 +2088,41 @@ def pairing_findings(
             "facet",
             facet_entity_ids(mesh, facets.rows[first[~consistent]]),
         )
+
+
+def _shared_segment_separation(
+    points: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Prove two segments meet only at their declared common endpoint.
+
+    Along each nonconstant coordinate, an open segment stays strictly on its
+    endpoint's side of the common point. Opposite sides, or one segment lying
+    in a coordinate plane that the other leaves, therefore exclude every
+    nonshared contact. Source comparisons are exact, including rational banks;
+    no subtraction, rounded construction or tolerance is involved.
+    """
+    count = first.shape[0]
+    with budget.temporary_scope():
+        budget.reserve(0, 1024 + count * (64 + 48 * points.shape[1]))
+        sharing = first[:, :, None] == second[:, None, :]
+        rows = np.flatnonzero(np.sum(sharing, axis=(1, 2)) == 1)
+        result = np.zeros(count, dtype=np.bool_)
+        if not rows.size:
+            return result
+        left = np.argmax(np.any(sharing[rows], axis=2), axis=1)
+        right = np.argmax(np.any(sharing[rows], axis=1), axis=1)
+        origin = points[first[rows, left]]
+        a = points[first[rows, 1 - left]]
+        b = points[second[rows, 1 - right]]
+        opposed = ((a < origin) & (b > origin)) | ((a > origin) & (b < origin))
+        different_support = (a == origin) != (b == origin)
+        result[rows] = np.any(opposed | different_support, axis=1)
+        return result
 
 
 def _segment_contacts(
@@ -1580,18 +2214,42 @@ def _segment_contacts(
 _EXACT_CONTACT_BATCH = 4096
 
 
-def _exact_box_charge(
-    points: np.ndarray, count: int, /, *, budget: CoordinateEnclosureBudget
-) -> tuple[int, int]:
-    """Work and transient storage of ``boxes`` over ``count`` rational items.
+def _exact_contact_boxes(
+    points: np.ndarray,
+    rows: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    integer_preparation: (
+        exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
+    ) = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build the same outward boxes while converting each used vertex once.
 
-    Per item twelve rational comparisons (each cross-multiplies two integers
-    of at most ``2 b + 1`` bits, ``b`` the source bits) and six outward float
-    conversions, with sixteen gathered slots; the bit scan charges itself.
+    Binary64 rounding is monotone, so taking minima/maxima after conversion
+    yields the same rounded extrema as rational comparisons before conversion.
+    The original outward nextafter then gives identical conservative boxes.
+    Only actual bit scans and source-coordinate conversions retain their
+    existing exact-work charges; no rational comparisons are performed here.
+    When every bank row is used, a preparation bound to this bank already
+    scanned the same bit lengths.
     """
-    return 18 * count, 2 * bigint_bytes(
-        2 * exact_bits(points, budget=budget) + 1
-    ) + 8 * 16 * count
+    with exact_charge(0, 1024 + 128 * rows.size, budget=budget):
+        used, inverse = np.unique(rows, return_inverse=True)
+        selected = points[used]
+        bits = (
+            integer_preparation.rational_bits(points, budget=budget)
+            if integer_preparation is not None and used.size == points.shape[0]
+            else exact_bits(selected, budget=budget)
+        )
+        with exact_charge(
+            selected.size,
+            2 * bigint_bytes(2 * bits + 1) + 8 * selected.size,
+            budget=budget,
+        ):
+            rounded = np.asarray(selected, dtype=np.float64)
+            lower, upper = boxes(rounded, inverse.reshape(rows.shape))
+            return np.nextafter(lower, -np.inf), np.nextafter(upper, np.inf)
 
 
 def _exact_shared_edge_disjoint(
@@ -1760,6 +2418,9 @@ def exact_pair_contacts(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    integer_preparation: (
+        exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
+    ) = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Decide contact on the integer scaling of rational source coordinates.
 
@@ -1769,16 +2430,40 @@ def exact_pair_contacts(
     normals (twenty visits, eighteen integers of at most ``2 b + 3`` bits for
     bank bits ``b``) and gathers at most 128 slots; a segment pair gathers
     eight slots.
+    The integer bank contains only vertices used by this batch. Its injective
+    index map preserves declared sharing while avoiding normalization of
+    unrelated interior coordinates during a boundary-only contact proof.
     """
 
-    with exact_charge(0, budget=budget):
-        integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
-            points, budget=budget
-        )
+    slots = first.size + second.size
+    with exact_charge(0, 1024 + 128 * slots, budget=budget):
+        if not slots:
+            return np.zeros(first.shape[0], dtype=np.bool_), np.ones(
+                first.shape[0], dtype=np.bool_
+            )
+        used = np.unique(np.concatenate((first.reshape(-1), second.reshape(-1))))
+        if integer_preparation is not None:
+            integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
+                points, budget=budget, preparation=integer_preparation
+            )
+            if used.size < points.shape[0]:
+                integers = integers[used]
+        else:
+            selected = points[used] if used.size < points.shape[0] else points
+            integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
+                selected, budget=budget
+            )
+        if used.size < points.shape[0]:
+            first = np.searchsorted(used, first)
+            second = np.searchsorted(used, second)
         if first.shape[1] == 2:
             with exact_charge(0, 8 * 8 * first.shape[0], budget=budget):
                 return _segment_contacts(integers, first, second, budget=budget)
-        bits = exact_bits(integers, budget=budget)
+        bits = (
+            integer_preparation.integer_bits
+            if integer_preparation is not None
+            else exact_bits(integers, budget=budget)
+        )
         hit = np.zeros((first.shape[0],), dtype=np.bool_)
         certain = np.ones((first.shape[0],), dtype=np.bool_)
         for start in range(0, first.shape[0], _EXACT_CONTACT_BATCH):
@@ -1813,17 +2498,20 @@ def pairwise_contacts(
     *,
     budget: CoordinateEnclosureBudget,
     source_rows: np.ndarray | None = None,
+    integer_preparation: (
+        exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
+    ) = None,
 ) -> None:
     """Decide contacts of segment/triangle items with exact predicates beyond combinatorial sharing."""
 
     check = parse(check, MeshCertificateCheck, "pairwise_contacts.check")
     state.checks.append(check)
     exact = points.dtype == object
-    with _exact_step(
-        exact,
-        *(_exact_box_charge(points, items.shape[0], budget=budget) if exact else (0, 0)),
-        budget=budget,
-    ):
+    if exact:
+        lower, upper = _exact_contact_boxes(
+            points, items, budget=budget, integer_preparation=integer_preparation
+        )
+    else:
         lower, upper = boxes(points, items)
     first, second, exceeded = candidate_pairs(
         lower, upper, limits.maximum_candidate_pairs - state.candidate_pairs
@@ -1834,6 +2522,11 @@ def pairwise_contacts(
     if source_rows is not None:
         pending = (source_rows[first] < 0) | (source_rows[second] < 0)
         first, second = first[pending], second[pending]
+    if first.size and items.shape[1] == 2:
+        separated = _shared_segment_separation(
+            points, items[first], items[second], budget=budget
+        )
+        first, second = first[~separated], second[~separated]
     if not first.size:
         return
     if exact:
@@ -1883,7 +2576,8 @@ def pairwise_contacts(
             pending = np.ones(first.shape, dtype=np.bool_)
         if np.any(pending):
             hit[pending], certain[pending] = exact_pair_contacts(
-                points, items[first[pending]], items[second[pending]], budget=budget
+                points, items[first[pending]], items[second[pending]], budget=budget,
+                integer_preparation=integer_preparation,
             )
     elif items.shape[1] == 2:
         hit, certain = _segment_contacts(
@@ -2223,6 +2917,9 @@ def _exterior_degrees(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    integer_preparation: (
+        exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
+    ) = None,
 ) -> None:
     state.checks.append("exterior_degree")
     labels, unbalanced = boundary_shells(boundary, dimension)
@@ -2242,18 +2939,23 @@ def _exterior_degrees(
     if exact:
         # One positive common denominator preserves every orientation, measure
         # sign and the perturbed ray: rational source shells use integer scaling.
-        # Per piece the shell measure is one 14-visit integer determinant
-        # below 2**(3 b + 3); boxes take twelve comparisons and fifteen slots;
+        # A segment's 2D cofactor uses three operations; a triangle's 3D cofactor
+        # uses fourteen. Both fit the existing 2**(3 b + 3) storage bound.
+        # Min/max boxes compare each later corner in each coordinate twice;
         # a ray test takes five box comparisons per piece and, per crossed
         # candidate, fifteen perturbation visits with six differences below
         # 2**(b + 1) and forty slots. Orientation signs charge themselves.
         integers, _ = exact_polyhedral_geometry_owner.coordinate_integers(
-            points, budget=budget
+            points, budget=budget, preparation=integer_preparation
         )
-        bits = exact_bits(integers, budget=budget)
+        bits = (
+            integer_preparation.integer_bits
+            if integer_preparation is not None
+            else exact_bits(integers, budget=budget)
+        )
         coordinates = integers
         exact_reserve(
-            12 * pieces,
+            2 * dimension * (boundary.pieces.shape[1] - 1) * pieces,
             8 * 15 * pieces + shells * bigint_bytes(3 * bits + 3 + pieces.bit_length()),
             budget=budget,
         )
@@ -2262,7 +2964,10 @@ def _exterior_degrees(
         coordinates = points
         bits = 0
     with _exact_step(
-        exact, 14 * pieces, 14 * pieces * bigint_bytes(3 * bits + 3), budget=budget
+        exact,
+        (3 if dimension == 2 else 14) * pieces,
+        14 * pieces * bigint_bytes(3 * bits + 3),
+        budget=budget,
     ):
         measures = _shell_measures(integers, boundary, labels, shells)
     piece_shell = labels[boundary.piece_owners]
@@ -2315,31 +3020,166 @@ def volume_embedding(
     *,
     budget: CoordinateEnclosureBudget,
     predecessor: CellGeometryPredecessor | None = None,
+    geometry: CellGeometrySpec | None = None,
+    restriction: CellGeometryPredecessor | None = None,
 ) -> None:
     boundary = boundary_pieces(state, mesh, points, facets, limits, budget=budget)
+    decided = _nested_boundary_import(
+        state, mesh, geometry, points, limits, budget=budget, restriction=restriction
+    )
     inherited = (
         None
-        if predecessor is None
+        if predecessor is None or decided
         else _boundary_predecessor_rows(predecessor, facets, budget=budget)
     )
-    pairwise_contacts(
-        state,
-        points,
-        boundary.pieces,
-        boundary.entities[boundary.piece_owners],
-        "facet",
-        "boundary_contact",
-        limits,
-        budget=budget,
-        source_rows=(None if inherited is None else inherited[boundary.piece_owners]),
+    _boundary_embedding(
+        state, points, boundary, mesh.topological_dimension, limits,
+        budget=budget, inherited=inherited, decided=decided,
     )
+
+
+def _nested_boundary_import(
+    state: EmbeddingState,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec | None,
+    points: np.ndarray,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    restriction: CellGeometryPredecessor | None,
+) -> bool:
+    """Import the source boundary-contact theorem through an exact parent partition.
+
+    Admitted only on a clean state after facet pairing, with the authenticated
+    certified source embedding of a nested restriction. The imported root
+    union and the partition proof each record their own check; any absent or
+    failed premise retains the full pairwise boundary-contact proof.
+    """
+    if restriction is None or geometry is None or not state.clean:
+        return False
+    from . import _restricted_embedding as restricted_embedding_owner
+
+    with budget.temporary_scope():
+        imported = restricted_embedding_owner.nested_parent_partition(
+            mesh, geometry, points, limits,
+            state=state, budget=budget, predecessor=restriction,
+        )
+    if isinstance(imported, str) or not state.clean:
+        return False
+    state.checks.extend(
+        (
+            "boundary_contact",
+            "mapped_restriction_root_embedding_reuse",
+            "restriction_parent_partition",
+        )
+    )
+    state.imported_root_embedding_certificate_id = imported.certificate_id
+    return True
+
+
+def _boundary_embedding(
+    state: EmbeddingState,
+    points: np.ndarray,
+    boundary: Boundary,
+    dimension: int,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    inherited: np.ndarray | None,
+    integer_preparation: (
+        exact_polyhedral_geometry_owner.CoordinateIntegerPreparation | None
+    ) = None,
+    decided: bool = False,
+) -> None:
+    """Decide every boundary contact and exterior degree in its input bank.
+
+    ``decided`` contacts were transferred by an admitted parent-partition
+    theorem; exterior degrees are always computed on this boundary.
+    """
+    if not decided:
+        pairwise_contacts(
+            state,
+            points,
+            boundary.pieces,
+            boundary.entities[boundary.piece_owners],
+            "facet",
+            "boundary_contact",
+            limits,
+            budget=budget,
+            source_rows=(
+                None if inherited is None else inherited[boundary.piece_owners]
+            ),
+            integer_preparation=integer_preparation,
+        )
     if not state.clean:
         # Degree theory requires the preceding boundary decisions.
         state.add("exterior_degree_premise", "unresolved", "mesh")
         return
     _exterior_degrees(
-        state, points, boundary, mesh.topological_dimension, limits, budget=budget
+        state, points, boundary, dimension, limits, budget=budget,
+        integer_preparation=integer_preparation,
     )
+
+
+def _exact_planar_boundary_embedding(
+    state: EmbeddingState,
+    mesh: CellMesh,
+    points: np.ndarray,
+    facets: Facets,
+    limits: MeshCertificateLimits,
+    maximum_bits: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    predecessor: CellGeometryPredecessor | None,
+    geometry: CellGeometrySpec | None = None,
+    restriction: CellGeometryPredecessor | None = None,
+) -> None:
+    """Normalize only the source points used by the planar boundary theorem.
+
+    Full source-map validity and oriented facet pairing have already been
+    checked. The remaining contact, shell measure and degree predicates use
+    boundary vertices only. An injective index map preserves every incidence
+    and the original facet entity IDs, without changing the physical source.
+    """
+    boundary = boundary_pieces(state, mesh, points, facets, limits, budget=budget)
+    decided = _nested_boundary_import(
+        state, mesh, geometry, points, limits, budget=budget, restriction=restriction
+    )
+    inherited = (
+        None
+        if predecessor is None or decided
+        else _boundary_predecessor_rows(predecessor, facets, budget=budget)
+    )
+    with budget.temporary_scope():
+        budget.reserve(0, 1024 + 128 * boundary.rows.size)
+        used = np.unique(boundary.rows[boundary.rows >= 0])
+        local_points = points[used]
+        local_boundary = Boundary(
+            np.searchsorted(used, boundary.rows),
+            boundary.entities,
+            np.searchsorted(used, boundary.pieces),
+            boundary.piece_owners,
+        )
+        integer_preparation = exact_polyhedral_geometry_owner.CoordinateIntegerPreparation(
+            local_points, maximum_bits, budget=budget
+        )
+        if integer_preparation.profile is None:
+            state.add("exact_source_bit_budget", "unresolved", "mesh")
+            return
+        predicate_points, binary = exact_source_predicate_view(
+            local_points, budget=budget
+        )
+        if binary:
+            state.checks.append("exact_source_binary64_value_equivalence")
+        _boundary_embedding(
+            state, predicate_points, local_boundary, 2, limits,
+            budget=budget, inherited=inherited,
+            integer_preparation=None if binary else integer_preparation,
+            decided=decided,
+        )
 
 
 @checked
@@ -2367,6 +3207,106 @@ def exact_source_predicate_view(
     return exported, True
 
 
+def source_bank_binary64_rows(
+    bank: CoordinateSourceBank, *, budget: CoordinateEnclosureBudget
+) -> tuple[np.ndarray, np.ndarray]:
+    """Issue exact binary64-equality proofs independently for immutable rows.
+
+    Only rows whose mask is true may be used by binary predicates. A false
+    row retains its original exact source; its float slots are not a carrier
+    approximation or a substitute source. The strong bank reference prevents
+    identity-key recycling across this request's consumers.
+    """
+    from ..discretization._coordinate_operands import (
+        _immutable_array_layout, seal_coordinate_operand_array,
+    )
+
+    cached = budget.source_binary64_rows_cache.get(id(bank))
+    if cached is not None and cached[0] is bank:
+        budget.reserve(2)
+        if (
+            _immutable_array_layout(cached[1]) != cached[3]
+            or _immutable_array_layout(cached[2]) != cached[4]
+        ):
+            raise ValueError("Source binary64 rows must retain their actual immutable numeric layouts.")
+        return cached[1], cached[2]
+    ambient = len(bank[0]) if bank else 0
+    with budget.temporary_scope(), budget.live_storage() as conversion_storage:
+        budget.reserve(0, 256 + len(bank) * (8 * ambient + 1))
+        view = np.full((len(bank), ambient), np.nan, dtype=np.float64)
+        represented = np.ones((len(bank),), dtype=np.bool_)
+        conversions: dict[tuple[type, int, int], tuple[float, bool]] = {}
+        for row, point in enumerate(bank):
+            if len(point) != ambient:
+                represented[row] = False
+                continue
+            for column, value in enumerate(point):
+                # This is only a rational binary64-equality filter. Algebraic
+                # rows retain their exact-source path; no rounding is necessary.
+                if type(value) is not Fraction:
+                    represented[row] = False
+                    break
+                budget.reserve(1)
+                key = (Fraction, value.numerator, value.denominator)
+                known = conversions.get(key)
+                if known is None:
+                    budget.reserve(3)
+                    conversion_storage.set_bound(
+                        512 + 512 * (len(conversions) + 1)
+                    )
+                    try:
+                        numeric = float(value)
+                        exact = math.isfinite(numeric) and Fraction(numeric) == value
+                    except (OverflowError, TypeError, ValueError):
+                        numeric, exact = math.nan, False
+                    known = numeric, exact
+                    conversions[key] = known
+                numeric, exact = known
+                if not exact:
+                    represented[row] = False
+                    break
+                view[row, column] = numeric
+        del conversions
+        # Only the last scalar/key locals remain; the full conversion table is
+        # dead before copying the two immutable exported numeric banks.
+        conversion_storage.set_bound(512 if bank else 0)
+        view = seal_coordinate_operand_array(view, budget=budget)
+        represented = seal_coordinate_operand_array(represented, budget=budget)
+        layouts = _immutable_array_layout(view), _immutable_array_layout(represented)
+        budget.retain_owner((view, represented, *layouts))
+        budget.source_binary64_rows_cache[id(bank)] = (
+            bank, view, represented, *layouts,
+        )
+        return view, represented
+
+
+def source_bank_predicate_view(
+    bank: CoordinateSourceBank, *, budget: CoordinateEnclosureBudget
+) -> tuple[np.ndarray, bool]:
+    """Export one prepared immutable source bank's predicate view once per ledger.
+
+    Embedding and coverage certify the same prepared source bank in one
+    request; the second consumer reads the view the first one earned.
+    """
+    view, represented = source_bank_binary64_rows(bank, budget=budget)
+    cached = budget.source_predicate_view_cache.get(id(bank))
+    if cached is not None and cached[0] is bank:
+        budget.reserve(1)
+        if cached[1] is not view or cached[2] is not True:
+            raise ValueError("Source predicate views must retain their actual immutable binary row bank.")
+        return view, True
+    binary = bool(np.all(represented))
+    if binary:
+        budget.source_predicate_view_cache[id(bank)] = (bank, view, True)
+        return view, True
+    # Object arrays cannot have immutable byte-backed object references. Never
+    # retain one as a reusable authority behind a reversible NumPy write flag.
+    budget.reserve(0, 128 + len(bank) * (len(bank[0]) if bank else 0) * 8)
+    exact = np.asarray(bank, dtype=object)
+    exact.flags.writeable = False
+    return exact, False
+
+
 def _exact_source_embedding(
     state: EmbeddingState,
     mesh: CellMesh,
@@ -2392,7 +3332,8 @@ def _exact_source_embedding(
     dimensions, so the source runs the volume proof.
     """
 
-    facets = mesh_facets(mesh, budget=budget)
+    # Geometry-bound facets are shared with coverage and fidelity in this request.
+    facets = mesh_facets(mesh, geometry=geometry, budget=budget)
     pairing_findings(state, mesh, facets, junctions)
     match source:
         case (
@@ -2404,7 +3345,13 @@ def _exact_source_embedding(
             # Scope preparation proved every source map affine and retained
             # the rational target vertex bank, so no cell expression is rebuilt.
             points = np.asarray(exact_points, dtype=object)
-            if (
+            if mesh.topological_dimension == 2:
+                _exact_planar_boundary_embedding(
+                    state, mesh, points, facets, limits, source.maximum_bits,
+                    budget=budget, predecessor=predecessor,
+                    geometry=geometry, restriction=mapped_predecessor,
+                )
+            elif (
                 exact_polyhedral_geometry_owner.coordinate_integer_profile(
                     points, source.maximum_bits, budget=budget
                 )
@@ -2412,8 +3359,8 @@ def _exact_source_embedding(
             ):
                 state.add("exact_source_bit_budget", "unresolved", "mesh")
             else:
-                predicate_points, binary = exact_source_predicate_view(
-                    points, budget=budget
+                predicate_points, binary = source_bank_predicate_view(
+                    exact_points, budget=budget
                 )
                 if binary:
                     state.checks.append("exact_source_binary64_value_equivalence")
@@ -2425,6 +3372,8 @@ def _exact_source_embedding(
                     limits,
                     budget=budget,
                     predecessor=predecessor,
+                    geometry=geometry,
+                    restriction=mapped_predecessor,
                 )
             state.source_expression_work_units = budget.current_measurement.work_units
             state.source_expression_peak_bytes = (
@@ -2547,6 +3496,8 @@ def _contact_predecessor(
     limits: MeshCertificateLimits,
     junctions: tuple[int, ...],
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> CellGeometryPredecessor | None:
     """Authenticate imported evidence and select the affine contact reuse route."""
     if predecessor is None:
@@ -2554,8 +3505,8 @@ def _contact_predecessor(
     source = predecessor.source_embedding
     if source is None or source.binding.coordinate_scope != "affine":
         return None
-    predecessor.require_bound(mesh, geometry)
-    source = GlobalEmbeddingCertificate.from_stored_fields(source)
+    predecessor.require_bound(mesh, geometry, budget=budget)
+    source = GlobalEmbeddingCertificate.from_stored_fields(source, budget=budget)
     source.binding.require(predecessor.source_mesh, predecessor.source_geometry)
     predecessor.source_validity.require_bound(
         predecessor.source_geometry, mesh=predecessor.source_mesh
@@ -2636,6 +3587,8 @@ def _certify_affine_embedding(
     dimensions: tuple[int, int],
     /,
     *,
+    geometry: CellGeometrySpec,
+    restriction: CellGeometryPredecessor | None,
     budget: CoordinateEnclosureBudget,
     predecessor: CellGeometryPredecessor | None = None,
 ) -> None:
@@ -2681,9 +3634,285 @@ def _certify_affine_embedding(
                 limits,
                 budget=budget,
                 predecessor=predecessor,
+                geometry=geometry,
+                restriction=restriction,
             )
         case _:
             state.add("unsupported_embedding_dimension", "unresolved", "mesh")
+
+
+_ISSUED_NESTED_PARTITIONS: IssuedProofs[
+    CoordinateEnclosureBudget, GlobalEmbeddingCertificate
+] = IssuedProofs()
+
+
+def _nested_partition_authority_key(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    predecessor: CellGeometryPredecessor,
+    certificate: GlobalEmbeddingCertificate,
+    limits: MeshCertificateLimits,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> str:
+    predecessor.require_bound(mesh, geometry, budget=budget)
+    return _nested_partition_content_key(
+        mesh, geometry, predecessor, certificate, limits, budget=budget
+    )
+
+
+def _nested_partition_content_key(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    predecessor: CellGeometryPredecessor,
+    certificate: GlobalEmbeddingCertificate,
+    limits: MeshCertificateLimits,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> str:
+    """Bind content after the same operation's actual predecessor validation.
+
+    Issuance follows the fresh closed-partition/root proof without callbacks
+    or publication between validation and recording. Consumer verification
+    must use ``_nested_partition_authority_key`` to authenticate current owners.
+    """
+    from ..lifecycle._meshing_source_records import stored_record_content_id
+
+    budget.reserve(8 + len(certificate.evaluated_checks), 1024)
+    return canonical_fingerprint(
+        {
+            "kind": "earned-current-nested-partition",
+            "target_scope": coordinate_identity_owner.coordinate_scope_key(mesh, geometry),
+            "predecessor": predecessor.content_id,
+            "certificate": stored_record_content_id(certificate, excluded="", budget=budget),
+            "limits": stored_record_content_id(limits, excluded="", budget=budget),
+        }
+    )
+
+
+def _has_nested_partition_premises(
+    certificate: GlobalEmbeddingCertificate, predecessor: CellGeometryPredecessor,
+) -> bool:
+    root = certificate.restriction_root_embedding
+    source = predecessor.source_embedding
+    return (
+        certificate.status == "certified"
+        and source is not None
+        and root is not None
+        and root.imported_certificate_id == source.certificate_id
+        and {
+            "restriction_parent_partition", "mapped_restriction_root_embedding_reuse",
+            "facet_pairing", "boundary_contact",
+        }.issubset(certificate.evaluated_checks)
+    )
+
+
+def is_issued_current_nested_partition(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    predecessor: CellGeometryPredecessor,
+    certificate: GlobalEmbeddingCertificate,
+    limits: MeshCertificateLimits,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Authenticate the complete partition actually earned on this request ledger."""
+    if not _has_nested_partition_premises(certificate, predecessor):
+        return False
+    certificate.binding.require(mesh, geometry)
+    return _ISSUED_NESTED_PARTITIONS.get(
+        budget,
+        _nested_partition_authority_key(
+            mesh, geometry, predecessor, certificate, limits, budget=budget
+        ),
+    ) is certificate
+
+
+def _embedding_request_key(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    validity: CellValidityCertificate,
+    limits: MeshCertificateLimits,
+    junctions: tuple[int, ...],
+    /,
+) -> str:
+    """Bind request-local proof reuse to current mesh arrays and every proof input."""
+    return canonical_fingerprint(
+        {
+            "kind": "global-embedding-request",
+            "mesh": mesh.mesh_id,
+            "mesh_arrays": array_tree_fingerprint(mesh),
+            "topology": mesh.topology_id,
+            "periodic_topology": None
+            if mesh.periodic_topology is None
+            else mesh.periodic_topology.periodic_topology_id,
+            "geometry": cell_geometry_id(geometry),
+            "coordinate_scope": coordinate_identity_owner.coordinate_scope_key(
+                mesh, geometry
+            ),
+            "validity": validity.certificate_id,
+            "limits": limits.limits_id,
+            "junctions": junctions,
+        }
+    )
+
+
+_COMPLETE_PERIODIC_ROUTES = (
+    frozenset(
+        (
+            "cell_validity",
+            "periodic_authored_group_identity",
+            "periodic_full_source_hulls",
+            "periodic_image_sufficiency",
+            "periodic_mapped_trace_equivariance",
+            "periodic_mapped_self_image_embedding",
+        )
+    ),
+    frozenset(
+        (
+            "cell_validity",
+            "periodic_authored_group_identity",
+            "periodic_mapped_trace_equivariance",
+            "periodic_restriction_source_embedding",
+            "periodic_restriction_parent_partition",
+            "periodic_restriction_boundary_subdivision",
+        )
+    ),
+    frozenset(
+        (
+            "cell_validity",
+            "periodic_authored_group_identity",
+            "periodic_mapped_trace_equivariance",
+            "periodic_mapped_restriction_source_embedding",
+            "periodic_mapped_restriction_parent_partition",
+            "periodic_mapped_restriction_common_subcomplex",
+            "periodic_mapped_restriction_derived_region_assignment",
+        )
+    ),
+)
+
+
+def _periodic_restriction_premise(
+    premise: PeriodicRestrictionPremise | None,
+    mesh: CellMesh,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> PeriodicRestrictionPremise | None:
+    """Authenticate a complete current periodic source certificate for transfer."""
+    if premise is None:
+        return None
+    if mesh.periodic_topology is None or premise.source_mesh.periodic_topology is None:
+        raise ValueError(
+            "certify_global_embedding.periodic_restriction must bind periodic source and target meshes; got a nonperiodic mesh"
+        )
+    source = GlobalEmbeddingCertificate.from_stored_fields(
+        premise.source_embedding, budget=budget
+    )
+    source.binding.require(premise.source_mesh, premise.source_geometry)
+    premise.source_validity.require_bound(
+        premise.source_geometry, mesh=premise.source_mesh
+    )
+    checks = frozenset(source.evaluated_checks)
+    if (
+        source.status != "certified"
+        or source.findings
+        or not premise.source_validity.all_certified
+        or source.validity_certificate_id != premise.source_validity.certificate_id
+        or not any(route <= checks for route in _COMPLETE_PERIODIC_ROUTES)
+    ):
+        raise ValueError(
+            "certify_global_embedding.periodic_restriction.source_embedding must be a complete certified quotient embedding of its bound source validity; "
+            f"got status={source.status!r}, checks={sorted(checks)!r}"
+        )
+    predecessor = premise.mapped_predecessor
+    if predecessor is not None and any(
+        actual is not declared
+        for actual, declared in (
+            (predecessor.source_mesh, premise.source_mesh),
+            (predecessor.source_geometry, premise.source_geometry),
+            (predecessor.source_validity, premise.source_validity),
+            (predecessor.source_embedding, premise.source_embedding),
+        )
+    ):
+        raise ValueError(
+            "Mapped periodic predecessor must retain the actual authenticated premise source owners"
+        )
+    return premise
+
+
+
+
+def _certify_cad_boundary_embedding(
+    state: EmbeddingState,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    cell_ids: np.ndarray,
+    closure: CadBoundaryClosureEvidence,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Consume the positive-local-degree theorem without closed-cell injectivity.
+
+    Only the already proved whole-boundary contact obligation is imported.
+    Full-cell positivity, all shared entity traces, oriented facet pairing and
+    shell exterior degrees remain independent current-target obligations.
+    """
+    from . import _boundary_degree_embedding, _embedding_cells, _mapped_embedding
+
+    if (
+        mesh.topological_dimension != 3
+        or mesh.ambient_dimension != 3
+        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+        or mesh.storage is not None
+        or mesh.periodic_topology is not None
+    ):
+        raise ValueError("cad_boundary requires the complete nonperiodic tetrahedral volume")
+    budget.retain_owner(closure)
+    facets = mesh_facets(mesh, geometry=geometry, budget=budget)
+    pairing_findings(state, mesh, facets, np.empty((0,), dtype=np.int64))
+    if not state.clean:
+        return
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    values = coordinate_enclosure_owner.prepared_coordinate_source_bank(
+        geometry, budget=budget
+    )
+    budget.reserve(int(cell_ids.size), 1024 + 4096 * int(cell_ids.size))
+    cells = []
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        for vertices, dofs in zip(np.asarray(block.vertices), np.asarray(route), strict=True):
+            coordinates = coordinate_enclosure_owner.coordinate_expressions(
+                element, tuple(values[int(dof)] for dof in dofs), budget=budget
+            )
+            if coordinates is None:
+                state.add("coordinate_source_enclosure", "unresolved", "mesh")
+                return
+            if any(
+                _mapped_embedding.bernstein_node_count(value, "simplex", 3)
+                > limits.maximum_bernstein_nodes
+                for value in coordinates
+            ):
+                state.add("mapped_bernstein_node_budget", "unresolved", "mesh")
+                return
+            cells.append(
+                _embedding_cells.Cell(
+                    coordinates, "simplex", "tetrahedron", 3,
+                    tuple(int(vertex) for vertex in vertices),
+                    _embedding_cells.vertices("tetrahedron"),
+                )
+            )
+    facet_traces = _mapped_embedding.trace_continuity(
+        state, mesh, cells, geometry=geometry, budget=budget,
+        retain_facet_traces=True,
+    )
+    if state.clean and not _boundary_degree_embedding.certify_boundary_degree_embedding(
+        state, mesh, cells, cell_ids, limits, budget=budget,
+        cad_boundary=(geometry, closure),
+        facet_traces=facet_traces,
+    ):
+        state.add("mapped_boundary_degree", "unresolved", "mesh")
 
 
 @checked
@@ -2697,6 +3926,8 @@ def certify_global_embedding(
     junction_vertices: ArrayLike | None = None,
     budget: CoordinateEnclosureBudget | None = None,
     predecessor: CellGeometryPredecessor | None = None,
+    periodic_restriction: PeriodicRestrictionPremise | None = None,
+    cad_boundary: CadBoundaryClosureEvidence | None = None,
 ) -> GlobalEmbeddingCertificate:
     """Certify that the mesh is globally embedded (see the module docstring).
 
@@ -2710,7 +3941,12 @@ def certify_global_embedding(
     changed contacts, broad-phase counts, and exterior degrees are recomputed.
     Mapped restrictions can import an embedded root union after coefficientwise
     source-map comparison, preserving their child-domain and child-contact proofs.
-    Periodic proofs retain their full quotient routes.
+    Periodic proofs retain their full quotient routes unless an authenticated
+    ``periodic_restriction`` premise admits the exact parent-partition theorem.
+    ``cad_boundary`` imports only an independently issued whole-boundary CAD
+    isotopy. The current full-cell positive Jacobians, exact skeleton conformity,
+    facet pairing and exterior degrees are still proved here; fidelity status
+    or a stored homotopy hash alone never authorizes this route.
     """
 
     # Mapped/periodic proof kernels consume affine certificate helpers; import their dispatch once per request.
@@ -2723,9 +3959,38 @@ def certify_global_embedding(
     limits_ = MeshCertificateLimits() if limits is None else limits
     junctions = _junction_vertices(mesh, junction_vertices)
     inherited = _contact_predecessor(
-        predecessor, mesh, geometry, limits_, tuple(junctions.tolist())
+        predecessor, mesh, geometry, limits_, tuple(junctions.tolist()), budget=budget
     )
+    restriction = _periodic_restriction_premise(periodic_restriction, mesh, budget=budget)
+    cad_closure = cad_boundary
+    if cad_closure is not None:
+        from ._source_fidelity import require_issued_cad_boundary_closure
+
+        require_issued_cad_boundary_closure(mesh, geometry, cad_closure, limits_)
+    reuse_key = (
+        _embedding_request_key(
+            mesh, geometry, validity, limits_, tuple(junctions.tolist())
+        )
+        if budget is not None and mesh.storage is None
+        else None
+    )
+    if cad_closure is not None and reuse_key is not None:
+        reuse_key = canonical_fingerprint(
+            {"embedding_request": reuse_key, "cad_boundary": cad_closure.evidence_id}
+        )
     with coordinate_certificate_request(limits_, budget=budget) as budget:
+        earned = (
+            None
+            if reuse_key is None
+            else budget.global_embedding_certificate_cache.get(reuse_key)
+        )
+        if earned is not None:
+            earned.binding.require(mesh, geometry)
+            if earned.periodic_mapped_restriction is not None:
+                PeriodicMappedRestrictionEvidence.from_stored_fields(
+                    earned.periodic_mapped_restriction, budget=budget
+                )
+            return earned
         with ExitStack() as preparation:
             scope_resource: CoordinateEnclosureResourceError | None = None
             try:
@@ -2790,8 +4055,21 @@ def certify_global_embedding(
                         limits_,
                         budget=budget,
                         validity=validity,
+                        restriction=restriction,
                     )
                 )
+            elif cad_closure is not None:
+                try:
+                    with budget.measurement(), budget.activate(), budget.temporary_scope():
+                        _certify_cad_boundary_embedding(
+                            state, mesh, geometry, cell_ids, cad_closure, limits_,
+                            budget=budget,
+                        )
+                except CoordinateEnclosureResourceError as error:
+                    state.add(
+                        "mapped_source_expression_resource_budget", "unresolved", "mesh",
+                        resource_error=error, expression_budget=budget,
+                    )
             elif geometry.exact_source is not None:
                 try:
                     with budget.measurement(), budget.activate():
@@ -2856,6 +4134,8 @@ def certify_global_embedding(
                             dimensions,
                             budget=budget,
                             predecessor=inherited,
+                            geometry=geometry,
+                            restriction=predecessor,
                         )
                 except CoordinateEnclosureResourceError as error:
                     state.add(
@@ -2869,13 +4149,17 @@ def certify_global_embedding(
             state.source_expression_peak_bytes = (
                 budget.current_measurement.peak_bytes_upper
             )
-            return GlobalEmbeddingCertificate(
+            certificate = GlobalEmbeddingCertificate(
                 binding,
                 validity.certificate_id,
                 tuple(state.findings),
                 tuple(state.checks),
                 boundary_degree=state.boundary_degree,
                 periodic_affine=state.periodic_affine,
+                periodic_affine_degree=state.periodic_affine_degree,
+                periodic_restriction=state.periodic_restriction,
+                periodic_mapped_restriction=state.periodic_mapped_restriction,
+                _periodic_mapped_budget=budget,
                 restriction_root_embedding=(
                     None
                     if state.imported_root_embedding_certificate_id is None
@@ -2884,6 +4168,11 @@ def certify_global_embedding(
                         binding.binding_id,
                         validity.certificate_id,
                     )
+                ),
+                cad_boundary_closure=(
+                    cad_closure
+                    if "mapped_cad_boundary_homotopy_reuse" in state.checks
+                    else None
                 ),
                 counts=EmbeddingCounts(
                     cell_count=cell_ids.size,
@@ -2899,6 +4188,19 @@ def certify_global_embedding(
                     peak_bytes=state.source_expression_peak_bytes,
                 ),
             )
+            if reuse_key is not None and certificate.status == "certified":
+                budget.retain_basis((reuse_key,))
+                budget.retain_owner(certificate)
+                budget.global_embedding_certificate_cache[reuse_key] = certificate
+            if predecessor is not None and _has_nested_partition_premises(certificate, predecessor):
+                _ISSUED_NESTED_PARTITIONS.record(
+                    budget,
+                    _nested_partition_content_key(
+                        mesh, geometry, predecessor, certificate, limits_, budget=budget
+                    ),
+                    certificate,
+                )
+            return certificate
 
 
 __all__ = [
@@ -2924,6 +4226,7 @@ __all__ = [
     "ray_crossings_2d",
     "ray_crossings_3d",
     "shell_representatives",
+    "source_bank_predicate_view",
     "surface_embedding",
     "volume_embedding",
 ]

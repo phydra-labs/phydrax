@@ -30,6 +30,7 @@ from jax.typing import ArrayLike
 import phydrax.discretization._cell_geometry as cell_geometry_owner
 import phydrax.discretization._cell_geometry_validity as cell_validity_owner
 import phydrax.discretization._coordinate_budget as coordinate_budget_owner
+import phydrax.discretization._coordinate_enclosure as coordinate_enclosure_owner
 import phydrax.discretization.fem._reference_rules as reference_rules_owner
 import phydrax.ein as ein
 import phydrax.linalg._small_batched as small_linear_owner
@@ -973,6 +974,21 @@ def _volume_rule(kind: str, degree: int, /) -> _QualityRule:
     return probes, weights
 
 
+def _quality_padded_rows(values: Array, /) -> Array:
+    """Reuse bounded quality executables without changing any active cell lane."""
+    count = values.shape[0]
+    if count == 0 or count > 256:
+        return values
+    capacity = adaptive_simplex_bucket(count, 1.0)
+    if capacity == count:
+        return values
+    return jnp.concatenate(
+        (values, jnp.broadcast_to(values[-1:], (capacity - count, *values.shape[1:]))),
+        axis=0,
+    )
+
+
+
 def _mapped_face_warpage(
     plan: _MappedQualityPlan,
     source: _ScalarCoordinateElement,
@@ -984,11 +1000,13 @@ def _mapped_face_warpage(
     """Sample coordinate-map face normals in prepared reference-face order."""
     if not plan.faces:
         return _zero_face_warpage(coordinates)
+    tabulation = cell_geometry_owner.coordinate_tabulation(source)
+    padded = _quality_padded_rows(coordinates)
     angles = []
     for probes, directions in plan.faces:
         _count_quality_queries(budget, coordinates.shape[0] * probes.shape[0])
-        angles.append(_mapped_face_sample(source, coordinates, probes, directions))
-    return _maximum_face_warpage(tuple(angles))
+        angles.append(_mapped_face_sample(tabulation, padded, probes, directions))
+    return _maximum_face_warpage(tuple(angles))[:coordinates.shape[0]]
 
 
 def _zero_face_warpage(coordinates: Array, /) -> Array:
@@ -1002,7 +1020,7 @@ def _maximum_face_warpage(angles: tuple[Array, ...], /) -> Array:
 
 @eqx.filter_jit
 def _mapped_face_sample(
-    source: _ScalarCoordinateElement,
+    source: cell_geometry_owner.ScalarCoordinateTabulation,
     coordinates: Array,
     probes: np.ndarray,
     directions: np.ndarray,
@@ -1010,6 +1028,12 @@ def _mapped_face_sample(
 ) -> Array:
     _, gradients = source.tabulate(jnp.asarray(probes, dtype=coordinates.dtype))
     jacobian = ein.contract("qir,cia->cqar", gradients, coordinates, backend="jax")
+    return _mapped_differential_face_sample(jacobian, directions)
+
+
+@eqx.filter_jit
+def _mapped_differential_face_sample(jacobian: Array, directions: np.ndarray) -> Array:
+    """Retain the sampled-normal arithmetic for an already earned differential."""
     tangents = ein.contract("cqar,rs->cqas", jacobian, directions, backend="jax")
     normals = jnp.cross(tangents[..., 0], tangents[..., 1])
     reference = normals[:, :1]
@@ -1145,13 +1169,14 @@ def _mapped_boundary_samples(
     directions: np.ndarray,
     /,
 ) -> tuple[Array, Array]:
-    return _mapped_boundary_values(
+    low, high = _mapped_boundary_values(
         cell_geometry_owner.coordinate_tabulation(source),
         source.topological_dimension,
-        coordinates,
+        _quality_padded_rows(coordinates),
         probes,
         directions,
     )
+    return low[:coordinates.shape[0]], high[:coordinates.shape[0]]
 
 
 @eqx.filter_jit
@@ -1167,22 +1192,7 @@ def _mapped_boundary_values(
     direction_values = jnp.asarray(directions, dtype=coordinates.dtype)
     if dimension == 2:
         jacobian = ein.contract("qir,cia->cqar", gradients, coordinates, backend="jax")
-        tangents = ein.contract(
-            "cqar,qrs->cqas", jacobian, direction_values, backend="jax"
-        )
-        cosine = jnp.sum(tangents[..., 0] * tangents[..., 1], axis=-1)
-        if coordinates.shape[-1] == 2:
-            sine = determinant_small_linear(SmallLinearSolvePlan(2), tangents)
-        else:
-            normal = jnp.cross(jacobian[..., 0], jacobian[..., 1])
-            normal = normal / jnp.maximum(
-                jnp.linalg.norm(normal, axis=-1, keepdims=True), _tiny(coordinates)
-            )
-            sine = jnp.sum(
-                jnp.cross(tangents[..., 0], tangents[..., 1]) * normal, axis=-1
-            )
-        angles = _angle(sine, cosine)
-        return jnp.min(angles, axis=1), jnp.max(angles, axis=1)
+        return _mapped_planar_angles(jacobian, direction_values)
     low = jnp.full((coordinates.shape[0],), jnp.inf, dtype=coordinates.dtype)
     high = jnp.full((coordinates.shape[0],), -jnp.inf, dtype=coordinates.dtype)
 
@@ -1198,6 +1208,37 @@ def _mapped_boundary_values(
 
     result, _ = jax.lax.scan(sample, (low, high), (gradients, direction_values))
     return result
+
+
+def _mapped_planar_angles(jacobian: Array, directions: Array) -> tuple[Array, Array]:
+    """Canonical tangent-angle arithmetic for sampled and constant maps."""
+    tangents = ein.contract("cqar,qrs->cqas", jacobian, directions, backend="jax")
+    cosine = jnp.sum(tangents[..., 0] * tangents[..., 1], axis=-1)
+    if jacobian.shape[-2] == 2:
+        sine = determinant_small_linear(SmallLinearSolvePlan(2), tangents)
+    else:
+        normal = jnp.cross(jacobian[..., 0], jacobian[..., 1])
+        normal = normal / jnp.maximum(
+            jnp.linalg.norm(normal, axis=-1, keepdims=True), _tiny(jacobian)
+        )
+        sine = jnp.sum(
+            jnp.cross(tangents[..., 0], tangents[..., 1]) * normal, axis=-1
+        )
+    angles = _angle(sine, cosine)
+    return jnp.min(angles, axis=1), jnp.max(angles, axis=1)
+
+
+def _constant_boundary_angles(
+    jacobian: Array, directions: np.ndarray | None
+) -> tuple[Array, Array]:
+    """Apply the existing mapped boundary frames to one earned differential."""
+    if directions is None:
+        return _missing_boundary_angles(jacobian)
+    reference = jnp.asarray(directions, dtype=jacobian.dtype)
+    frames = jnp.broadcast_to(
+        jacobian[:, None], (jacobian.shape[0], reference.shape[0], *jacobian.shape[1:])
+    )
+    return _mapped_planar_angles(frames, reference)
 
 
 def _mapped_block_quality(
@@ -1220,6 +1261,48 @@ def _mapped_block_quality(
     source = cell_geometry_owner.require_scalar_coordinate_element(
         element, "Mapped quality"
     )
+    # Standalone sampled-quality requests deliberately own no proof storage.
+    # Their unchanged quadrature route needs no extra retained source theorem.
+    # Face-warpage routes retain their canonical sampled-normal arithmetic,
+    # including its roundoff residuals, so stored and renewed reports agree.
+    if (
+        budget.maximum_memory_bytes > 0
+        and (
+            (not rule.faces and kind in ("interval", "triangle"))
+            or kind == "tetrahedron"
+        )
+        and coordinate_enclosure_owner.affine_simplex_source(source, budget=budget)
+    ):
+        # The canonical affine-root proof makes every volume and boundary
+        # Jacobian identical, including non-cardinal coefficient actions.
+        # Evaluate the original tabulation once; do not project its source bank.
+        _count_quality_queries(budget, coordinates.shape[0])
+        # Canonical P1 simplex gradients contain only zero and signed unit
+        # coefficients, independent of the probe. Reuse their actual computed
+        # differential, but keep all original sampled-normal lanes/arithmetic.
+        shared_faces = (
+            tuple((probes.shape[0], directions) for probes, directions in rule.faces)
+            if isinstance(source, FiniteElementSpec)
+            and source.cell_kind == "tetrahedron"
+            and source.degree == 1
+            else ()
+        )
+        constant = _constant_jacobian_quality(
+            kind,
+            cell_geometry_owner.coordinate_tabulation(source),
+            source.topological_dimension,
+            coordinates,
+            metric,
+            rule.volume[1],
+            None if rule.boundary is None else rule.boundary[1],
+            shared_faces,
+        )
+        if not rule.faces or shared_faces:
+            return constant
+        warpage = _mapped_face_warpage(rule, source, coordinates, budget=budget)
+        return _finish_mapped_quality(
+            constant, constant.minimum_angle, constant.maximum_angle, warpage
+        )
     _count_quality_queries(budget, coordinates.shape[0] * rule.volume[0].shape[0])
     measured = _mapped_sample_worksets(kind, source, coordinates, metric, rule.volume)
     minimum_angle, maximum_angle = _mapped_boundary_angles(
@@ -1227,6 +1310,107 @@ def _mapped_block_quality(
     )
     warpage = _mapped_face_warpage(rule, source, coordinates, budget=budget)
     return _finish_mapped_quality(measured, minimum_angle, maximum_angle, warpage)
+
+
+@eqx.filter_jit
+def _constant_jacobian_quality(
+    kind: str,
+    source: cell_geometry_owner.ScalarCoordinateTabulation,
+    dimension: int,
+    coordinates: Array,
+    metric: Array | None,
+    weights: np.ndarray,
+    boundary_directions: np.ndarray | None,
+    face_frames: tuple[tuple[int, np.ndarray], ...],
+) -> BlockQuality:
+    """Measure a source-proved affine map from its one constant differential."""
+    _, gradients = source.tabulate(
+        jnp.zeros((1, dimension), dtype=coordinates.dtype)
+    )
+    reference = jnp.asarray(
+        reference_cell_topology(kind).vertices, dtype=coordinates.dtype
+    )
+    plan = SmallLinearSolvePlan(dimension)
+    quadrature_weights = jnp.asarray(weights, dtype=coordinates.dtype)
+    jacobians = ein.contract("ir,cia->car", gradients[0], coordinates, backend="jax")
+    # Boundary angles retain the original full, unpadded cell axis. Computing
+    # transcendental metrics inside power-of-two worksets changes their final
+    # rounding on non-power-of-two meshes and invalidates renewed audit IDs.
+    if dimension == 3:
+        minimum_angle, maximum_angle = _constant_dihedral_angles(
+            jacobians, boundary_directions
+        )
+    else:
+        minimum_angle, maximum_angle = _constant_boundary_angles(
+            jacobians, boundary_directions
+        )
+
+    def evaluate(jacobian: Array, tensor: Array | None) -> BlockQuality:
+        if jacobian.shape[-2] == dimension:
+            density = determinant_small_linear(plan, jacobian)
+        else:
+            gram = ein.contract("car,cas->crs", jacobian, jacobian, backend="jax")
+            density = jnp.sqrt(determinant_small_linear(plan, gram))
+        vertices = ein.contract("car,vr->cva", jacobian, reference, backend="jax")
+        quality = _standard_block_quality(kind, vertices, tensor)
+        # Retain the original quadrature summation order without re-evaluating
+        # its identical differential, including the signed full-dimensional map.
+        measure, _ = jax.lax.scan(
+            lambda total, weight: (total + weight * density, None),
+            jnp.zeros_like(density),
+            quadrature_weights,
+        )
+        return eqx.tree_at(
+            lambda value: (value.measure, value.sampled_valid),
+            quality,
+            (
+                measure,
+                quality.sampled_valid & (density > 0.0) & jnp.isfinite(density),
+            ),
+        )
+
+    measured = _quality_worksets(evaluate, jacobians, metric)
+    warpage = measured.warpage
+    if face_frames:
+        padded = _quality_padded_rows(jacobians)
+        angles = tuple(
+            _mapped_differential_face_sample(
+                jnp.broadcast_to(
+                    padded[:, None],
+                    (padded.shape[0], probes, *padded.shape[1:]),
+                ),
+                directions,
+            )
+            for probes, directions in face_frames
+        )
+        warpage = _maximum_face_warpage(angles)[:coordinates.shape[0]]
+    return eqx.tree_at(
+        lambda value: (value.minimum_angle, value.maximum_angle, value.warpage),
+        measured,
+        (minimum_angle, maximum_angle, warpage),
+    )
+
+
+def _constant_dihedral_angles(
+    jacobians: Array, directions: np.ndarray | None
+) -> tuple[Array, Array]:
+    """Apply the sampled dihedral frames to one earned constant differential."""
+    if directions is None:
+        return _missing_boundary_angles(jacobians)
+    low = jnp.full((jacobians.shape[0],), jnp.inf, dtype=jacobians.dtype)
+    high = jnp.full((jacobians.shape[0],), -jnp.inf, dtype=jacobians.dtype)
+
+    def sample(
+        bounds: tuple[Array, Array], reference: Array
+    ) -> tuple[tuple[Array, Array], None]:
+        vectors = jacobians @ reference
+        angle = _dihedral_vectors(vectors[..., 0], vectors[..., 1], vectors[..., 2])
+        return (jnp.minimum(bounds[0], angle), jnp.maximum(bounds[1], angle)), None
+
+    result, _ = jax.lax.scan(
+        sample, (low, high), jnp.asarray(directions, dtype=jacobians.dtype)
+    )
+    return result
 
 
 def _mapped_sample_worksets(
@@ -1237,14 +1421,16 @@ def _mapped_sample_worksets(
     rule: _QualityRule,
     /,
 ) -> BlockQuality:
-    return _mapped_sample_values(
+    count = coordinates.shape[0]
+    quality = _mapped_sample_values(
         kind,
         cell_geometry_owner.coordinate_tabulation(source),
         source.topological_dimension,
-        coordinates,
-        metric,
+        _quality_padded_rows(coordinates),
+        None if metric is None else _quality_padded_rows(metric),
         rule,
     )
+    return jax.tree_util.tree_map(lambda field: field[:count], quality)
 
 
 @eqx.filter_jit

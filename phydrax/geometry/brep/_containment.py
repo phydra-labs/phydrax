@@ -259,7 +259,12 @@ def _prepare_containment(
     if trim_domains is None:
         domains = tuple(
             brep_trim_domain(
-                model.geometry, face, model.patches[face], tolerance=0.01, budget=budget
+                model.geometry,
+                face,
+                model.patches[face],
+                tolerance=0.01,
+                budget=budget,
+                preparations=preparations,
             )
             for face in faces
         )

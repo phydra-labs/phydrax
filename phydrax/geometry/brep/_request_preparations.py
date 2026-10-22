@@ -10,11 +10,14 @@ import numpy as np
 
 
 if TYPE_CHECKING:
-    from .._atlas import TrimArcRefinements
+    from .._atlas import TrimArcRefinements, TrimSourceArcs
     from ._intersection import (
+        BranchRootEndpoint,
         CurveSurfaceIntersectionRoot,
         Prepared,
         TrimIntersectionRoot,
+        TrimRootEndpoint,
+        TripleSurfaceIntersectionRoot,
     )
     from ._intersection_curve import IntersectionCurve, IntersectionJetPreparation
     from ._query_types import FaceCertificate
@@ -28,7 +31,19 @@ class TrimRequestPreparations:
         int, tuple[TrimIntersectionRoot, Prepared | None, dict[int, np.ndarray]]
     ] = field(default_factory=dict)
     curve_surface_roots: dict[
-        int, tuple[CurveSurfaceIntersectionRoot, Prepared | None]
+        int,
+        tuple[CurveSurfaceIntersectionRoot, Prepared | None, dict[int, np.ndarray]],
+    ] = field(default_factory=dict)
+    triple_roots: dict[
+        int,
+        tuple[TripleSurfaceIntersectionRoot, Prepared | None, dict[int, np.ndarray]],
+    ] = field(default_factory=dict)
+    root_endpoints: dict[
+        int,
+        tuple[
+            TrimRootEndpoint | BranchRootEndpoint,
+            dict[int, tuple[float, float]],
+        ],
     ] = field(default_factory=dict)
     branch_objects: dict[int, tuple[IntersectionCurve, IntersectionJetPreparation]] = (
         field(default_factory=dict)
@@ -44,5 +59,8 @@ class TrimRequestPreparations:
         default_factory=OrderedDict
     )
     trim_arc_refinements: dict[tuple[int, int], TrimArcRefinements] = field(
+        default_factory=dict
+    )
+    trim_source_arcs: dict[tuple[object, ...], TrimSourceArcs] = field(
         default_factory=dict
     )

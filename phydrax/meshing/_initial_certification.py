@@ -2,18 +2,24 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Certify authored-patch native initial surfaces collectively.
+"""Certify native initial meshes collectively from a source-discriminated premise.
 
-Chart and trim coverage use the source domain and generated partition rows.
-Cross-partition contacts use bounded candidate packets and native predicates;
-logical content remains on the sharded array substrate.
+A surface premise binds authored patches, charts and trims; a planar premise
+binds a worker-count-independent tile complex of an authored planar region.
+Owner-local proofs use the premise; cross-owner checks use bounded packets or
+tile containment; logical content remains on the sharded array substrate.
+Source-stratum ordering, duplicate admission and incidence joins share one
+numerical program; only bounded owning-host inputs and scalar counts cross
+the host boundary, and retained content keeps the canonical byte recipes.
 """
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from functools import partial
 from itertools import combinations
-from typing import assert_never, final, Literal
+from typing import assert_never, final, Literal, Self
 
 import equinox as eqx
 import jax
@@ -21,7 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.experimental import multihost_utils
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.sharding import NamedSharding, PartitionSpec
 from numpy.typing import NDArray
 
 import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
@@ -43,6 +49,7 @@ import phydrax.meshing._contracts as _owner_phydrax_meshing__contracts
 import phydrax.meshing._device_adaptation as _dependency_phydrax_meshing__device_adaptation
 import phydrax.meshing._device_generation as _dependency_phydrax_meshing__device_generation
 import phydrax.meshing._distributed_generation as _dependency_phydrax_meshing__distributed_generation
+import phydrax.meshing._distributed_planar_generation as planar_generation_owner
 import phydrax.meshing._domain as _dependency_phydrax_meshing__domain
 import phydrax.meshing._entity_keys as entity_keys_owner
 import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
@@ -57,25 +64,44 @@ import phydrax.meshing._trace as _owner_phydrax_meshing__trace
 import phydrax.meshing.providers._native_schedules as _dependency_phydrax_meshing_providers__native_schedules
 import phydrax.meshing.providers._native_sources as _dependency_phydrax_meshing_providers__native_sources
 import phydrax.meshing.providers._native_surface_association as surface_association_owner
+from phydrax.meshing.providers._native_planar_domain import (
+    _association_distances,
+    _field_sizes,
+    source_arrays,
+)
 
+from .._execution_runtime import owner_execution_mesh, process_owner_devices
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
     logical_array_value_collection_digest,
+    tree_content_equal,
 )
-from .._meshcore import MeshcoreError, NativeExecutionScope
+from .._meshcore import exact_orient2d, MeshcoreError, NativeExecutionScope
 from .._physical import SpatialCoordinateContract
 from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
+from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..typing import checked
-from ._collective_failure import collective_failure_barrier, collective_failure_decision
+from ._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+    GeometrySourceEntityRole,
+)
+from ._collective_failure import (
+    agreed_local_step,
+    collective_failure_barrier,
+    collective_failure_decision,
+)
 from ._compliance_failure import compliance_failure
+from ._controls import FeatureKind
 from ._result import AbstractCollectiveMeshTheorem
+from ._sizing import size_statistic_quantile, SizeControlStrength, UniformSizeControl
 
 
-_CHECKS = (
+_SURFACE_CHECKS = (
     "authored_source_binding",
     "chart_trim_coverage",
     "continuous_source_fidelity",
@@ -86,6 +112,258 @@ _CHECKS = (
     "reciprocal_source_facets",
     "cross_owner_embedding",
 )
+# Same positions as the surface checks: coverage, ownership, shared geometry,
+# reciprocal facets and cross-owner disjointness keep their indices.
+_PLANAR_CHECKS = (
+    "authored_source_binding",
+    "tile_region_coverage",
+    "source_carrier_fidelity",
+    "local_embedding",
+    "physical_controls",
+    "unique_cell_ownership",
+    "shared_vertex_geometry",
+    "reciprocal_source_facets",
+    "tile_containment",
+)
+
+
+def _layout_key(
+    layout: _dependency_phydrax_meshing__device_generation.DeviceGenerationLayout, /
+) -> tuple[int, int, int, int, int]:
+    return (
+        layout.vertex_capacity,
+        layout.cell_capacity,
+        layout.candidate_capacity,
+        layout.maximum_work_units,
+        layout.neighborhood_depth,
+    )
+
+
+def _immutable_owners(owners: NDArray[np.int32], rows: int, name: str, /) -> NDArray[np.int32]:
+    value = np.array(owners, dtype=np.int32, copy=True)
+    if value.shape != (rows,) or np.any(value < 0):
+        raise ValueError(
+            f"initial.premise.{name} must be nonnegative int32 rows aligned with generation units; got incompatible owners"
+        )
+    value.flags.writeable = False
+    return value
+
+
+@final
+class InitialSurfacePremise(StrictModule, NonTrainableState):
+    """Authored parametric surface domain, request, schedule and patch owners."""
+
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain
+    specification: _dependency_phydrax_meshing__contracts.SurfaceMeshingSpec
+    authored_source: (
+        _dependency_phydrax_meshing_providers__native_sources.NativeSurfaceSource
+    )
+    schedule: (
+        _dependency_phydrax_meshing_providers__native_schedules.NativeSurfaceSchedule
+    )
+    layout: _dependency_phydrax_meshing__device_generation.DeviceGenerationLayout
+    patch_owners: NDArray[np.int32]
+    premise_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+        specification: _dependency_phydrax_meshing__contracts.SurfaceMeshingSpec,
+        schedule: _dependency_phydrax_meshing_providers__native_schedules.NativeSurfaceSchedule,
+        layout: _dependency_phydrax_meshing__device_generation.DeviceGenerationLayout,
+        patch_owners: NDArray[np.int32],
+        /,
+    ) -> None:
+        if compiled.specification_id != specification.specification_id:
+            raise ValueError(
+                "initial.premise.compiled must bind its specification; got a different request"
+            )
+        owners = _immutable_owners(patch_owners, compiled.patches.size, "patch_owners")
+        self.compiled = compiled
+        self.specification = specification
+        self.authored_source = (
+            _dependency_phydrax_meshing_providers__native_sources.NativeSurfaceSource(
+                compiled.domain
+            )
+        )
+        self.schedule = schedule
+        self.layout = layout
+        self.patch_owners = owners
+        self.premise_id = canonical_fingerprint(
+            {
+                "kind": "initial-surface-premise",
+                "compiled": compiled.compiled_id,
+                "specification": specification.specification_id,
+                "schedule": schedule.schedule_id,
+                "layout": _layout_key(layout),
+                "owners": array_tree_fingerprint(owners),
+            }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: InitialSurfacePremise, /) -> Self:
+        """Rebuild the premise through its constructor and its identity."""
+        rebuilt = cls(
+            value.compiled,
+            value.specification,
+            value.schedule,
+            value.layout,
+            value.patch_owners,
+        )
+        if rebuilt.premise_id != value.premise_id:
+            raise ValueError(
+                "InitialSurfacePremise.premise_id must match its stored inputs; got changed stored content"
+            )
+        return rebuilt
+
+    @property
+    def source_id(self) -> str:
+        return self.compiled.domain.source_id
+
+    @property
+    def source_revision(self) -> str:
+        return self.compiled.domain.source_revision
+
+    @property
+    def source_domain_id(self) -> str:
+        return self.compiled.domain.domain_id
+
+    @property
+    def generation_id(self) -> str:
+        return self.compiled.compiled_id
+
+    @property
+    def definitions_id(self) -> str:
+        return canonical_fingerprint(
+            (self.compiled.compiled_id, self.specification.specification_id)
+        )
+
+    @property
+    def block_name(self) -> str:
+        return "surface"
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    def identity_fields(self) -> dict[str, str]:
+        """Source-theorem identity fields of this premise kind."""
+        return {"compiled": self.compiled.compiled_id}
+
+
+@final
+class InitialPlanarPremise(StrictModule, NonTrainableState):
+    """Authored planar region tile complex, layout and tile owners."""
+
+    tiles: planar_generation_owner.PlanarTileComplex
+    layout: _dependency_phydrax_meshing__device_generation.DeviceGenerationLayout
+    tile_owners: NDArray[np.int32]
+    premise_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        tiles: planar_generation_owner.PlanarTileComplex,
+        layout: _dependency_phydrax_meshing__device_generation.DeviceGenerationLayout,
+        tile_owners: NDArray[np.int32],
+        /,
+    ) -> None:
+        owners = _immutable_owners(tile_owners, tiles.tiles.shape[0], "tile_owners")
+        self.tiles = tiles
+        self.layout = layout
+        self.tile_owners = owners
+        self.premise_id = canonical_fingerprint(
+            {
+                "kind": "initial-planar-premise",
+                "tiles": tiles.compiled_id,
+                "layout": _layout_key(layout),
+                "owners": array_tree_fingerprint(owners),
+            }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: InitialPlanarPremise, /) -> Self:
+        """Rebuild the premise through its constructor and its identity."""
+        rebuilt = cls(
+            value._current_tiles(),
+            value.layout,
+            value.tile_owners,
+        )
+        if rebuilt.premise_id != value.premise_id:
+            raise ValueError(
+                "InitialPlanarPremise.premise_id must match its stored inputs; got changed stored content"
+            )
+        return rebuilt
+
+    def require_current_domain(self) -> PiecewiseLinearDomain:
+        """Authenticate authored input and retained tile banks at a proof boundary."""
+        return type(self).from_stored_fields(self).tiles.region_domain()
+
+    def _current_tiles(self) -> planar_generation_owner.PlanarTileComplex:
+        """Rebuild and compare, rather than silently repairing a changed bank."""
+        _dependency_phydrax_meshing_providers__native_sources.NativePlanarSource.from_stored_fields(
+            self.tiles.source
+        )
+        rebuilt = planar_generation_owner.PlanarTileComplex.from_stored_fields(self.tiles)
+        if not tree_content_equal(rebuilt, self.tiles):
+            raise ValueError(
+                "InitialPlanarPremise.tiles must match their authored source, request and schedule; got changed retained banks"
+            )
+        return rebuilt
+
+    @property
+    def authored_source(
+        self,
+    ) -> _dependency_phydrax_meshing_providers__native_sources.NativePlanarSource:
+        return self.tiles.source
+
+    @property
+    def specification(self) -> _dependency_phydrax_meshing__contracts.SurfaceMeshingSpec:
+        return self.tiles.specification
+
+    @property
+    def schedule(self) -> planar_generation_owner.PlanarTileSchedule:
+        return self.tiles.schedule
+
+    @property
+    def source_id(self) -> str:
+        return self.tiles.source.source_id
+
+    @property
+    def source_revision(self) -> str:
+        return self.tiles.source.source_revision
+
+    @property
+    def source_domain_id(self) -> str:
+        return self.tiles.source.binding_id
+
+    @property
+    def generation_id(self) -> str:
+        return self.tiles.compiled_id
+
+    @property
+    def definitions_id(self) -> str:
+        return canonical_fingerprint(
+            (self.tiles.compiled_id, self.tiles.specification.specification_id)
+        )
+
+    @property
+    def block_name(self) -> str:
+        return "planar"
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 2
+
+    def identity_fields(self) -> dict[str, str]:
+        """Source-theorem identity fields of this premise kind."""
+        return {"tiles": self.tiles.compiled_id}
+
+
+type InitialMeshPremise = InitialSurfacePremise | InitialPlanarPremise
 
 
 import phydrax._identity as _owner_phydrax__identity
@@ -95,6 +373,7 @@ import phydrax._identity as _owner_phydrax__identity
 class _LocalProof(StrictModule):
     certificate_ids: tuple[str, ...] = eqx.field(static=True)
     patch_checks: NDArray[np.bool_]
+    vertex_residuals: NDArray[np.float64] | None = None
 
 
 @final
@@ -202,7 +481,7 @@ class _CollectiveSourcePayload(StrictModule):
 
     source: str = eqx.field(static=True)
     revision: str = eqx.field(static=True)
-    compiled: str = eqx.field(static=True)
+    generation: tuple[tuple[str, str], ...] = eqx.field(static=True)
     specification: str = eqx.field(static=True)
     limits: str = eqx.field(static=True)
     physical_angles: NDArray[np.float64]
@@ -215,7 +494,7 @@ class _CollectiveSourcePayload(StrictModule):
                 "kind": "collective-initial-source-theorem",
                 "source": self.source,
                 "revision": self.revision,
-                "compiled": self.compiled,
+                **dict(self.generation),
                 "specification": self.specification,
                 "limits": self.limits,
                 "physical_angles": array_tree_fingerprint(self.physical_angles),
@@ -256,8 +535,7 @@ class _SourceBindingRows(StrictModule):
 
 
 def _collective_source_payload(
-    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
-    specification: _dependency_phydrax_meshing__contracts.SurfaceMeshingSpec,
+    premise: InitialSurfacePremise | InitialPlanarPremise,
     limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     minimum_angle: float,
     maximum_normal_angle: float,
@@ -266,10 +544,10 @@ def _collective_source_payload(
     /,
 ) -> _CollectiveSourcePayload:
     return _CollectiveSourcePayload(
-        compiled.domain.source_id,
-        compiled.domain.source_revision,
-        compiled.compiled_id,
-        specification.specification_id,
+        premise.source_id,
+        premise.source_revision,
+        tuple(premise.identity_fields().items()),
+        premise.specification.specification_id,
         limits.limits_id,
         np.asarray((minimum_angle, maximum_normal_angle), dtype=np.float64),
         content_id,
@@ -278,8 +556,7 @@ def _collective_source_payload(
 
 
 def _source_binding_contract(
-    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
-    | InitialCollectiveMeshEvidence,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
     generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     /,
     *,
@@ -435,8 +712,7 @@ def _curve_binding_coordinates(
 
 
 def _source_binding(
-    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
-    | InitialCollectiveMeshEvidence,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
     generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     /,
     *,
@@ -508,8 +784,7 @@ def _source_binding(
 
 
 def _physical_controls(
-    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
-    | InitialCollectiveMeshEvidence,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
     construction: surface_construction_owner.SurfaceConstruction,
     minimum_angle: float,
     maximum_normal_angle: float,
@@ -620,8 +895,7 @@ def _physical_controls(
 
 
 def _source_feature_controls(
-    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
-    | InitialCollectiveMeshEvidence,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
     construction: surface_construction_owner.SurfaceConstruction,
     /,
 ) -> None:
@@ -688,8 +962,7 @@ def _source_feature_controls(
 
 
 def _local_proof(
-    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
-    | InitialCollectiveMeshEvidence,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
     generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     minimum_angle: float,
@@ -791,51 +1064,178 @@ def _local_proof(
     return _LocalProof(tuple(certificates), patch_checks)
 
 
-def _logical_initial_content(
+@dataclass(frozen=True, slots=True)
+class _InitialOwnerRows:
+    """One owner's generated rows in the premise-neutral collective layout.
+
+    ``vertex_banks`` become ``initial/{name}`` vertex banks, ``cell_banks``
+    ``initial/cell_{name}`` and ``curve_banks`` ``initial/edge_{name}``. Curve
+    edges carry sorted global vertex IDs, their oriented ``curve_along`` rows and
+    source curve/edge values; ``curve_uses[c]`` is the declared facet incidence
+    of source curve/edge ``c``. ``work_checks`` mark the generation units this
+    owner certified (patches or tiles).
+    """
+
+    coordinates: NDArray[np.float64]
+    vertex_ids: NDArray[np.int64]
+    vertex_owners: NDArray[np.int32]
+    corners: NDArray[np.int64]
+    cell_ids: NDArray[np.int64]
+    vertex_banks: tuple[tuple[str, np.ndarray, float | int], ...]
+    cell_banks: tuple[tuple[str, np.ndarray, float | int], ...]
+    curve_edges: NDArray[np.int64]
+    curve_along: NDArray[np.int64]
+    curve_values: NDArray[np.int64]
+    curve_banks: tuple[tuple[str, NDArray[np.float64]], ...]
+    curve_uses: NDArray[np.int32]
+    work_checks: NDArray[np.bool_]
+    global_vertex_count: int
+    global_cell_count: int
+
+
+def _rows_or_empty(
+    value: np.ndarray | None, shape: tuple[int, ...], dtype: type, /
+) -> np.ndarray:
+    return np.empty(shape, dtype=dtype) if value is None else np.asarray(value, dtype=dtype)
+
+
+def _surface_owner_rows(
     prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
     generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     local: _LocalProof,
-    sharding: NamedSharding,
+    /,
+) -> _InitialOwnerRows:
+    """Surface chart, trim and curve facts of one owner's generated rows."""
+    construction = generated.construction
+    present = construction is not None
+
+    def field(name: str) -> np.ndarray | None:
+        return None if construction is None else getattr(construction, name)
+
+    uses = np.asarray(
+        [
+            sum(
+                patch in prepared.compiled.patches
+                for patch, _ in prepared.compiled.domain.curve_uses(curve)
+            )
+            for curve in range(len(prepared.compiled.domain.curves))
+        ],
+        dtype=np.int32,
+    )
+    return _InitialOwnerRows(
+        coordinates=_rows_or_empty(field("vertices"), (0, 3), np.float64),
+        vertex_ids=generated.vertex_ids,
+        vertex_owners=generated.vertex_owners,
+        corners=(
+            generated.vertex_ids[construction.triangles]
+            if present
+            else np.empty((0, 3), dtype=np.int64)
+        ),
+        cell_ids=generated.cell_ids,
+        vertex_banks=(
+            (
+                "source_dimensions",
+                _rows_or_empty(field("vertex_source_dimensions"), (0,), np.int64),
+                -1,
+            ),
+            (
+                "source_indices",
+                _rows_or_empty(field("vertex_source_indices"), (0,), np.int64),
+                -1,
+            ),
+            (
+                "source_parameters",
+                _rows_or_empty(field("vertex_parameters"), (0, 2), np.float64),
+                0,
+            ),
+        ),
+        cell_banks=(
+            ("patches", _rows_or_empty(field("triangle_patches"), (0,), np.int64), -1),
+            ("charts", _rows_or_empty(field("triangle_charts"), (0, 2), np.float64), 0),
+            (
+                "parameters",
+                _rows_or_empty(field("triangle_parameters"), (0, 3, 2), np.float64),
+                0,
+            ),
+            (
+                "deviations",
+                _rows_or_empty(field("triangle_deviations"), (0,), np.float64),
+                0,
+            ),
+            (
+                "deviation_bounds",
+                _rows_or_empty(field("triangle_deviation_bounds"), (0,), np.float64),
+                0,
+            ),
+            (
+                "normal_bounds",
+                _rows_or_empty(field("triangle_normal_bounds"), (0,), np.float64),
+                0,
+            ),
+            (
+                "boundary_occurrences",
+                _rows_or_empty(field("boundary_occurrences"), (0, 3, 3), np.int32),
+                -1,
+            ),
+        ),
+        curve_edges=(
+            np.sort(generated.vertex_ids[construction.curve_edges], axis=1)
+            if present
+            else np.empty((0, 2), dtype=np.int64)
+        ),
+        curve_along=(
+            generated.vertex_ids[construction.curve_edges]
+            if present
+            else np.empty((0, 2), dtype=np.int64)
+        ),
+        curve_values=_rows_or_empty(field("curve_edge_curves"), (0,), np.int64),
+        curve_banks=(
+            (
+                "deviations",
+                _rows_or_empty(field("curve_edge_deviations"), (0,), np.float64),
+            ),
+            (
+                "deviation_bounds",
+                _rows_or_empty(field("curve_edge_deviation_bounds"), (0,), np.float64),
+            ),
+        ),
+        curve_uses=uses,
+        work_checks=local.patch_checks,
+        global_vertex_count=generated.global_vertex_count,
+        global_cell_count=generated.global_cell_count,
+    )
+
+
+@jax.jit
+def _initial_content_values(
+    raw: dict[str, Array],
+    vertex_banks: dict[str, Array],
+    cell_banks: dict[str, Array],
+    curve_banks: dict[str, Array],
     /,
 ) -> tuple[
     dict[str, Array],
     tuple[Array, ...],
     tuple[Array, ...],
     tuple[Array, ...],
-    tuple[int, ...],
-    str,
-    str,
+    Array,
     Array,
 ]:
-    """Order source-stratum facts from bounded partition rows."""
-    construction = generated.construction
-    vertex_capacity, cell_capacity = (
-        prepared.layout.vertex_capacity,
-        prepared.layout.cell_capacity,
-    )
-    coordinates = (
-        np.empty((0, 3), dtype=np.float64)
-        if construction is None
-        else construction.vertices
-    )
-    corners = (
-        np.empty((0, 3), dtype=np.int64)
-        if construction is None
-        else generated.vertex_ids[construction.triangles]
-    )
-    vertex_ids = _global_rows(generated.vertex_ids, vertex_capacity, sharding, -1)
-    vertex_owners = _global_rows(generated.vertex_owners, vertex_capacity, sharding, -1)
-    raw_coordinates = _global_rows(coordinates, vertex_capacity, sharding)
-    cell_ids = _global_rows(generated.cell_ids, cell_capacity, sharding, -1)
-    raw_corners = _global_rows(corners, cell_capacity, sharding, -1)
-    ranks = jnp.repeat(jnp.arange(jax.process_count(), dtype=jnp.int32), cell_capacity)
+    """Fuse source-stratum joins on placed arrays, without host mesh assembly."""
+    vertex_ids, vertex_owners = raw["vertex_ids"], raw["vertex_owners"]
+    raw_coordinates = raw["coordinates"]
+    cell_ids, raw_corners = raw["cell_ids"], raw["corners"]
+    parts = raw["work_checks"].shape[0]
+    vertex_capacity = vertex_ids.shape[0] // parts
+    cell_capacity = cell_ids.shape[0] // parts
+    ranks = jnp.repeat(jnp.arange(parts, dtype=jnp.int32), cell_capacity)
     cell_keys, cell_order, nc = (
-        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+        _dependency_phydrax_meshing__device_adaptation._canonical_row_values(
             cell_ids[:, None], cell_ids >= 0
         )
     )
     vertex_keys, vertex_order, nv = (
-        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+        _dependency_phydrax_meshing__device_adaptation._canonical_row_values(
             vertex_ids[:, None], vertex_ids >= 0
         )
     )
@@ -854,13 +1254,13 @@ def _logical_initial_content(
     )
     owned_vertex = vertex_ids >= 0
     owned_vertex &= vertex_owners == jnp.repeat(
-        jnp.arange(jax.process_count(), dtype=jnp.int32), vertex_capacity
+        jnp.arange(parts, dtype=jnp.int32), vertex_capacity
     )
     unique_ownership = jnp.sum(owned_vertex) == nv
     unique_ownership &= (
         (jnp.sum(cell_ids >= 0) == nc)
-        & (nc == generated.global_cell_count)
-        & (nv == generated.global_vertex_count)
+        & (nc == raw["global_counts"][1])
+        & (nv == raw["global_counts"][0])
     )
     canonical_corners = jnp.where(
         (jnp.arange(cell_keys.shape[0]) < nc)[:, None], raw_corners[cell_order], -1
@@ -877,78 +1277,21 @@ def _logical_initial_content(
         "coordinates": canonical_coordinates,
         "cell_owners": ranks[cell_order],
     }
-    fields = (
-        (
-            "source_dimensions",
-            None if construction is None else construction.vertex_source_dimensions,
-            np.int64,
-            -1,
-        ),
-        (
-            "source_indices",
-            None if construction is None else construction.vertex_source_indices,
-            np.int64,
-            -1,
-        ),
-        (
-            "source_parameters",
-            None if construction is None else construction.vertex_parameters,
-            np.float64,
-            0,
-        ),
-    )
-    for name, source, dtype, fill in fields:
-        shape = (0, 2) if name == "source_parameters" else (0,)
-        value = (
-            np.empty(shape, dtype=dtype)
-            if source is None
-            else np.asarray(source, dtype=dtype)
-        )
-        bank = _global_rows(value, vertex_capacity, sharding, fill)
+    for name, bank in vertex_banks.items():
         arrays[f"initial/{name}"] = bank[vertex_order]
         equal = bank[ordered[1:]] == bank[ordered[:-1]]
-        if name == "source_parameters":
+        if jnp.issubdtype(bank.dtype, jnp.floating):
             equal |= jnp.isnan(bank[ordered[1:]]) & jnp.isnan(bank[ordered[:-1]])
         if equal.ndim == 2:
             equal = jnp.all(equal, axis=1)
         shared &= jnp.all(~duplicate | equal)
-    for name, source in (
-        ("patches", None if construction is None else construction.triangle_patches),
-        ("charts", None if construction is None else construction.triangle_charts),
-        (
-            "parameters",
-            None if construction is None else construction.triangle_parameters,
-        ),
-        (
-            "deviations",
-            None if construction is None else construction.triangle_deviations,
-        ),
-        (
-            "deviation_bounds",
-            None if construction is None else construction.triangle_deviation_bounds,
-        ),
-        (
-            "normal_bounds",
-            None if construction is None else construction.triangle_normal_bounds,
-        ),
-    ):
-        shape = (
-            (0, 3, 2) if name == "parameters" else (0, 2) if name == "charts" else (0,)
-        )
-        dtype = np.int64 if name == "patches" else np.float64
-        value = (
-            np.empty(shape, dtype=dtype)
-            if source is None
-            else np.asarray(source, dtype=dtype)
-        )
-        arrays[f"initial/cell_{name}"] = _global_rows(
-            value, cell_capacity, sharding, -1 if name == "patches" else 0
-        )[cell_order]
+    for name, bank in cell_banks.items():
+        arrays[f"initial/cell_{name}"] = bank[cell_order]
     edge_columns = np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32)
     edge_rows = jnp.sort(canonical_corners[:, edge_columns], axis=2).reshape((-1, 2))
     edge_valid = jnp.repeat(jnp.arange(cell_keys.shape[0]) < nc, 3)
     edge_keys, edge_order, ne = (
-        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+        _dependency_phydrax_meshing__device_adaptation._canonical_row_values(
             edge_rows, edge_valid
         )
     )
@@ -975,20 +1318,9 @@ def _logical_initial_content(
         .at[jnp.maximum(positions, 0)]
         .add(jnp.where(edge_valid, sign, 0))
     )
-    curves = (
-        np.empty((0,), dtype=np.int64)
-        if construction is None
-        else construction.curve_edge_curves
-    )
-    curve_edges = (
-        np.empty((0, 2), dtype=np.int64)
-        if construction is None
-        else np.sort(generated.vertex_ids[construction.curve_edges], axis=1)
-    )
-    curve_keys = _global_rows(curve_edges, 3 * cell_capacity, sharding, -1)
-    curve_values = _global_rows(curves, 3 * cell_capacity, sharding, -1)
+    curve_keys, curve_values = raw["curve_edges"], raw["curve_values"]
     curve_table, curve_order, curve_count = (
-        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+        _dependency_phydrax_meshing__device_adaptation._canonical_row_values(
             curve_keys, curve_values >= 0
         )
     )
@@ -1000,18 +1332,10 @@ def _logical_initial_content(
         curve_values[curve_order[jnp.maximum(curve_positions, 0)]],
         -1,
     )
-    uses = np.asarray(
-        [
-            sum(
-                patch in prepared.compiled.patches
-                for patch, _ in prepared.compiled.domain.curve_uses(curve)
-            )
-            for curve in range(len(prepared.compiled.domain.curves))
-        ],
-        dtype=np.int32,
-    )
     expected = jnp.where(
-        edge_curves >= 0, jnp.asarray(uses)[jnp.maximum(edge_curves, 0)], 2
+        edge_curves >= 0,
+        raw["curve_uses"][jnp.maximum(edge_curves, 0)],
+        2,
     )
     reciprocal = jnp.all((jnp.arange(edge_ids.shape[0]) >= ne) | (incidence == expected))
     curve_rows = entity_keys_owner.key_positions(
@@ -1029,28 +1353,13 @@ def _logical_initial_content(
             "initial/edge_physical": incidence == 1,
         }
     )
-    for name, source in (
-        (
-            "deviations",
-            None if construction is None else construction.curve_edge_deviations,
-        ),
-        (
-            "deviation_bounds",
-            None if construction is None else construction.curve_edge_deviation_bounds,
-        ),
-    ):
-        value = np.empty((0,), dtype=np.float64) if source is None else source
-        bank = _global_rows(value, 3 * cell_capacity, sharding)
+    for name, bank in curve_banks.items():
         arrays[f"initial/edge_{name}"] = bank[
             curve_order[jnp.maximum(curve_positions, 0)]
         ]
-    along = (
-        np.empty((0, 2), dtype=np.int64)
-        if construction is None
-        else generated.vertex_ids[construction.curve_edges]
-    )
-    bank = _global_rows(along, 3 * cell_capacity, sharding, -1)
-    arrays["initial/edge_along"] = bank[curve_order[jnp.maximum(curve_positions, 0)]]
+    arrays["initial/edge_along"] = raw["curve_along"][
+        curve_order[jnp.maximum(curve_positions, 0)]
+    ]
     keys, identifiers, owners = (
         (vertex_keys, edge_keys, cell_keys),
         (vertex_keys[:, 0], edge_ids, cell_keys[:, 0]),
@@ -1059,44 +1368,46 @@ def _logical_initial_content(
     counts = (nv, ne, nc)
     for degree, count in enumerate(counts):
         arrays[f"entity_active_{degree}"] = jnp.arange(keys[degree].shape[0]) < count
-    shapes = {
-        "cell_global_ids": (nc,),
-        "cell_vertices": (nc, 3),
-        "vertex_global_ids": (nv,),
-        "entity_global_ids_1": (ne,),
-        "entity_vertices_1": (ne, 2),
-    }
-    topology_id = canonical_fingerprint(
-        {
-            "kind": "cell-mesh-topology",
-            "dimension": 2,
-            "blocks": [("surface", "triangle")],
-            "arrays": logical_array_value_collection_digest(
-                {name: arrays[name] for name in shapes}, logical_shapes=shapes
-            ),
-        }
+    arrays["source_basis"] = jnp.where(
+        (jnp.arange(cell_keys.shape[0]) < nc)[:, None],
+        jnp.broadcast_to(raw["source_basis"], (cell_keys.shape[0], 32)),
+        0,
     )
-    geometry_id = canonical_fingerprint(
-        {
-            "kind": "cell-mesh-geometry",
-            "topology": topology_id,
-            "ambient_dimension": 3,
-            "coordinates": logical_array_value_collection_digest(
-                {"coordinates": canonical_coordinates},
-                logical_shapes={"coordinates": (nv, 3)},
-            ),
-        }
+    covered = jnp.all(jnp.sum(raw["work_checks"].astype(jnp.int32), axis=0) == 1)
+    checks = raw["checks"]
+    checks = (
+        checks.at[:, 1]
+        .set(covered)
+        .at[:, 5]
+        .set(unique_ownership)
+        .at[:, 6]
+        .set(shared)
+        .at[:, 7]
+        .set(reciprocal)
     )
-    arrays.update(
-        {
-            "geometry/coordinate_ids": vertex_keys[:, 0],
-            "geometry/coordinates": canonical_coordinates,
-            "geometry/coordinate_owners": owners[0],
-            "geometry/cell_ids/surface": cell_keys[:, 0],
-            "geometry/routes/surface": canonical_corners,
-        }
-    )
+    return arrays, keys, identifiers, owners, jnp.stack(counts), checks
 
+
+def _collective_initial_content(
+    owner_rows: _InitialOwnerRows,
+    sharding: NamedSharding,
+    /,
+    *,
+    vertex_capacity: int,
+    cell_capacity: int,
+    block: str,
+    width: int,
+) -> tuple[
+    dict[str, Array],
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[int, ...],
+    str,
+    str,
+    Array,
+]:
+    """Place owning-host rows once, then fuse joins before the unchanged hashes."""
     element = _owner_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
         "triangle", 1
     )
@@ -1108,47 +1419,120 @@ def _logical_initial_content(
             "arrays": array_tree_fingerprint(element),
         }
     )
-    basis = jnp.asarray(np.frombuffer(bytes.fromhex(basis_id), dtype=np.uint8))
-    arrays["geometry/source_basis/surface"] = jnp.where(
-        (jnp.arange(cell_keys.shape[0]) < nc)[:, None],
-        jnp.broadcast_to(basis, (cell_keys.shape[0], 32)),
-        0,
+    parts = jax.process_count()
+    raw = {
+        "vertex_ids": _global_rows(owner_rows.vertex_ids, vertex_capacity, sharding, -1),
+        "vertex_owners": _global_rows(
+            owner_rows.vertex_owners, vertex_capacity, sharding, -1
+        ),
+        "coordinates": _global_rows(owner_rows.coordinates, vertex_capacity, sharding),
+        "cell_ids": _global_rows(owner_rows.cell_ids, cell_capacity, sharding, -1),
+        "corners": _global_rows(owner_rows.corners, cell_capacity, sharding, -1),
+        "curve_edges": _global_rows(
+            owner_rows.curve_edges, 3 * cell_capacity, sharding, -1
+        ),
+        "curve_values": _global_rows(
+            owner_rows.curve_values, 3 * cell_capacity, sharding, -1
+        ),
+        "curve_along": _global_rows(
+            owner_rows.curve_along, 3 * cell_capacity, sharding, -1
+        ),
+        "curve_uses": jax.device_put(owner_rows.curve_uses),
+        "work_checks": jax.make_array_from_process_local_data(
+            sharding,
+            owner_rows.work_checks[None],
+            (parts, owner_rows.work_checks.size),
+        ),
+        "checks": jax.make_array_from_process_local_data(
+            sharding,
+            np.ones((1, len(_SURFACE_CHECKS)), dtype=np.bool_),
+            (parts, len(_SURFACE_CHECKS)),
+        ),
+        "global_counts": jax.device_put(
+            np.asarray(
+                (owner_rows.global_vertex_count, owner_rows.global_cell_count),
+                dtype=np.int64,
+            )
+        ),
+        "source_basis": jax.device_put(
+            np.frombuffer(bytes.fromhex(basis_id), dtype=np.uint8)
+        ),
+    }
+    vertex_banks = {
+        name: _global_rows(value, vertex_capacity, sharding, fill)
+        for name, value, fill in owner_rows.vertex_banks
+    }
+    cell_banks = {
+        name: _global_rows(value, cell_capacity, sharding, fill)
+        for name, value, fill in owner_rows.cell_banks
+    }
+    curve_banks = {
+        name: _global_rows(value, 3 * cell_capacity, sharding)
+        for name, value in owner_rows.curve_banks
+    }
+    arrays, keys, identifiers, owners, count_values, checks = _initial_content_values(
+        raw, vertex_banks, cell_banks, curve_banks
     )
-    patch_checks = jax.make_array_from_process_local_data(
-        sharding,
-        local.patch_checks[None],
-        (jax.process_count(), prepared.compiled.patches.size),
+    counts = tuple(int(value) for value in np.asarray(jax.device_get(count_values)))
+    nv, ne, nc = counts
+    canonical_corners = arrays["cell_vertices"]
+    canonical_coordinates = arrays["coordinates"]
+    shapes = {
+        "cell_global_ids": (nc,),
+        "cell_vertices": (nc, 3),
+        "vertex_global_ids": (nv,),
+        "entity_global_ids_1": (ne,),
+        "entity_vertices_1": (ne, 2),
+    }
+    topology_id = canonical_fingerprint(
+        {
+            "kind": "cell-mesh-topology",
+            "dimension": 2,
+            "blocks": [(block, "triangle")],
+            "arrays": logical_array_value_collection_digest(
+                {name: arrays[name] for name in shapes}, logical_shapes=shapes
+            ),
+        }
     )
-    covered = jnp.all(jnp.sum(patch_checks.astype(jnp.int32), axis=0) == 1)
-    local_checks = np.asarray(
-        (True, True, True, True, True, True, True, True, True), dtype=np.bool_
+    geometry_id = canonical_fingerprint(
+        {
+            "kind": "cell-mesh-geometry",
+            "topology": topology_id,
+            "ambient_dimension": width,
+            "coordinates": logical_array_value_collection_digest(
+                {"coordinates": canonical_coordinates},
+                logical_shapes={"coordinates": (nv, width)},
+            ),
+        }
     )
-    checks = jax.make_array_from_process_local_data(
-        sharding, local_checks[None], (jax.process_count(), len(_CHECKS))
-    )
-    checks = (
-        checks.at[:, 1]
-        .set(covered)
-        .at[:, 5]
-        .set(unique_ownership)
-        .at[:, 6]
-        .set(shared)
-        .at[:, 7]
-        .set(reciprocal)
+    arrays.update(
+        {
+            "geometry/coordinate_ids": identifiers[0],
+            "geometry/coordinates": canonical_coordinates,
+            "geometry/coordinate_owners": owners[0],
+            f"geometry/cell_ids/{block}": identifiers[2],
+            f"geometry/routes/{block}": canonical_corners,
+            f"geometry/source_basis/{block}": arrays.pop("source_basis"),
+        }
     )
     return arrays, keys, identifiers, owners, counts, topology_id, geometry_id, checks
 
 
 def _initial_coordinate_geometry_id(
-    arrays: dict[str, Array], counts: tuple[int, ...], topology_id: str, /
+    arrays: dict[str, Array],
+    counts: tuple[int, ...],
+    topology_id: str,
+    premise: InitialSurfacePremise | InitialPlanarPremise,
+    /,
 ) -> str:
     """Bind the affine coordinate basis, coefficient IDs, values, and routes."""
+    block = premise.block_name
     shapes = {
         "geometry/coordinate_ids": (counts[0],),
-        "geometry/coordinates": (counts[0], 3),
-        "geometry/cell_ids/surface": (counts[2],),
-        "geometry/routes/surface": (counts[2], 3),
-        "geometry/source_basis/surface": (counts[2], 32),
+        "geometry/coordinates": (counts[0], premise.ambient_dimension),
+        f"geometry/cell_ids/{block}": (counts[2],),
+        f"geometry/routes/{block}": (counts[2], 3),
+        f"geometry/source_basis/{block}": (counts[2], 32),
     }
     digest = logical_array_value_collection_digest(
         {name: arrays[name] for name in shapes}, logical_shapes=shapes
@@ -1162,7 +1546,10 @@ def _initial_coordinate_geometry_id(
     )
 
 
-@partial(jax.jit, static_argnames=("vertex_count", "cell_count", "capacity", "parts"))
+@partial(
+    jax.jit,
+    static_argnames=("vertex_count", "cell_count", "capacity", "parts", "neighborhood_depth"),
+)
 def _initial_closures(
     arrays: dict[str, Array],
     *,
@@ -1170,8 +1557,9 @@ def _initial_closures(
     cell_count: int,
     capacity: int,
     parts: int,
+    neighborhood_depth: int,
 ) -> tuple[dict[str, Array], Array]:
-    """Materialize every owner closure in one common-shape device operation."""
+    """Earn the requested whole-star reach, retaining bounded owner-local packets."""
     ids, corners = arrays["cell_global_ids"], arrays["cell_vertices"]
     table = jnp.where(
         jnp.arange(arrays["vertex_global_ids"].shape[0]) < vertex_count,
@@ -1183,13 +1571,20 @@ def _initial_closures(
 
     def one(part: Array) -> tuple[Array, Array, Array]:
         own_cells = active & (arrays["cell_owners"] == part)
-        own_vertices = (
-            jnp.zeros(table.shape, dtype=jnp.bool_)
-            .at[jnp.minimum(rows, table.shape[0] - 1)]
-            .max(own_cells[:, None])
-        )
-        selected = active & jnp.any(
-            own_vertices[jnp.minimum(rows, table.shape[0] - 1)], axis=1
+        def expand(_: int, selected: Array) -> Array:
+            vertices = (
+                jnp.zeros(table.shape, dtype=jnp.bool_)
+                .at[jnp.minimum(rows, table.shape[0] - 1)]
+                .max(selected[:, None])
+            )
+            return active & jnp.any(
+                vertices[jnp.minimum(rows, table.shape[0] - 1)], axis=1
+            )
+
+        # A finite cell graph reaches its fixed point within cell_count steps.
+        # This cap preserves every requested layer without unbounded empty work.
+        selected = jax.lax.fori_loop(
+            0, min(neighborhood_depth, cell_count), expand, own_cells
         )
         count = jnp.sum(selected, dtype=jnp.int32)
         order = jnp.nonzero(selected, size=capacity, fill_value=0)[0]
@@ -1229,6 +1624,7 @@ _INITIAL_INPUT_FIELDS = (
     ("curve_edge_deviations", np.float64, ()),
     ("curve_edge_deviation_bounds", np.float64, ()),
     ("unresolved", np.bool_, ()),
+    ("boundary_occurrences", np.int32, (3, 3)),
 )
 
 
@@ -1262,6 +1658,7 @@ def _initial_input_values(
         construction.curve_edge_deviations,
         construction.curve_edge_deviation_bounds,
         construction.unresolved,
+        construction.boundary_occurrences,
     )
     return tuple(
         np.asarray(value, dtype=dtype)
@@ -1361,13 +1758,8 @@ def _retain_initial_inputs(
 
 
 def _placement() -> NamedSharding:
-    devices = [
-        next(device for device in jax.devices() if device.process_index == rank)
-        for rank in range(jax.process_count())
-    ]
-    return NamedSharding(
-        Mesh(np.asarray(devices), ("initial_owner",)), PartitionSpec("initial_owner")
-    )
+    mesh = owner_execution_mesh(process_owner_devices())
+    return NamedSharding(mesh, PartitionSpec(mesh.axis_names[0]))
 
 
 def _global_rows(
@@ -1400,16 +1792,17 @@ def _exchange(
         (rank, second if rank == first else first if rank == second else rank)
         for rank in range(jax.process_count())
     )
+    axis = sharding.mesh.axis_names[0]
 
     @partial(
         jax.shard_map,
         mesh=sharding.mesh,
-        in_specs=PartitionSpec("initial_owner"),
-        out_specs=PartitionSpec("initial_owner"),
+        in_specs=PartitionSpec(axis),
+        out_specs=PartitionSpec(axis),
         check_vma=False,
     )
     def send(value: Array) -> Array:
-        return jax.lax.ppermute(value, "initial_owner", permutation)
+        return jax.lax.ppermute(value, axis, permutation)
 
     received = jax.jit(send)(data)
     return np.asarray(jax.device_get(received.addressable_shards[0].data))[0]
@@ -1500,20 +1893,325 @@ def _cross_owner_contacts(
             tested = packet.tested
     return np.asarray(findings, dtype=np.int64).reshape((-1, 3)), tested
 
+def _premise_checks(
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+    | planar_generation_owner.PreparedDistributedPlanarGeneration,
+    /,
+) -> tuple[str, ...]:
+    match prepared:
+        case _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration():
+            return _SURFACE_CHECKS
+        case planar_generation_owner.PreparedDistributedPlanarGeneration():
+            return _PLANAR_CHECKS
+        case _:
+            assert_never(prepared)
+
+
+def _triangle_angles(corners: NDArray[np.float64], /) -> NDArray[np.float64]:
+    """Interior angles (radians) of ``(n, 3, d)`` triangle corners."""
+    first = np.roll(corners, -1, axis=1) - corners
+    second = np.roll(corners, 1, axis=1) - corners
+    lengths = np.linalg.norm(first, axis=2) * np.linalg.norm(second, axis=2)
+    cosine = np.sum(first * second, axis=2) / np.where(lengths > 0.0, lengths, 1.0)
+    return np.arccos(np.clip(cosine, -1.0, 1.0))
+
+
+def _planar_edge_parameters(
+    edge_rows: NDArray[np.int64],
+    vertices: NDArray[np.int64],
+    dimensions: NDArray[np.int64],
+    indices: NDArray[np.int64],
+    parameters: NDArray[np.float64],
+    source_edges: NDArray[np.int64],
+    /,
+) -> NDArray[np.float64]:
+    """Binary64 source-edge parameter of each local vertex row, NaN if foreign."""
+    edge = source_edges[edge_rows]
+    on_edge = (dimensions[vertices] == 1) & (indices[vertices] == edge_rows)
+    start = (dimensions[vertices] == 0) & (indices[vertices] == edge[:, 0])
+    end = (dimensions[vertices] == 0) & (indices[vertices] == edge[:, 1])
+    return np.where(
+        on_edge,
+        parameters[vertices],
+        np.where(start, 0.0, np.where(end, 1.0, np.nan)),
+    )
+
+
+def _planar_local_proof(
+    prepared: planar_generation_owner.PreparedDistributedPlanarGeneration,
+    generated: planar_generation_owner.DistributedPlanarConstruction,
+    minimum_angle: float,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _LocalProof:
+    """Certify one owner's tiles against the authored region and its controls."""
+    tiles = prepared.tiles
+    source = tiles.source
+    stage = "distributed-initial-certification"
+    if (
+        generated.compiled_id != tiles.compiled_id
+        or generated.source_id != source.source_id
+        or generated.source_revision != source.source_revision
+        or generated.specification_id != tiles.specification.specification_id
+    ):
+        raise compliance_failure(
+            "initial.source_binding must match the tile complex, source revision and specification; got different identities",
+            stage=stage,
+        )
+    target = tiles.specification.target
+    families = target.cell_families
+    if (
+        target.topological_dimension != 2
+        or target.ambient_dimension != 2
+        or target.geometry_order != 1
+        or set((*families.required, *families.preferred)) != {"triangle"}
+        or families.allowed_transitions
+        or families.allow_mixed
+    ):
+        raise compliance_failure(
+            "initial.target must declare affine planar triangles; got incompatible target semantics",
+            stage=stage,
+        )
+    local_tiles = np.flatnonzero(prepared.tile_owners == jax.process_index())
+    coordinates = generated.coordinates
+    triangles = generated.triangles
+    nv, nc = generated.vertex_ids.size, generated.cell_ids.size
+    if (
+        coordinates.shape != (nv, 2)
+        or generated.vertex_owners.shape != (nv,)
+        or generated.vertex_dimensions.shape != (nv,)
+        or generated.vertex_indices.shape != (nv,)
+        or generated.vertex_parameters.shape != (nv,)
+        or triangles.shape != (nc, 3)
+        or generated.cell_tiles.shape != (nc,)
+        or np.unique(generated.vertex_ids).size != nv
+        or np.unique(generated.cell_ids).size != nc
+        or np.any(generated.vertex_ids < 0)
+        or np.any(generated.vertex_ids >= generated.global_vertex_count)
+        or np.any(generated.cell_ids < 0)
+        or np.any(generated.cell_ids >= generated.global_cell_count)
+        or np.any(generated.vertex_owners < 0)
+        or np.any(generated.vertex_owners >= prepared.partition_count)
+        or np.any(triangles < 0)
+        or np.any(triangles >= nv)
+        or not np.array_equal(generated.local_tiles, local_tiles)
+        or not np.array_equal(np.unique(generated.cell_tiles), local_tiles)
+        or not np.all(np.isfinite(coordinates))
+    ):
+        raise compliance_failure(
+            "initial.generated_rows must have unique in-range IDs and assigned tile incidence; got inconsistent rows",
+            stage=stage,
+        )
+    corners = coordinates[triangles]
+    orientation = exact_orient2d(corners[:, 0], corners[:, 1], corners[:, 2])
+    if np.any(orientation <= 0) or (
+        np.unique(np.sort(triangles, axis=1), axis=0).shape[0] != nc
+    ):
+        raise compliance_failure(
+            "initial.local_embedding must have distinct positively oriented cells; got inverted, degenerate or repeated cells",
+            stage=stage,
+        )
+    first = corners[:, 1] - corners[:, 0]
+    second = corners[:, 2] - corners[:, 0]
+    areas = 0.5 * (first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0])
+    tile_count = tiles.tiles.shape[0]
+    tile_area = np.bincount(generated.cell_tiles, weights=areas, minlength=tile_count)
+    tile_cells = np.bincount(generated.cell_tiles, minlength=tile_count)
+    scale = max(1.0, float(np.max(np.abs(tiles.origin))) + tiles.span) ** 2
+    tolerance = 64.0 * np.finfo(np.float64).eps * scale * np.maximum(tile_cells, 1)
+    covered = np.abs(tile_area - tiles.tile_weights) <= tolerance
+    if not np.all(covered[local_tiles]):
+        raise compliance_failure(
+            "initial.tile_region_coverage must reproduce every owned tile's region area; got an uncovered or overlapping tile",
+            stage=stage,
+        )
+    tile_checks = np.zeros((tile_count,), dtype=np.bool_)
+    tile_checks[local_tiles] = True
+    vertices, edges, loops = source_arrays(source)
+    dimensions = generated.vertex_dimensions
+    indices = generated.vertex_indices
+    corner_rows = dimensions == 0
+    edge_rows = dimensions == 1
+    if (
+        np.any((dimensions < 0) | (dimensions > 2))
+        or np.any(corner_rows & ((indices < 0) | (indices >= vertices.shape[0])))
+        or np.any(edge_rows & ((indices < 0) | (indices >= edges.shape[0])))
+        or np.any((dimensions == 2) & (indices != 0))
+        or not np.array_equal(
+            coordinates[corner_rows], vertices[indices[corner_rows]]
+        )
+    ):
+        raise compliance_failure(
+            "initial.authored_source_binding must bind vertices to source vertices, edges or the region; got foreign provenance",
+            stage=stage,
+        )
+    constrained = dimensions < 2
+    residuals = np.zeros((nv,), dtype=np.float64)
+    residuals[constrained] = _association_distances(
+        coordinates[constrained],
+        vertices,
+        edges,
+        dimensions[constrained].astype(np.int8),
+        indices[constrained],
+        budget=budget,
+    )
+    bounds = np.where(
+        edge_rows, tiles.source_bounds[np.clip(indices, 0, edges.shape[0] - 1)], 0.0
+    )
+    if np.any(residuals[constrained] > bounds[constrained]):
+        raise compliance_failure(
+            "initial.source_carrier_fidelity must keep constrained vertices within their source bounds; got excess deviation",
+            stage=stage,
+        )
+    carried = generated.edge_sources >= 0
+    pairs = generated.edge_vertices[carried]
+    carried_edges = generated.edge_sources[carried]
+    for column in (0, 1):
+        if np.any(
+            np.isnan(
+                _planar_edge_parameters(
+                    carried_edges,
+                    pairs[:, column],
+                    dimensions,
+                    indices,
+                    generated.vertex_parameters,
+                    edges,
+                )
+            )
+        ):
+            raise compliance_failure(
+                "initial.authored_source_binding must bind constrained edge endpoints to their source edge; got a foreign endpoint",
+                stage=stage,
+            )
+    if nc and minimum_angle > 0.0:
+        achieved = float(np.min(_triangle_angles(corners)))
+        if achieved < minimum_angle:
+            raise compliance_failure(
+                f"initial.physical_controls must satisfy the hard minimum angle; got {achieved} < {minimum_angle}",
+                stage=stage,
+            )
+    certificates = tuple(
+        canonical_fingerprint(
+            {
+                "kind": "planar-tile-certificate",
+                "tiles": tiles.compiled_id,
+                "tile": int(tile),
+                "cells": array_tree_fingerprint(
+                    np.sort(generated.cell_ids[generated.cell_tiles == tile])
+                ),
+                "area": float(tile_area[tile]),
+            }
+        )
+        for tile in local_tiles.tolist()
+    )
+    return _LocalProof(certificates, tile_checks, residuals)
+
+
+def _planar_owner_rows(
+    prepared: planar_generation_owner.PreparedDistributedPlanarGeneration,
+    generated: planar_generation_owner.DistributedPlanarConstruction,
+    local: _LocalProof,
+    /,
+) -> _InitialOwnerRows:
+    """Planar vertex provenance, region cells and source-edge facts of one owner."""
+    tiles = prepared.tiles
+    _, edges, loops = source_arrays(tiles.source)
+    residuals = local.vertex_residuals
+    if residuals is None:
+        raise ValueError(
+            "initial.planar_proof must retain constrained vertex residuals; got None"
+        )
+    dimensions = generated.vertex_dimensions
+    parameters = np.full((dimensions.size, 2), np.nan, dtype=np.float64)
+    parameters[dimensions == 1, 0] = generated.vertex_parameters[dimensions == 1]
+    carried = generated.edge_sources >= 0
+    pairs = generated.edge_vertices[carried]
+    values = generated.edge_sources[carried]
+    first, second = (
+        _planar_edge_parameters(
+            values,
+            pairs[:, column],
+            dimensions,
+            generated.vertex_indices,
+            generated.vertex_parameters,
+            edges,
+        )
+        for column in (0, 1)
+    )
+    along = np.where((first <= second)[:, None], pairs, pairs[:, ::-1])
+    ids = generated.vertex_ids
+    return _InitialOwnerRows(
+        coordinates=generated.coordinates,
+        vertex_ids=ids,
+        vertex_owners=generated.vertex_owners,
+        corners=ids[generated.triangles],
+        cell_ids=generated.cell_ids,
+        vertex_banks=(
+            ("source_dimensions", dimensions.astype(np.int64), -1),
+            ("source_indices", generated.vertex_indices.astype(np.int64), -1),
+            ("source_parameters", parameters, 0),
+            ("source_residuals", residuals, 0.0),
+        ),
+        cell_banks=(
+            ("patches", np.zeros((generated.cell_ids.size,), dtype=np.int64), -1),
+            ("tiles", generated.cell_tiles.astype(np.int64), -1),
+        ),
+        curve_edges=np.sort(ids[pairs], axis=1).reshape((-1, 2)),
+        curve_along=ids[along].reshape((-1, 2)),
+        curve_values=values.astype(np.int64),
+        curve_banks=(
+            (
+                "deviations",
+                np.maximum(residuals[pairs[:, 0]], residuals[pairs[:, 1]]),
+            ),
+            ("deviation_bounds", tiles.source_bounds[values]),
+        ),
+        curve_uses=np.where(loops >= 0, 1, 2).astype(np.int32),
+        work_checks=local.patch_checks,
+        global_vertex_count=generated.global_vertex_count,
+        global_cell_count=generated.global_cell_count,
+    )
+
+
+def _planar_tile_findings(
+    prepared: planar_generation_owner.PreparedDistributedPlanarGeneration,
+    generated: planar_generation_owner.DistributedPlanarConstruction,
+    /,
+) -> tuple[NDArray[np.int64], int]:
+    """Cells outside their tile's closed lattice box.
+
+    Distinct tiles meet only on lattice lines, so containment of every cell in
+    its own closed box proves cross-owner interiors disjoint without exchanging
+    candidate pairs; the tested pair count is therefore zero.
+    """
+    tiles = prepared.tiles
+    corners = generated.coordinates[generated.triangles]
+    low = tiles.origin + tiles.span * tiles.tiles[generated.cell_tiles].astype(np.float64)
+    high = low + tiles.span
+    inside = np.all(
+        (corners >= low[:, None, :]) & (corners <= high[:, None, :]), axis=(1, 2)
+    )
+    outside = np.flatnonzero(~inside)
+    findings = np.stack(
+        (
+            generated.cell_ids[outside],
+            generated.cell_tiles[outside],
+            np.ones((outside.size,), dtype=np.int64),
+        ),
+        axis=1,
+    ).astype(np.int64)
+    return findings.reshape((-1, 3)), 0
+
 
 class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
-    """Certify source binding and retain collective initial mesh content."""
+    """Certify source binding and retain collective initial mesh content.
 
-    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain
-    specification: _dependency_phydrax_meshing__contracts.SurfaceMeshingSpec
-    authored_source: (
-        _dependency_phydrax_meshing_providers__native_sources.NativeSurfaceSource
-    )
-    schedule: (
-        _dependency_phydrax_meshing_providers__native_schedules.NativeSurfaceSchedule
-    )
-    layout: _dependency_phydrax_meshing__device_generation.DeviceGenerationLayout
-    patch_owners: NDArray[np.int32] = eqx.field(static=True)
+    ``premise`` discriminates the authored source: a parametric surface with
+    patch owners, or a planar region tile complex with tile owners.
+    """
+
+    premise: InitialSurfacePremise | InitialPlanarPremise
     cell_kind: Literal["triangle"] = eqx.field(static=True)
     partition_checks: Array
     global_checks: Array
@@ -1539,8 +2237,10 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
     @checked
     def __init__(
         self,
-        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
-        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+        | planar_generation_owner.PreparedDistributedPlanarGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction
+        | planar_generation_owner.DistributedPlanarConstruction,
         /,
         *,
         limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
@@ -1553,6 +2253,36 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             if limits is None
             else limits
         )
+        match prepared, generated:
+            case (
+                _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration(),
+                _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction(),
+            ):
+                premise: InitialSurfacePremise | InitialPlanarPremise = (
+                    InitialSurfacePremise(
+                        prepared.compiled,
+                        prepared.specification,
+                        prepared.schedule,
+                        prepared.layout,
+                        prepared.patch_owners,
+                    )
+                )
+            case (
+                planar_generation_owner.PreparedDistributedPlanarGeneration(),
+                planar_generation_owner.DistributedPlanarConstruction(),
+            ):
+                if not math.isinf(maximum_normal_angle):
+                    raise ValueError(
+                        "initial.maximum_normal_angle must be unbounded for planar regions; got a normal control"
+                    )
+                premise = InitialPlanarPremise(
+                    prepared.tiles, prepared.layout, prepared.tile_owners
+                )
+            case _:
+                raise TypeError(
+                    "initial.prepared must pair with its own generated rows; got "
+                    f"{type(prepared).__name__} with {type(generated).__name__}"
+                )
         with NativeExecutionScope(limits_.native_limits()) as scope:
             ticket = scope.batch(0)
             ticket.settle()
@@ -1563,6 +2293,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             )
             with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
                 self._initialize(
+                    premise,
                     prepared,
                     generated,
                     limits_=limits_,
@@ -1574,8 +2305,10 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
 
     def _attempt_local_proof(
         self,
-        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
-        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+        | planar_generation_owner.PreparedDistributedPlanarGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction
+        | planar_generation_owner.DistributedPlanarConstruction,
         limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
         minimum_angle: float,
         maximum_normal_angle: float,
@@ -1600,14 +2333,30 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
                     ),
                 )
                 with budget.bind_ticket(ticket), ticket.native_target():
-                    return _local_proof(
-                        prepared,
-                        generated,
-                        limits_,
-                        minimum_angle,
-                        maximum_normal_angle,
-                        budget=budget,
-                    )
+                    match prepared, generated:
+                        case (
+                            _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration(),
+                            _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction(),
+                        ):
+                            return _local_proof(
+                                prepared,
+                                generated,
+                                limits_,
+                                minimum_angle,
+                                maximum_normal_angle,
+                                budget=budget,
+                            )
+                        case (
+                            planar_generation_owner.PreparedDistributedPlanarGeneration(),
+                            planar_generation_owner.DistributedPlanarConstruction(),
+                        ):
+                            return _planar_local_proof(
+                                prepared, generated, minimum_angle, budget=budget
+                            )
+                        case _:
+                            raise TypeError(
+                                "initial.prepared must pair with its own generated rows; got mismatched kinds"
+                            )
         except (
             MeshcoreError,
             _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
@@ -1626,8 +2375,11 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
 
     def _certify_local_owners(
         self,
-        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
-        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        premise: InitialSurfacePremise | InitialPlanarPremise,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+        | planar_generation_owner.PreparedDistributedPlanarGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction
+        | planar_generation_owner.DistributedPlanarConstruction,
         limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
         minimum_angle: float,
         maximum_normal_angle: float,
@@ -1649,17 +2401,8 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             )
         binding = canonical_fingerprint(
             (
-                prepared.compiled.compiled_id,
-                prepared.specification.specification_id,
-                prepared.schedule.schedule_id,
+                premise.premise_id,
                 limits_.limits_id,
-                (
-                    prepared.layout.vertex_capacity,
-                    prepared.layout.cell_capacity,
-                    prepared.layout.candidate_capacity,
-                    prepared.layout.maximum_work_units,
-                ),
-                array_tree_fingerprint(prepared.patch_owners),
                 array_tree_fingerprint(
                     np.asarray((minimum_angle, maximum_normal_angle), dtype=np.float64)
                 ),
@@ -1721,16 +2464,61 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
 
     def _prepare_collective_content(
         self,
-        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
-        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        premise: InitialSurfacePremise | InitialPlanarPremise,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+        | planar_generation_owner.PreparedDistributedPlanarGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction
+        | planar_generation_owner.DistributedPlanarConstruction,
         owner: _InitialOwnerProof,
         /,
     ) -> _InitialContent:
         local, sharding = owner.local, owner.sharding
+        match prepared, generated:
+            case (
+                _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration(),
+                _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction(),
+            ):
+                owner_rows = _surface_owner_rows(prepared, generated, local)
+            case (
+                planar_generation_owner.PreparedDistributedPlanarGeneration(),
+                planar_generation_owner.DistributedPlanarConstruction(),
+            ):
+                owner_rows = _planar_owner_rows(prepared, generated, local)
+            case _:
+                raise TypeError(
+                    "initial.prepared must pair with its own generated rows; got mismatched kinds"
+                )
+        # The layout caps admit construction; immutable evidence retains only
+        # the collectively required rows, not every unused construction slot.
+        row_counts = np.asarray(
+            multihost_utils.process_allgather(
+                np.asarray(
+                    (owner_rows.vertex_ids.size, owner_rows.cell_ids.size),
+                    dtype=np.int64,
+                ),
+                tiled=False,
+            )
+        ).reshape((-1, 2))
+        vertex_rows, cell_rows = (int(value) for value in np.max(row_counts, axis=0))
+        if (
+            vertex_rows > premise.layout.vertex_capacity
+            or cell_rows > premise.layout.cell_capacity
+        ):
+            raise compliance_failure(
+                "initial.owner_rows must fit the declared construction capacities; got excess rows",
+                stage="distributed-initial-certification",
+            )
         arrays, keys, identifiers, owners, counts, topology_id, geometry_id, checks = (
-            _logical_initial_content(prepared, generated, local, sharding)
+            _collective_initial_content(
+                owner_rows,
+                sharding,
+                vertex_capacity=max(1, vertex_rows),
+                cell_capacity=max(1, cell_rows),
+                block=premise.block_name,
+                width=premise.ambient_dimension,
+            )
         )
-        request_limits = prepared.specification.limits
+        request_limits = premise.specification.limits
         quotas = (
             ("vertices", counts[0], request_limits.maximum_vertices),
             ("edges", counts[1], request_limits.maximum_edges),
@@ -1743,7 +2531,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             ),
             (
                 "data_bytes",
-                24 * counts[0] + 12 * counts[2],
+                8 * premise.ambient_dimension * counts[0] + 12 * counts[2],
                 request_limits.maximum_data_bytes,
             ),
         )
@@ -1758,7 +2546,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
                 achieved=tuple((name, float(measured)) for name, measured, _ in quotas),
             )
         coordinate_geometry_id = _initial_coordinate_geometry_id(
-            arrays, counts, topology_id
+            arrays, counts, topology_id, premise
         )
         return _InitialContent(
             arrays,
@@ -1774,8 +2562,10 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
 
     def _certify_collective_contacts(
         self,
-        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
-        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+        | planar_generation_owner.PreparedDistributedPlanarGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction
+        | planar_generation_owner.DistributedPlanarConstruction,
         limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
         content: _InitialContent,
         owner: _InitialOwnerProof,
@@ -1801,13 +2591,27 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
                     ),
                 )
                 with budget.bind_ticket(ticket), ticket.native_target():
-                    findings, pairs = _cross_owner_contacts(
-                        generated,
-                        limits_,
-                        prepared.specification.limits.maximum_scratch_bytes,
-                        sharding,
-                        budget=budget,
-                    )
+                    match prepared, generated:
+                        case (
+                            _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration(),
+                            _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction(),
+                        ):
+                            findings, pairs = _cross_owner_contacts(
+                                generated,
+                                limits_,
+                                prepared.specification.limits.maximum_scratch_bytes,
+                                sharding,
+                                budget=budget,
+                            )
+                        case (
+                            planar_generation_owner.PreparedDistributedPlanarGeneration(),
+                            planar_generation_owner.DistributedPlanarConstruction(),
+                        ):
+                            findings, pairs = _planar_tile_findings(prepared, generated)
+                        case _:
+                            raise TypeError(
+                                "initial.prepared must pair with its own generated rows; got mismatched kinds"
+                            )
         except (
             MeshcoreError,
             _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
@@ -1859,7 +2663,9 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
                 "initial.collective_checks must pass; got failed checks: "
                 + ", ".join(
                     name
-                    for name, passed in zip(_CHECKS, summary, strict=True)
+                    for name, passed in zip(
+                        _premise_checks(prepared), summary, strict=True
+                    )
                     if not passed
                 ),
                 stage="distributed-initial-certification",
@@ -1872,8 +2678,11 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
 
     def _retain_collective_content(
         self,
-        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
-        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        premise: InitialSurfacePremise | InitialPlanarPremise,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+        | planar_generation_owner.PreparedDistributedPlanarGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction
+        | planar_generation_owner.DistributedPlanarConstruction,
         limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
         minimum_angle: float,
         maximum_normal_angle: float,
@@ -1899,21 +2708,37 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             ],
             dtype=np.uint8,
         ).reshape((-1, 32))
+        match prepared, generated:
+            case (
+                _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration(),
+                _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction(),
+            ):
+                certificate_capacity = 2 + 2 * prepared.compiled.patches.size
+                arrays.update(_retain_initial_inputs(prepared, generated, sharding))
+            case (
+                planar_generation_owner.PreparedDistributedPlanarGeneration(),
+                planar_generation_owner.DistributedPlanarConstruction(),
+            ):
+                certificate_capacity = prepared.tiles.tiles.shape[0]
+            case _:
+                raise TypeError(
+                    "initial.prepared must pair with its own generated rows; got mismatched kinds"
+                )
         arrays["initial/certificate_ids"] = _global_rows(
-            certificate_rows, 2 + 2 * prepared.compiled.patches.size, sharding
+            certificate_rows, certificate_capacity, sharding
         )
         arrays["initial/certificate_counts"] = jax.make_array_from_process_local_data(
             sharding,
             np.asarray((certificate_rows.shape[0],), dtype=np.int64),
             (jax.process_count(),),
         )
-        arrays.update(_retain_initial_inputs(prepared, generated, sharding))
         closures, fits = _initial_closures(
             arrays,
             vertex_count=counts[0],
             cell_count=counts[2],
-            capacity=prepared.layout.cell_capacity,
+            capacity=min(premise.layout.cell_capacity, counts[2]),
             parts=jax.process_count(),
+            neighborhood_depth=premise.layout.neighborhood_depth,
         )
         if not bool(jax.device_get(fits)):
             raise compliance_failure(
@@ -1925,7 +2750,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         )
 
         membership = _owner_phydrax_meshing__collective_organization.initial_organization_membership(
-            prepared.compiled, prepared.specification, arrays, counts
+            premise, arrays, counts
         )
         arrays.update(membership)
         organization_names = (
@@ -1935,8 +2760,8 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         organization_id = canonical_fingerprint(
             {
                 "kind": "collective-initial-source-organization",
-                "source": prepared.compiled.domain.domain_id,
-                "specification": prepared.specification.specification_id,
+                "source": premise.source_domain_id,
+                "specification": premise.specification.specification_id,
                 "content": logical_array_value_collection_digest(
                     {name: arrays[name] for name in organization_names}
                 ),
@@ -1944,8 +2769,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         )
         content_id = logical_array_value_collection_digest(arrays)
         source_evidence_id = _collective_source_payload(
-            prepared.compiled,
-            prepared.specification,
+            premise,
             limits_,
             minimum_angle,
             maximum_normal_angle,
@@ -1961,7 +2785,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
                 "mesh": mesh_id,
                 "source_theorem": source_evidence_id,
                 "content": content_id,
-                "checks": list(zip(_CHECKS, summary.tolist(), strict=True)),
+                "checks": list(zip(_premise_checks(prepared), summary.tolist(), strict=True)),
             }
         )
         return _InitialIdentity(
@@ -1970,8 +2794,11 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
 
     def _initialize(
         self,
-        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
-        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        premise: InitialSurfacePremise | InitialPlanarPremise,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+        | planar_generation_owner.PreparedDistributedPlanarGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction
+        | planar_generation_owner.DistributedPlanarConstruction,
         /,
         *,
         limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
@@ -1981,6 +2808,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
     ) -> None:
         owner = self._certify_local_owners(
+            premise,
             prepared,
             generated,
             limits_,
@@ -1989,11 +2817,12 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             scope,
             budget,
         )
-        content = self._prepare_collective_content(prepared, generated, owner)
+        content = self._prepare_collective_content(premise, prepared, generated, owner)
         contact = self._certify_collective_contacts(
             prepared, generated, limits_, content, owner, scope, budget
         )
         identity = self._retain_collective_content(
+            premise,
             prepared,
             generated,
             limits_,
@@ -2003,8 +2832,7 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             owner,
             contact,
         )
-        self.compiled = prepared.compiled
-        self.specification = prepared.specification
+        self.premise = premise
         self.partition_checks = contact.checks
         self.global_checks = contact.verdict
         self.logical_arrays = tuple(sorted(content.arrays.items()))
@@ -2019,21 +2847,13 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         self.source_evidence_id = identity.source_evidence_id
         self.mesh_id = identity.mesh_id
         self.partition_count = jax.process_count()
-        self.checks = _CHECKS
+        self.checks = _premise_checks(prepared)
         self.evidence_id = identity.evidence_id
         self.minimum_angle = minimum_angle
         self.maximum_normal_angle = maximum_normal_angle
         self.cell_kind = "triangle"
         self.limits = limits_
         self.content_id = identity.content_id
-        self.authored_source = (
-            _dependency_phydrax_meshing_providers__native_sources.NativeSurfaceSource(
-                prepared.compiled.domain
-            )
-        )
-        self.schedule = prepared.schedule
-        self.layout = prepared.layout
-        self.patch_owners = prepared.patch_owners
 
     def require_passed(self) -> None:
         if not bool(jax.device_get(jnp.all(self.global_checks))):
@@ -2044,39 +2864,52 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
 
     def require_current(self) -> None:
         """Collective immutable-content replay before any asymmetric constructor."""
-        self.require_passed()
-        if (
-            logical_array_value_collection_digest(dict(self.logical_arrays))
-            != self.content_id
-        ):
-            raise compliance_failure(
-                "initial.content_id must match retained numerical content; got a different digest",
-                stage="distributed-initial-certification",
-            )
-        if (
-            _initial_coordinate_geometry_id(
-                dict(self.logical_arrays), self.global_entity_counts, self.topology_id
-            )
-            != self.coordinate_geometry_id
-        ):
-            raise compliance_failure(
-                "initial.coordinate_geometry_id must match the basis and coefficient banks; got a different fingerprint",
-                stage="distributed-initial-certification",
-            )
-        expected = _collective_source_payload(
-            self.compiled,
-            self.specification,
-            self.limits,
-            self.minimum_angle,
-            self.maximum_normal_angle,
-            self.content_id,
-            self.global_organization_id,
-        ).fingerprint()
-        if expected != self.source_evidence_id:
-            raise compliance_failure(
-                "initial.source_evidence_id must match the domain and physical controls; got a different fingerprint",
-                stage="distributed-initial-certification",
-            )
+        with agreed_local_step(stage="distributed-initial-certification"):
+            self.require_passed()
+            arrays = dict(self.logical_arrays)
+            block = self.premise.block_name
+            # Check the recipe's bank accesses before either distributed digest.
+            for name in (
+                "geometry/coordinate_ids",
+                "geometry/coordinates",
+                f"geometry/cell_ids/{block}",
+                f"geometry/routes/{block}",
+                f"geometry/source_basis/{block}",
+            ):
+                if name not in arrays:
+                    raise compliance_failure(
+                        f"initial.logical_arrays must contain {name!r}; got absent bank",
+                        stage="distributed-initial-certification",
+                    )
+        content_id = logical_array_value_collection_digest(arrays)
+        with agreed_local_step(stage="distributed-initial-certification"):
+            if content_id != self.content_id:
+                raise compliance_failure(
+                    "initial.content_id must match retained numerical content; got a different digest",
+                    stage="distributed-initial-certification",
+                )
+        coordinate_geometry_id = _initial_coordinate_geometry_id(
+            arrays, self.global_entity_counts, self.topology_id, self.premise
+        )
+        with agreed_local_step(stage="distributed-initial-certification"):
+            if coordinate_geometry_id != self.coordinate_geometry_id:
+                raise compliance_failure(
+                    "initial.coordinate_geometry_id must match the basis and coefficient banks; got a different fingerprint",
+                    stage="distributed-initial-certification",
+                )
+            expected = _collective_source_payload(
+                self.premise,
+                self.limits,
+                self.minimum_angle,
+                self.maximum_normal_angle,
+                self.content_id,
+                self.global_organization_id,
+            ).fingerprint()
+            if expected != self.source_evidence_id:
+                raise compliance_failure(
+                    "initial.source_evidence_id must match the domain and physical controls; got a different fingerprint",
+                    stage="distributed-initial-certification",
+                )
 
 
 @checked
@@ -2085,11 +2918,16 @@ def restore_initial_construction(
     partition_index: int,
     /,
 ) -> _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction:
-    """Restore the numerical source inputs used by initial certification."""
+    """Restore the numerical surface inputs used by initial certification."""
 
     if not 0 <= partition_index < evidence.partition_count:
         raise ValueError(
             f"initial.partition_index must lie in the retained process group; got {partition_index}"
+        )
+    premise = evidence.premise
+    if not isinstance(premise, InitialSurfacePremise):
+        raise ValueError(
+            "initial.restore_construction must replay a surface premise; got a planar tile premise"
         )
     banks = dict(evidence.logical_arrays)
 
@@ -2117,7 +2955,7 @@ def restore_initial_construction(
     if bool(local("initial/input_present")):
         arrays = {name: rows(name) for name, _, _ in _INITIAL_INPUT_FIELDS}
         charts = []
-        for patch in evidence.compiled.patches.tolist():
+        for patch in premise.compiled.patches.tolist():
             values = rows(f"chart/{patch}/charts")
             if values.shape[0]:
                 charts.append(
@@ -2135,7 +2973,7 @@ def restore_initial_construction(
                     )
                 )
         curves = []
-        for curve in evidence.compiled.curves.tolist():
+        for curve in premise.compiled.curves.tolist():
             values = rows(f"curve/{curve}")
             if values.shape[0]:
                 curves.append((curve, values))
@@ -2164,9 +3002,9 @@ def restore_initial_construction(
         int(metadata[8]),
         int(metadata[9]),
         None,
-        evidence.compiled.domain.source_id,
-        evidence.compiled.domain.source_revision,
-        evidence.specification.specification_id,
+        premise.source_id,
+        premise.source_revision,
+        premise.specification.specification_id,
     )
 
 
@@ -2187,7 +3025,14 @@ def _lower_initial_mesh(
     blocks = (
         ()
         if cell_ids.size == 0
-        else (CellBlock("surface", evidence.cell_kind, cells, global_ids=cell_ids),)
+        else (
+            CellBlock(
+                evidence.premise.block_name,
+                evidence.cell_kind,
+                cells,
+                global_ids=cell_ids,
+            ),
+        )
     )
     probe = (
         None
@@ -2195,6 +3040,7 @@ def _lower_initial_mesh(
         else CellMesh(coordinates, blocks, vertex_global_ids=vertex_ids)
     )
     identifiers, owners = [], []
+    boundary_entities = []
     for degree in range(3):
         mask = receipts[f"entity/{degree}/valid"]
         positions = (
@@ -2207,6 +3053,9 @@ def _lower_initial_mesh(
         )
         identifiers.append(receipts[f"entity/{degree}/ids"][mask][positions])
         owners.append(receipts[f"entity/{degree}/owners"][mask][positions])
+        boundary_entities.append(
+            receipts[f"entity/{degree}/physical_boundary"][mask][positions]
+        )
     edge_mask = receipts["entity/1/valid"]
     receipt_edge_keys = receipts["entity/1/keys"][edge_mask]
     edge_keys = (
@@ -2243,8 +3092,9 @@ def _lower_initial_mesh(
         coordinate_owner=owners[0],
         geometry_projection=geometry_projection,
         local_physical_boundary_facets=physical,
+        local_physical_boundary_entities=boundary_entities,
         local_neighborhood_complete=complete,
-        neighborhood_depth=1,
+        neighborhood_depth=evidence.premise.layout.neighborhood_depth,
         logical_topology_id=evidence.topology_id,
         logical_geometry_id=evidence.geometry_id,
         logical_coordinate_geometry_id=evidence.coordinate_geometry_id,
@@ -2255,7 +3105,7 @@ def _lower_initial_mesh(
         coordinates,
         blocks,
         storage=storage,
-        numeric_version=evidence.compiled.domain.source_revision,
+        numeric_version=evidence.premise.source_revision,
     )
 
 
@@ -2322,6 +3172,9 @@ def _lower_initial_construction(
         curve_edge_deviations=receipts["initial/edge_deviations"][edge_mask],
         curve_edge_deviation_bounds=receipts["initial/edge_deviation_bounds"][edge_mask],
         unresolved=np.zeros((mesh.entity_set(2).count,), dtype=np.bool_),
+        boundary_occurrences=receipts["initial/cell_boundary_occurrences"][cell_mask][
+            cell_order
+        ],
         chart_triangulations=() if original is None else original.chart_triangulations,
         curve_parameters=() if original is None else original.curve_parameters,
         minimum_angle=minimum_angle,
@@ -2346,7 +3199,12 @@ def _initial_region_boundaries(
 ) -> tuple[_dependency_phydrax_meshing__organization.RegionBoundaryEvidence, ...]:
     """Bind authored region sides to the final globally scoped patch identities."""
 
-    domain, specification = evidence.compiled.domain, evidence.specification
+    premise = evidence.premise
+    if not isinstance(premise, InitialSurfacePremise):
+        raise ValueError(
+            "initial.region_boundaries must bind authored surface regions; got a planar tile premise"
+        )
+    domain, specification = premise.compiled.domain, premise.specification
     result = []
     for region in range(len(domain.regions)):
         identifier = domain.entity_id(3, region)
@@ -2442,7 +3300,7 @@ def publish_distributed_surface_initial(
         evidence, evidence.logical_arrays, evidence.global_entity_counts
     )
     scopes = _owner_phydrax_meshing__organization.prepare_mesh_organization_scopes(
-        evidence, evidence, projection, evidence.compiled.domain.source_revision
+        evidence, evidence, projection, evidence.premise.source_revision
     )
     receipts = {
         name: np.asarray(jax.device_get(value))
@@ -2592,4 +3450,548 @@ def publish_distributed_surface_initial(
     return result
 
 
-__all__ = ["InitialCollectiveMeshEvidence", "publish_distributed_surface_initial"]
+def _process_values(value: np.ndarray | np.generic, /) -> np.ndarray:
+    return np.asarray(multihost_utils.process_allgather(value, tiled=False))
+
+
+def _order_statistic(values: NDArray[np.float64], rank: int, /) -> float:
+    """``rank``-th smallest (0-based) nonnegative binary64 value over all owners.
+
+    Nonnegative binary64 values order like their bit patterns, so bisection on
+    the pattern needs only one exchanged count per round and no value gather.
+    """
+    patterns = np.sort(np.ascontiguousarray(values, dtype=np.float64).view(np.uint64))
+    low, high = 0, int(np.asarray(np.inf, dtype=np.float64).view(np.uint64))
+    while low < high:
+        middle = (low + high) // 2
+        local = np.int64(np.searchsorted(patterns, np.uint64(middle), side="right"))
+        if int(np.sum(_process_values(local))) >= rank + 1:
+            high = middle
+        else:
+            low = middle + 1
+    return float(np.asarray(low, dtype=np.uint64).view(np.float64))
+
+
+def _process_quantile(values: NDArray[np.float64], quantile: float, count: int, /) -> float:
+    """Linear-interpolated global quantile of distributed nonnegative values."""
+    position = quantile * (count - 1)
+    lower = int(math.floor(position))
+    upper = min(lower + 1, count - 1)
+    first = _order_statistic(values, lower)
+    second = first if upper == lower else _order_statistic(values, upper)
+    return first + (second - first) * (position - lower)
+
+
+def _planar_owned_edges(
+    prepared: planar_generation_owner.PreparedDistributedPlanarGeneration,
+    generated: planar_generation_owner.DistributedPlanarConstruction,
+    /,
+) -> NDArray[np.int64]:
+    """Local edge rows counted once over owners: a seam edge belongs to its lower tile's owner."""
+    triangles = generated.triangles
+    edges = np.unique(
+        np.sort(
+            triangles[:, np.asarray(((0, 1), (1, 2), (0, 2)), dtype=np.int64)].reshape(
+                (-1, 2)
+            ),
+            axis=1,
+        ),
+        axis=0,
+    ).reshape((-1, 2))
+    seams = generated.edge_seams >= 0
+    seam_edges = generated.edge_vertices[seams]
+    seam_rows = generated.edge_seams[seams]
+    if seam_rows.size == 0:
+        return edges
+    lower_tiles = np.min(prepared.tiles.seam_tiles[seam_rows], axis=1)
+    foreign = seam_edges[prepared.tile_owners[lower_tiles] != jax.process_index()]
+    if foreign.shape[0] == 0:
+        return edges
+    width = np.int64(max(generated.vertex_ids.size, 1))
+    keep = ~np.isin(edges[:, 0] * width + edges[:, 1], foreign[:, 0] * width + foreign[:, 1])
+    return edges[keep]
+
+
+def _planar_distributed_compliance(
+    prepared: planar_generation_owner.PreparedDistributedPlanarGeneration,
+    generated: planar_generation_owner.DistributedPlanarConstruction,
+    owned_residual: float,
+    /,
+) -> _owner_phydrax_meshing__result.MeshingComplianceReport:
+    """Planar size, quality and carrier statistics over all owners' owned rows.
+
+    Quantities and names follow the serial planar compliance; extrema and sums
+    exchange one scalar per quantity and quantiles use an exact distributed
+    order-statistic search.
+    """
+    tiles = prepared.tiles
+    specification = tiles.specification
+    policy = specification.size_compliance
+    points = generated.coordinates
+    edges = _planar_owned_edges(prepared, generated)
+    a, b = points[edges[:, 0]], points[edges[:, 1]]
+    lengths = np.linalg.norm(b - a, axis=1)
+    local = np.min(
+        _field_sizes(
+            np.concatenate((a, b, 0.5 * (a + b))),
+            tiles.region_size,
+            tiles.patch_segments,
+            tiles.patch_sizes,
+            tiles.gradation_slope,
+        ).reshape(3, -1),
+        axis=0,
+    )
+    endpoint = _field_sizes(
+        points,
+        tiles.region_size,
+        tiles.patch_segments,
+        tiles.patch_sizes,
+        tiles.gradation_slope,
+    )
+    gradation = 1.0 + float(
+        np.max(
+            _process_values(
+                np.float64(
+                    np.max(
+                        np.abs(endpoint[edges[:, 1]] - endpoint[edges[:, 0]]) / lengths,
+                        initial=0.0,
+                    )
+                )
+            )
+        )
+    )
+    constrained = generated.edge_sources >= 0
+    constrained_pairs = generated.edge_vertices[constrained]
+    constrained_sources = generated.edge_sources[constrained]
+    width = np.int64(max(generated.vertex_ids.size, 1))
+    edge_keys = edges[:, 0] * width + edges[:, 1]
+    requested: list[tuple[str, float]] = []
+    achieved: list[tuple[str, float]] = []
+    issues: list[str] = []
+    for control in specification.size_controls:
+        if not isinstance(control, UniformSizeControl):
+            raise TypeError(
+                "specification.size_controls must contain UniformSizeControl; got an unsupported control"
+            )
+        if control.scope.entity_dimension == 1:
+            pairs = constrained_pairs[
+                np.isin(constrained_sources, np.asarray(control.scope.entity_ids))
+            ]
+            rows = np.flatnonzero(np.isin(edge_keys, pairs[:, 0] * width + pairs[:, 1]))
+        else:
+            governed = local >= tiles.region_size
+            any_governed = bool(np.any(_process_values(np.bool_(np.any(governed)))))
+            rows = np.flatnonzero(governed) if any_governed else np.arange(edges.shape[0])
+        selected, selected_local = lengths[rows], local[rows]
+        count = int(np.sum(_process_values(np.int64(selected.size))))
+        key = f"size:{control.control_id}"
+        requested.append((f"{key}:target_size", control.target_size))
+        requested.extend(
+            (f"{key}:{name}", value)
+            for name, value in (
+                ("minimum_size", control.minimum_size),
+                ("maximum_size", control.maximum_size),
+                ("maximum_growth_rate", control.maximum_growth_rate),
+            )
+            if value is not None
+        )
+        minimum = float(
+            np.min(_process_values(np.float64(np.min(selected, initial=np.inf))))
+        )
+        maximum = float(np.max(_process_values(np.float64(np.max(selected, initial=0.0)))))
+        ratio = float(
+            np.max(
+                _process_values(np.float64(np.max(selected / selected_local, initial=0.0)))
+            )
+        )
+        achieved.extend(
+            (
+                (f"{key}:edge_count", float(count)),
+                (f"{key}:minimum_edge", minimum),
+                (f"{key}:maximum_edge", maximum),
+                (f"{key}:maximum_edge_to_local_size", ratio),
+                (f"{key}:size_field_growth_rate", gradation),
+            )
+        )
+        statistics = {
+            name: _process_quantile(selected, size_statistic_quantile(name), count)
+            for name in policy.target_statistics
+        }
+        achieved.extend((f"{key}:{name}_edge", value) for name, value in statistics.items())
+        if control.strength is SizeControlStrength.SOFT:
+            continue
+        tolerance = policy.tolerance
+        issues.extend(
+            f"target_size_{name}:{control.control_id}"
+            for name, value in statistics.items()
+            if abs(value - control.target_size) > tolerance(control.target_size)
+        )
+        oversized = bool(
+            np.any(
+                _process_values(
+                    np.bool_(
+                        np.any(
+                            selected
+                            > selected_local
+                            + policy.absolute_tolerance
+                            + policy.relative_tolerance * selected_local
+                        )
+                    )
+                )
+            )
+        )
+        checks = (
+            (
+                "minimum_size",
+                control.minimum_size is not None
+                and minimum < control.minimum_size - tolerance(control.minimum_size),
+            ),
+            (
+                "maximum_size",
+                control.maximum_size is not None
+                and maximum > control.maximum_size + tolerance(control.maximum_size),
+            ),
+            ("local_size", oversized),
+            (
+                "maximum_growth_rate",
+                control.maximum_growth_rate is not None
+                and gradation
+                > control.maximum_growth_rate + tolerance(control.maximum_growth_rate),
+            ),
+        )
+        issues.extend(f"{name}:{control.control_id}" for name, failed in checks if failed)
+    corners = points[generated.triangles]
+    first = corners[:, 1] - corners[:, 0]
+    second = corners[:, 2] - corners[:, 0]
+    areas = 0.5 * np.abs(first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0])
+    maximum_area = float(np.max(_process_values(np.float64(np.max(areas, initial=0.0)))))
+    local_angle = (
+        float(np.min(_triangle_angles(corners))) if corners.shape[0] else math.inf
+    )
+    minimum_angle = float(np.min(_process_values(np.float64(local_angle))))
+    steiner = int(np.sum(_process_values(np.int64(generated.steiner_count))))
+    complete = bool(np.all(_process_values(np.bool_(generated.refinement_complete))))
+    rounding = float(np.max(_process_values(np.float64(owned_residual))))
+    admissible = float(np.max(tiles.source_bounds, initial=0.0))
+    requested.extend(
+        (
+            ("maximum_triangle_area", tiles.maximum_area),
+            ("maximum_steiner_points", tiles.maximum_steiner),
+            ("maximum_constraint_rounding", admissible),
+        )
+    )
+    achieved.extend(
+        (
+            ("maximum_triangle_area", maximum_area),
+            ("minimum_angle", minimum_angle),
+            ("steiner_points", steiner),
+            ("maximum_constraint_rounding", rounding),
+            ("seam_rounds", generated.seam_rounds),
+        )
+    )
+    quality = specification.quality_target
+    if quality is not None:
+        requested.append(("minimum_angle", quality.minimum_angle))
+        if quality.hard and minimum_angle < quality.minimum_angle:
+            issues.append(f"minimum_angle:{quality.target_id}")
+    if not complete:
+        issues.append("refinement_limit:refinement_limit")
+    if rounding > admissible:
+        issues.append("constraint_rounding")
+    for feature in specification.protected_features:
+        key = f"protected:{feature.feature_id}:maximum_deviation"
+        requested.append((key, feature.maximum_deviation))
+        deviation = 0.0 if feature.feature_kind is FeatureKind.CORNER else rounding
+        achieved.append((key, deviation))
+        if feature.hard and deviation > feature.maximum_deviation:
+            issues.append(key)
+    return _owner_phydrax_meshing__result.MeshingComplianceReport(
+        specification.specification_id,
+        issues=tuple(issues),
+        requested=tuple(requested),
+        achieved=tuple(achieved),
+    )
+
+
+def _planar_associations(
+    premise: InitialPlanarPremise,
+    mesh: CellMesh,
+    receipts: dict[str, np.ndarray],
+    region_distance: float,
+    /,
+) -> tuple[GeometryAssociation, ...]:
+    """Source vertex/edge/region associations of one owner's lowered closure."""
+    from ._association_routes import ordered_vertices
+
+    source = premise.authored_source
+    revision = source.source_revision
+    vertices, source_edges, _ = source_arrays(source)
+    directions = vertices[source_edges[:, 1]] - vertices[source_edges[:, 0]]
+    vertex_mask = receipts["entity/0/valid"]
+    dimensions = receipts["initial/source_dimensions"][vertex_mask].astype(np.int8)
+    indices = receipts["initial/source_indices"][vertex_mask].astype(np.int64)
+    parameters = receipts["initial/source_parameters"][vertex_mask]
+    residuals = receipts["initial/source_residuals"][vertex_mask]
+    distances = np.where(dimensions < 2, residuals, region_distance)
+    edge_mask = receipts["entity/1/valid"]
+    positions = entity_keys_owner.key_rows(
+        receipts["entity/1/keys"][edge_mask], entity_keys_owner.entity_keys(mesh, 1)
+    )
+    edge_curves = receipts["initial/edge_curves"][edge_mask][positions]
+    edge_deviations = receipts["initial/edge_deviations"][edge_mask][positions]
+    edge_set = mesh.entity_set(1)
+    carried = np.flatnonzero(edge_curves >= 0)
+    edge_ids = np.asarray(edge_set.entity_ids, dtype=np.int64)[carried]
+    order = np.argsort(edge_ids, kind="stable")
+    carried, edge_ids = carried[order], edge_ids[order]
+    sources = edge_curves[carried].astype(np.int64)
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    ordered = ordered_vertices(mesh, 1)
+    if ordered is None:
+        raise ValueError(
+            "initial.planar_edge_orientation must retain ordered mesh incidence; got unsupported edges"
+        )
+    first, second = ordered[carried].T
+    orientations = np.sign(
+        np.sum((coordinates[second] - coordinates[first]) * directions[sources], axis=1)
+    ).astype(np.int8)
+    cell_set = mesh.entity_set(2)
+    cell_count = cell_set.count
+    roles = (
+        GeometrySourceEntityRole.VERTEX,
+        GeometrySourceEntityRole.EDGE,
+        GeometrySourceEntityRole.REGION,
+    )
+    entity_id = _dependency_phydrax_meshing_providers__native_sources.source_entity_id
+    return (
+        GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            source.source_id,
+            revision,
+            cell_set.entity_set_id,
+            cell_set.entity_ids,
+            tuple(entity_id(revision, "region", 0) for _ in range(cell_count)),
+            np.full((cell_count,), region_distance, dtype=np.float64),
+            exact=region_distance == 0.0,
+            source_dimensions=np.full(cell_count, 2, dtype=np.int8),
+            source_indices=np.zeros(cell_count, dtype=np.int64),
+            source_entity_roles=(GeometrySourceEntityRole.REGION,) * cell_count,
+        ),
+        GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            source.source_id,
+            revision,
+            edge_set.entity_set_id,
+            edge_ids,
+            tuple(entity_id(revision, "edge", int(edge)) for edge in sources.tolist()),
+            edge_deviations[carried],
+            exact=bool(np.all(edge_deviations[carried] == 0.0)),
+            orientations=orientations,
+            source_dimensions=np.full(edge_ids.size, 1, dtype=np.int8),
+            source_indices=sources,
+            source_entity_roles=(GeometrySourceEntityRole.EDGE,) * edge_ids.size,
+        ),
+        GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            source.source_id,
+            revision,
+            mesh.entity_set(0).entity_set_id,
+            mesh.vertex_global_ids,
+            tuple(
+                entity_id(revision, ("vertex", "edge", "region")[int(kind)], int(index))
+                for kind, index in zip(dimensions, indices, strict=True)
+            ),
+            distances,
+            resolved=np.ones(dimensions.shape, dtype=np.bool_),
+            ambiguous=np.zeros(dimensions.shape, dtype=np.bool_),
+            exact=bool(np.all(distances == 0.0)),
+            source_dimensions=dimensions,
+            source_indices=indices,
+            parameters=parameters,
+            source_entity_roles=tuple(roles[int(kind)] for kind in dimensions),
+        ),
+    )
+
+
+@checked
+def publish_distributed_planar_initial(
+    prepared: planar_generation_owner.PreparedDistributedPlanarGeneration,
+    generated: planar_generation_owner.DistributedPlanarConstruction,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: _dependency_phydrax_meshing__contracts.MeshingProviderInfo,
+    /,
+    *,
+    minimum_angle: float,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
+    plan_id: str | None = None,
+) -> _owner_phydrax_meshing__result.CellMeshingResult:
+    """Accept the planar tile theorem collectively, then lower owner-local results."""
+    evidence = InitialCollectiveMeshEvidence(
+        prepared, generated, minimum_angle=minimum_angle, limits=limits
+    )
+    premise = evidence.premise
+    if not isinstance(premise, InitialPlanarPremise):
+        raise TypeError(
+            "initial.planar_publication must retain a planar premise; got another premise"
+        )
+    projection = _owner_phydrax_meshing__publication_lowering.PreparedPublicationLowering(
+        None, evidence, None, vertex_capacity=prepared.layout.vertex_capacity
+    ).execute()
+    projection.require_source(evidence.logical_arrays)
+    storage_binding = _owner_phydrax_meshing__result.CollectiveMeshStorageBinding(
+        evidence, evidence.logical_arrays, evidence.global_entity_counts
+    )
+    scopes = _owner_phydrax_meshing__organization.prepare_mesh_organization_scopes(
+        evidence, evidence, projection, premise.source_revision
+    )
+    receipts = {
+        name: np.asarray(jax.device_get(value))
+        for name, value in projection.addressable_arrays(jax.process_index())
+    }
+    _, _, loops = source_arrays(premise.authored_source)
+    edge_mask = receipts["entity/1/valid"]
+    curves = receipts["initial/edge_curves"][edge_mask]
+    region_edges = (curves >= 0) & (loops[np.maximum(curves, 0)] >= 0)
+    region_distance = float(
+        np.max(
+            _process_values(
+                np.float64(
+                    np.max(
+                        receipts["initial/edge_deviations"][edge_mask][region_edges],
+                        initial=0.0,
+                    )
+                )
+            )
+        )
+    )
+    vertex_mask = receipts["entity/0/valid"]
+    owned = vertex_mask & (receipts["entity/0/owners"] == jax.process_index())
+    owned_residual = float(
+        np.max(
+            np.where(
+                receipts["initial/source_dimensions"][owned] < 2,
+                receipts["initial/source_residuals"][owned],
+                0.0,
+            ),
+            initial=0.0,
+        )
+    )
+    compliance = _planar_distributed_compliance(prepared, generated, owned_residual)
+    result = None
+    failure = None
+    try:
+        mesh = _lower_initial_mesh(evidence, receipts, projection.geometry)
+        if mesh.storage is None:
+            raise ValueError("initial.mesh.storage must retain logical storage; got None")
+        geometry = mesh.storage.restore_geometry()
+        associations = (
+            _planar_associations(premise, mesh, receipts, region_distance)
+            if np.any(receipts["closure/cell_valid"])
+            else ()
+        )
+        patches, zones, labels, attributes = (
+            _owner_phydrax_meshing__organization.lower_mesh_organization(
+                evidence, mesh, dict(evidence.logical_arrays), scope_projections=scopes
+            )
+        )
+        audit = _owner_phydrax_meshing__audit.audit_cell_mesh(
+            mesh,
+            geometry,
+            policy=_owner_phydrax_meshing__audit.CellMeshAuditPolicy(
+                require_complete_association=True
+            ),
+            patches=patches,
+            labels=labels,
+            zones=zones,
+            attributes=attributes,
+            associations=associations,
+        )
+        audit.require_passed()
+        audit.require_decided()
+        trace = _owner_phydrax_meshing__trace.MeshingTrace(
+            (
+                _owner_phydrax_meshing__trace.MeshingStageReport(
+                    _owner_phydrax_meshing__trace.MeshingStageKind.SURFACE_MESHING,
+                    _owner_phydrax_meshing__trace.MeshingStageStatus.PASSED,
+                    input_ids=(
+                        premise.generation_id,
+                        premise.specification.specification_id,
+                    ),
+                    output_ids=(evidence.evidence_id, audit.report_id),
+                    created_count=generated.global_cell_count,
+                ),
+            )
+        )
+        result = _owner_phydrax_meshing__result.CellMeshingResult(
+            mesh,
+            geometry,
+            coordinate_contract,
+            audit,
+            audit.quality,
+            compliance,
+            trace,
+            provider,
+            _owner_phydrax_meshing__result.MeshingRuntimeInfo(
+                provider.provider_id,
+                provider.version,
+                _owner_phydrax_meshing__contracts.MeshingExecutionMode.IN_PROCESS,
+                deterministic=True,
+                enforced_limits=(
+                    "source_theorem",
+                    "collective_acceptance",
+                    "fixed_capacity_closure",
+                    "worker_count_independent_tiles",
+                ),
+            ),
+            _owner_phydrax_meshing__contracts.MeshingDerivativeMode.NONDIFFERENTIABLE,
+            _owner_phydrax__identity.SemanticProvenance(
+                {
+                    "kind": "native-distributed-planar-initial-publication",
+                    "source": premise.authored_source.binding_id,
+                    "tiles": premise.generation_id,
+                    "theorem": evidence.evidence_id,
+                    "plan": plan_id,
+                }
+            ),
+            patches=patches,
+            zones=zones,
+            labels=labels,
+            attributes=attributes,
+            associations=associations,
+            region_boundary_evidence=(),
+            collective_evidence=evidence,
+            scope_projections=scopes,
+            storage_binding=storage_binding,
+        )
+    except (
+        MeshcoreError,
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
+    ) as error:
+        failure = _dependency_phydrax_meshing__distributed_generation.initial_owner_failure(
+            error, "distributed-initial-publication"
+        )
+    except _leaf_phydrax_meshing__failures.MeshingFailure as error:
+        failure = error
+    except ValueError as error:
+        failure = compliance_failure(str(error), stage="distributed-initial-certification")
+    collective_failure_barrier(
+        failure,
+        message="An owner rejected owner-local planar publication; no generated tile was published.",
+        stage="distributed-initial-commit",
+    )
+    if result is None:
+        raise ValueError(
+            "initial.publication.result must be present on every partition; got None"
+        )
+    return result
+
+
+__all__ = [
+    "InitialCollectiveMeshEvidence",
+    "InitialMeshPremise",
+    "InitialPlanarPremise",
+    "InitialSurfacePremise",
+    "publish_distributed_planar_initial",
+    "publish_distributed_surface_initial",
+]

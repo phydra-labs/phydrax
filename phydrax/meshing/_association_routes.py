@@ -191,6 +191,8 @@ def child_sources(
 
     A vertex on a target edge (face) refined from a source edge (face) lies in
     that source entity; otherwise its split parents span the source simplex.
+    Interior vertices without split-parent records inherit a source cell only
+    when every incident target cell refines that same source cell.
     """
 
     top = source_mesh.topological_dimension
@@ -279,6 +281,37 @@ def child_sources(
             position = np.searchsorted(created, owners[selected])
             dims[position] = np.where(entity >= 0, size - 1, -1)
             rows[position] = entity
+    if np.any(dims < 0) and any(
+        record.dimension == top for record in lineage.entities
+    ):
+        record = lineage.entity_lineage(top)
+        mask = np.isin(np.asarray(record.relation_kinds), refined)
+        parents = np.unique(
+            np.stack(
+                (
+                    entity_rows(
+                        target_mesh, top, np.asarray(record.target_global_ids)[mask]
+                    ),
+                    entity_rows(
+                        source_mesh, top, np.asarray(record.source_global_ids)[mask]
+                    ),
+                ),
+                axis=1,
+            ),
+            axis=0,
+        )
+        owners, counts = np.unique(parents[:, 0], return_counts=True)
+        cell_parents = np.full(target_mesh.entity_set(top).count, -1, dtype=np.int64)
+        single = counts == 1
+        cell_parents[owners[single]] = parents[
+            np.searchsorted(parents[:, 0], owners[single]), 1
+        ]
+        vertex_parents = stratum_region_consensus(target_mesh, 0, cell_parents, top)
+        target_rows = entity_rows(target_mesh, 0, created)
+        interior = ~boundary_mask(target_mesh, 0)[target_rows]
+        inherited = (dims < 0) & interior & (vertex_parents[target_rows] >= 0)
+        dims[inherited] = top
+        rows[inherited] = vertex_parents[target_rows[inherited]]
     return dims, rows
 
 

@@ -1,10 +1,12 @@
-from collections.abc import Callable, Iterator
-from contextlib import ExitStack
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager, ExitStack
 from fractions import Fraction
-from typing import NoReturn
+from pathlib import Path
+from typing import Any, NoReturn
 
 import numpy as np
 import pytest
+from jax import Array
 
 from phydrax._bvh import PackedBVH
 from phydrax._resource_ticket import HostBatchTicket
@@ -19,8 +21,11 @@ from phydrax.discretization._cell_geometry import (
     CellGeometryRestrictionSource,
     RestrictedCellGeometryElement,
 )
+from phydrax.discretization._cell_geometry_predecessor import CellGeometryPredecessor
+from phydrax.discretization._cell_geometry_transition_types import CellGeometryTransition
 from phydrax.discretization._cell_geometry_validity import (
     cell_geometry_id,
+    CellValidityCertificate,
     certify_cell_geometry_validity,
 )
 from phydrax.discretization._coordinate_budget import (
@@ -41,10 +46,20 @@ from phydrax.discretization._coordinate_enclosure import (
 from phydrax.discretization.fem import FiniteElementSpec
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._embedding_cells import Cell
-from phydrax.geometry._embedding_state import EmbeddingState, MeshCertificateLimits
-from phydrax.geometry._global_embedding import certify_global_embedding
+from phydrax.geometry._embedding_state import (
+    EmbeddingState,
+    MeshCertificateLimits,
+    PeriodicPartitionDirection,
+)
+from phydrax.geometry._global_embedding import (
+    certify_global_embedding,
+    GlobalEmbeddingCertificate,
+)
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 from phydrax.geometry._periodic_embedding import certify_periodic_mapped_embedding
+from phydrax.geometry._periodic_mapped_restriction import (
+    PeriodicMappedRestrictionEvidence,
+)
 from phydrax.geometry._source_fidelity import (
     certify_source_fidelity,
     MappedDomainBoundarySource,
@@ -440,6 +455,16 @@ def test_full_source_affine_quotient_contacts_match_generic_exact_proof(
             decision,
         )
 
+    # The closed 2D affine torus is decided first by the degree-one theorem,
+    # which enumerates no contacts. Exercise the contact theorem directly.
+    degree = certify_global_embedding(mesh, geometry, validity)
+    assert (degree.periodic_affine_degree is not None) == (case == "closed")
+    assert degree.periodic_affine is None
+    monkeypatch.setattr(
+        owner.periodic_affine_degree_owner,
+        "certify_affine_torus_degree",
+        lambda *args, **kwargs: False,
+    )
     monkeypatch.setattr(owner, "_record_periodic_contact", record)
     accelerated = certify_global_embedding(mesh, geometry, validity)
     accelerated_decisions = tuple(decisions)
@@ -677,12 +702,18 @@ def test_periodic_bvh_matches_complete_brute_force_decisions(
         maximum_block_pairs: int,
         retain_owner: Callable[[object], None],
     ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        # Exercise the predecessor's full b-by-a bank. Only the unchanged
-        # rational transformed-map bound rejection may remove these pairs.
-        selected = np.arange(first.item_bbox_min.shape[0], dtype=np.int64)
-        for b in range(second.item_bbox_min.shape[0]):
-            visit(selected.size)
-            yield selected, np.full(selected.shape, b, dtype=np.int64)
+        # Exercise the predecessor's full b-by-a bank, filtered only by the
+        # complete brute-force closed-box test: the conservative BVH bank is
+        # the sole broad phase, so no later box filter may remove pairs.
+        lo, hi = np.asarray(first.item_bbox_min), np.asarray(first.item_bbox_max)
+        lower, upper = np.asarray(second.item_bbox_min), np.asarray(second.item_bbox_max)
+        for b in range(lower.shape[0]):
+            visit(lo.shape[0])
+            selected = np.flatnonzero(
+                ~(np.any(hi < lower[b], axis=1) | np.any(upper[b] < lo, axis=1))
+            ).astype(np.int64)
+            if selected.size:
+                yield selected, np.full(selected.shape, b, dtype=np.int64)
 
     monkeypatch.setattr(owner, "bvh_overlap_pair_blocks", brute_query)
     brute = prove()
@@ -1043,27 +1074,26 @@ def test_original_screw_mapped_bank_keeps_negative_and_period_witnesses(
 ) -> None:
     import phydrax.geometry._periodic_embedding as owner
     from phydrax.discretization._periodic_exact import (
-        exact_periodic_element,
+        ExactPeriodicActionLattice,
         PeriodicIsometryGroup,
     )
 
     mesh, geometry = _screw_mapped_source()
     source_bits = np.asarray(geometry.coordinates).copy()
     source_id = cell_geometry_id(geometry)
-    original = exact_periodic_element
+    original = ExactPeriodicActionLattice.prepare
     observed: list[tuple[int, ...]] = []
 
     def record(
-        matrices: tuple[tuple[tuple[Fraction, ...], ...], ...],
-        orders: tuple[int, ...],
-        exponents: tuple[int, ...],
+        self: ExactPeriodicActionLattice,
+        exponents: Sequence[Sequence[int]],
         *,
         budget: CoordinateEnclosureBudget,
-    ) -> tuple[tuple[Fraction, ...], ...]:
-        observed.append(exponents)
-        return original(matrices, orders, exponents, budget=budget)
+    ) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+        observed.extend(tuple(int(value) for value in row) for row in exponents)
+        return original(self, exponents, budget=budget)
 
-    monkeypatch.setattr(owner, "exact_periodic_element", record)
+    monkeypatch.setattr(ExactPeriodicActionLattice, "prepare", record)
     state = EmbeddingState([], [])
     from tests._support.coordinate_references import coordinate_reference_budget
 
@@ -1767,3 +1797,658 @@ def test_periodic_wrapper_refusal_measures_only_its_source_phase(
     assert achieved[f"{prefix}:source_expression_native_charged_work_units"] == 0
     assert ledger.work_units == 10
     np.testing.assert_array_equal(mesh.coordinates, coordinates)
+
+
+def test_periodic_candidate_buckets_preserve_full_order_and_work_boundary() -> None:
+    from phydrax.geometry._periodic_embedding import _ordered_image_candidate_rows
+
+    blocks = [
+        (np.asarray((5, 2, 7, 2)), np.asarray((2, 0, 2, 0))),
+        (np.asarray((3, 1, 9, 4)), np.asarray((2, 3, 0, 3))),
+    ]
+    first = np.concatenate([block[0] for block in blocks])
+    second = np.concatenate([block[1] for block in blocks])
+    order = np.lexsort((first, second))
+    expected = tuple(first[order][second[order] == row] for row in range(5))
+    sizes = [row.size for row in expected]
+    required = 5 + 2 * first.size + sum(
+        size * max(1, size.bit_length()) for size in sizes
+    )
+    ledger = _budget(required, 100_000)
+    with ledger.ticket, ledger.activate():
+        actual = _ordered_image_candidate_rows(blocks, 5, budget=ledger)
+    assert ledger.work_units == required
+    for actual_row, expected_row in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(actual_row, expected_row)
+    # Repeated pairs and empty query rows must not disappear during grouping.
+    assert actual[0].tolist() == [2, 2, 9]
+    assert actual[1].size == actual[4].size == 0
+    short = _budget(required - 1, 100_000)
+    with short.ticket, short.activate(), pytest.raises(CoordinateEnclosureResourceError):
+        _ordered_image_candidate_rows(blocks, 5, budget=short)
+
+
+def _periodic_partition_mesh(
+    points: np.ndarray, rows: np.ndarray
+) -> CellMesh:
+    mesh = CellMesh.from_tetrahedra(points, rows)
+    topology = PeriodicMeshTopology(
+        mesh,
+        PeriodicCell(4.0 * np.eye(3), periodic_axes=(True, False, False)),
+        np.arange(len(points), dtype=np.int64),
+        np.zeros((len(points), 3), dtype=np.int64),
+    )
+    return CellMesh(points, mesh.blocks, periodic_topology=topology)
+
+
+@pytest.mark.parametrize("fault", (None, "missing-child", "aliased-centre"))
+def test_periodic_mapped_subcomplex_retains_exact_interior_centres(
+    fault: str | None,
+) -> None:
+    from phydrax.discretization._nested_reference_types import exact_reference_pair
+    from phydrax.geometry._periodic_mapped_restriction import _subcomplex
+
+    points = np.asarray(((0., 0., 0.), (1., 0., 0.), (0., 1., 0.), (0., 0., 1.)))
+    coarse = _periodic_partition_mesh(points, np.asarray(((0, 1, 2, 3),)))
+    fine_points = np.concatenate((points, np.asarray(((0.25, 0.25, 0.25),))))
+    rows = np.asarray(((4, 1, 2, 3), (0, 4, 2, 3), (0, 1, 4, 3), (0, 1, 2, 4)))
+    if fault == "missing-child":
+        rows = rows[:-1]
+    if fault == "aliased-centre":
+        fine_points = np.concatenate((fine_points, fine_points[4:5]))
+        rows[0, 0] = 5
+    fine = _periodic_partition_mesh(fine_points, rows)
+    pieces = []
+    for child, row in enumerate(rows):
+        vertices = tuple(tuple(Fraction(float(value)) for value in fine_points[index]) for index in row)
+        offset = vertices[0]
+        matrix = tuple(
+            tuple(vertices[column + 1][axis] - offset[axis] for column in range(3))
+            for axis in range(3)
+        )
+        pieces.append((0, child, exact_reference_pair(0, child, False, matrix, offset)))
+    budget = _budget(100_000, 10_000_000)
+    with budget.ticket, budget.activate():
+        proof = _subcomplex(coarse, fine, tuple(pieces), budget=budget)
+    assert (proof is not None) is (fault is None)
+
+
+def test_periodic_mapped_subcomplex_rejects_one_sided_source_edge_split() -> None:
+    from phydrax.discretization._nested_reference_types import exact_reference_pair
+    from phydrax.geometry._periodic_mapped_restriction import _subcomplex
+
+    points = np.asarray(((0., 0., 0.), (1., 0., 0.), (0., 1., 0.), (0., 0., 1.), (0., 0., -1.)))
+    coarse = _periodic_partition_mesh(points, np.asarray(((0, 1, 2, 3), (0, 2, 1, 4))))
+    fine = _periodic_partition_mesh(
+        np.concatenate((points, np.asarray(((0.5, 0., 0.),)))),
+        np.asarray(((0, 5, 2, 3), (5, 1, 2, 3), (0, 2, 1, 4))),
+    )
+    halves = (
+        (((Fraction(1, 2), 0, 0), (0, 1, 0), (0, 0, 1)), (0, 0, 0)),
+        (((Fraction(1, 2), Fraction(-1, 2), Fraction(-1, 2)), (0, 1, 0), (0, 0, 1)), (Fraction(1, 2), 0, 0)),
+        (((1, 0, 0), (0, 1, 0), (0, 0, 1)), (0, 0, 0)),
+    )
+    pieces = tuple(
+        (
+            0 if child < 2 else 1,
+            child,
+            exact_reference_pair(
+                0 if child < 2 else 1, child, False,
+                tuple(tuple(Fraction(value) for value in row) for row in matrix),
+                tuple(Fraction(value) for value in offset),
+            ),
+        )
+        for child, (matrix, offset) in enumerate(halves)
+    )
+    budget = _budget(100_000, 10_000_000)
+    with budget.ticket, budget.activate():
+        assert _subcomplex(coarse, fine, pieces, budget=budget) is None
+
+
+def test_stored_record_budget_preserves_identity_and_exact_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import dataclass
+
+    from phydrax.lifecycle import _meshing_source_records as owner
+
+    @dataclass
+    class Record:
+        names: tuple[str, ...]
+        values: np.ndarray
+
+    value = Record(('quoted-"', "unicode-λ", "line\nbreak"), np.arange(24, dtype=np.float64))
+    expected = owner.stored_record_content_id(value, excluded="")
+    original = owner.prepare_model_recipe
+    active: list[CoordinateEnclosureBudget] = []
+    entered: list[int] = []
+
+    def prepare(
+        record: object, /, *, prefix: str
+    ) -> tuple[dict[str, Any], dict[str, Array | np.ndarray]]:
+        assert active[0].temporary_bytes_upper > value.values.nbytes
+        entered.append(active[0].work_units)
+        return original(record, prefix=prefix)
+
+    monkeypatch.setattr(owner, "prepare_model_recipe", prepare)
+    generous = _budget(100_000, 10_000_000)
+    active[:] = [generous]
+    with generous.ticket, generous.activate():
+        assert owner.stored_record_content_id(value, excluded="", budget=generous) == expected
+    required = generous.work_units
+    assert required >= value.values.size
+    assert generous.temporary_bytes_upper == 0
+    exact = _budget(required, 10_000_000)
+    active[:] = [exact]
+    with exact.ticket, exact.activate():
+        assert owner.stored_record_content_id(value, excluded="", budget=exact) == expected
+    assert exact.work_units == required and exact.temporary_bytes_upper == 0
+    count = len(entered)
+    short = _budget(required - 1, 10_000_000)
+    active[:] = [short]
+    with short.ticket, short.activate(), pytest.raises(CoordinateEnclosureResourceError):
+        owner.stored_record_content_id(value, excluded="", budget=short)
+    assert short.temporary_bytes_upper == 0
+    # The canonical scan completes before the new request-local retention is
+    # admitted. Refusal must not publish a partial memo or retain temporary bytes.
+    assert len(entered) == count + 1
+    assert not short.stored_record_content_cache
+    tiny = _budget(100_000, value.values.nbytes - 1)
+    active[:] = [tiny]
+    with tiny.ticket, tiny.activate(), pytest.raises(CoordinateEnclosureResourceError):
+        owner.stored_record_content_id(value, excluded="", budget=tiny)
+    assert tiny.temporary_bytes_upper == 0
+    assert len(entered) == count + 1
+
+
+@contextmanager
+def _periodic_proof_request() -> Iterator[CoordinateEnclosureBudget]:
+    from phydrax._meshcore import NativeExecutionScope
+
+    limits = MeshCertificateLimits()
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.ticket_view() as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with budget.activate():
+                yield budget
+
+
+def _earned_periodic_partition(
+    source_id: str, *, readonly: bool = False
+) -> GlobalEmbeddingCertificate:
+    from phydrax.discretization._cell_geometry_predecessor import (
+        prepare_cell_geometry_predecessor,
+    )
+    from phydrax.discretization._cell_geometry_transfer import (
+        transition_nested_cell_geometry,
+    )
+    from phydrax.discretization._cell_geometry_transition_types import (
+        NestedReferenceWitnesses,
+    )
+    from phydrax.geometry._periodic_restriction import PeriodicRestrictionPremise
+
+    # The four positively oriented children retain every old corner and share
+    # one genuine interior vertex. No stored flags or invented issuer entries
+    # discharge the source embedding, material coverage, or subdivision proof.
+    points = np.asarray(
+        ((0., 0., 0.), (1., 0., 0.), (0., 1., 0.), (0., 0., 1.))
+    )
+    fine_points = np.concatenate((points, np.asarray(((0.25, 0.25, 0.25),))))
+    rows = np.asarray(
+        ((4, 1, 2, 3), (0, 4, 2, 3), (0, 1, 4, 3), (0, 1, 2, 4)),
+        dtype=np.int64,
+    )
+    limits = MeshCertificateLimits()
+    with _periodic_proof_request() as budget:
+        source = _periodic_partition_mesh(points, np.asarray(((0, 1, 2, 3),)))
+        target = _periodic_partition_mesh(fine_points, rows)
+        source_geometry = CellGeometrySpec.affine(source)
+        source_validity = certify_cell_geometry_validity(
+            source_geometry, mesh=source, budget=budget
+        )
+        source_embedding = certify_global_embedding(
+            source, source_geometry, source_validity, limits=limits, budget=budget
+        )
+        assert source_validity.all_certified
+        assert source_embedding.status == "certified"
+        assert source_embedding.findings == ()
+        transition = transition_nested_cell_geometry(
+            source,
+            source_geometry,
+            target,
+            CellGeometrySpec.affine(target),
+            refinement=NestedReferenceWitnesses(
+                np.arange(4, dtype=np.int64),
+                np.zeros(4, dtype=np.int64),
+                fine_points[rows],
+            ),
+            budget=budget,
+        )
+        geometry = transition.geometry
+        validity = certify_cell_geometry_validity(
+            geometry, mesh=target, budget=budget
+        )
+        predecessor = prepare_cell_geometry_predecessor(
+            source,
+            source_geometry,
+            source_validity,
+            source_embedding,
+            target,
+            geometry,
+            source_limits=limits,
+            budget=budget,
+        )
+        domain = PiecewiseLinearDomain(
+            points.copy(),
+            np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))),
+            np.asarray(((0, -1),) * 4),
+            ("fluid",),
+            source_id=source_id,
+        )
+        domain.vertices.flags.writeable = not readonly
+        premise = PeriodicRestrictionPremise(
+            source,
+            source_geometry,
+            source_validity,
+            source_embedding,
+            tuple((child, 0) for child in range(4)),
+            mapped_predecessor=predecessor,
+            mapped_transition=transition,
+            source_regions=(0,),
+            target_regions=(0, 0, 0, 0),
+            region_namespace_id=domain.domain_id,
+            source_domain=domain,
+        )
+        certificate = certify_global_embedding(
+            target,
+            geometry,
+            validity,
+            limits=limits,
+            predecessor=predecessor,
+            periodic_restriction=premise,
+            budget=budget,
+        )
+        evidence = certificate.periodic_mapped_restriction
+        assert certificate.status == "certified" and certificate.findings == ()
+        assert evidence is not None
+        assert evidence.direction == "refine"
+        assert evidence.source_regions == (0,)
+        assert evidence.target_regions == (0, 0, 0, 0)
+        assert evidence.predecessor.source_embedding is source_embedding
+        assert evidence.transition is transition
+        assert evidence.validity is validity
+        return certificate
+
+
+@pytest.fixture(scope="module")
+def earned_periodic_partition() -> GlobalEmbeddingCertificate:
+    return _earned_periodic_partition("periodic-proof-authority")
+
+
+def test_periodic_mapped_live_reuse_keeps_the_explicit_owning_budget(
+    earned_periodic_partition: GlobalEmbeddingCertificate,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _periodic_mapped_restriction as owner
+    from phydrax.meshing._certification import require_prepared_embedding
+
+    certificate = earned_periodic_partition
+    evidence = certificate.periodic_mapped_restriction
+    assert evidence is not None
+    predecessor = evidence.predecessor
+    original_admit = owner.PeriodicMappedRestrictionEvidence.from_stored_fields
+    original_prove = owner._prove
+    admitted_budgets = []
+    proved = []
+
+    def admit(
+        cls: type[PeriodicMappedRestrictionEvidence],
+        value: PeriodicMappedRestrictionEvidence,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> PeriodicMappedRestrictionEvidence:
+        admitted_budgets.append(budget)
+        return original_admit(value, budget=budget)
+
+    def prove(
+        predecessor: CellGeometryPredecessor,
+        transition: CellGeometryTransition,
+        validity: CellValidityCertificate,
+        source_regions: tuple[int, ...],
+        target_regions: tuple[int, ...],
+        source_domain: object,
+        region_namespace_id: str,
+        facet_trace_certificate_id: str,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[str, str, PeriodicPartitionDirection] | None:
+        result = original_prove(
+            predecessor, transition, validity, source_regions, target_regions,
+            source_domain, region_namespace_id, facet_trace_certificate_id, budget=budget,
+        )
+        proved.append(result)
+        return result
+
+    monkeypatch.setattr(
+        owner.PeriodicMappedRestrictionEvidence,
+        "from_stored_fields",
+        classmethod(admit),
+    )
+    monkeypatch.setattr(owner, "_prove", prove)
+    assert predecessor.source_limits is not None
+    with _periodic_proof_request() as budget:
+        for _ in range(2):
+            restored = GlobalEmbeddingCertificate.from_stored_fields(
+                certificate, budget=budget
+            )
+            assert restored.certificate_id == certificate.certificate_id
+            require_prepared_embedding(
+                predecessor.target_mesh,
+                predecessor.target_geometry,
+                evidence.validity,
+                restored,
+                predecessor.source_limits,
+                budget=budget,
+            )
+        assert admitted_budgets
+        assert all(actual is budget for actual in admitted_budgets)
+    assert proved == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "source-mesh-bank",
+        "target-mesh-bank",
+        "source-geometry-bank",
+        "target-geometry-bank",
+        "source-domain-bank",
+        "source-domain-material-bank",
+        "source-domain-material-namespace",
+        "source-assignment",
+        "target-assignment",
+        "predecessor-row-cache",
+        "source-limits-contract",
+        "transition-reference-bank",
+        "transition-evidence-contract",
+        "target-validity-bank",
+    ),
+)
+def test_periodic_mapped_live_authority_binds_the_full_actual_record(
+    change: str,
+    earned_periodic_partition: GlobalEmbeddingCertificate,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from copy import deepcopy
+    from dataclasses import replace
+
+    from phydrax.geometry import _periodic_mapped_restriction as owner
+
+    issued = earned_periodic_partition.periodic_mapped_restriction
+    assert issued is not None
+    value = deepcopy(issued)
+    # Establish real live-issued admission before changing a field hidden behind
+    # cached mesh/geometry/domain/transition IDs.
+    assert owner.PeriodicMappedRestrictionEvidence.from_stored_fields(value) is value
+    original_content = owner._full_content(value, None)
+    predecessor = value.predecessor
+
+    def change_bank(
+        record: object, field: str, index: int | tuple[int, ...], delta: float = 0.125
+    ) -> None:
+        bank = np.array(getattr(record, field), copy=True)
+        bank[index] += delta
+        object.__setattr__(record, field, bank)
+
+    if change == "source-mesh-bank":
+        change_bank(predecessor.source_mesh, "coordinates", (1, 0))
+    elif change == "target-mesh-bank":
+        change_bank(predecessor.target_mesh, "coordinates", (4, 0))
+    elif change == "source-geometry-bank":
+        change_bank(predecessor.source_geometry, "coordinates", (1, 0))
+    elif change == "target-geometry-bank":
+        change_bank(predecessor.target_geometry, "coordinates", (0, 0))
+    elif change == "source-domain-bank":
+        change_bank(value.source_domain, "vertices", (1, 0))
+    elif change == "source-domain-material-bank":
+        change_bank(value.source_domain, "facet_regions", (0, 0), -1)
+    elif change == "source-domain-material-namespace":
+        object.__setattr__(value.source_domain, "region_ids", ("foreign-material",))
+    elif change == "source-assignment":
+        object.__setattr__(value, "source_regions", (1,))
+    elif change == "target-assignment":
+        object.__setattr__(value, "target_regions", (0, 0, 0, 1))
+    elif change == "predecessor-row-cache":
+        object.__setattr__(predecessor, "source_rows", (0, 0, 0, 0))
+    elif change == "source-limits-contract":
+        limits = predecessor.source_limits
+        assert limits is not None
+        limits = deepcopy(limits)
+        object.__setattr__(limits, "maximum_work_units", limits.maximum_work_units - 1)
+        object.__setattr__(value, "predecessor", replace(predecessor, source_limits=limits))
+    elif change == "transition-reference-bank":
+        change_bank(value.transition, "parent_reference_vertices", (0, 0, 0))
+    elif change == "transition-evidence-contract":
+        object.__setattr__(value.transition.evidence, "exact", False)
+    else:
+        change_bank(value.validity, "determinant_lower", 0)
+    # Refresh the public digest where necessary: a syntactically self-consistent
+    # record is still not an issued theorem. Full actual content must differ.
+    object.__setattr__(value, "evidence_id", value._identity())
+    assert owner._full_content(value, None) != original_content
+    full_calls = []
+    original_full = owner._full_content
+
+    def full(
+        record: PeriodicMappedRestrictionEvidence, budget: CoordinateEnclosureBudget | None
+    ) -> str:
+        full_calls.append(record)
+        return original_full(record, budget)
+
+    monkeypatch.setattr(owner, "_full_content", full)
+    with pytest.raises(ValueError, match="owning archive/request budget"):
+        owner.PeriodicMappedRestrictionEvidence.from_stored_fields(value)
+    assert any(record is value for record in full_calls)
+    if change in {
+        "source-assignment",
+        "target-assignment",
+        "source-domain-bank",
+        "source-domain-material-bank",
+        "transition-reference-bank",
+    }:
+        original_prove = owner._prove
+        proof_budgets = []
+
+        def prove(
+            predecessor: CellGeometryPredecessor,
+            transition: CellGeometryTransition,
+            validity: CellValidityCertificate,
+            source_regions: tuple[int, ...],
+            target_regions: tuple[int, ...],
+            source_domain: object,
+            region_namespace_id: str,
+            facet_trace_certificate_id: str,
+            *,
+            budget: CoordinateEnclosureBudget,
+        ) -> tuple[str, str, PeriodicPartitionDirection] | None:
+            proof_budgets.append(budget)
+            return original_prove(
+                predecessor, transition, validity, source_regions, target_regions,
+                source_domain, region_namespace_id, facet_trace_certificate_id, budget=budget,
+            )
+
+        monkeypatch.setattr(owner, "_prove", prove)
+        with _periodic_proof_request() as budget:
+            with pytest.raises(ValueError):
+                owner.PeriodicMappedRestrictionEvidence.from_stored_fields(
+                    value, budget=budget
+                )
+            assert len(proof_budgets) == 1 and proof_budgets[0] is budget
+
+
+@pytest.mark.parametrize("readonly", (False, True), ids=("writable", "readonly-toggled"))
+def test_periodic_mapped_numpy_owner_is_rehashed_after_in_place_mutation(
+    readonly: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.geometry import _periodic_mapped_restriction as owner
+
+    certificate = _earned_periodic_partition(
+        f"periodic-numpy-authority-{readonly}", readonly=readonly
+    )
+    value = certificate.periodic_mapped_restriction
+    assert value is not None
+    assert isinstance(value.source_domain, PiecewiseLinearDomain)
+    bank = value.source_domain.vertices
+    assert isinstance(bank, np.ndarray)
+    original_full = owner._full_content
+    scans = []
+
+    def full(
+        record: PeriodicMappedRestrictionEvidence, budget: CoordinateEnclosureBudget | None
+    ) -> str:
+        result = original_full(record, budget)
+        scans.append((record, result, budget))
+        return result
+
+    monkeypatch.setattr(owner, "_full_content", full)
+    # Keep the same request ledger alive across admission and mutation so a
+    # request-local immutable-content memo is exercised too.
+    with _periodic_proof_request() as budget:
+        assert owner.PeriodicMappedRestrictionEvidence.from_stored_fields(
+            value, budget=budget
+        ) is value
+        before = scans[-1][1]
+        bank.flags.writeable = True
+        bank[1, 0] += 0.125
+        bank.flags.writeable = not readonly
+        with pytest.raises(ValueError):
+            owner.PeriodicMappedRestrictionEvidence.from_stored_fields(
+                value, budget=budget
+            )
+        assert scans[-1][1] != before
+        assert all(actual is budget for _, _, actual in scans)
+
+
+def test_periodic_mapped_live_digest_requires_the_actual_issued_owner() -> None:
+    from copy import deepcopy
+
+    from phydrax.geometry import _periodic_mapped_restriction as owner
+
+    certificate = _earned_periodic_partition("periodic-changed-issued-owner")
+    issued = certificate.periodic_mapped_restriction
+    assert issued is not None
+    assert isinstance(issued.source_domain, PiecewiseLinearDomain)
+    equivalent = deepcopy(issued)
+    content = owner._full_content(equivalent, None)
+    assert owner._live_proofs[content] is issued
+    issued.source_domain.vertices[1, 0] += 0.125
+    # The registry still contains the *old* digest, but its actual issuer no
+    # longer owns that content. The untouched copy cannot borrow stale authority.
+    assert owner._full_content(equivalent, None) == content
+    assert owner._full_content(issued, None) != content
+    with pytest.raises(ValueError, match="owning archive/request budget"):
+        owner.PeriodicMappedRestrictionEvidence.from_stored_fields(equivalent)
+
+
+def test_periodic_mapped_proof_registry_does_not_keep_expired_owners_alive() -> None:
+    import gc
+    import weakref
+    from copy import deepcopy
+
+    from phydrax.geometry import _periodic_mapped_restriction as owner
+
+    certificate = _earned_periodic_partition("periodic-expiring-issued-owner")
+    issued = certificate.periodic_mapped_restriction
+    assert issued is not None
+    equivalent = deepcopy(issued)
+    content = owner._full_content(issued, None)
+    reference = weakref.ref(issued)
+    assert owner._live_proofs[content] is issued
+    # The earning helper's entire request/budget has already gone out of scope.
+    del certificate, issued
+    gc.collect()
+    assert reference() is None
+    assert content not in owner._live_proofs
+    with pytest.raises(ValueError, match="owning archive/request budget"):
+        owner.PeriodicMappedRestrictionEvidence.from_stored_fields(equivalent)
+
+
+def test_periodic_mapped_archive_in_fresh_process_requires_current_request_authority(
+    earned_periodic_partition: GlobalEmbeddingCertificate,
+    tmp_path: Path,
+) -> None:
+    import subprocess
+    import sys
+    from textwrap import dedent
+
+    from phydrax.lifecycle import write_meshing_source_closure
+
+    value = earned_periodic_partition.periodic_mapped_restriction
+    assert value is not None
+    receipt = write_meshing_source_closure(tmp_path / "periodic-partition", value)
+    script = dedent(
+        """
+        import sys
+        from phydrax.geometry import _periodic_mapped_restriction as owner
+        from phydrax.lifecycle import read_meshing_source_closure
+        from phydrax.lifecycle._meshing_source_records import stored_record_content_id
+        from tests.unit.meshing.test_periodic_mapped_embedding import _periodic_proof_request
+
+        path, content_id, expected_full_content = sys.argv[1:]
+        assert not owner._live_proofs
+        try:
+            read_meshing_source_closure(path, expected_content_id=content_id)
+        except ValueError as error:
+            assert "owning archive/request budget" in str(error), str(error)
+        else:
+            raise AssertionError("cold serialized digest authorized an unissued proof")
+        assert not owner._live_proofs
+        original = owner._prove
+        proofs = []
+        def prove(*args, **kwargs):
+            result = original(*args, **kwargs)
+            proofs.append((kwargs["budget"], result))
+            return result
+        owner._prove = prove
+        with _periodic_proof_request() as budget:
+            restored = read_meshing_source_closure(
+                path, expected_content_id=content_id, budget=budget
+            )
+            assert proofs, "archive admission must execute the genuine theorem"
+            expected = (restored.partition_id, restored.subcomplex_id, restored.direction)
+            assert all(result == expected for _, result in proofs)
+            assert all(actual is budget for actual, _ in proofs)
+            assert stored_record_content_id(
+                restored, excluded="", budget=budget
+            ) == expected_full_content
+            count = len(proofs)
+            assert owner.PeriodicMappedRestrictionEvidence.from_stored_fields(
+                restored, budget=budget
+            ) is restored
+            assert len(proofs) == count
+        print("cold-periodic-partition: genuine source coverage, traces, partition and subcomplex")
+        """
+    )
+    from phydrax.lifecycle._meshing_source_records import stored_record_content_id
+
+    completed = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            script,
+            str(receipt.path),
+            receipt.content_id,
+            stored_record_content_id(value, excluded=""),
+        ),
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "cold-periodic-partition: genuine source coverage" in completed.stdout

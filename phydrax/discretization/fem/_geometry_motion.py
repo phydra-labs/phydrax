@@ -81,6 +81,7 @@ from .._motion_validity import (
     MotionValidityStatus,
 )
 from .._reference_cell import reference_cell_topology
+from . import _assembly as imported_assembly
 from ._generic import FiniteElementDiscretization, FiniteElementRuntimeData
 from ._reference import lagrange_element
 
@@ -1152,7 +1153,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
             boundary = np.arange(reference.shape[0], dtype=np.int64)
         else:
             boundary = np.flatnonzero(
-                np.asarray(mesh.topology.entities(0).subset("boundary").mask)
+                imported_assembly._physical_boundary_entity_masks(mesh)[0]
             )
         provider_reference = np.asarray(
             boundary_provider.reference_points, dtype=np.float64

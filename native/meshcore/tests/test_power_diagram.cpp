@@ -153,12 +153,19 @@ struct Cells {
   std::vector<int32_t> piece_sites, piece_tets, piece_cells;
   std::vector<double> piece_volumes;
   int64_t failure[PHX_MC_POWER_CELLS_FAILURE] = {};
+  std::array<int64_t, PHX_MC_POWER_CELLS_PREFLIGHT> preflight{};
+  std::array<int64_t, PHX_MC_POWER_CELLS_CAPACITY> capacity{};
 };
 
 Cells collect(Cells cells);
 
+constexpr std::array<int64_t, PHX_MC_POWER_CELLS_PREFLIGHT> unlimited_output{
+    1000000, INT64_MAX, INT64_MAX, INT64_MAX, INT64_MAX, 100000,
+    INT64_MAX, INT64_MAX, INT64_MAX, INT64_MAX, INT64_MAX, INT64_MAX};
+
 Cells run(const Sites& sites, const Domain& domain, const std::vector<int8_t>& split,
-          int64_t work_limit) {
+          int64_t work_limit,
+          const std::array<int64_t, PHX_MC_POWER_CELLS_PREFLIGHT>& limits = unlimited_output) {
   Cells cells;
   const int64_t count = static_cast<int64_t>(sites.points.size() / 3);
   const std::vector<double> weights(static_cast<std::size_t>(count), 0.0);
@@ -178,6 +185,15 @@ Cells run(const Sites& sites, const Domain& domain, const std::vector<int8_t>& s
       .max_pieces = 100000,
       .max_vertices = 1000000,
       .work_limit = work_limit,
+      .max_edges = limits[1],
+      .max_faces = limits[2],
+      .max_face_entries = limits[3],
+      .max_cells = limits[4],
+      .max_site_witnesses = limits[6],
+      .max_sided_loop_occurrences = limits[7],
+      .max_sided_corner_occurrences = limits[8],
+      .max_connectivity_entries = limits[10],
+      .max_data_bytes = limits[11],
       .record_phases = 0,
       .result = &cells.handle,
   };
@@ -190,6 +206,14 @@ Cells collect(Cells cells) {
     return cells;
   }
   PHX_CHECK(phx_mc_power_cells_failure(cells.handle, cells.failure) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_power_cells_preflight(cells.handle, cells.preflight.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_power_cells_capacity(cells.handle, cells.capacity.data()) == PHX_MC_OK);
+  if (cells.capacity[0] != 0) {
+    int64_t sizes[PHX_MC_POWER_CELLS_SIZES];
+    PHX_CHECK(phx_mc_power_cells_sizes(cells.handle, sizes) == PHX_MC_OK);
+    for (const int64_t size : sizes) PHX_CHECK(size == 0);
+    PHX_CHECK(phx_mc_power_cells_site_witness_size(cells.handle) == 0);
+  }
   if (cells.status == PHX_MC_OK) {
     int64_t sizes[PHX_MC_POWER_CELLS_SIZES];
     PHX_CHECK(phx_mc_power_cells_sizes(cells.handle, sizes) == PHX_MC_OK);
@@ -483,7 +507,8 @@ void test_exact_image_source_and_refusals() {
   double components[3] = {0.75, 0.25, 0.25};
   const int64_t neighbors[2] = {0, 0};
   const int8_t split[1] = {0};
-  const auto construct = [&](int64_t work_limit, int64_t max_pieces) {
+  const auto construct = [&](int64_t work_limit, int64_t max_pieces,
+                            const std::array<int64_t, PHX_MC_POWER_CELLS_PREFLIGHT>& limits = unlimited_output) {
     Cells cells;
     const phx_mc_restricted_power_cells_exact_request request{
         .original_site_count = 2,
@@ -506,6 +531,15 @@ void test_exact_image_source_and_refusals() {
         .max_pieces = max_pieces,
         .max_vertices = 1000000,
         .work_limit = work_limit,
+        .max_edges = limits[1],
+        .max_faces = limits[2],
+        .max_face_entries = limits[3],
+        .max_cells = limits[4],
+        .max_site_witnesses = limits[6],
+        .max_sided_loop_occurrences = limits[7],
+        .max_sided_corner_occurrences = limits[8],
+        .max_connectivity_entries = limits[10],
+        .max_data_bytes = limits[11],
         .record_phases = 0,
         .result = &cells.handle,
     };
@@ -521,6 +555,37 @@ void test_exact_image_source_and_refusals() {
     PHX_CHECK_NEAR(cells.cell_volumes[cell], 1.0, 1e-13);
     PHX_CHECK_NEAR(independent[cell], 1.0, 1e-13);
   }
+  for (const std::size_t axis : {1, 2, 3, 4, 6, 7, 8, 10, 11}) {
+    auto limits = unlimited_output;
+    limits[axis] = cells.preflight[axis];
+    const Cells accepted = construct(1000000, 100000, limits);
+    PHX_CHECK(accepted.status == PHX_MC_OK);
+    PHX_CHECK(accepted.preflight == cells.preflight);
+    PHX_CHECK(accepted.vertices == cells.vertices);
+    PHX_CHECK(accepted.face_vertices == cells.face_vertices);
+    PHX_CHECK(accepted.cell_sites == cells.cell_sites);
+    PHX_CHECK(accepted.cell_volumes == cells.cell_volumes);
+    PHX_CHECK(accepted.cell_moments == cells.cell_moments);
+    PHX_CHECK(accepted.cell_second == cells.cell_second);
+    --limits[axis];
+    const Cells refused = construct(1000000, 100000, limits);
+    PHX_CHECK(refused.status == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(refused.preflight == cells.preflight);
+    PHX_CHECK(refused.capacity[0] == static_cast<int64_t>(axis + 1));
+    PHX_CHECK(refused.capacity[1] == cells.preflight[axis]);
+    PHX_CHECK(refused.capacity[2] == limits[axis]);
+    // An invalid output allowance takes precedence over source-work
+    // exhaustion and unsupported expansion decoding, without a result handle.
+    limits[axis] = -1;
+    const Cells invalid = construct(1, 100000, limits);
+    PHX_CHECK(invalid.status == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(invalid.failure[PHX_MC_POWER_CELLS_FAILURE_REASON] == 0);
+    components[0] = 0x1p-173;
+    const Cells invalid_source = construct(1000000, 100000, limits);
+    PHX_CHECK(invalid_source.status == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(invalid_source.failure[PHX_MC_POWER_CELLS_FAILURE_REASON] == 0);
+    components[0] = 0.75;
+  }
   PHX_CHECK(construct(1000000, 1).status == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(construct(1, 100000).status == PHX_MC_CAPACITY_EXCEEDED);
   components[0] = 0x1p-173;
@@ -532,6 +597,48 @@ void test_exact_image_source_and_refusals() {
   PHX_CHECK(original_sites[3] == 0.75);
 }
 
+void test_output_preflight() {
+  const Domain domain = two_cubes();
+  const Sites sites{{0.75, 0.25, 0.25}, {0, 0}, {}};
+  const std::vector<int8_t> split{0};
+  const Cells reference = run(sites, domain, split, 1000000);
+  PHX_CHECK(reference.status == PHX_MC_OK);
+  const auto& counts = reference.preflight;
+  PHX_CHECK(counts[0] == static_cast<int64_t>(reference.vertices.size() / 3));
+  PHX_CHECK(counts[2] == static_cast<int64_t>(reference.face_facets.size()));
+  PHX_CHECK(counts[3] == static_cast<int64_t>(reference.face_vertices.size()));
+  PHX_CHECK(counts[4] == static_cast<int64_t>(reference.cell_sites.size()));
+  PHX_CHECK(counts[5] == static_cast<int64_t>(reference.piece_sites.size()));
+  PHX_CHECK(counts[9] == 48 * counts[0] + 20 * counts[2] + 4 * counts[3] +
+                             48 * counts[4] + 20 * counts[5] + 4 * counts[6] + 16);
+  PHX_CHECK(counts[10] == 64 * (counts[7] + counts[8]) + 16 * (counts[0] + counts[4] + 1));
+  PHX_CHECK(counts[11] == 8 * counts[10]);
+  for (const std::size_t axis : {1, 2, 3, 4, 6, 7, 8, 10, 11}) {
+    auto limits = unlimited_output;
+    limits[axis] = counts[axis];
+    const Cells accepted = run(sites, domain, split, 1000000, limits);
+    PHX_CHECK(accepted.status == PHX_MC_OK);
+    PHX_CHECK(accepted.preflight == counts);
+    PHX_CHECK(accepted.vertices == reference.vertices);
+    PHX_CHECK(accepted.face_offsets == reference.face_offsets);
+    PHX_CHECK(accepted.face_vertices == reference.face_vertices);
+    PHX_CHECK(accepted.face_cells == reference.face_cells);
+    PHX_CHECK(accepted.cell_volumes == reference.cell_volumes);
+    PHX_CHECK(accepted.cell_moments == reference.cell_moments);
+    PHX_CHECK(accepted.cell_second == reference.cell_second);
+    PHX_CHECK(accepted.piece_cells == reference.piece_cells);
+    --limits[axis];
+    const Cells refused = run(sites, domain, split, 1000000, limits);
+    PHX_CHECK(refused.status == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(refused.preflight == counts);
+    PHX_CHECK(refused.capacity[0] == static_cast<int64_t>(axis + 1));
+    PHX_CHECK(refused.capacity[1] == counts[axis]);
+    PHX_CHECK(refused.capacity[2] == limits[axis]);
+    limits[axis] = -1;
+    PHX_CHECK(run(sites, domain, split, 1000000, limits).status == PHX_MC_INVALID_ARGUMENT);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -539,5 +646,6 @@ int main() {
   test_refusals();
   test_nonconvex_hole_and_disconnected_components();
   test_exact_image_source_and_refusals();
+  test_output_preflight();
   return phx::mc::test::finish("test_power_diagram");
 }

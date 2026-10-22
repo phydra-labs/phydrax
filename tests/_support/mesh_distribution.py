@@ -61,7 +61,7 @@ def compiled_fv(part: Any) -> Any:
 
 def quad_mesh(nx: Any, ny: Any, *, refine: Any = (), extend: Any = 0) -> Any:
     """Two triangles per unit quad; ``refine`` quads split into four about their
-    center (children of the two original triangles) and ``extend`` columns are
+    center (children of the two source triangles) and ``extend`` columns are
     appended as created cells. Returns the part and each cell's source parent ID."""
     width = nx + extend
     xs, ys = np.meshgrid(np.arange(width + 1.0), np.arange(ny + 1.0), indexing="ij")
@@ -126,6 +126,27 @@ def cell_lineage(source: Any, target: Any, parents: Any) -> Any:
         target_ids[routed],
         kinds,
         created_target_ids=target_ids[~routed],
+    )
+    return phx.meshing.MeshLineage(
+        source.carrier.mesh.topology_id, target.carrier.mesh.topology_id, (cells,)
+    )
+
+
+def merged_cell_lineage(source: Any, target: Any, parents: Any) -> Any:
+    """Coarsen ``source`` cells onto their ``parents`` IDs in ``target``."""
+    source_ids = np.asarray(source.carrier.mesh.blocks[0].global_ids)
+    kinds = np.where(
+        parents == source_ids,
+        int(phx.meshing.EntityLineageKind.PRESERVED),
+        int(phx.meshing.EntityLineageKind.COARSENED_INTO),
+    )
+    cells = phx.meshing.EntityLineage(
+        2,
+        source.carrier.mesh.entity_set(2).entity_set_id,
+        target.carrier.mesh.entity_set(2).entity_set_id,
+        source_ids,
+        parents,
+        kinds,
     )
     return phx.meshing.MeshLineage(
         source.carrier.mesh.topology_id, target.carrier.mesh.topology_id, (cells,)

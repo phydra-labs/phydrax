@@ -41,9 +41,17 @@ def association_round_trip() -> dict[str, int | bool]:
     leaves, structure = jax.tree.flatten(value)
     mesh = Mesh(np.asarray(jax.devices()), ("process",))
     sharding = NamedSharding(mesh, PartitionSpec("process"))
-    distributed = [_sharded_leaf(leaf, sharding) for leaf in leaves]
+    # Source-identity routes are immutable host metadata, not numerical banks.
+    distributed = [
+        _sharded_leaf(leaf, sharding) if isinstance(leaf, jax.Array) else leaf
+        for leaf in leaves
+    ]
     value = jax.tree.unflatten(structure, distributed)
-    assert all(not leaf.is_fully_addressable for leaf in distributed)
+    assert all(
+        not leaf.is_fully_addressable
+        for leaf in distributed if isinstance(leaf, jax.Array)
+    )
+    assert isinstance(value.source_entities.row_indices, np.ndarray)
     restored = reconstruct_distributed_stored_fields(
         value, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
     )

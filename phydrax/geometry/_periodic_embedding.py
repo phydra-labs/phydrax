@@ -280,7 +280,7 @@ End mesh certificate checks
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from itertools import combinations, product
 
@@ -296,19 +296,26 @@ import phydrax.geometry._affine_mapped_contact as affine_mapped_contact_owner
 import phydrax.geometry._embedding_cells as embedding_cells_owner
 import phydrax.geometry._embedding_state as embedding_state_owner
 import phydrax.geometry._exact_polyhedral_geometry as exact_polyhedral_geometry_owner
+import phydrax.geometry._periodic_affine_degree as periodic_affine_degree_owner
 import phydrax.geometry._periodic_power_preparation as periodic_power_preparation_owner
+import phydrax.geometry._periodic_restriction as periodic_restriction_owner
 import phydrax.geometry._planar_primitives as planar_primitives_owner
 import phydrax.geometry._supermesh as supermesh_owner
 import phydrax.linalg._small_batched as small_batched_owner
-from phydrax._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
+from phydrax._bvh import (
+    _host_boxes_overlap,
+    bvh_overlap_pair_blocks,
+    PackedBVH,
+    prepare_bvh,
+)
 from phydrax._strict import StrictModule
 from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization._cell_geometry_validity import CellValidityCertificate
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._periodic_exact import (
     exact_isometry_power,
-    exact_periodic_element,
     exact_periodic_generators,
+    ExactPeriodicActionLattice,
     PeriodicIsometryGroup,
     PeriodicIsometryIdentityError,
 )
@@ -353,6 +360,7 @@ from ..discretization._coordinate_enclosure import (
     coordinate_expressions,
     coordinate_reference_chain,
     CoordinateSourceBank,
+    expression_add,
     expression_bernstein_coefficients,
     expression_evaluate,
     expression_node_count,
@@ -378,6 +386,8 @@ from ._mapped_embedding import (
     separating_plane,
     tensor_gluing,
 )
+from ._periodic_mapped_restriction import certify_periodic_mapped_restriction
+from ._periodic_restriction import PeriodicRestrictionPremise
 from ._rational import fraction_endpoint, rational_vector, translation_ranges
 
 
@@ -400,8 +410,8 @@ def _transform(
         coordinates = tuple(
             value
             if not row[-1]
-            else expression_sum(
-                (value, constant(row[-1], cell.dimension, budget=budget)),
+            else expression_add(
+                value, constant(row[-1], cell.dimension, budget=budget),
                 budget=budget,
             )
             for value, row in zip(cell.coordinates, matrix[:-1], strict=True)
@@ -675,6 +685,24 @@ def _source_edge_parameters(
     return tuple(sorted(parameters))
 
 
+def _simple_source_polygon_is_convex(
+    source: CoordinateSourceBank, *, budget: CoordinateEnclosureBudget
+) -> bool:
+    """Use the caller's simple-loop proof and exact convex-hull area equality."""
+    cached = budget.simple_source_polygon_convexity_cache.get(source)
+    if cached is not None:
+        return cached
+    with budget.temporary_scope():
+        hull = planar_primitives_owner.convex_hull(source, budget=budget)
+        hull_area = abs(planar_primitives_owner.signed_measure(hull, budget=budget))
+        source_area = abs(planar_primitives_owner.signed_measure(source, budget=budget))
+        convex = bool(hull_area) and source_area == hull_area
+        del hull
+        budget.retain_basis((source,))
+        budget.simple_source_polygon_convexity_cache[source] = convex
+    return convex
+
+
 @checked
 def closed_source_polygon_contains(
     source: CoordinateSourceBank,
@@ -691,6 +719,10 @@ def closed_source_polygon_contains(
         )
     ):
         return False
+    if _simple_source_polygon_is_convex(source, budget=budget):
+        # A convex source contains the convex hull of the admitted vertices,
+        # hence every subject segment and its interior without edge crossings.
+        return True
     for a, b in zip(subject, (*subject[1:], subject[0]), strict=True):
         if a == b:
             continue
@@ -849,8 +881,9 @@ def _original_power_facet_authority(
         work, storage = exact_polyhedral_geometry_owner.triangulation_charge(
             point_array, row, budget=budget
         )
-        budget.admit_work_bound(work)
-        budget.reserve(work, storage)
+        # triangulate_loop charges each performed operation; the bound is a priori.
+        budget.admit_work_bound(work, storage_upper=storage)
+        budget.reserve(0, storage)
         exact_polyhedral_geometry_owner.triangulate_loop(point_array, row, budget=budget)
         loop = tuple(points[index] for index in row)
         plane = source_polygon_plane(loop, budget=budget)
@@ -1238,6 +1271,8 @@ class _PeriodicCells(StrictModule):
     lifted: _LiftedVertices
     affine_pieces: set[int]
     affine_source_ids: dict[int, str]
+    # Rational corners of pieces whose whole coordinate map is proven affine.
+    affine_corners: dict[int, CoordinateSourceBank]
 
 
 class _ParentFace(StrictModule):
@@ -1281,10 +1316,33 @@ class _PeriodicImages(StrictModule):
     cell_ids: np.ndarray
 
 
+_PERIODIC_CONTACT_CHUNK_SIZE = 16
+
+
 @dataclass
 class _PeriodicContactCache:
     decisions: dict[tuple[int, int, tuple[int, ...]], str]
     recorded_reuse: bool = False
+    trace_permissions: dict[
+        tuple[int, int, tuple[int, ...]], tuple[tuple[int, ...], ...]
+    ] = field(default_factory=dict)
+    source_supports: dict[
+        tuple[tuple[int, ...], tuple[int, ...], int], tuple[int, ...] | None
+    ] = field(default_factory=dict)
+    transformed_face_planes: dict[
+        tuple[
+            tuple[coordinate_enclosure_owner.ExactScalar, ...],
+            tuple[tuple[Fraction, ...], ...],
+        ],
+        tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    ] = field(default_factory=dict)
+    transformed_source_points: dict[
+        tuple[
+            tuple[coordinate_enclosure_owner.ExactScalar, ...],
+            tuple[tuple[Fraction, ...], ...],
+        ],
+        tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    ] = field(default_factory=dict)
 
 
 def _prepare_periodic_group(request: _PeriodicRequest) -> _PeriodicGroup:
@@ -1310,10 +1368,11 @@ def _prepare_periodic_group(request: _PeriodicRequest) -> _PeriodicGroup:
     if finite_count > maximum_images:
         state.add("periodic_image_budget", "unresolved", "mesh")
         return _PeriodicGroup(matrices, orders, periods, translations, finite_count, ())
-    finite = []
-    for exponents in product(*(range(order) for order in linear_orders)):
-        transform = exact_periodic_element(matrices, orders, exponents, budget=budget)
-        finite.append((exponents, transform))
+    exponents = tuple(product(*(range(order) for order in linear_orders)))
+    transforms = ExactPeriodicActionLattice(matrices, orders).prepare(
+        exponents, budget=budget
+    )
+    finite = tuple(zip(exponents, transforms, strict=True))
     return _PeriodicGroup(
         matrices, orders, periods, translations, finite_count, tuple(finite)
     )
@@ -1569,6 +1628,25 @@ def _prepare_periodic_piece(
             root_preparation.layer_column,
         )
     root_record = source_roots.get(owner)
+    # An affine simplex piece is the interpolant of these rational corners; its
+    # restriction to any shared sub-simplex is therefore determined by them.
+    corners = (
+        coordinate_enclosure_owner.affine_simplex_corner_images(
+            source_element, source_local, budget=budget
+        )
+        if kind in ("interval", "triangle", "tetrahedron")
+        and source_element.cell_kind == kind
+        else None
+    )
+    if corners is not None:
+        prepared.affine_corners[len(prepared.cells)] = corners
+        if affine_mapped_contact_owner.affine_expressions(cell.coordinates):
+            # These corners just came from the canonical full-source affine
+            # producer. Bind them now, before any later consumer can change a
+            # coefficient; nested image scopes retain this original bank.
+            affine_mapped_contact_owner._retain_affine_cell_images(
+                cell, corners, budget=budget
+            )
     # The proof returns only a reason; its derivative/SPD tensors are not cells.
     with budget.temporary_scope():
         affine_validity = (
@@ -1576,11 +1654,7 @@ def _prepare_periodic_piece(
             and request.validity.all_certified
             and state.closed_cell_orientation
             and block.cell_kind == kind == source_element.cell_kind
-            and kind in ("interval", "triangle", "tetrahedron")
-            and coordinate_enclosure_owner.affine_simplex_corner_images(
-                source_element, source_local, budget=budget
-            )
-            is not None
+            and corners is not None
         )
         if affine_validity:
             prepared.affine_pieces.add(len(prepared.cells))
@@ -1620,7 +1694,7 @@ def _prepare_periodic_cells(
         request.budget,
     )
     topology = request.topology
-    elements, routes, coordinates = geometry.resolve(mesh)
+    elements, routes, coordinates = geometry.resolve(mesh, budget=budget)
     points = np.asarray(coordinates, dtype=np.float64)
     source_bank = prepared_coordinate_source_bank(geometry, budget=budget)
     roots = np.asarray(topology.vertex_representatives, dtype=np.int64)
@@ -1629,7 +1703,7 @@ def _prepare_periodic_cells(
     lifted = _LiftedVertices(roots, shifts, fixed, group.orders, {})
     budget.reserve(0, 128 + 192 * cell_ids.size)
     prepared = _PeriodicCells(
-        [], [], [], set(), {}, {}, set(), source_bank, lifted, set(), {}
+        [], [], [], set(), {}, {}, set(), source_bank, lifted, set(), {}, {}
     )
     first_cell = 0
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
@@ -1813,6 +1887,39 @@ def _prepare_periodic_source_faces(
     return _PeriodicSourceFaces(original_facets, source_faces)
 
 
+def _trace_already_permitted(
+    support: tuple[int, ...], permitted: dict[tuple[int, ...], None], /
+) -> bool:
+    """Reuse one authenticated convex simplex trace, never a union of traces."""
+    return any(all(vertex in trace for vertex in support) for trace in permitted)
+
+
+def _transport_source_point(
+    point: tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    action: tuple[tuple[Fraction, ...], ...],
+    cache: _PeriodicContactCache,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[coordinate_enclosure_owner.ExactScalar, ...]:
+    """Reuse only exact numeric point transport, never trace authorization."""
+    point_key = point, action
+    transformed = cache.transformed_source_points.get(point_key)
+    if transformed is None:
+        budget.reserve(len(point) * (len(point) + 1))
+        transformed = tuple(
+            row[-1]
+            + sum(
+                (weight * value for weight, value in zip(row[:-1], point, strict=True)),
+                Fraction(0),
+            )
+            for row in action[:-1]
+        )
+        budget.retain_basis((point_key, transformed))
+        cache.transformed_source_points[point_key] = transformed
+    return transformed
+
+
 def _permit_orbit_traces(
     request: _PeriodicRequest,
     prepared: _PeriodicCells,
@@ -1823,6 +1930,7 @@ def _permit_orbit_traces(
     action: tuple[tuple[Fraction, ...], ...],
     image: tuple[int, ...],
     permitted: dict[tuple[int, ...], None],
+    cache: _PeriodicContactCache,
 ) -> None:
     budget, source_bank, identifiers = (
         request.budget,
@@ -1845,7 +1953,7 @@ def _permit_orbit_traces(
             )
         )
         support = tuple(vertex for vertex in first.vertices if vertex in source_a)
-        if not support or len(support) > first.dimension or support in permitted:
+        if not support or len(support) > first.dimension or _trace_already_permitted(support, permitted):
             continue
         for face_b, _ in by_orbit[owner_b].get((degree_a, orbit_a), ()):
             budget.reserve(len(face_b))
@@ -1855,18 +1963,7 @@ def _permit_orbit_traces(
             equal = True
             for key, vertex in zip(keys_b, face_b, strict=True):
                 point = source_bank[vertex]
-                budget.reserve(len(point) * (len(point) + 1))
-                transformed = tuple(
-                    row[-1]
-                    + sum(
-                        (
-                            weight * value
-                            for weight, value in zip(row[:-1], point, strict=True)
-                        ),
-                        Fraction(0),
-                    )
-                    for row in action[:-1]
-                )
+                transformed = _transport_source_point(point, action, cache, budget=budget)
                 if transformed != source_a[key]:
                     equal = False
                     break
@@ -1874,6 +1971,39 @@ def _permit_orbit_traces(
                 budget.reserve(len(support), 128 + 64 * len(support))
                 permitted[support] = None
                 break
+
+
+def _transport_source_plane(
+    plane: tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    action: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[coordinate_enclosure_owner.ExactScalar, ...]:
+    """Transport an earned plane through an exactly admitted proper isometry."""
+    dimension = len(plane) - 1
+    planar_primitives_owner.reserve_fraction_work(
+        (*action, plane),
+        2 * dimension**2 + 2 * dimension + 1 + dimension + 1,
+        3 * (dimension + 1),
+        (4 * dimension + 5) * dimension,
+        budget=budget,
+    )
+    # x' = R x + t and R^-1 = R^T give n' = R n, d' = d - n'·t.
+    normal = tuple(
+        sum((a * b for a, b in zip(row[:-1], plane[:-1], strict=True)), Fraction(0))
+        for row in action[:-1]
+    )
+    offset = plane[-1] - sum(
+        (value * row[-1] for value, row in zip(normal, action[:-1], strict=True)),
+        Fraction(0),
+    )
+    divisor = next((value for value in normal if value), None)
+    if divisor is None:
+        raise ValueError(
+            "periodic_trace.action must preserve the nonzero source-plane normal; got a singular action"
+        )
+    return tuple(value / divisor for value in (*normal, offset))
 
 
 def _permit_source_plane_traces(
@@ -1886,6 +2016,7 @@ def _permit_source_plane_traces(
     action: tuple[tuple[Fraction, ...], ...],
     first_source_vertices: np.ndarray,
     permitted: dict[tuple[int, ...], None],
+    cache: _PeriodicContactCache,
 ) -> None:
     mesh, budget, source_bank = request.mesh, request.budget, prepared.source_bank
     parent_faces, original_facets, source_faces = (
@@ -1893,33 +2024,45 @@ def _permit_source_plane_traces(
         sources.original_facets,
         sources.source_faces,
     )
-    for facet_root, source_plane, axes_, polygon in original_facets:
-        budget.reserve(0, 128 + 64 * len(first_source_vertices))
-        support_points = []
-        support_ids = []
-        for identifier, vertex in zip(first.vertices, first_source_vertices, strict=True):
-            point = source_bank[int(vertex)]
-            budget.reserve(2 * len(point))
-            if sum(
-                (a * b for a, b in zip(source_plane[:-1], point, strict=True)),
-                source_plane[-1],
-            ):
+    source_vertices = tuple(int(vertex) for vertex in first_source_vertices)
+    for source_facet, (facet_root, source_plane, axes_, polygon) in enumerate(original_facets):
+        # A periodic authority root may contain several different source planes.
+        support_key = first.vertices, source_vertices, source_facet
+        if support_key in cache.source_supports:
+            support = cache.source_supports[support_key]
+        else:
+            budget.reserve(0, 128 + 64 * len(first_source_vertices))
+            support_points = []
+            support_ids = []
+            for identifier, vertex in zip(first.vertices, source_vertices, strict=True):
+                point = source_bank[vertex]
+                budget.reserve(2 * len(point))
+                if sum(
+                    (a * b for a, b in zip(source_plane[:-1], point, strict=True)),
+                    source_plane[-1],
+                ):
+                    continue
+                if closed_source_polygon_contains(
+                    polygon,
+                    planar_primitives_owner.project((point,), axes_, budget=budget),
+                    budget=budget,
+                ):
+                    support_points.append(point)
+                    support_ids.append(identifier)
+            support = tuple(support_ids)
+            if support and _trace_already_permitted(support, permitted):
                 continue
-            if closed_source_polygon_contains(
+            if not support or len(support) > first.dimension:
+                support = None
+            elif not closed_source_polygon_contains(
                 polygon,
-                planar_primitives_owner.project((point,), axes_, budget=budget),
+                planar_primitives_owner.project(tuple(support_points), axes_, budget=budget),
                 budget=budget,
             ):
-                support_points.append(point)
-                support_ids.append(identifier)
-        support = tuple(support_ids)
-        if not support or len(support) > first.dimension or support in permitted:
-            continue
-        if not closed_source_polygon_contains(
-            polygon,
-            planar_primitives_owner.project(tuple(support_points), axes_, budget=budget),
-            budget=budget,
-        ):
+                support = None
+            budget.retain_basis((support_key, support))
+            cache.source_supports[support_key] = support
+        if support is None or _trace_already_permitted(support, permitted):
             continue
         for face in parent_faces[owner_b]:
             degree_b, face_b = face.dimension, face.source_vertices
@@ -1928,25 +2071,13 @@ def _permit_source_plane_traces(
             authority_b = source_faces.get((owner_b, face_b))
             if authority_b is None or facet_root not in authority_b[1]:
                 continue
-            budget.reserve(len(face_b) * first.dimension * (first.dimension + 1))
-            transformed = tuple(
-                tuple(
-                    row[-1]
-                    + sum(
-                        (
-                            weight * value
-                            for weight, value in zip(
-                                row[:-1], source_bank[vertex], strict=True
-                            )
-                        ),
-                        Fraction(0),
-                    )
-                    for row in action[:-1]
-                )
-                for vertex in face_b
-            )
-            plane_b = source_polygon_plane(transformed, budget=budget)
-            if plane_b is not None and plane_b[0] == source_plane:
+            plane_key = authority_b[0], action
+            if plane_key not in cache.transformed_face_planes:
+                plane_b = _transport_source_plane(authority_b[0], action, budget=budget)
+                budget.retain_basis((plane_key, plane_b))
+                cache.transformed_face_planes[plane_key] = plane_b
+            plane_b = cache.transformed_face_planes[plane_key]
+            if plane_b == source_plane:
                 budget.reserve(len(support), 128 + 64 * len(support))
                 permitted[support] = None
                 break
@@ -1964,6 +2095,7 @@ def _authored_periodic_traces(
     action: tuple[tuple[Fraction, ...], ...],
     image: tuple[int, ...],
     first_source_vertices: np.ndarray,
+    cache: _PeriodicContactCache,
 ) -> tuple[tuple[int, ...], ...]:
     if owner_a not in facets.parent_faces or owner_b not in facets.parent_faces:
         return ()
@@ -1975,9 +2107,6 @@ def _authored_periodic_traces(
             "periodic_trace.first_source_vertices must identify every first-piece lifted corner; got mismatched source bank"
         )
     permitted: dict[tuple[int, ...], None] = {}
-    _permit_orbit_traces(
-        request, prepared, facets, first, owner_a, owner_b, action, image, permitted
-    )
     _permit_source_plane_traces(
         request,
         prepared,
@@ -1988,8 +2117,81 @@ def _authored_periodic_traces(
         action,
         first_source_vertices,
         permitted,
+        cache,
+    )
+    _permit_orbit_traces(
+        request, prepared, facets, first, owner_a, owner_b, action, image, permitted, cache
     )
     return tuple(permitted)
+
+
+class _PieceTrace:
+    """One piece in a facet's normalized lift, compared on its shared entities.
+
+    A piece whose whole coordinate map is a proven affine simplex keeps only
+    its isometry-transformed rational corners: two affine simplices restrict to
+    the same map on every shared sub-simplex exactly when their shared corner
+    images agree. Any other pair is decided by the full expression restriction.
+    """
+
+    __slots__ = ("_action", "_cell", "_source", "corners", "vertices")
+
+    def __init__(
+        self,
+        source: Cell,
+        action: tuple[tuple[coordinate_enclosure_owner.ExactScalar, ...], ...],
+        vertices: tuple[int, ...],
+        corners: tuple[tuple[coordinate_enclosure_owner.ExactScalar, ...], ...] | None,
+    ) -> None:
+        self._source, self._action, self._cell = source, action, None
+        self.vertices, self.corners = vertices, corners
+
+    @classmethod
+    def prepare(
+        cls,
+        source: Cell,
+        corners: CoordinateSourceBank | None,
+        action: tuple[tuple[coordinate_enclosure_owner.ExactScalar, ...], ...],
+        vertices: tuple[int, ...],
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> _PieceTrace:
+        if corners is None:
+            return cls(source, action, vertices, None)
+        budget.reserve(
+            len(corners) * (len(action) - 1) * len(action),
+            128 + 64 * len(corners) * (len(action) - 1),
+        )
+        images = tuple(
+            tuple(
+                sum(
+                    (weight * value for weight, value in zip(row[:-1], point, strict=True)),
+                    row[-1],
+                )
+                for row in action[:-1]
+            )
+            for point in corners
+        )
+        return cls(source, action, vertices, images)
+
+    def cell(self, *, budget: CoordinateEnclosureBudget) -> Cell:
+        if self._cell is None:
+            self._cell = _transform(self._source, self._action, self.vertices, budget=budget)
+        return self._cell
+
+    def equal(self, other: _PieceTrace, *, budget: CoordinateEnclosureBudget) -> bool:
+        if self.corners is None or other.corners is None:
+            return cell_traces_equal(
+                self.cell(budget=budget), other.cell(budget=budget), budget=budget
+            )
+        shared = set(self.vertices).intersection(other.vertices)
+        budget.reserve(len(shared) * (1 + len(self.corners[0])))
+        return all(
+            self.corners[self.vertices.index(key)]
+            == other.corners[other.vertices.index(key)]
+            for key in shared
+        )
+
 
 
 def _certify_periodic_traces(
@@ -2019,10 +2221,11 @@ def _certify_periodic_traces(
         prepared_facets.anchors,
     )
     initial_findings = len(state.findings)
-    traces: dict[int, tuple[Cell, ...]] = {}
+    traces: dict[int, tuple[_PieceTrace, ...]] = {}
     owner_pieces: dict[int, list[int]] = {}
     for piece, owner in enumerate(owners):
         owner_pieces.setdefault(owner, []).append(piece)
+    lattice = ExactPeriodicActionLattice(matrices, orders)
     for occurrence, entity in enumerate(entity_ids.tolist()):
         request.progress.resource_kind, request.progress.resource_ids = (
             "facet",
@@ -2031,10 +2234,12 @@ def _certify_periodic_traces(
         row = facet_rows[entity]
         image = tuple(-int(value) for value in anchors[row])
         cell_row = int(facets.cells[occurrence])
+        action = lattice.prepare((image,), budget=budget)[0]
         normalized = tuple(
-            _transform(
+            _PieceTrace.prepare(
                 cells[piece],
-                exact_periodic_element(matrices, orders, image, budget=budget),
+                prepared.affine_corners.get(piece),
+                action,
                 identifiers(piece_vertices[piece], image),
                 budget=budget,
             )
@@ -2043,9 +2248,7 @@ def _certify_periodic_traces(
         orbit = int(orbits[row])
         previous = traces.get(orbit)
         if previous is not None and any(
-            not cell_traces_equal(a, b, budget=budget)
-            for a in previous
-            for b in normalized
+            not a.equal(b, budget=budget) for a in previous for b in normalized
         ):
             state.add("periodic_mapped_trace_mismatch", "violated", "facet", (entity,))
         traces[orbit] = normalized
@@ -2341,12 +2544,9 @@ def _certify_periodic_pair(
 ) -> None:
     state, limits, budget = request.state, request.limits, request.budget
     first, cell_ids, owners = prepared.cells[a], images.cell_ids, prepared.owners
-    key = (
-        None
-        if facets.parent_faces
-        else _inverse_equivalent_pair_key(a, b, exponents, group.orders)
-    )
-    inverse_decision = None if key is None else cache.decisions.get(key)
+    inverse_key = _inverse_equivalent_pair_key(a, b, exponents, group.orders)
+    key = None if facets.parent_faces else inverse_key
+    inverse_decision = cache.decisions.get(inverse_key)
     if inverse_decision is not None:
         if not cache.recorded_reuse:
             state.checks.append("periodic_inverse_pair_proof_reuse")
@@ -2392,19 +2592,41 @@ def _certify_periodic_pair(
         return
     if _periodic_root_contact(request, prepared, a, b, image, transform_):
         return
-    allowed_traces = _authored_periodic_traces(
-        request,
-        prepared,
-        group,
-        facets,
-        sources,
-        first,
-        owners[a],
-        owners[b],
-        transform_,
-        exponents,
-        prepared.piece_vertices[a],
+    algebraic = any(
+        isinstance(coefficient, RadicalElement)
+        for cell in (first, image)
+        for expression in cell.coordinates
+        if isinstance(expression, dict)
+        for coefficient in expression.values()
     )
+    trace_authority_consumed = False
+
+    def prepare_traces() -> tuple[tuple[int, ...], ...]:
+        nonlocal trace_authority_consumed
+        trace_authority_consumed = True
+        # Authority depends on the first piece and the other parent boundary,
+        # not on which tetrahedron of that parent is being compared.
+        trace_key = a, owners[b], exponents
+        allowed_traces = cache.trace_permissions.get(trace_key)
+        if allowed_traces is None:
+            allowed_traces = _authored_periodic_traces(
+                request,
+                prepared,
+                group,
+                facets,
+                sources,
+                first,
+                owners[a],
+                owners[b],
+                transform_,
+                exponents,
+                prepared.piece_vertices[a],
+                cache,
+            )
+            budget.retain_basis((trace_key, allowed_traces))
+            cache.trace_permissions[trace_key] = allowed_traces
+        return allowed_traces
+
     reference = _layer_periodic_contact(request, prepared, a, b, image, transform_)
     if reference is not None and reference.status == "separated":
         return
@@ -2418,23 +2640,14 @@ def _certify_periodic_pair(
         else None
     )
     if decision is None:
-        algebraic = any(
-            isinstance(coefficient, RadicalElement)
-            for cell in (first, image)
-            for expression in cell.coordinates
-            if isinstance(expression, dict)
-            for coefficient in expression.values()
-        )
-        affine_contact = (
-            affine_mapped_contact_owner.affine_simplex_contact(
-                first,
-                image,
-                limits.maximum_work_units,
-                authenticated_first_traces=allowed_traces,
-                budget=budget,
-            )
+        affine_contact = affine_mapped_contact_owner.affine_simplex_contact(
+            first,
+            image,
+            limits.maximum_work_units
             if algebraic
-            else None
+            else limits.maximum_subdivision_pieces - state.subdivision_pieces,
+            trace_preparation=prepare_traces,
+            budget=budget,
         )
         if affine_contact is not None:
             decision = (
@@ -2443,6 +2656,11 @@ def _certify_periodic_pair(
                 else affine_contact.status
             )
             work = affine_contact.work
+            if decision == "separated" and not trace_authority_consumed:
+                # Shared-simplex support is symmetric under the inverse exact
+                # isometry, even when other pairs need authored parent traces.
+                budget.retain_basis((inverse_key,))
+                cache.decisions[inverse_key] = decision
         elif separating_plane(first, image, budget=budget):
             decision, work = "separated", 0
         else:
@@ -2451,7 +2669,7 @@ def _certify_periodic_pair(
                 image,
                 limits,
                 limits.maximum_subdivision_pieces - state.subdivision_pieces,
-                authenticated_first_traces=allowed_traces,
+                authenticated_first_traces=prepare_traces(),
                 budget=budget,
             )
             decision = (
@@ -2515,15 +2733,27 @@ def _certify_periodic_image_candidates(
         (int(images.cell_ids[b]),),
     )
     with budget.polynomial_preparation_scope():
-        image = _transform(
-            prepared.cells[b],
+        original = prepared.cells[b]
+        identity_image = not any(exponents)
+        image = original if identity_image else _transform(
+            original,
             transform_,
             prepared.lifted.identifiers(prepared.piece_vertices[b], exponents),
             budget=budget,
         )
-        lower, upper = _periodic_piece_bounds(
-            image, b in prepared.affine_pieces, budget=budget
-        )
+        if not identity_image and affine_mapped_contact_owner.affine_expressions(original.coordinates):
+            # Transform already-issued exact original corners directly, rather
+            # than evaluating the newly transformed polynomial at them again.
+            # The image key is issued immediately by this actual constructor.
+            corners = affine_mapped_contact_owner._cell_images(original, budget=budget)
+            budget.reserve(0, 128 + 64 * len(corners))
+            image_corners = tuple(
+                _transport_source_point(point, transform_, cache, budget=budget)
+                for point in corners
+            )
+            affine_mapped_contact_owner._retain_affine_cell_images(
+                image, image_corners, budget=budget
+            )
         for index in candidates:
             a = int(index)
             with budget.temporary_scope():
@@ -2531,12 +2761,9 @@ def _certify_periodic_image_candidates(
                     a >= b or prepared.owners[a] == prepared.owners[b]
                 ):
                     continue
-                # Broad boxes only propose candidates. Coefficient-field source-map bounds
-                # and every trace/contact predicate keep their previous order.
-                lo, hi = images.base_boxes[a]
-                budget.reserve(2 * request.mesh.ambient_dimension + 4)
-                if np.any(hi < lower) or np.any(upper < lo):
-                    continue
+                # The BVH already used a sound outward enclosure of the full
+                # source image under this exact action. Its candidates go
+                # directly to exact contact proof, not a duplicate box filter.
                 if state.candidate_pairs >= limits.maximum_candidate_pairs:
                     state.add(
                         "periodic_candidate_pair_budget",
@@ -2567,6 +2794,34 @@ def _certify_periodic_image_candidates(
     return True
 
 
+def _ordered_image_candidate_rows(
+    blocks: list[tuple[np.ndarray, np.ndarray]],
+    count: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, ...]:
+    """Bucket query IDs before sorting, preserving the full lexicographic bank.
+
+    The second index is already an integer in ``range(count)``. Sorting all
+    pairs compares unrelated query rows; integer bucketing visits each pair
+    once, and only the first indices within each query need comparisons.
+    Duplicates are retained, as in the previous full-bank ordering.
+    """
+    pairs = sum(first.size for first, _ in blocks)
+    budget.reserve(count + 2 * pairs, 256 + 96 * count + 64 * pairs)
+    rows: list[list[int]] = [[] for _ in range(count)]
+    for first, second in blocks:
+        for a, b in zip(first, second, strict=True):
+            rows[int(b)].append(int(a))
+    result: list[np.ndarray] = []
+    for row in rows:
+        size = len(row)
+        budget.reserve(size * max(1, size.bit_length()))
+        result.append(np.asarray(sorted(row), dtype=np.int64))
+    return tuple(result)
+
+
 def _certify_periodic_contact_chunk(
     request: _PeriodicRequest,
     prepared: _PeriodicCells,
@@ -2580,6 +2835,8 @@ def _certify_periodic_contact_chunk(
     exponents: tuple[int, ...],
     start: int,
     stop: int,
+    candidate_rows: list[tuple[int, ...]] | None,
+    source_box: tuple[np.ndarray, np.ndarray],
 ) -> bool:
     budget = request.budget
     dimension = request.mesh.ambient_dimension
@@ -2595,16 +2852,45 @@ def _certify_periodic_contact_chunk(
                 "cell",
                 (int(images.cell_ids[b]),),
             )
-            lower[local], upper[local] = transformed_source_box(
-                *images.base_boxes[b], transform_, budget=budget
+            if any(exponents):
+                lower[local], upper[local] = transformed_source_box(
+                    *images.base_boxes[b], transform_, budget=budget
+                )
+            else:
+                # The zero group action leaves the already outward source
+                # enclosure unchanged; do not reconstruct it with arithmetic.
+                lower[local], upper[local] = images.base_boxes[b]
+        # The earned whole-source enclosure contains every source item. Reject
+        # image items outside it before rebuilding/traversing a query hierarchy;
+        # the identical touching predicate still admits every possible pair.
+        budget.reserve(
+            count * (2 * dimension + 4),
+            512 + 128 * count * dimension,
+        )
+        overlaps = _host_boxes_overlap(
+            lower, upper, source_box[0], source_box[1], True, 0.0, 0.0
+        )
+        budget.reserve(count)
+        active_count = int(np.count_nonzero(overlaps))
+        if active_count == 0:
+            return True
+        query_indices = None
+        if active_count != count:
+            budget.reserve(
+                count + 2 * active_count * dimension,
+                256 + 8 * active_count + 16 * active_count * dimension,
             )
-        query = _periodic_contact_tree(lower, upper, budget)
+            query_indices = np.flatnonzero(overlaps)
+            query_lower, query_upper = lower[query_indices], upper[query_indices]
+        else:
+            query_lower, query_upper = lower, upper
+        query = _periodic_contact_tree(query_lower, query_upper, budget)
         maximum_block_pairs = 256
         # Pair banks, concatenation, lexicographic ordering and traversal stacks
         # are admitted even when the broad phase rejects every item.
         budget.reserve(
             0,
-            64 * len(prepared.cells) * count
+            64 * len(prepared.cells) * active_count
             + maximum_block_pairs
             * (512 + 32 * dimension)
             * (tree.max_depth + query.max_depth + 2),
@@ -2635,15 +2921,14 @@ def _certify_periodic_contact_chunk(
         )
         if not blocks:
             return True
-        first = np.concatenate([block[0] for block in blocks])
-        second = np.concatenate([block[1] for block in blocks])
-        budget.reserve(first.size * max(1, first.size.bit_length()))
-        order = np.lexsort((first, second))
-        first, second = first[order], second[order]
-        budget.reserve(count * max(1, second.size.bit_length()), 16 * (count + 1))
-        offsets = np.searchsorted(second, np.arange(count + 1, dtype=np.int64))
-        for local, b in enumerate(range(start, stop)):
-            selected = first[offsets[local] : offsets[local + 1]]
+        rows = _ordered_image_candidate_rows(blocks, active_count, budget=budget)
+        for local, selected in enumerate(rows):
+            b = start + (local if query_indices is None else int(query_indices[local]))
+            if candidate_rows is not None:
+                budget.reserve(0, 128 + 48 * selected.size)
+                row = tuple(int(index) for index in selected)
+                budget.retain_polynomial_preparation((row,))
+                candidate_rows[b] = row
             if selected.size and not _certify_periodic_image_candidates(
                 request,
                 prepared,
@@ -2674,7 +2959,13 @@ def _certify_periodic_contacts(
     if not prepared.cells:
         return
     # Source whole-map outward bounds and tree are shared by every image chunk.
-    with budget.temporary_scope():
+    with budget.temporary_scope(), budget.polynomial_preparation_scope():
+        # Canonical affine sources already issued their original corners. Seed
+        # only one fallback chunk; transformed expression-key aliases remain
+        # image-consumer-local, while exact point/action values are request-owned.
+        for cell in prepared.cells[:_PERIODIC_CONTACT_CHUNK_SIZE]:
+            if affine_mapped_contact_owner.affine_expressions(cell.coordinates):
+                affine_mapped_contact_owner._cell_images(cell, budget=budget)
         budget.reserve(
             2 * len(prepared.cells) * request.mesh.ambient_dimension,
             16 * len(prepared.cells) * request.mesh.ambient_dimension,
@@ -2682,9 +2973,26 @@ def _certify_periodic_contacts(
         lower = np.asarray([box[0] for box in images.base_boxes], dtype=np.float64)
         upper = np.asarray([box[1] for box in images.base_boxes], dtype=np.float64)
         tree = _periodic_contact_tree(lower, upper, budget)
-        _certify_periodic_contact_images(
-            request, prepared, group, facets, sources, images, cache, tree
+        budget.reserve(
+            2 * len(prepared.cells) * request.mesh.ambient_dimension,
+            16 * request.mesh.ambient_dimension,
         )
+        source_box = np.min(lower, axis=0), np.max(upper, axis=0)
+        _certify_periodic_contact_images(
+            request, prepared, group, facets, sources, images, cache, tree, source_box
+        )
+
+
+def _transpose_image_candidates(
+    rows: tuple[tuple[int, ...], ...], /, *, budget: CoordinateEnclosureBudget
+) -> tuple[tuple[int, ...], ...]:
+    """Transpose a complete conservative relation without another geometric query."""
+    budget.reserve(0, 512 + 192 * len(rows) + 64 * sum(map(len, rows)))
+    transposed: list[list[int]] = [[] for _ in rows]
+    for second, firsts in enumerate(rows):
+        for first in firsts:
+            transposed[first].append(second)
+    return tuple(tuple(row) for row in transposed)
 
 
 def _certify_periodic_contact_images(
@@ -2696,7 +3004,12 @@ def _certify_periodic_contact_images(
     images: _PeriodicImages,
     cache: _PeriodicContactCache,
     tree: PackedBVH,
+    source_box: tuple[np.ndarray, np.ndarray],
 ) -> None:
+    lattice = ExactPeriodicActionLattice(group.matrices, group.orders)
+    budget = request.budget
+    budget.reserve(0, 512)
+    candidate_banks: dict[tuple[int, ...], tuple[tuple[int, ...], ...]] = {}
     for finite_exponents, _ in group.finite:
         for translation_exponents in product(*images.ranges):
             iterator = iter(translation_exponents)
@@ -2705,10 +3018,31 @@ def _certify_periodic_contact_images(
                 value + period * next(iterator) if period else value
                 for value, period in zip(finite_exponents, group.periods, strict=True)
             )
-            transform_ = exact_periodic_element(
-                group.matrices, group.orders, exponents, budget=request.budget
+            transform_ = lattice.prepare((exponents,), budget=request.budget)[0]
+            action_key = lattice.key(exponents)
+            inverse_key = tuple(
+                -value % order if order else -value
+                for value, order in zip(action_key, group.orders, strict=True)
             )
-            for start in range(0, len(prepared.cells), 16):
+            inverse_bank = candidate_banks.get(inverse_key)
+            if inverse_bank is not None:
+                # A ∩ G(B) maps bijectively to G^-1(A) ∩ B. Transposing a
+                # complete conservative bank is therefore conservative too;
+                # current contact/authority predicates still run for every row.
+                with budget.temporary_scope():
+                    rows = _transpose_image_candidates(inverse_bank, budget=budget)
+                    for b, firsts in enumerate(rows):
+                        if firsts and not _certify_periodic_image_candidates(
+                            request, prepared, group, facets, sources, images, cache,
+                            transform_, exponents, b, np.asarray(firsts, dtype=np.int64),
+                        ):
+                            return
+                continue
+            budget.reserve(0, 128 + 32 * len(prepared.cells))
+            candidate_rows: list[tuple[int, ...]] | None = (
+                [()] * len(prepared.cells) if inverse_key != action_key else None
+            )
+            for start in range(0, len(prepared.cells), _PERIODIC_CONTACT_CHUNK_SIZE):
                 if not _certify_periodic_contact_chunk(
                     request,
                     prepared,
@@ -2721,9 +3055,98 @@ def _certify_periodic_contact_images(
                     transform_,
                     exponents,
                     start,
-                    min(start + 16, len(prepared.cells)),
+                    min(start + _PERIODIC_CONTACT_CHUNK_SIZE, len(prepared.cells)),
+                    candidate_rows,
+                    source_box,
                 ):
                     return
+            if candidate_rows is not None:
+                # Publish only after every chunk of this image was visited.
+                bank = tuple(candidate_rows)
+                budget.retain_polynomial_preparation((action_key, bank))
+                candidate_banks[action_key] = bank
+
+
+def _certify_periodic_restriction(
+    request: _PeriodicRequest, restriction: PeriodicRestrictionPremise
+) -> None:
+    """Prove target-only premises, then transfer the source embedding or fall back.
+
+    Group identity, cell preparation, facet traces and the exact parent and
+    boundary-subdivision partition are current target proofs. Without admitted
+    partition evidence the bounded image-pair proof below decides the whole
+    embedding.
+    """
+    state, limits, progress = request.state, request.limits, request.progress
+    state.checks.extend(
+        ("periodic_authored_group_identity", "periodic_mapped_trace_equivariance")
+    )
+    group = _prepare_periodic_group(request)
+    if group.finite_count > limits.maximum_periodic_images:
+        state.checks.extend(_PERIODIC_IMAGE_CHECKS)
+        progress.image_count = group.finite_count
+        return
+    prepared = _prepare_periodic_cells(request, group)
+    if prepared is None:
+        state.checks.extend(_PERIODIC_IMAGE_CHECKS)
+        return
+    facets = _prepare_periodic_facets(request, prepared, group)
+    _certify_periodic_traces(request, prepared, group, facets)
+    request.budget.reserve(facets.entity_ids.size, 256 + 16 * facets.entity_ids.size)
+    occurrence_orbits = np.asarray(
+        [int(facets.orbits[facets.facet_rows[int(entity)]]) for entity in facets.entity_ids],
+        dtype=np.int64,
+    )
+    evidence = periodic_restriction_owner.certify_periodic_restriction_partition(
+        state,
+        request.mesh,
+        request.geometry,
+        request.validity,
+        restriction,
+        progress.facet_trace_certificate_id,
+        occurrence_orbits,
+        prepared.source_bank,
+        budget=request.budget,
+    )
+    if evidence is not None:
+        state.periodic_restriction = evidence
+        return
+    if not state.findings:
+        mapped = certify_periodic_mapped_restriction(
+            restriction.mapped_predecessor,
+            restriction.mapped_transition,
+            request.validity,
+            restriction.source_regions,
+            restriction.target_regions,
+            restriction.source_domain,
+            restriction.region_namespace_id,
+            progress.facet_trace_certificate_id,
+            budget=request.budget,
+        )
+        if mapped is not None:
+            state.periodic_mapped_restriction = mapped
+            state.checks.extend(
+                (
+                    "periodic_mapped_restriction_source_embedding",
+                    "periodic_mapped_restriction_parent_partition",
+                    "periodic_mapped_restriction_common_subcomplex",
+                    "periodic_mapped_restriction_derived_region_assignment",
+                )
+            )
+            return
+    state.checks.extend(_PERIODIC_IMAGE_CHECKS)
+    sources = _prepare_periodic_source_faces(request, prepared, facets)
+    _prepare_periodic_affine_quotient(request, prepared, facets)
+    images = _prepare_periodic_images(request, prepared, group)
+    if images is not None:
+        _certify_periodic_contacts(request, prepared, group, facets, sources, images)
+
+
+_PERIODIC_IMAGE_CHECKS = (
+    "periodic_full_source_hulls",
+    "periodic_image_sufficiency",
+    "periodic_mapped_self_image_embedding",
+)
 
 
 @checked
@@ -2737,17 +3160,13 @@ def certify_periodic_mapped_embedding(
     *,
     budget: CoordinateEnclosureBudget,
     validity: CellValidityCertificate | None = None,
+    restriction: PeriodicRestrictionPremise | None = None,
 ) -> int:
-    """Certify source-map contacts in the quotient and return the image count."""
-    state.checks.extend(
-        (
-            "periodic_authored_group_identity",
-            "periodic_full_source_hulls",
-            "periodic_image_sufficiency",
-            "periodic_mapped_trace_equivariance",
-            "periodic_mapped_self_image_embedding",
-        )
-    )
+    """Certify source-map contacts in the quotient and return the image count.
+
+    An authenticated ``restriction`` premise first attempts the exact parent
+    partition theorem; outside its admission the bounded image-pair proof runs.
+    """
     topology = mesh.periodic_topology
     if topology is None:
         raise ValueError(
@@ -2765,6 +3184,27 @@ def certify_periodic_mapped_embedding(
             budget.activate(),
             budget.bound_stage(limits.maximum_work_units, limits.maximum_scratch_bytes),
         ):
+            degree = periodic_affine_degree_owner.certify_affine_torus_degree(
+                state, mesh, geometry, cell_ids, budget=budget
+            )
+            if degree is not False:
+                if isinstance(degree, embedding_state_owner.PeriodicAffineTorusDegreeEvidence):
+                    state.periodic_affine_degree = degree
+                # The degree proof quantifies all quotient images without
+                # enumerating any; do not invent a visited-image count.
+                return progress.image_count
+            if restriction is not None:
+                _certify_periodic_restriction(request, restriction)
+                return progress.image_count
+            state.checks.extend(
+                (
+                    "periodic_authored_group_identity",
+                    "periodic_full_source_hulls",
+                    "periodic_image_sufficiency",
+                    "periodic_mapped_trace_equivariance",
+                    "periodic_mapped_self_image_embedding",
+                )
+            )
             group = _prepare_periodic_group(request)
             if group.finite_count > limits.maximum_periodic_images:
                 progress.image_count = group.finite_count

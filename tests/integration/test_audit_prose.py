@@ -43,8 +43,16 @@ def test_docstring_rejects_intensifiers(tmp_path: Path, word: str) -> None:
         "Compare actual consumption with the admitted upper bound.",
         "Retain source authority.",
         "Compare original coordinates with lifted coordinates.",
+        "Round the exact source-owned P1 root to its binary64 carrier.",
     ],
-    ids=["precision", "identity", "resource-bound", "provenance", "derived-coordinates"],
+    ids=[
+        "precision",
+        "identity",
+        "resource-bound",
+        "provenance",
+        "derived-coordinates",
+        "unrounded-value",
+    ],
 )
 def test_domain_phrases_pass(tmp_path: Path, phrase: str) -> None:
     path = _source(tmp_path, f'"""{phrase}"""\n')
@@ -57,6 +65,7 @@ def test_domain_phrases_pass(tmp_path: Path, phrase: str) -> None:
         "Return actual work.",
         "Keep original coordinates.",
         "Return exact results.",
+        "Return exact roots.",
         "Return canonical evidence.",
         "Return actual original authoritative results.",
     ],
@@ -64,6 +73,7 @@ def test_domain_phrases_pass(tmp_path: Path, phrase: str) -> None:
         "missing-bound",
         "missing-derived-object",
         "precision-claim",
+        "unrounded-value-without-rounding-contrast",
         "identity-claim",
         "adjective-stack",
     ],
@@ -228,7 +238,7 @@ def test_changed_since_filters_unchanged_files_and_keeps_worktree_changes(
     changed = package / "changed.py"
     unchanged.write_text("# genuinely\nclass Witness:\n    pass\n", encoding="utf-8")
     changed.write_text("# Before.\n", encoding="utf-8")
-    _policy(tmp_path, {"phydrax/owned.py": False})
+    _policy(tmp_path, {"phydrax/unchanged.py": False})
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", ".")
     _git(
@@ -277,6 +287,7 @@ def test_changed_since_scans_unowned_files_only_on_changed_lines(
     package.mkdir()
     consumer = package / "consumer.py"
     consumer.write_text("# genuinely legacy\nvalue = 1\n", encoding="utf-8")
+    (package / "owned.py").write_text("value = 0\n", encoding="utf-8")
     _policy(tmp_path, {"phydrax/owned.py": False})
     revision = _commit_baseline(tmp_path)
     consumer.write_text("# genuinely legacy\nvalue = 2  # actually\n", encoding="utf-8")
@@ -301,34 +312,129 @@ def test_changed_since_scans_policy_listed_files_whole(
     assert [(item.line, item.detail) for item in findings] == [(1, "genuinely")]
 
 
-def test_default_scope_selects_policy_tests_and_meshing_tools(
+def test_default_changed_scope_scans_branch_authored_files_whole(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _policy(
         tmp_path,
-        {
-            "tests/unit/geometry/test_geometry.py": True,
-            "tests/unrelated.py": False,
-        },
+        {"tests/unit/geometry/test_geometry.py": True, "tools/owned_tool.py": False},
     )
-    selected = [
+    legacy = "# genuinely legacy\nvalue = 1\n"
+    modified = [
         "tests/unit/geometry/test_geometry.py",
-        "tools/native_moving_overset.py",
+        "tests/unit/other/test_modified.py",
         "tools/meshing_design_source.py",
+        "tools/native_moving_overset.py",
+        "tools/owned_tool.py",
     ]
-    for name in [*selected, "tests/unrelated.py"]:
+    added = [
+        "examples/new_example.py",
+        "tests/unit/other/test_added.py",
+        "tests/unit/test_untracked.py",
+        "tools/new_tool.py",
+    ]
+    for name in modified:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("# Before.\n", encoding="utf-8")
+        path.write_text(legacy, encoding="utf-8")
     revision = _commit_baseline(tmp_path)
-    for name in [*selected, "tests/unrelated.py"]:
-        (tmp_path / name).write_text("# actually\n", encoding="utf-8")
+    for name in modified:
+        (tmp_path / name).write_text(
+            legacy.replace("1", "2  # actually"), encoding="utf-8"
+        )
+    for name in added:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(legacy, encoding="utf-8")
+    _git(tmp_path, "add", "tests/unit/other/test_added.py")
     monkeypatch.setattr(audit_prose, "ROOT", tmp_path)
     findings, count = audit_prose.audit(changed_since=revision)
-    assert count == 3
+    # A modified file outside the default selection stays out; an added file
+    # outside phydrax/, tests/ and tools/ is not a gate path.
+    assert count == 7
     assert [(item.file, item.line, item.detail) for item in findings] == [
-        (name, 1, "actually") for name in sorted(selected)
+        ("tests/unit/geometry/test_geometry.py", 1, "genuinely"),
+        ("tests/unit/geometry/test_geometry.py", 2, "actually"),
+        ("tests/unit/other/test_added.py", 1, "genuinely"),
+        ("tests/unit/test_untracked.py", 1, "genuinely"),
+        ("tools/meshing_design_source.py", 2, "actually"),
+        ("tools/native_moving_overset.py", 2, "actually"),
+        ("tools/new_tool.py", 1, "genuinely"),
+        ("tools/owned_tool.py", 1, "genuinely"),
+        ("tools/owned_tool.py", 2, "actually"),
     ]
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        None,
+        ("diff.renames", "false"),
+        ("diff.renames", "copies"),
+        ("diff.mnemonicPrefix", "true"),
+        ("diff.noprefix", "true"),
+        ("diff.interHunkContext", "10"),
+    ],
+    ids=["default", "no-renames", "copies", "mnemonic", "no-prefix", "hunk-context"],
+)
+def test_changed_since_scopes_staged_rename_to_rewritten_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: tuple[str, str] | None
+) -> None:
+    package = tmp_path / "phydrax"
+    package.mkdir()
+    padding = "".join(f"PAD_{index} = {index}\n" for index in range(8))
+    (package / "legacy.py").write_text(
+        "value = 1\n# genuinely legacy\nother = 1\n" + padding, encoding="utf-8"
+    )
+    (package / "owned.py").write_text("value = 0\n", encoding="utf-8")
+    _policy(tmp_path, {"phydrax/owned.py": False})
+    revision = _commit_baseline(tmp_path)
+    _git(tmp_path, "mv", "phydrax/legacy.py", "phydrax/moved.py")
+    (package / "moved.py").write_text(
+        "value = 2\n# genuinely legacy\nother = 2  # actually\n" + padding,
+        encoding="utf-8",
+    )
+    if setting is not None:
+        _git(tmp_path, "config", *setting)
+    monkeypatch.setattr(audit_prose, "ROOT", tmp_path)
+    findings, count = audit_prose.audit(changed_since=revision)
+    assert count == 1
+    assert [(item.file, item.line, item.detail) for item in findings] == [
+        ("phydrax/moved.py", 3, "actually")
+    ]
+
+
+@pytest.mark.parametrize("gate", ["prose", "contracts"])
+def test_branch_gates_admit_policy_paths_deleted_since_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str
+) -> None:
+    package = tmp_path / "phydrax"
+    package.mkdir()
+    (package / "removed.py").write_text("# genuinely legacy\n", encoding="utf-8")
+    (package / "changed.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _policy(tmp_path, {"phydrax/removed.py": False})
+    revision = _commit_baseline(tmp_path)
+    (package / "removed.py").unlink()
+    (package / "changed.py").write_text(
+        "VALUE = 1\n\n\n"
+        "def added(value: Operand) -> None:\n"
+        "    # actually\n"
+        "    if not isinstance(value, Operand):\n"
+        '        raise TypeError("Operand.value must be an Operand; got None")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(audit_prose, "ROOT", tmp_path)
+    monkeypatch.setattr(audit_contract_candidates, "ROOT", tmp_path)
+    if gate == "prose":
+        findings, _ = audit_prose.audit([package], changed_since=revision)
+        assert [(item.file, item.line, item.detail) for item in findings] == [
+            ("phydrax/changed.py", 5, "actually")
+        ]
+    else:
+        guards = audit_contract_candidates.audit_changed_signatures(package, revision)
+        assert [(item.file, item.function, item.disposition) for item in guards] == [
+            ("phydrax/changed.py", "added", "undisposed-annotation-guard")
+        ]
 
 
 @pytest.mark.parametrize("gate", ["prose", "contracts"])
@@ -395,6 +501,7 @@ def test_branch_diagnostics_preserve_whole_mixed_and_new_file_boundaries(
         "path\tprose_test\nphydrax/*.py\t0\n",
         "path\tprose_test\nphydrax/owned.py\tinvalid\n",
         "path\tprose_test\nphydrax/owned.py\t1\n",
+        "path\tprose_test\nphydrax/absent.py\t0\n",
     ],
     ids=[
         "missing",
@@ -409,6 +516,7 @@ def test_branch_diagnostics_preserve_whole_mixed_and_new_file_boundaries(
         "glob",
         "flag",
         "non-test-selection",
+        "absent",
     ],
 )
 def test_branch_gates_refuse_missing_or_invalid_scope_policy(

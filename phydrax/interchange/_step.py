@@ -53,6 +53,7 @@ from ..discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
+from ..geometry.brep._coordinate_request import coordinate_source_request
 from ..geometry.brep._model import (
     BRepAssemblyContainer,
     BRepGeometry,
@@ -79,6 +80,7 @@ from ..geometry.brep._patches import (
 )
 from ..typing import checked, parse
 from ._cad import (
+    bounded_approximation_descriptor,
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     CadCodecInvariantError,
@@ -92,6 +94,7 @@ from ._cad import (
     CadStage,
     certified_cad_export_tolerances,
     curve_parameter,
+    decode_bounded_approximation_descriptor,
     explicit_carrier,
     length_factor,
     prepare_cad_export_geometry,
@@ -427,26 +430,31 @@ _TOKEN = re.compile(
 
 type _Token = tuple[str, str, int]
 
+_PAGE_ESCAPE = re.compile(r"\\P[A-I]\\")
+
 
 def _decode_string(raw: str, position: int, /) -> str:
-    """Part 21 string literal body: quote doubling and ``\\`` control directives."""
+    """Part 21 string literal body: quote doubling and ``\\`` control directives.
+
+    Directives are matched in place, so decoding is linear in the literal length.
+    """
     text = raw[1:-1].replace("''", "'")
     result: list[str] = []
     index = 0
-    while index < len(text):
+    length = len(text)
+    while index < length:
         character = text[index]
         if character != "\\":
             result.append(character)
             index += 1
             continue
-        rest = text[index:]
-        if rest.startswith("\\\\"):
+        if text.startswith("\\\\", index):
             result.append("\\")
             index += 2
-        elif rest.startswith("\\X2\\") or rest.startswith("\\X4\\"):
-            width = 4 if rest[2] == "2" else 8
-            end = rest.find("\\X0\\")
-            digits = rest[4:end]
+        elif text.startswith("\\X2\\", index) or text.startswith("\\X4\\", index):
+            width = 4 if text[index + 2] == "2" else 8
+            end = text.find("\\X0\\", index)
+            digits = text[index + 4 : end]
             if end < 0 or len(digits) % width:
                 raise refuse(
                     "malformed",
@@ -457,14 +465,14 @@ def _decode_string(raw: str, position: int, /) -> str:
                 chr(int(digits[offset : offset + width], 16))
                 for offset in range(0, len(digits), width)
             )
-            index += end + 4
-        elif rest.startswith("\\X\\") and len(rest) >= 5:
-            result.append(chr(int(rest[3:5], 16)))
+            index = end + 4
+        elif text.startswith("\\X\\", index) and length - index >= 5:
+            result.append(chr(int(text[index + 3 : index + 5], 16)))
             index += 5
-        elif rest.startswith("\\S\\") and len(rest) >= 4:
-            result.append(chr(ord(rest[3]) + 128))
+        elif text.startswith("\\S\\", index) and length - index >= 4:
+            result.append(chr(ord(text[index + 3]) + 128))
             index += 4
-        elif re.match(r"\\P[A-I]\\", rest):
+        elif _PAGE_ESCAPE.match(text, index):
             index += 4
         else:
             raise refuse("malformed", f"offset {position}", "Invalid string escape.")
@@ -659,6 +667,18 @@ class _Parser:
                 self._take(")")
                 if not records:
                     raise refuse("malformed", reference[1], "Empty complex instance.")
+                # ISO 10303-21 lists each partial entity of a complex instance
+                # once; a repeated name would make partial lookup order-dependent.
+                names: set[str] = set()
+                repeated: set[str] = set()
+                for record in records:
+                    (repeated if record.name in names else names).add(record.name)
+                if repeated:
+                    raise refuse(
+                        "malformed",
+                        reference[1],
+                        f"STEP.complex_instance.partials must name each entity once; got repeated {sorted(repeated)}.",
+                    )
                 instance = _Instance(identifier, tuple(records), True)
             else:
                 instance = _Instance(identifier, (self._record(),), False)
@@ -810,6 +830,26 @@ def _reverse(loop: list[StagedCoedge], /) -> list[StagedCoedge]:
     return [StagedCoedge(c.edge, -c.sense, c.pcurve, c.label) for c in reversed(loop)]
 
 
+def _composes_without_rounding(
+    outer: RigidPlacement, inner: RigidPlacement, composed: RigidPlacement, /
+) -> bool:
+    """Whether ``composed`` represents ``outer`` after ``inner`` in rationals."""
+    first, second, result = outer.matrix(), inner.matrix(), composed.matrix()
+    for row in range(3):
+        for column in range(4):
+            value = sum(
+                (
+                    Fraction(float(first[row, axis]))
+                    * Fraction(float(second[axis, column]))
+                    for axis in range(3)
+                ),
+                Fraction(0) if column < 3 else Fraction(float(first[row, 3])),
+            )
+            if value != Fraction(float(result[row, column])):
+                return False
+    return True
+
+
 class _Decoder:
     """Map an admitted instance graph to a `CadStage`."""
 
@@ -839,6 +879,7 @@ class _Decoder:
         self.solids: dict[int, int] = {}
         self.representations: dict[int, list[int]] = {}
         self.mapped_items: dict[int, list[tuple[int, int, RigidPlacement]]] = {}
+        self.occurrence_counts: dict[int, int] = {}
         self.unit_cache: dict[int, _Units] = {}
         self.entity_units: dict[int, _Units] = {}
         self.children: dict[int, tuple[int, ...]] = {}
@@ -847,6 +888,8 @@ class _Decoder:
         self.raw_source_uncertainties: dict[str, float] = {}
         self.source_uncertainty_units: dict[int, float] = {}
         self.unrepresentable_uncertainties: dict[int, str] = {}
+        self.bounded_descriptors: dict[int, str] = {}
+        self.context_bounded_descriptors: set[int] = set()
         self.ignored_units: set[int] = set()
 
     # -------------------------------------------------------------- access
@@ -1028,6 +1071,9 @@ class _Decoder:
         )
         for reference in references:
             self._record_uncertainty(reference)
+            identifier = self._get(reference).id
+            if identifier in self.bounded_descriptors:
+                self.context_bounded_descriptors.add(identifier)
 
     def _record_uncertainty(self, reference: Any) -> None:
         uncertainty = self._get(reference)
@@ -1040,7 +1086,7 @@ class _Decoder:
                 uncertainty,
                 "Expected UNCERTAINTY_MEASURE_WITH_UNIT.",
             )
-        magnitude, unit, _, _ = self._params(uncertainty, 4)
+        magnitude, unit, name, description = self._params(uncertainty, 4)
         if not isinstance(magnitude, _Typed) or magnitude.name != "LENGTH_MEASURE":
             raise self._refuse(
                 "units",
@@ -1056,6 +1102,26 @@ class _Decoder:
             )
         unit_meters = self._unit_value(unit, "LENGTH_UNIT")
         converted = value * length_factor(unit_meters, self.policy.coordinate_contract)
+        if name == "phydrax_bounded_approximation":
+            if not isinstance(description, str):
+                raise self._refuse(
+                    "malformed", uncertainty, "Bounded approximation descriptor must be text."
+                )
+            declared_gap = decode_bounded_approximation_descriptor(description)
+            if value != declared_gap:
+                raise self._refuse(
+                    "inconsistent-geometry",
+                    uncertainty,
+                    "Context length uncertainty must equal the bounded descriptor gap "
+                    f"in source units; got {value!r}, expected {declared_gap!r}.",
+                )
+            converted = decode_bounded_approximation_descriptor(
+                description,
+                length_factor=length_factor(
+                    unit_meters, self.policy.coordinate_contract
+                ),
+            )
+            self.bounded_descriptors[uncertainty.id] = description
         if np.isfinite(converted):
             self.source_uncertainties[uncertainty.id] = converted
         else:
@@ -2069,48 +2135,22 @@ class _Decoder:
                 "A mapped occurrence requires exactly unit scale.",
             )
         axes = tuple(
-            np.eye(3)[i]
-            if axis is None
-            else self._direction(
-                axis,
-                3,
-                normalize=self.policy.maximum_placement_deviation == 0.0,
-            )
+            np.eye(3)[i] if axis is None else self._direction(axis, 3, normalize=False)
             for i, axis in enumerate((axis1, axis2, axis3))
         )
-        if (
-            self.policy.maximum_placement_deviation > 0.0
-            and axis1 is None
-            and axes[2][1] == 0.0
-            and axes[2][2] == 0.0
-        ):
+        if axis1 is None and axes[2][1] == 0.0 and axes[2][2] == 0.0:
             axes = (np.eye(3)[1], axes[1], axes[2])
-        rotation = np.stack(axes, axis=1)
         previous = self.units
         self.units = self._context_units(context)
         translation = self._point(location, 3, True)
         self.units = previous
-        if self.policy.maximum_placement_deviation > 0.0:
-            if self.coordinate_budget is None:
-                raise ValueError(
-                    "STEP.placement.coordinate_budget must be supplied; got None."
-                )
-            destination = RigidPlacement.from_source_directions(
-                axes[0],
-                axes[2],
-                translation,
-                operator.label,
-                self.coordinate_budget,
-                second_axis=axes[1],
-            )
-        else:
-            destination = RigidPlacement.from_certified_matrix(
-                np.concatenate((rotation, translation[:, None]), axis=1),
-                operator.label,
-            )
-        return mapped.id, destination.compose(
+        destination = self._source_frame(
+            axes[0], axes[2], translation, operator.label, second_axis=axes[1]
+        )
+        return mapped.id, self._compose(
+            destination,
             source_placement.inverse(coordinate_budget=self.coordinate_budget),
-            coordinate_budget=self.coordinate_budget,
+            instance.label,
         )
 
     def _representation_occurrences(
@@ -2128,10 +2168,14 @@ class _Decoder:
             for solid in self._representation(identifier)
         ]
         for item, mapped, local in self.mapped_items.get(identifier, ()):
+            # A solid-free subgraph publishes nothing; skipping it keeps shared
+            # empty maps from unfolding exponentially.
+            if not self._occurrence_count(mapped):
+                continue
             result.extend(
                 self._representation_occurrences(
                     mapped,
-                    placement.compose(local, coordinate_budget=self.coordinate_budget),
+                    self._compose(placement, local, self.instances[item].label),
                     path + (f"mapped{item}",),
                 )
             )
@@ -2143,43 +2187,111 @@ class _Decoder:
                 )
         return result
 
+    def _occurrence_count(self, identifier: int) -> int:
+        """Count unfolded mapped solid occurrences, saturating past the limit.
+
+        Each representation is counted once, so the count is linear in the
+        distinct mapped graph however often its definitions are shared.
+        """
+        if identifier not in self.occurrence_counts:
+            limit = self.policy.maximum_occurrences + 1
+            total = len(self._representation(identifier))
+            for _, mapped, _ in self.mapped_items.get(identifier, ()):
+                total = min(limit, total + self._occurrence_count(mapped))
+            self.occurrence_counts[identifier] = min(limit, total)
+        return self.occurrence_counts[identifier]
+
+    def _compose(
+        self, outer: RigidPlacement, inner: RigidPlacement, label: str
+    ) -> RigidPlacement:
+        """Compose poses; a zero placement-deviation limit refuses rounding.
+
+        Positive limits carry composition error in the retained enclosures.
+        Zero-width binary64 frames are signed permutations, so their inverses
+        are representable and only composition can round.
+        """
+        composed = outer.compose(inner, coordinate_budget=self.coordinate_budget)
+        if self.policy.maximum_placement_deviation > 0.0 or _composes_without_rounding(
+            outer, inner, composed
+        ):
+            return composed
+        raise self._refuse(
+            "unsupported-entity",
+            label,
+            "STEP.placement.composition must have zero deviation under a zero placement-deviation limit; got a rounded composed pose.",
+        )
+
     def _placement(self, reference: Any, context: Any) -> RigidPlacement:
+        """Certify an ``AXIS2_PLACEMENT_3D`` from its source direction ratios."""
         previous = self.units
         self.units = self._context_units(context)
-        if self.policy.maximum_placement_deviation > 0.0:
-            instance = self._get(reference)
-            if self._simple(instance).name != "AXIS2_PLACEMENT_3D":
-                raise self._refuse(
-                    "unsupported-entity",
-                    instance,
-                    "STEP.placement must be AXIS2_PLACEMENT_3D; got an unsupported source frame.",
-                )
-            _, location, axis, ref = self._params(instance, 4)
-            origin = self._point(location, 3, True)
-            z = (
-                np.eye(3)[2]
-                if axis is None
-                else self._direction(axis, 3, normalize=False)
+        instance = self._get(reference)
+        if self._simple(instance).name != "AXIS2_PLACEMENT_3D":
+            raise self._refuse(
+                "unsupported-entity",
+                instance,
+                "STEP.placement must be AXIS2_PLACEMENT_3D; got an unsupported source frame.",
             )
-            x = np.eye(3)[0] if ref is None else self._direction(ref, 3, normalize=False)
-            if ref is None and z[1] == 0.0 and z[2] == 0.0:
-                x = np.eye(3)[1]
-            self.units = previous
+        _, location, axis, ref = self._params(instance, 4)
+        origin = self._point(location, 3, True)
+        z = np.eye(3)[2] if axis is None else self._direction(axis, 3, normalize=False)
+        x = np.eye(3)[0] if ref is None else self._direction(ref, 3, normalize=False)
+        if ref is None and z[1] == 0.0 and z[2] == 0.0:
+            x = np.eye(3)[1]
+        self.units = previous
+        return self._source_frame(x, z, origin, instance.label)
+
+    def _source_frame(
+        self,
+        first_axis: np.ndarray,
+        third_axis: np.ndarray,
+        translation: np.ndarray,
+        label: str,
+        *,
+        second_axis: np.ndarray | None = None,
+    ) -> RigidPlacement:
+        """Certify the proper pose intended by source direction ratios.
+
+        A positive limit retains the source enclosure as placement evidence. A
+        zero placement-deviation limit admits only poses whose source enclosure
+        has zero width, so rounded frames refuse instead of entering without
+        evidence.
+        """
+        if self.policy.maximum_placement_deviation > 0.0:
             if self.coordinate_budget is None:
                 raise ValueError(
                     "STEP.placement.coordinate_budget must be supplied; got None."
                 )
             return RigidPlacement.from_source_directions(
-                x,
-                z,
-                origin,
-                instance.label,
+                first_axis,
+                third_axis,
+                translation,
+                label,
                 self.coordinate_budget,
+                second_axis=second_axis,
             )
-        origin, x, y, z = self._frame3(reference)
-        self.units = previous
-        rotation = np.stack((x, y, z), axis=1)
-        return RigidPlacement(rotation, origin)
+        with coordinate_source_request(
+            (first_axis, third_axis, translation, second_axis),
+            budget=self.coordinate_budget,
+        ) as budget:
+            placement = RigidPlacement.from_source_directions(
+                first_axis,
+                third_axis,
+                translation,
+                label,
+                budget,
+                second_axis=second_axis,
+            )
+        if (
+            placement.rotation_deviation_bound > 0.0
+            or placement.translation_deviation_bound > 0.0
+        ):
+            raise self._refuse(
+                "unsupported-entity",
+                label,
+                "STEP.placement must have zero rotation and translation deviation under a zero placement-deviation limit; got a rounded source frame.",
+            )
+        return RigidPlacement(placement.rotation, placement.translation)
 
     def _items_context(self, identifier: int) -> Any:
         instance = self.instances[identifier]
@@ -2297,8 +2409,15 @@ class _Expansion:
         self.decoder = decoder
         self.assembly = assembly
         self.count = 0
+        self.product_solids: dict[int, tuple[list[int], list[int]]] = {}
 
     def solids(self, product: int) -> tuple[list[int], list[int]]:
+        """Representations and first-use solid order of a product (memoized)."""
+        if product not in self.product_solids:
+            self.product_solids[product] = self._solids(product)
+        return self.product_solids[product]
+
+    def _solids(self, product: int) -> tuple[list[int], list[int]]:
         representations = [
             identifier
             for identifier in _closure(
@@ -2374,17 +2493,13 @@ class _Expansion:
         origin = decoder._placement(source, decoder._items_context(child))
         destination = decoder._placement(target, decoder._items_context(parent))
         decoder._leave()
-        matrix = (
-            destination
-            if origin.is_identity
-            else destination.compose(
-                origin.inverse(coordinate_budget=decoder.coordinate_budget),
-                coordinate_budget=decoder.coordinate_budget,
-            )
+        if origin.is_identity:
+            return destination
+        return decoder._compose(
+            destination,
+            origin.inverse(coordinate_budget=decoder.coordinate_budget),
+            transform.label,
         )
-        if decoder.policy.maximum_placement_deviation > 0.0:
-            return matrix
-        return RigidPlacement.from_matrix(matrix.matrix(), transform.label)
 
     def expand(
         self,
@@ -2469,10 +2584,7 @@ class _Expansion:
             combined = (
                 local
                 if placement.is_identity
-                else placement.compose(
-                    local,
-                    coordinate_budget=decoder.coordinate_budget,
-                )
+                else decoder._compose(placement, local, decoder.instances[usage].label)
             )
             kind = "container" if child_is_container else "occurrence"
             declared_path = _identity_path(
@@ -2655,6 +2767,18 @@ def _decode(
         relative_geometric_tolerance=policy.relative_geometric_tolerance,
     )
     decoder.stage = stage
+    descriptors = {
+        decoder.bounded_descriptors[identifier]
+        for identifier in decoder.context_bounded_descriptors
+    }
+    if len(descriptors) > 1:
+        raise refuse(
+            "inconsistent-geometry", "DATA",
+            "Shape contexts must agree on one bounded approximation descriptor.",
+        )
+    if descriptors:
+        identifier = min(decoder.context_bounded_descriptors)
+        stage.bounded_approximation_gap = decoder.source_uncertainties[identifier]
     # Definition numbering, not assembly traversal, determines native rows.
     # Reused placed parts reference the same already-decoded definition.
     for representation in representations:
@@ -2684,13 +2808,18 @@ def _decode(
         model = stage.publish(
             coordinate_contract=policy.coordinate_contract,
             source_id=canonical_fingerprint(
-                {"kind": "step-source", "sha256": resource.manifest.content_sha256}
+                {
+                    "kind": "step-bounded-approximation" if descriptors else "step-source",
+                    "sha256": resource.manifest.content_sha256,
+                    **({"descriptor": next(iter(descriptors))} if descriptors else {}),
+                }
             ),
             source_format="step",
             source_digest=resource.manifest.content_sha256,
             import_policy_id=policy.policy_id,
             tessellation=policy.tessellation,
             default_occurrences=False,
+            coordinate_budget=coordinate_budget,
         )
         model, repairs, decoder.orientation_assumptions = audit_shells(
             model, repair_policy, tuple(decoder.shell_labels), coordinate_budget
@@ -2698,7 +2827,7 @@ def _decode(
         decoder.repairs.extend(repairs)
         if policy.maximum_placement_deviation > 0.0:
             model = certify_placed_model(model, policy, decoder.coordinate_budget)
-    except CadInterchangeError:
+    except (CadInterchangeError, CoordinateEnclosureResourceError):
         raise
     except ValueError as error:
         raise refuse("inconsistent-geometry", "DATA", str(error)) from error
@@ -2720,44 +2849,60 @@ def _numbers(value: Any, /) -> Iterator[float]:
                 yield float(item)
 
 
+# Each supported surface-fill style attribute: parameter count, attribute
+# index, and the only entity that attribute's ISO select admits here.
+_PRESENTATION_CHILDREN = {
+    "PRESENTATION_STYLE_ASSIGNMENT": (1, 0, "SURFACE_STYLE_USAGE"),
+    "SURFACE_STYLE_USAGE": (2, 1, "SURFACE_SIDE_STYLE"),
+    "SURFACE_SIDE_STYLE": (2, 1, "SURFACE_STYLE_FILL_AREA"),
+    "SURFACE_STYLE_FILL_AREA": (1, 0, "FILL_AREA_STYLE"),
+    "FILL_AREA_STYLE": (2, 1, "FILL_AREA_STYLE_COLOUR"),
+    "FILL_AREA_STYLE_COLOUR": (2, 1, "COLOUR_RGB"),
+}
+
+type _Colors = tuple[tuple[float, float, float], ...]
+
+
 def _presentation_colors(
-    decoder: _Decoder, reference: Any, /
-) -> tuple[tuple[float, float, float], ...] | None:
-    """Decode only the explicit ISO surface-fill RGB style chain."""
+    decoder: _Decoder,
+    reference: Any,
+    expected: str,
+    decoded: dict[int, _Colors | None],
+    /,
+) -> _Colors | None:
+    """Decode only the explicit ISO surface-fill RGB style chain.
+
+    Every reference must name the entity its parent attribute admits, which
+    fixes the chain depth; ``decoded`` visits each shared style instance once.
+    """
     if not isinstance(reference, _Ref):
         return None
     instance = decoder.instances[reference.id]
-    if instance.complex:
+    if instance.complex or instance.records[0].name != expected:
         return None
+    if instance.id in decoded:
+        return decoded[instance.id]
     record = instance.records[0]
-    expected = {
-        "PRESENTATION_STYLE_ASSIGNMENT": (1, 0),
-        "SURFACE_STYLE_USAGE": (2, 1),
-        "SURFACE_SIDE_STYLE": (2, 1),
-        "SURFACE_STYLE_FILL_AREA": (1, 0),
-        "FILL_AREA_STYLE": (2, 1),
-        "FILL_AREA_STYLE_COLOUR": (2, 1),
-    }
+    colors: _Colors | None = None
     if record.name == "COLOUR_RGB":
-        color = _rgb_color(record.params)
-        if color is not None:
-            decoder.seen.add(instance.id)
-        return color
-    if record.name not in expected:
-        return None
-    count, index = expected[record.name]
-    if len(record.params) != count:
-        return None
-    children = record.params[index]
-    references = children if isinstance(children, tuple) else (children,)
-    colors = []
-    for child in references:
-        found = _presentation_colors(decoder, child)
-        if found is None:
-            return None
-        colors.extend(found)
-    decoder.seen.add(instance.id)
-    return tuple(sorted(set(colors)))
+        colors = _rgb_color(record.params)
+    else:
+        count, index, child_name = _PRESENTATION_CHILDREN[record.name]
+        if len(record.params) == count:
+            children = record.params[index]
+            references = children if isinstance(children, tuple) else (children,)
+            found: set[tuple[float, float, float]] = set()
+            for child in references:
+                child_colors = _presentation_colors(decoder, child, child_name, decoded)
+                if child_colors is None:
+                    break
+                found.update(child_colors)
+            else:
+                colors = tuple(sorted(found))
+    if colors is not None:
+        decoder.seen.add(instance.id)
+    decoded[instance.id] = colors
+    return colors
 
 
 def _rgb_color(
@@ -2836,6 +2981,7 @@ def _metadata_product_names(decoder: _Decoder, names: dict[int, list[str]], /) -
 def _metadata_colors(
     decoder: _Decoder, colors: dict[int, list[tuple[float, float, float]]], /
 ) -> None:
+    decoded: dict[int, _Colors | None] = {}
     for instance in _instances_named(decoder.instances, "STYLED_ITEM"):
         params = instance.records[0].params
         if (
@@ -2846,7 +2992,10 @@ def _metadata_colors(
             continue
         if not isinstance(params[1], tuple):
             continue
-        found = [_presentation_colors(decoder, style) for style in params[1]]
+        found = [
+            _presentation_colors(decoder, style, "PRESENTATION_STYLE_ASSIGNMENT", decoded)
+            for style in params[1]
+        ]
         if any(value is None for value in found):
             continue
         for value in found:
@@ -2954,19 +3103,54 @@ def _import_report(
         )
     losses += tolerance_evidence.losses
     losses += tuple(decoder.repairs)
+    if stage.bounded_approximation_gap is not None:
+        losses += (
+            AdapterLoss(
+                "geometry.bounded-coupled-approximation",
+                "import",
+                "transformed",
+                "The source-vs-approximation loss was declared by the exporter; "
+                "import preserves that same bounded representation, not the original "
+                "exact source. Its declared gap is independently checked against "
+                f"stored geometry. Artifact SHA256={digest}; descriptors="
+                + json.dumps(
+                    tuple(
+                        decoder.bounded_descriptors[identifier]
+                        for identifier in sorted(decoder.context_bounded_descriptors)
+                    ),
+                    separators=(",", ":"),
+                ),
+                changes_interpretation=False,
+            ),
+        )
     return AdapterReport(
         AdapterStatus.REPAIRED
         if decoder.repairs
         else (AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS),
         "step",
         "phydrax-brep",
-        source_id=canonical_fingerprint({"kind": "step-source", "sha256": digest}),
+        source_id=model.source_id,
         target_id=model.model_id,
         stage="host-import",
         source_profile=AdapterFormatProfile(
             "step",
             qualifiers={
                 "schema": schema,
+                "artifact-sha256": digest,
+                "representation": (
+                    "bounded-coupled-approximation"
+                    if stage.bounded_approximation_gap is not None
+                    else "source"
+                ),
+                **(
+                    {
+                        "bounded-approximation-descriptor": decoder.bounded_descriptors[
+                            min(decoder.context_bounded_descriptors)
+                        ],
+                    }
+                    if decoder.context_bounded_descriptors
+                    else {}
+                ),
                 "length-unit-m": format(float(units.length_meters), ".17g"),
                 "plane-angle-unit-rad": format(units.angle_radians, ".17g"),
                 "declared-tolerance-limit": format(
@@ -3039,6 +3223,8 @@ def decode_step_resource(
             f"STEP.resource.limits must equal policy limits {policy.limits}; got {resource.manifest.limits}"
         )
     try:
+        if coordinate_budget is not None:
+            coordinate_budget.ticket.checkpoint()
         decoded = _decode(
             resource,
             policy,
@@ -3082,6 +3268,7 @@ def decode_step_resource(
     tolerance_evidence = build_cad_import_tolerance_evidence(
         model,
         tuple((None, value) for _, value in sorted(decoder.source_uncertainties.items())),
+        coordinate_budget=coordinate_budget,
         unrepresentable_losses=tuple(
             unrepresentable_cad_tolerance_loss(
                 f"global (#{identifier})",
@@ -3152,6 +3339,7 @@ def decode_step_bytes(
             coordinate_budget=coordinate_budget,
         ),
         source_path=source_path,
+        coordinate_budget=coordinate_budget,
     )
 
 
@@ -3175,6 +3363,7 @@ def read_step(
             coordinate_budget=coordinate_budget,
         ),
         trusted_root=trusted_root,
+        coordinate_budget=coordinate_budget,
     )
 
 
@@ -3225,8 +3414,10 @@ def _string(value: str, /) -> str:
             out.append("\\\\")
         elif 32 <= ord(character) < 127:
             out.append(character)
-        else:
+        elif ord(character) <= 0xFFFF:
             out.append(f"\\X2\\{ord(character):04X}\\X0\\")
+        else:
+            out.append(f"\\X4\\{ord(character):08X}\\X0\\")
     return "'" + "".join(out) + "'"
 
 
@@ -3318,6 +3509,7 @@ class _Writer:
         policy: CadExportPolicy,
         uncertainty: float,
         metadata: StepEntityMetadata | None,
+        descriptor: str | None,
     ) -> None:
         self.model = model
         self.geometry = geometry
@@ -3325,6 +3517,7 @@ class _Writer:
         self.policy = policy
         self.uncertainty = uncertainty
         self.metadata = metadata
+        self.descriptor = descriptor
         self.entity_names = {
             (row.entity.kind, row.entity.index): row.names[0]
             for row in (() if metadata is None else metadata.rows)
@@ -3591,8 +3784,14 @@ class _Writer:
         solid_angle = self.add(
             "( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() )"
         )
+        description = self.descriptor or "confusion accuracy"
+        name = (
+            "phydrax_bounded_approximation"
+            if self.descriptor is not None
+            else "distance_accuracy_value"
+        )
         uncertainty = self.add(
-            f"UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({_real(self.uncertainty, certified_precision=True)}),#{length},'distance_accuracy_value','confusion accuracy')"
+            f"UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({_real(self.uncertainty, certified_precision=True)}),#{length},{_string(name)},{_string(description)})"
         )
         return self.add(
             f"( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{uncertainty})) "
@@ -4073,15 +4272,22 @@ def write_step(
     policy: CadExportPolicy | None = None,
     metadata: StepEntityMetadata | None = None,
     mode: PublicationMode = "exclusive",
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadExportResult:
     """Atomically publish a native B-Rep as a deterministic STEP Part 21 file.
 
     Analytic and rational carriers are written unless intersection approximation
     requests coupled B-splines. Substitution requires continuous deviation and
     surface-lift bounds plus embedded source/fit homotopy and face-trim evidence.
+    Bounded substitutions carry their complete frozen gap law in the descriptive
+    field of the context-wide length uncertainty, not as per-edge tolerances.
+    Import validates that declaration and independently proves the stored gap;
+    ordinary source uncertainty never widens the source geometry policy.
     Optional entity metadata emits authored names, RGB colors, and layers; it must
     belong to this model and is not included in its geometric identity payload.
     """
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     schema_ = parse(schema, StepSchema, "schema")
     policy_ = CadExportPolicy() if policy is None else policy
     if metadata is not None and metadata.model_id != model.model_id:
@@ -4095,23 +4301,40 @@ def write_step(
             "STEP.model.geometry must contain B-Rep topology; got only a derived tessellation.",
         )
     geometry, _, approximations = prepare_cad_export_geometry(
-        model, model.geometry, policy_, format_name="step"
+        model, model.geometry, policy_, format_name="step",
+        coordinate_budget=coordinate_budget,
     )
     approximation_policy = policy_.intersection_approximation
     if approximations and approximation_policy is None:
         raise ValueError(
             f"STEP.policy.intersection_approximation must bind {len(approximations)} substitutions; got None"
         )
-    tolerances = certified_cad_export_tolerances(model, approximations)
-    writer = _Writer(model, geometry, schema_, policy_, tolerances.uncertainty, metadata)
+    descriptor = bounded_approximation_descriptor(
+        model, approximations, policy_, coordinate_budget=coordinate_budget
+    )
+    uncertainty = (
+        certified_cad_export_tolerances(
+            model, approximations, coordinate_budget=coordinate_budget
+        ).uncertainty
+        if descriptor is None
+        else decode_bounded_approximation_descriptor(descriptor)
+    )
+    writer = _Writer(
+        model, geometry, schema_, policy_, uncertainty, metadata, descriptor
+    )
     text = writer.encode()
     data = text.encode("ascii")
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     receipt = publish_bytes(path, data, maximum_bytes=policy_.maximum_bytes, mode=mode)
     qualifiers = {
         "schema": schema_,
         "length-unit": model.coordinate_contract.length_unit.symbol,
         "plane-angle-unit": "rad",
     }
+    if descriptor is not None:
+        qualifiers["representation"] = "bounded-coupled-approximation"
+        qualifiers["bounded-approximation-descriptor"] = descriptor
     report = build_cad_export_report(
         model,
         receipt,

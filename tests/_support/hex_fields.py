@@ -171,6 +171,9 @@ def _transfer_form_fields(
             parent_reference_vertices=adaptation.parent_reference_vertices
             if refine
             else None,
+            parent_reference_homogeneous=adaptation.parent_reference_homogeneous
+            if refine
+            else None,
             source_geometry=adaptation.source.geometry,
             target_geometry=adaptation.target.geometry,
             geometry_transition=adaptation.geometry_transition,

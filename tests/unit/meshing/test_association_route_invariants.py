@@ -5,11 +5,15 @@ from __future__ import annotations
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
+from pathlib import Path
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import numpy as np
 import pytest
 
+import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax._fingerprint import tree_content_equal
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax._strict import StrictModule
@@ -21,7 +25,12 @@ from phydrax.discretization._coordinate_budget import (
 )
 from phydrax.geometry import Circle
 from phydrax.lifecycle._meshing_source_records import reconstruct_stored_fields
-from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    register_meshing_source_artifacts,
+    validate_meshing_source_closure,
+    write_meshing_source_closure,
+)
 from phydrax.meshing import (
     CellMeshingResult,
     CurveJunction,
@@ -29,6 +38,7 @@ from phydrax.meshing import (
     EntityLineageKind,
     GeometryAssociation,
     GeometryAssociationKind,
+    GeometrySourceEntityRole,
     MeshingEntityKind,
     MeshingScope,
     MeshLineage,
@@ -36,15 +46,21 @@ from phydrax.meshing import (
     SizeControlStrength,
     UniformSizeControl,
 )
+from phydrax.meshing._association import retain_association_scopes
 from phydrax.meshing._association_routes import (
     association_for_dimension,
     association_lookup,
     require_transfer_lineage,
     stratum_region_consensus,
 )
+from phydrax.meshing._contracts import MeshingLimits
+from phydrax.meshing._host_banks import entity_key
+from phydrax.meshing._quad_generation import extract_surface_quads, remap_dual_metadata
 from phydrax.units import METER
 from tests._support.cell_meshes import unit_square
+from tests._support.coordinate_references import native_meshing_request
 from tests._support.forced_devices import gloo_rank_environment, run_on_forced_devices
+from tests._support.meshing_fixtures import box_plc
 from tests._support.native_family_generation import native_family_generation
 from tests._support.native_provider_cases import curve_plan, curve_spec
 
@@ -428,14 +444,381 @@ def test_unindexed_association_stored_replay_refuses_forged_index_banks(
             reconstruct_stored_fields(changed)
 
 
+def public_association(
+    kind: GeometryAssociationKind, **options: Any
+) -> GeometryAssociation:
+    return GeometryAssociation(
+        kind,
+        "public-source",
+        "declared-revision",
+        "target",
+        np.asarray((5, 9, 13), dtype=np.int64),
+        ("left", "right", "left"),
+        np.asarray((0.0, 0.25, 0.5), dtype=np.float64),
+        **options,
+    )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    (GeometryAssociationKind.PIECEWISE_LINEAR, GeometryAssociationKind.SURFACE),
+    ids=("plc", "surface"),
+)
+def test_public_unindexed_association_replays_through_archive_consumer(
+    kind: GeometryAssociationKind,
+) -> None:
+    register_meshing_source_artifacts()
+    value = public_association(kind)
+    assert value.source_entities.indexed_roles is False
+    np.testing.assert_array_equal(value.source_dimensions, -1)
+    np.testing.assert_array_equal(value.source_indices, -1)
+    with HostBatchTicket(100_000, bytes_upper=16 * 1024**2) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=100_000, maximum_memory_bytes=16 * 1024**2
+        )
+        with budget.measurement():
+            budgeted = GeometryAssociation.from_stored_fields(value, budget=budget)
+        assert budget.temporary_bytes_upper == 0
+        assert budget.retained_owner_objects[id(budgeted)] is budgeted
+    for restored in (
+        GeometryAssociation.from_stored_fields(value),
+        budgeted,
+        reconstruct_stored_fields(value),
+    ):
+        assert restored is not value
+        assert restored.association_id == value.association_id
+        assert tree_content_equal(restored, value)
+    validate_meshing_source_closure(value)
+
+
+def test_surface_explicit_absent_strata_take_unindexed_representation() -> None:
+    register_meshing_source_artifacts()
+    unresolved = np.zeros((3,), dtype=np.bool_)
+    absent = public_association(GeometryAssociationKind.SURFACE, resolved=unresolved)
+    explicit = public_association(
+        GeometryAssociationKind.SURFACE,
+        resolved=unresolved,
+        source_dimensions=np.full((3,), -1, dtype=np.int8),
+        source_indices=np.full((3,), -1, dtype=np.int64),
+    )
+    assert explicit.association_id == absent.association_id
+    assert tree_content_equal(explicit, absent)
+    restored = GeometryAssociation.from_stored_fields(explicit)
+    assert restored.association_id == absent.association_id
+    assert tree_content_equal(restored, absent)
+
+
+@pytest.mark.parametrize(
+    ("dimensions", "indices", "message"),
+    (
+        ((-1, -1, -1), (-1, -1, -1), "must identify entities on resolved rows"),
+        ((2, -1, -1), (-1, -1, -1), "must pair dimensions"),
+    ),
+    ids=("resolved-sentinels", "mixed-sentinels"),
+)
+def test_surface_explicit_strata_refuse_unsupported_sentinels(
+    dimensions: tuple[int, ...], indices: tuple[int, ...], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        public_association(
+            GeometryAssociationKind.SURFACE,
+            source_dimensions=np.asarray(dimensions, dtype=np.int8),
+            source_indices=np.asarray(indices, dtype=np.int64),
+        )
+
+
+def test_indexed_surface_replay_preserves_and_authenticates_strata() -> None:
+    register_meshing_source_artifacts()
+    resolved = np.asarray((True, False, False))
+    absent = public_association(GeometryAssociationKind.SURFACE, resolved=resolved)
+    value = public_association(
+        GeometryAssociationKind.SURFACE,
+        resolved=resolved,
+        source_dimensions=np.asarray((2, -1, -1), dtype=np.int8),
+        source_indices=np.asarray((7, -1, -1), dtype=np.int64),
+    )
+    assert value.association_id != absent.association_id
+    assert np.asarray(value.source_indices).dtype == np.int64
+    restored = GeometryAssociation.from_stored_fields(value)
+    assert restored.association_id == value.association_id
+    assert tree_content_equal(restored, value)
+    forged = eqx.tree_at(
+        lambda association: (association.source_dimensions, association.source_indices),
+        value,
+        (
+            value.source_dimensions.at[0].set(np.int8(-1)),
+            value.source_indices.at[0].set(np.int64(-1)),
+        ),
+    )
+    assert forged.association_id == value.association_id
+    with pytest.raises(ValueError, match=r"stored_fields\.GeometryAssociation\."):
+        GeometryAssociation.from_stored_fields(forged)
+    with pytest.raises(ValueError, match=r"stored_fields\.GeometryAssociation"):
+        reconstruct_stored_fields(forged)
+
+
+def test_indexed_plc_replay_refuses_missing_or_corrupted_roles() -> None:
+    register_meshing_source_artifacts()
+    revision = "declared-revision"
+    facet = entity_key(revision, GeometrySourceEntityRole.FACET.value, 0)
+    dimensions = np.full((3,), 2, dtype=np.int8)
+    indices = np.zeros((3,), dtype=np.int64)
+    with pytest.raises(TypeError, match="must be a tuple for indexed PLC rows"):
+        GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            "public-source",
+            revision,
+            "target",
+            np.asarray((5, 9, 13), dtype=np.int64),
+            (facet,) * 3,
+            np.zeros((3,), dtype=np.float64),
+            source_dimensions=dimensions,
+            source_indices=indices,
+        )
+    value = GeometryAssociation(
+        GeometryAssociationKind.PIECEWISE_LINEAR,
+        "public-source",
+        revision,
+        "target",
+        np.asarray((5, 9, 13), dtype=np.int64),
+        (facet,) * 3,
+        np.zeros((3,), dtype=np.float64),
+        source_entity_roles=(GeometrySourceEntityRole.FACET,) * 3,
+        source_dimensions=dimensions,
+        source_indices=indices,
+    )
+    assert value.source_entities.indexed_roles is True
+    assert GeometryAssociation.from_stored_fields(value).association_id == (
+        value.association_id
+    )
+    forged = eqx.tree_at(
+        lambda association: (association.source_dimensions, association.source_indices),
+        value,
+        (
+            value.source_dimensions.at[:].set(np.int8(-1)),
+            value.source_indices.at[:].set(np.int64(-1)),
+        ),
+    )
+    with pytest.raises(ValueError, match=r"GeometryAssociation\.source_entity_roles"):
+        GeometryAssociation.from_stored_fields(forged)
+
+
+@pytest.mark.parametrize(
+    ("kind", "indexed"),
+    (
+        (GeometryAssociationKind.PIECEWISE_LINEAR, False),
+        (GeometryAssociationKind.SURFACE, False),
+        (GeometryAssociationKind.SURFACE, True),
+    ),
+    ids=("unindexed-plc", "unindexed-surface", "indexed-surface"),
+)
+def test_dual_lineage_keeps_canonical_strata_presence(
+    kind: GeometryAssociationKind, indexed: bool
+) -> None:
+    source = CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64),
+        np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64),
+    )
+    with native_meshing_request(MeshingLimits()) as (scope, budget, _):
+        extraction = extract_surface_quads(
+            source, MeshingLimits(), scope=scope, budget=budget
+        )
+    cells = source.entity_set(2)
+    ids = np.asarray(cells.entity_ids, dtype=np.int64)
+    strata = (
+        {
+            "source_dimensions": np.full(ids.shape, 2, dtype=np.int8),
+            "source_indices": np.full(ids.shape, 4, dtype=np.int64),
+        }
+        if indexed
+        else {}
+    )
+    parent = GeometryAssociation(
+        kind,
+        "dual-source",
+        "dual-revision",
+        cells.entity_set_id,
+        ids,
+        ("patch",) * ids.size,
+        np.zeros(ids.shape, dtype=np.float64),
+        **strata,
+    )
+    assert parent.indexed_source_strata is indexed
+    with native_meshing_request(MeshingLimits()) as (scope, _, _):
+        _, _, _, children = remap_dual_metadata(
+            extraction, associations=(parent,), surface_source_cover=True, scope=scope
+        )
+    assert {child.target_entity_set_id for child in children} == {
+        extraction.mesh.entity_set(dimension).entity_set_id for dimension in range(3)
+    }
+    for child in children:
+        assert child.association_kind is kind
+        assert bool(np.all(np.asarray(child.resolved)))
+        assert child.indexed_source_strata is indexed
+        np.testing.assert_array_equal(child.source_dimensions, 2 if indexed else -1)
+        np.testing.assert_array_equal(child.source_indices, 4 if indexed else -1)
+        restored = GeometryAssociation.from_stored_fields(child)
+        assert restored.association_id == child.association_id
+        assert tree_content_equal(restored, child)
+
+
+@pytest.mark.parametrize(
+    ("kind", "indexed"),
+    (
+        (GeometryAssociationKind.PIECEWISE_LINEAR, False),
+        (GeometryAssociationKind.SURFACE, False),
+        (GeometryAssociationKind.CURVE, False),
+        (GeometryAssociationKind.MAPPED_REFERENCE, False),
+        (GeometryAssociationKind.SURFACE, True),
+    ),
+    ids=(
+        "unindexed-plc",
+        "unindexed-surface",
+        "curve",
+        "mapped-reference",
+        "indexed-surface",
+    ),
+)
+def test_retained_scope_rebuild_keeps_canonical_strata_presence(
+    kind: GeometryAssociationKind, indexed: bool
+) -> None:
+    strata = (
+        {
+            "source_dimensions": np.full((3,), 2, dtype=np.int8),
+            "source_indices": np.asarray((7, 8, 9), dtype=np.int64),
+        }
+        if indexed
+        else {}
+    )
+    original = public_association(kind, **strata)
+    fresh = GeometryAssociation(
+        kind,
+        "public-source",
+        "declared-revision",
+        "target",
+        np.asarray((13, 5, 9), dtype=np.int64),
+        ("left", "left", "right"),
+        np.asarray((0.5, 0.0, 0.25), dtype=np.float64),
+        **(
+            {
+                "source_dimensions": np.full((3,), 2, dtype=np.int8),
+                "source_indices": np.asarray((9, 7, 8), dtype=np.int64),
+            }
+            if indexed
+            else {}
+        ),
+    )
+    (retained,) = retain_association_scopes((original,), (fresh,))
+    assert retained.parent_association_id == original.association_id
+    assert retained.indexed_source_strata is indexed
+    np.testing.assert_array_equal(retained.target_global_ids, (5, 9, 13))
+    assert retained.source_entities.entity_ids() == ("left", "right", "left")
+    np.testing.assert_array_equal(retained.source_dimensions, 2 if indexed else -1)
+    np.testing.assert_array_equal(retained.source_indices, (7, 8, 9) if indexed else -1)
+    restored = GeometryAssociation.from_stored_fields(retained)
+    assert restored.association_id == retained.association_id
+
+
+class NativeDualGeneration(NamedTuple):
+    part: phx.meshing.MeshPart
+    source: phx.meshing.NativePlcSource
+    specification: phx.meshing.VolumeMeshingSpec
+    options: phx.meshing.NativeMeshingOptions
+
+
+@pytest.fixture(scope="module")
+def native_dual_generation() -> NativeDualGeneration:
+    m = phx.meshing
+    source = m.NativePlcSource(box_plc(), "association-dual-cube", "dual-r1")
+    scope = m.MeshingScope(
+        source.source_id,
+        source.source_revision,
+        m.MeshingEntityKind.GEOMETRY,
+        2,
+        "association-dual-cube-facets",
+        np.arange(source.complex.facet_count, dtype=np.int64),
+    )
+    specification = m.VolumeMeshingSpec(
+        m.CellMeshingTarget(3, 3, m.CellFamilyPolicy(required=("hexahedron",))),
+        scope,
+        m.VolumeFillStrategy.MULTIZONE,
+        size_controls=(
+            m.UniformSizeControl(scope, 1.0, strength=m.SizeControlStrength.SOFT),
+        ),
+    )
+    options = m.NativeMeshingOptions("plc_balanced_grid_hex")
+    result = (
+        m.NativeMeshingProvider(options)
+        .plan(
+            source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
+        )
+        .execute()
+    )
+    return NativeDualGeneration(
+        m.MeshPart("generation", result), source, specification, options
+    )
+
+
+def test_native_dual_unindexed_plc_associations_round_trip_source_closure(
+    native_dual_generation: NativeDualGeneration,
+    tmp_path: Path,
+) -> None:
+    register_meshing_source_artifacts()
+    result = native_dual_generation.part.carrier
+    assert isinstance(result, CellMeshingResult)
+    associations = result.associations
+    unindexed = tuple(
+        value
+        for value in associations
+        if value.association_kind is GeometryAssociationKind.PIECEWISE_LINEAR
+        and not value.indexed_source_strata
+    )
+    assert unindexed
+    for value in unindexed:
+        assert value.source_entities.indexed_roles is False
+        np.testing.assert_array_equal(value.source_dimensions, -1)
+        np.testing.assert_array_equal(value.source_indices, -1)
+        restored = GeometryAssociation.from_stored_fields(value)
+        assert restored.association_id == value.association_id
+        assert tree_content_equal(restored, value)
+    report = result.certification
+    assert report is not None
+    limits = ArrayArchiveLimits(
+        max_members=4096, max_manifest_nesting=128, max_manifest_bytes=1 << 26
+    )
+    receipt = write_meshing_source_closure(
+        tmp_path / "native-dual-closure.zip",
+        {
+            "certification_inputs": report.request,
+            "report": report,
+            "associations": associations,
+            "generation_part": native_dual_generation.part,
+            "generation_source": native_dual_generation.source,
+            "generation_specification": native_dual_generation.specification,
+            "generation_options": native_dual_generation.options,
+        },
+        limits=limits,
+    )
+    restored_closure = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id, limits=limits
+    )
+    restored_associations = restored_closure["associations"]
+    assert tuple(value.association_id for value in restored_associations) == tuple(
+        value.association_id for value in associations
+    )
+    for restored, value in zip(restored_associations, associations, strict=True):
+        assert restored.source_entities == value.source_entities
+        for name in ("source_dimensions", "source_indices", "resolved", "residuals"):
+            np.testing.assert_array_equal(
+                np.asarray(getattr(restored, name)), np.asarray(getattr(value, name))
+            )
+
+
 @pytest.mark.parametrize("indexed", (False, True))
 def test_budgeted_association_replay_preserves_owner_identity(indexed: bool) -> None:
     count = 512
     if indexed:
         revision = "declared-revision"
-        from phydrax.meshing import GeometrySourceEntityRole
-        from phydrax.meshing._host_banks import entity_key
-
         roles = (GeometrySourceEntityRole.FACET,) * count
         value = GeometryAssociation(
             GeometryAssociationKind.PIECEWISE_LINEAR,

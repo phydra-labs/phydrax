@@ -1,0 +1,77 @@
+{
+  "kind": "external-cad-step-source",
+  "title": "NIST MBE PMI FTC-11 AP203 geometry-only part and an authored radial cross hole",
+  "author": "National Institute of Standards and Technology (NIST) MBE PMI Validation and Conformance Testing Project",
+  "license": "NIST statement: The test cases, CAD models, and STEP files can be used without any restrictions; acknowledgement requested",
+  "provenance": {
+    "landing_page": "https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0",
+    "archive_url": "https://www.nist.gov/system/files/documents/noindex/2024/06/19/NIST-PMI-STEP-Files.zip",
+    "archive_sha256": "8fa78429e6d8d9b0d7681d223b6aa9ec98c3772185c55b1a0e3679b21c181911",
+    "archive_member": "NIST-PMI-STEP-Files/AP203 geometry only/nist_ftc_11_asme1_rb.stp",
+    "retrieved": "2026-10-20",
+    "modification": "none; vendored byte-for-byte"
+  },
+  "source_file": "nist_ftc_11_asme1_rb.stp",
+  "source_sha256": "a5abfea460499dc31bc812aca68917948a117565fea4f5a080e36eb32f39650d",
+  "source_length_unit_meters": 0.001,
+  "independent_reference": {
+    "method": "Pappus revolution of the profile read manually from STEP entities #72 #100 #120 #140 #168 #180 (millimetres)",
+    "inner_radius": 16.0,
+    "outer_radius": 31.5,
+    "bottom_z": -1.5,
+    "flat_z": 0.425,
+    "inner_bead": {
+      "center_radius": 17.5,
+      "minor_radius": 1.5
+    },
+    "outer_bead": {
+      "center_radius": 30.0,
+      "minor_radius": 1.5
+    },
+    "flat_inner_radius": 18.93853223808158,
+    "flat_outer_radius": 28.56146776191842,
+    "solids": 1
+  },
+  "authored_hole": {
+    "author": "PHYDRA, Inc.",
+    "license": "LicenseRef-PHYDRA-Proprietary",
+    "radius": 0.4,
+    "center_z": -0.75,
+    "half_length": 40.0,
+    "axis": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "operation": "difference",
+    "loops": [
+      {
+        "axis_radius": 16.0,
+        "transverse_radius": 0.4,
+        "transverse_center_z": -0.75,
+        "side": 1
+      },
+      {
+        "axis_radius": 16.0,
+        "transverse_radius": 0.4,
+        "transverse_center_z": -0.75,
+        "side": -1
+      },
+      {
+        "axis_radius": 31.5,
+        "transverse_radius": 0.4,
+        "transverse_center_z": -0.75,
+        "side": 1
+      },
+      {
+        "axis_radius": 31.5,
+        "transverse_radius": 0.4,
+        "transverse_center_z": -0.75,
+        "side": -1
+      }
+    ],
+    "volume": "2 * integral over the hole disk of (sqrt(31.5^2-y^2) - sqrt(16^2-y^2)) dy dz"
+  },
+  "manufactured_length": 31.5,
+  "record_id": "f6ca1aac3f6626ad1253906e43861e6096aa0775e93e824e31e243c9490f9c0f"
+}

@@ -98,7 +98,9 @@ def deferred_table(path: Path) -> dict[str, str]:
     )
     owners = ast.literal_eval(table)
     if list(owners) != sorted(owners):
-        raise ValueError(f"{path.relative_to(ROOT)} _DEFERRED_EXPORTS is not sorted")
+        raise ValueError(
+            f"facade.owners must be sorted; got unordered _DEFERRED_EXPORTS in {path.relative_to(ROOT)}"
+        )
     # A submodule is public only at its own dotted path; re-exporting another
     # package's submodule would create an alias spelling.
     aliases = sorted(
@@ -108,8 +110,7 @@ def deferred_table(path: Path) -> dict[str, str]:
     )
     if aliases:
         raise ValueError(
-            f"{path.relative_to(ROOT)} re-exports foreign submodules: "
-            + ", ".join(aliases)
+            f"facade.owners must exclude foreign submodules; got {', '.join(aliases)} in {path.relative_to(ROOT)}"
         )
     return owners
 

@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._geometry_predicates import PredicateMode, SegmentIntersectionResult
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_predecessor import (
     CellGeometryPredecessor,
@@ -30,7 +29,6 @@ from phydrax.geometry._global_embedding import (
     EmbeddingExpressionWork,
     GlobalEmbeddingCertificate,
 )
-from phydrax.typing import ConvertibleToArray
 from tests._support.mesh_certificate_fixtures import (
     coordinate_budget as coordinate_budget,
     reference_budget as reference_budget,
@@ -47,23 +45,27 @@ def _certificates(
 
 
 def _contact_counter(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count segment pairs reaching an exact contact decision.
+
+    Every candidate pair not inherited from the predecessor enters the shared
+    endpoint separation proof first; only its undecided pairs reach
+    ``segment_intersections_2d``.
+    """
     counts: list[int] = []
-    predicate = embedding_owner.segment_intersections_2d
+    separation = embedding_owner._shared_segment_separation
 
     def counted(
-        a: ConvertibleToArray,
-        b: ConvertibleToArray,
-        c: ConvertibleToArray,
-        d: ConvertibleToArray,
+        points: np.ndarray,
+        first: np.ndarray,
+        second: np.ndarray,
         /,
         *,
-        mode: PredicateMode,
-        budget: CoordinateEnclosureBudget | None = None,
-    ) -> SegmentIntersectionResult:
-        counts.append(np.asarray(a).shape[0])
-        return predicate(a, b, c, d, mode=mode, budget=budget)
+        budget: CoordinateEnclosureBudget,
+    ) -> np.ndarray:
+        counts.append(np.asarray(first).shape[0])
+        return separation(points, first, second, budget=budget)
 
-    monkeypatch.setattr(embedding_owner, "segment_intersections_2d", counted)
+    monkeypatch.setattr(embedding_owner, "_shared_segment_separation", counted)
     return counts
 
 
@@ -327,3 +329,50 @@ def test_changed_contained_component_keeps_exterior_degree_checks(
     assert reused.ray_test_count > 0
     assert reused.candidate_pair_count == full.candidate_pair_count
     assert tuple(f.check for f in reused.findings) == ("nested_component",)
+
+
+def test_predecessor_definition_filter_only_excludes_unequal_definitions(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
+    from phydrax.discretization._cell_geometry_predecessor import (
+        _cell_content_keys,
+        _matching_definition_ids,
+    )
+
+    mesh = CellMesh.from_triangles(
+        np.asarray(((0, 0), (1, 0), (0, 1)), dtype=np.float64),
+        np.asarray(((0, 1, 2),), dtype=np.int32),
+    )
+    geometry = CellGeometrySpec.affine(mesh, budget=reference_budget)
+    block = mesh.blocks[0]
+    shared = np.asarray(block.global_ids)
+    transformed = CellGeometrySpec(
+        {
+            block.name: BarycentricCellGeometryElement(
+                geometry.elements[0],
+                np.asarray(((1, 0, 0), (0.5, 0.5, 0), (0, 0, 1)), dtype=np.float64),
+            )
+        },
+        {block.name: geometry.geometry_dofs[0]},
+        geometry.coordinates,
+        budget=reference_budget,
+    )
+    assert not _matching_definition_ids(
+        mesh, geometry, mesh, transformed, shared, reference_budget
+    ).size
+    assert _cell_content_keys(mesh, geometry, reference_budget) != _cell_content_keys(
+        mesh, transformed, reference_budget
+    )
+    changed = geometry.with_coordinates(np.asarray(geometry.coordinates) + 0.25)
+    np.testing.assert_array_equal(
+        _matching_definition_ids(
+            mesh, geometry, mesh, changed, shared, reference_budget
+        ),
+        shared,
+    )
+    # Matching definitions do not certify equal coefficients or carriers:
+    # the canonical cell-local key comparison remains necessary.
+    assert _cell_content_keys(mesh, geometry, reference_budget) != _cell_content_keys(
+        mesh, changed, reference_budget
+    )

@@ -1,6 +1,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
-"""Lossless array and exact-coordinate records for cold lifecycle scenarios."""
+"""Lossless array and rational-coordinate records for cold lifecycle scenarios."""
 
 from typing import Any, TypedDict
 

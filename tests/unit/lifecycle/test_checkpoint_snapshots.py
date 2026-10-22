@@ -4,7 +4,9 @@
 
 import jax
 import numpy as np
+import pytest
 
+from phydrax._host_storage import immutable_host_array, immutable_host_array_layout
 from phydrax.lifecycle import MeshingCheckpointState, snapshot_addressable_arrays
 from tests._support.distributed_meshing.restart_builders import checkpoint_state
 
@@ -35,13 +37,26 @@ def test_host_checkpoint_snapshot_copies_writable_coefficients() -> None:
     np.testing.assert_array_equal(snapshot.payload, expected)
 
 
-def test_host_checkpoint_snapshot_reuses_immutable_coefficients() -> None:
-    authored = np.arange(8, dtype=np.int64).reshape(2, 4)[:, ::2]
+def test_host_checkpoint_snapshot_copies_readonly_mutable_aliases() -> None:
+    owner = np.arange(8, dtype=np.int64).reshape(2, 4)
+    authored = owner[:, ::2]
     authored.setflags(write=False)
+    expected = authored.copy()
+    snapshots = snapshot_addressable_arrays({"authored": authored})
+    assert len(snapshots) == 1
+    assert snapshots[0].payload is not authored
+    owner[:] = -1
+    np.testing.assert_array_equal(snapshots[0].payload, expected)
+    assert immutable_host_array_layout(snapshots[0].payload) is not None
+
+
+def test_host_checkpoint_snapshot_reuses_genuinely_immutable_coefficients() -> None:
+    authored = immutable_host_array(np.arange(8, dtype=np.int64).reshape(2, 4))
     snapshots = snapshot_addressable_arrays({"authored": authored})
     assert len(snapshots) == 1
     assert snapshots[0].payload is authored
-    np.testing.assert_array_equal(snapshots[0].payload, authored)
+    with pytest.raises(ValueError):
+        snapshots[0].payload.setflags(write=True)
 
 
 def test_mixed_checkpoint_snapshot_preserves_host_then_device_publication() -> None:

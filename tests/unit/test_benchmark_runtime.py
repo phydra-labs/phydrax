@@ -257,6 +257,8 @@ def test_source_build_inputs_preserves_fingerprint_payload(tmp_path: Path) -> No
         "native/meshcore/LICENSE",
         "native/meshcore/include/kernel.h",
         "native/meshcore/src/kernel.cpp",
+        "native/providers/common/protocol.hpp",
+        "native/providers/mmg/CMakeLists.txt",
     )
     ignored = (
         "phydrax/model.data",
@@ -270,24 +272,27 @@ def test_source_build_inputs_preserves_fingerprint_payload(tmp_path: Path) -> No
         "native/meshcore/__pycache__/cached.py",
         "native/meshcore/module.pyc",
         "native/meshcore/module.pyo",
+        "native/providers/mmg/build/generated.cpp",
     )
     for relative in (*included, *ignored):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(relative.encode("utf-8"))
-    expected = tuple(
-        tmp_path / relative
+    expected = {
+        relative: tmp_path / relative
         for relative in sorted(
             (*included, "phydrax/model.py", "pyproject.toml", "uv.lock")
         )
-    )
-    assert source_build_inputs(tmp_path) == expected
+    }
+    inventory = source_build_inputs(tmp_path)
+    assert inventory == expected
+    assert list(inventory) == list(expected)
     records = []
-    for path in expected:
+    for relative, path in expected.items():
         payload = path.read_bytes()
         records.append(
             {
-                "path": path.relative_to(tmp_path).as_posix(),
+                "path": relative,
                 "size_bytes": len(payload),
                 "sha256": hashlib.sha256(payload).hexdigest(),
             }
@@ -297,10 +302,106 @@ def test_source_build_inputs_preserves_fingerprint_payload(tmp_path: Path) -> No
     )
 
 
+def _provider_layouts(tmp_path: Path) -> tuple[Path, Path]:
+    """Write equal sources in the checkout layout and the installed-wheel layout."""
+    checkout = tmp_path / "checkout"
+    installed = tmp_path / "installed"
+    providers = {
+        "common/phydrax_worker.hpp": b"// protocol\n",
+        "mmg/CMakeLists.txt": b"project(worker)\n",
+        "mmg/worker.cpp": b"int main() { return 0; }\n",
+    }
+    for root, tree in (
+        (checkout, "native/providers"),
+        (installed, "phydrax/native/providers"),
+    ):
+        root.mkdir()
+        _benchmark_source_tree(root)
+        for relative, payload in providers.items():
+            path = root / tree / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+    return checkout, installed
+
+
+def test_source_build_identity_reads_provider_bytes_runtime_lookup_selects(
+    tmp_path: Path,
+) -> None:
+    import phydrax
+    from phydrax.meshing.providers import (
+        native_provider_source_path,
+        native_provider_source_root,
+    )
+
+    checkout, installed = _provider_layouts(tmp_path)
+    # The public lookup selects its tree through the same layout rule.
+    package = Path(phydrax.__file__).resolve().parent
+    selected = native_provider_source_root(package)
+    assert selected is not None
+    assert native_provider_source_path("mmg") == selected / "mmg"
+    for root, tree in (
+        (checkout, checkout / "native/providers"),
+        (installed, installed / "phydrax/native/providers"),
+    ):
+        assert native_provider_source_root(root / "phydrax") == tree
+        inventory = source_build_inputs(root)
+        assert {
+            name: path
+            for name, path in inventory.items()
+            if name.startswith("native/providers/")
+        } == {
+            f"native/providers/{path.relative_to(tree).as_posix()}": path
+            for path in tree.rglob("*")
+            if path.is_file()
+        }
+    assert source_build_inputs(checkout).keys() == source_build_inputs(installed).keys()
+    assert source_build_fingerprint(checkout) == source_build_fingerprint(installed)
+
+    (installed / "phydrax/native/providers/mmg/worker.cpp").write_bytes(b"stale\n")
+    assert source_build_fingerprint(checkout) != source_build_fingerprint(installed)
+
+
+def test_source_build_identity_refuses_parallel_provider_layouts(
+    tmp_path: Path,
+) -> None:
+    from phydrax.meshing.providers import native_provider_source_root
+
+    checkout, installed = _provider_layouts(tmp_path)
+    (installed / "phydrax/native/providers/mmg/worker.cpp").write_bytes(b"stale\n")
+    # A current checkout-layout copy beside an installed package cannot stand in
+    # for the package-owned bytes that provider lookup reads.
+    parallel = installed / "native/providers/mmg/worker.cpp"
+    parallel.parent.mkdir(parents=True)
+    parallel.write_bytes((checkout / "native/providers/mmg/worker.cpp").read_bytes())
+    with pytest.raises(RuntimeError, match="one installation layout"):
+        native_provider_source_root(installed / "phydrax")
+    for capture in (source_build_inputs, source_build_fingerprint):
+        with pytest.raises(RuntimeError, match="one installation layout"):
+            capture(installed)
+
+
+@pytest.mark.parametrize("tree", ["native/providers", "phydrax/native/providers"])
+def test_source_build_identity_refuses_non_directory_provider_tree(
+    tree: str, tmp_path: Path
+) -> None:
+    from phydrax.meshing.providers import native_provider_source_root
+
+    _benchmark_source_tree(tmp_path)
+    impostor = tmp_path / tree
+    impostor.parent.mkdir(parents=True, exist_ok=True)
+    impostor.write_bytes(b"not a provider source tree\n")
+    refusal = "must be a provider source directory"
+    with pytest.raises(NotADirectoryError, match=refusal):
+        native_provider_source_root(tmp_path / "phydrax")
+    for capture in (source_build_inputs, source_build_fingerprint):
+        with pytest.raises(NotADirectoryError, match=refusal):
+            capture(tmp_path)
+
+
 @pytest.mark.parametrize("missing", ["pyproject.toml", "uv.lock"])
 @pytest.mark.parametrize("capture", [source_build_inputs, source_build_fingerprint])
 def test_source_build_inventory_requires_build_inputs(
-    missing: str, capture: Callable[[Path], tuple[Path, ...] | str], tmp_path: Path
+    missing: str, capture: Callable[[Path], dict[str, Path] | str], tmp_path: Path
 ) -> None:
     _benchmark_source_tree(tmp_path)
     (tmp_path / missing).unlink()

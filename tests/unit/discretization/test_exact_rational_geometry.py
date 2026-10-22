@@ -249,6 +249,61 @@ def test_exact_interpolation_restore_retains_identity_and_shared_dynamic_bank(
         validate_meshing_source_closure(changed)
 
 
+def test_geometry_restore_reproves_exact_source_on_actual_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.discretization._cell_geometry as geometry_owner
+
+    mesh = _mesh("triangle")
+    geometry = straight_geometry(mesh, 2, source_geometry=CellGeometrySpec.affine(mesh))
+    source = geometry.exact_source
+    assert isinstance(source, ExactRationalCellGeometrySource)
+
+    def forbid_preparation(*args, **kwargs):
+        raise AssertionError("explicit restoration must not open a helper preparation")
+
+    monkeypatch.setattr(
+        geometry_owner, "owned_coordinate_preparation", forbid_preparation
+    )
+
+    def restore(cap: int) -> int:
+        memory = 128_000_000
+        ticket = HostBatchTicket(cap, bytes_upper=memory)
+        with (
+            ticket,
+            CoordinateEnclosureBudget(
+                ticket, maximum_work_units=cap, maximum_memory_bytes=memory
+            ).activate() as caller,
+        ):
+            restored = CellGeometrySpec.from_stored_fields(geometry, budget=caller)
+            assert restored.exact_source is source
+            assert restored.geometry_layout_id == geometry.geometry_layout_id
+            np.testing.assert_array_equal(restored.coordinates, geometry.coordinates)
+            assert restored.source_coordinates(budget=caller) == geometry.source_coordinates(
+                budget=caller
+            )
+            return caller.work_units
+
+    work = restore(10_000_000)
+    assert work > 0
+    assert restore(work) == work
+    with pytest.raises(CoordinateEnclosureResourceError):
+        restore(work - 1)
+    changed = eqx.tree_at(
+        lambda value: value.coordinates, geometry, geometry.coordinates + 0.001
+    )
+    memory = 128_000_000
+    ticket = HostBatchTicket(10_000_000, bytes_upper=memory)
+    with (
+        ticket,
+        CoordinateEnclosureBudget(
+            ticket, maximum_work_units=10_000_000, maximum_memory_bytes=memory
+        ).activate() as caller,
+    ):
+        with pytest.raises(ValueError, match="representatives"):
+            CellGeometrySpec.from_stored_fields(changed, budget=caller)
+
+
 def test_exact_interpolation_layout_orders_and_resource_refusals(
     budget: CoordinateEnclosureBudget,
 ) -> None:

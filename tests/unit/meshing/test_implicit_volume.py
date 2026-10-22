@@ -665,3 +665,64 @@ def test_restricted_lf03_preserves_original_capacity_and_hard_fidelity() -> None
     assert execution.total_work_units <= limits.maximum_work_units
     next_metric_size = h / (2.0 ** (1.0 / 3.0))
     assert np.min(lengths) >= next_metric_size / np.sqrt(2.0)
+
+
+@NATIVE
+def test_sphere_geodesic_seeds_meet_joint_hard_size_and_fidelity(
+    execution_scope: NativeExecutionScope,
+) -> None:
+    from phydrax.meshing._implicit_volume import (
+        _sphere_geodesic_lattice,
+        _sphere_seed_sites,
+        prepare_restricted_implicit_volume,
+    )
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification.scenarios.implicit import (
+        IMPLICIT_QUALIFICATION_CASES,
+        _implicit_qualification_source,
+        _implicit_volume_request,
+    )
+
+    args = QualificationControls(implicit_case="sphere-refinement", adaptation_rounds=2)
+    geometry, source, domain, witness = _implicit_qualification_source(
+        args, IMPLICIT_QUALIFICATION_CASES[args.implicit_case]
+    )
+    fidelity = args.implicit_fidelity / 4.0
+    specification = _implicit_volume_request(args, source, witness, fidelity)
+    prepared = prepare_restricted_implicit_volume(
+        geometry,
+        domain,
+        specification,
+        NativeVolumeSchedule(refinement_rounds=8),
+        phx.SpatialCoordinateContract.si(),
+        scope=execution_scope,
+    )
+    with implicit_source_budget(
+        specification.limits,
+        scope=execution_scope,
+        queries_upper=execution_scope.remaining().remaining_geometry_queries,
+    ) as budget:
+        points, cover = _sphere_seed_sites(
+            prepared, specification.limits.maximum_vertices, budget=budget
+        )
+        directions, faces = _sphere_geodesic_lattice(4, 1, prepared, budget=budget)
+    assert points.shape[0] == 10 * (4 * 4 + 4 + 1) + 2
+    assert np.array_equal(points, args.implicit_radius * directions)
+    edges = np.unique(
+        np.sort(faces[:, ((0, 1), (1, 2), (2, 0))].reshape((-1, 2)), axis=1), axis=0
+    )
+    lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+    control = specification.size_controls[0]
+    assert isinstance(control, UniformSizeControl)
+    assert np.all(
+        np.abs(np.quantile(lengths, (0.5, 0.95)) - control.target_size)
+        <= specification.size_compliance.tolerance(control.target_size)
+    )
+    assert cover <= prepared.seed_cover_radius
+    assert np.max(np.abs(np.linalg.norm(points, axis=1) - args.implicit_radius)) <= fidelity
+    corners = points[faces]
+    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    plane_distances = np.abs(np.sum(normals * corners[:, 0], axis=1)) / np.linalg.norm(
+        normals, axis=1
+    )
+    assert args.implicit_radius - np.min(plane_distances) <= fidelity

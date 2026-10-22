@@ -104,12 +104,8 @@ def _collective_target() -> tuple[CellMeshingResult, CellMeshingResult]:
         fine.target, policy=policy, hierarchy=hierarchy
     )
     partitioned = phx.meshing.partition_adaptive_simplex(prepared)
-    refined = refine_adaptive_simplex_parts(
-        partitioned.layout,
-        partitioned.parts,
-        partitioned.states,
-        partitioned.cell_marks(np.asarray(uniform.child_ids)[0, :1]),
-    ).state
+    refined = refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states,
+    partitioned.cell_marks(np.asarray(uniform.child_ids)[0, :1]),).state
     target = (
         phx.meshing.commit_partitioned_adaptive_simplex(partitioned, refined)
         .local_results[0]

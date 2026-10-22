@@ -24,7 +24,11 @@ from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
 from ..typing import Dim, Size, validate
 from ._migration_anchor import MigrationAnchor
+from ._migration_execution import LogicalMigrationParts, MigrationParts
 from ._migration_state_record import (
+    _migration_local_validation,
+    _migration_optional_owner,
+    _require_migration_arrays_live,
     MigrationTransportEvidence,
     MigrationWorkset,
     MigrationWorkState,
@@ -33,7 +37,6 @@ from ._migration_state_record import (
 
 if TYPE_CHECKING:
     from .._meshcore import NativeExecutionScope
-    from ..discretization._adaptive_simplex import AdaptiveSimplexParts
     from ..discretization._coordinate_budget import CoordinateEnclosureBudget
     from ..lifecycle._restart_topology import TopologyRestartPolicy
     from ._device_adaptation import PartitionedAdaptiveSimplex
@@ -92,7 +95,9 @@ class MigrationPlacement(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def from_live(cls, parts: AdaptiveSimplexParts) -> MigrationPlacement:
+    def from_live(cls, parts: MigrationParts) -> MigrationPlacement:
+        if isinstance(parts, LogicalMigrationParts):
+            return cls.from_stored_fields(parts.placement)
         return cls(
             parts.axis_name,
             tuple(parts.mesh.axis_names),
@@ -163,7 +168,7 @@ class MigrationPlacement(StrictModule, NonTrainableState):
                 "MigrationPlacement.placement_id must bind its execution metadata; got changed fields"
             )
 
-    def rebind(self, policy: TopologyRestartPolicy | None = None) -> AdaptiveSimplexParts:
+    def rebind(self, policy: TopologyRestartPolicy | None = None) -> MigrationParts:
         from .._execution_resources import ExecutionGroupSpec
         from .._execution_runtime import bind_execution_group
         from ..discretization._adaptive_simplex import AdaptiveSimplexParts
@@ -187,15 +192,9 @@ class MigrationPlacement(StrictModule, NonTrainableState):
                 "runtime_device_keys": self.runtime_device_keys,
             }
         )
-        relation_class = "bitwise" if len(current) >= self.part_count else "unsupported"
-        relation = TopologyRestartRelation(
-            source_id,
-            target_id,
-            relation_class,
-            reason=""
-            if relation_class == "bitwise"
-            else "Logical migration partition count exceeds available devices.",
-        )
+        # Physical topology does not change the retained logical program. The
+        # explicit restart policy still admits or rejects the topology change.
+        relation = TopologyRestartRelation(source_id, target_id, "bitwise")
         admitted = admit_topology_restart(
             relation,
             TopologyRestartPolicy(allow_topology_change=False)
@@ -206,6 +205,28 @@ class MigrationPlacement(StrictModule, NonTrainableState):
             raise ValueError(
                 f"MigrationPlacement.topology must admit its restart relation; got {admitted.reason}"
             )
+        if current != self.runtime_device_keys:
+            physical_count = max(
+                count
+                for count in range(1, min(len(current), self.part_count) + 1)
+                if self.part_count % count == 0
+            )
+            selected_physical = current[:physical_count]
+            group = bind_execution_group(
+                ExecutionGroupSpec(
+                    canonical_fingerprint(
+                        {
+                            "kind": "logical-migration-execution-group",
+                            "placement": self.placement_id,
+                            "physical_devices": selected_physical,
+                        }
+                    ),
+                    tuple(sorted({process for process, _ in selected_physical})),
+                    selected_physical,
+                    mesh_axes=((self.axis_name, physical_count),),
+                )
+            )
+            return LogicalMigrationParts(self, group.mesh)
         selected = (
             self.device_keys
             if set(self.device_keys) <= set(current)
@@ -238,6 +259,7 @@ class MigrationSourceRecord(StrictModule, NonTrainableState):
     part_count: Size[_MigrationPartDim] = eqx.field(static=True)
     adaptation: phydrax.meshing._adaptation.PreparedMeshAdaptation
     layout: phydrax.discretization._adaptive_simplex.AdaptiveSimplexLayout
+    preparation_layout: phydrax.discretization._adaptive_simplex.AdaptiveSimplexLayout
     preparation_state: phydrax.discretization._adaptive_simplex.AdaptiveSimplexState
     anchor: MigrationAnchor
     preparation_evidence: phydrax.meshing._measurements.NativeExecutionRecord | None
@@ -263,6 +285,7 @@ class MigrationSourceRecord(StrictModule, NonTrainableState):
         self.part_count = source.parts.part_count
         self.adaptation = source.prepared.adaptation
         self.layout = source.layout
+        self.preparation_layout = source.prepared.layout
         self.preparation_state = source.prepared.state
         self.anchor = MigrationAnchor.from_live(source.prepared.anchor)
         self.preparation_evidence = source.prepared.execution_evidence
@@ -295,53 +318,72 @@ class MigrationSourceRecord(StrictModule, NonTrainableState):
         )
         self.validate_restored()
 
-    def validate_restored(self) -> None:
-        validate(self)
-        self.anchor.validate_restored()
-        self.placement.validate_restored()
-        if (
-            self.part_count != self.placement.part_count
-            or self.states.mesh.cell_ids.shape[0] != self.part_count
-        ):
-            raise ValueError(
-                "MigrationSourceRecord.part_count must bind its placement and state axes; got inconsistent partitions"
-            )
-        if (
-            self.source_exterior.shape != self.states.mesh.cells.shape
-            or self.slot_origins.shape != self.states.mesh.cell_ids.shape
-            or self.solver_cell_owners.shape != self.states.mesh.cell_ids.shape
-        ):
-            raise ValueError(
-                "MigrationSourceRecord.routing must align with source cell axes; got inconsistent banks"
-            )
-        if self.prepared_id != canonical_fingerprint(
-            {
-                "kind": "prepared-adaptive-simplex",
-                "adaptation": self.adaptation.prepared_id,
-                "layout": self.layout.signature_id,
-            }
-        ):
-            raise ValueError(
-                "MigrationSourceRecord.prepared_id must bind adaptation and layout; got changed identity"
-            )
-        if self.source_topology_id != self.adaptation.source.mesh.topology_id:
-            raise ValueError(
-                "MigrationSourceRecord.source_topology_id must bind its accepted source; got changed topology"
-            )
+    def validate_restored(self, *, collective: bool = False) -> None:
+        with _migration_local_validation(collective):
+            validate(self)
+            if collective:
+                _require_migration_arrays_live(self)
+            self.anchor.validate_restored()
+            self.placement.validate_restored()
+            if (
+                self.preparation_state.mesh.signature_id
+                != self.preparation_layout.mesh_signature_id
+                or self.states.mesh.signature_id != self.layout.mesh_signature_id
+            ):
+                raise ValueError(
+                    "MigrationSourceRecord.layouts must bind their distinct preparation and execution states; got inconsistent capacities"
+                )
+            if (
+                self.part_count != self.placement.part_count
+                or self.states.mesh.cell_ids.shape[0] != self.part_count
+            ):
+                raise ValueError(
+                    "MigrationSourceRecord.part_count must bind its placement and state axes; got inconsistent partitions"
+                )
+            if (
+                self.source_exterior.shape != self.states.mesh.cells.shape
+                or self.slot_origins.shape != self.states.mesh.cell_ids.shape
+                or self.solver_cell_owners.shape != self.states.mesh.cell_ids.shape
+            ):
+                raise ValueError(
+                    "MigrationSourceRecord.routing must align with source cell axes; got inconsistent banks"
+                )
+            if self.prepared_id != canonical_fingerprint(
+                {
+                    "kind": "prepared-adaptive-simplex",
+                    "adaptation": self.adaptation.prepared_id,
+                    "layout": self.preparation_layout.signature_id,
+                }
+            ):
+                raise ValueError(
+                    "MigrationSourceRecord.prepared_id must bind adaptation and layout; got changed identity"
+                )
+            if self.source_topology_id != self.adaptation.source.mesh.topology_id:
+                raise ValueError(
+                    "MigrationSourceRecord.source_topology_id must bind its accepted source; got changed topology"
+                )
+        _migration_optional_owner(
+            collective, self.solver_neighborhood is not None,
+            "MigrationSourceRecord.solver_neighborhood",
+        )
         if self.solver_neighborhood is not None:
-            self.solver_neighborhood.validate_restored()
-        for evidence in (self.preparation_evidence, self.execution_evidence):
-            if evidence is not None:
-                evidence.require_valid()
+            self.solver_neighborhood.validate_restored(collective=collective)
+        with _migration_local_validation(collective):
+            for evidence in (self.preparation_evidence, self.execution_evidence):
+                if evidence is not None:
+                    evidence.require_valid()
 
     @classmethod
-    def from_stored_fields(cls, value: MigrationSourceRecord, /) -> MigrationSourceRecord:
+    def from_stored_fields(
+        cls, value: MigrationSourceRecord, /, *, collective: bool = False
+    ) -> MigrationSourceRecord:
         from .._model._structure import restore_registered_fields
 
-        value.validate_restored()
-        return restore_registered_fields(
-            cls, {field.name: getattr(value, field.name) for field in fields(value)}
-        )
+        value.validate_restored(collective=collective)
+        with _migration_local_validation(collective):
+            return restore_registered_fields(
+                cls, {field.name: getattr(value, field.name) for field in fields(value)}
+            )
 
     def rebind(
         self,
@@ -359,7 +401,7 @@ class MigrationSourceRecord(StrictModule, NonTrainableState):
         parts = self.placement.rebind(policy)
         prepared = PreparedAdaptiveSimplex(
             self.adaptation,
-            self.layout,
+            self.preparation_layout,
             self.preparation_state,
             self.anchor.to_live(),
             execution_evidence=self.preparation_evidence,
@@ -450,31 +492,38 @@ class CollectiveMigrationRecord(StrictModule, NonTrainableState):
         self.migration_id = self._identity()
         self.validate_restored()
 
-    def _identity(self) -> str:
-        arrays = {
-            "requested_target_owners": self.requested_target_owners,
-            "source_exterior": self.source_exterior,
-            "slot_origins": self.slot_origins,
-            "solver_cell_owners": self.solver_cell_owners,
-            "initial_solver_cell_owners": self.initial_solver_cell_owners,
-            "solver_source_exterior": self.solver_source_exterior,
-            "solver_slot_origins": self.solver_slot_origins,
-        }
-        for prefix, value in (
-            ("states", self.states),
-            ("initial_states", self.initial_states),
-            ("solver_forest", self.solver_forest),
-            ("solver_initial", self.solver_initial_states),
-        ):
-            arrays.update(
-                {
-                    f"{prefix}/{jax.tree_util.keystr(path)}": leaf
-                    for path, leaf in jax.tree_util.tree_flatten_with_path(value)[0]
-                    if isinstance(leaf, Array)
-                }
-            )
-        return canonical_fingerprint(
-            {
+    def _identity(self, *, collective: bool = False) -> str:
+        with _migration_local_validation(collective):
+            arrays = {
+                "requested_target_owners": self.requested_target_owners,
+                "source_exterior": self.source_exterior,
+                "slot_origins": self.slot_origins,
+                "solver_cell_owners": self.solver_cell_owners,
+                "initial_solver_cell_owners": self.initial_solver_cell_owners,
+                "solver_source_exterior": self.solver_source_exterior,
+                "solver_slot_origins": self.solver_slot_origins,
+            }
+            key_implementations: dict[str, str] = {}
+            for prefix, value in (
+                ("saved_states", self.saved_states),
+                ("saved_migration_state", self.saved_migration_state),
+                ("states", self.states),
+                ("initial_states", self.initial_states),
+                ("solver_forest", self.solver_forest),
+                ("solver_initial", self.solver_initial_states),
+            ):
+                # Retain raw integer words and the declared implementation of
+                # typed keys, exactly as in the live migration identity.
+                for path, leaf in jax.tree_util.tree_flatten_with_path(value)[0]:
+                    if not isinstance(leaf, Array):
+                        continue
+                    name = f"{prefix}/{jax.tree_util.keystr(path)}"
+                    if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+                        arrays[name] = jax.random.key_data(leaf)
+                        key_implementations[name] = str(jax.random.key_impl(leaf))
+                    else:
+                        arrays[name] = leaf
+            identity = {
                 "kind": "collective-migration-record",
                 "source_prepared": self.source.prepared_id,
                 "source_state": self.source.initial_state_id,
@@ -482,55 +531,66 @@ class CollectiveMigrationRecord(StrictModule, NonTrainableState):
                 "part_count": self.part_count,
                 "axis_name": self.placement.axis_name,
                 "neighbor_pairs": self.placement.neighbor_pairs,
-                "numerical_receipts": logical_array_value_collection_digest(arrays),
+                "key_implementations": key_implementations,
             }
-        )
+        numerical_receipts = logical_array_value_collection_digest(arrays)
+        with _migration_local_validation(collective):
+            return canonical_fingerprint(
+                {**identity, "numerical_receipts": numerical_receipts}
+            )
 
-    def validate_restored(self) -> None:
-        validate(self)
-        self.source.validate_restored()
-        self.saved_migration_state.validate_restored()
-        self.solver_neighborhood.validate_restored()
-        self.transport_evidence.validate_restored()
-        self.placement.validate_restored()
-        if (
-            self.part_count != self.source.part_count
-            or self.part_count != self.placement.part_count
-        ):
-            raise ValueError(
-                "CollectiveMigrationRecord.part_count must bind source and output placement; got inconsistent partition count"
-            )
-        if (
-            self.source_exterior.shape != self.initial_states.mesh.cells.shape
-            or self.slot_origins.shape != self.initial_states.mesh.cell_ids.shape
-        ):
-            raise ValueError(
-                "CollectiveMigrationRecord.initial_routing must bind retained initial states; got inconsistent banks"
-            )
-        if (
-            self.solver_source_exterior.shape
-            != self.solver_initial_states.mesh.cells.shape
-            or self.solver_slot_origins.shape
-            != self.solver_initial_states.mesh.cell_ids.shape
-        ):
-            raise ValueError(
-                "CollectiveMigrationRecord.solver_routing must bind retained solver states; got inconsistent banks"
-            )
-        if self._identity() != self.migration_id:
-            raise ValueError(
-                "CollectiveMigrationRecord.migration_id must bind its numerical receipts; got changed content"
-            )
+    def validate_restored(self, *, collective: bool = False) -> None:
+        with _migration_local_validation(collective):
+            validate(self)
+            if collective:
+                _require_migration_arrays_live(self)
+        self.source.validate_restored(collective=collective)
+        self.saved_migration_state.validate_restored(collective=collective)
+        self.solver_neighborhood.validate_restored(collective=collective)
+        self.transport_evidence.validate_restored(collective=collective)
+        with _migration_local_validation(collective):
+            self.placement.validate_restored()
+            if (
+                self.part_count != self.source.part_count
+                or self.part_count != self.placement.part_count
+            ):
+                raise ValueError(
+                    "CollectiveMigrationRecord.part_count must bind source and output placement; got inconsistent partition count"
+                )
+            if (
+                self.source_exterior.shape != self.initial_states.mesh.cells.shape
+                or self.slot_origins.shape != self.initial_states.mesh.cell_ids.shape
+            ):
+                raise ValueError(
+                    "CollectiveMigrationRecord.initial_routing must bind retained initial states; got inconsistent banks"
+                )
+            if (
+                self.solver_source_exterior.shape
+                != self.solver_initial_states.mesh.cells.shape
+                or self.solver_slot_origins.shape
+                != self.solver_initial_states.mesh.cell_ids.shape
+            ):
+                raise ValueError(
+                    "CollectiveMigrationRecord.solver_routing must bind retained solver states; got inconsistent banks"
+                )
+        identity = self._identity(collective=collective)
+        with _migration_local_validation(collective):
+            if identity != self.migration_id:
+                raise ValueError(
+                    "CollectiveMigrationRecord.migration_id must bind its numerical receipts; got changed content"
+                )
 
     @classmethod
     def from_stored_fields(
-        cls, value: CollectiveMigrationRecord, /
+        cls, value: CollectiveMigrationRecord, /, *, collective: bool = False
     ) -> CollectiveMigrationRecord:
         from .._model._structure import restore_registered_fields
 
-        value.validate_restored()
-        return restore_registered_fields(
-            cls, {field.name: getattr(value, field.name) for field in fields(value)}
-        )
+        value.validate_restored(collective=collective)
+        with _migration_local_validation(collective):
+            return restore_registered_fields(
+                cls, {field.name: getattr(value, field.name) for field in fields(value)}
+            )
 
     def replay(
         self,
@@ -560,21 +620,19 @@ class CollectiveMigrationRecord(StrictModule, NonTrainableState):
         return replayed
 
 
-def _place_partition_tree[T](value: T, parts: AdaptiveSimplexParts) -> T:
-    """Place admitted logical partition banks on the rebound execution mesh."""
+def _place_partition_tree[T](value: T, parts: MigrationParts) -> T:
+    """Place an explicitly declared historical rank tree, never infer its layout."""
     sharding = jax.sharding.NamedSharding(
         parts.mesh, jax.sharding.PartitionSpec(parts.axis_name)
     )
-    replicated = jax.sharding.NamedSharding(parts.mesh, jax.sharding.PartitionSpec())
 
     def place(leaf: object) -> object:
         if isinstance(leaf, Array):
-            return jax.device_put(
-                leaf,
-                sharding
-                if leaf.ndim and leaf.shape[0] == parts.part_count
-                else replicated,
-            )
+            if not leaf.ndim or leaf.shape[0] != parts.part_count:
+                raise ValueError(
+                    "migration.partition_tree must retain one row per historical logical owner; got incompatible rank extent"
+                )
+            return jax.device_put(leaf, sharding)
         return leaf
 
     return jax.tree.map(place, value)

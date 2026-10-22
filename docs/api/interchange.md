@@ -91,6 +91,10 @@ unbounded export evidence refuses instead of using a fixed default tolerance.
 
 ::: phydrax.interchange.build_cad_import_tolerance_evidence
 
+IGES composite boundaries retain their declared segment multiplicity and order.
+Their expanded reference count is checked against `max_attributes` before
+materialization; encoded size and reference depth alone do not bound expansion.
+
 ### STEP assemblies and placement evidence
 
 Nested `MAPPED_ITEM`/`REPRESENTATION_MAP` graphs share native solid definitions
@@ -99,13 +103,16 @@ unit-scale, proper frames whose normalized binary64 axes are exactly
 orthogonal under rational dot products. Reflections, nonuniform scale,
 nextafter-unit scale, and unsupported transformation operators refuse.
 
-`CadImportPolicy.maximum_placement_deviation=0.0` keeps that exact default.
-A positive value declares a fixed maximum in target length coordinates and
-requires an explicit `coordinate_budget` on the STEP reader. Source directions
-then define a frame by ISO 10303-42 projection and normalization; outward
-rational/square-root enclosures admit rounded oblique proper frames only when
-the resulting whole-occurrence point deviation is within the declaration.
-This does not admit arbitrary scale/shear matrices.
+`CadImportPolicy.maximum_placement_deviation=0.0` keeps that exact default for
+mapping origins, transformation operators, assembly usage placements, inverses,
+and compositions. A positive value declares a fixed maximum in target length
+coordinates and requires an explicit `coordinate_budget` on the STEP reader.
+Source directions define a frame by ISO 10303-42 projection and normalization
+under either policy; outward rational/square-root enclosures admit rounded
+oblique proper frames only when the resulting whole-occurrence point deviation
+is within the declaration. This does not admit arbitrary scale/shear matrices.
+An external writer's requested quarter turn can still contain rounded direction
+ratios and require a positive declaration; it is not a zero-limit success.
 
 `BRepOccurrence.placement_evidence` retains norm and entrywise rotation/
 translation errors against source intent, the native chart extent, and the
@@ -122,6 +129,12 @@ for non-STEP adapters. Canonical `StepEntityLabels` rows retain all authored
 names, RGB colors, and layers on solid/face/edge/vertex identities.
 Unsupported presentation forms are explicitly ignored by design, not
 interpreted as guessed colors.
+
+Known presentation relationships are type-checked, and shared definitions are
+decoded once. STEP complex instances refuse repeated partial entity types,
+including contradictory `SI_UNIT` declarations, instead of selecting one by
+order. Escaped strings are scanned without repeated suffix copies; the writer
+uses the STEP `X4` form for Unicode code points above U+FFFF.
 
 `metadata.entities(kind, label, unique=...)` performs exact lookup.
 `select_step_entities(model, metadata, kind, label, family="face",

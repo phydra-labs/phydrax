@@ -48,13 +48,14 @@ from ..meshing import (
     _volume_generation,
 )
 from ..meshing._plc_source import PiecewiseLinearComplex
-from ..meshing.providers import _native_periodic, _native_sources
+from ..meshing.providers import _native_cad_volume, _native_periodic, _native_sources
 
 
 type NativeGenerationSource = (
     _native_sources.NativePlanarSource
     | _native_sources.NativeImplicitSource
     | _native_sources.NativePlcSource
+    | _native_cad_volume.NativeCadVolumeSource
     | _native_sources.NativeStructuredSource
     | _native_sources.NativeMappedHexSource
     | _native_sources.NativePolyhedralSource
@@ -84,6 +85,7 @@ def native_family_artifact_types() -> tuple[tuple[str, tuple[type, ...]], ...]:
             "phydrax.meshing",
             (
                 _native_sources.NativePlcSource,
+                _native_cad_volume.NativeCadVolumeSource,
                 _native_sources.NativeStructuredSource,
                 _native_sources.NativeMappedHexSource,
                 _native_sources.NativePolyhedralSource,

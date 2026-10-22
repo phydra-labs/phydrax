@@ -14,17 +14,20 @@ import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.discretization._spaces import GlobalCoefficientId
+from phydrax._sampling import derive_key
+from phydrax.lifecycle._meshing_field_records import (
+    MeshingFieldIndexBinding,
+    MeshingFieldStateRole,
+    MeshingRandomStream,
+    rebuild_meshing_field_record,
+)
 
 
 @pytest.fixture
 def common_field_inputs() -> dict[str, Any]:
-    """Declare a scalar coefficient bank with explicit scientific row identities."""
+    """Declare a scalar coefficient bank with its derived scientific row identity."""
     space_id = "declared-scalar-field"
-    coefficient = GlobalCoefficientId(space_id, 0, ())
-    bank = phx.lifecycle.MeshingCoefficientIdentityBank(
-        space_id, ((0, (), coefficient.coefficient_id),)
-    )
+    bank = phx.lifecycle.MeshingCoefficientIdentityBank.from_rows(space_id, ((0, ()),))
     binding = phx.lifecycle.MeshingFieldIndexBinding(
         bank_name="field/global_coefficient_ids",
         source_result_id="accepted-carrier",
@@ -266,3 +269,203 @@ def test_stored_field_metadata_rejects_corruption(
     object.__setattr__(record, field, value)
     with pytest.raises(error, match=field):
         type(record).from_stored_fields(record)
+
+
+@pytest.fixture
+def random_stream() -> MeshingRandomStream:
+    return MeshingRandomStream(
+        "root-key",
+        "threefry2x32",
+        "meshing-test",
+        "cell-probe",
+        ("scalar",),
+        "rademacher",
+    )
+
+
+@pytest.fixture
+def random_counter_role(random_stream: MeshingRandomStream) -> MeshingFieldStateRole:
+    binding = MeshingFieldIndexBinding(
+        bank_name="epoch/cell_ids",
+        source_result_id="accepted-carrier",
+        source_topology_id="accepted-topology",
+        source_geometry_id="accepted-geometry",
+        source_evidence_id="accepted-evidence",
+        source_epoch_id="accepted-epoch",
+        index_values=np.asarray([[1, 2**32 + 1, -1]], dtype=np.int64),
+        index_axes=(0, 1),
+    )
+    return MeshingFieldStateRole(
+        "raw-counter",
+        "scalar",
+        "rng-counter",
+        binding.index_values.shape,
+        np.dtype(np.uint64),
+        0,
+        index_binding=binding,
+        random_stream=random_stream,
+    )
+
+
+def test_entity_random_keys_fold_both_id_and_counter_words(
+    random_stream: MeshingRandomStream,
+) -> None:
+    root = jax.random.key(37, impl=random_stream.implementation)
+    data = jax.random.key_data(root)
+    ids = np.asarray([1, 2**32 + 1, 2**63 - 1, 1], dtype=np.int64)
+    counters = np.asarray([7, 7, 2**64 - 1, 2**32 + 7], dtype=np.uint64)
+    actual = random_stream.entity_keys(data, ids, counters)
+    expected = [
+        derive_key(
+            root,
+            random_stream.address,
+            int(identifier) >> 32,
+            int(identifier) & 0xFFFFFFFF,
+            int(counter) >> 32,
+            int(counter) & 0xFFFFFFFF,
+        )
+        for identifier, counter in zip(ids, counters, strict=True)
+    ]
+    np.testing.assert_array_equal(
+        jax.random.key_data(actual),
+        np.stack([jax.random.key_data(key) for key in expected]),
+    )
+    assert np.unique(np.asarray(jax.random.key_data(actual)), axis=0).shape[0] == 4
+    # A changed owner order and batch extent must not alter an entity's next draw.
+    order = np.asarray([3, 1, 0, 2], dtype=np.int64)
+    reordered = random_stream.entity_keys(data, ids[order], counters[order])
+    draws = jax.vmap(lambda key: jax.random.bits(key, (8,)))(actual)
+    np.testing.assert_array_equal(
+        jax.vmap(lambda key: jax.random.bits(key, (8,)))(reordered), draws[order]
+    )
+    for row in range(ids.size):
+        singleton = random_stream.entity_keys(
+            data, ids[row : row + 1], counters[row : row + 1]
+        )
+        np.testing.assert_array_equal(jax.random.bits(singleton[0], (8,)), draws[row])
+
+
+@pytest.mark.parametrize("dtype", [np.uint32, np.uint64])
+def test_random_counter_role_round_trip_preserves_unsigned_schema(
+    random_counter_role: MeshingFieldStateRole,
+    dtype: type[np.uint32] | type[np.uint64],
+) -> None:
+    role = replace(random_counter_role, dtype=np.dtype(dtype))
+    restored = rebuild_meshing_field_record(role)
+    assert restored == role
+    assert rebuild_meshing_field_record(role.random_stream) == role.random_stream
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.int64, np.bool_, np.uint16])
+def test_random_counter_role_refuses_non_counter_dtypes(
+    random_counter_role: MeshingFieldStateRole,
+    dtype: type[np.generic],
+) -> None:
+    with pytest.raises(ValueError, match="uint32 or uint64"):
+        replace(random_counter_role, dtype=np.dtype(dtype))
+
+
+def test_random_roles_require_unitless_addressed_entity_state(
+    random_counter_role: MeshingFieldStateRole,
+    common_field_inputs: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError, match="unitless"):
+        replace(random_counter_role, value_units=(phx.units.ONE,))
+    with pytest.raises(TypeError, match="random_stream"):
+        replace(random_counter_role, random_stream=None)
+    with pytest.raises(ValueError, match="stable entity ID"):
+        replace(
+            random_counter_role,
+            shape=(1,),
+            index_binding=common_field_inputs["state_roles"][0].index_binding,
+        )
+    with pytest.raises(ValueError, match="component axes"):
+        replace(random_counter_role, shape=(*random_counter_role.shape, 1))
+    with pytest.raises(ValueError, match="absent for physical state"):
+        replace(random_counter_role, role="stage-history")
+
+
+def test_random_counter_declaration_requires_its_persisted_root_key(
+    random_counter_role: MeshingFieldStateRole,
+    random_stream: MeshingRandomStream,
+    finite_element_declaration: phx.lifecycle.MeshingFiniteElementFieldDeclaration,
+) -> None:
+    coefficient = finite_element_declaration.state_roles[0]
+    key = MeshingFieldStateRole(
+        random_stream.key_entry_name,
+        "scalar",
+        "rng-key",
+        random_stream.key_shape,
+        np.dtype(np.uint32),
+        0,
+        random_stream=random_stream,
+    )
+    with pytest.raises(ValueError, match="missing or foreign root key"):
+        replace(
+            finite_element_declaration,
+            state_roles=(coefficient, random_counter_role),
+            history_policy="accepted-state",
+        )
+    declaration = replace(
+        finite_element_declaration,
+        state_roles=(coefficient, random_counter_role, key),
+        history_policy="accepted-state",
+    )
+    restored = type(declaration).from_stored_fields(declaration)
+    assert restored.state_roles == declaration.state_roles
+    with pytest.raises(ValueError, match="missing or foreign root key"):
+        replace(
+            declaration,
+            state_roles=(
+                coefficient,
+                random_counter_role,
+                replace(key, random_stream=replace(random_stream, purpose="foreign")),
+            ),
+        )
+    with pytest.raises(ValueError, match="rng-key schema"):
+        replace(key, dtype=np.dtype(np.int32))
+
+
+def test_random_key_address_rejects_truncated_or_signed_inputs(
+    random_stream: MeshingRandomStream,
+) -> None:
+    data = jax.random.key_data(jax.random.key(1))
+    with pytest.raises(ValueError, match="incompatible rows"):
+        random_stream.entity_keys(
+            data, np.asarray([1], dtype=np.int32), np.asarray([1], dtype=np.uint32)
+        )
+    with pytest.raises(ValueError, match="incompatible rows"):
+        random_stream.entity_keys(
+            data, np.asarray([1], dtype=np.int64), np.asarray([1], dtype=np.int64)
+        )
+    with pytest.raises(ValueError, match="negative identity"):
+        random_stream.entity_keys(
+            data, np.asarray([-1], dtype=np.int64), np.asarray([1], dtype=np.uint32)
+        )
+
+
+def test_euler_history_preserves_four_component_axes_and_physical_units(
+    random_counter_role: MeshingFieldStateRole,
+    finite_element_declaration: phx.lifecycle.MeshingFiniteElementFieldDeclaration,
+) -> None:
+    from tools.meshing_qualification.scenarios._distributed_euler import state_units
+
+    units = state_units()
+    role = replace(
+        random_counter_role,
+        entry_name="allocated-euler-conserved",
+        role="stage-history",
+        shape=(*random_counter_role.shape, 4),
+        dtype=np.dtype(np.float64),
+        value_units=units,
+        random_stream=None,
+    )
+    declaration = replace(
+        finite_element_declaration,
+        state_roles=(*finite_element_declaration.state_roles, role),
+        history_policy="accepted-state",
+    )
+    restored = type(declaration).from_stored_fields(declaration)
+    assert restored.state_roles[-1] == role
+    assert role.shape[-1] == len(units) == 4
+    assert units[0] != units[1] == units[2] != units[3]

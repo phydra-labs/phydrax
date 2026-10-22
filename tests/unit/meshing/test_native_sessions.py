@@ -74,6 +74,7 @@ def _counter_state(record: NativeExecutionRecord | None) -> tuple[object, ...] |
         record.native_primitive_queries,
         record.host_storage_live_bytes_upper,
         record.host_storage_peak_bytes_upper,
+        record.managed_admission_peak_bytes_upper,
         record.source_preparation_work_units,
         record.source_preparation_geometry_queries,
         record.owner_id,

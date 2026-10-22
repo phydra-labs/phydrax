@@ -22,6 +22,7 @@ from phydrax._array_archive import (
     read_array_archive,
     write_array_archive,
 )
+from phydrax._host_storage import immutable_host_array_layout
 
 
 def test_array_archive_reads_are_bounded_before_payload_allocation(
@@ -106,6 +107,41 @@ def test_streamed_archive_matches_prechange_golden_bytes(tmp_path: Path) -> None
     assert array_collection_digest(arrays) == (
         "db9d1ddef35d46b00f6920f7ce1d6a6ab890493b00a7f9de5e87c648fc67205d"
     )
+
+
+def test_decoded_archive_owns_immutable_numeric_bytes(tmp_path: Path) -> None:
+    expected = np.arange(24, dtype=np.float64).reshape(4, 6)
+    path = tmp_path / "immutable.phx"
+    write_array_archive(path, manifest={"kind": "immutable-test"}, arrays={"bank": expected})
+    _, arrays = read_array_archive(path)
+    restored = arrays["bank"]
+    np.testing.assert_array_equal(restored, expected)
+    assert array_collection_digest(arrays) == array_collection_digest({"bank": expected})
+    assert immutable_host_array_layout(restored) is not None
+    with pytest.raises(ValueError):
+        restored.setflags(write=True)
+    with pytest.raises(TypeError):
+        memoryview(restored)[0, 0] = 0
+
+
+def test_logical_archive_keeps_verified_bytes_as_immutable_backing() -> None:
+    from phydrax.lifecycle._archive import decode_logical_arrays, encode_logical_arrays
+
+    expected = np.arange(12, dtype=np.int64).reshape(3, 4)
+    encoded = encode_logical_arrays({"bank": expected})
+    mutable_payloads = {name: bytearray(value) for name, value in encoded.payloads.items()}
+    restored = decode_logical_arrays(encoded.manifest, mutable_payloads)
+    sealed = restored["bank"]
+    assert immutable_host_array_layout(sealed) is not None
+    for payload in mutable_payloads.values():
+        payload[:] = bytes(len(payload))
+    np.testing.assert_array_equal(sealed, expected)
+    repeated = encode_logical_arrays(restored)
+    assert repeated.manifest == encoded.manifest
+    assert repeated.payloads == encoded.payloads
+    assert repeated.collection_id == encoded.collection_id
+    with pytest.raises(ValueError):
+        sealed.setflags(write=True)
 
 
 @pytest.mark.parametrize("layout", ["scalar", "strided", "fortran", "empty", "endian"])

@@ -74,6 +74,14 @@ a native two-compartment mesh and advances a closed bulk/network/reservoir
 system, reporting compartment inventory, interface adjacency, total-inventory
 error, and exchange defect in an explicit millimeter/second/millimolar system.
 
+The native transport qualification cold reader reauthors the declared image
+for independent scientific comparison using the same active request budget
+as archive decoding, source reproof, and continued transport. Exact-affine
+authoring consumes the remaining allowance; it does not open a nested request
+or reset work or the whole-workflow deadline. Explicit standalone authoring
+still owns its bounded request. Resource refusals propagate rather than being
+treated as a different source identity.
+
 ## Flow
 
 `TaylorHoodCSFFlowPlan` prepares the existing P2/P1 mixed Stokes operator with an

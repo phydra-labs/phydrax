@@ -54,7 +54,8 @@ bool valid_source_buffers(const SourceComplex& source, int64_t point_count) {
          (source.witness_strata == nullptr) == (source.witness_parameters == nullptr);
 }
 
-int32_t create(const phx_mc_tet_mesh_create_request& in, const SourceComplex* source) {
+int32_t create(const phx_mc_tet_mesh_create_request& in, const SourceComplex* source,
+               const CurvedSourceDeclaration* curved) {
   if (in.mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
   *in.mesh = nullptr;
   if (!valid_creation_limits(in) || !valid_creation_buffers(in) ||
@@ -82,7 +83,8 @@ int32_t create(const phx_mc_tet_mesh_create_request& in, const SourceComplex* so
       make_native_unique<TetMesh>(boundary, in.max_vertices, in.max_tetrahedra, budget.owner());
   const int32_t status = handle->mesh->build(
       in.point_count, in.points, in.tet_count, in.tets, in.tet_regions, in.face_count, in.faces,
-      in.face_sources, in.segment_count, in.segments, in.segment_sources, in.protection_radii, source);
+      in.face_sources, in.segment_count, in.segments, in.segment_sources, in.protection_radii, source,
+      curved);
   if (status != PHX_MC_OK) return status;
   *in.mesh = handle.release();
   return PHX_MC_OK;
@@ -393,8 +395,74 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
       if (in.mesh != nullptr) *in.mesh = nullptr;
       return PHX_MC_INVALID_ARGUMENT;
     }
+    // Curved claims bind the own source complex only.
+    const bool curved = in.curved_source_count != 0;
+    if (in.curved_source_count < 0 ||
+        (curved && (declared || in.curved_sources == nullptr ||
+                    in.curved_tolerances == nullptr || in.curved_digests == nullptr ||
+                    (in.face_count > 0 && in.face_claims == nullptr) ||
+                    !phx::mc::addressable(in.curved_source_count, 32, sizeof(uint8_t)))) ||
+        (!curved && (in.curved_sources != nullptr || in.curved_tolerances != nullptr ||
+                     in.curved_digests != nullptr || in.face_claims != nullptr))) {
+      if (in.mesh != nullptr) *in.mesh = nullptr;
+      return PHX_MC_INVALID_ARGUMENT;
+    }
     const auto source = phx::mc::source_from_request(in);
-    return phx::mc::create(in, declared ? &source : nullptr);
+    phx::mc::CurvedSourceDeclaration declaration;
+    declaration.source_count = in.curved_source_count;
+    declaration.sources = in.curved_sources;
+    declaration.tolerances = in.curved_tolerances;
+    declaration.digests = in.curved_digests;
+    declaration.face_claims = in.face_claims;
+    return phx::mc::create(in, declared ? &source : nullptr, curved ? &declaration : nullptr);
+  });
+}
+
+int32_t phx_mc_tet_mesh_accepted_generation(const phx_mc_tet_mesh* handle,
+                                            int64_t* generation) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (generation == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    *generation = -1;
+    const int32_t status = phx::mc::check(handle);
+    if (status != PHX_MC_OK) return status;
+    *generation = handle->mesh->accepted_generation();
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_curved_claims(const phx_mc_tet_mesh* handle, int64_t capacity,
+                                      int64_t* count, int32_t* rows, int32_t* sources,
+                                      double* coordinates, double* deviations,
+                                      int64_t* generations) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const int32_t status = phx::mc::check(handle);
+    if (status != PHX_MC_OK || count == nullptr || capacity < 0) {
+      return status != PHX_MC_OK ? status : PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::TetMesh& mesh = *handle->mesh;
+    const auto claims = mesh.curved_claims();
+    *count = static_cast<int64_t>(claims.size());
+    if (rows == nullptr && sources == nullptr && coordinates == nullptr &&
+        deviations == nullptr && generations == nullptr) {
+      return PHX_MC_OK;
+    }
+    if (rows == nullptr || sources == nullptr || coordinates == nullptr ||
+        deviations == nullptr || generations == nullptr || capacity < *count) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const auto faces = mesh.original_faces();
+    for (std::size_t i = 0; i < claims.size(); ++i) {
+      const auto& face = faces[static_cast<std::size_t>(claims[i].row)];
+      rows[i] = claims[i].row;
+      sources[i] = claims[i].source;
+      for (int k = 0; k < 3; ++k) {
+        std::copy_n(mesh.original_point(face[static_cast<std::size_t>(k)]), 3,
+                    coordinates + 9 * i + 3 * k);
+      }
+      deviations[i] = claims[i].deviation;
+      generations[i] = claims[i].generation;
+    }
+    return PHX_MC_OK;
   });
 }
 
@@ -495,12 +563,19 @@ int32_t phx_mc_tet_mesh_source_evidence(const phx_mc_tet_mesh* handle, int64_t c
     mesh.collect_faces(faces);
     phx::mc::NativeVector<int64_t> offsets(1, 0);
     phx::mc::NativeVector<int32_t> rows, contributors;
-    for (const auto& face : faces) {
-      if (!mesh.face_ancestry(face.data(), face[3], contributors)) {
-        return PHX_MC_INVALID_INPUT;
+    // The count and fill calls, and repeated evidence of an unchanged mesh,
+    // reuse one exact ancestry CSR; any differing face input recomputes it.
+    if (!mesh.cached_face_ancestry(faces, offsets, rows)) {
+      offsets.assign(1, 0);
+      rows.clear();
+      for (const auto& face : faces) {
+        if (!mesh.face_ancestry(face.data(), face[3], contributors)) {
+          return PHX_MC_INVALID_INPUT;
+        }
+        rows.insert(rows.end(), contributors.begin(), contributors.end());
+        offsets.push_back(static_cast<int64_t>(rows.size()));
       }
-      rows.insert(rows.end(), contributors.begin(), contributors.end());
-      offsets.push_back(static_cast<int64_t>(rows.size()));
+      mesh.store_face_ancestry(faces, offsets, rows);
     }
     *count = static_cast<int64_t>(rows.size());
     if (values == nullptr && face_ancestor_offsets == nullptr && face_ancestor_rows == nullptr &&

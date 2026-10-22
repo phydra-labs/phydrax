@@ -22,6 +22,7 @@ from tools.meshing_qualification._runtime import (
     _missing_dependency,
     _runtime_identity,
     qualification_failure,
+    StageMeasurement,
 )
 from tools.meshing_qualification.scenarios.supermesh import (
     _MESHCORE_DETAIL,
@@ -54,11 +55,11 @@ class _RemapFiniteVolumePreparation(phx.StrictModule):
     common_refinement: phx.geometry.PreparedCommonRefinement
     limited_plan: phx.discretization.UnstructuredSecondOrderRemapPlan
     unlimited_plan: phx.discretization.UnstructuredSecondOrderRemapPlan
-    source_record: dict[str, float]
-    target_record: dict[str, float]
-    refinement_record: dict[str, float]
-    limited_record: dict[str, float]
-    unlimited_record: dict[str, float]
+    source_record: StageMeasurement
+    target_record: StageMeasurement
+    refinement_record: StageMeasurement
+    limited_record: StageMeasurement
+    unlimited_record: StageMeasurement
     evidence: CommonRefinementEvidence
     remap_id: str
 
@@ -159,8 +160,8 @@ def _prepare_remap_finite_volume() -> _RemapFiniteVolumePreparation:
 @final
 class _RemapFiniteVolumeExecution(phx.StrictModule):
     fv: dict[str, Any]
-    p0_record: dict[str, float]
-    p1_record: dict[str, float]
+    p0_record: StageMeasurement
+    p1_record: StageMeasurement
 
 
 def _execute_remap_finite_volume(
@@ -300,10 +301,10 @@ class _RemapFiniteElementProjection(phx.StrictModule):
     target_identity: dict[str, str | int]
     refinement_id: str
     transfer_id: str
-    refinement_record: dict[str, float]
-    target_record: dict[str, float]
-    transfer_record: dict[str, float]
-    projection_record: dict[str, float]
+    l2_refinement_record: StageMeasurement
+    l2_target_record: StageMeasurement
+    l2_transfer_record: StageMeasurement
+    l2_apply_record: StageMeasurement
     retained_bytes: int
     working_bytes: int
 
@@ -323,7 +324,7 @@ def _project_remap_finite_element() -> _RemapFiniteElementProjection:
         ).prepare()
 
     fem_source, fem_target = p1_space(fem_source_mesh), p1_space(fem_target_mesh)
-    fem_refinement, fem_refinement_record = _measured(
+    fem_refinement, l2_refinement_record = _measured(
         lambda: phx.geometry.prepare_common_refinement(
             fem_source_mesh,
             fem_target_mesh,
@@ -337,10 +338,10 @@ def _project_remap_finite_element() -> _RemapFiniteElementProjection:
             (f"L2 projection refinement failed: {fem_refinement.status}."),
             {"fem_refinement": fem_refinement},
         )
-    prepared_target, target_record = _measured(
+    prepared_target, l2_target_record = _measured(
         lambda: discretization.prepare_l2_projection_target(fem_target, field_name="u")
     )
-    transfer, transfer_record = _measured(
+    transfer, l2_transfer_record = _measured(
         lambda: discretization.prepare_l2_projection_transfer(
             fem_source,
             prepared_target,
@@ -357,7 +358,7 @@ def _project_remap_finite_element() -> _RemapFiniteElementProjection:
         fem_target.mass.mv(jnp.ones((fem_target.dof_maps[0].global_dof_count,)))
     )
     fem_smooth = _remap_field(source_dofs)
-    projected, projection_record = _measured(
+    projected, l2_apply_record = _measured(
         lambda: jax.block_until_ready(
             (
                 transfer.apply(jnp.ones_like(jnp.asarray(fem_smooth))),
@@ -423,10 +424,10 @@ def _project_remap_finite_element() -> _RemapFiniteElementProjection:
         },
         refinement_id=fem_refinement.refinement_id,
         transfer_id=transfer.transfer_id,
-        refinement_record=fem_refinement_record,
-        target_record=target_record,
-        transfer_record=transfer_record,
-        projection_record=projection_record,
+        l2_refinement_record=l2_refinement_record,
+        l2_target_record=l2_target_record,
+        l2_transfer_record=l2_transfer_record,
+        l2_apply_record=l2_apply_record,
         retained_bytes=fem_refinement.evidence.retained_bytes,
         working_bytes=fem_refinement.evidence.working_bytes,
     )
@@ -445,6 +446,7 @@ def qualify_remap_p1() -> dict[str, object]:
     limited_plan = preparation.limited_plan
     unlimited_plan = preparation.unlimited_plan
     source_record = preparation.source_record
+    target_record = preparation.target_record
     refinement_record = preparation.refinement_record
     limited_record = preparation.limited_record
     unlimited_record = preparation.unlimited_record
@@ -455,10 +457,10 @@ def qualify_remap_p1() -> dict[str, object]:
     p1_record = execution.p1_record
     projection = _project_remap_finite_element()
     fem = projection.fem
-    fem_refinement_record = projection.refinement_record
-    target_record = projection.target_record
-    transfer_record = projection.transfer_record
-    projection_record = projection.projection_record
+    l2_refinement_record = projection.l2_refinement_record
+    l2_target_record = projection.l2_target_record
+    l2_transfer_record = projection.l2_transfer_record
+    l2_apply_record = projection.l2_apply_record
     return {
         "status": "passed",
         "source": {
@@ -508,10 +510,10 @@ def qualify_remap_p1() -> dict[str, object]:
             "unlimited_p1_plan": unlimited_record,
             "p0_apply": p0_record,
             "limited_p1_apply": p1_record,
-            "l2_refinement": fem_refinement_record,
-            "l2_target_prepare": target_record,
-            "l2_transfer_prepare": transfer_record,
-            "l2_apply": projection_record,
+            "l2_refinement": l2_refinement_record,
+            "l2_target_prepare": l2_target_record,
+            "l2_transfer_prepare": l2_transfer_record,
+            "l2_apply": l2_apply_record,
             "refinement_retained_bytes": evidence.retained_bytes,
             "refinement_working_bytes": evidence.working_bytes,
             "l2_refinement_retained_bytes": projection.retained_bytes,

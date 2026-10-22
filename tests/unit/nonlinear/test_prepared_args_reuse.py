@@ -154,7 +154,7 @@ def test_prepared_jacobian_rereads_same_opaque_args(
     _mutate_args(args, mutation)
     second = nl.prepare_jacobian(problem, state, policy, args)
 
-    # These binary-exact affine evaluations and diagonal actions have no roundoff.
+    # These affine evaluations and diagonal actions have no float64 roundoff.
     for prepared, factor in ((first, 1.0), (second, next_factor)):
         diagonal = np.asarray([2.0, 5.0], dtype=np.float64) * factor
         np.testing.assert_array_equal(

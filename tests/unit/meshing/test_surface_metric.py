@@ -4,6 +4,7 @@
 import gc
 import weakref
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import replace
 from fractions import Fraction
 from typing import Any, NamedTuple
@@ -119,6 +120,38 @@ from tests._support.surface_metric import (
     surface_resources,
     UVMetricSource,
 )
+
+
+def test_rational_metric_source_reuses_certified_coordinate_restrictions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.meshing import _surface_association_transfer as associations
+
+    prepared = prepare_rational_trim_metric_source()
+    with coordinate_reference_budget() as budget:
+        proof = associations.source_proof(
+            prepared.transfer.support,
+            prepared.source,
+            prepared.transfer.receipts,
+            budget=budget,
+        )
+        original_work = budget.work_units
+
+    def forbid_reproof(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("retained source-fidelity proof must not be repeated")
+
+    monkeypatch.setattr(associations, "source_proof", forbid_reproof)
+    with coordinate_reference_budget() as budget:
+        witness = owner.prepare_surface_metric_source(
+            prepared.source, prepared.transfer, budget=budget
+        )
+        reused_work = budget.work_units
+    rows = key_rows(proof.cell_ids[:, None], np.asarray(witness.cell_global_ids)[:, None])
+    np.testing.assert_array_equal(witness.patches, proof.patches[rows])
+    np.testing.assert_array_equal(
+        witness.charts, np.asarray(proof.source_corners, dtype=np.float64)[rows]
+    )
+    assert reused_work < original_work
 
 
 @pytest.mark.parametrize(
@@ -498,7 +531,7 @@ def test_sphere_cone_filter_resolves_zero_area_contact_and_retains_source_cells(
         sphere_native_scope(policy.limits) as native_scope,
         native_coordinate_phase(native_scope, ledger),
     ):
-        kept_source, kept_target = cone_candidates(
+        kept_source, kept_target, _ = cone_candidates(
             atlas,
             atlas,
             np.asarray((0, 0), dtype=np.int64),
@@ -508,6 +541,45 @@ def test_sphere_cone_filter_resolves_zero_area_contact_and_retains_source_cells(
         )
     np.testing.assert_array_equal(kept_source, (0,))
     np.testing.assert_array_equal(kept_target, (0,))
+
+
+def test_batched_sphere_location_preserves_serial_cone_order_and_boundary_signs(
+    sphere_metric_source: SphereMetricSource,
+) -> None:
+    from phydrax._meshcore import exact_orient3d
+
+    domain, source, atlas, transfer, policy = sphere_metric_source
+    metric = np.broadcast_to(np.eye(3), (source.mesh.coordinates.shape[0], 3, 3))
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
+        _, background = owner._sphere_initial_state(
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
+        )
+        rows = np.arange(atlas.num_charts, dtype=np.int64)[::-1]
+        for direction in (
+            background.cone_directions[0, 0],
+            np.mean(background.cone_directions[0], axis=0),
+        ):
+            expected = []
+            for row in rows:
+                corners = background.cone_directions[row]
+                signs = exact_orient3d(
+                    np.zeros(3),
+                    np.stack((direction, corners[0], corners[0])),
+                    np.stack((corners[1], direction, corners[1])),
+                    np.stack((corners[2], corners[2], direction)),
+                )
+                if np.all(signs * background.cone_orientations[row] >= 0):
+                    expected.append((int(row), tuple(map(int, signs))))
+            actual = [
+                (row, tuple(map(int, signs)))
+                for row, signs in owner._sphere_location_cones(
+                    background, rows, direction, budget=ledger
+                )
+            ]
+            assert actual == expected
 
 
 def test_sphere_displacement_zero_requires_exact_coefficient_cancellation() -> None:
@@ -676,6 +748,403 @@ def test_native_sphere_metric_changes_cells_with_radial_correspondence(
         <= policy.limits.maximum_work_units
     )
     np.testing.assert_array_equal(np.asarray(source.geometry.coordinates), before)
+
+
+def test_sphere_interior_split_collapse_preserves_current_organization(
+    sphere_metric_source: SphereMetricSource,
+) -> None:
+    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+    from phydrax.meshing._host_banks import selected_rows
+
+    domain, source, atlas, transfer, policy = sphere_metric_source
+    metric = np.broadcast_to(np.eye(3), (source.mesh.coordinates.shape[0], 3, 3))
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
+        state, background = owner._sphere_initial_state(
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
+        )
+        original_cells = {tuple(sorted(map(int, cell))) for cell in state.cells}
+        original_features = dict(state.features)
+        born = state.points.shape[0]
+        for pair in owner._sphere_edges(state)[0]:
+            edge = tuple(map(int, pair))
+            if edge in state.features or edge in state.blocked:
+                continue
+            closures = [
+                background.vertex_closure_memberships[int(state.vertex_ids[vertex])]
+                for vertex in edge
+            ]
+            if closures[0] == closures[1]:
+                continue
+            interior = [
+                vertex
+                for vertex in edge
+                if vertex not in state.fixed
+                and not any(vertex in feature for feature in state.features)
+                and np.unique(state.classes[np.any(state.cells == vertex, axis=1)]).size
+                == 1
+                and np.unique(state.patches[np.any(state.cells == vertex, axis=1)]).size
+                == 1
+            ]
+            if not interior:
+                continue
+            if owner._sphere_apply_operation(
+                state,
+                "split",
+                edge,
+                domain,
+                background,
+                transfer,
+                budget=ledger,
+                scope=native_scope,
+            ):
+                kept = interior[0]
+                break
+        else:
+            pytest.fail(
+                "native sphere must expose an interior edge next to a labeled trace"
+            )
+        assert (
+            len(
+                {
+                    background.vertex_closure_memberships[parent]
+                    for parent in state.vertex_sources[born]
+                }
+            )
+            > 1
+        )
+        assert owner._sphere_collapse_organization(state, born, kept, background)
+        trace_end = edge[1] if edge[0] == kept else edge[0]
+        assert any(trace_end in feature for feature in state.features)
+        assert not owner._sphere_collapse_organization(state, born, trace_end, background)
+        assert not owner._sphere_collapse(
+            state,
+            born,
+            trace_end,
+            domain,
+            background,
+            state.minimum_metric_quality,
+            budget=ledger,
+        )
+        assert owner._sphere_apply_operation(
+            state,
+            "collapse",
+            (born, kept),
+            domain,
+            background,
+            transfer,
+            budget=ledger,
+            scope=native_scope,
+        )
+        assert state.features == original_features
+        assert {tuple(sorted(map(int, cell))) for cell in state.cells} == original_cells
+        edit, _, _, _, _ = owner._sphere_assemble(source, state)
+        target, lineage, _ = assemble_topology_edit(
+            source.mesh,
+            edit,
+            numeric_version=canonical_fingerprint(
+                array_tree_fingerprint(edit.coordinates)
+            ),
+            budget=ledger,
+        )
+        patches, zones, labels = inherit_mesh_organization(source, target, lineage)
+    for original, inherited in zip(
+        (*source.patches, *source.zones, *source.labels),
+        (*patches, *zones, *labels),
+        strict=True,
+    ):
+        assert original.name == inherited.name
+        old_keys = entity_keys(source.mesh, original.scope.entity_dimension)[
+            selected_rows(source.mesh, original.scope)
+        ]
+        new_keys = entity_keys(target, inherited.scope.entity_dimension)[
+            selected_rows(target, inherited.scope)
+        ]
+        if original.scope.entity_dimension < 2:
+            assert set(map(tuple, old_keys.tolist())) == set(
+                map(tuple, new_keys.tolist())
+            )
+        else:
+
+            def physical_cell_keys(
+                mesh: CellMesh,
+                identifiers: np.ndarray,
+            ) -> set[tuple[int, ...]]:
+                selected = set(map(int, identifiers[:, 0]))
+                vertex_ids = np.asarray(mesh.vertex_global_ids)
+                return {
+                    tuple(sorted(map(int, vertex_ids[corners])))
+                    for block in mesh.blocks
+                    for identifier, corners in zip(
+                        np.asarray(block.global_ids),
+                        np.asarray(block.vertices),
+                        strict=True,
+                    )
+                    if int(identifier) in selected
+                }
+
+            assert physical_cell_keys(source.mesh, old_keys) == physical_cell_keys(
+                target, new_keys
+            )
+
+
+def test_sphere_midpoint_collapse_relocates_interior_kept_vertex_with_lineage(
+    sphere_metric_source: SphereMetricSource,
+) -> None:
+    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+    from phydrax.meshing._host_banks import selected_rows
+
+    domain, source, atlas, transfer, policy = sphere_metric_source
+    # Coarse metric: interior edges are short, so a merged star stays below
+    # the upper length obligation.
+    metric = np.broadcast_to(np.eye(3) / 4.0, (source.mesh.coordinates.shape[0], 3, 3))
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
+        state, background = owner._sphere_initial_state(
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
+        )
+        original_features = dict(state.features)
+        cell_count = state.cells.shape[0]
+        for pair in owner._sphere_edges(state)[0]:
+            removed, kept = map(int, pair)
+            before = state.points[kept].copy()
+            if owner._sphere_midpoint_collapse(
+                state,
+                removed,
+                kept,
+                domain,
+                background,
+                state.minimum_metric_quality,
+                budget=ledger,
+            ):
+                break
+            # A refused trial restores the carrier exactly.
+            np.testing.assert_array_equal(state.points[kept], before)
+        else:
+            pytest.fail("native sphere must admit one interior midpoint collapse")
+        assert state.dimensions[removed] == state.dimensions[kept] == 2
+        assert not any(
+            vertex in feature for feature in state.features for vertex in (removed, kept)
+        )
+        assert state.features == original_features
+        assert state.successors[removed] == kept
+        assert kept in state.relocated
+        assert state.vertex_sources[kept] == {
+            parent for parent, _ in state.stencils[kept]
+        }
+        assert not np.any(state.cells == removed)
+        assert state.cells.shape[0] == cell_count - 2
+        assert not np.array_equal(state.points[kept], before)
+        edit, _, _, _, _ = owner._sphere_assemble(source, state)
+        target, lineage, _ = assemble_topology_edit(
+            source.mesh,
+            edit,
+            numeric_version=canonical_fingerprint(
+                array_tree_fingerprint(edit.coordinates)
+            ),
+            budget=ledger,
+        )
+        patches, zones, labels = inherit_mesh_organization(source, target, lineage)
+    for original, inherited in zip(
+        (*source.patches, *source.zones, *source.labels),
+        (*patches, *zones, *labels),
+        strict=True,
+    ):
+        assert original.name == inherited.name
+        if original.scope.entity_dimension < 2:
+            old_keys = entity_keys(source.mesh, original.scope.entity_dimension)[
+                selected_rows(source.mesh, original.scope)
+            ]
+            new_keys = entity_keys(target, inherited.scope.entity_dimension)[
+                selected_rows(target, inherited.scope)
+            ]
+            assert set(map(tuple, old_keys.tolist())) == set(
+                map(tuple, new_keys.tolist())
+            )
+
+
+def test_sphere_invalid_cavity_is_rejected_before_rational_cone_construction(
+    sphere_metric_source: SphereMetricSource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._sphere_material_atlas as material_owner
+
+    domain, source, atlas, transfer, policy = sphere_metric_source
+    metric = np.broadcast_to(np.eye(3), (source.mesh.coordinates.shape[0], 3, 3))
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
+        state, background = owner._sphere_initial_state(
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
+        )
+        cells = state.cells[:2].copy()
+        cells[1] = cells[1, [0, 2, 1]]
+
+        def forbid_bound(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("an inverted cavity must not construct cone bounds")
+
+        monkeypatch.setattr(material_owner, "sphere_radial_triangle_bounds", forbid_bound)
+        before = ledger.work_units
+        assert not owner._sphere_legal(
+            domain,
+            cells,
+            state.patches[:2],
+            state.directions,
+            points=state.points,
+            background=background,
+            maximum_fidelity=0.16,
+            budget=ledger,
+        )
+        assert ledger.work_units == before
+
+
+@pytest.mark.parametrize("orientation", [1, -1])
+def test_sphere_interval_normalization_encloses_the_exact_cone_bound(
+    orientation: int,
+) -> None:
+    from phydrax.geometry._sphere_material_atlas import sphere_radial_triangle_bounds
+
+    rays = np.asarray(((1.0, 0.0, 0.0), (0.9, 0.3, 0.0), (0.9, 0.0, 0.3)))
+    if orientation < 0:
+        rays = rays[[0, 2, 1]]
+    source_norm = 1.3
+    with coordinate_reference_budget() as budget:
+        filtered = owner._sphere_radial_normalization_upper(
+            rays, orientation, source_norm, budget=budget
+        )
+        assert budget.work_units == 1
+        exact = sphere_radial_triangle_bounds(rays, budget=budget)
+    assert exact is not None and filtered is not None
+    determinant, floor, ceiling, unit_error = exact
+    assert determinant * orientation > 0
+    normalization = Fraction(source_norm) * (
+        max(1 - Fraction(floor), Fraction(ceiling) - 1, Fraction(0)) + unit_error
+    )
+    assert Fraction(filtered) >= normalization
+
+
+def test_sphere_interval_normalization_preserves_exact_uncertainty_fallback() -> None:
+    rays = np.asarray(
+        ((1.0, 1.0, 1.0), (1.0, 2.0, 3.0), (2.0, 3.0, np.nextafter(4.0, np.inf)))
+    )
+    with coordinate_reference_budget() as budget:
+        assert (
+            owner._sphere_radial_normalization_upper(rays, 1, 1.0, budget=budget) is None
+        )
+
+
+def test_sphere_filtered_legality_preserves_exact_candidate_decision(
+    sphere_metric_source: SphereMetricSource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    domain, source, atlas, transfer, policy = sphere_metric_source
+    metric = np.broadcast_to(np.eye(3), (source.mesh.coordinates.shape[0], 3, 3))
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
+        state, background = owner._sphere_initial_state(
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
+        )
+        before = ledger.work_units
+        assert owner._sphere_legal(
+            domain,
+            state.cells,
+            state.patches,
+            state.directions,
+            points=state.points,
+            background=background,
+            maximum_fidelity=0.16,
+            budget=ledger,
+        )
+        filtered_work = ledger.work_units - before
+        monkeypatch.setattr(
+            owner, "_sphere_radial_normalization_upper", lambda *a, **kw: None
+        )
+        before = ledger.work_units
+        assert owner._sphere_legal(
+            domain,
+            state.cells,
+            state.patches,
+            state.directions,
+            points=state.points,
+            background=background,
+            maximum_fidelity=0.16,
+            budget=ledger,
+        )
+        assert filtered_work < ledger.work_units - before
+
+
+def test_sphere_relocation_preserves_an_already_conforming_live_star(
+    sphere_metric_source: SphereMetricSource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    domain, source, atlas, transfer, policy = sphere_metric_source
+    metric = np.broadcast_to(np.eye(3), (source.mesh.coordinates.shape[0], 3, 3))
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
+        state, background = owner._sphere_initial_state(
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
+        )
+        for candidate in np.unique(state.cells):
+            vertex = int(candidate)
+            if (
+                vertex in state.fixed
+                or state.dimensions[vertex] != 2
+                or any(vertex in edge for edge in state.features)
+            ):
+                continue
+            rows = np.flatnonzero(np.any(state.cells == vertex, axis=1))
+            if (
+                np.unique(state.patches[rows]).size != 1
+                or np.unique(state.classes[rows]).size != 1
+            ):
+                continue
+            neighbors = np.unique(state.cells[rows])
+            neighbors = neighbors[neighbors != vertex]
+            lengths = np.linalg.norm(
+                state.points[neighbors] - state.points[vertex], axis=1
+            )
+            lower = owner._LOWER / np.min(lengths)
+            upper = owner._UPPER / np.max(lengths)
+            if lower >= upper:
+                continue
+            state.metric[:] = np.eye(3) * ((lower + upper) / 2) ** 2
+            if np.all(
+                owner._sphere_quality(
+                    state, state.cells[rows], state.patches[rows], background
+                )
+                >= state.minimum_metric_quality
+            ):
+                break
+        else:
+            pytest.fail("native sphere must contain a conforming interior star")
+
+        def forbid_proposal(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("a conforming star needs no source relocation query")
+
+        monkeypatch.setattr(owner, "_sphere_point", forbid_proposal)
+        before = state.points.copy()
+        work = ledger.work_units
+        assert not owner._sphere_relocate(
+            state, vertex, domain, background, transfer, budget=ledger
+        )
+        np.testing.assert_array_equal(state.points, before)
+        assert ledger.work_units == work
+        # Admission is recomputed from live metric values, not remembered as a
+        # permanent exemption for this source vertex.
+        state.metric *= 4
+        with pytest.raises(AssertionError, match="source relocation query"):
+            owner._sphere_relocate(
+                state, vertex, domain, background, transfer, budget=ledger
+            )
 
 
 @pytest.mark.parametrize(
@@ -1064,8 +1533,13 @@ def test_native_sphere_metric_stale_source_revision_refuses_without_mutation(
     np.testing.assert_array_equal(np.asarray(source.geometry.coordinates), before)
 
 
-def test_public_sphere_metric_resource_refusal_reaches_the_consumer_as_evidence(
+@pytest.mark.parametrize("nested", (False, True), ids=("root", "nested"))
+@pytest.mark.parametrize("work_limit", (1_000, 640_000), ids=("refusal", "stalled"))
+def test_public_sphere_metric_handoff_preserves_refusal_or_stall(
     sphere_metric_source: SphereMetricSource,
+    monkeypatch: pytest.MonkeyPatch,
+    nested: bool,
+    work_limit: int,
 ) -> None:
 
     _, source, _, transfer, policy = sphere_metric_source
@@ -1075,7 +1549,7 @@ def test_public_sphere_metric_resource_refusal_reaches_the_consumer_as_evidence(
         maximum_edges=160_000,
         maximum_faces=160_000,
         maximum_cells=160_000,
-        maximum_work_units=1_000,
+        maximum_work_units=work_limit,
         maximum_geometry_queries=1_280_000,
         maximum_scratch_bytes=81_920_000,
     )
@@ -1104,23 +1578,63 @@ def test_public_sphere_metric_resource_refusal_reaches_the_consumer_as_evidence(
         minimum_size=0.8,
         maximum_size=0.8,
     )
-    result = execute_mesh_adaptation(
-        prepare_mesh_adaptation(
-            source,
-            MetricMeshAdaptation(metric, coordinate_contract=source.coordinate_contract),
-            policy=starved,
-        )
+    from phydrax.meshing import (
+        _adaptation as adaptation_owner,
+        _native_preparation as preparation_owner,
     )
 
-    assert result.status is MeshAdaptationStatus.RESOURCE_LIMIT
-    assert result.target.result_id == source.result_id
+    ended = []
+    retained = []
+    execute = adaptation_owner._execute_mesh_routes
+    remember = preparation_owner.NativePreparationLedger.remember_receipt
+
+    def capture_outcome(*args: Any, **kwargs: Any) -> Any:
+        outcome = execute(*args, **kwargs)
+        ended.append(outcome)
+        return outcome
+
+    def capture_receipt(self: Any, parent: Any, record: Any, **kwargs: Any) -> None:
+        if ended:
+            retained.append(record)
+        remember(self, parent, record, **kwargs)
+
+    monkeypatch.setattr(adaptation_owner, "_execute_mesh_routes", capture_outcome)
+    monkeypatch.setattr(
+        preparation_owner.NativePreparationLedger, "remember_receipt", capture_receipt
+    )
+    parent = NativeExecutionScope(limits.native_limits()) if nested else None
+    with parent if parent is not None else nullcontext():
+        result = execute_mesh_adaptation(
+            prepare_mesh_adaptation(
+                source,
+                MetricMeshAdaptation(
+                    metric, coordinate_contract=source.coordinate_contract
+                ),
+                policy=starved,
+            )
+        )
+
+    assert len(ended) == 1
     evidence = result.evidence
     assert isinstance(evidence, MetricRemeshingEvidence)
-    assert evidence.status is MetricRemeshingStatus.RESOURCE_LIMIT
-    assert evidence.resource_message
-    assert dict(evidence.resource_requested)["maximum_work_units"] == 1_000
-    assert dict(evidence.resource_achieved)["coordinate_work_units"] <= 1_000
     assert evidence.execution_evidence is not None
+    assert result.target.execution_evidence is not None
+    assert tree_content_equal(
+        result.target.execution_evidence, evidence.execution_evidence
+    )
+    if work_limit == 1_000:
+        assert result.status is MeshAdaptationStatus.RESOURCE_LIMIT
+        assert result.target.result_id == source.result_id
+        assert evidence.status is MetricRemeshingStatus.RESOURCE_LIMIT
+        assert evidence.resource_message == ended[0].evidence.resource_message
+        assert evidence.resource_requested == ended[0].evidence.resource_requested
+        assert evidence.resource_achieved == ended[0].evidence.resource_achieved
+        assert evidence.resource_message
+        assert dict(evidence.resource_requested)["maximum_work_units"] == work_limit
+        assert not retained
+    else:
+        assert result.status is MeshAdaptationStatus.STALLED
+        assert not retained
     np.testing.assert_array_equal(np.asarray(source.geometry.coordinates), before)
 
 
@@ -1622,6 +2136,29 @@ def test_rational_surface_reconstruction_preserves_original_complete_map(
         reconstruction = reference_state.reconstruction
         mesh = reference_state.mesh
         ledger = reference_state.ledger
+        before_restore = ledger.work_units
+        restored = type(reconstruction).from_stored_fields(reconstruction, budget=ledger)
+        assert (
+            ledger.work_units >= before_restore + 8 * reconstruction.cell_global_ids.size
+        )
+        assert restored is reconstruction
+        assert restored.reconstruction_id == reconstruction.reconstruction_id
+        assert restored.source_geometry_id == reconstruction.source_geometry_id
+        stale = replace(reconstruction, target_topology_id="stale")
+        with pytest.raises(ValueError, match=r"surface_reconstruction\.binding"):
+            type(reconstruction).from_stored_fields(stale, budget=ledger)
+        invalid = replace(
+            reconstruction,
+            fidelity_bounds=reconstruction.fidelity_bounds.at[0].set(-1.0),
+        )
+        with pytest.raises(ValueError, match=r"surface_reconstruction\.bounds"):
+            type(reconstruction).from_stored_fields(invalid, budget=ledger)
+        changed = replace(
+            reconstruction,
+            vertex_coordinates=reconstruction.vertex_coordinates.at[0, 0].add(0.01),
+        )
+        with pytest.raises(ValueError, match="changed restored representatives"):
+            type(reconstruction).from_stored_fields(changed, budget=ledger)
         assert isinstance(reference_state.atlas, SurfaceSourceRootAtlas)
         assert isinstance(reference_state.original, SplineCellGeometryElement)
         np.testing.assert_array_equal(
@@ -2637,3 +3174,45 @@ def test_sphere_quality_floor_refuses_invalid_value_without_source_mutation(
                     scope=native_scope,
                 )
     np.testing.assert_array_equal(source.geometry.coordinates, before)
+
+
+@pytest.mark.parametrize("orientation", (-1, 1))
+def test_nominal_coedge_split_preserves_coincident_source_sides(orientation: int) -> None:
+    cells = np.asarray(((0, 1, 2), (0, 1, 3)), dtype=np.int32)
+    bank = np.full((2, 3, 3), -1, dtype=np.int32)
+    bank[0, 0] = (0, 4, orientation)
+    bank[1, 0] = (2, 9, -orientation)
+    state = owner.SurfaceState(
+        points=np.zeros((4, 3)),
+        metric=np.tile(np.eye(3), (4, 1, 1)),
+        cells=cells,
+        patches=np.asarray((7, 7), dtype=np.int32),
+        charts=np.zeros((2, 3, 2)),
+        classes=np.zeros(2, dtype=np.int32),
+        cell_ids=np.asarray((901, 17), dtype=np.int64),
+        vertex_ids=np.asarray((100, 42, 905, 8), dtype=np.int64),
+        parents=[{901}, {17}],
+        vertex_sources=[{100}, {42}, {905}, {8}],
+        next_cell_id=902,
+        next_vertex_id=906,
+        cell_coedges=bank,
+    )
+    result = owner._transport_cell_coedges(
+        state,
+        np.asarray((1, 0, 1, 0), dtype=np.int64),
+        np.asarray(((4, 1, 3), (0, 4, 2), (0, 4, 3), (4, 1, 2))),
+        split_edge=np.asarray((0, 1)),
+        split_vertex=4,
+    )
+    assert result is not None
+    np.testing.assert_array_equal(result[:, 0], bank[[1, 0, 1, 0], 0])
+    np.testing.assert_array_equal(result[:, 1:], -np.ones((4, 2, 3), dtype=np.int32))
+    moved, preserved = owner._cavity_cell_coedges(
+        state, np.asarray((0,)), np.asarray(((0, 1, 3),))
+    )
+    assert preserved and moved is not None
+    np.testing.assert_array_equal(moved[0, 0], bank[0, 0])
+    merged, preserved = owner._cavity_cell_coedges(
+        state, np.asarray((0, 1)), np.asarray(((0, 1, 3),))
+    )
+    assert not preserved and merged is None

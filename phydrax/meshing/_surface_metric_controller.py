@@ -68,6 +68,9 @@ class SurfaceMetricController:
         _dependency_phydrax_meshing__periodic.PeriodicMetricOrbitOutcome | None
     ) = None
     minimum_metric_quality: float = 0.05
+    material_routing: (
+        _dependency_phydrax_meshing__surface_metric.PreparedMaterialRouting | None
+    ) = None
 
     @property
     def operation_count(self) -> int:
@@ -112,6 +115,7 @@ class SurfaceMetricController:
                         state.charts,
                         state.vertex_ids,
                         state.cell_ids,
+                        *(() if state.cell_coedges is None else (state.cell_coedges,)),
                     )
                 ),
             )
@@ -133,6 +137,7 @@ class SurfaceMetricController:
                 self.policy,
                 self.maximum_fidelity,
                 minimum_metric_quality=self.minimum_metric_quality,
+                material_routing=self.material_routing,
                 budget=self.budget,
             ):
                 return None
@@ -142,6 +147,7 @@ class SurfaceMetricController:
                 background,
                 self.policy,
                 operation,
+                material_routing=self.material_routing,
                 budget=self.budget,
             )
 
@@ -283,6 +289,7 @@ class SurfaceMetricController:
                 self.policy,
                 self.maximum_fidelity,
                 minimum_metric_quality=self.minimum_metric_quality,
+                material_routing=self.material_routing,
                 budget=self.budget,
             ):
                 raise ValueError(
@@ -295,6 +302,7 @@ class SurfaceMetricController:
             background,
             self.policy,
             operation,
+            material_routing=self.material_routing,
             budget=self.budget,
         )
         if edit.operation != result.operation or not stencils:
@@ -322,6 +330,7 @@ class SurfaceMetricController:
                 background.patches,
                 background.charts,
                 self.policy.limits.maximum_geometry_queries,
+                material_routing=self.material_routing,
                 budget=self.budget,
             )
         )
@@ -342,6 +351,9 @@ class SurfaceMetricController:
                 domain.domain_id,
                 tuple(domain.entity_id(2, int(patch)) for patch in patches),
                 tuple(domain.source_occurrences[2][int(patch)] for patch in patches),
+                _dependency_phydrax_meshing__surface_metric.surface_cell_coedges(
+                    aggregate, edit
+                ),
             )
         )
         actual = _dependency_phydrax_meshing__surface_metric.prepare_policy_surface_metric_transition(
@@ -394,6 +406,8 @@ def _apply_operation(
     /,
     *,
     minimum_metric_quality: float,
+    material_routing: _dependency_phydrax_meshing__surface_metric.PreparedMaterialRouting
+    | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
     if len(vertices) != (1 if operation == "relocate" else 2) or any(
@@ -427,6 +441,7 @@ def _apply_operation(
                 state.patches[owner : owner + 1],
                 chart[None],
                 policy.limits.maximum_geometry_queries,
+                material_cache=material_routing,
                 budget=budget,
             )
             metric_rows = entity_keys_owner.key_rows(
@@ -488,6 +503,7 @@ def _apply_operation(
                 blocked,
                 minimum_metric_quality,
                 selected_vertices=frozenset(vertices),
+                material_routing=material_routing,
                 budget=budget,
             )
             return changes == 1
@@ -505,6 +521,8 @@ def _exact_edit(
     operation: _dependency_phydrax_meshing__periodic.PeriodicMetricOperation,
     /,
     *,
+    material_routing: _dependency_phydrax_meshing__surface_metric.PreparedMaterialRouting
+    | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
     _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
@@ -517,6 +535,7 @@ def _exact_edit(
         background.patches,
         background.charts,
         policy.limits.maximum_geometry_queries,
+        material_routing=material_routing,
         budget=budget,
     )
     queries = []

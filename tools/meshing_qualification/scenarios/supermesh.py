@@ -20,6 +20,7 @@ from tools.meshing_qualification._runtime import (
     _missing_dependency,
     _runtime_identity,
     qualification_failure,
+    StageMeasurement,
 )
 
 
@@ -35,7 +36,7 @@ class _SupermeshCaseRecord(TypedDict):
     conservation: dict[str, float | dict[str, float]]
     pairs: dict[str, int]
     predicates: dict[str, str | int]
-    resources: dict[str, int | dict[str, float]]
+    resources: dict[str, int | StageMeasurement]
 
 
 def _unit_lattice_cells(

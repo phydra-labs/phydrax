@@ -28,6 +28,7 @@ from phydrax.discretization.fem._generic import FiniteElementFieldSpec, FiniteEl
 from phydrax.discretization.fem._reference import lagrange_element
 from phydrax.discretization.finite_volume._unstructured_dynamics import (
     execute_owner_local_finite_volume_advance,
+    prepare_owner_local_finite_volume_execution,
     PreparedUnstructuredFiniteVolumeDynamics,
 )
 from phydrax.lifecycle._array_artifact import (
@@ -424,14 +425,10 @@ def _prepare_epoch(
     prepared = M.prepare_adaptive_simplex(source, policy=policy)
     partitioned = M.partition_adaptive_simplex(prepared)
     marks = partitioned.cell_marks(np.asarray((0,), dtype=np.int64))
-    update = D.refine_adaptive_simplex_parts(
-        partitioned.layout, partitioned.parts, partitioned.states, marks
-    )
+    update = D.refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states, marks)
     states = update.state
     if scenario == "coarsen_publication":
-        states = coarsen_adaptive_simplex_parts(
-            partitioned.layout, partitioned.parts, states, states.mesh.cell_active
-        ).state
+        states = coarsen_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), states, states.mesh.cell_active).state
     return _NativeEpoch(
         source, partition_policy, distribution, policy, prepared, partitioned, states
     )
@@ -671,12 +668,8 @@ def native_audit_only() -> dict[str, Any]:
             current, M.MarkedMeshAdaptation(), policy=continued_policy
         )
     )
-    back = coarsen_adaptive_simplex_parts(
-        continued.layout,
-        continued.parts,
-        continued.states,
-        continued.states.mesh.cell_active,
-    )
+    back = coarsen_adaptive_simplex_parts(continued.layout, type(continued).execution_parts(continued), continued.states,
+    continued.states.mesh.cell_active,)
     restored = M.commit_partitioned_adaptive_simplex(continued, back.state)
     checks.setdefault("distributed_642", []).append(
         bool(restored.identity.target_topology_id == seed.mesh.topology_id)
@@ -1193,19 +1186,15 @@ def _publication(scenario: str) -> dict[str, Any]:
             axis=1,
         )
         initial.append(system.primitive_to_conserved(primitive))
-    seeds = jnp.stack(
-        tuple(
-            (
-                jnp.where(
-                    _require_instance(
-                        program.discretization, D.UnstructuredFiniteVolumeDiscretization
-                    ).cell_owned[:, None],
-                    value,
-                    2 * value,
-                )
-                for program, value in zip(dynamics, initial, strict=True)
-            )
+    seeds = tuple(
+        jnp.where(
+            _require_instance(
+                program.discretization, D.UnstructuredFiniteVolumeDiscretization
+            ).cell_owned[:, None],
+            value,
+            2 * value,
         )
+        for program, value in zip(dynamics, initial, strict=True)
     )
     devices = tuple(jax.devices())
     group = ExecutionGroup(
@@ -1217,15 +1206,20 @@ def _publication(scenario: str) -> dict[str, Any]:
         ),
         devices,
     )
-    advance = execute_owner_local_finite_volume_advance(
+    counts = _require_present(results[0].target.mesh.storage).global_entity_counts
+    execution = prepare_owner_local_finite_volume_execution(
         tuple(zip(dynamics, cell_halos, strict=True)),
-        seeds,
-        jnp.asarray(0.0),
-        jnp.asarray(0.01),
         group,
         axis_name="parts",
+        maximum_cells=counts[-1],
+        maximum_faces=max(8, counts[1]),
+        maximum_message_entries=counts[-1],
+        maximum_storage_bytes=1 << 30,
     )
-    updated = advance.state
+    advance = execute_owner_local_finite_volume_advance(
+        execution, execution.pack_state(seeds), jnp.asarray(0.0), jnp.asarray(0.01)
+    )
+    updated = execution.unpack_state(advance.state)
     for rank, program in enumerate(dynamics):
         owned = _require_instance(
             program.discretization, D.UnstructuredFiniteVolumeDiscretization

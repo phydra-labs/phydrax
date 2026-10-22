@@ -12,9 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.experimental import multihost_utils
+from jax.sharding import NamedSharding, PartitionSpec
 
 from phydrax.meshing._entity_keys import facet_packets
 
+from .._execution_array import _place_process_local_array
 from .._fingerprint import canonical_fingerprint, logical_array_value_collection_digest
 from .._strict import StrictModule
 from ..discretization._adaptive_simplex import AdaptiveSimplexState
@@ -28,12 +30,17 @@ from . import (
     _organization_records as organization_owner,
     _result as result_owner,
 )
+from ._collective_failure import agreed_local
 from ._entity_keys import entity_keys, key_positions
 from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
+from .providers import _native_planar_domain as native_planar_domain_owner
 
 
 type OrganizationDefinitions = tuple[
-    tuple[str, tuple[organization_owner.MeshPatch, ...]],
+    tuple[
+        str,
+        tuple[organization_owner.MeshPatch, ...] | organization_owner.MeshPatchBank,
+    ],
     tuple[str, tuple[organization_owner.MeshZone, ...]],
     tuple[str, tuple[organization_owner.MeshLabel, ...]],
     tuple[str, tuple[organization_owner.MeshAttribute, ...]],
@@ -45,7 +52,55 @@ def initial_organization_definitions(
     evidence: initial_certification_owner.InitialCollectiveMeshEvidence, /
 ) -> OrganizationDefinitions:
     """Return authored source declarations for accepted collective evidence."""
-    return _initial_organization_definitions(evidence.compiled, evidence.specification)
+    return _premise_organization_definitions(evidence.premise)
+
+
+def _premise_organization_definitions(
+    premise: initial_certification_owner.InitialSurfacePremise
+    | initial_certification_owner.InitialPlanarPremise,
+    /,
+) -> OrganizationDefinitions:
+    match premise:
+        case initial_certification_owner.InitialSurfacePremise():
+            return _initial_organization_definitions(
+                premise.compiled, premise.specification
+            )
+        case initial_certification_owner.InitialPlanarPremise():
+            return _planar_initial_organization_definitions(premise)
+        case _:
+            raise TypeError(
+                "collective_organization.premise must be an initial surface or planar premise; got an unknown premise kind"
+            )
+
+
+def _planar_initial_organization_definitions(
+    premise: initial_certification_owner.InitialPlanarPremise, /
+) -> OrganizationDefinitions:
+    """Return planar loop patches and embedded-edge labels over source edge rows."""
+    _, _, loops = native_planar_domain_owner.source_arrays(premise.authored_source)
+
+    def scope(rows: np.ndarray) -> MeshingScope:
+        return MeshingScope(
+            premise.source_id,
+            premise.source_revision,
+            MeshingEntityKind.GEOMETRY,
+            1,
+            premise.tiles.entity_set_id(1),
+            np.asarray(rows, dtype=np.int64),
+        )
+
+    patches = tuple(
+        organization_owner.MeshPatch(
+            f"loop:{loop}", scope(np.flatnonzero(loops == loop))
+        )
+        for loop in np.unique(loops[loops >= 0]).tolist()
+    )
+    labels = (
+        (organization_owner.MeshLabel("embedded", scope(np.flatnonzero(loops < 0))),)
+        if np.any(loops < 0)
+        else ()
+    )
+    return (("patch", patches), ("zone", ()), ("label", labels), ("attribute", ()))
 
 
 def _initial_organization_definitions(
@@ -178,29 +233,64 @@ def _initial_organization_definitions(
     )
 
 
+@jax.jit
+def _initial_membership_values(
+    sources: tuple[Array, ...],
+    selections: tuple[Array, ...],
+    counts: tuple[int, ...],
+) -> tuple[Array, ...]:
+    return tuple(
+        jnp.isin(source, selected) & (jnp.arange(source.shape[0]) < count)
+        for source, selected, count in zip(sources, selections, counts, strict=True)
+    )
+
+
 @checked
 def initial_organization_membership(
-    compiled: domain_owner.CompiledSurfaceDomain,
-    specification: contracts_owner.SurfaceMeshingSpec,
+    premise: initial_certification_owner.InitialSurfacePremise
+    | initial_certification_owner.InitialPlanarPremise,
     banks: Mapping[str, Array],
     counts: tuple[int, ...],
     /,
 ) -> tuple[tuple[str, Array], ...]:
     """Evaluate source scope memberships before collective evidence construction."""
-    result = []
-    for family, records in _initial_organization_definitions(compiled, specification):
+    names = []
+    sources = []
+    selections = []
+    active_counts = []
+    for family, records in _premise_organization_definitions(premise):
         for index, record in enumerate(records):
             degree = record.scope.entity_dimension
-            selected = compiled.domain.resolve_indices(
-                degree, np.asarray(record.scope.global_entity_ids, dtype=np.int64)
-            )
-            source = banks[
-                "initial/cell_patches" if degree == 2 else "initial/edge_curves"
-            ]
-            member = jnp.isin(source, jnp.asarray(selected, dtype=jnp.int64))
-            member &= jnp.arange(member.shape[0]) < counts[degree]
-            result.append((f"organization/{family}/{index}/membership", member))
-    return tuple(result)
+            match premise:
+                case initial_certification_owner.InitialSurfacePremise():
+                    selected = premise.compiled.domain.resolve_indices(
+                        degree,
+                        np.asarray(record.scope.global_entity_ids, dtype=np.int64),
+                    )
+                    source = banks[
+                        "initial/cell_patches" if degree == 2 else "initial/edge_curves"
+                    ]
+                case _:
+                    if degree != 1:
+                        raise ValueError(
+                            "collective_organization.planar_scope must select source edges; got a non-edge scope"
+                        )
+                    selected = np.asarray(record.scope.global_entity_ids)
+                    source = banks["initial/edge_curves"]
+            names.append(f"organization/{family}/{index}/membership")
+            sources.append(source)
+            selections.append(np.asarray(selected, dtype=np.int64))
+            active_counts.append(counts[degree])
+    if sources:
+        sources = [_organization_source_operand(source, sources[0]) for source in sources]
+        selections = [
+            _organization_source_operand(selected, source)
+            for selected, source in zip(selections, sources, strict=True)
+        ]
+    values = _initial_membership_values(
+        tuple(sources), tuple(selections), tuple(active_counts)
+    )
+    return tuple(zip(names, values, strict=True))
 
 
 @checked
@@ -365,6 +455,58 @@ def _bind_vertex_source_rows(
     return rows, passed
 
 
+@eqx.filter_jit
+def _vertex_occurrence_values(
+    vertex_ids: Array,
+    vertex_parents: Array,
+    cursors: Array,
+    active: Array,
+    target_ids: Array,
+    width: int,
+    uniform: tuple[Array, Array, Array] | None,
+) -> tuple[Array, Array, Array]:
+    support_ids, support_weights, valid = jax.vmap(
+        lambda ids, parents, cursor: _original_vertex_ancestry_values(
+            ids, parents, cursor[0], width, uniform
+        )
+    )(vertex_ids, vertex_parents, cursors)
+    sources, weights = _select_vertex_occurrence_values(
+        vertex_ids, active, support_ids, support_weights, target_ids
+    )
+    return sources, weights, jnp.all(valid)
+
+
+def _organization_source_operand(
+    value: Array | np.ndarray | None, target: Array
+) -> Array:
+    """Admit dense local sources on current replicas; retain admitted global banks."""
+    def prepare() -> Array:
+        placement = target.sharding
+        if value is None:
+            raise ValueError("collective_organization.source must be present; got missing data")
+        source = value if isinstance(value, Array) else jnp.asarray(value)
+        if source.is_deleted():
+            raise ValueError("collective_organization.source must be live; got deleted data")
+        if not source.is_fully_addressable:
+            if (
+                not isinstance(source.sharding, NamedSharding)
+                or not isinstance(placement, NamedSharding)
+                or source.sharding.mesh != placement.mesh
+            ):
+                raise ValueError(
+                    "collective_organization.source must use the current physical mesh; got foreign placement"
+                )
+            return source
+        replica = (
+            NamedSharding(placement.mesh, PartitionSpec())
+            if isinstance(placement, NamedSharding)
+            else placement
+        )
+        return _place_process_local_array(source, replica)
+
+    return agreed_local(prepare)
+
+
 def _prepare_vertex_occurrences(
     original: result_owner.CellMeshingResult
     | initial_certification_owner.InitialCollectiveMeshEvidence,
@@ -374,20 +516,34 @@ def _prepare_vertex_occurrences(
     uniform_refinement: bisection_owner.BisectionUniformRefinement | None,
     source_counts: tuple[int, ...],
 ) -> _VertexOccurrences:
-    support_ids, support_weights, valid = jax.vmap(
-        lambda state: original_vertex_ancestry(state, uniform_refinement),
-    )(states)
-    if not bool(jax.device_get(jnp.all(valid))):
+    uniform = (
+        None
+        if uniform_refinement is None
+        else (
+            uniform_refinement.child_vertices,
+            uniform_refinement.parent_rows,
+            uniform_refinement.barycentric_weights,
+        )
+    )
+    if uniform is not None:
+        uniform = (
+            _organization_source_operand(uniform[0], target_ids[0]),
+            _organization_source_operand(uniform[1], target_ids[0]),
+            _organization_source_operand(uniform[2], target_ids[0]),
+        )
+    vertex_sources, vertex_weights, valid = _vertex_occurrence_values(
+        states.mesh.vertex_ids,
+        states.vertex_parents,
+        states.cursors,
+        states.mesh.vertex_active,
+        target_ids[0],
+        states.mesh.cells.shape[-1],
+        uniform,
+    )
+    if not bool(jax.device_get(valid)):
         raise ValueError(
             "collective_organization.ancestry must be a valid midpoint DAG; got invalid ancestry"
         )
-    vertex_sources, vertex_weights = _select_vertex_occurrence_values(
-        states.mesh.vertex_ids,
-        states.mesh.vertex_active,
-        support_ids,
-        support_weights,
-        target_ids[0],
-    )
     placement = target_ids[0].sharding
     vertex_sources = jax.device_put(vertex_sources, placement)
     vertex_weights = jax.device_put(vertex_weights, placement)
@@ -396,10 +552,11 @@ def _prepare_vertex_occurrences(
         "organization/vertex/source_weights": vertex_weights,
     }
     source_vertex_ids = (
-        original.entity_ids[0][: source_counts[0]]
+        _organization_source_operand(original.entity_ids[0], vertex_sources)[: source_counts[0]]
         if isinstance(original, initial_certification_owner.InitialCollectiveMeshEvidence)
-        else jnp.asarray(original.mesh.vertex_global_ids, dtype=jnp.int64)
+        else agreed_local(lambda: jnp.asarray(original.mesh.vertex_global_ids, dtype=jnp.int64))
     )
+    source_vertex_ids = _organization_source_operand(source_vertex_ids, vertex_sources)
     vertex_source_rows, source_binding = _bind_vertex_source_rows(
         source_vertex_ids, vertex_sources, jnp.asarray(counts[0], dtype=jnp.int64)
     )
@@ -512,6 +669,21 @@ def _bind_entity_support_rows(
     return _entity_carrier_rows(scientific, supports)
 
 
+@eqx.filter_jit
+def _cell_occurrence_values(
+    cell_ids: Array,
+    parents: Array,
+    cursors: Array,
+    active: Array,
+    target_ids: Array,
+    uniform: tuple[Array, Array] | None,
+) -> tuple[Array, Array, Array, Array]:
+    root_ids = _cell_root_ids(cell_ids, parents, cursors[:, 1])
+    if uniform is not None:
+        root_ids = _translate_uniform_cell_roots(root_ids, *uniform)
+    return _select_cell_occurrence_values(root_ids, active, cell_ids, target_ids)
+
+
 def _prepare_cell_occurrences(
     original: result_owner.CellMeshingResult
     | initial_certification_owner.InitialCollectiveMeshEvidence,
@@ -525,21 +697,34 @@ def _prepare_cell_occurrences(
     vertex_sources: Array,
     arrays: dict[str, Array],
 ) -> _CellOccurrences:
-    root_ids = _cell_root_ids(states.mesh.cell_ids, states.parents, states.cursors[:, 1])
-    if uniform_refinement is not None:
-        root_ids = _translate_uniform_cell_roots(
-            root_ids, uniform_refinement.child_ids, uniform_refinement.parent_ids
+    uniform = (
+        None
+        if uniform_refinement is None
+        else (uniform_refinement.child_ids, uniform_refinement.parent_ids)
+    )
+    if uniform is not None:
+        uniform = (
+            _organization_source_operand(uniform[0], target_ids[-1]),
+            _organization_source_operand(uniform[1], target_ids[-1]),
         )
-    cell_sources, cell_active, cell_ids, order = _select_cell_occurrence_values(
-        root_ids, states.mesh.cell_active, states.mesh.cell_ids, target_ids[-1]
+    cell_sources, cell_active, cell_ids, order = _cell_occurrence_values(
+        states.mesh.cell_ids,
+        states.parents,
+        states.cursors,
+        states.mesh.cell_active,
+        target_ids[-1],
+        uniform,
     )
     cell_sources = jax.device_put(cell_sources, target_ids[-1].sharding)
     arrays["organization/cell/source_ids"] = cell_sources
     source_cells = (
-        original.entity_ids[-1][: source_counts[-1]]
+        _organization_source_operand(original.entity_ids[-1], cell_sources)[: source_counts[-1]]
         if isinstance(original, initial_certification_owner.InitialCollectiveMeshEvidence)
-        else jnp.asarray(entity_keys(original.mesh, dimension)[:, 0], dtype=jnp.int64)
+        else agreed_local(
+            lambda: jnp.asarray(entity_keys(original.mesh, dimension)[:, 0], dtype=jnp.int64)
+        )
     )
+    source_cells = _organization_source_operand(source_cells, cell_sources)
     cell_rows, source_binding = _bind_cell_source_rows(
         source_cells, cell_sources, jnp.asarray(counts[-1], dtype=jnp.int64)
     )
@@ -554,12 +739,13 @@ def _prepare_cell_occurrences(
     for degree in range(1, dimension):
         keys = target_keys[degree]
         scientific = (
-            original.entity_keys[degree][: source_counts[degree]]
+            _organization_source_operand(original.entity_keys[degree], keys)[: source_counts[degree]]
             if isinstance(
                 original, initial_certification_owner.InitialCollectiveMeshEvidence
             )
-            else jnp.asarray(entity_keys(original.mesh, degree), dtype=jnp.int64)
+            else agreed_local(lambda: jnp.asarray(entity_keys(original.mesh, degree), dtype=jnp.int64))
         )
+        scientific = _organization_source_operand(scientific, keys)
 
         rows = _bind_entity_support_rows(
             target_ids[0],
@@ -603,15 +789,18 @@ def _prepare_region_occurrences(
     scientific_regions = dict(
         zip(evidence.cell_global_ids, evidence.cell_region_ids, strict=True)
     )
-    region_values = jnp.asarray(
-        [
-            region_lookup[scientific_regions[int(identifier)]]
-            for identifier in np.asarray(
-                original.mesh.entity_set(dimension).entity_ids, dtype=np.int64
-            )
-        ],
-        dtype=jnp.int32,
+    region_values = agreed_local(
+        lambda: jnp.asarray(
+            [
+                region_lookup[scientific_regions[int(identifier)]]
+                for identifier in np.asarray(
+                    original.mesh.entity_set(dimension).entity_ids, dtype=np.int64
+                )
+            ],
+            dtype=jnp.int32,
+        )
     )
+    region_values = _organization_source_operand(region_values, cell_rows)
     regions = region_values[cell_rows]
     regions = jnp.where(jnp.arange(regions.shape[0]) < counts[-1], regions, -1)
     arrays["organization/region/cell_indices"] = jax.device_put(
@@ -693,14 +882,16 @@ def _prepare_attribute_values(
         raise ValueError(
             "collective_organization.attribute must come from a generated result; got an initial source"
         )
-    scientific_ids = jnp.asarray(
-        original.mesh.entity_set(degree).entity_ids, dtype=jnp.int64
+    scientific_ids = agreed_local(
+        lambda: jnp.asarray(original.mesh.entity_set(degree).entity_ids, dtype=jnp.int64)
     )
-    scoped_ids = record.scope.global_entity_ids
+    scientific_ids = _organization_source_operand(scientific_ids, member)
+    scoped_ids = _organization_source_operand(record.scope.global_entity_ids, member)
+    global_values = _organization_source_operand(record.global_values, member)
     scoped_order = jnp.argsort(scoped_ids)
     scoped_rows = jnp.searchsorted(scoped_ids[scoped_order], scientific_ids)
     scoped_rows = jnp.minimum(scoped_rows, scoped_ids.size - 1)
-    source_values = record.global_values[scoped_order[scoped_rows]]
+    source_values = global_values[scoped_order[scoped_rows]]
     if degree == 0:
         support_values = source_values[jnp.maximum(vertex_source_rows, 0)]
         values = support_values[:, 0]
@@ -762,12 +953,14 @@ def _prepare_definition_occurrence(
     vertex_sources, vertex_source_rows = vertices.sources, vertices.rows
     degree = record.scope.entity_dimension
     membership = (
-        source_memberships[f"organization/{family}/{index}/membership"][
-            : source_counts[degree]
-        ]
+        _organization_source_operand(
+            source_memberships[f"organization/{family}/{index}/membership"],
+            target_ids[degree],
+        )[: source_counts[degree]]
         if isinstance(original, initial_certification_owner.InitialCollectiveMeshEvidence)
-        else resolve_mesh_scope(original.mesh, record.scope).mask
+        else agreed_local(lambda: resolve_mesh_scope(original.mesh, record.scope).mask)
     )
+    membership = _organization_source_operand(membership, target_ids[degree])
     if degree == 0:
         member = _vertex_membership_values(
             jnp.asarray(membership), vertex_sources, vertex_source_rows, counts[degree]
@@ -837,8 +1030,7 @@ def build_collective_organization_witness(
     source_memberships = (
         dict(
             initial_organization_membership(
-                original.compiled,
-                original.specification,
+                original.premise,
                 dict(original.logical_arrays),
                 original.global_entity_counts,
             )

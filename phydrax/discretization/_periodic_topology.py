@@ -80,8 +80,8 @@ from ._coordinate_budget import CoordinateEnclosureBudget
 from ._hexahedral import HexahedralConnectivity
 from ._periodic_cell import PeriodicCell
 from ._periodic_exact import (
-    exact_periodic_element,
     exact_periodic_generators,
+    ExactPeriodicActionLattice,
     identification_id,
     identification_orders,
     isometry_element_work_upper,
@@ -298,13 +298,10 @@ def _require_exact_periodic_vertex_lift(
     budget: CoordinateEnclosureBudget,
 ) -> None:
     matrices, orders = exact_periodic_generators(cell, budget=budget)
-    for row, root, shift in zip(bank, representatives, shifts, strict=True):
-        action = exact_periodic_element(
-            matrices,
-            orders,
-            tuple(int(value) for value in shift),
-            budget=budget,
-        )
+    actions = ExactPeriodicActionLattice(matrices, orders).prepare(
+        np.asarray(shifts, dtype=np.int64).tolist(), budget=budget
+    )
+    for row, root, action in zip(bank, representatives, actions, strict=True):
         if row != _exact_periodic_point_image(action, bank[int(root)], budget=budget):
             raise ValueError(
                 "PeriodicMeshTopology.vertex_shifts must reproduce source vertices from quotient representatives; got an inconsistent source group image"
@@ -337,6 +334,7 @@ def fixed_generators(
             dtype=np.bool_,
         )
         if sum(order > 1 for order in orders) > 1:
+            lattice = ExactPeriodicActionLattice(matrices, orders)
             for root in range(len(source_coordinates)):
                 if representatives[root] != root:
                     continue
@@ -349,9 +347,7 @@ def fixed_generators(
                         for axis, exponent in enumerate(exponents)
                     ):
                         continue
-                    action = exact_periodic_element(
-                        matrices, orders, exponents, budget=budget
-                    )
+                    (action,) = lattice.prepare((exponents,), budget=budget)
                     if _exact_periodic_point_image(action, point, budget=budget) == point:
                         raise PeriodicIsometryIdentityError(
                             "PeriodicMeshTopology.vertex_fixed_generators must represent every source vertex stabilizer; got an unsupported composed stabilizer"
@@ -1356,13 +1352,14 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         /,
         *,
         lifted: cell_mesh_owner.CellMesh,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PeriodicMeshTopology:
         """Rebuild stored periodic fields against their bound lifted carrier."""
         if value.lifted_topology_id != lifted.topology_id:
             raise ValueError(
                 "PeriodicMeshTopology.lifted_topology_id must bind the supplied carrier; got another lifted topology"
             )
-        return value.rebuilt(lifted)
+        return value.rebuilt(lifted, budget=budget)
 
     @checked
     def rebuilt(

@@ -87,6 +87,7 @@ def main() -> None:
         parents,
         field_name="u",
         parent_reference_vertices=adaptation.parent_reference_vertices,
+        parent_reference_homogeneous=adaptation.parent_reference_homogeneous,
         source_geometry=source.geometry,
         target_geometry=adaptation.target.geometry,
         geometry_transition=transition,

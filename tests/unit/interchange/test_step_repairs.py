@@ -11,8 +11,29 @@ import pytest
 from phydrax._external_resource import ResourceLimits
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
-from phydrax.geometry.brep._constructors import brep_box
-from phydrax.interchange._cad import CadImportPolicy, CadInterchangeError
+from phydrax.geometry.brep._gap_evidence import certify_brep_gaps
+from phydrax.geometry.brep._intersection_curve import PeriodicPCurve
+from phydrax.geometry.brep._patches import (
+    CircleCurve,
+    CylinderPatch,
+    LineCurve,
+    PlanePatch,
+    SurfaceIsoparametricCurve,
+    TorusPatch,
+    curve_evaluate_host,
+    surface_evaluate_host,
+    surface_value_and_differential_host,
+)
+from phydrax.geometry.brep._constructors import brep_box, BRepTessellationPolicy
+from phydrax.geometry.brep._query import prepare_brep_query
+from phydrax.interchange._cad import (
+    CadImportPolicy,
+    CadInterchangeError,
+    CadStage,
+    explicit_carrier,
+    StagedCoedge,
+    StagedFace,
+)
 from phydrax.interchange._report import (
     AdapterLoss,
     AdapterReport,
@@ -117,8 +138,13 @@ END-ISO-10303-21;
 
 
 def test_missing_longitudinal_seam_is_exact_and_recorded() -> None:
-    with pytest.raises(CadInterchangeError):
-        decode_step_bytes(_CYLINDER, POLICY)
+    native = decode_step_bytes(_CYLINDER, POLICY)
+    assert native.report.status == AdapterStatus.LOSSLESS
+    assert not native.report.losses
+    assert any(
+        "DERIVED:periodic-chart-identification" in label
+        for _, label in native.provenance
+    )
     with _budget() as budget:
         result = decode_step_bytes(
             _CYLINDER,
@@ -142,6 +168,255 @@ def test_missing_longitudinal_seam_is_exact_and_recorded() -> None:
     bounds = np.asarray(result.model.parameter_bounds[0])
     assert np.all(bounds[0] <= (0.0, 0.0))
     assert np.all(bounds[1] >= (2 * np.pi, 2.0))
+
+
+@pytest.mark.parametrize("axis", (0, 1))
+@pytest.mark.parametrize("fixed", (0.0, 0.375))
+def test_cylinder_isoline_export_retains_the_native_parameter(
+    axis: int, fixed: float
+) -> None:
+    cylinder = CylinderPatch(
+        (0.25, -0.5, 0.75), (0, 1, 0), (0, 0, 1), (1, 0, 0), 2.0
+    )
+    source = SurfaceIsoparametricCurve(
+        cylinder, axis, fixed, parameter_range=(-0.5, 1.5)
+    )
+    carrier = explicit_carrier(source)
+    assert isinstance(carrier, LineCurve if axis == 0 else CircleCurve)
+    parameters = np.linspace(-0.5, 1.5, 17)
+    np.testing.assert_allclose(
+        curve_evaluate_host(carrier, parameters),
+        curve_evaluate_host(source, parameters),
+        rtol=0,
+        atol=1e-14,
+    )
+    assert carrier.period == source.period
+
+
+@pytest.mark.parametrize("torus", (False, True), ids=("cylinder", "torus"))
+@pytest.mark.parametrize("reverse_carriers", (False, True))
+def test_periodic_band_chart_seam_preserves_area_winding_and_source(
+    torus: bool, reverse_carriers: bool
+) -> None:
+    patch = (
+        TorusPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 3.0, 1.0)
+        if torus
+        else CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 3.0)
+    )
+    stage = CadStage(10.0, None)
+    limits = (0.0, 0.5)
+    rings = []
+    direction = -1 if reverse_carriers else 1
+    for index, value in enumerate(limits):
+        point = surface_evaluate_host(patch, np.asarray((0.0, value)))
+        vertex = stage.vertex(point, f"authored-vertex-{index}")
+        radius = 3.0 + np.cos(value) if torus else 3.0
+        height = np.sin(value) if torus else value
+        edge = stage.edge(
+            CircleCurve((0, 0, height), (1, 0, 0), (0, direction, 0), radius),
+            vertex,
+            vertex,
+            f"authored-ring-{index}",
+            parameter_range=(0.0, 2 * np.pi),
+        )
+        rings.append(
+            [
+                StagedCoedge(
+                    edge, direction * (1 if index == 0 else -1), None, f"ring-{index}"
+                )
+            ]
+        )
+    face = StagedFace(patch, rings, 1, "band", "authored-face", True)
+    loops, _ = stage._resolve_face(face)
+    assert len(loops) == 1 and len(loops[0]) == 4
+    loop = loops[0]
+    assert [loop[index][0].edge for index in (0, 2)] == [0, 1]
+    assert [loop[index][0].sense for index in (0, 2)] == [direction, -direction]
+    assert len(stage.vertices) == 2 and len(stage.edge_curves) == 3
+    assert stage.provenance[:4] == [
+        ("vertex:0", "authored-vertex-0"),
+        ("edge:0", "authored-ring-0"),
+        ("vertex:1", "authored-vertex-1"),
+        ("edge:1", "authored-ring-1"),
+    ]
+    assert loop[1][0].edge == loop[3][0].edge
+    assert loop[1][0].sense == -loop[3][0].sense
+    assert all(isinstance(curve, PeriodicPCurve) for _, curve in loop)
+    for current, following in zip(loop, loop[1:] + loop[:1], strict=True):
+        np.testing.assert_allclose(
+            stage._ends(*current)[1], stage._ends(*following)[0], rtol=0, atol=1e-14
+        )
+    samples = np.linspace(*limits, 17)
+    seam_points = [
+        surface_evaluate_host(patch, curve_evaluate_host(loop[index][1], samples))
+        for index in (1, 3)
+    ]
+    np.testing.assert_allclose(seam_points[0], seam_points[1], rtol=0, atol=2e-14)
+    nodes, weights = np.polynomial.legendre.leggauss(16)
+    v = limits[0] + (nodes + 1) * (limits[1] - limits[0]) / 2
+    uv = np.stack((np.ones_like(v), v), axis=-1)
+    _, differential = surface_value_and_differential_host(patch, uv)
+    density = np.linalg.norm(
+        np.cross(differential[..., 0], differential[..., 1]), axis=-1
+    )
+    area = 2 * np.pi * (limits[1] - limits[0]) / 2 * (weights @ density)
+    expected = 2 * np.pi * (
+        3 * (limits[1] - limits[0])
+        + (np.sin(limits[1]) - np.sin(limits[0]) if torus else 0)
+    )
+    assert area == pytest.approx(expected, rel=1e-12)
+    assert stage._signed_area(stage._loop_polygon(loop)) == pytest.approx(np.pi)
+
+
+@pytest.mark.parametrize("defect", ("partial-turn", "near-period", "nonperiodic"))
+def test_periodic_band_requires_exact_native_turn(defect: str) -> None:
+    patch = (
+        PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0))
+        if defect == "nonperiodic"
+        else CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    )
+    stage = CadStage(2.0, None)
+    rings = []
+    for index in range(2):
+        vertex = stage.vertex(np.asarray((1.0, 0.0, float(index))), f"v{index}")
+        edge = stage.edge(
+            CircleCurve((0, 0, index), (1, 0, 0), (0, 1, 0), 1.0),
+            vertex,
+            vertex,
+            f"e{index}",
+            parameter_range=(0.0, 2 * np.pi),
+        )
+        rings.append(
+            [
+                StagedCoedge(
+                    edge,
+                    1 if index == 0 else -1,
+                    LineCurve((0, index), (1, 0)),
+                    f"c{index}",
+                )
+            ]
+        )
+    if defect in ("partial-turn", "near-period"):
+        stage.edge_ranges[0] = (
+            0.0,
+            np.pi if defect == "partial-turn" else np.nextafter(2 * np.pi, 0.0),
+        )
+    face = StagedFace(patch, rings, 1, "band", "authored-face", True)
+    assert stage._periodic_band(face) is None
+    assert len(stage.edge_curves) == 2 and len(stage.vertices) == 2
+    with pytest.raises(CadInterchangeError):
+        stage._resolve_face(face)
+
+
+@pytest.mark.parametrize("point", ((0.0, 1.0), (0.6, 0.8)))
+def test_misaligned_full_band_retains_authored_vertex_as_subdivision(
+    point: tuple[float, float],
+) -> None:
+    source = _CYLINDER.replace(
+        b"#11=CARTESIAN_POINT('',(1.,0.,2.));",
+        f"#11=CARTESIAN_POINT('',({point[0]},{point[1]},2.));".encode(),
+    )
+    result = decode_step_bytes(
+        source,
+        CadImportPolicy(
+            CONTRACT, POLICY.limits, tessellation=BRepTessellationPolicy(realize=False)
+        ),
+    )
+    assert result.report.status == AdapterStatus.LOSSLESS
+    geometry = result.model.require_geometry()
+    np.testing.assert_array_equal(
+        geometry.vertex_points[:2], ((1.0, 0.0, 0.0), (*point, 2.0))
+    )
+    assert len(geometry.vertex_points) == 3
+    assert len(geometry.edge_curves) == 4
+    assert len(geometry.face_loops[0]) == 1
+    assert len(geometry.face_loops[0][0]) == 5
+    assert any(
+        key.startswith("curve:") and label.startswith("#15 ")
+        for key, label in result.provenance
+    )
+    assert sum(
+        key.startswith("edge:") and "#15 " in label and "DERIVED:subedge" in label
+        for key, label in result.provenance
+    ) == 2
+
+
+def test_nist_periodic_bands_preserve_authored_vertices_and_closed_boundary(
+    request: pytest.FixtureRequest,
+) -> None:
+    source = Path(__file__).parents[2] / "data/cad/nist_ftc_11_asme1_rb.stp"
+    result = decode_step_bytes(
+        source.read_bytes(),
+        CadImportPolicy(
+            CONTRACT, POLICY.limits, tessellation=BRepTessellationPolicy(realize=False)
+        ),
+    )
+    assert result.report.valid
+    geometry = result.model.require_geometry()
+    assert len(result.model.patches) == 6
+    gaps = certify_brep_gaps(result.model)
+    for kind in ("edge-face", "vertex-edge"):
+        maximum = max(
+            float(bound)
+            for category, bound in zip(gaps.kinds, gaps.upper_bounds, strict=True)
+            if category == kind
+        )
+        # The source is an authored tolerance B-Rep, not a zero-gap theorem.
+        request.node.user_properties.append((f"maximum_{kind}_gap_meters", maximum))
+    provenance = dict(result.provenance)
+    for external in (74, 85, 102, 122, 142, 153):
+        assert any(
+            key.startswith("vertex:") and label.startswith(f"#{external} ")
+            for key, label in result.provenance
+        )
+    seams = [
+        int(key.split(":")[1])
+        for key, label in provenance.items()
+        if key.startswith("edge:") and "periodic-chart-identification" in label
+    ]
+    assert len(seams) == 4
+    for edge in seams:
+        uses = [
+            index for index, owner in enumerate(geometry.coedge_edges) if owner == edge
+        ]
+        assert len(uses) == 2
+        assert sum(geometry.coedge_senses[index] for index in uses) == 0
+    orientation = np.asarray(result.model.orientation)
+    for edge in range(len(geometry.edge_curves)):
+        assert sum(
+            geometry.coedge_senses[use] * orientation[geometry.coedge_faces[use]]
+            for use, owner in enumerate(geometry.coedge_edges)
+            if owner == edge
+        ) == 0
+    for loops in geometry.face_loops:
+        for loop in loops:
+            for first, second in zip(loop, (*loop[1:], loop[0]), strict=True):
+                edge0, edge1 = geometry.coedge_edges[first], geometry.coedge_edges[second]
+                end = 1 if geometry.coedge_senses[first] > 0 else 0
+                start = 0 if geometry.coedge_senses[second] > 0 else 1
+                assert geometry.edge_vertices[edge0][end] == geometry.edge_vertices[edge1][start]
+                np.testing.assert_allclose(
+                    curve_evaluate_host(
+                        geometry.pcurves[first], np.asarray(geometry.edge_ranges[edge0, end])
+                    ),
+                    curve_evaluate_host(
+                        geometry.pcurves[second], np.asarray(geometry.edge_ranges[edge1, start])
+                    ),
+                    rtol=0,
+                    atol=1e-12,
+                )
+    areas = np.asarray(prepare_brep_query(result.model).measures.face_areas)
+    angle = np.pi - np.arcsin(0.425 / 1.5)
+    for index, patch in enumerate(result.model.patches):
+        if isinstance(patch, CylinderPatch):
+            expected = 2 * np.pi * float(patch.radius) * 0.0015
+        elif isinstance(patch, TorusPatch):
+            radius = float(patch.major_radius)
+            height = 0.000425 if radius > 0.02 else -0.000425
+            expected = 2 * np.pi * 0.0015 * (radius * angle + height)
+        else:
+            continue
+        assert areas[index] == pytest.approx(expected, rel=1e-9)
 
 
 def test_negative_shell_is_refused_by_default_and_reversed_with_certificate(

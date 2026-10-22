@@ -107,6 +107,7 @@ def test_material_refinement_and_coarsening_renew_exact_region_evidence() -> Non
     source = _source(np.asarray((((1,),), ((2,),)), dtype=np.int16))
     result = _execute(source)
     assert result.region_evidence is not None
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.meshing._compartments import prepare_compartment_complex
     from phydrax.meshing._volume_generation import (
         native_volume_execution_budget,
@@ -115,14 +116,24 @@ def test_material_refinement_and_coarsening_renew_exact_region_evidence() -> Non
 
     limits = phx.meshing.MeshingLimits()
     with native_volume_execution_budget(limits) as scope:
-        prepared_source = prepare_plc_source(
-            prepare_compartment_complex(source, limits=limits, scope=scope),
-            source.source_id,
-            source.source_revision,
-            source.coordinate_contract,
-            limits=limits,
-            scope=scope,
+        initial = scope.batch(0)
+        initial.settle()
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
         )
+        with budget.bind_ticket(scope.ticket_view()):
+            prepared_source = prepare_plc_source(
+                prepare_compartment_complex(source, limits=limits, scope=scope),
+                source.source_id,
+                source.source_revision,
+                source.coordinate_contract,
+                limits=limits,
+                scope=scope,
+                source_result=result,
+                coordinate_budget=budget,
+            )
     policy = phx.meshing.MeshAdaptationPolicy(
         phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION,
         association_transfer=prepared_source.association_transfer,
@@ -972,7 +983,7 @@ def test_hard_unit_cell_region_cold_renewal_retains_controls_and_patch_order(
         owner.zones, renewal.zones, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
     )
     assert source_content_equal(
-        owner.patches, renewal.patches, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
+        tuple(owner.patches), renewal.patches, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
     )
 
 
@@ -1010,3 +1021,279 @@ def test_region_evidence_refuses_foreign_or_tampered_material_controls(
             changed,
             bindings={"mesh": result.mesh, "geometry": result.geometry},
         )
+
+
+def test_exact_affine_image_keeps_independent_material_and_outer_domains() -> None:
+    from itertools import product
+
+    from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
+    from phydrax.meshing._certified_unit_cells import affine_image_geometry
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    values = np.asarray((((1,), (2,)), ((3,), (3,))), dtype=np.int16)
+    matrix = np.asarray(
+        (
+            (0.9, 0.15, 0.1, 1.5),
+            (0.0, 0.8, 0.2, -2.0),
+            (0.05, 0.0, 1.1, 0.75),
+            (0.0, 0.0, 0.0, 1.0),
+        ),
+        dtype=np.float64,
+    )
+    literal = _source(values, matrix)
+    corners = tuple(
+        tuple(Fraction(int(bit) * length) - Fraction(1, 2) for bit, length in zip(row, values.shape, strict=True))
+        for row in product((0, 1), repeat=3)
+    )
+    with coordinate_reference_budget() as budget:
+        geometry = affine_image_geometry(
+            literal.outer_surface.mesh, matrix, corners, budget=budget
+        )
+        outer = phx.geometry.SurfaceModel.from_triangles(
+            geometry.coordinates,
+            literal.outer_surface.mesh.blocks[0].vertices,
+            literal.outer_surface.metadata,
+        )
+        geometry.resolve(outer.mesh, budget=budget)
+    source = CompartmentMeshingSource(
+        literal.labels,
+        literal.compartments,
+        outer,
+        literal.interfaces,
+        outer_geometry=geometry,
+    )
+    assert source.source_id != literal.source_id
+    source.validate_source_integrity()
+    result = _execute(source)
+    evidence = result.region_evidence
+    assert evidence is not None
+    assert isinstance(evidence.domain, MappedReferenceDomain)
+    assert evidence.domain.source_id == source.source_id
+    assert evidence.domain.source_revision == source.source_revision
+    assert evidence.coverage.status == "certified"
+    assert evidence.coverage.findings == ()
+    assert result.geometry.exact_source is not None
+    evidence.require_current(
+        result.mesh, result.zones, result.patches, geometry=result.geometry
+    )
+    exact = tuple(tuple(Fraction(float(value)) for value in row[:3]) for row in matrix[:3])
+    determinant = (
+        exact[0][0] * (exact[1][1] * exact[2][2] - exact[1][2] * exact[2][1])
+        - exact[0][1] * (exact[1][0] * exact[2][2] - exact[1][2] * exact[2][0])
+        + exact[0][2] * (exact[1][0] * exact[2][1] - exact[1][1] * exact[2][0])
+    )
+    with coordinate_reference_budget() as budget:
+        assert evidence.domain.exact_region_measures(budget=budget) == (
+            determinant, determinant, 2 * determinant
+        )
+    np.testing.assert_array_equal(
+        _region_measure_array(evidence),
+        np.asarray((float(determinant), float(determinant), float(2 * determinant))),
+    )
+    renewal = revalidate_region_evidence(
+        result, result.mesh, result.geometry, result.zones, result.patches
+    )
+    assert renewal.region_evidence.coverage.status == "certified"
+    assert renewal.region_evidence.domain.domain_id == evidence.domain.domain_id
+
+
+def test_region_renewal_uses_material_ids_not_declaration_ordinals() -> None:
+    from phydrax._fingerprint import array_tree_fingerprint
+
+    source = _source(np.asarray(([[1]], [[2]], [[10]]), dtype=np.int16))
+    result = _execute(source)
+    evidence = result.region_evidence
+    assert evidence is not None
+
+    def declared_source(
+        definitions: tuple[phx.geometry.CompartmentDefinition, ...],
+    ) -> CompartmentMeshingSource:
+        complex_ = phx.imaging.build_compartment_complex(
+            source.labels, definitions, source.compartments.interfaces
+        )
+        return CompartmentMeshingSource(
+            source.labels,
+            complex_,
+            source.outer_surface,
+            phx.imaging.extract_compartment_surfaces(source.labels, complex_),
+        )
+
+    permuted = declared_source(tuple(reversed(source.compartments.compartments)))
+    assert tuple(
+        definition.compartment_id for definition in permuted.compartments.compartments
+    ) != tuple(sorted(evidence.domain.region_ids))
+    assert {
+        definition.compartment_id: definition.label_ids
+        for definition in permuted.compartments.compartments
+    } == {
+        definition.compartment_id: definition.label_ids
+        for definition in source.compartments.compartments
+    }
+    renewal = revalidate_region_evidence(
+        result,
+        result.mesh,
+        result.geometry,
+        result.zones,
+        result.patches,
+        compartment_source=permuted,
+    )
+    renewed = renewal.region_evidence
+    assert renewed.coverage.status == "certified"
+    assert renewed.cell_global_ids == evidence.cell_global_ids
+    assert renewed.cell_region_ids == evidence.cell_region_ids
+    renewed.require_source(permuted.compartments)
+    assert dict(
+        zip(renewed.coverage.region_ids, renewed.coverage.achieved_region_measures, strict=True)
+    ) == dict(
+        zip(evidence.coverage.region_ids, evidence.coverage.achieved_region_measures, strict=True)
+    )
+
+    # The same inventory cannot authorize different label-to-material laws.
+    # Swapping two label assignments preserves every ID and voxel count, but
+    # reverses one material interface and changes another's named adjacency.
+    definitions = source.compartments.compartments
+    misbound = declared_source(
+        (
+            replace(definitions[0], label_ids=definitions[1].label_ids),
+            replace(definitions[1], label_ids=definitions[0].label_ids),
+            *definitions[2:],
+        )
+    )
+    assert sorted(
+        definition.compartment_id for definition in misbound.compartments.compartments
+    ) == sorted(evidence.domain.region_ids)
+    before = array_tree_fingerprint(result)
+    with pytest.raises(phx.meshing.MeshingFailure, match="coverage"):
+        revalidate_region_evidence(
+            result,
+            result.mesh,
+            result.geometry,
+            result.zones,
+            result.patches,
+            compartment_source=misbound,
+        )
+    assert array_tree_fingerprint(result) == before
+
+
+@pytest.mark.parametrize(
+    ("live", "batch", "host"),
+    ((False, False, False), (False, False, True), (True, False, False), (True, True, False)),
+    ids=("settled-caller", "settled-host", "live-view", "live-batch"),
+)
+@pytest.mark.parametrize("with_source", (False, True), ids=("retained-domain", "authored-source"))
+def test_region_renewal_borrows_actual_caller_budget(
+    live: bool, batch: bool, host: bool, with_source: bool,
+) -> None:
+    from contextlib import nullcontext
+
+    from phydrax._fingerprint import array_tree_fingerprint
+    from phydrax._meshcore import current_native_execution_scope, NativeExecutionScope
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    source = _source(np.asarray((((1,), (2,)),), dtype=np.int16))
+    result = _execute(source)
+    evidence = result.region_evidence
+    assert evidence is not None
+    before = array_tree_fingerprint(result)
+    limits = phx.meshing.MeshingLimits()
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = HostBatchTicket(0) if host else scope.batch(0)
+        initial.settle()
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        with budget.retained_storage(lambda amount: scope.batch(0, bytes_upper=amount)):
+            ticket = None
+            if live:
+                remaining = scope.remaining()
+                ticket = (
+                    scope.batch(
+                        remaining.remaining_work_units,
+                        queries_upper=remaining.remaining_geometry_queries,
+                        bytes_upper=remaining.remaining_managed_bytes,
+                    )
+                    if batch else scope.ticket_view()
+                )
+            with (
+                budget.bind_ticket(ticket) if ticket is not None else nullcontext()
+            ):
+                renewal = revalidate_region_evidence(
+                    result, result.mesh, result.geometry, result.zones, result.patches,
+                    compartment_source=source if with_source else None,
+                    limits=limits, budget=budget,
+                )
+                assert current_native_execution_scope() is scope
+                assert renewal.native_execution_evidence is None
+                assert budget.work_units > 0
+                assert renewal.region_evidence.cell_global_ids == evidence.cell_global_ids
+                assert renewal.region_evidence.cell_region_ids == evidence.cell_region_ids
+                renewal.region_evidence.require_source(source.compartments)
+                renewal.region_evidence.require_current(
+                    result.mesh, renewal.zones, renewal.patches, geometry=result.geometry
+                )
+    assert int(scope.completed_evidence().work_counters.construction_work) > 0
+    assert array_tree_fingerprint(result) == before
+
+
+def test_region_renewal_cannot_reset_exhausted_actual_caller_allowance() -> None:
+    from phydrax._fingerprint import array_tree_fingerprint
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    source = _source(np.ones((1, 1, 1), dtype=np.int16))
+    result = _execute(source)
+    before = array_tree_fingerprint(result)
+    limits = phx.meshing.MeshingLimits(maximum_work_units=1)
+    with pytest.raises(phx.meshing.MeshingFailure):
+        with NativeExecutionScope(limits.native_limits()) as scope:
+            initial = scope.batch(0)
+            initial.settle()
+            budget = CoordinateEnclosureBudget(
+                initial,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with budget.bind_ticket(scope.ticket_view()):
+                budget.reserve(1)
+                revalidate_region_evidence(
+                    result, result.mesh, result.geometry, result.zones, result.patches,
+                    compartment_source=source, budget=budget,
+                )
+    assert budget.work_units == 1
+    assert scope.completed_evidence().status is phx.meshing.MeshcoreStatus.CAPACITY_EXCEEDED
+    assert array_tree_fingerprint(result) == before
+
+
+@pytest.mark.parametrize("new_request", (False, True), ids=("no-caller", "foreign-request"))
+def test_region_renewal_rejects_ended_or_foreign_request_budget(new_request: bool) -> None:
+    from contextlib import nullcontext
+
+    from phydrax._fingerprint import array_tree_fingerprint
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    source = _source(np.ones((1, 1, 1), dtype=np.int16))
+    result = _execute(source)
+    before = array_tree_fingerprint(result)
+    limits = phx.meshing.MeshingLimits()
+    with NativeExecutionScope(limits.native_limits()) as old_scope:
+        initial = old_scope.batch(0)
+        initial.settle()
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+    with (
+        NativeExecutionScope(limits.native_limits()) if new_request else nullcontext()
+    ):
+        with pytest.raises(ValueError, match="region_renewal.budget"):
+            revalidate_region_evidence(
+                result, result.mesh, result.geometry, result.zones, result.patches,
+                budget=budget,
+            )
+    assert budget.work_units == 0
+    assert array_tree_fingerprint(result) == before

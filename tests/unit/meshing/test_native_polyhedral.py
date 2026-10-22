@@ -106,6 +106,14 @@ from phydrax.meshing._polyhedral_generation import (
 )
 from phydrax.meshing._topology_edit import assemble_topology_edit
 from phydrax.meshing.providers._native_polyhedral import construction_failure
+from phydrax.meshing.qualification._native_lifecycle import prepare_plc_associations
+from phydrax.meshing.qualification._polyhedral import (
+    prepare_polyhedral_archive_owners,
+    prepare_polyhedral_source_star_fem,
+    prepare_polyhedral_source_star_field_transfer,
+    prepare_polyhedral_vem_reconstruction_transfer,
+    solve_polyhedral_source_star_diffusion,
+)
 from tests._support.coordinate_references import (
     coordinate_reference_budget,
 )
@@ -2847,6 +2855,10 @@ def test_polyhedral_schedule_refuses_invalid_volume_targets(
             M.MeshingFailureCategory.RESOURCE_EXHAUSTED,
         ),
         (
+            PolyhedralGenerationReason.SOURCE_VERTEX_BUDGET,
+            M.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        ),
+        (
             PolyhedralGenerationReason.PERIODIC_VOLUME_OPTIMIZATION_UNRESOLVED,
             M.MeshingFailureCategory.COMPLIANCE_FAILED,
         ),
@@ -2855,7 +2867,7 @@ def test_polyhedral_schedule_refuses_invalid_volume_targets(
             M.MeshingFailureCategory.COMPLIANCE_FAILED,
         ),
     ],
-    ids=["work", "feature-candidates", "volume", "feature-ancestry"],
+    ids=["work", "feature-candidates", "source-vertices", "volume", "feature-ancestry"],
 )
 def test_polyhedral_refusal_reason_retains_category_and_evidence(
     reason: PolyhedralGenerationReason,
@@ -2915,3 +2927,514 @@ def test_voxel_fixture_oriented_union_volume_and_material_interfaces(
 def test_polyhedral_generator_refuses_foreign_source_before_native_scope() -> None:
     with pytest.raises(TypeError, match="complex_"):
         generate_polyhedral_volume(object(), scope=object())  # ty: ignore[invalid-argument-type]
+
+
+def _source_star_affine(points: Array) -> Array:
+    # Material interfaces in this extruded L are parallel to grad(u).
+    return 1.0 + 3.0 * points[:, 2]
+
+
+def test_source_star_fem_nonconvex_material_physical_solution() -> None:
+    result = _publish(voxel_plc([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, 0]))
+    plan = prepare_polyhedral_source_star_fem(result)
+    count = len(plan.cell_volumes)
+    material = jnp.where(plan.space.mesh.coordinates[-count:, 0] > 1., 5., 2.)
+    accepted = solve_polyhedral_source_star_diffusion(
+        plan, jnp.zeros(count, dtype=jnp.float64),
+        cell_material=material, exact_solution=_source_star_affine,
+        repeats=3,
+    )
+    compiler = accepted.compiler
+    assert compiler["kernel"] == "_solve_source_star_problem"
+    assert compiler["compilation_count"] == 1
+    assert all(
+        type(value) in (int, float, str) or value is None
+        or isinstance(value, tuple) and all(type(item) is float for item in value)
+        for value in compiler.values()
+    )
+    warm_samples = compiler["warm_samples_seconds"]
+    assert isinstance(warm_samples, tuple)
+    assert len(warm_samples) == 3
+    assert all(value >= 0 for value in warm_samples)
+    retained_bytes = compiler["logical_retained_bytes"]
+    assert type(retained_bytes) is int and retained_bytes > 0
+    byte_fields = ("temporary_bytes", "output_bytes", "argument_bytes", "generated_code_bytes")
+    if compiler["memory_status"] == "measured":
+        assert all(
+            type(value) is int and value >= 0
+            for name in byte_fields for value in (compiler[name],)
+        )
+    else:
+        assert compiler["memory_status"] == "unavailable"
+        assert all(compiler[name] is None for name in byte_fields)
+    assert float(accepted.l2_error) <= 1e-7
+    assert float(accepted.maximum_free_residual) <= 1e-7
+    assert float(accepted.conservation_defect) <= 1e-7
+    np.testing.assert_allclose(
+        accepted.gradients, np.broadcast_to([0., 0., 3.], accepted.gradients.shape),
+        atol=1e-7, rtol=0,
+    )
+    np.testing.assert_allclose(
+        accepted.vector_flux,
+        -np.asarray(material)[np.asarray(plan.tetrahedron_parents), None]
+        * np.asarray(accepted.gradients),
+        atol=_VOLUME_ATOL, rtol=0,
+    )
+    loaded = solve_polyhedral_source_star_diffusion(
+        plan, material, cell_material=material, exact_solution=_source_star_affine,
+        seed=accepted.coefficients,
+    )
+    assert float(jnp.max(jnp.abs(loaded.coefficients-accepted.coefficients))) > 1e-6
+    assert float(loaded.maximum_free_residual) <= 1e-7
+    assert float(loaded.conservation_defect) <= 1e-7
+    assert loaded.source_geometry_id == cell_geometry_id(result.geometry)
+    assert loaded.prepared_id == plan.space.prepared_id
+    assert loaded.runtime_id == plan.space.default_runtime.runtime_id
+    assert plan.source_preparation_work_units > 0
+
+
+def _source_star_halfcell(points: Array) -> Array:
+    x = jnp.mod(points[:, 0], 1.)
+    right = x - 0.5
+    return jnp.where(
+        x <= 0.5, 0.5*x*x-0.25*x, -0.5*right*right+0.25*right
+    )
+
+
+def test_source_star_fem_periodic_seams_and_physical_density() -> None:
+    domain, constraints = periodic_cube_source()
+    result = _publish(
+        domain, sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
+        weights=np.zeros(2, dtype=np.float64), periodic_constraints=constraints,
+    )
+    plan = prepare_polyhedral_source_star_fem(result)
+    physical = np.asarray(plan.space.mesh.coordinates)
+    triangles = {
+        tuple(sorted(face))
+        for tetrahedron in np.asarray(plan.tetrahedra)
+        for face in itertools.combinations(tetrahedron.tolist(), 3)
+    }
+    for axis in range(3):
+        seam_sides = []
+        for side in (0., 1.):
+            seam_sides.append({
+                tuple(sorted(
+                    tuple(np.delete(physical[index], axis)) for index in face
+                ))
+                for face in triangles
+                if all(physical[index, axis] == side for index in face)
+            })
+        assert seam_sides[0] == seam_sides[1]
+        assert seam_sides[0]
+    centers = np.asarray(plan.space.mesh.coordinates)[np.asarray(plan.tetrahedra)].mean(axis=1)
+    moments = np.zeros(len(plan.cell_volumes), dtype=np.float64)
+    np.add.at(
+        moments, np.asarray(plan.tetrahedron_parents),
+        np.asarray(plan.tetrahedron_volumes)*centers[:, 0],
+    )
+    density = jnp.asarray(np.where(moments/np.asarray(plan.cell_volumes) < 0.5, 2., 4.))
+    accepted = solve_polyhedral_source_star_diffusion(
+        plan, density, cell_material=jnp.ones_like(density),
+        exact_solution=_source_star_halfcell, periodic_density=True,
+    )
+    assert float(accepted.l2_error) <= 0.05
+    assert float(jnp.max(jnp.abs(accepted.coefficients))) > 1e-6
+    assert float(jnp.max(jnp.abs(accepted.vector_flux))) > 1e-6
+    assert float(accepted.maximum_free_residual) <= 1e-7
+    assert float(accepted.conservation_defect) <= 1e-7
+    assert float(accepted.load_compatibility_residual) <= float(accepted.load_compatibility_bound)
+    assert float(accepted.removed_density_mean) == pytest.approx(3.)
+    quotient = np.asarray(plan.quotient_dofs)
+    values = np.asarray(accepted.coefficients)
+    for orbit in np.unique(quotient):
+        assert np.all(values[quotient == orbit] == values[quotient == orbit][0])
+    with pytest.raises(ValueError, match="physically incompatible mean"):
+        solve_polyhedral_source_star_diffusion(
+            plan, jnp.ones_like(density), cell_material=jnp.ones_like(density),
+            exact_solution=_source_star_halfcell,
+        )
+
+
+def test_source_star_fem_transfers_history_and_cold_replays_accepted_seed() -> None:
+    register_meshing_source_artifacts()
+    domain = voxel_plc([(0, 0, 0)])
+    source = _publish(
+        domain, sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
+        weights=np.zeros(2, dtype=np.float64),
+    )
+    before = prepare_polyhedral_source_star_fem(source)
+    accepted = solve_polyhedral_source_star_diffusion(
+        before, jnp.ones_like(before.cell_volumes),
+        cell_material=jnp.ones_like(before.cell_volumes),
+        exact_solution=_source_star_affine,
+    )
+    limits = M.MeshingLimits()
+    associations = prepare_plc_associations(
+        M.NativePlcSource(domain, "polyhedral-domain", "r1"), source, limits
+    )
+    adapted = M.execute_mesh_adaptation(M.prepare_mesh_adaptation(
+        source,
+        M.PolyhedralMeshAdaptation(
+            M.PolyhedralAdaptationOperation.PLANE_SPLIT,
+            planes=np.asarray([[0., 1., 0., 0.5]], dtype=np.float64),
+        ),
+        policy=M.MeshAdaptationPolicy(
+            M.MeshAdaptationRoute.NATIVE_POLYHEDRAL,
+            limits=limits,
+            association_transfer=associations.association_transfer,
+            audit_policy=M.CellMeshAuditPolicy(
+                require_complete_association=True,
+                watertight_boundary=M.CellMeshAuditDisposition.REJECT,
+            ),
+        ),
+    ))
+    target = prepare_polyhedral_source_star_fem(adapted.target)
+    transfer = prepare_polyhedral_source_star_field_transfer(before, target)
+    seed = transfer.primal_operator.mv(accepted.coefficients)
+    history = tuple(
+        transfer.primal_operator.mv(factor * accepted.coefficients)
+        for factor in (0.5, 0.75, 1.)
+    )
+    np.testing.assert_allclose(
+        transfer.primal_operator.mv(_source_star_affine(before.space.dof_maps[0].dof_coordinates)),
+        _source_star_affine(target.space.dof_maps[0].dof_coordinates),
+        rtol=0, atol=1e-12,
+    )
+    assert float(jnp.max(jnp.abs(seed-_source_star_affine(target.space.dof_maps[0].dof_coordinates)))) > 1e-6
+    warm = solve_polyhedral_source_star_diffusion(
+        target, jnp.ones_like(target.cell_volumes),
+        cell_material=jnp.ones_like(target.cell_volumes),
+        exact_solution=_source_star_affine, seed=seed, history=history,
+    )
+    # Cold continuation restores only the certified carrier and generic arrays;
+    # no prepared matrix, reconstruction, or live compiler object is reused.
+    bank = (adapted.target, seed, history)
+    recipe = model_structure_recipe(bank)
+    restored_carrier, restored_seed, restored_history = model_from_array_recipe(
+        recipe, model_recipe_array_values(bank, recipe, prefix="source-star"),
+        prefix="source-star",
+    )
+    cold_plan = prepare_polyhedral_source_star_fem(restored_carrier)
+    cold = solve_polyhedral_source_star_diffusion(
+        cold_plan, jnp.ones_like(cold_plan.cell_volumes),
+        cell_material=jnp.ones_like(cold_plan.cell_volumes),
+        exact_solution=_source_star_affine, seed=restored_seed,
+        history=restored_history,
+    )
+    assert cold.plan_id == warm.plan_id
+    assert cold.source_geometry_id == warm.source_geometry_id
+    np.testing.assert_array_equal(cold.seed, seed)
+    np.testing.assert_array_equal(jnp.stack(cold.history), jnp.stack(history))
+    np.testing.assert_allclose(cold.coefficients, warm.coefficients, atol=1e-9, rtol=0)
+    np.testing.assert_allclose(cold.vector_flux, warm.vector_flux, atol=1e-9, rtol=0)
+    assert float(cold.maximum_free_residual) <= 1e-7
+    assert float(cold.conservation_defect) <= 1e-7
+
+
+def test_nonnested_vem_reconstruction_and_canonical_diagnostic_roles() -> None:
+    import json
+
+    from phydrax.lifecycle import _meshing_field_records as field_owner
+    from tools.meshing_qualification.scenarios.polyhedral import (
+        _prepare_polyhedral_accepted_epoch,
+    )
+
+    domain = voxel_plc([(0, 0, 0)])
+    source = _publish(
+        domain,
+        sites=np.asarray(((0.25, 0.5, 0.5), (0.75, 0.5, 0.5)), dtype=np.float64),
+        weights=np.zeros(2, dtype=np.float64),
+    )
+    target = _publish(
+        domain,
+        sites=np.asarray(((0.2, 0.5, 0.5), (0.5, 0.5, 0.5), (0.8, 0.5, 0.5)), dtype=np.float64),
+        weights=np.zeros(3, dtype=np.float64),
+    )
+    for carrier in (source, target):
+        provenance = dict(json.loads(carrier.provenance.content_json)["items"])
+        assert provenance["specification"] == carrier.compliance.specification_id
+        assert carrier.execution_evidence is not None
+        assert provenance["plan"] == carrier.execution_evidence.owner_id
+    before, after = prepare_polyhedral_archive_owners(source), prepare_polyhedral_archive_owners(target)
+    fem = prepare_polyhedral_source_star_field_transfer(before.source_star, after.source_star)
+    transfer = prepare_polyhedral_vem_reconstruction_transfer(
+        before.vem, after.vem, before.source_star, after.source_star, fem
+    )
+    source_points = before.source_star.space.mesh.coordinates[:before.vem.dof_count]
+    target_points = after.source_star.space.mesh.coordinates[:after.vem.dof_count]
+    for values, expected in (
+        (jnp.ones(before.vem.dof_count, dtype=jnp.float64), jnp.ones(after.vem.dof_count, dtype=jnp.float64)),
+        (_source_star_affine(source_points), _source_star_affine(target_points)),
+    ):
+        np.testing.assert_allclose(transfer.primal_operator.mv(values), expected, atol=1e-12, rtol=0)
+    primal = jnp.sin(jnp.arange(before.vem.dof_count, dtype=jnp.float64) + 0.3)
+    dual = jnp.cos(jnp.arange(after.vem.dof_count, dtype=jnp.float64) + 0.7)
+    pullback = transfer.dual_pullback_operator
+    assert pullback is not None
+    np.testing.assert_allclose(
+        jnp.vdot(dual, transfer.primal_operator.mv(primal)),
+        jnp.vdot(pullback.mv(dual), primal), atol=1e-12, rtol=0,
+    )
+    assert transfer.properties.semantics == "reconstruction"
+    assert not transfer.properties.nested
+    assert not transfer.properties.positivity_preserving
+    assert not transfer.properties.conservative
+    with pytest.raises(ValueError, match="actual canonical source-star"):
+        prepare_polyhedral_vem_reconstruction_transfer(
+            before.vem, after.vem, after.source_star, before.source_star, fem
+        )
+    vem_values = jnp.ones(before.vem.dof_count, dtype=jnp.float64)
+    fem_values = _source_star_affine(before.source_star.space.dof_maps[0].dof_coordinates)
+    inventory = jnp.ones_like(before.finite_volume.cell_volumes)
+    epoch = _prepare_polyhedral_accepted_epoch(
+        source,
+        {
+            "vem_solution": vem_values,
+            "vem_solution_history": jnp.stack((vem_values,) * 3),
+            "vem_analytic_nodal": vem_values,
+            "fem_solution": fem_values,
+            "fem_solution_history": jnp.stack((fem_values,) * 3),
+            "inventory": inventory,
+            "inventory_history": jnp.stack((inventory,) * 3),
+            "previous_inventory": 0.9 * inventory,
+        },
+        0, owners=before,
+    )
+    declaration = epoch.declarations[0]
+    assert isinstance(declaration, field_owner.MeshingPolyhedralFieldDeclaration)
+    assert {role.entry_name for role in declaration.state_roles if role.role == "coefficients"} == {"vem_solution", "fem_solution"}
+    analytic = next(role for role in declaration.state_roles if role.entry_name == "vem_analytic_nodal")
+    assert analytic.role == "physical-values"
+    assert declaration.normalization_reference_length is not None
+    assert declaration.normalization_reference_length.unit_id == phx.units.METER.unit_id
+
+
+def test_vem_kernel_stabilization_uses_gradient_rank_not_boundary_dof_count() -> None:
+    points = np.asarray(
+        [(row & 1, (row >> 1) & 1, (row >> 2) & 1) for row in range(8)],
+        dtype=np.float64,
+    )
+    mesh = CellMesh.from_polyhedra(points, (POLYHEDRAL_CUBE_LOOPS,))
+    prepared = prepare_polyhedral_h1_virtual_element_3d(mesh)
+    mode = jnp.asarray((2 * points[:, 0] - 1) * (2 * points[:, 1] - 1))
+    energy = float(jnp.vdot(mode, prepared.mv(mode)))
+    # This mode is orthogonal to all four affine nodal columns and has norm²=8.
+    # Affine reproduction forces ||G||_F² >= 3/2 on the unit cube, so the
+    # mean nonzero consistency scale (trace/3) gives kernel energy at least 4.
+    assert energy >= 4.0 - 1e-12
+
+
+def _structured_polyhedral_patch(count: int, subdivide: bool) -> tuple[CellMesh, np.ndarray]:
+    vertices: list[tuple[int, int, int]] = []
+    index: dict[tuple[int, int, int], int] = {}
+    cells: list[tuple[tuple[int, ...], ...]] = []
+    centers = []
+    segments = 2 if subdivide else 1
+    for x, y, z in itertools.product(range(count), repeat=3):
+        corners = np.asarray(
+            [(2*x + 2*(row & 1), 2*y + 2*((row >> 1) & 1), 2*z + 2*((row >> 2) & 1))
+             for row in range(8)],
+            dtype=np.int64,
+        )
+        faces = []
+        for face in POLYHEDRAL_CUBE_LOOPS:
+            origin, first, _, last = corners[np.asarray(face)]
+            du, dv = (first - origin) // segments, (last - origin) // segments
+            for u, v in itertools.product(range(segments), repeat=2):
+                loop = []
+                for a, b in ((u, v), (u+1, v), (u+1, v+1), (u, v+1)):
+                    point = origin + a*du + b*dv
+                    key = (int(point[0]), int(point[1]), int(point[2]))
+                    if key not in index:
+                        index[key] = len(vertices)
+                        vertices.append(key)
+                    loop.append(index[key])
+                faces.append(tuple(loop))
+        cells.append(tuple(faces))
+        centers.append(((x+0.5)/count, (y+0.5)/count, (z+0.5)/count))
+    coordinates = np.asarray(vertices, dtype=np.float64) / (2*count)
+    return CellMesh.from_polyhedra(coordinates, tuple(cells)), np.asarray(centers, dtype=np.float64)
+
+
+@pytest.mark.parametrize("subdivide", (False, True), ids=("whole-facets", "facet-edge-subdivisions"))
+def test_vem_nonconstant_poisson_converges_with_boundary_subdivisions(subdivide: bool) -> None:
+    errors = []
+    for count in (2, 4, 8):
+        mesh, centers = _structured_polyhedral_patch(count, subdivide)
+        prepared = prepare_polyhedral_h1_virtual_element_3d(mesh)
+        points = np.asarray(mesh.coordinates)
+        exact = np.prod(np.sin(np.pi * points), axis=1)
+        half = 0.5/count
+        # Exact cell averages of f=3*pi²*sin(pi*x)*sin(pi*y)*sin(pi*z).
+        forcing = 3*np.pi**2 * np.prod(
+            count*(np.cos(np.pi*(centers-half)) - np.cos(np.pi*(centers+half)))/np.pi,
+            axis=1,
+        )
+        rhs_full = prepared.assemble_cellwise_constant_load(jnp.asarray(forcing))
+        free = np.flatnonzero(np.all((points > 0) & (points < 1), axis=1))
+        indices = jnp.asarray(free, dtype=jnp.int32)
+        base = prepared.as_linear_operator()
+
+        def action(value: Array) -> Array:
+            return base.mv(jnp.zeros(len(points), dtype=jnp.float64).at[indices].set(value))[indices]
+
+        space = phx.linalg.ArraySpace((len(free),), dtype=jnp.float64)
+        operator = phx.linalg.FunctionLinearOperator(
+            action, source=space, target=space,
+            properties=phx.linalg.OperatorProperties(
+                self_adjoint=True, positive_definite=True,
+                evidence={"self_adjoint": "construction", "positive_definite": "construction"},
+            ),
+        )
+        solved = phx.linalg.solve(
+            phx.linalg.LinearSystem(operator), rhs_full[indices],
+            policy=phx.linalg.LinearSolvePolicy(phx.linalg.ConjugateGradient()),
+        )
+        assert bool(jnp.all(solved.successful))
+        values = np.zeros(len(points), dtype=np.float64)
+        values[free] = np.asarray(solved.value)
+        error = float(np.sqrt(np.mean((values-exact)**2)))
+        errors.append(error)
+        assert prepared.evidence.maximum_reproduction_defect <= 1e-10
+        assert float(jnp.max(jnp.abs(operator.mv(solved.value)-rhs_full[indices]))) <= 1e-8
+    assert errors[1] < 0.6*errors[0]
+    assert errors[2] < 0.6*errors[1]
+
+
+def test_periodic_power_operands_extend_the_actual_paid_generation_request() -> None:
+    import pickle
+    from copy import copy
+    from dataclasses import replace
+
+    from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
+    from phydrax.meshing.qualification import execute_native_consumer
+    from tools._meshing_cases import prepare_polyhedral_case
+    from tools.meshing_qualification._records import qualification_failure
+
+    source, request, options = prepare_polyhedral_case(
+        "polyhedral-periodic-cube", 4, 20_000, 120.0, source=True
+    )
+    plan = phx.meshing.NativeMeshingProvider(options).plan(
+        source, request, coordinate_contract=phx.SpatialCoordinateContract.si()
+    )
+    collector = CoordinateOperandCollector()
+    generated = plan.execute(coordinate_operands=collector)
+    operands = collector.prepared
+    assert operands is not None
+    earning_receipt = generated.execution_evidence
+    assert earning_receipt is not None
+    assert operands.earning_receipt is earning_receipt
+    assert operands._power_witnesses
+    with pytest.raises(TypeError, match="detach"):
+        pickle.dumps(operands)
+    with coordinate_reference_budget() as budget:
+        with pytest.raises(ValueError, match="actual live native request"):
+            operands.require(
+                generated.mesh, generated.geometry, earning_receipt, budget,
+                coordinate_contract=generated.coordinate_contract,
+            )
+        with pytest.raises(ValueError, match="exact paid earning receipt"):
+            operands.require(
+                generated.mesh, generated.geometry,
+                copy(earning_receipt), budget,
+                coordinate_contract=generated.coordinate_contract,
+            )
+
+    def prepare(budget: CoordinateEnclosureBudget) -> None:
+        for identity, witness in operands._power_witnesses.items():
+            assert budget.power_witness_cache[identity] is witness
+        identity, witness = next(iter(operands._power_witnesses.items()))
+        budget.power_witness_cache[identity] = replace(witness)
+        with pytest.raises(ValueError, match="conflict.*exact power"):
+            operands.require(
+                generated.mesh, generated.geometry, earning_receipt, budget,
+                coordinate_contract=generated.coordinate_contract,
+            )
+        budget.power_witness_cache[identity] = witness
+        operands.require(
+            generated.mesh, generated.geometry, earning_receipt, budget,
+            coordinate_contract=generated.coordinate_contract,
+        )
+        owners = prepare_polyhedral_archive_owners(generated, budget=budget)
+        assert owners.source_star.periodic
+        assert owners.finite_volume.mesh is generated.mesh
+
+    consumed = execute_native_consumer(
+        generated, request.limits, prepare,
+        failure_factory=qualification_failure, prepared_operands=operands,
+        observe_managed_admission=True,
+    )
+    receipt = consumed.result.execution_evidence
+    assert receipt is not None
+    assert receipt.preparation_evidence is earning_receipt
+    managed_peak = receipt.total_managed_admission_peak_bytes_upper
+    assert managed_peak is not None
+    assert int(np.asarray(managed_peak)) <= request.limits.maximum_scratch_bytes
+    assert int(np.asarray(receipt.total_work_units)) <= request.limits.maximum_work_units
+    assert int(np.asarray(receipt.total_geometry_queries)) <= request.limits.maximum_geometry_queries
+
+
+def test_polyhedral_source_vertex_prefix_shortfall_is_a_typed_resource_refusal() -> None:
+    from dataclasses import replace
+
+    from tools._meshing_cases import prepare_polyhedral_case
+    from tools.meshing_qualification._controls import (
+        MeshingLimitControls,
+        with_meshing_limits,
+    )
+
+    source, request, options = prepare_polyhedral_case(
+        "polyhedral-material-L", 4, 20_000, 120.0, source=True
+    )
+    required = source.complex.vertices.shape[0]
+    limits = replace(
+        MeshingLimitControls.from_limits(request.limits),
+        maximum_vertices=required - 1,
+    ).to_limits()
+    plan = M.NativeMeshingProvider(options).plan(
+        source, with_meshing_limits(request, limits),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+    with pytest.raises(M.MeshingFailure) as caught:
+        plan.execute()
+    refusal = caught.value
+    assert refusal.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert refusal.__cause__ is not None
+    assert isinstance(refusal.__cause__, PolyhedralGenerationError)
+    assert refusal.__cause__.reason is PolyhedralGenerationReason.SOURCE_VERTEX_BUDGET
+    assert dict(refusal.evidence.achieved) == {
+        "required_vertices": required, "maximum_vertices": required - 1,
+    }
+
+
+def test_coordinate_input_binding_retains_the_actual_named_constraint_layout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization._coordinate_operands import (
+        coordinate_input_owner_fields,
+        require_coordinate_input_owners,
+    )
+    from phydrax.meshing._adaptation import _empty_constraints
+
+    mesh, _ = _structured_polyhedral_patch(1, False)
+    constraints = _empty_constraints(mesh)
+    arrays: list[Array | np.ndarray] = []
+    containers: list[tuple[list[object], tuple[object, ...]]] = []
+    with coordinate_reference_budget() as budget:
+        snapshot = coordinate_input_owner_fields(
+            (constraints,), budget, arrays=arrays, containers=containers
+        )
+        assert snapshot is not None
+        root = next(record for record in snapshot if record[0] is constraints)
+        assert root[1] is type(constraints)
+        assert root[2] == ("_fields", *constraints._fields)
+        assert all(
+            root[3][index + 1] is value for index, value in enumerate(constraints)
+        )
+        assert require_coordinate_input_owners(snapshot, budget)
+        with monkeypatch.context() as mutation:
+            mutation.setattr(
+                type(constraints), "_fields", tuple(reversed(constraints._fields))
+            )
+            assert not require_coordinate_input_owners(snapshot, budget)
+        assert require_coordinate_input_owners(snapshot, budget)

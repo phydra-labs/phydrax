@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Navigation of canonical positional structure recipes for archive tests.
+"""Navigation of positional structure recipes for archive tests.
 
 A registered dataclass recipe node stores its children as ``items`` in the
 registered class's dataclass field order; there is no name-keyed form. Tests
@@ -26,9 +26,9 @@ from phydrax._strict import StrictModule
 
 
 def recipe_field_names(node: Mapping[str, Any], /) -> tuple[str, ...]:
-    """Registered field names of one canonical dataclass recipe node, in order."""
+    """Registered field names of one dataclass recipe node, in order."""
     if node.get("kind") != "dataclass":
-        raise ValueError("Expected a canonical dataclass recipe node.")
+        raise ValueError("recipe.node.kind must be dataclass; got another node kind.")
     return tuple(field.name for field in dataclasses.fields(artifact_value(node["type"])))
 
 

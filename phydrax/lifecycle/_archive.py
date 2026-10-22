@@ -318,8 +318,7 @@ def decode_logical_arrays(
             or math.prod(shape) * dtype.itemsize != byte_count
         ):
             raise ValueError("Logical-array payload checksum or byte count failed.")
-        value = np.frombuffer(payload, dtype=dtype).reshape(tuple(shape)).copy()
-        value.setflags(write=False)
+        value = np.frombuffer(payload, dtype=dtype).reshape(tuple(shape))
         arrays[name] = value
         expected_logical_names.add(logical_name)
     if set(payloads) != expected_logical_names:

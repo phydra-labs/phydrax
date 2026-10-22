@@ -5,6 +5,7 @@
 """Consumer-visible global embedding certificates contracts."""
 
 from collections.abc import Callable
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -20,12 +21,18 @@ from phydrax.discretization._cell_geometry import (
 )
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_enclosure import (
+    ExactScalar,
+    Expression,
+    Polynomial,
+)
 from phydrax.discretization._coordinate_identity import coordinate_scope_key
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry._embedding_state import (
     EmbeddingState,
     MeshCertificateLimits,
     PeriodicAffineQuotientEvidence,
+    PeriodicAffineTorusDegreeEvidence,
 )
 from phydrax.geometry._global_embedding import (
     cell_global_ids,
@@ -57,6 +64,50 @@ from tests._support.mesh_certificate_fixtures import (
 from tests._support.meshing_fixtures import finding_checks
 
 
+@pytest.mark.parametrize("dimension", (2, 3))
+def test_exact_affine_rank_proof_avoids_spd_nets_without_relaxing_piece_cap(
+    dimension: int,
+    monkeypatch: pytest.MonkeyPatch,
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry import _mapped_embedding as owner
+    from phydrax.geometry._embedding_cells import Cell, vertices
+
+    kind = "triangle" if dimension == 2 else "tetrahedron"
+    coordinates: tuple[Expression, ...] = tuple(
+        {
+            tuple(int(axis == column) for column in range(dimension)):
+            Fraction(1, 2**100) if axis == dimension - 1 else Fraction(1)
+        }
+        for axis in range(dimension)
+    )
+    cell = Cell(coordinates, "simplex", kind, dimension,
+                tuple(range(dimension + 1)), vertices(kind))
+    original_spd = owner.strict_spd
+
+    def unexpected_spd(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("an exact full-rank affine map needs no SPD net")
+
+    monkeypatch.setattr(owner, "strict_spd", unexpected_spd)
+    state = EmbeddingState([], [])
+    assert owner.injective(
+        cell, MeshCertificateLimits(), state, budget=reference_budget
+    ) is None
+    assert state.subdivision_pieces == 1
+    capped = EmbeddingState([], [])
+    assert owner.injective(
+        cell, MeshCertificateLimits(), capped, maximum_work=0, budget=reference_budget
+    ) == "local_injectivity_piece_budget"
+    assert capped.subdivision_pieces == 0
+    monkeypatch.setattr(owner, "strict_spd", original_spd)
+    zero: Expression = {}
+    singular = Cell((*coordinates[:-1], zero), "simplex", kind, dimension,
+                    tuple(range(dimension + 1)), vertices(kind))
+    assert owner.injective(
+        singular, MeshCertificateLimits(), EmbeddingState([], []), budget=reference_budget
+    ) is not None
+
+
 @pytest.fixture(scope="module")
 def closed_affine_quotient_certificate() -> GlobalEmbeddingCertificate:
     points = np.asarray(
@@ -77,7 +128,7 @@ def closed_affine_quotient_certificate() -> GlobalEmbeddingCertificate:
     validity = phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
     certificate = phx.geometry.certify_global_embedding(mesh, geometry, validity)
     assert certificate.status == "certified"
-    assert certificate.periodic_affine is not None
+    assert certificate.periodic_affine_degree is not None
     return certificate
 
 
@@ -87,15 +138,14 @@ def test_global_certificate_restores_bound_periodic_affine_premises(
     certificate = closed_affine_quotient_certificate
     restored = GlobalEmbeddingCertificate.from_stored_fields(certificate)
     assert restored.certificate_id == certificate.certificate_id
-    assert restored.periodic_affine is not None
-    assert certificate.periodic_affine is not None
-    assert restored.periodic_affine.evidence_id == certificate.periodic_affine.evidence_id
-    assert restored.periodic_affine.mesh_id == certificate.binding.mesh_id
-    assert restored.periodic_affine.geometry_id == certificate.binding.geometry_id
-    assert (
-        restored.periodic_affine.validity_certificate_id
-        == certificate.validity_certificate_id
-    )
+    assert restored.periodic_affine_degree is not None
+    assert certificate.periodic_affine_degree is not None
+    assert restored.periodic_affine_degree.evidence_id == certificate.periodic_affine_degree.evidence_id
+    assert restored.periodic_affine_degree.mesh_id == certificate.binding.mesh_id
+    assert restored.periodic_affine_degree.geometry_id == certificate.binding.geometry_id
+    assert restored.periodic_affine_degree.covering_degree == 1
+    assert restored.periodic_affine_degree.pullback_area == restored.periodic_affine_degree.lattice_area
+    assert restored.validity_certificate_id == certificate.validity_certificate_id
 
 
 @pytest.mark.parametrize(
@@ -106,15 +156,15 @@ def test_global_certificate_refuses_foreign_periodic_affine_binding(
     foreign_field: str,
 ) -> None:
     certificate = closed_affine_quotient_certificate
-    evidence = certificate.periodic_affine
+    evidence = certificate.periodic_affine_degree
     assert evidence is not None
     identities = {
         "mesh_id": evidence.mesh_id,
         "geometry_id": evidence.geometry_id,
         "periodic_topology_id": evidence.periodic_topology_id,
-        "validity_certificate_id": evidence.validity_certificate_id,
+        "validity_certificate_id": certificate.validity_certificate_id,
         "affinity_certificate_id": evidence.affinity_certificate_id,
-        "facet_trace_certificate_id": evidence.facet_trace_certificate_id,
+        "facet_trace_certificate_id": evidence.trace_certificate_id,
     }
     identities[foreign_field] = phx.canonical_fingerprint(
         ("foreign-periodic-premise", foreign_field)
@@ -136,8 +186,43 @@ def test_global_certificate_refuses_foreign_periodic_affine_binding(
                 certificate.periodic_image_count,
             ),
             periodic_affine=foreign,
+            periodic_affine_degree=evidence,
         )
 
+
+
+@pytest.mark.parametrize("foreign_field", ("mesh_id", "geometry_id"))
+def test_global_certificate_refuses_foreign_torus_degree_binding(
+    closed_affine_quotient_certificate: GlobalEmbeddingCertificate,
+    foreign_field: str,
+) -> None:
+    certificate = closed_affine_quotient_certificate
+    evidence = certificate.periodic_affine_degree
+    assert evidence is not None
+    identities = {
+        name: getattr(evidence, name)
+        for name in (
+            "mesh_id", "geometry_id", "periodic_topology_id", "input_binding_id",
+            "affinity_certificate_id", "manifold_certificate_id",
+            "trace_certificate_id", "orientation_certificate_id",
+        )
+    }
+    identities[foreign_field] = phx.canonical_fingerprint(("foreign-degree", foreign_field))
+    foreign = PeriodicAffineTorusDegreeEvidence(
+        **identities, pullback_area=evidence.pullback_area, lattice_area=evidence.lattice_area
+    )
+    with pytest.raises(ValueError, match="GlobalEmbeddingCertificate.periodic_affine_degree"):
+        GlobalEmbeddingCertificate(
+            certificate.binding, certificate.validity_certificate_id,
+            certificate.findings, certificate.evaluated_checks,
+            counts=EmbeddingCounts(
+                certificate.cell_count, certificate.boundary_facet_count,
+                certificate.shell_count, certificate.candidate_pair_count,
+                certificate.ray_test_count, certificate.subdivision_piece_count,
+                certificate.periodic_image_count,
+            ),
+            periodic_affine_degree=foreign,
+        )
 
 @pytest.mark.parametrize(
     ("points", "cells", "status"),
@@ -732,6 +817,108 @@ def test_affine_restricted_roots_preserve_candidate_pair_exhaustion() -> None:
     assert any(finding.entity_kind == "source_cell" for finding in certificate.findings)
 
 
+def test_rational_restriction_chart_keys_bind_the_complete_source_action(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.discretization._coordinate_enclosure import RationalPolynomial
+    from phydrax.geometry._embedding_cells import Cell, vertices
+    from phydrax.geometry._restricted_embedding import (
+        _restriction_chart_key,
+        _RestrictionChartCache,
+    )
+
+    def chart(denominator: Polynomial) -> Cell:
+        return Cell(
+            (RationalPolynomial({(1, 0, 0): Fraction(1)}, denominator),),
+            "box", "pyramid", 3, tuple(range(5)), vertices("pyramid"),
+        )
+
+    with reference_budget.live_storage() as storage:
+        cache = _RestrictionChartCache({}, {}, {}, {}, storage)
+        first = chart({(0, 0, 0): Fraction(1)})
+        equal = chart({(0, 0, 0): Fraction(1)})
+        changed = chart({(0, 0, 0): Fraction(1), (0, 0, 1): Fraction(1)})
+        assert first.coordinates is not equal.coordinates
+        assert _restriction_chart_key(first, cache) == _restriction_chart_key(equal, cache)
+        assert _restriction_chart_key(first, cache) != _restriction_chart_key(changed, cache)
+        assert storage.bound > 0
+
+
+@pytest.mark.parametrize("changed", (False, True))
+def test_facet_restrictions_reuse_only_the_same_live_source_and_local_facet(
+    changed: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry import _mapped_embedding as owner
+    from phydrax.geometry._embedding_cells import Cell, vertices
+
+    points = np.asarray(
+        ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, -1)),
+        dtype=np.float64,
+    )
+    rows = np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int64)
+    all_rows = np.concatenate((rows, np.asarray(((5, 8, 6, 7), (5, 9, 7, 6)))))
+    point_bank = np.concatenate((points, points + 3))
+    # Oriented boundary of [0,1,2,3], independently of mesh construction.
+    boundary = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
+    for pair, shared in zip(all_rows.reshape(2, 2, 4), ((0, 1, 2), (5, 6, 7)), strict=True):
+        orientations = []
+        for row in pair:
+            (loop,) = (
+                tuple(int(row[index]) for index in face)
+                for face in boundary if {int(row[index]) for index in face} == set(shared)
+            )
+            inversions = sum(loop[i] > loop[j] for i in range(3) for j in range(i + 1, 3))
+            orientations.append((-1) ** inversions)
+        assert orientations[0] == -orientations[1]
+    mesh = phx.discretization.CellMesh(
+        point_bank, (phx.discretization.CellBlock("tet", "tetrahedron", all_rows),),
+    )
+
+    def affine_coordinates(row: np.ndarray, *, perturb: bool) -> tuple[Expression, ...]:
+        origin = point_bank[row[0]]
+        edges = point_bank[row[1:]] - origin
+        result: list[Expression] = []
+        for component in range(3):
+            polynomial: Polynomial = {(0, 0, 0): Fraction(float(origin[component]))}
+            for axis in range(3):
+                if edges[axis, component]:
+                    polynomial[tuple(int(i == axis) for i in range(3))] = Fraction(
+                        float(edges[axis, component])
+                    )
+            if perturb and component == 1:
+                assert polynomial[(0, 1, 0)] == 1
+                polynomial[(0, 1, 0)] = Fraction(2)
+            result.append(polynomial)
+        return tuple(result)
+
+    cells = [
+        Cell(
+            affine_coordinates(row, perturb=changed and index == 3),
+            "simplex", "tetrahedron", 3, tuple(map(int, row)), vertices("tetrahedron"),
+        )
+        for index, row in enumerate(all_rows)
+    ]
+    calls = []
+    original = owner._facet_trace
+
+    def capture(
+        cell: Cell, facet: np.ndarray, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[ExactScalar, ...] | tuple[Expression, ...]:
+        calls.append((cell.coordinates, tuple(facet)))
+        return original(cell, facet, budget=budget)
+
+    monkeypatch.setattr(owner, "_facet_trace", capture)
+    state = EmbeddingState([], [])
+    owner.trace_continuity(state, mesh, cells, shared_charts=True, budget=reference_budget)
+    # Both sides of each oriented interface have different affine actions.
+    # The first pair restricts local face {0,1,2}, the second {0,2,3}; all
+    # four (live source, ordered local facet) keys are therefore distinct.
+    assert len(calls) == 4
+    assert ("mapped_trace_mismatch" in {finding.check for finding in state.findings}) == changed
+
+
 def test_shared_curved_edge_with_opposite_local_orientation_is_one_trace() -> None:
     certificate = bumped_square(antisymmetric, antisymmetric)
 
@@ -1146,6 +1333,341 @@ def test_restricted_prism_root_import_refuses_changed_predecessor(change: str) -
     assert result.evaluated_checks == complete.evaluated_checks
 
 
+_ORIGINAL_ROOT_LIMITS = MeshCertificateLimits(
+    maximum_work_units=150_000_000, maximum_scratch_bytes=256 * 1024**2
+)
+
+
+def _restricted_root_request(
+    source_limits: MeshCertificateLimits | None,
+    current: MeshCertificateLimits,
+    *,
+    embedding_limits: MeshCertificateLimits = _ORIGINAL_ROOT_LIMITS,
+) -> Any:
+    from phydrax.discretization._cell_geometry_predecessor import (
+        prepare_cell_geometry_predecessor,
+    )
+    from phydrax.geometry._restricted_embedding import (
+        _authenticated_restriction_predecessor,
+        _RestrictedRequest,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    roots, source, mesh, geometry = _restricted_affine_p2_prisms()
+    source_validity = phx.discretization.certify_cell_geometry_validity(
+        source, mesh=roots
+    )
+    source_embedding = phx.geometry.certify_global_embedding(
+        roots, source, source_validity, limits=embedding_limits
+    )
+    with coordinate_reference_budget() as budget:
+        predecessor = prepare_cell_geometry_predecessor(
+            roots,
+            source,
+            source_validity,
+            source_embedding,
+            mesh,
+            geometry,
+            source_limits=source_limits,
+            budget=budget,
+        )
+        request = _RestrictedRequest(
+            EmbeddingState([], []),
+            mesh,
+            geometry,
+            np.arange(4, dtype=np.int64),
+            current,
+            budget,
+            predecessor,
+        )
+        return _authenticated_restriction_predecessor(request), source_embedding
+
+
+def test_restricted_root_import_carries_original_resource_limits() -> None:
+    from phydrax.discretization._cell_geometry_predecessor import (
+        prepare_cell_geometry_predecessor,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    current = MeshCertificateLimits()
+    assert current.limits_id != _ORIGINAL_ROOT_LIMITS.limits_id
+    authenticated, source_embedding = _restricted_root_request(
+        _ORIGINAL_ROOT_LIMITS, current
+    )
+    assert not isinstance(authenticated, str)
+    _, certificate = authenticated
+    assert certificate.certificate_id == source_embedding.certificate_id
+    assert certificate.binding.limits_id == _ORIGINAL_ROOT_LIMITS.limits_id
+
+    roots, source, mesh, geometry = _restricted_affine_p2_prisms()
+    source_validity = phx.discretization.certify_cell_geometry_validity(
+        source, mesh=roots
+    )
+    original = phx.geometry.certify_global_embedding(
+        roots, source, source_validity, limits=_ORIGINAL_ROOT_LIMITS
+    )
+    validity = phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
+    with coordinate_reference_budget() as budget:
+        predecessor = prepare_cell_geometry_predecessor(
+            roots,
+            source,
+            source_validity,
+            original,
+            mesh,
+            geometry,
+            source_limits=_ORIGINAL_ROOT_LIMITS,
+            budget=budget,
+        )
+        imported = phx.geometry.certify_global_embedding(
+            mesh,
+            geometry,
+            validity,
+            limits=current,
+            predecessor=predecessor,
+            budget=budget,
+        )
+    assert imported.status == "certified"
+    assert imported.binding.limits_id == current.limits_id
+    evidence = imported.restriction_root_embedding
+    assert evidence is not None
+    assert evidence.imported_certificate_id == original.certificate_id
+    assert "mapped_restriction_root_embedding_reuse" in imported.evaluated_checks
+
+
+@pytest.mark.parametrize(
+    ("source_limits", "current", "refusal"),
+    (
+        (None, MeshCertificateLimits(), "policy"),
+        (
+            _ORIGINAL_ROOT_LIMITS,
+            MeshCertificateLimits(maximum_candidate_pairs=4_999_999),
+            "policy",
+        ),
+        (
+            _ORIGINAL_ROOT_LIMITS,
+            MeshCertificateLimits(maximum_subdivision_depth=11),
+            "policy",
+        ),
+    ),
+)
+def test_restricted_root_import_refuses_scientific_limit_change(
+    source_limits: MeshCertificateLimits | None,
+    current: MeshCertificateLimits,
+    refusal: str,
+) -> None:
+    authenticated, _ = _restricted_root_request(source_limits, current)
+    assert authenticated == refusal
+
+
+def test_restricted_root_import_refuses_partial_proof_and_foreign_limits() -> None:
+    from phydrax.discretization._cell_geometry_predecessor import (
+        prepare_cell_geometry_predecessor,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    starved = MeshCertificateLimits(maximum_candidate_pairs=1)
+    authenticated, partial = _restricted_root_request(
+        starved, MeshCertificateLimits(), embedding_limits=starved
+    )
+    assert partial.status != "certified"
+    assert authenticated == "partial_proof"
+
+    roots, source, mesh, geometry = _restricted_affine_p2_prisms()
+    source_validity = phx.discretization.certify_cell_geometry_validity(
+        source, mesh=roots
+    )
+    embedding = phx.geometry.certify_global_embedding(roots, source, source_validity)
+    with (
+        coordinate_reference_budget() as budget,
+        pytest.raises(ValueError, match="source_limits must be the limits bound"),
+    ):
+        prepare_cell_geometry_predecessor(
+            roots,
+            source,
+            source_validity,
+            embedding,
+            mesh,
+            geometry,
+            source_limits=_ORIGINAL_ROOT_LIMITS,
+            budget=budget,
+        )
+
+
+def _restricted_validity_import() -> tuple[Any, ...]:
+    from phydrax.discretization._cell_geometry_predecessor import (
+        prepare_cell_geometry_predecessor,
+    )
+    from phydrax.discretization._cell_geometry_validity import (
+        _prepare_validity_import,
+        CellValidityPolicy,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    roots, source, mesh, geometry = _restricted_affine_p2_prisms()
+    source_validity = phx.discretization.certify_cell_geometry_validity(
+        source, mesh=roots
+    )
+    with coordinate_reference_budget() as budget:
+        predecessor = prepare_cell_geometry_predecessor(
+            roots, source, source_validity, None, mesh, geometry, budget=budget
+        )
+        policy = CellValidityPolicy()
+        imported = _prepare_validity_import(
+            predecessor, mesh, geometry, policy, budget=budget
+        )
+    return roots, source, mesh, geometry, source_validity, predecessor, imported, policy
+
+
+def test_restricted_children_import_exact_parent_validity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.discretization._cell_geometry_validity as validity_owner
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    _, _, mesh, geometry, source_validity, predecessor, _, _ = (
+        _restricted_validity_import()
+    )
+    assert all(row < 0 for row in predecessor.source_rows)
+    fresh = phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
+
+    def refuse_fresh(*args: object, **kwargs: object) -> None:
+        raise AssertionError("restricted children must not be certified freshly")
+
+    monkeypatch.setattr(validity_owner, "_certify_polynomial_block", refuse_fresh)
+    with coordinate_reference_budget() as budget:
+        imported = phx.discretization.certify_cell_geometry_validity(
+            geometry, mesh=mesh, predecessor=predecessor, budget=budget
+        )
+    assert imported.all_certified and fresh.all_certified
+    assert imported.geometry_id == fresh.geometry_id
+    parent_lower = np.asarray(source_validity.determinant_lower)
+    parent_upper = np.asarray(source_validity.determinant_upper)
+    lower = np.asarray(imported.determinant_lower)
+    upper = np.asarray(imported.determinant_upper)
+    # Each half-height child has det M = 1/2 over its parent's whole cell.
+    assert np.all(lower <= np.tile(parent_lower, 2) / 2)
+    assert np.all(upper >= np.tile(parent_upper, 2) / 2)
+    assert np.all(lower > 0.0)
+    assert np.all(lower <= np.asarray(fresh.determinant_upper))
+
+
+def test_restricted_child_jacobian_is_child_own_differential() -> None:
+    from phydrax.discretization._cell_geometry_validity import (
+        _physical_jacobian,
+        _restricted_child_jacobian,
+        _restriction_parent_chart,
+        _restriction_parents,
+    )
+    from phydrax.discretization._coordinate_enclosure import (
+        expression_equal,
+        prepared_coordinate_source_bank,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    _, _, _, geometry, _, _, imported, _ = _restricted_validity_import()
+    record = geometry.restriction_source
+    assert record is not None
+    with coordinate_reference_budget() as budget:
+        bank = prepared_coordinate_source_bank(geometry, budget=budget)
+        for name, element, route in zip(
+            geometry.block_names, geometry.elements, geometry.geometry_dofs, strict=True
+        ):
+            assert isinstance(element, RestrictedCellGeometryElement)
+            origins = np.asarray(record.block_parent_cell_ids[name], dtype=np.int64)
+            for row, origin in zip(np.asarray(route), origins, strict=True):
+                local = tuple(bank[int(index)] for index in row)
+                (parent,) = _restriction_parents(imported, budget)[int(origin)]
+                chart = _restriction_parent_chart(element, parent.element, budget=budget)
+                assert chart is not None
+                chained = _restricted_child_jacobian(
+                    parent, imported, chart, "prism", 3, budget
+                )
+                own = _physical_jacobian(element, local, "prism", 3, budget)
+                assert chained is not None and own is not None
+                assert all(
+                    expression_equal(first, second, budget=budget)
+                    for first_row, second_row in zip(chained, own, strict=True)
+                    for first, second in zip(first_row, second_row, strict=True)
+                )
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "wrong-parent",
+        "coefficients",
+        "not-contained",
+        "orientation",
+        "partial-proof",
+        "scale",
+    ),
+)
+def test_restricted_child_validity_typed_refusals(change: str) -> None:
+    from dataclasses import replace
+
+    from phydrax.discretization._cell_geometry_validity import (
+        _restricted_child_validity,
+        CellValidityStatus,
+    )
+    from phydrax.discretization._coordinate_enclosure import (
+        prepared_coordinate_source_bank,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    _, source, mesh, geometry, _, _, imported, policy = _restricted_validity_import()
+    element = geometry.elements[0]
+    assert isinstance(element, RestrictedCellGeometryElement)
+    parent = int(np.asarray(geometry.restriction_source.block_parent_cell_ids["lower"])[0])
+    with coordinate_reference_budget() as budget:
+        bank = prepared_coordinate_source_bank(geometry, budget=budget)
+        route = np.asarray(geometry.geometry_dofs[0], dtype=np.int64)[0]
+        local = tuple(bank[int(index)] for index in route)
+        origin = parent
+        expected = {
+            "wrong-parent": "wrong_parent",
+            "coefficients": "coefficients",
+            "not-contained": "not_contained",
+            "orientation": "orientation",
+            "partial-proof": "partial_proof",
+            "scale": "scale",
+        }[change]
+        if change == "wrong-parent":
+            origin = 10_000
+        elif change == "coefficients":
+            local = (
+                tuple(value + Fraction(1, 64) for value in local[0]),
+                *local[1:],
+            )
+        elif change == "not-contained":
+            element = RestrictedCellGeometryElement(
+                element.source_element,
+                "prism",
+                np.diag(np.asarray((1.0, 1.0, 0.5))),
+                np.asarray((0.0, 0.0, 0.75)),
+            )
+        elif change == "orientation":
+            element = RestrictedCellGeometryElement(
+                element.source_element,
+                "prism",
+                np.diag(np.asarray((1.0, 1.0, -0.5))),
+                np.asarray((0.0, 0.0, 0.5)),
+            )
+        elif change == "partial-proof":
+            status = imported.status.copy()
+            status[:] = CellValidityStatus.UNRESOLVED
+            imported = replace(imported, status=status, parents={})
+        else:
+            imported = replace(
+                imported,
+                lower=np.full_like(imported.lower, 1.0e-300),
+                parents={},
+            )
+        decision = _restricted_child_validity(
+            element, "prism", local, origin, imported, policy, budget
+        )
+    assert decision == expected
+
+
 def test_restriction_root_evidence_refuses_foreign_certificate_replay() -> None:
     from phydrax.geometry._embedding_state import MappedRestrictionRootEmbeddingEvidence
 
@@ -1176,3 +1698,488 @@ def test_restriction_root_evidence_refuses_foreign_certificate_replay() -> None:
             ),
             restriction_root_embedding=evidence,
         )
+
+
+def test_exact_contact_normalizes_only_requested_vertices(
+    reference_budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._exact_polyhedral_geometry as exact_owner
+    from phydrax.geometry._global_embedding import exact_pair_contacts
+
+    points = np.asarray(
+        [
+            (Fraction(2**200 + row, 2**150 + row), Fraction(row))
+            for row in range(100)
+        ],
+        dtype=object,
+    )
+    points[[1, 31, 60, 95]] = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1, 3), Fraction(1, 3)),
+        (Fraction(0), Fraction(1, 3)),
+        (Fraction(1, 3), Fraction(0)),
+    )
+    original = exact_owner.coordinate_integers
+    normalized_rows = []
+
+    def normalize(
+        values: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[np.ndarray, Fraction]:
+        normalized_rows.append(values.shape[0])
+        return original(values, budget=budget)
+
+    monkeypatch.setattr(exact_owner, "coordinate_integers", normalize)
+    hit, certain = exact_pair_contacts(
+        points,
+        np.asarray(((1, 31), (1, 31)), dtype=np.int64),
+        np.asarray(((60, 95), (1, 60)), dtype=np.int64),
+        budget=reference_budget,
+    )
+    assert normalized_rows == [4]
+    np.testing.assert_array_equal(hit, (True, False))
+    np.testing.assert_array_equal(certain, (True, True))
+
+
+def test_identity_welded_audit_reuses_exact_canonical_facet_table(
+    reference_budget: CoordinateEnclosureBudget,
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+) -> None:
+    from phydrax.geometry._embedding_state import mesh_facets
+
+    mesh = phx.discretization.CellMesh(
+        np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=np.float64),
+        (
+            phx.discretization.CellBlock(
+                "first", "triangle", np.asarray(((0, 1, 2),)), global_ids=np.asarray((0,))
+            ),
+            phx.discretization.CellBlock(
+                "second", "triangle", np.asarray(((0, 2, 3),)), global_ids=np.asarray((1,))
+            ),
+        ),
+    )
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    audit = phx.meshing.audit_cell_mesh(mesh, geometry, budget=reference_budget)
+    assert audit.passed
+    key = coordinate_scope_key(mesh, geometry)
+    assert key in reference_budget.facet_cache
+    borrowed = reference_budget.facet_cache[key]
+    before = reference_budget.work_units
+    assert mesh_facets(mesh, geometry=geometry, budget=reference_budget) is borrowed
+    assert reference_budget.work_units - before == 1
+    fresh_budget = coordinate_budget(
+        reference_budget.maximum_work_units, reference_budget.maximum_memory_bytes
+    )
+    fresh = mesh_facets(mesh, geometry=geometry, budget=fresh_budget)
+    for field in ("rows", "signs", "cells", "group", "counts", "order", "group_offsets"):
+        np.testing.assert_array_equal(getattr(borrowed, field), getattr(fresh, field))
+    for observed, expected in zip(borrowed.groups, fresh.groups, strict=True):
+        np.testing.assert_array_equal(observed, expected)
+        assert not observed.flags.writeable
+
+
+def test_exact_planar_degree_profiles_only_boundary_source_coordinates(
+    reference_budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._exact_polyhedral_geometry as exact_owner
+    from phydrax.geometry._embedding_state import mesh_facets
+    from phydrax.geometry._global_embedding import _exact_planar_boundary_embedding
+
+    points = np.asarray(
+        (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0)),
+            (Fraction(1), Fraction(1)),
+            (Fraction(0), Fraction(1)),
+            (Fraction(1, 3), Fraction(1, 3)),
+        ),
+        dtype=object,
+    )
+    mesh = phx.discretization.CellMesh.from_triangles(
+        np.asarray(points, dtype=np.float64),
+        np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int64),
+    )
+    facets = mesh_facets(mesh, budget=reference_budget)
+    original = exact_owner._coordinate_integer_profile
+    profiled_rows = []
+
+    def profile(
+        values: np.ndarray,
+        maximum_bits: int | None,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        collect_scalars: bool = False,
+    ) -> tuple[tuple[int, int] | None, int, object]:
+        profiled_rows.append(values.shape[0])
+        return original(
+            values, maximum_bits, budget=budget, collect_scalars=collect_scalars,
+        )
+
+    # Every public and prepared profile route runs this one canonical scan.
+    monkeypatch.setattr(exact_owner, "_coordinate_integer_profile", profile)
+    state = EmbeddingState([], [])
+    _exact_planar_boundary_embedding(
+        state, mesh, points, facets, MeshCertificateLimits(), 256,
+        budget=reference_budget, predecessor=None,
+    )
+    assert state.clean
+    assert state.boundary_facets == 4
+    assert profiled_rows and max(profiled_rows) == 4
+    assert "boundary_contact" in state.checks
+    assert "exterior_degree" in state.checks
+
+
+@pytest.mark.parametrize(("ambient", "arity"), ((2, 2), (3, 2), (3, 3)))
+def test_unique_rational_vertex_boxes_preserve_outward_bounds_bitwise(
+    ambient: int,
+    arity: int,
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._embedding_state import boxes
+    from phydrax.geometry._global_embedding import _exact_contact_boxes
+
+    values = (
+        Fraction(1) + Fraction(1, 2**54),
+        Fraction(1) - Fraction(1, 2**54),
+        Fraction(1, 2**1075),
+        Fraction(-1, 2**1075),
+        Fraction(0),
+        Fraction(1, 3),
+        Fraction(-1, 3),
+        Fraction(-1) - Fraction(1, 2**54),
+    )
+    points = np.asarray(
+        [tuple(values[(row + axis) % len(values)] for axis in range(ambient))
+         for row in range(len(values))],
+        dtype=object,
+    )
+    rows = np.asarray(
+        [tuple((row + local) % len(values) for local in range(arity))
+         for row in range(len(values))],
+        dtype=np.int64,
+    )
+    expected = boxes(points, rows)
+    actual = _exact_contact_boxes(points, rows, budget=reference_budget)
+    for observed, original in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(observed.view(np.uint64), original.view(np.uint64))
+    from phydrax._geometry_predicates import exact_bits
+    from phydrax.geometry._exact_polyhedral_geometry import CoordinateIntegerPreparation
+
+    with reference_budget.temporary_scope():
+        preparation = CoordinateIntegerPreparation(points, 4096, budget=reference_budget)
+        assert preparation.rational_bits(points, budget=reference_budget) == exact_bits(
+            points, budget=reference_budget
+        )
+        before = reference_budget.work_units
+        _exact_contact_boxes(points, rows, budget=reference_budget)
+        scanned = reference_budget.work_units - before
+        before = reference_budget.work_units
+        prepared = _exact_contact_boxes(
+            points, rows, budget=reference_budget, integer_preparation=preparation
+        )
+        # Every bank row is used, so the bound preparation's scan is reused.
+        assert reference_budget.work_units - before == scanned - points.size
+        for observed, original in zip(prepared, expected, strict=True):
+            np.testing.assert_array_equal(
+                observed.view(np.uint64), original.view(np.uint64)
+            )
+        changed = points.copy()
+        changed[0, 0] = Fraction(1, 7)
+        with pytest.raises(ValueError, match="current source values and ledger"):
+            _exact_contact_boxes(
+                changed, rows, budget=reference_budget, integer_preparation=preparation
+            )
+
+
+@pytest.mark.parametrize("ambient", (2, 3))
+def test_shared_endpoint_separation_preserves_segment_contact_semantics(
+    ambient: int,
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._global_embedding import (
+        _shared_segment_separation,
+        exact_pair_contacts,
+    )
+
+    coordinates = ((0, 0), (1, 0), (0, 1), (1, 1), (-2, -2), (2, 2), (2, 1))
+    points = np.asarray(
+        [tuple(Fraction(value) for value in row) + (Fraction(0),) * (ambient - 2)
+         for row in coordinates],
+        dtype=object,
+    )
+    first = np.asarray(((0, 1), (0, 3), (0, 3), (0, 3), (0, 3)), dtype=np.int64)
+    second = np.asarray(((0, 2), (0, 4), (0, 5), (0, 6), (3, 0)), dtype=np.int64)
+    separated = _shared_segment_separation(
+        points, first, second, budget=reference_budget
+    )
+    np.testing.assert_array_equal(separated, (True, True, False, False, False))
+    hit, certain = exact_pair_contacts(points, first, second, budget=reference_budget)
+    assert np.all(certain)
+    assert np.all(~hit[separated])
+    np.testing.assert_array_equal(hit, (False, False, True, False, True))
+
+
+def test_prepared_embedding_refusal_names_its_actual_missing_governed_check(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from copy import copy
+
+    from phydrax.meshing._certification import require_prepared_embedding
+
+    mesh = phx.discretization.CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+    )
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    limits = MeshCertificateLimits()
+    validity = phx.discretization.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=reference_budget,
+    )
+    certificate = phx.geometry.certify_global_embedding(
+        mesh, geometry, validity, limits=limits, budget=reference_budget,
+    )
+    assert certificate.status == "certified"
+    broken = copy(certificate)
+    object.__setattr__(
+        broken, "evaluated_checks",
+        tuple(check for check in certificate.evaluated_checks if check != "exterior_degree"),
+    )
+    with pytest.raises(ValueError, match="sufficient governed evidence") as refusal:
+        require_prepared_embedding(
+            mesh, geometry, validity, broken, limits, budget=reference_budget,
+        )
+    assert "missing_checks=('exterior_degree',)" in str(refusal.value)
+    assert "counts_and_limits=" in str(refusal.value)
+    assert "validity_ids=" in str(refusal.value)
+
+
+def test_prepared_integer_bank_binds_values_ledger_and_bit_admission(
+    reference_budget: CoordinateEnclosureBudget,
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+) -> None:
+    from phydrax.geometry._exact_polyhedral_geometry import (
+        coordinate_integers,
+        CoordinateIntegerPreparation,
+    )
+
+    points = np.asarray(
+        ((Fraction(0), Fraction(1, 3)), (Fraction(2, 3), Fraction(1))), dtype=object
+    )
+    original = points.copy()
+    with reference_budget.temporary_scope():
+        preparation = CoordinateIntegerPreparation(points, 256, budget=reference_budget)
+        assert preparation.profile is not None
+        before = reference_budget.work_units
+        integers, scale = coordinate_integers(
+            points, budget=reference_budget, preparation=preparation
+        )
+        assert reference_budget.work_units - before == points.size
+        np.testing.assert_array_equal(integers * scale, points)
+        assert not integers.flags.writeable
+        before = reference_budget.work_units
+        reused, reused_scale = coordinate_integers(
+            points.copy(), budget=reference_budget, preparation=preparation
+        )
+        assert reused is integers and reused_scale == scale
+        assert reference_budget.work_units == before
+        points[0, 0] = Fraction(1, 7)
+        with pytest.raises(ValueError, match="current source values and ledger"):
+            coordinate_integers(points, budget=reference_budget, preparation=preparation)
+        foreign = coordinate_budget(1000, 1 << 20)
+        with pytest.raises(ValueError, match="current source values and ledger"):
+            coordinate_integers(original, budget=foreign, preparation=preparation)
+        refused = CoordinateIntegerPreparation(original, 1, budget=reference_budget)
+        assert refused.profile is None
+        with pytest.raises(ValueError, match="completed bit profile"):
+            coordinate_integers(original, budget=reference_budget, preparation=refused)
+
+
+def test_integer_normalization_factors_actual_repeated_denominators_and_scalars(
+    reference_budget: CoordinateEnclosureBudget, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _exact_polyhedral_geometry as exact_owner
+
+    points = np.asarray(
+        ((Fraction(1, 6), Fraction(1, 10), Fraction(1, 6)),
+         (Fraction(1, 10), Fraction(1, 6), Fraction(1, 10))),
+        dtype=object,
+    )
+    original_gcd = exact_owner.math.gcd
+    visits = []
+
+    def gcd(first: int, second: int) -> int:
+        visits.append((first, second))
+        return original_gcd(first, second)
+
+    monkeypatch.setattr(exact_owner.math, "gcd", gcd)
+    with reference_budget.temporary_scope():
+        before = reference_budget.work_units
+        profile, _, scalars = exact_owner._coordinate_integer_profile(
+            points, 256, budget=reference_budget, collect_scalars=True,
+        )
+        assert visits == [(1, 6), (6, 10)]
+        assert reference_budget.work_units - before == points.size + 2
+        assert profile is not None and scalars is not None
+        before = reference_budget.work_units
+        integers, scale = exact_owner._scale_coordinate_integers(
+            points, profile, scalars, budget=reference_budget,
+        )
+        assert reference_budget.work_units - before == 2
+        np.testing.assert_array_equal(integers, ((5, 3, 5), (3, 5, 3)))
+        assert scale == Fraction(1, 30)
+        np.testing.assert_array_equal(integers * scale, points)
+
+
+def test_prepared_integer_scalars_reject_changed_fraction_contents(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._exact_polyhedral_geometry import CoordinateIntegerPreparation
+
+    value = Fraction(1, 3)
+    points = np.asarray(((value, Fraction(0)),), dtype=object)
+    with reference_budget.temporary_scope():
+        preparation = CoordinateIntegerPreparation(points, 256, budget=reference_budget)
+        object.__setattr__(value, "_numerator", 2)
+        try:
+            with pytest.raises(ValueError, match="current source values and ledger"):
+                preparation.coordinates(points, budget=reference_budget)
+        finally:
+            object.__setattr__(value, "_numerator", 1)
+
+
+def test_restricted_predecessor_reuses_issuer_paid_content_on_same_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _cell_geometry_predecessor as predecessor_owner
+    from phydrax.geometry._restricted_embedding import (
+        _authenticated_restriction_predecessor,
+        _RestrictedRequest,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    roots, source, mesh, geometry = _restricted_affine_p2_prisms()
+    validity = phx.discretization.certify_cell_geometry_validity(source, mesh=roots)
+    embedding = phx.geometry.certify_global_embedding(
+        roots, source, validity, limits=_ORIGINAL_ROOT_LIMITS
+    )
+    hashes = 0
+
+    def observed_hash[**P](function: Callable[P, str]) -> Callable[P, str]:
+        def counted(*args: P.args, **kwargs: P.kwargs) -> str:
+            nonlocal hashes
+            hashes += 1
+            return function(*args, **kwargs)
+
+        return counted
+
+    monkeypatch.setattr(
+        predecessor_owner, "_predecessor_content_id",
+        observed_hash(predecessor_owner._predecessor_content_id),
+    )
+    with coordinate_reference_budget() as budget:
+        predecessor = predecessor_owner.prepare_cell_geometry_predecessor(
+            roots, source, validity, embedding, mesh, geometry,
+            source_limits=_ORIGINAL_ROOT_LIMITS, budget=budget,
+        )
+        assert hashes == 1
+        request = _RestrictedRequest(
+            EmbeddingState([], []), mesh, geometry,
+            np.arange(4, dtype=np.int64), MeshCertificateLimits(), budget, predecessor,
+        )
+        start = budget.work_units
+        first = _authenticated_restriction_predecessor(request)
+        first_work = budget.work_units - start
+        start = budget.work_units
+        second = _authenticated_restriction_predecessor(request)
+        second_work = budget.work_units - start
+        assert not isinstance(first, str)
+        assert not isinstance(second, str)
+        assert (
+            first[1].certificate_id == second[1].certificate_id == embedding.certificate_id
+        )
+        assert hashes == 1
+        print(
+            f"restriction-sourceauth same-ledger-first={first_work} "
+            f"same-ledger-repeat={second_work} cumulative={budget.work_units}"
+        )
+    with coordinate_reference_budget() as independent:
+        request = _RestrictedRequest(
+            EmbeddingState([], []), mesh, geometry,
+            np.arange(4, dtype=np.int64), MeshCertificateLimits(),
+            independent, predecessor,
+        )
+        result = _authenticated_restriction_predecessor(request)
+        assert not isinstance(result, str)
+        assert hashes == 2
+        assert independent.work_units > second_work
+
+
+def test_binary_row_filter_never_rounds_algebraic_source(
+    reference_budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+    from phydrax.geometry._global_embedding import source_bank_binary64_rows
+
+    radical = RadicalElement(terms=((2, Fraction(1)),))
+    bank = (
+        (Fraction(0), Fraction(1)),
+        (radical, Fraction(0)),
+        (Fraction(1, 3), Fraction(0)),
+    )
+
+    def unexpected_rounding(self: RadicalElement) -> float:
+        raise AssertionError("Rational-only predicate filtering must not round algebraic rows.")
+
+    monkeypatch.setattr(RadicalElement, "__float__", unexpected_rounding)
+    view, represented = source_bank_binary64_rows(bank, budget=reference_budget)
+    np.testing.assert_array_equal(represented, (True, False, False))
+    np.testing.assert_array_equal(view[0], (0.0, 1.0))
+    for array in (view, represented):
+        with pytest.raises(ValueError):
+            array.flags.writeable = True
+
+
+@pytest.mark.parametrize("array_index", (0, 1), ids=("coordinates", "mask"))
+def test_binary_row_cache_rejects_changed_numeric_view_layout(
+    reference_budget: CoordinateEnclosureBudget, array_index: int,
+) -> None:
+    from phydrax.geometry._global_embedding import source_bank_binary64_rows
+
+    bank = ((Fraction(0), Fraction(1)), (Fraction(1), Fraction(0)))
+    arrays = source_bank_binary64_rows(bank, budget=reference_budget)
+    target = arrays[array_index]
+    cached = reference_budget.source_binary64_rows_cache[id(bank)]
+    changed = target.reshape((1, target.size))
+    # Preserve the exact byte owner, pointer and values; only the cached
+    # view's shape/strides differ from its previously earned layout proof.
+    assert np.shares_memory(changed, target)
+    reference_budget.source_binary64_rows_cache[id(bank)] = (
+        cached[0],
+        changed if array_index == 0 else cached[1],
+        changed if array_index == 1 else cached[2],
+        cached[3], cached[4],
+    )
+    try:
+        with pytest.raises(ValueError, match="immutable numeric layouts"):
+            source_bank_binary64_rows(bank, budget=reference_budget)
+    finally:
+        reference_budget.source_binary64_rows_cache[id(bank)] = cached
+
+
+def test_nonbinary_predicate_object_view_is_not_a_mutable_cached_authority(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._global_embedding import source_bank_predicate_view
+
+    bank = ((Fraction(0), Fraction(1, 3)), (Fraction(1), Fraction(0)))
+    first, binary = source_bank_predicate_view(bank, budget=reference_budget)
+    assert not binary
+    first.flags.writeable = True
+    first[0, 0] = Fraction(99)
+    second, binary = source_bank_predicate_view(bank, budget=reference_budget)
+    assert not binary and second is not first
+    assert second[0, 0] is bank[0][0]
+    assert second[0, 1] is bank[0][1]

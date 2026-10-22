@@ -17,7 +17,7 @@ from . import (
     _interface_binding as interface_binding_owner,
     _mesh_part as mesh_part_owner,
 )
-from ._scope import contains_ids, MeshingScope
+from ._scope import MeshingScope, overlapping_ids
 
 
 class AssemblyInventory(StrictModule, NonTrainableState):
@@ -73,12 +73,8 @@ def _prepare_overset_ownership(
         key = (overlay.target_scope.source_id, overlay.target_scope.entity_set_id)
         owned = receptors.setdefault(key, [])
         if any(
-            bool(
-                jnp.any(
-                    contains_ids(
-                        previous.global_entity_ids, overlay.target_scope.global_entity_ids
-                    )
-                )
+            overlapping_ids(
+                previous.global_entity_ids, overlay.target_scope.global_entity_ids
             )
             for previous in owned
         ):
@@ -96,7 +92,7 @@ def _prepare_overset_ownership(
             holes.setdefault(key, []).append(overlay.hole_scope)
     for key, scopes in receptors.items():
         if any(
-            bool(jnp.any(contains_ids(scope.global_entity_ids, hole.global_entity_ids)))
+            overlapping_ids(scope.global_entity_ids, hole.global_entity_ids)
             for scope in scopes
             for hole in holes.get(key, ())
         ):
@@ -134,7 +130,7 @@ def _require_donor_ownership(
             used = jnp.where(weights > 0, overlay.donor_ids, -1).reshape(-1)
         forbidden = (*receptors.get(key, ()), *holes.get(key, ()))
         if any(
-            bool(jnp.any(contains_ids(scope.global_entity_ids, used)))
+            overlapping_ids(scope.global_entity_ids, used)
             for scope in forbidden
         ):
             raise ValueError(

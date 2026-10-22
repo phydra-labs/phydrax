@@ -1184,8 +1184,15 @@ int32_t phx_mc_surface_reconnect(
     if (cells != PHX_MC_OK) {
       return cells;
     }
+    // Orientation/manifold validation of the source is mandatory: without its
+    // allowance the call refuses with its evidence and never publishes the
+    // unvalidated input as OK. Only a validated source keeps partial work.
     const int32_t prepared = surface.prepare();
-    if (prepared != PHX_MC_OK && prepared != PHX_MC_CAPACITY_EXCEEDED) {
+    if (prepared == PHX_MC_CAPACITY_EXCEEDED) {
+      publisher.enabled = true;
+      return prepared;
+    }
+    if (prepared != PHX_MC_OK) {
       return prepared;
     }
     phx::mc::execute_surface_insertions(surface, r);

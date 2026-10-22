@@ -17,6 +17,7 @@ from .._external_resource import (
     read_bounded_resource,
     ResourceReadError,
 )
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..typing import checked
 from ..units._dimension import LENGTH
 from ..units._unit import UnitDefinition
@@ -34,8 +35,11 @@ def decode_cad_bytes(
     *,
     decoder: CadResourceDecoder,
     source_path: str | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Admit a bounded byte resource and pass it to its format decoder."""
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     try:
         resource = bounded_resource_from_bytes(
             data, limits=policy.limits, source_path=source_path
@@ -53,8 +57,11 @@ def read_cad_file(
     *,
     decoder: CadResourceDecoder,
     trusted_root: str | os.PathLike[str],
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Descriptor-read a bounded local resource and decode its admitted format."""
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     try:
         resource = read_bounded_resource(
             path, trusted_root=trusted_root, limits=policy.limits
@@ -72,6 +79,7 @@ def read_cad(
     *,
     trusted_root: str | os.PathLike[str],
     source_length_unit: UnitDefinition | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Read STEP, IGES, or OCCT BRep text under bounded resource admission.
 
@@ -109,11 +117,16 @@ def read_cad(
     codec = import_module(f"._{format_name}", __package__)
     if format_name == "cad_brep_text":
         return codec.read_brep_text(
-            path, policy, trusted_root=trusted_root, source_length_unit=source_length_unit
+            path, policy, trusted_root=trusted_root, source_length_unit=source_length_unit,
+            coordinate_budget=coordinate_budget,
         )
     if format_name == "step":
-        return codec.read_step(path, policy, trusted_root=trusted_root)
-    return codec.read_iges(path, policy, trusted_root=trusted_root)
+        return codec.read_step(
+            path, policy, trusted_root=trusted_root, coordinate_budget=coordinate_budget
+        )
+    return codec.read_iges(
+        path, policy, trusted_root=trusted_root, coordinate_budget=coordinate_budget
+    )
 
 
 __all__ = ["CadResourceDecoder", "decode_cad_bytes", "read_cad_file", "read_cad"]

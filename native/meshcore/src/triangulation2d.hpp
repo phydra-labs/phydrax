@@ -19,6 +19,7 @@
 // tests are broken by index-ordered symbolic perturbation with vertex ids.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -167,22 +168,33 @@ class Triangulation2D {
     throw std::logic_error("triangulation2d: inconsistent adjacency");
   }
 
+  // Capacity to reserve for `needed` elements: at least double the current
+  // capacity once it is exceeded (amortized O(1) copies per element; exact
+  // growth would reallocate and copy every array on each insertion). The
+  // target depends only on the operation history, never on the remaining
+  // allowance, so the recorded peak bytes stay the exact requirement.
+  static std::size_t growth_target(std::size_t capacity, std::size_t needed) {
+    return needed <= capacity ? needed : std::max(needed, 2 * capacity);
+  }
+
   // Reserve every array before allocating/releasing a batch of triangle slots.
   // Growth may change capacity but never changes accepted topology on refusal.
   void prepare_slots(std::size_t allocations, std::size_t releases = 0) {
     MemoryScope scope(budget.memory_owner);
+    constexpr std::size_t kMaxSlots = static_cast<std::size_t>(std::numeric_limits<int32_t>::max());
     const std::size_t available = free_slots.size() + releases;
     const std::size_t growth = allocations > available ? allocations - available : 0;
     const std::size_t total = triangles.size() + growth;
-    if (total > static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) {
+    if (total > kMaxSlots) {
       throw std::bad_alloc();
     }
-    triangles.reserve(total);
-    constraints.reserve(3 * total);
-    region.reserve(total);
-    live.reserve(total);
-    marks_.reserve(total);
-    free_slots.reserve(available);
+    const std::size_t target = std::min(growth_target(triangles.capacity(), total), kMaxSlots);
+    triangles.reserve(target);
+    constraints.reserve(3 * target);
+    region.reserve(target);
+    live.reserve(target);
+    marks_.reserve(target);
+    free_slots.reserve(growth_target(free_slots.capacity(), available));
   }
 
   int32_t allocate() {
@@ -292,10 +304,12 @@ class Triangulation2D {
   int32_t add_vertex(const double* xy) {
     MemoryScope scope(budget.memory_owner);
     const double x = xy[0], y = xy[1];
-    coordinates.reserve(coordinates.size() + 2);
-    vertex_triangle.reserve(vertex_triangle.size() + 1);
-    vertex_marks_.reserve(vertex_marks_.size() + 1);
-    vertex_slots_.reserve(vertex_slots_.size() + 1);
+    const std::size_t target =
+        growth_target(vertex_triangle.capacity(), vertex_triangle.size() + 1);
+    coordinates.reserve(2 * target);
+    vertex_triangle.reserve(target);
+    vertex_marks_.reserve(target + 1);
+    vertex_slots_.reserve(target + 1);
     budget.charge();
     const int32_t index = vertex_count();
     coordinates.push_back(x);

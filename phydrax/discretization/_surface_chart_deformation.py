@@ -1110,8 +1110,11 @@ def _exact_chart_partition_proof(
     source: surface_chart_records.SurfaceChartWitness,
     target: surface_chart_records.SurfaceChartWitness,
     /,
+    *,
+    domain: MeshingDomain,
+    budget: CoordinateEnclosureBudget,
 ) -> int:
-    "Prove the target positive chart complex has the source boundary."
+    "Prove the authored-oriented target chart complex has the source boundary."
 
     def records(
         witness: surface_chart_records.SurfaceChartWitness, /
@@ -1121,18 +1124,24 @@ def _exact_chart_partition_proof(
         int,
     ]:
         charts = surface_chart_records.exact_chart_bank(
-            witness.charts, witness.cell_global_ids.shape[0]
+            witness.charts, witness.cell_global_ids.shape[0], budget=budget
         )
         boundaries: dict[int, dict[tuple[_ExactPoint, _ExactPoint], int]] = {}
         areas: dict[int, Fraction] = {}
         work = 0
-        for patch, triangle in zip(np.asarray(witness.patches), charts, strict=True):
-            signed_area = area(triangle)
-            if signed_area <= 0:
-                raise ValueError(
-                    "surface_chart.records.pieces must satisfy the material reference contract; got Restricted chart partition has a nonpositive cell."
-                )
+        for row, (patch, triangle) in enumerate(
+            zip(np.asarray(witness.patches), charts, strict=True)
+        ):
             patch_ = int(patch)
+            signed_area = area(triangle)
+            orientation = -1 if domain.patches[patch_].reversed else 1
+            if orientation * signed_area <= 0:
+                raise ValueError(
+                    "surface_chart.records.pieces must satisfy the material reference contract; got Restricted chart partition has a nonpositive cell: "
+                    f"cell_id={int(witness.cell_global_ids[row])}, patch={patch_}, "
+                    f"occurrence={witness.occurrence_paths[row]!r}, "
+                    f"orientation={orientation}, signed_area={signed_area}."
+                )
             areas[patch_] = areas.get(patch_, Fraction(0)) + signed_area
             boundary = boundaries.setdefault(patch_, {})
             for first, second in zip(triangle, triangle[1:] + triangle[:1], strict=True):
@@ -1160,6 +1169,7 @@ def _exact_chart_partition_proof(
         source_boundary != target_boundary
         or source_area != target_area
         or source.domain_id != target.domain_id
+        or source.domain_id != domain.domain_id
     ):
         raise ValueError(
             "surface_chart.exact_chart_partition_proof.pieces must satisfy the material reference contract; got Target restricted charts do not exactly partition the source chart complex."
@@ -1770,9 +1780,14 @@ def _certify_surface_endpoints(
             target_geometry, mesh=target_mesh, policy=validity_policy_, budget=budget
         )
         target_measure_routes = None
+    # Only an inherited embedding requires identical physical UV partitions.
+    # Independent reconstructions may move curved-trim chord boundaries; their
+    # embedding is certified below and their material partition separately.
     partition_work = (
-        _exact_chart_partition_proof(source_witness, target_witness)
-        if prepared_source_certificates is not None
+        _exact_chart_partition_proof(
+            source_witness, target_witness, domain=domain, budget=budget
+        )
+        if restricted_reuse
         else 0
     )
     if restricted_reuse:
@@ -2450,6 +2465,8 @@ def _prepare_surface_material_banks(
     cell_count: int,
     memory: int,
     candidates: int,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _SurfaceMaterialBanks:
     "Bind endpoint material banks to their retained root chart."
     if (source_material_charts is None) != (target_material_charts is None):
@@ -2472,15 +2489,17 @@ def _prepare_surface_material_banks(
         if source_material_charts is None
         else source_material_charts,
         source_order.size,
+        budget=budget,
     )
     target_material = surface_chart_records.exact_chart_bank(
         target_witness.charts
         if target_material_charts is None
         else target_material_charts,
         target_order.size,
+        budget=budget,
     )
     root_material = surface_chart_records.exact_chart_bank(
-        root_witness.charts, root_witness.cell_global_ids.shape[0]
+        root_witness.charts, root_witness.cell_global_ids.shape[0], budget=budget
     )
     material_bytes = _exact_retained_bytes(
         (source_material, target_material, root_material)
@@ -2642,6 +2661,7 @@ def _prepare_surface_chart_deformation(
         cell_count=cell_count,
         memory=memory,
         candidates=candidates,
+        budget=budget,
     )
     root_witness = _phase.root_witness
     source_material = _phase.source_material

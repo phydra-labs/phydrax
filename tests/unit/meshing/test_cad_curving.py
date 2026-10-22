@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -34,8 +36,14 @@ BOUNDARY_CLASSIFICATION_MARGIN = 1e-9
 
 @pytest.fixture(scope="module")
 def native_cad_subdivision() -> tuple[
-    phx.meshing.CellMeshingResult, phx.meshing.CellMeshingResult
+    phx.meshing.CellMeshingResult, phx.meshing.CellMeshingResult, phx.meshing.PreparedMeshAdaptation
 ]:
+    from tools.meshing_qualification._controls import authored_resource_envelope
+
+    envelope = authored_resource_envelope(
+        "native-surface-pde", "planar-hole-feature", {}, larger=False
+    )
+    assert envelope is not None
     profile = phx.geometry.PlanarProfile(
         phx.geometry.ProfilePlane(),
         phx.geometry.ProfileLoop.polygon(((0, 0), (1, 0), (1, 1), (0, 1))),
@@ -66,8 +74,12 @@ def native_cad_subdivision() -> tuple[
                 strength=phx.meshing.SizeControlStrength.HARD,
             ),
         ),
-        # LF-04/21/22 specify 640,000 work units per request.
-        limits=phx.meshing.MeshingLimits(maximum_work_units=640_000),
+        # This planar source uses the registered whole-workflow envelope.
+        limits=phx.meshing.MeshingLimits(
+            maximum_work_units=envelope["effective"]["maximum_work_units"],
+            maximum_geometry_queries=envelope["effective"]["maximum_geometry_queries"],
+            maximum_scratch_bytes=envelope["effective"]["maximum_scratch_bytes"],
+        ),
     )
     original = (
         phx.meshing.NativeMeshingProvider(
@@ -91,25 +103,24 @@ def native_cad_subdivision() -> tuple[
     current = original
     hierarchy = None
     for _ in range(2):
-        adapted = phx.meshing.execute_mesh_adaptation(
-            phx.meshing.prepare_mesh_adaptation(
-                current,
-                phx.meshing.MarkedMeshAdaptation(
-                    np.asarray(current.mesh.blocks[0].global_ids), hierarchy=hierarchy
-                ),
-                policy=policy,
-            )
+        prepared = phx.meshing.prepare_mesh_adaptation(
+            current,
+            phx.meshing.MarkedMeshAdaptation(
+                np.asarray(current.mesh.blocks[0].global_ids), hierarchy=hierarchy
+            ),
+            policy=policy,
         )
+        adapted = phx.meshing.execute_mesh_adaptation(prepared)
         current, hierarchy = adapted.target, adapted.hierarchy
-    return original, current
+    return original, current, prepared
 
 
 def test_native_cad_affine_chain_retains_chart_root_and_binds_live_target(
     native_cad_subdivision: tuple[
-        phx.meshing.CellMeshingResult, phx.meshing.CellMeshingResult
+        phx.meshing.CellMeshingResult, phx.meshing.CellMeshingResult, phx.meshing.PreparedMeshAdaptation
     ],
 ) -> None:
-    original, target = native_cad_subdivision
+    original, target, _ = native_cad_subdivision
     charts = target.surface_source
     assert charts is not None and original.surface_source is not None
     assert target.certification is not None and target.certification.passed
@@ -125,18 +136,73 @@ def test_native_cad_affine_chain_retains_chart_root_and_binds_live_target(
     charts.require_bound(target.mesh, target.geometry, source)
     assert target.mesh.entity_set(2).count > original.mesh.entity_set(2).count
     assert all(association.complete for association in target.associations)
+    occurrences = source.current_boundary_source
+    assert occurrences.boundary_cell_ids is not None
+    assert occurrences.boundary_occurrences is not None
+    np.testing.assert_array_equal(
+        occurrences.boundary_cell_ids,
+        np.sort(np.concatenate([np.asarray(block.global_ids) for block in target.mesh.blocks])),
+    )
+    assert occurrences.boundary_occurrences.shape == (target.mesh.entity_set(2).count, 3, 3)
+    occurrences.require_current()
 
 
 def test_native_cad_affine_chain_refuses_initial_source_bound_to_target(
     native_cad_subdivision: tuple[
-        phx.meshing.CellMeshingResult, phx.meshing.CellMeshingResult
+        phx.meshing.CellMeshingResult, phx.meshing.CellMeshingResult, phx.meshing.PreparedMeshAdaptation
     ],
 ) -> None:
-    _, target = native_cad_subdivision
+    _, target, _ = native_cad_subdivision
     charts = target.surface_source
     assert charts is not None
     with pytest.raises(ValueError, match="SurfaceSourceCharts.root"):
         charts.require_bound(target.mesh, target.geometry, charts.boundary_source)
+
+
+@pytest.mark.parametrize("shortfall", (0, 1), ids=("R", "R-minus-one"))
+def test_native_cad_subdivision_measured_work_boundary(
+    native_cad_subdivision: tuple[
+        phx.meshing.CellMeshingResult, phx.meshing.CellMeshingResult, phx.meshing.PreparedMeshAdaptation
+    ],
+    shortfall: int,
+) -> None:
+    from phydrax._meshcore import MeshcoreError, MeshcoreStatus
+
+    _, _, prepared = native_cad_subdivision
+    # Measured complete bounded request, including source-metadata publication.
+    # The 2M discovery request uses 866043; its distinct limit/receipt binding
+    # is not the bounded request's work identity.
+    required = 866_045
+    assert 0 < required < prepared.policy.limits.maximum_work_units
+    policy = phx.meshing.MeshAdaptationPolicy(
+        prepared.policy.route,
+        limits=phx.meshing.MeshingLimits(
+            maximum_work_units=required - shortfall,
+            maximum_geometry_queries=prepared.policy.limits.maximum_geometry_queries,
+            maximum_scratch_bytes=prepared.policy.limits.maximum_scratch_bytes,
+        ),
+        compatibility=prepared.policy.compatibility,
+        association_transfer=prepared.policy.association_transfer,
+    )
+    print(f"CAD subdivision measured work R={required}, shortfall={shortfall}")
+    if shortfall:
+        with pytest.raises(MeshcoreError) as refused:
+            phx.meshing.execute_mesh_adaptation(
+                phx.meshing.prepare_mesh_adaptation(
+                    prepared.source, prepared.request, policy=policy
+                )
+            )
+        assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    else:
+        result = phx.meshing.execute_mesh_adaptation(
+            phx.meshing.prepare_mesh_adaptation(
+                prepared.source, prepared.request, policy=policy
+            )
+        )
+        assert result.target.certification is not None and result.target.certification.passed
+        assert result.target.execution_evidence is not None
+        assert int(np.asarray(result.target.execution_evidence.total_work_units)) == required
+
 
 
 def test_brep_association_refinement_preserves_vertex_edge_face_classes() -> None:
@@ -219,6 +285,27 @@ def test_brep_association_collapse_rejects_cross_class_identification() -> None:
             policy=CURVING_ASSOCIATION_POLICY,
         )
     assert error.value.target_ids.tolist() == [int(mesh.vertex_global_ids[hole])]
+
+
+def test_brep_association_collapse_keeps_true_corner_protected() -> None:
+    projection = plate_projection()
+    mesh = plate_mesh((1.2, 1.2))
+    association = phx.meshing.associate_mesh_vertices(
+        mesh, projection, policy=CURVING_ASSOCIATION_POLICY
+    )
+    corner, edge = coordinate_rows(mesh, [[2.0, -2.0], [0.0, -2.0]])
+    assert np.asarray(association.source_dimensions)[corner] == 0
+    target, lineage = collapsed_mesh(mesh, corner, edge)
+    with pytest.raises(phx.meshing.AssociationPropagationError) as error:
+        phx.meshing.propagate_association(
+            association,
+            lineage,
+            mesh,
+            target,
+            projection,
+            policy=CURVING_ASSOCIATION_POLICY,
+        )
+    assert error.value.target_ids.tolist() == [int(mesh.vertex_global_ids[edge])]
 
 
 def test_brep_association_rederivation_preserves_shared_vertex_classes() -> None:
@@ -410,6 +497,76 @@ def test_nonconvergence_opt_in_does_not_bypass_continuous_certificate(
         () if rounds == 0 else (phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED,)
     )
     assert result.relaxation_statuses == expected
+
+
+@pytest.mark.parametrize("all_invalid", (False, True), ids=("earlier-accepted", "rollback"))
+def test_newest_first_proofs_keep_the_invalid_last_candidate_and_real_fallback(
+    monkeypatch: pytest.MonkeyPatch, all_invalid: bool,
+) -> None:
+    from phydrax.meshing import _curving as curving
+
+    projection = sphere_projection()
+    mesh = icosphere(0)
+    association = phx.meshing.associate_mesh_vertices(
+        mesh, projection, policy=CURVING_ASSOCIATION_POLICY
+    )
+    straight = straight_geometry(mesh, 2)
+    _, routes, _ = straight.resolve(mesh)
+    first_cell = np.asarray(routes[0])[0]
+    project = curving._project_constrained
+    projections = 0
+
+    def projected(*args: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        nonlocal projections
+        coordinates, rows, projectors = project(*args)
+        projections += 1
+        if all_invalid or projections == 3:
+            classes = args[2]
+            free = [int(row) for row in first_cell if not classes.fixed[row]]
+            assert len(free) >= 2
+            coordinates = coordinates.copy()
+            coordinates[free[0]] = coordinates[free[1]]
+        return coordinates, rows, projectors
+
+    monkeypatch.setattr(curving, "_project_constrained", projected)
+    evaluate = curving._evidence
+    evaluated = []
+
+    def evidence(
+        mesh: phx.discretization.CellMesh,
+        geometry: CellGeometrySpec,
+        *args: Any,
+        **kwargs: Any,
+    ) -> curving.CurvedGeometryEvidence:
+        value = evaluate(mesh, geometry, *args, **kwargs)
+        evaluated.append((geometry, value))
+        return value
+
+    monkeypatch.setattr(curving, "_evidence", evidence)
+    result = phx.meshing.curve_cell_mesh(
+        mesh, association, projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(
+            degree=2, relaxation_rounds=2, fidelity_tolerance=0.5,
+            termination=phx.optim.OptimizationTermination(maximum_steps=1),
+            accept_valid_nonconverged_relaxation=True,
+        ),
+    )
+    assert projections == 3 and len(result.minimizations) == 2
+    assert result.candidate is evaluated[0][1]
+    assert result.candidate_geometry is evaluated[0][0]
+    assert not result.candidate.accepted
+    assert not result.candidate.certificate.all_certified
+    if all_invalid:
+        assert result.status is CURVING_STATUS.ROLLED_BACK_INVALID
+        assert result.accepted_round is None
+        assert not any(value.accepted for _, value in evaluated[:-1])
+        np.testing.assert_array_equal(result.geometry.coordinates, result.straight.coordinates)
+    else:
+        assert result.status is CURVING_STATUS.CURVED
+        assert result.accepted_round == 1
+        assert result.evidence is evaluated[1][1]
+        assert result.evidence.accepted
+        assert len(evaluated) == 2
 
 
 def test_existing_coordinate_node_budget_uses_actual_supplied_layout() -> None:

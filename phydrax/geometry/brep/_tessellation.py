@@ -461,6 +461,7 @@ def _retained_bytes(construction: SurfaceConstruction, /) -> int:
             construction.curve_edge_deviations,
             construction.curve_edge_deviation_bounds,
             construction.unresolved,
+            construction.boundary_occurrences,
             *(
                 array
                 for (

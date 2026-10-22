@@ -21,11 +21,14 @@ from phydrax._meshcore import (
     NativeExecutionLimits,
     NativeExecutionScope,
 )
+from phydrax._resource_ticket import HostBatchEstimateError, HostBatchTicket
 from phydrax.discretization import _coordinate_enclosure as algebra
 from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
+from phydrax.discretization._reference_cell_types import CellGeometryElement
+from phydrax.geometry import _planar_coverage as planar_coverage
 from phydrax.geometry._embedding_state import EmbeddingState, MeshCertificateFinding
 from phydrax.geometry._source_fidelity import (
     SourceFidelityBounds,
@@ -39,7 +42,14 @@ from phydrax.meshing._certification import (
 )
 from phydrax.meshing._certification_inputs import MeshCertificationInputs
 from phydrax.meshing._lineage_records import EntityLineage, EntityLineageKind, MeshLineage
-from phydrax.meshing._plc_mapped_support import prepare_mapped_plc_support
+from phydrax.meshing._plc_mapped_support import (
+    _cell_maps,
+    _require_support_work_bounds,
+    bind_mapped_plc_support,
+    MappedPlcSupport,
+    MappedPlcSupportProof,
+    prepare_mapped_plc_support,
+)
 from phydrax.meshing.providers._native_publication import (
     NativePublicationExecution,
     NativePublicationOrganization,
@@ -236,7 +246,7 @@ def test_retained_certification_renews_source_coverage_on_actual_refinement() ->
     assert original.passed and renewed.passed
     assert renewed.mesh_id == target.mesh_id
     assert renewed.geometry_id != original.geometry_id
-    assert renewed.coverage is not None
+    assert isinstance(renewed.coverage, phx.geometry.DomainCoverageCertificate)
     assert renewed.coverage.domain_id == domain.domain_id
     assert renewed.coverage.achieved_region_measures == (float(Fraction(1, 6)),)
     assert np.array_equal(
@@ -264,6 +274,21 @@ def test_retained_source_integrity_rejects_changed_region_assignments() -> None:
     request.validate_source_integrity()
     with pytest.raises(ValueError, match="assignments"):
         changed.validate_source_integrity()
+    cell_ids = request.cell_global_ids
+    assert type(cell_ids) is np.ndarray and cell_ids.dtype == np.int64
+    assert not cell_ids.flags.writeable
+    np.testing.assert_array_equal(
+        cell_ids,
+        np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks]),
+    )
+    reordered = eqx.tree_at(lambda value: value.cell_global_ids, request, cell_ids[::-1])
+    with pytest.raises(ValueError, match="assignments"):
+        reordered.validate_source_integrity()
+    narrowed = eqx.tree_at(
+        lambda value: value.cell_global_ids, request, cell_ids.astype(np.int32)
+    )
+    with pytest.raises(TypeError, match="cell_global_ids"):
+        narrowed.validate_source_integrity()
 
 
 def test_prepared_acceptance_preserves_scientific_report_and_work() -> None:
@@ -289,7 +314,8 @@ def test_prepared_acceptance_preserves_scientific_report_and_work() -> None:
     assert cold.passed and reused.passed
     assert reused.report_id == cold.report_id
     assert reused.embedding is not None and cold.embedding is not None
-    assert reused.coverage is not None and cold.coverage is not None
+    assert isinstance(reused.coverage, phx.geometry.DomainCoverageCertificate)
+    assert isinstance(cold.coverage, phx.geometry.DomainCoverageCertificate)
     assert reused.embedding.candidate_pair_count == cold.embedding.candidate_pair_count
     assert reused.coverage.candidate_pair_count == cold.coverage.candidate_pair_count
     assert (
@@ -379,7 +405,8 @@ def test_mapped_prepared_acceptance_keeps_source_limits_and_region_measure(
         prepared=phx.meshing.PreparedVolumeAcceptance(support.prepared),
     )
     assert reused.passed
-    assert reused.embedding is not None and reused.coverage is not None
+    assert reused.embedding is not None
+    assert isinstance(reused.coverage, phx.geometry.DomainCoverageCertificate)
     for certificate in (reused.embedding, reused.coverage):
         certificate.binding.require(mesh, geometry)
         assert certificate.binding.limits_id == limits.limits_id
@@ -399,6 +426,441 @@ def test_mapped_prepared_acceptance_keeps_source_limits_and_region_measure(
     assert lower <= 1.0 / 6.0 <= upper
 
 
+@pytest.fixture
+def mapped_source_support(
+    reference_budget: CoordinateEnclosureBudget,
+) -> MappedPlcSupport:
+    mesh, geometry, audit, initial = prepared_tetrahedral_acceptance()
+    return prepare_mapped_plc_support(
+        mesh,
+        geometry,
+        initial.request.domain,
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+        maximum_support_queries=32768,
+        validity=audit.validity,
+        budget=reference_budget,
+    )
+
+
+def test_mapped_cardinal_images_reuse_proved_corner_rows(
+    mapped_source_support: MappedPlcSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    support = mapped_source_support
+    original = algebra.coordinate_map_images
+    calls: list[bool] = []
+
+    def counted(
+        element: CellGeometryElement,
+        local: algebra.CoordinateCoefficients,
+        *,
+        include_expressions: bool = True,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[tuple[algebra.Expression, ...] | None, algebra.CoordinateSourceBank | None]:
+        calls.append(include_expressions)
+        return original(
+            element, local, include_expressions=include_expressions, budget=budget
+        )
+
+    monkeypatch.setattr(algebra, "coordinate_map_images", counted)
+    general = _cell_maps(
+        support.mesh, support.geometry, prepare_expressions=True, budget=support.ledger
+    )
+    assert calls
+    calls.clear()
+    cardinal = _cell_maps(
+        support.mesh, support.geometry, prepare_expressions=False, budget=support.ledger
+    )
+    assert not calls
+    assert cardinal.vertex_images == general.vertex_images
+    assert cardinal.degree_one_exactness_work_units == general.degree_one_exactness_work_units
+    assert tuple(
+        (cell.kind, cell.vertices, cell.controls, cell.root_cell_id, cell.root_vertex_ids)
+        for cell in cardinal.cells
+    ) == tuple(
+        (cell.kind, cell.vertices, cell.controls, cell.root_cell_id, cell.root_vertex_ids)
+        for cell in general.cells
+    )
+
+
+@pytest.mark.parametrize("mixed_regions", (False, True))
+def test_mapped_region_batch_matches_scalar_predicates_and_charges(
+    reference_budget: CoordinateEnclosureBudget,
+    mixed_regions: bool,
+) -> None:
+    cells = np.asarray(
+        ((0, 1, 2, 4), (0, 3, 1, 4), (0, 2, 3, 4), (1, 3, 2, 4)),
+        dtype=np.int64,
+    )
+    vertices = np.asarray(
+        ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0.25, 0.25, 0.25)),
+        dtype=np.float64,
+    )
+    mesh = phx.discretization.CellMesh.from_tetrahedra(vertices, cells)
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    facets: list[tuple[int, ...]] = []
+    pairs: list[list[int]] = []
+    owners: dict[tuple[int, ...], int] = {}
+    labels = np.arange(4, dtype=np.int64) if mixed_regions else np.zeros(4, dtype=np.int64)
+    reference_faces = phx.discretization.reference_cell_topology("tetrahedron").entities[2]
+    for cell, region in zip(cells, labels.tolist(), strict=True):
+        for face in reference_faces:
+            corners = tuple(int(cell[index]) for index in face)
+            key = tuple(sorted(corners))
+            if key in owners:
+                pairs[owners[key]][1] = region
+            else:
+                owners[key] = len(facets)
+                facets.append(corners)
+                pairs.append([region, -1])
+    keep = np.asarray([own != other for own, other in pairs], dtype=np.bool_)
+    domain = phx.geometry.PiecewiseLinearDomain(
+        vertices,
+        np.asarray(facets, dtype=np.int64)[keep],
+        np.asarray(pairs, dtype=np.int64)[keep],
+        tuple(f"body-{index}" for index in range(4 if mixed_regions else 1)),
+        source_id="batched-region-source",
+    )
+    support = prepare_mapped_plc_support(
+        mesh,
+        geometry,
+        domain,
+        labels,
+        np.arange(4 if mixed_regions else 1, dtype=np.int64),
+        maximum_support_queries=32768,
+        budget=reference_budget,
+    )
+    empty_edges = np.empty((0, 2), dtype=np.int64)
+    empty_triangles = np.empty((0, 3), dtype=np.int64)
+    empty_facets = np.empty((0,), dtype=np.int64)
+    for dimension in range(4):
+        ordered = np.arange(mesh.entity_set(dimension).count, dtype=np.int64)
+        noncontiguous = ordered[::-2]
+        for rows in (
+            ordered[:0],
+            ordered[::-1],
+            np.concatenate((noncontiguous, noncontiguous[:1])),
+        ):
+            regions = np.asarray(
+                [support.cell_regions[support.parents(dimension, int(row))[0]] for row in rows],
+                dtype=np.int64,
+            )
+            if regions.size:
+                regions[-1] = 99
+            scalar_work = [32768]
+            queries = reference_budget.ticket.geometry_queries
+            coordinate_work = reference_budget.work_units
+            expected = np.asarray(
+                [
+                    support.entity_support(
+                        dimension,
+                        int(row),
+                        3,
+                        int(region),
+                        edge_vertices=empty_edges,
+                        triangle_vertices=empty_triangles,
+                        triangle_facets=empty_facets,
+                        work=scalar_work,
+                    )[0]
+                    for row, region in zip(rows, regions, strict=True)
+                ],
+                dtype=np.bool_,
+            )
+            scalar_queries = reference_budget.ticket.geometry_queries - queries
+            scalar_coordinate_work = reference_budget.work_units - coordinate_work
+            batch_work = [32768]
+            queries = reference_budget.ticket.geometry_queries
+            coordinate_work = reference_budget.work_units
+            actual = support.region_support(dimension, rows, regions, batch_work)
+            np.testing.assert_array_equal(actual, expected)
+            assert batch_work == scalar_work
+            assert reference_budget.ticket.geometry_queries - queries == scalar_queries
+            assert reference_budget.work_units - coordinate_work == scalar_coordinate_work
+
+
+def test_mapped_region_batch_refuses_before_completing_unadmitted_queries(
+    mapped_source_support: MappedPlcSupport,
+) -> None:
+    support = mapped_source_support
+    rows = np.zeros((2,), dtype=np.int64)
+    regions = np.zeros((2,), dtype=np.int64)
+    work = [1]
+    before = (support.ledger.work_units, support.ledger.ticket.geometry_queries)
+    with pytest.raises(ValueError, match="support query allowance"):
+        support.region_support(3, rows, regions, work)
+    assert work == [1]
+    assert (support.ledger.work_units, support.ledger.ticket.geometry_queries) == before
+
+    limits = support.prepared.request.limits
+    with HostBatchTicket(
+        limits.maximum_work_units,
+        queries_upper=support.proof.preparation_queries + 1,
+        bytes_upper=limits.maximum_scratch_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        rebound = bind_mapped_plc_support(
+            support.proof,
+            support.mesh,
+            support.geometry,
+            support.domain,
+            support.cell_regions,
+            maximum_support_queries=32768,
+            certification_request=support.prepared.request,
+            budget=budget,
+        )
+        before = (budget.work_units, ticket.geometry_queries)
+        work = [2]
+        with pytest.raises(HostBatchEstimateError):
+            rebound.region_support(3, rows, regions, work)
+        assert work == [2]
+        assert (budget.work_units, ticket.geometry_queries) == before
+
+
+def test_mapped_source_simplex_reuse_authenticates_content_and_ledger(
+    mapped_source_support: MappedPlcSupport,
+    coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    support = mapped_source_support
+    original = planar_coverage.prepare_affine_exact_source_simplex
+    preparations: list[CoordinateEnclosureBudget] = []
+
+    def counted(
+        points: tuple[tuple[algebra.ExactScalar, ...], ...],
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> planar_coverage.AffineSourceSimplex:
+        preparations.append(budget)
+        return original(points, budget=budget)
+
+    monkeypatch.setattr(planar_coverage, "prepare_affine_exact_source_simplex", counted)
+    vertices = np.asarray(support.mesh.coordinates).copy()
+    vertices.setflags(write=False)
+    triangles = support.entity_vertices[2][:1].copy()
+    work = [32768]
+
+    def query(
+        view: MappedPlcSupport, bank: np.ndarray, rows: np.ndarray
+    ) -> tuple[bool, int]:
+        return view.entity_support(
+            2,
+            0,
+            2,
+            17,
+            edge_vertices=np.empty((0, 2), dtype=np.int64),
+            triangle_vertices=rows,
+            triangle_facets=np.asarray((17,), dtype=np.int64),
+            source_vertices=bank,
+            work=work,
+        )
+
+    first = query(support, vertices, triangles)
+    assert first[0] and first[1] in (-1, 1)
+    before = (work[0], support.ledger.ticket.geometry_queries, support.ledger.work_units)
+    assert query(support, vertices, triangles) == first
+    assert len(preparations) == 1
+    assert work[0] == before[0] - 2
+    assert support.ledger.ticket.geometry_queries == before[1] + 1
+    assert support.ledger.work_units > before[2]
+    assert query(support, vertices, triangles[:, ::-1]) == (True, -first[1])
+    assert len(preparations) == 2
+    other_bank = vertices.copy()
+    assert query(support, other_bank, triangles) == first
+    assert len(preparations) == 3
+
+    limits = support.prepared.request.limits
+    other_ledger = coordinate_budget(
+        limits.maximum_work_units, limits.maximum_scratch_bytes
+    )
+
+    def bind(proof: MappedPlcSupportProof) -> MappedPlcSupport:
+        return bind_mapped_plc_support(
+            proof,
+            support.mesh,
+            support.geometry,
+            support.domain,
+            support.cell_regions,
+            maximum_support_queries=32768,
+            certification_request=support.prepared.request,
+            budget=other_ledger,
+        )
+
+    rebound = bind(support.proof)
+    assert query(rebound, other_bank, triangles) == first
+    assert preparations == [support.ledger] * 3 + [other_ledger]
+    assert len(rebound._source_simplices) == 1
+    with pytest.raises(ValueError, match="stale or foreign proof"):
+        bind(replace(support.proof))
+
+    # Read-only flags are not an authentication boundary.
+    vertices.setflags(write=True)
+    vertices += 3.0
+    vertices.setflags(write=False)
+    assert not query(support, vertices, triangles)[0]
+    assert len(preparations) == 5
+    vertices.setflags(write=True)
+    vertices[:] = 0.0
+    with pytest.raises(ValueError, match="nondegenerate source triangle"):
+        query(support, vertices, triangles)
+
+
+@pytest.mark.parametrize("prepared_first", (False, True))
+def test_mapped_source_simplex_rejects_unselected_nonfinite_bank_rows(
+    mapped_source_support: MappedPlcSupport,
+    prepared_first: bool,
+) -> None:
+    support = mapped_source_support
+    triangle = np.asarray((0, 1, 2), dtype=np.int64)
+    vertices = np.asarray(
+        ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        dtype=np.float64,
+    )
+    vertices.setflags(write=False)
+    if prepared_first:
+        support._source_simplex(triangle, vertices)
+    vertices.setflags(write=True)
+    vertices[3, 0] = np.nan
+    vertices.setflags(write=False)
+    with pytest.raises(ValueError, match="NaN"):
+        support._source_simplex(triangle, vertices)
+
+
+@pytest.mark.parametrize("scalar", ("fraction", "radical"))
+def test_mapped_source_simplex_rebuilds_mutated_exact_object_banks(
+    mapped_source_support: MappedPlcSupport,
+    scalar: str,
+) -> None:
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+
+    support = mapped_source_support
+    triangle = np.asarray((0, 1, 2), dtype=np.int64)
+    vertices = np.asarray(
+        [
+            [Fraction(value) for value in row]
+            for row in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+        ],
+        dtype=object,
+    )
+    value = (
+        Fraction(1)
+        if scalar == "fraction"
+        else RadicalElement(terms=((2, Fraction(1)),))
+    )
+    vertices[2, 2] = value
+    vertices.setflags(write=False)
+    first = support._source_simplex(triangle, vertices)
+    original_plane = repr(first.plane)
+    pointer_bytes = vertices.tobytes()
+    if scalar == "fraction":
+        object.__setattr__(value, "_numerator", 2)
+    else:
+        object.__setattr__(value, "terms", ((3, Fraction(1)),))
+    assert vertices.tobytes() == pointer_bytes
+    second = support._source_simplex(triangle, vertices)
+    assert second is not first
+    assert repr(second.plane) != original_plane
+    second_plane = repr(second.plane)
+    vertices.setflags(write=True)
+    vertices[2, 2] = (
+        Fraction(3)
+        if scalar == "fraction"
+        else RadicalElement(terms=((5, Fraction(1)),))
+    )
+    vertices.setflags(write=False)
+    third = support._source_simplex(triangle, vertices)
+    assert third is not second
+    assert repr(third.plane) != second_plane
+    assert not support._source_simplices
+    assert not support._source_vertex_banks
+    assert all(
+        sum(
+            (weight * coordinate for weight, coordinate in zip(
+                third.plane[:-1], point, strict=True
+            )),
+            third.plane[-1],
+        ) == 0
+        for point in vertices[triangle]
+    )
+
+
+@pytest.mark.parametrize("union", ("disconnected", "nonconvex"))
+def test_mapped_affine_facet_union_preserves_gaps_and_orientation(
+    mapped_source_support: MappedPlcSupport,
+    union: str,
+) -> None:
+    support = mapped_source_support
+    if union == "disconnected":
+        vertices = np.asarray(
+            (
+                (0, 0, 0), (1, 0, 0), (0, 1, 0),
+                (2, 0, 0), (3, 0, 0), (2, 1, 0),
+            ),
+            dtype=np.float64,
+        )
+        triangles = np.asarray(((0, 1, 2), (3, 4, 5)), dtype=np.int64)
+        good = ((0.125, 0.125, 0), (0.5, 0.125, 0), (0.125, 0.5, 0))
+        bad = ((0.25, 0.25, 0), (2.25, 0.25, 0), (2.125, 0.5, 0))
+    else:
+        # Three unit squares form an L; the upper-right square is absent.
+        vertices = np.asarray(
+            (
+                (0, 0, 0), (1, 0, 0), (2, 0, 0),
+                (0, 1, 0), (1, 1, 0), (2, 1, 0),
+                (0, 2, 0), (1, 2, 0),
+            ),
+            dtype=np.float64,
+        )
+        triangles = np.asarray(
+            (
+                (0, 1, 4), (0, 4, 3), (1, 2, 5),
+                (1, 5, 4), (3, 4, 7), (3, 7, 6),
+            ),
+            dtype=np.int64,
+        )
+        good = ((0.25, 0.25, 0), (1.75, 0.25, 0), (0.25, 1.75, 0))
+        bad = ((0.75, 1.75, 0), (1.75, 0.75, 0), (0.25, 0.25, 0))
+    groups = support._source_facet_groups(17, triangles, vertices, [32768])
+    for dimension in (1, 2):
+        for accepted, corners in ((True, good), (False, bad)):
+            for reverse in (False, True):
+                values = np.asarray(corners[: dimension + 1], dtype=np.float64)
+                if reverse:
+                    values = values[::-1]
+                points = tuple(tuple(Fraction(float(v)) for v in row) for row in values)
+                direct_work = [32768]
+                queries = support.ledger.ticket.geometry_queries
+                direct = support._affine_facet_support(points, groups, direct_work)
+                assert direct.supported is accepted
+                assert direct_work[0] < 32768
+                assert support.ledger.ticket.geometry_queries > queries
+                if dimension == 1:
+                    assert direct.orientation == 0
+                # Compare the retained exact union predicate with the original
+                # full-chart route, including orientation and candidate work.
+                chart = algebra.affine_arguments(
+                    values[0], (values[1:] - values[0]).T, budget=support.ledger
+                )
+                chart_work = [32768]
+                general = support._facet_chart_support(
+                    dimension,
+                    ((chart, "box" if dimension == 1 else "simplex"),),
+                    groups,
+                    chart_work,
+                )
+                assert (direct.supported, direct.orientation) == (
+                    general.supported,
+                    general.orientation,
+                )
+                if dimension == 2 or accepted:
+                    assert direct_work == chart_work
+
+
 def test_mapped_support_preserves_its_stricter_source_quota_across_queries(
     coordinate_budget: Callable[[int, int], CoordinateEnclosureBudget],
     reference_budget: CoordinateEnclosureBudget,
@@ -408,6 +870,12 @@ def test_mapped_support_preserves_its_stricter_source_quota_across_queries(
     domain = initial.request.domain
     assert isinstance(domain, phx.geometry.PiecewiseLinearDomain)
     labels = np.asarray((0,), dtype=np.int64)
+    # The acceptance fixture still owns a coverage proof issued under default
+    # limits for this mesh. A distinct policy makes the calibrating request
+    # prove coverage itself, as the limited request below must.
+    calibration = phx.geometry.MeshCertificateLimits(
+        maximum_work_units=phx.geometry.MeshCertificateLimits().maximum_work_units + 1
+    )
     measured = prepare_mapped_plc_support(
         mesh,
         geometry,
@@ -416,6 +884,7 @@ def test_mapped_support_preserves_its_stricter_source_quota_across_queries(
         labels,
         maximum_support_queries=32768,
         validity=audit.validity,
+        certificate_limits=calibration,
         budget=reference_budget,
     )
     limits = phx.geometry.MeshCertificateLimits(
@@ -707,6 +1176,7 @@ def test_uncertain_prepared_refusal_keeps_unbounded_values_out_of_finite_evidenc
                 budget=ledger,
             )
     failure = caught.value
+    assert isinstance(failure.coverage, phx.geometry.DomainCoverageCertificate)
     assert failure.coverage.certificate_id == coverage.certificate_id
     assert failure.coverage.achieved_region_measures == coverage.achieved_region_measures
     assert failure.unbounded_region_measures == tuple(
@@ -1141,3 +1611,122 @@ def test_canonical_checked_preparation_refuses_the_unwrapped_volume_evidence(
             # ty: ignore[invalid-argument-type]
             certification_prepared=evidence,
         )
+
+
+def _planar_audit_square() -> phx.discretization.CellMesh:
+    return phx.discretization.CellMesh.from_triangles(
+        np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=np.float64),
+        np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64),
+    )
+
+
+def test_planar_audit_imports_completed_embedding_without_skipping_contact(
+    reference_budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._audit_topology as owner
+
+    mesh = _planar_audit_square()
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    policy = phx.meshing.CellMeshAuditPolicy(
+        watertight_boundary=phx.meshing.CellMeshAuditDisposition.REJECT
+    )
+    validity, embedding = owner.prepare_planar_audit_embedding(
+        mesh,
+        geometry,
+        policy=policy,
+        limits=phx.geometry.MeshCertificateLimits(),
+        junction_vertices=None,
+        budget=reference_budget,
+    )
+    assert validity is not None and embedding is not None
+    assert embedding.status == "certified"
+
+    def unexpected_pair_sweep(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("A completed bound planar embedding proof was not imported")
+
+    monkeypatch.setattr(owner, "_self_intersections", unexpected_pair_sweep)
+    audit = phx.meshing.audit_cell_mesh(
+        mesh, geometry, policy=policy, prepared_validity=validity, budget=reference_budget
+    )
+    assert audit.passed
+    assert "self_intersection" in audit.evaluated_checks
+    assert "self_intersection" not in audit.skipped_checks
+    assert dict(audit.check_counts)["self_intersection"] == 0
+
+
+@pytest.mark.parametrize("drift", ("coordinates", "triangles", "geometry", "welding"))
+def test_planar_embedding_audit_proof_rejects_changed_carrier_or_welding(
+    drift: str,
+    reference_budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._audit_topology as owner
+
+    mesh = _planar_audit_square()
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    policy = phx.meshing.CellMeshAuditPolicy(
+        watertight_boundary=phx.meshing.CellMeshAuditDisposition.REJECT
+    )
+    validity, embedding = owner.prepare_planar_audit_embedding(
+        mesh,
+        geometry,
+        policy=policy,
+        limits=phx.geometry.MeshCertificateLimits(),
+        junction_vertices=None,
+        budget=reference_budget,
+    )
+    assert validity is not None and embedding is not None
+    if drift == "coordinates":
+        mesh = mesh.with_coordinates(
+            np.asarray(mesh.coordinates) + (2, 3), numeric_version="translated-test"
+        )
+    elif drift == "triangles":
+        mesh = phx.discretization.CellMesh.from_triangles(
+            mesh.coordinates, np.asarray(((0, 1, 3), (1, 2, 3)), dtype=np.int64)
+        )
+    elif drift == "geometry":
+        geometry = eqx.tree_at(
+            lambda value: value.coordinates,
+            geometry,
+            geometry.coordinates + jnp.asarray((2, 3)),
+        )
+    original = owner._self_intersections
+    calls = 0
+
+    def check_pairs(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, "_self_intersections", check_pairs)
+    owner.audit_welded_topology(
+        mesh,
+        np.asarray(mesh.coordinates),
+        coincident_tolerance=2.0 if drift == "welding" else None,
+        candidate_capacity=policy.maximum_coincidence_candidates,
+        intersection_candidate_capacity=policy.maximum_intersection_candidates,
+        check_manifold=True,
+        check_watertight=True,
+        check_self_intersection=True,
+        budget=reference_budget,
+        audit_policy_id=policy.policy_id,
+        audit_geometry=geometry,
+    )
+    assert calls == 1
+
+
+def test_mapped_prepared_capacity_exhaustion_retains_resource_classification(
+    mapped_source_support: MappedPlcSupport,
+) -> None:
+    proof = mapped_source_support.proof
+    with pytest.raises(phx.meshing.MeshingFailure) as refusal:
+        _require_support_work_bounds(
+            proof.prepared,
+            phx.geometry.MeshCertificateLimits(maximum_ray_tests=1),
+            proof.entity_vertices,
+            proof.boundary_entities,
+            False,
+        )
+    assert refusal.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert refusal.value.evidence.provider_code == "mapped_support_resource_bound"

@@ -9,6 +9,7 @@ from jax import Array
 from phydrax.meshing._collective_organization import (
     _bind_cell_source_rows,
     _bind_entity_support_rows,
+    _cell_occurrence_values,
     _select_cell_occurrence_values,
     _translate_uniform_cell_roots,
 )
@@ -112,3 +113,31 @@ def test_entity_support_binding_real_support_width_and_dynamic_prefix() -> None:
     assert compiler.count == 0
     for rows in (first, repeated, dynamic):
         np.testing.assert_array_equal(rows, (1, 0, -1))
+
+
+def test_cell_ancestry_selection_fuses_cursor_projection_and_root_translation() -> None:
+    ids = _ids((40, 10, 30, 20)).reshape((1, 4))
+    parents = jax.device_put(np.asarray(((-1, -1, 0, 1),), dtype=np.int32))
+    cursors = _ids((0, 4, 0, 0)).reshape((1, 4))
+    active = jax.device_put(np.asarray(((False, True, True, True),), dtype=np.bool_))
+    targets = _ids((10, 20, 30))
+    uniform = (_ids((40, 10)).reshape((1, 2)), _ids((7,)))
+    changed_uniform = (_ids((40, 10)).reshape((1, 2)), _ids((107,)))
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(
+            _cell_occurrence_values(ids, parents, cursors, active, targets, uniform)
+        )
+    with CompileCounter() as warm:
+        changed = jax.block_until_ready(
+            _cell_occurrence_values(
+                ids, parents, cursors, active, targets, changed_uniform
+            )
+        )
+    assert cold.count == 1
+    assert warm.count == 0
+    np.testing.assert_array_equal(first[0], (7, 7, 7))
+    np.testing.assert_array_equal(changed[0], (107, 107, 107))
+    np.testing.assert_array_equal(first[1], (False, True, True, True))
+    np.testing.assert_array_equal(first[2], (40, 10, 30, 20))
+    np.testing.assert_array_equal(first[3], (1, 3, 2, 0))

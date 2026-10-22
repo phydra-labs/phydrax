@@ -1,10 +1,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Restore-local owner reuse requires freshly identical complete content."""
+"""Restore-local owner reuse requires freshly identical content in every field."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import equinox as eqx
 import jax
@@ -76,6 +76,59 @@ def test_identical_context_free_owner_reuses_only_one_restore_scope() -> None:
     assert calls == 4
 
 
+def test_public_source_validation_scopes_exact_owner_reuse_and_actual_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    sources.register_meshing_source_artifacts()
+    first = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
+    second = CellBlock.from_stored_fields(first)
+    admissions = dict(sources._source_admissions())
+    calls = 0
+    expected_budget: CoordinateEnclosureBudget | None = None
+    previous_scope = sources._source_owner_reconstruction_scope.get()
+
+    def reconstruct(
+        node: CellBlock, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> CellBlock:
+        nonlocal calls
+        scope = sources._source_owner_reconstruction_scope.get()
+        assert scope is not None and scope.budget is expected_budget
+        assert budget is expected_budget
+        calls += 1
+        return CellBlock.from_stored_fields(node)
+
+    admissions[CellBlock] = replace(admissions[CellBlock], reconstruct=reconstruct)
+    monkeypatch.setattr(sources, "_source_admissions", lambda: admissions)
+    sources.validate_meshing_source_closure((first, second))
+    assert calls == 1
+    assert sources._source_owner_reconstruction_scope.get() is previous_scope
+    sources.validate_meshing_source_closure((first, second))
+    assert calls == 2  # Independent public validation cannot borrow an earlier scope.
+    changed = eqx.tree_at(
+        lambda value: value.vertices, second,
+        np.asarray(((0, 1, 3),), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="stored_fields"):
+        sources.validate_meshing_source_closure((first, changed))
+    assert calls == 4
+    assert sources._source_owner_reconstruction_scope.get() is previous_scope
+    with HostBatchTicket(100_000, bytes_upper=1_000_000) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=100_000, maximum_memory_bytes=1_000_000
+        )
+        expected_budget = budget
+        with budget.activate():
+            with sources.meshing_source_owner_reconstruction_scope(budget=budget):
+                sources.validate_meshing_source_closure((first, second))
+                assert calls == 5
+                sources.validate_meshing_source_closure((first, second))
+                assert calls == 5
+    assert sources._source_owner_reconstruction_scope.get() is previous_scope
+
+
 def test_mutated_numpy_owner_and_foreign_context_do_not_reuse() -> None:
     sources.register_meshing_source_artifacts()
     original = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
@@ -115,6 +168,38 @@ def test_mutated_numpy_owner_and_foreign_context_do_not_reuse() -> None:
                 node, reconstruct_mutable, "owner", limits, None
             )
         assert calls == 4
+
+
+def test_readonly_numpy_bank_mutation_reconstructs_and_refuses_stale_owner() -> None:
+    sources.register_meshing_source_artifacts()
+    original = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
+    bank = np.asarray(original.vertices).copy()
+    bank.flags.writeable = False
+    stored = eqx.tree_at(lambda value: value.vertices, original, bank)
+    assert stored.vertices is bank
+    calls = 0
+
+    def reconstruct(value: CellBlock) -> CellBlock:
+        nonlocal calls
+        calls += 1
+        return CellBlock.from_stored_fields(value)
+
+    with sources.meshing_source_owner_reconstruction_scope():
+        for _ in range(2):
+            sources._validate_context_free_source_owner(
+                stored, reconstruct, "owner", ArrayArchiveLimits(), None
+            )
+        assert calls == 1
+        bank.flags.writeable = True
+        bank[0, 2] = 3
+        bank.flags.writeable = False
+        assert stored.vertices is bank and stored.vertices[0, 2] == 3
+        assert stored.block_id == original.block_id
+        with pytest.raises(ValueError, match="owner.stored_fields"):
+            sources._validate_context_free_source_owner(
+                stored, reconstruct, "owner", ArrayArchiveLimits(), None
+            )
+        assert calls == 2
 
 
 def test_reconstruction_callable_and_archive_limits_bind_reuse() -> None:
@@ -425,3 +510,240 @@ def test_field_preparation_reuses_only_complete_operation_local_inputs(
         assert calls == 3
     fourth, _ = prepare_meshing_field_owner(declaration, result)
     assert fourth is not first and calls == 4
+
+
+def test_recertification_integrity_and_canonical_proof_share_caller_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import contextmanager
+    from typing import Any
+
+    import phydrax as phx
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import (
+        CoordinateEnclosureBudget,
+        CoordinateEnclosureResourceError,
+    )
+    from phydrax.meshing._certification import MeshCertificationReport
+    from phydrax.meshing._certification_inputs import MeshCertificationInputs
+    from tests._support.periodic_meshing import periodic_seed_request
+
+    source, specification = periodic_seed_request()
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            phx.meshing.NativeMeshingOptions("periodic_delaunay")
+        )
+        .plan(
+            source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
+        )
+        .execute()
+    )
+    certification = result.certification
+    assert certification is not None
+    validate = MeshCertificationInputs.validate_source_integrity
+    integrity_budgets: list[CoordinateEnclosureBudget] = []
+    proof_budgets: list[CoordinateEnclosureBudget] = []
+
+    def integrity(self: MeshCertificationInputs, /, *, budget=None) -> None:
+        assert budget is not None
+        integrity_budgets.append(budget)
+        budget.reserve(3, 0)
+        validate(self, budget=budget)
+
+    def proof(*args: Any, **kwargs: Any) -> MeshCertificationReport:
+        budget = kwargs["budget"]
+        proof_budgets.append(budget)
+        budget.reserve(5, 0)
+        return certification
+
+    request = sources.coordinate_certificate_request
+
+    @contextmanager
+    def caller_only(limits, /, *, budget=None):
+        assert budget is not None, "restored certification must not create a helper quota"
+        with request(limits, budget=budget) as ledger:
+            assert ledger is budget
+            yield ledger
+
+    monkeypatch.setattr(MeshCertificationInputs, "validate_source_integrity", integrity)
+    monkeypatch.setattr(sources, "certify_meshing_acceptance", proof)
+    monkeypatch.setattr(sources, "coordinate_certificate_request", caller_only)
+    with sources.meshing_source_owner_reconstruction_scope():
+        for allowance in (8, 7):
+            with HostBatchTicket(allowance, bytes_upper=1 << 20) as ticket:
+                budget = CoordinateEnclosureBudget(
+                    ticket,
+                    maximum_work_units=allowance,
+                    maximum_memory_bytes=1 << 20,
+                )
+                if allowance == 7:
+                    with pytest.raises(CoordinateEnclosureResourceError):
+                        sources.recertify_restored_meshing_source(
+                            certification.request,
+                            result.mesh,
+                            result.geometry,
+                            result.audit,
+                            budget=budget,
+                        )
+                else:
+                    renewed = sources.recertify_restored_meshing_source(
+                        certification.request,
+                        result.mesh,
+                        result.geometry,
+                        result.audit,
+                        budget=budget,
+                    )
+                    assert renewed is certification
+                    assert budget.work_units == 8
+                    assert sources.recertify_restored_meshing_source(
+                        certification.request,
+                        result.mesh,
+                        result.geometry,
+                        result.audit,
+                        budget=budget,
+                    ) is renewed
+        assert len(integrity_budgets) == len(proof_budgets) == 2
+        assert all(
+            integrity is proof
+            for integrity, proof in zip(integrity_budgets, proof_budgets, strict=True)
+        )
+        assert integrity_budgets[0] is not integrity_budgets[1]
+
+
+def test_same_budget_object_cannot_borrow_another_native_request_admission() -> None:
+    from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
+    from phydrax._resource_ticket import HostBatchTicket
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    node = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
+    calls = 0
+
+    def reconstruct(value: CellBlock) -> CellBlock:
+        nonlocal calls
+        calls += 1
+        return CellBlock.from_stored_fields(value)
+
+    with HostBatchTicket(1, bytes_upper=1 << 20) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=1, maximum_memory_bytes=1 << 20
+        )
+        with sources.meshing_source_owner_reconstruction_scope(budget=budget):
+            for _ in range(2):
+                with NativeExecutionScope(
+                    NativeExecutionLimits(1, 0, 0, 1 << 20, 120.0)
+                ):
+                    sources._validate_context_free_source_owner(
+                        node, reconstruct, "owner", ArrayArchiveLimits(), None
+                    )
+                    sources._validate_context_free_source_owner(
+                        node, reconstruct, "owner", ArrayArchiveLimits(), None
+                    )
+            assert calls == 2
+
+
+def test_source_memo_binds_nested_current_owning_constructor_not_only_dispatcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources.register_meshing_source_artifacts()
+    block = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
+    value = (block,)
+    calls = 0
+    original = CellBlock.from_stored_fields
+
+    def reconstruct(record):
+        nonlocal calls
+        calls += 1
+        return tuple(CellBlock.from_stored_fields(item) for item in record)
+
+    def changed(cls, item):
+        return original(item)
+
+    with sources.meshing_source_owner_reconstruction_scope():
+        sources._validate_context_free_source_owner(
+            value, reconstruct, "owner", ArrayArchiveLimits(), None
+        )
+        sources._validate_context_free_source_owner(
+            value, reconstruct, "owner", ArrayArchiveLimits(), None
+        )
+        assert calls == 1
+        with monkeypatch.context() as patch:
+            patch.setattr(CellBlock, "from_stored_fields", classmethod(changed))
+            sources._validate_context_free_source_owner(
+                value, reconstruct, "owner", ArrayArchiveLimits(), None
+            )
+        assert calls == 2
+
+
+@pytest.mark.parametrize("registered_forwarder", (False, True))
+def test_registered_direct_owner_uses_current_constructor_and_reuses_its_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    registered_forwarder: bool,
+) -> None:
+    sources.register_meshing_source_artifacts()
+    block = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
+    original = CellBlock.from_stored_fields
+    registered = sources._source_admissions()[CellBlock].reconstruct
+    assert registered is not None
+    calls: list[str] = []
+
+    def first(cls, value: CellBlock) -> CellBlock:
+        calls.append("first")
+        return original(value)
+
+    def second(cls, value: CellBlock) -> CellBlock:
+        calls.append("second")
+        return original(value)
+
+    monkeypatch.setattr(CellBlock, "from_stored_fields", classmethod(first))
+    if registered_forwarder:
+        # A canonical slot may hold a forwarding method named "first", not
+        # "from_stored_fields", when the admission table first captures it.
+        admissions = dict(sources._source_admissions())
+        admissions[CellBlock] = replace(
+            admissions[CellBlock], reconstruct=CellBlock.from_stored_fields
+        )
+        monkeypatch.setattr(sources, "_source_admissions", lambda: admissions)
+    with sources.meshing_source_owner_reconstruction_scope():
+        for _ in range(2):
+            sources.reconstruct_meshing_source(block)
+        assert calls == ["first"]
+        with monkeypatch.context() as patch:
+            patch.setattr(CellBlock, "from_stored_fields", classmethod(second))
+            for _ in range(2):
+                sources.reconstruct_meshing_source(block)
+            assert calls == ["first", "second"]
+        sources.reconstruct_meshing_source(block)
+        assert calls == ["first", "second"]
+    sources.reconstruct_meshing_source(block)
+    assert calls == ["first", "second", "first"]
+
+
+def test_actual_receiving_limits_bind_preparation_and_restore_nested_policy() -> None:
+    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+
+    receiving = replace(DEFAULT_ARRAY_ARCHIVE_LIMITS, max_member_bytes=4096)
+    inner = replace(receiving, max_member_bytes=2048)
+    block = CellBlock("cells", "triangle", np.asarray(((0, 1, 2),), dtype=np.int64))
+    sources.register_meshing_source_artifacts()
+    constructor = sources._source_admissions()[CellBlock].reconstruct
+    assert constructor is not None
+    with sources.meshing_source_owner_reconstruction_scope():
+        scope = sources._source_owner_reconstruction_scope.get()
+        assert scope is not None
+        previous = scope.archive_limits
+        with sources.meshing_source_owner_reconstruction_scope(archive_limits=receiving):
+            assert scope.archive_limits is receiving
+            before = sources._source_owner_reconstruction_key(
+                block, scope.archive_limits, None, constructor, scope
+            )
+            with sources.meshing_source_owner_reconstruction_scope():
+                assert scope.archive_limits is receiving
+            with sources.meshing_source_owner_reconstruction_scope(archive_limits=inner):
+                assert scope.archive_limits is inner
+            assert scope.archive_limits is receiving
+            sources.validate_meshing_source_closure(block, limits=receiving)
+            after = sources._source_owner_reconstruction_key(
+                block, scope.archive_limits, None, constructor, scope
+            )
+            assert after == before
+        assert scope.archive_limits is previous

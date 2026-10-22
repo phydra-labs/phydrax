@@ -12,6 +12,10 @@ from phydrax import config as pxconfig
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import _coordinate_enclosure as algebra, FormBasis
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._nested_reference_types import (
+    exact_reference_pair,
+    NestedReferencePair,
+)
 from phydrax.discretization.fem._exact_form_moments import ExactFormMoments
 from phydrax.discretization.fem._form_elements import form_entity_chart
 from phydrax.exterior._form_type import FormTwist
@@ -171,6 +175,39 @@ def test_projective_common_moments_against_physical_inverse_chart(
         np.abs(actual - expected),
         errors @ np.abs(coefficients) + PROJECTIVE_ROUNDOFF_FLOOR,
     )
+
+
+def test_exact_affine_moment_chart_reuses_only_unchanged_input_banks(
+    ledger: CoordinateEnclosureBudget,
+) -> None:
+    pair = NestedReferencePair(0, 0, True, np.eye(3) / 2, np.zeros(3))
+    moments = ExactFormMoments(ledger)
+    first = moments.arguments(pair)
+    equal = NestedReferencePair(1, 1, True, pair.matrix.copy(), pair.offset.copy())
+    assert moments.arguments(equal) is first
+    pair.matrix[0, 0] = 0.25
+    changed = moments.arguments(pair)
+    assert changed is not first
+    assert changed[0][0][(1, 0, 0)] == Fraction(1, 4)
+    assert first[0][0][(1, 0, 0)] == Fraction(1, 2)
+
+
+def test_exact_affine_moment_chart_rechecks_nondyadic_execution_views(
+    ledger: CoordinateEnclosureBudget,
+) -> None:
+    pair = exact_reference_pair(
+        0,
+        0,
+        True,
+        ((Fraction(1, 3), Fraction(0)), (Fraction(0), Fraction(1, 3))),
+        (Fraction(0), Fraction(0)),
+    )
+    moments = ExactFormMoments(ledger)
+    first = moments.arguments(pair)
+    assert moments.arguments(pair) is first
+    pair.matrix[0, 0] = 0.25
+    with pytest.raises(ValueError, match="exact_pair"):
+        moments.arguments(pair)
 
 
 @pytest.fixture

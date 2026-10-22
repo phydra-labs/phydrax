@@ -15,7 +15,7 @@ from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._coordinate_enclosure import Polynomial
 from phydrax.discretization._nested_reference import (
     _require_polynomial_reference_action,
-    rooted_nested_reference_pairs,
+    prepare_nested_reference,
 )
 from phydrax.discretization._nested_reference_types import PolynomialReferencePair
 from tests._support.coordinate_references import coordinate_reference_budget
@@ -33,14 +33,17 @@ def test_nonlinear_pairs_certify_zero_physical_map_bound(
 ) -> None:
     mesh, geometry, root, controls = cylinder_source()
     fine_mesh, fine_geometry = six_quad_source(mesh, geometry, root, controls)
-    pairs, bound = rooted_nested_reference_pairs(
+    prepared = prepare_nested_reference(
         mesh,
         geometry,
         fine_mesh,
         fine_geometry,
         parent_cells=np.zeros(6, dtype=np.int64),
+        rooted=True,
         budget=budget,
     )
+    pairs, bound = prepared.pairs, prepared.geometry_bound
+    assert prepared.rooted and not prepared.affine
     assert len(pairs) == 6
     assert bound == 0.0
     for pair in pairs:
@@ -49,7 +52,7 @@ def test_nonlinear_pairs_certify_zero_physical_map_bound(
                 assert pair.jacobian_bounds[0] > 0
             case _:
                 raise AssertionError(
-                    "The fixture must exercise nonlinear reference actions."
+                    "nested_fixture.reference must exercise nonlinear reference actions; got an affine action."
                 )
     np.testing.assert_array_equal(fine_geometry.coordinates, controls)
 
@@ -78,12 +81,13 @@ def test_nonlinear_pairs_refuse_changed_source_coefficients(
         restriction_source=fine_geometry.restriction_source,
     )
     with pytest.raises(ValueError, match="nested_reference.source_root"):
-        rooted_nested_reference_pairs(
+        prepare_nested_reference(
             mesh,
             geometry,
             fine_mesh,
             stale,
             parent_cells=np.zeros(6, dtype=np.int64),
+            rooted=True,
             budget=budget,
         )
     np.testing.assert_array_equal(fine_geometry.coordinates, controls)
@@ -96,7 +100,9 @@ def test_nonlinear_pairs_refuse_changed_retained_root_identity(
     fine_mesh, fine_geometry = six_quad_source(mesh, geometry, root, controls)
     ancestry = fine_geometry.restriction_source
     if ancestry is None:
-        raise AssertionError("The fixture must retain its root coordinate identity.")
+        raise AssertionError(
+            "nested_fixture.ancestry must retain its root coordinate identity; got None."
+        )
     foreign = CellGeometryRestrictionSource(
         "foreign-coordinate-source",
         ancestry.source_topology_id,
@@ -120,12 +126,13 @@ def test_nonlinear_pairs_refuse_changed_retained_root_identity(
         restriction_source=foreign,
     )
     with pytest.raises(ValueError, match="nested_reference.source_root"):
-        rooted_nested_reference_pairs(
+        prepare_nested_reference(
             mesh,
             geometry,
             fine_mesh,
             stale,
             parent_cells=np.zeros(6, dtype=np.int64),
+            rooted=True,
             budget=budget,
         )
 

@@ -31,24 +31,39 @@ using phx::mc::addressable;
 using phx::mc::coordinate_in_domain;
 using phx::mc::guarded;
 
+// Validation polls the execution scope once per fixed chunk of rows (the
+// predicate region's chunk) before the chunk is read and again before any
+// return after a scan. Each poll reads the deadline as well as the refusal and
+// admission state; the ledger is never locked per coordinate. Every
+// coordinate of every array is checked. A nonfinite coordinate anywhere in the
+// batch outranks a domain violation, so a domain violation is reported only
+// once the whole batch is known finite. An empty batch reads nothing and polls
+// nothing.
+constexpr int64_t kValidationChunkRows =
+    static_cast<int64_t>(phx::mc::ParallelRequest{}.chunk_size);
+
 int32_t validate_coordinates(int64_t count, int width, const double* const* arrays, int arity) {
-  for (int k = 0; k < arity; ++k) {
-    for (int64_t index = 0; index < count * width; ++index) {
-      phx::mc::native_execution_charge(0);
-      if (!std::isfinite(arrays[k][index])) {
-        return PHX_MC_NONFINITE_INPUT;
+  bool outside = false;
+  for (int64_t begin = 0; begin < count; begin += kValidationChunkRows) {
+    phx::mc::native_execution_checkpoint();
+    const int64_t first = begin * width;
+    const int64_t last = std::min(count, begin + kValidationChunkRows) * width;
+    unsigned nonfinite = 0, out_of_domain = 0;
+    for (int k = 0; k < arity; ++k) {
+      const double* values = arrays[k];
+      for (int64_t index = first; index < last; ++index) {
+        nonfinite |= !std::isfinite(values[index]);
+        out_of_domain |= !coordinate_in_domain(values[index]);
       }
     }
-  }
-  for (int k = 0; k < arity; ++k) {
-    for (int64_t index = 0; index < count * width; ++index) {
-      phx::mc::native_execution_charge(0);
-      if (!coordinate_in_domain(arrays[k][index])) {
-        return PHX_MC_RANGE_ERROR;
-      }
+    if (nonfinite != 0) {
+      phx::mc::native_execution_checkpoint();
+      return PHX_MC_NONFINITE_INPUT;
     }
+    outside = outside || out_of_domain != 0;
   }
-  return PHX_MC_OK;
+  if (count > 0) phx::mc::native_execution_checkpoint();
+  return outside ? PHX_MC_RANGE_ERROR : PHX_MC_OK;
 }
 
 // Rejects a negative or unaddressable count before any `count * width` offset.
@@ -65,21 +80,27 @@ int32_t validate_batch(int64_t count, int width, const double* const* arrays, in
   return validate_coordinates(count, width, arrays, arity);
 }
 
+// Same fixed-chunk polls as validate_coordinates; every row is checked.
 int32_t validate_ids(int64_t count, int arity, const int64_t* ids) {
   if ((count > 0 && ids == nullptr) || !addressable(count, arity, sizeof(int64_t))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
-  for (int64_t row = 0; row < count; ++row) {
-    phx::mc::native_execution_charge(0);
-    const int64_t* r = ids + row * arity;
-    for (int i = 0; i < arity; ++i) {
-      for (int j = i + 1; j < arity; ++j) {
-        if (r[i] == r[j]) {
-          return PHX_MC_INVALID_INPUT;
+  for (int64_t begin = 0; begin < count; begin += kValidationChunkRows) {
+    phx::mc::native_execution_checkpoint();
+    const int64_t end = std::min(count, begin + kValidationChunkRows);
+    for (int64_t row = begin; row < end; ++row) {
+      const int64_t* r = ids + row * arity;
+      for (int i = 0; i < arity; ++i) {
+        for (int j = i + 1; j < arity; ++j) {
+          if (r[i] == r[j]) {
+            phx::mc::native_execution_checkpoint();
+            return PHX_MC_INVALID_INPUT;
+          }
         }
       }
     }
   }
+  if (count > 0) phx::mc::native_execution_checkpoint();
   return PHX_MC_OK;
 }
 

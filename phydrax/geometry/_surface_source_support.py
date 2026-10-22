@@ -42,6 +42,7 @@ from phydrax.geometry._source_boundary_records import (
 )
 
 from .._fingerprint import canonical_fingerprint, logical_array_value_collection_digest
+from .._host_storage import immutable_host_array
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -1208,9 +1209,8 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         )
         self.domain, self.mesh, self.geometry = domain, mesh, geometry
         self.coordinate_contract = coordinate_contract
-        # np.asarray without a dtype conversion retains the measured admitted
-        # producer buffers; source charts are not an independently sampled bank.
-        self.root_parameters, self.root_patches = parameters, patches
+        self.root_parameters = immutable_host_array(parameters)
+        self.root_patches = immutable_host_array(patches)
         self.associations, self.boundary_source = tuple(associations), boundary_source
         self.maximum_support_queries = maximum_support_queries
         self.source_chart_id = self._identity()
@@ -1252,6 +1252,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                 ),
                 "boundary": self.boundary_source.source_scope_id,
                 "boundary_source": self.boundary_source.domain.domain_id,
+                "boundary_occurrences": self.boundary_source.boundary_occurrence_id,
                 "boundary_charts": fingerprint_owner.array_tree_fingerprint(
                     self.boundary_source.chart_triangulations
                 ),
@@ -1302,6 +1303,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                 if (
                     source.domain.content_domain_id() != self.domain.content_domain_id()
                     or source.source_scope_id != self.boundary_source.source_scope_id
+                    or source.boundary_occurrence_id != self.boundary_source.boundary_occurrence_id
                     or fingerprint_owner.array_tree_fingerprint(
                         source.chart_triangulations
                     )
@@ -1340,12 +1342,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                         self.require_root(
                             deformation.source_mesh, deformation.source_geometry
                         )
-                        deformation.require_bound(
-                            deformation.source_mesh,
-                            deformation.source_geometry,
-                            mesh,
-                            geometry,
-                        )
+                        source.require_target_binding(mesh, geometry)
                         return
                     case surface_boundary_sources_owner.SurfaceSubdivisionBoundarySource():
                         raise ValueError(
@@ -1375,10 +1372,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         charts.require_root(original.mesh, original.geometry)
         match source:
             case surface_boundary_sources_owner.SurfaceChartBoundarySource():
-                deformation = source.deformation
-                deformation.require_bound(
-                    deformation.source_mesh, deformation.source_geometry, mesh, geometry
-                )
+                source.require_target_binding(mesh, geometry)
             case surface_boundary_sources_owner.SurfaceSubdivisionBoundarySource():
                 if (
                     not source.targets
@@ -1621,6 +1615,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
         /,
         *,
         root_result: CellMeshingResult | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PreparedSurfaceSourceSupport:
         """Replay stored support through its constructor with a retained root carrier.
 
@@ -1654,6 +1649,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
             value.root_parameters,
             value.root_boundary_source,
             maximum_support_queries=value.maximum_support_queries,
+            budget=budget,
         )
 
     @staticmethod
@@ -1734,10 +1730,20 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
         expected_basis: str,
     ) -> _RootBinding:
         corner_count, coefficient_count = 3, 3
+        # Initial collective evidence composes source-support geometry; resolve its premise type after those declarations load.
+        from ..meshing._initial_certification import InitialSurfacePremise
+
         original = root_boundary_source
         original.require_current()
+        match original.premise:
+            case InitialSurfacePremise():
+                compiled = original.premise.compiled
+            case _:
+                raise ValueError(
+                    "PreparedSurfaceSourceSupport.collective_source must come from an initial surface premise; got a non-surface initial premise"
+                )
         if (
-            original.compiled.domain.content_domain_id() != domain.content_domain_id()
+            compiled.domain.content_domain_id() != domain.content_domain_id()
             or root_result.collective_evidence is None
         ):
             raise ValueError(
@@ -1868,6 +1874,8 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
             source_charts.domain.content_domain_id() != domain.content_domain_id()
             or source_charts.boundary_source.source_scope_id
             != root_boundary_source.source_scope_id
+            or source_charts.boundary_source.boundary_occurrence_id
+            != root_boundary_source.boundary_occurrence_id
             or fingerprint_owner.array_tree_fingerprint(
                 source_charts.boundary_source.chart_triangulations
             )
@@ -2042,6 +2050,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                         "domain": boundary.domain.domain_id,
                         "scope": boundary.source_scope_id,
                         "resolution": boundary.resolution,
+                        "occurrences": boundary.boundary_occurrence_id,
                         "charts": fingerprint_owner.array_tree_fingerprint(
                             boundary.chart_triangulations
                         ),

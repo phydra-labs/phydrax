@@ -179,6 +179,93 @@ def test_handwritten_product_name_and_unsupported_presentation(
     assert f"#{maximum + 9} STYLED_ITEM" in qualifiers["coverage-ignored-by-design"]
 
 
+def test_authored_name_decodes_every_part21_string_escape(tmp_path: Path) -> None:
+    # ISO 10303-21 control directives: quote doubling, \\, \X\, \S\, a page
+    # switch, \X2\ (including an empty run), and \X4\.
+    literal = (
+        rb"'a''b\\c\X\E9\S\i\PA\d\X2\00E9263A\X0\\X2\\X0\\X4\0001F600\X0\e"
+        + rb"\\" * 512
+        + b"'"
+    )
+    result = decode_step_bytes(
+        _authored_box(tmp_path).replace(b"'inlet'", literal), POLICY
+    )
+    metadata = result.entity_metadata
+    assert metadata is not None
+    expected = "a'b\\c\u00e9\u00e9d\u00e9\u263a\U0001f600e" + "\\" * 512
+    assert metadata.entities("name", expected) == (result.model.face_ids[0],)
+
+
+def test_written_names_round_trip_every_escaped_character(tmp_path: Path) -> None:
+    model = native_solid("box")
+    names = ("it's", "back\\slash", "caf\u00e9 \u263a", "\U0001f600 astral", "\\" * 512)
+    metadata = StepEntityMetadata(
+        model, (StepEntityLabels(model.solid_ids[0], names=names),)
+    )
+    path = tmp_path / "escaped.step"
+    write_step(model, path, metadata=metadata)
+    result = decode_step_bytes(path.read_bytes(), POLICY)
+    assert result.entity_metadata is not None
+    assert result.entity_metadata.rows[0].names == tuple(sorted(names))
+
+
+def test_presentation_references_must_follow_the_style_chain(tmp_path: Path) -> None:
+    text = _authored_box(tmp_path).decode()
+    styled = re.search(r"#(\d+)=STYLED_ITEM\('',\(#(\d+)\),", text)
+    colour = re.search(r"#(\d+)=COLOUR_RGB\(", text)
+    assert styled and colour
+    maximum = max(int(value) for value in re.findall(r"#(\d+)=", text))
+    # Assignments that nest assignments are outside the ISO style select; the
+    # doubled references would expand exponentially if traversed.
+    previous = colour[1]
+    records = []
+    for level in range(1, 11):
+        assignment = f"PRESENTATION_STYLE_ASSIGNMENT((#{previous},#{previous}))"
+        records.append(f"#{maximum + level}={assignment};\n")
+        previous = str(maximum + level)
+    text = text.replace(
+        f"#{styled[1]}=STYLED_ITEM('',(#{styled[2]}),",
+        f"#{styled[1]}=STYLED_ITEM('',(#{previous}),",
+    )
+    text = text.replace("ENDSEC;\nEND-ISO", "".join(records) + "ENDSEC;\nEND-ISO")
+    result = decode_step_bytes(text.encode(), POLICY)
+    assert result.report.valid
+    metadata = result.entity_metadata
+    assert metadata is not None
+    assert metadata.entities("color", (1.0, 0.0, 0.0)) == ()
+    assert metadata.entities("name", "inlet") == (result.model.face_ids[0],)
+    qualifiers = dict(result.report.source_profile.qualifiers)
+    assert f"#{styled[1]} STYLED_ITEM" in qualifiers["coverage-ignored-by-design"]
+
+
+def test_shared_presentation_styles_bind_every_styled_item(tmp_path: Path) -> None:
+    text = _authored_box(tmp_path).decode()
+    faces = re.findall(r"#(\d+)=ADVANCED_FACE\(", text)
+    maximum = max(int(value) for value in re.findall(r"#(\d+)=", text))
+    # One fill area is shared by two sides, and one assignment by two faces.
+    records = [
+        "COLOUR_RGB('blue',0.,0.,1.)",
+        f"FILL_AREA_STYLE_COLOUR('',#{maximum + 1})",
+        f"FILL_AREA_STYLE('',(#{maximum + 2}))",
+        f"SURFACE_STYLE_FILL_AREA(#{maximum + 3})",
+        f"SURFACE_SIDE_STYLE('front',(#{maximum + 4}))",
+        f"SURFACE_SIDE_STYLE('back',(#{maximum + 4}))",
+        f"SURFACE_STYLE_USAGE(.POSITIVE.,#{maximum + 5})",
+        f"SURFACE_STYLE_USAGE(.NEGATIVE.,#{maximum + 6})",
+        f"PRESENTATION_STYLE_ASSIGNMENT((#{maximum + 7},#{maximum + 8}))",
+        f"STYLED_ITEM('',(#{maximum + 9}),#{faces[0]})",
+        f"STYLED_ITEM('',(#{maximum + 9}),#{faces[1]})",
+    ]
+    extra = "".join(f"#{maximum + i}={record};\n" for i, record in enumerate(records, 1))
+    result = decode_step_bytes(
+        text.replace("ENDSEC;\nEND-ISO", extra + "ENDSEC;\nEND-ISO").encode(), POLICY
+    )
+    metadata = result.entity_metadata
+    assert metadata is not None
+    assert metadata.entities("color", (0.0, 0.0, 1.0)) == result.model.face_ids[:2]
+    assert metadata.entities("color", (1.0, 0.0, 0.0)) == result.model.solid_ids
+
+
 def test_face_name_binds_and_meshes_the_named_region(tmp_path: Path) -> None:
     import numpy as np
 

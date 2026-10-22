@@ -1,0 +1,66 @@
+{
+  "kind": "native-authored-cad-quadrics",
+  "title": "Perpendicular unequal-radius cylinders whose intersection is a non-rational genus-one quartic",
+  "author": "PHYDRA, Inc.",
+  "license": "LicenseRef-PHYDRA-Proprietary",
+  "provenance": {
+    "method": "independently-authored analytic quadric coordinates",
+    "origin": "PHYDRA native meshing qualification corpus",
+    "redistribution": "repository-internal"
+  },
+  "coordinate_unit": "meter",
+  "operands": [
+    {
+      "name": "vertical",
+      "radius": 1.0,
+      "height": 2.4,
+      "base_center": [
+        0.0,
+        0.0,
+        -1.2
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "transverse",
+      "radius": 0.6,
+      "height": 3.0,
+      "base_center": [
+        -1.5,
+        0.0,
+        0.0
+      ],
+      "axis": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "operation": "intersection",
+  "independent_reference": {
+    "method": "closed-form one-dimensional quadrature of the analytic cylinder implicit equations",
+    "volume": "integral_{-r}^{r} 4 sqrt(R^2-y^2) sqrt(r^2-y^2) dy",
+    "loops": [
+      {
+        "axis_radius": 1.0,
+        "transverse_radius": 0.6,
+        "transverse_center_z": 0.0,
+        "side": 1
+      },
+      {
+        "axis_radius": 1.0,
+        "transverse_radius": 0.6,
+        "transverse_center_z": 0.0,
+        "side": -1
+      }
+    ],
+    "solids": 1,
+    "manufactured_length": 1.0
+  },
+  "record_id": "c575556a201da438cbe2a17a3092bc93b7f6f45d3bec4ceb54eb89ea4da35d06"
+}

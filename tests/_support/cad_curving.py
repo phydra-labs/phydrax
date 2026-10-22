@@ -279,7 +279,9 @@ def mapped_coordinates(
     elements, routes, coordinates = geometry.resolve(mesh)
     element = elements[0]
     if not isinstance(element, FiniteElementSpec):
-        raise AssertionError("P2 convergence evidence requires a scalar finite element.")
+        raise AssertionError(
+            "curving_fixture.element must be a scalar finite element; got another coordinate element."
+        )
     values, _ = element.tabulate(reference)
     route = np.asarray(routes[0])
     nodes = np.asarray(coordinates)[route if cells is None else route[cells]]

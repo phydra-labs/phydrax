@@ -72,6 +72,9 @@ class MeshingCase:
             "dimension": self.dimension,
             "family": self.family,
             "expected_admission": self.expected_admission,
+            "solution_field_degree": corpus_solution_field_degree(self),
+            "history_field_degree": corpus_solution_field_degree(self),
+            "density_field_degree": 1,
             "controls": list(self.controls),
             "expected_region_measures": dict(self.expected_regions),
             "minimum_angle_radians": np.radians(25.0).item()
@@ -298,6 +301,11 @@ def meshing_case(name: str) -> MeshingCase:
     raise ValueError(
         f"meshing_case.name must identify a registered meshing corpus case; got {name!r}."
     )
+
+
+def corpus_solution_field_degree(case: MeshingCase) -> int:
+    """Keep fixed-boundary quadratic traces without changing source geometry."""
+    return 2 if case.name == "plc-fixed-boundary" else 1
 
 
 def _box(lower: tuple[float, ...], upper: tuple[float, ...]) -> np.ndarray:
@@ -616,6 +624,10 @@ def prepare_case(
     resolution: int,
     capacity: int,
     timeout: float,
+    *,
+    maximum_work_units: int | None = None,
+    maximum_geometry_queries: int | None = None,
+    maximum_scratch_bytes: int | None = None,
 ) -> tuple[Any, Any, Any]:
     """Freeze a source, physical request and native route without executing it."""
     if resolution < 1 or capacity < 1 or not np.isfinite(timeout) or timeout <= 0.0:
@@ -634,12 +646,16 @@ def prepare_case(
         maximum_cells=8 * capacity,
         maximum_connectivity_entries=64 * capacity,
         maximum_data_bytes=1 if "maximum-storage" in case.controls else 1024 * capacity,
-        maximum_work_units=1 if "maximum-work" in case.controls else 32 * capacity,
+        maximum_work_units=(
+            (1 if "maximum-work" in case.controls else 32 * capacity)
+            if maximum_work_units is None else maximum_work_units
+        ),
         maximum_cavity_cells=1 if "maximum-cavity" in case.controls else capacity,
-        maximum_geometry_queries=1
-        if "maximum-queries" in case.controls
-        else 64 * capacity,
-        maximum_scratch_bytes=4096 * capacity,
+        maximum_geometry_queries=(
+            (1 if "maximum-queries" in case.controls else 64 * capacity)
+            if maximum_geometry_queries is None else maximum_geometry_queries
+        ),
+        maximum_scratch_bytes=4096 * capacity if maximum_scratch_bytes is None else maximum_scratch_bytes,
         maximum_wall_seconds=timeout,
     )
     if case.dimension == 2:
@@ -792,6 +808,10 @@ def prepare_sphere_case(
     resolution: int,
     capacity: int,
     timeout: float,
+    *,
+    maximum_work_units: int | None = None,
+    maximum_geometry_queries: int | None = None,
+    maximum_scratch_bytes: int | None = None,
 ) -> tuple[Any, Any, Any]:
     """Reuse the smooth seam/pole fixture with a frozen hard request."""
 
@@ -831,10 +851,10 @@ def prepare_sphere_case(
         maximum_faces=8 * capacity,
         maximum_connectivity_entries=64 * capacity,
         maximum_data_bytes=1024 * capacity,
-        maximum_work_units=32 * capacity,
+        maximum_work_units=32 * capacity if maximum_work_units is None else maximum_work_units,
         maximum_cavity_cells=capacity,
-        maximum_geometry_queries=64 * capacity,
-        maximum_scratch_bytes=4096 * capacity,
+        maximum_geometry_queries=64 * capacity if maximum_geometry_queries is None else maximum_geometry_queries,
+        maximum_scratch_bytes=4096 * capacity if maximum_scratch_bytes is None else maximum_scratch_bytes,
         maximum_wall_seconds=timeout,
     )
     request = phx.meshing.SurfaceMeshingSpec(
@@ -1121,6 +1141,9 @@ def prepare_polyhedral_case(
     timeout: float,
     *,
     source: bool = False,
+    maximum_work_units: int | None = None,
+    maximum_geometry_queries: int | None = None,
+    maximum_scratch_bytes: int | None = None,
 ) -> tuple[Any, Any, Any]:
     """Freeze material PLC, explicit dyadic sites and requested resources."""
     if site_count < 1 or capacity < 1 or not np.isfinite(timeout) or timeout <= 0.0:
@@ -1128,7 +1151,12 @@ def prepare_polyhedral_case(
             f"prepare_polyhedral_case.bounds must have positive site count, capacity and finite timeout; got {(site_count, capacity, timeout)!r}."
         )
     if name == "polyhedral-periodic-cube":
-        return _prepare_periodic_polyhedral_case(capacity, timeout)
+        return _prepare_periodic_polyhedral_case(
+            capacity, timeout,
+            maximum_work_units=maximum_work_units,
+            maximum_geometry_queries=maximum_geometry_queries,
+            maximum_scratch_bytes=maximum_scratch_bytes,
+        )
     complex_ = _polyhedral_complex(name)
     scale = 2.0 if name == "polyhedral-stretched-L" else 1.0
     # Dyadic y slabs keep the fixture's bisectors representable in binary64;
@@ -1168,10 +1196,10 @@ def prepare_polyhedral_case(
         maximum_cells=8 * capacity,
         maximum_connectivity_entries=64 * capacity,
         maximum_data_bytes=1024 * capacity,
-        maximum_work_units=32 * capacity,
+        maximum_work_units=32 * capacity if maximum_work_units is None else maximum_work_units,
         maximum_cavity_cells=capacity,
-        maximum_geometry_queries=64 * capacity,
-        maximum_scratch_bytes=4096 * capacity,
+        maximum_geometry_queries=64 * capacity if maximum_geometry_queries is None else maximum_geometry_queries,
+        maximum_scratch_bytes=4096 * capacity if maximum_scratch_bytes is None else maximum_scratch_bytes,
         maximum_wall_seconds=timeout,
     )
     request = phx.meshing.VolumeMeshingSpec(
@@ -1218,7 +1246,12 @@ def prepare_polyhedral_case(
 
 
 def _prepare_periodic_polyhedral_case(
-    capacity: int, timeout: float
+    capacity: int,
+    timeout: float,
+    *,
+    maximum_work_units: int | None = None,
+    maximum_geometry_queries: int | None = None,
+    maximum_scratch_bytes: int | None = None,
 ) -> tuple[Any, Any, Any]:
     """Retain the cube source SCI, sites, weights and periods."""
     complex_ = _polyhedral_complex("polyhedral-periodic-cube")
@@ -1274,10 +1307,10 @@ def _prepare_periodic_polyhedral_case(
         maximum_cells=8 * capacity,
         maximum_connectivity_entries=64 * capacity,
         maximum_data_bytes=1024 * capacity,
-        maximum_work_units=32 * capacity,
+        maximum_work_units=32 * capacity if maximum_work_units is None else maximum_work_units,
         maximum_cavity_cells=capacity,
-        maximum_geometry_queries=64 * capacity,
-        maximum_scratch_bytes=4096 * capacity,
+        maximum_geometry_queries=64 * capacity if maximum_geometry_queries is None else maximum_geometry_queries,
+        maximum_scratch_bytes=4096 * capacity if maximum_scratch_bytes is None else maximum_scratch_bytes,
         maximum_wall_seconds=timeout,
     )
     request = phx.meshing.VolumeMeshingSpec(

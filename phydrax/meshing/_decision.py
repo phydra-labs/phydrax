@@ -958,20 +958,20 @@ class NativeDesignSourceState:
                 "NativeDesignSourceState.options.implicit_policy must retain the source preparation policy; got None."
             )
 
-        match policy:
-            case ImplicitSurfacePolicy():
-                expected = prepare_implicit_route(self.source, self.specification, policy)
-            case AdaptiveImplicitSurfacePolicy():
-                with NativeExecutionScope(
-                    self.specification.limits.native_limits()
-                ) as scope:
+        if not isinstance(policy, ImplicitSurfacePolicy | AdaptiveImplicitSurfacePolicy):
+            raise TypeError(
+                f"NativeDesignSourceState.options.implicit_policy must be ImplicitSurfacePolicy or AdaptiveImplicitSurfacePolicy; got {type(policy).__name__}."
+            )
+        with NativeExecutionScope(self.specification.limits.native_limits()) as scope:
+            match policy:
+                case ImplicitSurfacePolicy():
+                    expected = prepare_implicit_route(
+                        self.source, self.specification, policy, scope=scope
+                    )
+                case AdaptiveImplicitSurfacePolicy():
                     expected = prepare_adaptive_implicit_route(
                         self.source, self.specification, policy, scope=scope
                     )
-            case _:
-                raise TypeError(
-                    f"NativeDesignSourceState.options.implicit_policy must be ImplicitSurfacePolicy or AdaptiveImplicitSurfacePolicy; got {type(policy).__name__}."
-                )
         pairs = model_recipe_array_pairs(self.plan.prepared, expected)
         if pairs is None:
             raise ValueError(

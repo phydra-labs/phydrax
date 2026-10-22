@@ -62,6 +62,7 @@
 #include "bounded_memory.hpp"
 #include "capi_guard.hpp"
 #include "counter_records.hpp"
+#include "dyadic.hpp"
 #include "filtered.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_line.hpp"
@@ -75,267 +76,6 @@ namespace {
 
 using exact::det3;
 using exact::lift;
-
-// ------------------------------------------------------------ dyadic integers
-
-using Limbs = NativeVector<std::uint32_t>;
-
-void trim(Limbs& limbs) {
-  while (!limbs.empty() && limbs.back() == 0) {
-    limbs.pop_back();
-  }
-}
-
-int compare_magnitude(const Limbs& a, const Limbs& b) {
-  if (a.size() != b.size()) {
-    return a.size() < b.size() ? -1 : 1;
-  }
-  for (std::size_t index = a.size(); index-- > 0;) {
-    if (a[index] != b[index]) {
-      return a[index] < b[index] ? -1 : 1;
-    }
-  }
-  return 0;
-}
-
-Limbs add_magnitude(const Limbs& a, const Limbs& b) {
-  const Limbs& longer = a.size() >= b.size() ? a : b;
-  const Limbs& shorter = a.size() >= b.size() ? b : a;
-  Limbs out(longer.size() + 1, 0);
-  std::uint64_t carry = 0;
-  for (std::size_t index = 0; index < longer.size(); ++index) {
-    const std::uint64_t sum = static_cast<std::uint64_t>(longer[index]) +
-                              (index < shorter.size() ? shorter[index] : 0u) + carry;
-    out[index] = static_cast<std::uint32_t>(sum);
-    carry = sum >> 32;
-  }
-  out[longer.size()] = static_cast<std::uint32_t>(carry);
-  trim(out);
-  return out;
-}
-
-// a - b for a >= b.
-Limbs subtract_magnitude(const Limbs& a, const Limbs& b) {
-  Limbs out(a.size(), 0);
-  std::int64_t borrow = 0;
-  for (std::size_t index = 0; index < a.size(); ++index) {
-    std::int64_t difference = static_cast<std::int64_t>(a[index]) -
-                              (index < b.size() ? static_cast<std::int64_t>(b[index]) : 0) -
-                              borrow;
-    borrow = difference < 0 ? 1 : 0;
-    if (difference < 0) {
-      difference += std::int64_t{1} << 32;
-    }
-    out[index] = static_cast<std::uint32_t>(difference);
-  }
-  trim(out);
-  return out;
-}
-
-Limbs multiply_magnitude(const Limbs& a, const Limbs& b) {
-  Limbs out(a.size() + b.size(), 0);
-  for (std::size_t row = 0; row < a.size(); ++row) {
-    std::uint64_t carry = 0;
-    for (std::size_t column = 0; column < b.size(); ++column) {
-      const std::uint64_t current = static_cast<std::uint64_t>(out[row + column]) +
-                                    static_cast<std::uint64_t>(a[row]) * b[column] + carry;
-      out[row + column] = static_cast<std::uint32_t>(current);
-      carry = current >> 32;
-    }
-    out[row + b.size()] = static_cast<std::uint32_t>(carry);
-  }
-  trim(out);
-  return out;
-}
-
-Limbs shift_left(const Limbs& a, std::int64_t bits) {
-  if (a.empty() || bits == 0) {
-    return a;
-  }
-  const std::size_t words = static_cast<std::size_t>(bits / 32);
-  const int rest = static_cast<int>(bits % 32);
-  Limbs out(a.size() + words + 1, 0);
-  for (std::size_t index = 0; index < a.size(); ++index) {
-    const std::uint64_t shifted = static_cast<std::uint64_t>(a[index]) << rest;
-    out[index + words] |= static_cast<std::uint32_t>(shifted);
-    out[index + words + 1] |= static_cast<std::uint32_t>(shifted >> 32);
-  }
-  trim(out);
-  return out;
-}
-
-std::int64_t bit_length(const Limbs& a) {
-  return a.empty() ? 0
-                   : static_cast<std::int64_t>(a.size() - 1) * 32 +
-                         (32 - std::countl_zero(a.back()));
-}
-
-// Bits [start, start + 64) of a, truncating.
-std::uint64_t bits_from(const Limbs& a, std::int64_t start) {
-  std::uint64_t value = 0;
-  for (int offset = 0; offset < 64; ++offset) {
-    const std::int64_t bit = start + offset;
-    const std::size_t word = static_cast<std::size_t>(bit / 32);
-    if (word < a.size() && ((a[word] >> (bit % 32)) & 1u)) {
-      value |= std::uint64_t{1} << offset;
-    }
-  }
-  return value;
-}
-
-// Exact dyadic rational (-1)^negative * magnitude * 2^exponent with an odd (or
-// zero) magnitude.  Every finite binary64 value is one, and sums, differences
-// and products of dyadic rationals are computed exactly.
-class Dyadic {
- public:
-  Dyadic() = default;
-
-  explicit Dyadic(double value) {
-    if (value == 0.0) {
-      return;
-    }
-    int exponent = 0;
-    const double fraction = std::frexp(value, &exponent);
-    negative_ = fraction < 0.0;
-    std::uint64_t mantissa = static_cast<std::uint64_t>(std::ldexp(std::fabs(fraction), 53));
-    const int zeros = std::countr_zero(mantissa);
-    mantissa >>= zeros;
-    exponent_ = static_cast<std::int64_t>(exponent) - 53 + zeros;
-    magnitude_ = {static_cast<std::uint32_t>(mantissa), static_cast<std::uint32_t>(mantissa >> 32)};
-    trim(magnitude_);
-  }
-  static Dyadic integer(const std::uint32_t* words, std::size_t count, int sign) {
-    Dyadic value;
-    if (count == 0) return value;
-    value.magnitude_.assign(words, words + count);
-    trim(value.magnitude_);
-    value.negative_ = sign < 0;
-    value.normalize();
-    return value;
-  }
-
-  void negate() noexcept {
-    if (!magnitude_.empty()) {
-      negative_ = !negative_;
-    }
-  }
-
-
-  int sign() const {
-    if (magnitude_.empty()) {
-      return 0;
-    }
-    return negative_ ? -1 : 1;
-  }
-
-  Dyadic operator-() const {
-    Dyadic result = *this;
-    if (!result.magnitude_.empty()) {
-      result.negative_ = !result.negative_;
-    }
-    return result;
-  }
-
-  friend Dyadic operator+(const Dyadic& a, const Dyadic& b) { return combine(a, b, false); }
-  friend Dyadic operator-(const Dyadic& a, const Dyadic& b) { return combine(a, b, true); }
-
-  friend Dyadic operator*(const Dyadic& a, const Dyadic& b) {
-    Dyadic result;
-    if (a.magnitude_.empty() || b.magnitude_.empty()) {
-      return result;
-    }
-    // Products of odd magnitudes are odd: the result stays normalized.
-    result.magnitude_ = multiply_magnitude(a.magnitude_, b.magnitude_);
-    result.negative_ = a.negative_ != b.negative_;
-    result.exponent_ = a.exponent_ + b.exponent_;
-    return result;
-  }
-
-  // value = fraction * 2^exponent up to a relative error below 2^-52.
-  double fraction(std::int64_t& exponent) const {
-    if (magnitude_.empty()) {
-      exponent = 0;
-      return 0.0;
-    }
-    const std::int64_t length = bit_length(magnitude_);
-    const std::int64_t start = std::max<std::int64_t>(0, length - 64);
-    exponent = exponent_ + start;
-    const double top = static_cast<double>(bits_from(magnitude_, start));
-    return negative_ ? -top : top;
-  }
-
-  const Limbs& magnitude() const { return magnitude_; }
-  std::int64_t exponent() const { return exponent_; }
-  Dyadic scaled_power(std::int64_t shift) const {
-    Dyadic result = *this;
-    result.exponent_ += shift;
-    return result;
-  }
-
- private:
-  static Dyadic combine(const Dyadic& a, const Dyadic& b, bool negate_b) {
-    if (b.magnitude_.empty()) {
-      return a;
-    }
-    const bool b_negative = b.negative_ != negate_b;
-    if (a.magnitude_.empty()) {
-      Dyadic result = b;
-      result.negative_ = b_negative;
-      return result;
-    }
-    const std::int64_t exponent = std::min(a.exponent_, b.exponent_);
-    const Limbs left = shift_left(a.magnitude_, a.exponent_ - exponent);
-    const Limbs right = shift_left(b.magnitude_, b.exponent_ - exponent);
-    Dyadic result;
-    result.exponent_ = exponent;
-    if (a.negative_ == b_negative) {
-      result.magnitude_ = add_magnitude(left, right);
-      result.negative_ = a.negative_;
-    } else {
-      const int order = compare_magnitude(left, right);
-      if (order == 0) {
-        return Dyadic();
-      }
-      result.magnitude_ = order > 0 ? subtract_magnitude(left, right)
-                                    : subtract_magnitude(right, left);
-      result.negative_ = order > 0 ? a.negative_ : b_negative;
-    }
-    result.normalize();
-    return result;
-  }
-
-  void normalize() {
-    std::size_t words = 0;
-    while (words < magnitude_.size() && magnitude_[words] == 0) {
-      ++words;
-    }
-    if (words == magnitude_.size()) {
-      magnitude_.clear();
-      exponent_ = 0;
-      return;
-    }
-    const int bits = std::countr_zero(magnitude_[words]);
-    if (words == 0 && bits == 0) {
-      return;
-    }
-    Limbs out(magnitude_.size() - words, 0);
-    for (std::size_t index = words; index < magnitude_.size(); ++index) {
-      const std::uint64_t pair =
-          static_cast<std::uint64_t>(magnitude_[index]) |
-          (index + 1 < magnitude_.size()
-               ? static_cast<std::uint64_t>(magnitude_[index + 1]) << 32
-               : 0u);
-      out[index - words] = static_cast<std::uint32_t>(pair >> bits);
-    }
-    trim(out);
-    magnitude_ = std::move(out);
-    exponent_ += static_cast<std::int64_t>(words) * 32 + bits;
-  }
-
-  bool negative_ = false;
-  Limbs magnitude_;
-  std::int64_t exponent_ = 0;
-};
 
 struct LineWork {
   bool (*spend)(void*, std::int64_t);
@@ -1681,15 +1421,15 @@ struct ExactReferenceEntry {
   std::int32_t incoming = 0;
 };
 
-bool same_reference_vertex(const ExactReferenceVertex& a, const ExactReferenceVertex& b) {
-  return (a.x * b.w - b.x * a.w).sign() == 0 &&
-         (a.y * b.w - b.y * a.w).sign() == 0;
-}
 
 using ExactReferencePlanes = std::array<std::array<Dyadic, 3>, 6>;
 
 struct ExactReferenceClip {
   std::array<ExactReferenceVertex, 16> vertices;
+  // A clipped convex polygon can repeat a point only when a crossing is an
+  // already-retained zero-side endpoint. Preserve that exact construction
+  // identity, rather than repeatedly comparing homogeneous cross products.
+  std::array<std::int32_t, 16> identities{0, 1, 2};
   std::array<ExactReferenceEntry, 12> loop{};
   std::array<ExactReferenceEntry, 12> next{};
   std::int32_t used = 3;
@@ -1736,12 +1476,19 @@ int32_t decode_reference_planes(const std::uint32_t* words, const std::int64_t* 
   return PHX_MC_OK;
 }
 
+bool reserve_reference_work(ExactReferenceClip& clip, std::int64_t amount,
+                            std::int64_t limit) {
+  if (amount > limit - clip.work) return false;
+  clip.work += amount;
+  return true;
+}
+
 int32_t append_reference_entry(ExactReferenceClip& clip, std::int32_t& next_count,
-                               ExactReferenceEntry entry) {
+                               ExactReferenceEntry entry, std::int64_t work_limit) {
   if (next_count) {
-    clip.work += 6;
-    if (same_reference_vertex(clip.vertices[clip.next[next_count - 1].vertex],
-                              clip.vertices[entry.vertex])) {
+    if (!reserve_reference_work(clip, 1, work_limit)) return PHX_MC_CAPACITY_EXCEEDED;
+    if (clip.identities[clip.next[next_count - 1].vertex] ==
+        clip.identities[entry.vertex]) {
       return PHX_MC_OK;
     }
   }
@@ -1775,14 +1522,49 @@ int32_t construct_reference_intersection(ExactReferenceClip& clip,
 }
 
 int32_t clip_reference_plane(ExactReferenceClip& clip,
-                             const ExactReferencePlanes& planes, int clipping) {
+                             const ExactReferencePlanes& planes, int clipping,
+                             std::int64_t work_limit) {
   std::array<int, 12> sides{};
+  bool all_inside = true;
+  bool all_outside = true;
   for (int slot = 0; slot < clip.count; ++slot) {
-    const auto& point = clip.vertices[clip.loop[slot].vertex];
-    sides[slot] = (planes[clipping][2] * point.w -
-                  planes[clipping][0] * point.x -
-                  planes[clipping][1] * point.y).sign();
-    clip.work += 7;
+    const int vertex = clip.loop[slot].vertex;
+    const auto& point = clip.vertices[vertex];
+    if (vertex < 3) {
+      // These are the authored unit corners: evaluate the affine line there
+      // directly, exactly as the containment proof did, without multiplications
+      // by zero and one. The result is also the clipping predicate.
+      if (vertex == 0) {
+        if (!reserve_reference_work(clip, 1, work_limit)) return PHX_MC_CAPACITY_EXCEEDED;
+        sides[slot] = planes[clipping][2].sign();
+      } else {
+        if (!reserve_reference_work(clip, 2, work_limit)) return PHX_MC_CAPACITY_EXCEEDED;
+        sides[slot] =
+            (planes[clipping][2] - planes[clipping][vertex - 1]).sign();
+      }
+    } else if (point.support[0] == clipping || point.support[1] == clipping) {
+      sides[slot] = 0;
+    } else {
+      if (!reserve_reference_work(clip, 7, work_limit)) return PHX_MC_CAPACITY_EXCEEDED;
+      sides[slot] = (planes[clipping][2] * point.w -
+                    planes[clipping][0] * point.x -
+                    planes[clipping][1] * point.y).sign();
+    }
+    all_inside = all_inside && sides[slot] >= 0;
+    all_outside = all_outside && sides[slot] < 0;
+  }
+  if (all_inside) {
+    // The ordinary retained-vertex loop rotates once; preserve its exact
+    // publication order and supporting-plane provenance.
+    for (int slot = 0; slot < clip.count; ++slot) {
+      clip.next[slot] = clip.loop[(slot + 1) % clip.count];
+    }
+    clip.next_count = clip.count;
+    return PHX_MC_OK;
+  }
+  if (all_outside) {
+    clip.next_count = 0;
+    return PHX_MC_OK;
   }
   std::int32_t& next_count = clip.next_count;
   next_count = 0;
@@ -1792,22 +1574,26 @@ int32_t clip_reference_plane(ExactReferenceClip& clip,
     const bool a_inside = sides[slot] >= 0;
     const bool b_inside = sides[following] >= 0;
     if (a_inside != b_inside) {
+      if (!reserve_reference_work(clip, 12, work_limit)) return PHX_MC_CAPACITY_EXCEEDED;
       int32_t status = construct_reference_intersection(clip, planes, b.incoming, clipping);
       if (status != PHX_MC_OK) return status;
+      const int endpoint = sides[slot] == 0 ? clip.loop[slot].vertex
+                           : sides[following] == 0 ? b.vertex : clip.used;
+      clip.identities[clip.used] =
+          endpoint == clip.used ? clip.used : clip.identities[endpoint];
       status = append_reference_entry(
-          clip, next_count, {clip.used++, a_inside ? b.incoming : clipping});
+          clip, next_count, {clip.used++, a_inside ? b.incoming : clipping}, work_limit);
       if (status != PHX_MC_OK) return status;
-      clip.work += 12;
     }
     if (b_inside) {
-      const int32_t status = append_reference_entry(clip, next_count, b);
+      const int32_t status = append_reference_entry(clip, next_count, b, work_limit);
       if (status != PHX_MC_OK) return status;
     }
   }
   if (next_count > 1) {
-    clip.work += 6;
-    if (same_reference_vertex(clip.vertices[clip.next[0].vertex],
-                              clip.vertices[clip.next[next_count - 1].vertex])) {
+    if (!reserve_reference_work(clip, 1, work_limit)) return PHX_MC_CAPACITY_EXCEEDED;
+    if (clip.identities[clip.next[0].vertex] ==
+        clip.identities[clip.next[next_count - 1].vertex]) {
       clip.next[0].incoming = clip.next[next_count - 1].incoming;
       --next_count;
     }
@@ -1815,17 +1601,6 @@ int32_t clip_reference_plane(ExactReferenceClip& clip,
   return PHX_MC_OK;
 }
 
-bool contains_reference_triangle(const ExactReferencePlanes& planes, std::int64_t& work) {
-  for (int clipping = 3; clipping < 6; ++clipping) {
-    ++work;
-    if (planes[clipping][2].sign() < 0) return false;
-    work += 2;
-    if ((planes[clipping][2] - planes[clipping][0]).sign() < 0) return false;
-    work += 2;
-    if ((planes[clipping][2] - planes[clipping][1]).sign() < 0) return false;
-  }
-  return true;
-}
 
 int32_t clip_reference_triangle_exact(
     const std::uint32_t* words, std::int64_t word_count,
@@ -1858,26 +1633,14 @@ int32_t clip_reference_triangle_exact(
   status = decode_reference_planes(words, offsets, signs, planes);
   if (status != PHX_MC_OK) return status;
   ExactReferenceClip clip;
-  // The unit corners need one comparison and two subtraction/comparison pairs
-  // per plane. A failed proof retains its executed work before generic clipping.
-  // Three unchanged generic phases rotate the loop three times, restoring this
-  // initial support and label order when all corners remain inside.
-  const bool contained = work_limit >= 15 && contains_reference_triangle(planes, clip.work);
-  if (!contained) {
-    for (int clipping = 3; clipping < 6 && clip.count >= 3; ++clipping) {
-      if (13 * clip.count + 42 > work_limit - clip.work) {
-        *work_units = clip.work;
-        return PHX_MC_CAPACITY_EXCEEDED;
-      }
-      status = clip_reference_plane(clip, planes, clipping);
-      if (status != PHX_MC_OK) return status;
-      if (clip.work > work_limit) {
-        *work_units = clip.work;
-        return PHX_MC_CAPACITY_EXCEEDED;
-      }
-      clip.loop.swap(clip.next);
-      clip.count = clip.next_count;
+  for (int clipping = 3; clipping < 6 && clip.count >= 3; ++clipping) {
+    status = clip_reference_plane(clip, planes, clipping, work_limit);
+    if (status != PHX_MC_OK) {
+      *work_units = clip.work;
+      return status;
     }
+    clip.loop.swap(clip.next);
+    clip.count = clip.next_count;
   }
   const auto& vertices = clip.vertices;
   const auto& loop = clip.loop;
@@ -1902,12 +1665,200 @@ int32_t clip_reference_triangle_exact(
 
 #include "reference_tetrahedron_clip.inc"
 
-}  // namespace
+// Outcome of the exact predicate facet coverage proofs.
+enum class PredicateCover : std::uint8_t { kCovered, kRefused, kUnknown };
 
-bool exact_facet_coverage(
-    const double* subject, const double* original_points,
-    std::span<const std::array<int32_t, 4>> original_faces,
-    std::span<const int32_t> rows, NativeVector<int32_t>& contributors) {
+// Proves the arrangement's coverage result without building it, with exact
+// orientation predicates only (one work unit each; one unit per compared
+// edge pair):
+//  * single row: the subject lies in one closed coplanar row and every other
+//    coplanar row is weakly separated from it by one of the six edge lines;
+//  * partition: the coplanar rows not weakly separated from the subject (the
+//    positive-area contributors) are pairwise weakly separated, consistently
+//    oriented, and no edge of their union that is not shared exactly (with
+//    reversed endpoints) by two contributors meets the open subject. The open
+//    subject is connected, misses the union's boundary and meets a
+//    contributor's interior, so it lies inside the union; each fragment then
+//    has exactly one owner.
+// The same predicates decide plane membership, the projection and degenerate
+// partners as the arrangement. A configuration neither proof decides (an
+// overlap, a T-junction or boundary edge across the subject, a gap) is left to
+// the arrangement.
+PredicateCover predicate_facet_cover(const double* coordinates,
+                                     std::span<const std::int64_t> triangles,
+                                     std::size_t rows, NativeVector<std::size_t>& covering) {
+  covering.clear();
+  const auto corner = [&](std::size_t face, int k) {
+    return coordinates + 3 * static_cast<std::size_t>(triangles[3 * face + k]);
+  };
+  const auto predicate = [] { native_execution_charge(1); };
+  // Projection: the first axis whose subject normal component is nonzero, as
+  // the arrangement's exact normal sign of face 0 selects it.
+  int axis = -1;
+  using Shape = std::array<std::array<double, 2>, 3>;
+  const auto project = [&](std::size_t face) {
+    Shape shape;
+    for (int k = 0; k < 3; ++k) {
+      shape[k][0] = corner(face, k)[(axis + 1) % 3];
+      shape[k][1] = corner(face, k)[(axis + 2) % 3];
+    }
+    return shape;
+  };
+  Shape subject{};
+  int subject_orientation = 0;
+  for (int a = 0; a < 3 && subject_orientation == 0; ++a) {
+    axis = a;
+    subject = project(0);
+    predicate();
+    subject_orientation = orient2d(subject[0].data(), subject[1].data(), subject[2].data());
+  }
+  if (subject_orientation == 0) return PredicateCover::kRefused;
+  // Coplanar partners in row order; a degenerate partner refuses the face.
+  NativeVector<std::size_t> partners;
+  NativeVector<int> orientations;
+  NativeVector<Shape> shapes;
+  partners.reserve(rows);
+  orientations.reserve(rows);
+  shapes.reserve(rows);
+  for (std::size_t row = 1; row <= rows; ++row) {
+    bool coplanar = true;
+    for (int k = 0; k < 3 && coplanar; ++k) {
+      predicate();
+      coplanar = orient3d(corner(0, 0), corner(0, 1), corner(0, 2), corner(row, k)) == 0;
+    }
+    if (!coplanar) continue;
+    const Shape shape = project(row);
+    predicate();
+    const int orientation = orient2d(shape[0].data(), shape[1].data(), shape[2].data());
+    if (orientation == 0) return PredicateCover::kRefused;
+    partners.push_back(row);
+    orientations.push_back(orientation);
+    shapes.push_back(shape);
+  }
+  if (partners.empty()) return PredicateCover::kRefused;
+  // Whether every vertex of `second` lies weakly outside one edge line of
+  // `first` (positively oriented when first_orientation > 0).
+  const auto outside_edge = [&](const Shape& first, int first_orientation, const Shape& second) {
+    for (int k = 0; k < 3; ++k) {
+      bool outside = true;
+      for (int v = 0; v < 3 && outside; ++v) {
+        predicate();
+        outside = first_orientation * orient2d(first[(k + 1) % 3].data(),
+                                               first[(k + 2) % 3].data(), second[v].data()) <= 0;
+      }
+      if (outside) return true;
+    }
+    return false;
+  };
+  // Separation from the subject, decided once per partner: -1 unknown.
+  NativeVector<std::int8_t> separated(partners.size(), -1);
+  const auto separated_from_subject = [&](std::size_t p) {
+    if (separated[p] < 0) {
+      separated[p] = outside_edge(subject, subject_orientation, shapes[p]) ||
+                             outside_edge(shapes[p], orientations[p], subject)
+                         ? 1
+                         : 0;
+    }
+    return separated[p] == 1;
+  };
+  // Single row: closed containment of every subject vertex in one partner.
+  std::size_t found = partners.size();
+  for (std::size_t p = 0; p < partners.size() && found == partners.size(); ++p) {
+    bool inside = true;
+    for (int v = 0; v < 3 && inside; ++v) {
+      for (int k = 0; k < 3 && inside; ++k) {
+        predicate();
+        inside = orientations[p] * orient2d(shapes[p][(k + 1) % 3].data(),
+                                            shapes[p][(k + 2) % 3].data(),
+                                            subject[v].data()) >= 0;
+      }
+    }
+    if (inside) found = p;
+  }
+  if (found != partners.size()) {
+    bool alone = true;
+    for (std::size_t p = 0; p < partners.size() && alone; ++p) {
+      alone = p == found || separated_from_subject(p);
+    }
+    if (alone) {
+      covering.assign(1, partners[found] - 1);
+      return PredicateCover::kCovered;
+    }
+  }
+  // Partition: positive-area contributors in row order.
+  NativeVector<std::size_t> contributors;
+  for (std::size_t p = 0; p < partners.size(); ++p) {
+    if (!separated_from_subject(p)) contributors.push_back(p);
+  }
+  if (contributors.empty()) return PredicateCover::kUnknown;
+  for (std::size_t i = 0; i < contributors.size(); ++i) {
+    const std::size_t a = contributors[i];
+    if (orientations[a] != orientations[contributors.front()]) return PredicateCover::kUnknown;
+    for (std::size_t j = i + 1; j < contributors.size(); ++j) {
+      const std::size_t b = contributors[j];
+      if (!outside_edge(shapes[a], orientations[a], shapes[b]) &&
+          !outside_edge(shapes[b], orientations[b], shapes[a])) {
+        return PredicateCover::kUnknown;
+      }
+    }
+  }
+  const auto same_point = [](const double* x, const double* y) {
+    return x[0] == y[0] && x[1] == y[1] && x[2] == y[2];
+  };
+  for (std::size_t a : contributors) {
+    const std::size_t row = partners[a];
+    for (int k = 0; k < 3; ++k) {
+      const double* from = corner(row, (k + 1) % 3);
+      const double* to = corner(row, (k + 2) % 3);
+      bool shared = false;
+      for (std::size_t b : contributors) {
+        if (b == a) continue;
+        const std::size_t other = partners[b];
+        for (int j = 0; j < 3 && !shared; ++j) {
+          native_execution_charge(1);
+          shared = same_point(corner(other, (j + 1) % 3), to) &&
+                   same_point(corner(other, (j + 2) % 3), from);
+        }
+        if (shared) break;
+      }
+      if (shared) continue;
+      // The closed edge misses the open subject iff its line weakly
+      // separates the subject or a subject edge line has it weakly outside.
+      const double* u = shapes[a][(k + 1) % 3].data();
+      const double* w = shapes[a][(k + 2) % 3].data();
+      int positive = 0;
+      int negative = 0;
+      for (int v = 0; v < 3; ++v) {
+        predicate();
+        const int side = orient2d(u, w, subject[v].data());
+        positive += side > 0;
+        negative += side < 0;
+      }
+      if (positive == 0 || negative == 0) continue;
+      bool clear = false;
+      for (int e = 0; e < 3 && !clear; ++e) {
+        predicate();
+        clear = subject_orientation *
+                    orient2d(subject[(e + 1) % 3].data(), subject[(e + 2) % 3].data(), u) <= 0;
+        if (clear) {
+          predicate();
+          clear = subject_orientation *
+                      orient2d(subject[(e + 1) % 3].data(), subject[(e + 2) % 3].data(), w) <= 0;
+        }
+      }
+      if (!clear) return PredicateCover::kUnknown;
+    }
+  }
+  for (std::size_t a : contributors) covering.push_back(partners[a] - 1);
+  return PredicateCover::kCovered;
+}
+
+// Shared admission, row validation and arrangement proof. predicate_proof
+// admits the exact predicate coverage proofs before the arrangement is built.
+bool facet_coverage(const double* subject, const double* original_points,
+                    std::span<const std::array<int32_t, 4>> original_faces,
+                    std::span<const int32_t> rows, NativeVector<int32_t>& contributors,
+                    bool predicate_proof) {
   contributors.clear();
   native_execution_charge(1, 1);
   if (rows.empty()) return false;
@@ -1950,6 +1901,19 @@ bool exact_facet_coverage(
       triangles.push_back(static_cast<std::int64_t>(coordinates.size() / 3));
       const double* point = original_points + 3 * static_cast<std::size_t>(face[corner]);
       coordinates.insert(coordinates.end(), point, point + 3);
+    }
+  }
+  if (predicate_proof) {
+    NativeVector<std::size_t> covering;
+    switch (predicate_facet_cover(coordinates.data(), triangles, selected.size(), covering)) {
+      case PredicateCover::kCovered:
+        contributors.clear();
+        for (std::size_t index : covering) contributors.push_back(selected[index]);
+        return true;
+      case PredicateCover::kRefused:
+        return false;
+      case PredicateCover::kUnknown:
+        break;
     }
   }
   try {
@@ -2012,6 +1976,22 @@ bool exact_facet_coverage(
     if (refusal.status == PHX_MC_DEGENERATE_INPUT) return false;
     throw ExecutionRefusal{refusal.status};
   }
+}
+
+}  // namespace
+
+bool exact_facet_coverage(
+    const double* subject, const double* original_points,
+    std::span<const std::array<int32_t, 4>> original_faces,
+    std::span<const int32_t> rows, NativeVector<int32_t>& contributors) {
+  return facet_coverage(subject, original_points, original_faces, rows, contributors, true);
+}
+
+bool exact_facet_coverage_by_arrangement(
+    const double* subject, const double* original_points,
+    std::span<const std::array<int32_t, 4>> original_faces,
+    std::span<const int32_t> rows, NativeVector<int32_t>& contributors) {
+  return facet_coverage(subject, original_points, original_faces, rows, contributors, false);
 }
 
 int relative_orient3d_exact(const double* a, const double* b, const double* c, const double* d,

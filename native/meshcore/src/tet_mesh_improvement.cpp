@@ -46,6 +46,7 @@ void dihedral_extremes(const double* const* p, double& minimum, double& maximum)
 TetMesh::PreparedReplacement TetMesh::prepare_replacement(
     std::span<const int32_t> removed, std::span<const std::array<int32_t, 4>> proposed) {
   const MemoryScope memory_scope(memory_owner_);
+  cancel_prepared_edit();
   EditTransaction transaction(*this, {});
   if (removed.empty() || proposed.empty()) return {};
   const int32_t region = complex_.region(removed.front());

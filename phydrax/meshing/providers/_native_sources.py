@@ -35,12 +35,10 @@ from ..._trainable import fixed_field, NonTrainableState
 from ..._validation import normalized_identifier, positive_finite_float
 from ...discretization._cell_geometry import CellGeometryRestrictionSource
 from ...discretization._cell_geometry_validity import cell_geometry_id
-from ...geometry._compartments import CompartmentMeshingSource
 from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
 from ...geometry._meshing_domain import MeshingDomain
 from ...geometry.brep._model import BRepGeometry, BRepModel
-from ...geometry.multiregion_surface._label_extraction import LabelFieldVolumeBinding
 from ...typing import checked
 from .. import _surface_envelope as envelope_owner
 from .._boundary_layer import BoundaryLayerMesh
@@ -51,7 +49,6 @@ from .._scope import MeshingEntityKind, MeshingScope
 from .._structured import TransfiniteBlock
 from .._sweep import SweepControl
 from .._volume_generation import declared_plc_domain
-from . import _native_periodic as periodic_owner
 
 
 def source_entity_id(revision: str, kind: str, index: int, /) -> str:
@@ -1259,22 +1256,6 @@ class NativeMappedHexSource(StrictModule, NonTrainableState):
         self.binding_id = binding.binding_id
 
 
-type NativeMeshingSource = (
-    NativeCurveSource
-    | CompartmentMeshingSource
-    | LabelFieldVolumeBinding
-    | NativeImplicitSource
-    | NativeLayerCoreSource
-    | NativeMappedHexSource
-    | NativePlanarSource
-    | periodic_owner.NativePeriodicSource
-    | NativePlcSource
-    | NativePolyhedralSource
-    | NativeSurfaceSource
-    | NativeStructuredSource
-    | NativeSweepSource
-    | NativeSurfaceEnvelopeSource
-)
 
 
 __all__ = [
@@ -1282,7 +1263,6 @@ __all__ = [
     "NativeImplicitSource",
     "NativeLayerCoreSource",
     "NativeMappedHexSource",
-    "NativeMeshingSource",
     "NativePlcSource",
     "NativePolyhedralSource",
     "NativePlanarSource",

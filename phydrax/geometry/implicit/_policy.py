@@ -168,8 +168,10 @@ class AdaptiveImplicitSurfacePolicy:
     bisection that certifies the root count of an edge the enclosure of its
     leaves cannot certify. ``flatness_tolerance`` bounds, per surface
     leaf, the leaf diagonal times the gradient-direction spread of its gradient
-    enclosure; ``None`` disables that error control. ``feature_angle`` is the
-    anchor-normal angle above which a vertex is reported as a sharp feature; on
+    enclosure, intersected for exact ball and full torus kernels with their
+    analytic gradient cone; ``None`` disables that error control.
+    ``feature_angle`` is the anchor-normal angle above which a vertex is
+    reported as a sharp feature; on
     smooth patches the anchor-normal spread scales with leaf size times
     curvature, so coarse smooth leaves can report features unless
     ``flatness_tolerance`` refines them. Sharp creases cannot meet a flatness

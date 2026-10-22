@@ -1,7 +1,9 @@
 """Association label banks preserve ordered source identities and restore bindings."""
 
+import json
 from dataclasses import fields, replace
 from pathlib import Path
+from typing import Any, cast
 
 import jax
 import numpy as np
@@ -12,18 +14,92 @@ from phydrax._model._structure import (
     model_recipe_array_values,
     model_structure_recipe,
 )
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
+from phydrax.geometry._embedding_state import MeshCertificateLimits
 from phydrax.lifecycle._meshing_sources import (
     register_meshing_source_artifacts,
     validate_meshing_source_closure,
 )
+from phydrax.meshing._association import support_budget
 from phydrax.meshing._association_state import (
     GeometryAssociation,
     GeometryAssociationKind,
     GeometryAssociationSourceBank,
+    GeometryAssociationSourceIdentities,
     GeometrySourceEntityRole,
 )
 from phydrax.meshing._host_banks import entity_key
+from tests._support.mesh_certificate_fixtures import (
+    coordinate_budget as coordinate_budget,
+    reference_budget as reference_budget,
+)
 from tests._support.recipes import recipe_field_position
+
+
+@pytest.mark.parametrize(
+    "maximum_memory_bytes",
+    (MeshCertificateLimits().maximum_scratch_bytes, 1_536_000_000),
+)
+def test_support_budget_preserves_explicit_cold_and_nested_cap(
+    maximum_memory_bytes: int,
+) -> None:
+    with support_budget(
+        100, 100, None, maximum_memory_bytes=maximum_memory_bytes
+    ) as budget:
+        assert budget.maximum_memory_bytes == maximum_memory_bytes
+        with support_budget(
+            100, 100, budget, maximum_memory_bytes=maximum_memory_bytes
+        ) as nested:
+            assert nested is budget
+            assert nested.ticket is budget.ticket
+            nested.reserve(1, maximum_memory_bytes)
+        assert budget.work_units == 1
+        with pytest.raises(CoordinateEnclosureResourceError) as refusal:
+            budget.reserve(1, 1)
+        assert refusal.value.limit == maximum_memory_bytes
+        assert refusal.value.requested == maximum_memory_bytes + 1
+        assert budget.work_units == 1
+
+
+@pytest.mark.parametrize("maximum_memory_bytes", (0, -1))
+def test_support_budget_rejects_nonpositive_cap(maximum_memory_bytes: int) -> None:
+    with pytest.raises(ValueError, match="maximum_memory_bytes"):
+        with support_budget(
+            100, 100, None, maximum_memory_bytes=maximum_memory_bytes
+        ):
+            pytest.fail("Invalid cap admitted")
+
+
+def test_support_budget_rejects_mismatched_nested_cap() -> None:
+    with support_budget(
+        100, 100, None, maximum_memory_bytes=1_536_000_000
+    ) as budget:
+        with pytest.raises(ValueError, match="match the caller memory limit"):
+            with support_budget(
+                100,
+                100,
+                budget,
+                maximum_memory_bytes=MeshCertificateLimits().maximum_scratch_bytes,
+            ):
+                pytest.fail("Replacement cap admitted")
+        assert budget.work_units == 0
+
+
+@pytest.mark.parametrize("cap", (1024, 1023))
+def test_support_budget_exact_required_memory_boundary(cap: int) -> None:
+    with support_budget(100, 100, None, maximum_memory_bytes=cap) as budget:
+        if cap == 1024:
+            budget.reserve(1, 1024)
+            assert budget.work_units == 1
+        else:
+            with pytest.raises(CoordinateEnclosureResourceError) as refusal:
+                budget.reserve(1, 1024)
+            assert refusal.value.limit == 1023
+            assert refusal.value.requested == 1024
+            assert budget.work_units == 0
 
 
 def _association() -> GeometryAssociation:
@@ -46,8 +122,12 @@ def _association() -> GeometryAssociation:
 def test_source_bank_retains_all_rows_and_only_one_copy_of_each_identity() -> None:
     association = _association()
     bank = association.source_entities
-    assert bank.row_indices == (0, 1, 0, 1)
+    assert bank.row_indices.dtype == np.int64
+    assert bank.row_indices.tolist() == [0, 1, 0, 1]
+    assert not bank.row_indices.flags.writeable
+    assert bank.row_indices.flags.c_contiguous
     assert len(bank.entries) == 2
+    assert bank.entries is bank.identities.entries
     assert bank.entity_ids() == tuple(
         entity_key("authored-r1", "region", row) for row in (0, 1, 0, 1)
     )
@@ -57,8 +137,9 @@ def test_source_bank_retains_all_rows_and_only_one_copy_of_each_identity() -> No
     assert bank.role(1) is GeometrySourceEntityRole.REGION
     assert bank.occurrence_path(1) == ()
     leaves = jax.tree_util.tree_leaves(association)
-    assert len(leaves) == 10
-    assert all(isinstance(value, jax.Array) for value in leaves)
+    assert len(leaves) == 11
+    assert sum(isinstance(value, jax.Array) for value in leaves) == 10
+    assert sum(value is bank.row_indices for value in leaves) == 1
     assert "source_entities" in tuple(field.name for field in fields(association))
     assert not {"source_entity_ids", "source_entity_roles", "source_occurrence_paths"} & {
         field.name for field in fields(association)
@@ -78,7 +159,7 @@ def test_source_bank_keeps_occurrences_and_explicit_roles_distinct() -> None:
     )
     assert len(bank.entries) == 3
     assert bank.row_indices[0] == bank.row_indices[3]
-    assert len(set(bank.row_indices[:3])) == 3
+    assert len(set(bank.row_indices[:3].tolist())) == 3
     assert bank.occurrence_paths() == (("left",), ("right",), ("left",), ("left",))
     assert bank.roles() == (
         GeometrySourceEntityRole.FACET,
@@ -92,6 +173,7 @@ def test_source_bank_preserves_absent_versus_declared_unresolved_roles() -> None
     absent = GeometryAssociationSourceBank.from_rows(("unclassified",), None, ((),))
     declared = GeometryAssociationSourceBank.from_rows(("unclassified",), (None,), ((),))
     assert absent.entries == declared.entries
+    assert absent.identities != declared.identities
     assert absent.roles() is None
     assert declared.roles() == (None,)
     assert absent != declared
@@ -103,6 +185,8 @@ def test_source_bank_preserves_absent_versus_declared_unresolved_roles() -> None
         "negative",
         "foreign",
         "boolean",
+        "tuple-routes",
+        "matrix-routes",
         "unused",
         "duplicate",
         "unordered",
@@ -118,37 +202,42 @@ def test_source_bank_refuses_noncanonical_typed_metadata(malformation: str) -> N
         (GeometrySourceEntityRole.VERTEX, GeometrySourceEntityRole.EDGE),
         ((), ()),
     )
-    with pytest.raises((TypeError, ValueError), match="GeometryAssociationSourceBank"):
+    entries = bank.identities.entries
+    with pytest.raises(
+        (TypeError, ValueError), match="GeometryAssociationSource(Bank|Identities)"
+    ):
         match malformation:
             case "negative":
-                replace(bank, row_indices=(-1, 1))
+                replace(bank, row_indices=np.asarray((-1, 1), dtype=np.int64))
             case "foreign":
-                replace(bank, row_indices=(0, 2))
+                replace(bank, row_indices=np.asarray((0, 2), dtype=np.int64))
             case "boolean":
-                replace(bank, row_indices=(False, 1))
+                replace(bank, row_indices=np.asarray((False, True)))
+            case "tuple-routes":
+                replace(bank, row_indices=(0, 1))
+            case "matrix-routes":
+                replace(bank, row_indices=np.asarray(((0, 1),), dtype=np.int64))
             case "unused":
-                replace(bank, row_indices=(0, 0))
+                replace(bank, row_indices=np.asarray((0, 0), dtype=np.int64))
             case "duplicate":
-                replace(bank, entries=(bank.entries[0], bank.entries[0]))
+                GeometryAssociationSourceIdentities((entries[0], entries[0]), True)
             case "unordered":
-                replace(bank, entries=bank.entries[::-1])
+                GeometryAssociationSourceIdentities(entries[::-1], True)
             case "mutable-path":
-                replace(
-                    bank,
-                    entries=(("a", GeometrySourceEntityRole.VERTEX, []), bank.entries[1]),
+                GeometryAssociationSourceIdentities(
+                    cast(Any, (("a", GeometrySourceEntityRole.VERTEX, []), entries[1])),
+                    True,
                 )
             case "untrimmed-name":
-                replace(
-                    bank,
-                    entries=(
-                        (" a", GeometrySourceEntityRole.VERTEX, ()),
-                        bank.entries[1],
-                    ),
+                GeometryAssociationSourceIdentities(
+                    ((" a", GeometrySourceEntityRole.VERTEX, ()), entries[1]), True
                 )
             case "role-type":
-                replace(bank, entries=(("a", "vertex", ()), bank.entries[1]))
+                GeometryAssociationSourceIdentities(
+                    cast(Any, (("a", "vertex", ()), entries[1])), True
+                )
             case "undeclared-role":
-                replace(bank, indexed_roles=False)
+                GeometryAssociationSourceIdentities(entries, False)
             case _:
                 raise ValueError(
                     f"source_bank.malformation must name a fixture; got {malformation!r}"
@@ -161,16 +250,24 @@ def test_restored_association_authenticates_source_bank_rows(tamper: str) -> Non
     register_meshing_source_artifacts()
     recipe = model_structure_recipe(association)
     arrays = model_recipe_array_values(association, recipe, prefix="bank-tamper")
-    bank_recipe = recipe["items"][recipe_field_position(recipe, "source_entities")]
-    column = "row_indices" if tamper == "route" else "entity_ids"
-    value = next(
-        value for key, value in bank_recipe["payload"]["items"] if key["value"] == column
-    )
-    value["values"] = (
-        [1, 0, 1, 0]
-        if tamper == "route"
-        else ["a-foreign-region", association.source_entities.entries[1][0]]
-    )
+    if tamper == "route":
+        (route_name,) = (
+            name for name, value in arrays.items() if isinstance(value, np.ndarray)
+        )
+        routes = np.asarray((1, 0, 1, 0), dtype=np.int64)
+        routes.setflags(write=False)
+        arrays[route_name] = routes
+    else:
+        bank_recipe = recipe["items"][recipe_field_position(recipe, "source_entities")]
+        identities = bank_recipe["items"][
+            recipe_field_position(bank_recipe, "identities")
+        ]
+        prefix = next(
+            value
+            for key, value in identities["payload"]["items"]
+            if key["value"] == "entity_id_prefix"
+        )
+        prefix["value"] = "a-foreign-region:"
     restored = model_from_array_recipe(recipe, arrays, prefix="bank-tamper")
     with pytest.raises(
         ValueError, match="source_entity_ids|source_entities|association_id"
@@ -221,7 +318,8 @@ def test_source_bank_archive_roundtrip_preserves_every_role_member(
     )
     assert restored == bank
     assert restored.indexed_roles is True
-    assert restored.row_indices == bank.row_indices
+    np.testing.assert_array_equal(restored.row_indices, bank.row_indices)
+    assert not restored.row_indices.flags.writeable
     for row, (identifier, role, path) in enumerate(
         zip(identifiers, roles, paths, strict=True)
     ):
@@ -236,23 +334,26 @@ def test_source_bank_column_record_preserves_optional_roles_and_occurrences(
 ) -> None:
     roles = (None, GeometrySourceEntityRole.FACET, None) if indexed_roles else None
     bank = GeometryAssociationSourceBank.from_rows(
-        ("left-face", "right-face", "left-face"),
+        ("face-left", "face-right", "face-left"),
         roles,
         (("assembly", "left"), ("assembly", "right"), ("assembly", "left")),
     )
-    record = bank.to_record()
-    assert record["entity_ids"] == ("left-face", "right-face")
-    assert record["entity_roles"] == (None, "facet" if indexed_roles else None)
-    assert record["occurrence_paths"] == (
-        ("assembly", "left"),
-        ("assembly", "right"),
-    )
-    assert record["row_indices"] == (0, 1, 0)
-    assert record["indexed_roles"] is indexed_roles
-    assert GeometryAssociationSourceBank.from_record(record) == bank
+    record = bank.identities.to_record()
+    assert record == {
+        "entity_id_prefix": "face-",
+        "entity_id_suffixes": ("left", "right"),
+        "role_values": ("facet",) if indexed_roles else (),
+        "role_codes": (-1, 0) if indexed_roles else (-1, -1),
+        "occurrence_paths": (("assembly", "left"), ("assembly", "right")),
+        "occurrence_path_codes": (0, 1),
+        "indexed_roles": indexed_roles,
+    }
+    assert bank.row_indices.tolist() == [0, 1, 0]
+    assert GeometryAssociationSourceIdentities.from_record(record) == bank.identities
     register_meshing_source_artifacts()
     recipe = model_structure_recipe(bank)
-    restored = model_from_array_recipe(recipe, {}, prefix="bank-columns")
+    arrays = model_recipe_array_values(bank, recipe, prefix="bank-columns")
+    restored = model_from_array_recipe(recipe, arrays, prefix="bank-columns")
     assert restored == bank
     assert restored.entity_ids() == bank.entity_ids()
     assert restored.roles() == bank.roles()
@@ -260,38 +361,132 @@ def test_source_bank_column_record_preserves_optional_roles_and_occurrences(
 
 
 @pytest.mark.parametrize(
-    "tamper", ("missing", "extra", "mutable", "extent", "role", "unused")
+    ("identifiers", "prefix", "suffixes"),
+    (
+        (
+            ("rev:facet:12", "rev:facet:1", "rev:vertex:3"),
+            "rev:",
+            ("facet:1", "facet:12", "vertex:3"),
+        ),
+        (("only",), "only", ("",)),
+        ((), "", ()),
+        (("edge", "edge:2", "edge:10"), "edge", ("", ":10", ":2")),
+        (
+            ("Fläche:β:2", "Fläche:β:1", "Fläche:γ:🙂"),
+            "Fläche:",
+            ("β:1", "β:2", "γ:🙂"),
+        ),
+        (("alpha", "beta", "gamma"), "", ("alpha", "beta", "gamma")),
+    ),
+    ids=("revision", "single", "empty", "id-equal-to-prefix", "unicode", "disjoint"),
+)
+def test_source_identity_record_shares_one_prefix_without_parsing_ids(
+    identifiers: tuple[str, ...], prefix: str, suffixes: tuple[str, ...]
+) -> None:
+    bank = GeometryAssociationSourceBank.from_rows(
+        identifiers, None, ((),) * len(identifiers)
+    )
+    identities = bank.identities
+    record = identities.to_record()
+    assert record["entity_id_prefix"] == prefix
+    assert record["entity_id_suffixes"] == suffixes
+    # The prefix is wire encoding only: decoded identities hold whole IDs.
+    assert tuple(entry[0] for entry in identities.entries) == tuple(
+        prefix + suffix for suffix in suffixes
+    )
+    assert not hasattr(identities, "entity_id_prefix")
+    assert GeometryAssociationSourceIdentities.from_record(record) == identities
+    register_meshing_source_artifacts()
+    recipe = json.loads(
+        json.dumps(model_structure_recipe(bank), ensure_ascii=True, sort_keys=True)
+    )
+    arrays = model_recipe_array_values(bank, recipe, prefix="bank-prefix")
+    restored = model_from_array_recipe(recipe, arrays, prefix="bank-prefix")
+    assert restored == bank
+    assert restored.entity_ids() == identifiers
+
+
+@pytest.mark.parametrize(
+    ("prefix", "suffixes"),
+    (("", ("",)), ("edge ", ("",)), ("", ("edge", "")), ("edge", ("", ""))),
+    ids=("empty-id", "untrimmed-id", "empty-second-id", "duplicate-id"),
+)
+def test_source_identity_record_refuses_suffixes_without_valid_ids(
+    prefix: str, suffixes: tuple[str, ...]
+) -> None:
+    record = {
+        "entity_id_prefix": prefix,
+        "entity_id_suffixes": suffixes,
+        "role_values": (),
+        "role_codes": (-1,) * len(suffixes),
+        "occurrence_paths": ((),),
+        "occurrence_path_codes": (0,) * len(suffixes),
+        "indexed_roles": False,
+    }
+    with pytest.raises(ValueError, match="GeometryAssociationSourceIdentities"):
+        GeometryAssociationSourceIdentities.from_record(record)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "missing",
+        "extra",
+        "mutable",
+        "extent",
+        "role",
+        "split",
+        "code",
+        "unused",
+        "boolean-code",
+    ),
 )
 def test_source_bank_column_record_refuses_malformed_wire_metadata(tamper: str) -> None:
-    record = dict(_association().source_entities.to_record())
+    record = dict(_association().source_entities.identities.to_record())
     match tamper:
         case "missing":
-            del record["entity_roles"]
+            del record["role_codes"]
         case "extra":
             record["unknown"] = ()
         case "mutable":
-            record["row_indices"] = [0, 1, 0, 1]
+            record["entity_id_suffixes"] = list(record["entity_id_suffixes"])
         case "extent":
-            record["entity_roles"] = ()
+            record["role_codes"] = ()
         case "role":
-            record["entity_roles"] = ("foreign-role", "region")
+            record["role_values"] = ("foreign-role",)
+        case "split":
+            prefix = record["entity_id_prefix"]
+            record["entity_id_prefix"] = prefix[:-1]
+            record["entity_id_suffixes"] = tuple(
+                prefix[-1] + suffix for suffix in record["entity_id_suffixes"]
+            )
+        case "code":
+            record["occurrence_path_codes"] = (0, 1)
         case "unused":
-            record["row_indices"] = (0, 0, 0, 0)
+            record["occurrence_paths"] = (*record["occurrence_paths"], ("unused",))
+        case "boolean-code":
+            record["role_codes"] = (False, False)
         case _:
             raise ValueError(
                 f"source_bank.tamper must name a wire mutation; got {tamper!r}"
             )
-    with pytest.raises((TypeError, ValueError), match="GeometryAssociationSourceBank"):
-        GeometryAssociationSourceBank.from_record(record)
+    with pytest.raises(
+        (TypeError, ValueError), match="GeometryAssociationSourceIdentities"
+    ):
+        GeometryAssociationSourceIdentities.from_record(record)
 
 
-@pytest.mark.parametrize("dimension", (0, 1, 2, 3))
 def test_volume_consensus_does_not_classify_exterior_boundary(
-    dimension: int,
+    reference_budget: CoordinateEnclosureBudget,
 ) -> None:
+    import phydrax as phx
     from phydrax.discretization import CellMesh
     from phydrax.meshing._association import _volume_stratum_consensus
-    from phydrax.meshing._association_routes import boundary_mask
+    from phydrax.meshing._association_routes import (
+        boundary_mask,
+        stratum_region_consensus,
+    )
+    from phydrax.meshing._plc_mapped_support import prepare_mapped_plc_support
 
     # Four tetrahedra partition the standard tetrahedron at its interior center.
     mesh = CellMesh.from_tetrahedra(
@@ -304,17 +499,43 @@ def test_volume_consensus_does_not_classify_exterior_boundary(
             dtype=np.int32,
         ),
     )
-    regions = _volume_stratum_consensus(mesh, dimension, np.zeros((4,), dtype=np.int64))
-    if dimension < 3:
-        boundary = boundary_mask(mesh, dimension)
-        assert np.any(boundary)
-        assert np.all(regions[boundary] == -1)
-        assert np.all(regions[~boundary] == 0)
-    else:
-        assert np.array_equal(regions, np.zeros((4,), dtype=np.int64))
-    if dimension == 0:
-        assert regions[0] == -1
-        assert regions[4] == 0
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    domain = phx.geometry.PiecewiseLinearDomain(
+        np.asarray(mesh.coordinates)[:4],
+        np.asarray(
+            phx.discretization.reference_cell_topology("tetrahedron").entities[2],
+            dtype=np.int64,
+        ),
+        np.tile(np.asarray((0, -1), dtype=np.int64), (4, 1)),
+        ("body",),
+        source_id="consensus-source",
+    )
+    support = prepare_mapped_plc_support(
+        mesh,
+        geometry,
+        domain,
+        np.zeros((4,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+        maximum_support_queries=32768,
+        budget=reference_budget,
+    )
+    for dimension in range(4):
+        for labels in (
+            np.zeros((4,), dtype=np.int64),
+            np.asarray((0, 1, 0, 1), dtype=np.int64),
+        ):
+            regions = _volume_stratum_consensus(support, dimension, labels)
+            expected = stratum_region_consensus(mesh, dimension, labels, 3)
+            if dimension < 3:
+                boundary = boundary_mask(mesh, dimension)
+                expected[boundary] = -1
+                assert np.any(boundary)
+                assert np.all(regions[boundary] == -1)
+            np.testing.assert_array_equal(regions, expected)
+            assert not np.shares_memory(regions, labels)
+    regions = _volume_stratum_consensus(support, 0, np.zeros((4,), dtype=np.int64))
+    assert regions[0] == -1
+    assert regions[4] == 0
 
 
 def test_reference_chart_reuse_binds_current_arrays_and_request_scope() -> None:

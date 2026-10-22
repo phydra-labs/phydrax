@@ -155,6 +155,17 @@ def face_charts(
         return (
             (tuple(composition(value, budget=budget) for value in coordinates), "box"),
         )
+    if len(face) == 4 and np.array_equal(corners[0] + corners[2], corners[1] + corners[3]):
+        # A reference parallelogram is one oriented unit-box chart. Splitting
+        # its diagonal would integrate and prove the same closed image twice.
+        arguments = algebra.affine_arguments(
+            corners[0], np.stack((corners[1] - corners[0], corners[3] - corners[0]), axis=1),
+            budget=budget,
+        )
+        composition = algebra.ExpressionComposition(arguments, budget=budget)
+        return (
+            (tuple(composition(value, budget=budget) for value in coordinates), "box"),
+        )
     pieces = (corners,) if len(face) <= 3 else (corners[[0, 1, 2]], corners[[0, 2, 3]])
     result: list[tuple[tuple[algebra.Expression, ...], algebra.BernsteinDomain]] = []
     for piece in pieces:

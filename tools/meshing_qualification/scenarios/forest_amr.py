@@ -14,6 +14,7 @@ from tools.meshing_qualification._runtime import (
     _measured,
     _runtime_identity,
     qualification_failure,
+    StageMeasurement,
 )
 
 
@@ -47,9 +48,9 @@ class _ForestAdaptationPhase(phx.StrictModule):
     before: dict[str, Any]
     after: dict[str, Any]
     closures: int
-    initialize_stage: dict[str, float]
-    refinement_stages: list[dict[str, float]]
-    adapt_stage: dict[str, float]
+    initialize_stage: StageMeasurement
+    refinement_stages: list[StageMeasurement]
+    adapt_stage: StageMeasurement
 
 
 @final
@@ -62,8 +63,8 @@ class _ForestTransferPhase(phx.StrictModule):
     residual: float
     reported: float
     constant_error: float
-    transition_stage: dict[str, float]
-    apply_stage: dict[str, float]
+    transition_stage: StageMeasurement
+    apply_stage: StageMeasurement
 
 
 def _forest_adaptation_phase() -> _ForestAdaptationPhase:
@@ -233,9 +234,9 @@ class _ForestMigrationPhase(phx.StrictModule):
     target_partition: phx.discretization.PreparedForestPartition
     migration: phx.discretization.ForestMigrationPlan
     migration_error: float
-    source_partition_stage: dict[str, float]
-    target_partition_stage: dict[str, float]
-    migration_stage: dict[str, float]
+    source_partition_stage: StageMeasurement
+    target_partition_stage: StageMeasurement
+    migration_stage: StageMeasurement
 
 
 def _forest_migration_phase(

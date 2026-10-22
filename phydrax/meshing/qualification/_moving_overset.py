@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from fractions import Fraction
 from os import PathLike
@@ -34,14 +34,20 @@ from phydrax.discretization import (
     certify_cell_geometry_validity,
     ExactPlcCellGeometrySource,
     FieldTracePolicy,
+    FiniteElementDirichletConstraint,
     FiniteElementDiscretization,
     FiniteElementPlan,
     PolygonalConnectivity,
 )
+from phydrax.discretization._cell_geometry_transfer import (
+    transition_displaced_cell_geometry,
+)
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
 from phydrax.discretization._exact_plc_geometry import translated_plc_layout_matches
 from phydrax.equations import CompiledFiniteElementProblem
 from phydrax.geometry import PiecewiseLinearDomain, PlanarMeshRegion, SegmentMesh
+from phydrax.geometry._domain_coverage import DomainCoverageCertificate
 from phydrax.geometry._source_fidelity import fidelity_norm_bound
 from phydrax.lifecycle import CompositionEntry
 from phydrax.lifecycle._meshing_field_records import (
@@ -59,6 +65,7 @@ from phydrax.meshing import (
     CellMeshAuditDisposition,
     CellMeshAuditPolicy,
     CellMeshingResult,
+    CellMeshTransition,
     evaluate_cell_quality,
     GeometryAssociation,
     GeometryAssociationKind,
@@ -67,6 +74,7 @@ from phydrax.meshing import (
     MeshCertificationSchedule,
     MeshingComplianceReport,
     MeshingDerivativeMode,
+    MeshingLimits,
     MeshingScope,
     MeshingStageKind,
     MeshingStageReport,
@@ -75,6 +83,7 @@ from phydrax.meshing import (
     MeshLineage,
     MeshPart,
     MeshPatch,
+    MeshTransitionKind,
     MeshZone,
     NativeMeshingPhaseRecorder,
     NativeMeshingPlan,
@@ -86,18 +95,25 @@ from phydrax.meshing import (
 )
 from phydrax.meshing._association import PlcAssociationTransfer, retain_association_scopes
 from phydrax.meshing._lineage import identity_lineage, inherit_mesh_organization
+from phydrax.meshing._native_preparation import (
+    native_preparation_ledger,
+    NativeCompletedSourceIssue,
+    stage_native_completed_source_issue,
+)
 from phydrax.meshing.providers import (
     NativeMeshingOptions,
     NativeMeshingProvider,
     NativePlanarSource,
 )
 from phydrax.meshing.providers._native_planar_domain import (
+    measure_edge_lengths,
     planar_compliance,
     PreparedPlanarDomain,
     source_arrays,
     source_carrier_evidence,
 )
 from phydrax.meshing.providers._native_publication import (
+    bind_native_execution_result,
     coordinate_budget,
     coordinate_phase,
     NativeCertificationRequest,
@@ -568,6 +584,8 @@ def _rigid_motion_certificate(
         limits=request.certificate_limits,
         budget=budget,
     )
+    if not isinstance(premises.coverage, DomainCoverageCertificate):
+        raise TypeError("Rigid moving PLC support requires exact domain coverage")
     patches, zones, labels, associations = (
         successor_transfer.transition_source_associations(
             before,
@@ -596,12 +614,14 @@ def _rigid_motion_compliance(
     before: CellMeshingResult,
     mesh: CellMesh,
     points: _HostFloatArray,
+    connectivity: PolygonalConnectivity,
     constrained: _HostIndexArray,
     constraint_sources: _HostIndexArray,
     original_prepared: PreparedPlanarDomain,
     translated: _TranslatedPlan,
     evidence: _CarrierEvidence,
     budget: CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> MeshingComplianceReport:
     prepared = translated.prepared
     moved_specification = translated.specification
@@ -619,14 +639,18 @@ def _rigid_motion_compliance(
         )
     # This status is the observed unchanged-topology predicate; no CDT was run.
     status = "ok" if mesh.topology_id == before.mesh.topology_id else "topology_changed"
+    edges = np.sort(np.asarray(connectivity.edges), axis=1)
     compliance = planar_compliance(
         moved_specification,
         prepared,
         points,
         np.asarray(mesh.blocks[0].vertices),
-        (constrained, constraint_sources),
+        edges,
+        measure_edge_lengths(points, edges, scope=scope),
+        (np.sort(constrained, axis=1), constraint_sources),
         (np.degrees(minimum_angle), retained_steiner, status),
         (certified_deviation, source_bound),
+        scope=scope,
     )
     source_requested, source_achieved = source_carrier_evidence(
         prepared,
@@ -752,6 +776,8 @@ def _interior_motion_support(
         limits=request.certificate_limits,
         budget=budget,
     )
+    if not isinstance(prepared.coverage, DomainCoverageCertificate):
+        raise TypeError("Interior moving PLC support requires exact domain coverage")
     lineage = identity_lineage(before.mesh, mesh)
     proved = transfer.propagate(
         before,
@@ -774,6 +800,7 @@ def _interior_motion_compliance(
     specification: SurfaceMeshingSpec,
     support: _InteriorSupport,
     budget: CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> MeshingComplianceReport:
     geometry = support.geometry
     proved = support.proved
@@ -783,7 +810,7 @@ def _interior_motion_compliance(
     )
     edge_rows = edge_support.target_rows(np.asarray(edge_set.entity_ids))
     selected = np.asarray(edge_support.source_dimensions)[edge_rows] == 1
-    constrained = np.asarray(connectivity.edges)[selected]
+    constrained = np.sort(np.asarray(connectivity.edges)[selected], axis=1)
     constraint_sources = np.asarray(edge_support.source_indices)[edge_rows][selected]
     original_prepared.domain(source)
     match geometry.exact_source:
@@ -798,11 +825,14 @@ def _interior_motion_compliance(
     certified_deviation = float(np.max(source_deviations, initial=0.0))
     source_bound = float(np.max(original_prepared.source_bounds, initial=0.0))
     measured = evaluate_cell_quality(mesh, budget=budget)
+    edges = np.sort(np.asarray(connectivity.edges), axis=1)
     compliance = planar_compliance(
         specification,
         original_prepared,
         points,
         np.asarray(mesh.blocks[0].vertices),
+        edges,
+        measure_edge_lengths(points, edges, scope=scope),
         (constrained, constraint_sources),
         (
             np.degrees(float(np.min(np.asarray(measured.minimum_angle)))),
@@ -810,6 +840,7 @@ def _interior_motion_compliance(
             "ok",
         ),
         (certified_deviation, source_bound),
+        scope=scope,
     )
     source_requested, source_achieved = source_carrier_evidence(
         original_prepared,
@@ -887,6 +918,50 @@ def _publish_planar_motion(
         geometry=geometry,
     )
     return MeshPart(part.name, result)
+
+
+def _prepare_planar_motion_issue(
+    successor: MeshPart,
+    before: CellMeshingResult,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> NativeCompletedSourceIssue:
+    """Prepay the actual target's handover while retaining the source as history."""
+    previous = before.execution_evidence
+    if previous is None or previous.owner_id is None:
+        raise RuntimeError("native_moving_overset.motion must retain owner-bound source execution history")
+    with budget.bind_ticket(scope.ticket_view()):
+        native_preparation_ledger(scope).record_history(
+            scope, previous, completed_source=before,
+        )
+        return stage_native_completed_source_issue(
+            scope, _cell_result(successor), budget=budget,
+        )
+
+
+def _ended_planar_motion(
+    successor: MeshPart,
+    before: CellMeshingResult,
+    limits: MeshingLimits,
+    scope: NativeExecutionScope,
+    issue: NativeCompletedSourceIssue,
+) -> MeshPart:
+    """Bind the actual ended motion request; the predecessor is history only."""
+    try:
+        if scope.evidence is None:
+            raise RuntimeError("native_moving_overset.motion must retain its actual ended execution scope")
+        previous = before.execution_evidence
+        if previous is None or previous.owner_id is None:
+            raise RuntimeError("native_moving_overset.motion must retain owner-bound source execution history")
+        bound = bind_native_execution_result(
+            _cell_result(successor), scope.evidence, limits, scope.operation_started,
+            history_evidence=(previous,),
+        )
+        issue.complete(bound)
+    except BaseException:
+        issue.close()
+        raise
+    return MeshPart(successor.name, bound)
 
 
 @final
@@ -1135,12 +1210,14 @@ def rigid_planar_successor(
                         before,
                         mesh,
                         points,
+                        connectivity,
                         constrained,
                         constraint_sources,
                         plan.prepared,
                         translated,
                         evidence,
                         budget,
+                        scope,
                     )
                 successor = _publish_planar_motion(
                     part,
@@ -1174,7 +1251,8 @@ def rigid_planar_successor(
                         raise RuntimeError(
                             f"native_moving_overset.successor.geometry must retain the translated coordinate layout; got {successor_geometry!r}"
                         )
-                return successor, moved_plan
+                issue = _prepare_planar_motion_issue(successor, before, scope, budget)
+    return _ended_planar_motion(successor, before, limits, scope, issue), moved_plan
 
 
 @checked
@@ -1185,8 +1263,17 @@ def deform_planar_interior(
     motion_id: str,
     plan: NativeMeshingPlan,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    record_motion: Callable[[CellMeshTransition], None] | None = None,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> MeshPart:
-    """Recertify native mesh motion inside its unchanged represented domain."""
+    """Recertify motion and optionally retain its actual same-topology transition.
+
+    The transition binds this source mesh and the published target with the
+    exact lineage used for native source-association propagation. It is not a
+    refinement/remesh or a second generation verdict.
+    An explicit operand collector retains only numerical kernel operands earned
+    by this request, not certification verdicts. Its caller aborts failed captures.
+    """
     before = _cell_result(part)
     if (
         not isinstance(plan.source, NativePlanarSource)
@@ -1198,8 +1285,22 @@ def deform_planar_interior(
         )
     limits = plan.specification.limits
     with NativeExecutionScope(limits.native_limits()) as scope:
+        if coordinate_operands is not None:
+            coordinate_operands.begin(
+                scope, None, native_preparation_ledger(scope).overlap(scope, None)
+            )
         with scope.host_workspace() as workspace:
             budget = coordinate_budget(limits)
+            budget.capture_coordinate_operands = coordinate_operands is not None
+            budget.capture_polynomial_operands = (
+                coordinate_operands is not None and coordinate_operands.capture_polynomials
+            )
+            budget.capture_measure_operands = (
+                coordinate_operands is not None and coordinate_operands.capture_measures
+            )
+            budget.capture_signed_determinant_operands = (
+                coordinate_operands is not None and coordinate_operands.capture_signed_determinants
+            )
             with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
                 inputs = _interior_motion_inputs(
                     before, coordinates, motion_id, plan.specification
@@ -1210,6 +1311,7 @@ def deform_planar_interior(
                     inputs.connectivity,
                     inputs.mesh,
                 )
+                geometry_transition = None
                 with coordinate_phase(scope, limits, budget):
                     support = _interior_motion_support(
                         before,
@@ -1230,7 +1332,12 @@ def deform_planar_interior(
                         plan.specification,
                         support,
                         budget,
+                        scope,
                     )
+                    if record_motion is not None:
+                        geometry_transition = transition_displaced_cell_geometry(
+                            before.mesh, before.geometry, mesh, budget=budget
+                        )
                 associations = retain_association_scopes(
                     before.associations, support.proved
                 )
@@ -1247,7 +1354,7 @@ def deform_planar_interior(
                     labels,
                     associations,
                 )
-                return _publish_planar_motion(
+                successor = _publish_planar_motion(
                     part,
                     before,
                     mesh,
@@ -1267,6 +1374,33 @@ def deform_planar_interior(
                     workspace,
                     budget,
                 )
+                if coordinate_operands is not None:
+                    published = _cell_result(successor)
+                    with coordinate_phase(scope, limits, budget):
+                        coordinate_operands.capture(
+                            published.mesh, published.geometry, budget, scope,
+                            input_owners=(before,),
+                            coordinate_contract=published.coordinate_contract,
+                        )
+                issue = _prepare_planar_motion_issue(successor, before, scope, budget)
+    successor = _ended_planar_motion(successor, before, limits, scope, issue)
+    if coordinate_operands is not None:
+        receipt = _cell_result(successor).execution_evidence
+        if receipt is None:
+            raise RuntimeError("Native planar motion must bind its operand earning receipt")
+        coordinate_operands.complete(receipt)
+    if record_motion is not None:
+        transition = CellMeshTransition(
+            before.mesh.mesh_id,
+            before.mesh.topology_id,
+            _cell_result(successor),
+            support.lineage,
+            MeshTransitionKind.MOTION,
+            budget=budget,
+            geometry_transition=geometry_transition,
+        )
+        record_motion(transition)
+    return successor
 
 
 def native_planar_part(
@@ -1512,17 +1646,32 @@ def field_entries(
 def prepare_poisson_update(
     field: FiniteElementDiscretization,
     carried: Array,
+    *,
+    constraint: FiniteElementDirichletConstraint | None = None,
 ) -> CompiledFiniteElementProblem:
+    """Compile ``-Δu = 1`` with strong data ``carried`` on the declared rows.
+
+    The default constrains every exterior DOF. Composite overset consumers constrain
+    physical and blanked rows, retaining receptor rows for coupling equations.
+    """
     form = phx.equations.FiniteElementForm(
         "moving-annulus-poisson",
         "u",
         (phx.equations.DiffusionAction("u", 1.0), phx.equations.SourceAction("u", 1.0)),
     )
-    constraint = phx.discretization.dirichlet_constraint(field, "u")
+    selected = (
+        phx.discretization.dirichlet_constraint(field, "u")
+        if constraint is None
+        else constraint
+    )
+    if selected.field_name != "u":
+        raise ValueError(
+            f"native_moving_overset.poisson.constraint.field_name must equal 'u'; got {selected.field_name!r}"
+        )
     return phx.equations.compile_finite_element_problem(
         form,
         field,
-        constraint=constraint,
+        constraint=selected,
         dirichlet_values=carried,
     )
 

@@ -123,11 +123,11 @@ def decimal_plc_inverse(path: str, content_id: str, route: str) -> dict[str, Any
     target_source = result.target.geometry.exact_source
     if not isinstance(original_source, ExactPlcCellGeometrySource):
         raise TypeError(
-            f"cold_lifecycle.original_source must be an exact PLC source; got {type(original_source).__name__}"
+            f"cold_lifecycle.original_source must be an ExactPlcCellGeometrySource; got {type(original_source).__name__}"
         )
     if not isinstance(target_source, ExactPlcCellGeometrySource):
         raise TypeError(
-            f"cold_lifecycle.target_source must be an exact PLC source; got {type(target_source).__name__}"
+            f"cold_lifecycle.target_source must be an ExactPlcCellGeometrySource; got {type(target_source).__name__}"
         )
     with coordinate_reference_budget(
         queries_upper=(

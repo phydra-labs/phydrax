@@ -63,7 +63,10 @@ End mesh certificate checks
 
 from __future__ import annotations
 
-from typing import Callable, final
+import threading
+import weakref
+from dataclasses import dataclass
+from typing import Callable, final, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -74,13 +77,20 @@ import phydrax.geometry._embedding_state as embedding_state_owner
 import phydrax.geometry._meshing_domain as domain_owner
 import phydrax.geometry._source_boundary_records as source_boundary_records_owner
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._host_storage import immutable_host_array
 from .._strict import StrictModule
 from .._validation import nonnegative_integer
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
-from ..typing import checked
+from ..typing import checked, HostInt32, HostInt64, parse, Scope
 from ._atlas import TrimDomain
 from ._chart_restriction import validate_chart_restrictions
+from ._source_boundary_records import (
+    SourceBoundaryCellDim,
+    SourceBoundaryOccurrenceDim,
+    SourceBoundarySideDim,
+)
+from .brep._carrier_pieces import admit_carrier_fingerprint, carrier_payload
 from .brep._coordinate_request import coordinate_source_request
 from .brep._patches import (
     BernsteinRestrictionBank,
@@ -89,6 +99,10 @@ from .brep._patches import (
     source_bernstein_restriction_scope,
 )
 from .brep._request_preparations import TrimRequestPreparations
+
+
+if TYPE_CHECKING:
+    from ._planar_chain_embedding import _PlanarTopology
 
 
 _SEED_BLOCK = 256
@@ -220,9 +234,17 @@ class MeshingDomainBoundarySource(StrictModule):
     neither necessary nor substituted for the requested Euclidean deviation.
     """
 
+    __strict_contract__ = True
+
     domain: domain_owner.MeshingDomain
     patches: tuple[int, ...] = eqx.field(static=True)
     resolution: int = eqx.field(static=True)
+    boundary_occurrences: HostInt32[
+        SourceBoundaryCellDim, SourceBoundarySideDim, SourceBoundaryOccurrenceDim
+    ] | None
+    boundary_cell_ids: HostInt64[SourceBoundaryCellDim] | None
+    boundary_patch_ids: HostInt32[SourceBoundaryCellDim] | None
+    boundary_occurrence_id: str = eqx.field(static=True)
     chart_triangulations: tuple[
         tuple[
             int,
@@ -247,6 +269,9 @@ class MeshingDomainBoundarySource(StrictModule):
         /,
         *,
         resolution: int = 48,
+        boundary_occurrences: np.ndarray | None = None,
+        boundary_cell_ids: np.ndarray | None = None,
+        boundary_patch_ids: np.ndarray | None = None,
         chart_triangulations: tuple[
             tuple[
                 int,
@@ -278,7 +303,128 @@ class MeshingDomainBoundarySource(StrictModule):
         self.domain = domain
         self.patches = selected
         self.resolution = count
-        self.chart_triangulations = chart_triangulations
+        supplied = (
+            boundary_occurrences is not None,
+            boundary_cell_ids is not None,
+            boundary_patch_ids is not None,
+        )
+        if any(supplied) and not all(supplied):
+            raise ValueError("Boundary occurrence ownership requires all three arrays")
+        self.boundary_occurrences = None
+        self.boundary_cell_ids = None
+        self.boundary_patch_ids = None
+        if (
+            boundary_occurrences is not None
+            and boundary_cell_ids is not None
+            and boundary_patch_ids is not None
+        ):
+            scope = Scope()
+            parse(boundary_cell_ids, HostInt64[SourceBoundaryCellDim], "boundary_cell_ids", scope=scope)
+            parse(boundary_patch_ids, HostInt32[SourceBoundaryCellDim], "boundary_patch_ids", scope=scope)
+            parse(
+                boundary_occurrences,
+                HostInt32[SourceBoundaryCellDim, SourceBoundarySideDim, SourceBoundaryOccurrenceDim],
+                "boundary_occurrences",
+                scope=scope,
+            )
+            bank = boundary_occurrences
+            ids = boundary_cell_ids
+            owners = boundary_patch_ids
+            if (
+                ids.dtype != np.dtype(np.int64)
+                or ids.ndim != 1
+                or owners.dtype != np.dtype(np.int32)
+                or owners.shape != ids.shape
+                or bank.dtype != np.dtype(np.int32)
+                or bank.shape != (ids.size, 3, 3)
+                or np.any(ids < 0)
+                or np.unique(ids).size != ids.size
+                or not np.all(np.isin(owners, selected))
+            ):
+                raise ValueError("Boundary occurrence arrays require unique global cells and selected patches")
+            interior = np.all(bank == -1, axis=2)
+            authored = ~interior
+            if np.any(bank[:, :, :2][authored] < 0) or np.any(
+                ~np.isin(bank[:, :, 2][authored], (-1, 1))
+            ):
+                raise ValueError("Boundary occurrences require complete interior sentinels or oriented loop/use rows")
+            for cell, side in np.argwhere(authored):
+                loop, use, _ = bank[cell, side]
+                loops = domain.patches[int(owners[cell])].loops
+                if loop >= len(loops) or use >= len(loops[int(loop)]):
+                    raise ValueError("Boundary occurrence refers to a foreign patch loop/use")
+                authored_use = loops[int(loop)][int(use)]
+                if not isinstance(authored_use, domain_owner.PatchCurveUse):
+                    raise ValueError("An active mesh side cannot own a collapsed pole use")
+                expected = 1 if authored_use.last > authored_use.first else -1
+                if authored_use.last == authored_use.first or bank[cell, side, 2] != expected:
+                    raise ValueError("Boundary occurrence orientation differs from its authored use")
+            expected_uses = {
+                (patch, loop, ordinal)
+                for patch in selected
+                for loop, uses in enumerate(domain.patches[patch].loops)
+                for ordinal, use_ in enumerate(uses)
+                if isinstance(use_, domain_owner.PatchCurveUse)
+            }
+            observed_uses = {
+                (int(owners[cell]), int(bank[cell, side, 0]), int(bank[cell, side, 1]))
+                for cell, side in np.argwhere(authored)
+            }
+            if observed_uses != expected_uses or set(owners.tolist()) != set(selected):
+                raise ValueError("Boundary occurrence ownership is missing an authored patch loop/use")
+            order = np.argsort(ids, kind="stable")
+            self.boundary_occurrences = immutable_host_array(bank[order])
+            self.boundary_cell_ids = immutable_host_array(ids[order])
+            self.boundary_patch_ids = immutable_host_array(owners[order])
+        self.chart_triangulations = tuple(
+            (
+                record[0],
+                immutable_host_array(record[1]),
+                immutable_host_array(record[2]),
+                immutable_host_array(record[3]),
+                immutable_host_array(record[4]),
+                immutable_host_array(record[5]),
+                immutable_host_array(record[6]),
+                immutable_host_array(record[7]),
+                immutable_host_array(record[8]),
+                immutable_host_array(record[9]),
+            )
+            for record in chart_triangulations
+        )
+        self.boundary_occurrence_id = self._boundary_occurrence_identity()
+
+    def require_current(self) -> None:
+        """Revalidate restored occurrence values and canonical ordering."""
+        self.domain.require_current(self.source_id, self.source_revision)
+        if self.boundary_cell_ids is not None and np.any(
+            np.diff(self.boundary_cell_ids) <= 0
+        ):
+            raise ValueError("Restored boundary occurrence cell IDs are not canonical")
+        rebuilt = MeshingDomainBoundarySource(
+            self.domain,
+            self.patches,
+            resolution=self.resolution,
+            chart_triangulations=self.chart_triangulations,
+            boundary_occurrences=self.boundary_occurrences,
+            boundary_cell_ids=self.boundary_cell_ids,
+            boundary_patch_ids=self.boundary_patch_ids,
+        )
+        if rebuilt.boundary_occurrence_id != self.boundary_occurrence_id:
+            raise ValueError("Restored boundary occurrences are not canonical")
+
+    def _boundary_occurrence_identity(self) -> str:
+        """Bind nominal side ownership to the current source and domain."""
+        return canonical_fingerprint(
+            {
+                "kind": "source-boundary-occurrences",
+                "source": self.source_id,
+                "revision": self.source_revision,
+                "domain": self.domain.domain_id,
+                "rows": array_tree_fingerprint(
+                    (self.boundary_cell_ids, self.boundary_patch_ids, self.boundary_occurrences)
+                ),
+            }
+        )
 
     @property
     def source_id(self) -> str:
@@ -625,7 +771,7 @@ class MeshingDomainBoundarySource(StrictModule):
                     images.append(ribbon_images)
                     bounds.append(ribbon_bounds)
             complete &= sorted(seen) == list(self.patches)
-            return source_boundary_records_owner.SourceBoundaryChartCover(
+            cover = source_boundary_records_owner.SourceBoundaryChartCover(
                 np.concatenate(images) if images else np.empty((0, 3, 3)),
                 np.concatenate(bounds) if bounds else np.empty((0,)),
                 "certified" if complete else "sampled",
@@ -636,6 +782,144 @@ class MeshingDomainBoundarySource(StrictModule):
                 resource_counts=tuple(resource_counts),
                 restriction_ids=tuple(restriction_ids),
             )
+            if complete and not findings:
+                _issue_chart_topology(self, cover, budget)
+            return cover
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True)
+class _SourceTopologyIssue:
+    """Numerical connectivity only, retained while its exact source lives."""
+
+    source: weakref.ReferenceType[MeshingDomainBoundarySource]
+    triangulations: tuple[SourceChartTriangulation, ...]
+    definition: str
+    simplices: dict[str, object]
+    topology: _PlanarTopology
+
+
+@dataclass(frozen=True, slots=True)
+class _CoverTopologyIssue:
+    cover: weakref.ReferenceType[source_boundary_records_owner.SourceBoundaryChartCover]
+    source: weakref.ReferenceType[_SourceTopologyIssue]
+    definition: str
+    simplices: np.ndarray
+    deviations: np.ndarray
+
+
+_TOPOLOGY_LOCK = threading.RLock()
+_SOURCE_TOPOLOGY: dict[int, _SourceTopologyIssue] = {}
+_COVER_TOPOLOGY: dict[int, _CoverTopologyIssue] = {}
+
+
+def _topology_definition(owner: StrictModule, budget: CoordinateEnclosureBudget) -> str:
+    with budget.temporary_scope():
+        admit_carrier_fingerprint(owner, budget)
+        return canonical_fingerprint(carrier_payload(owner))
+
+
+def _forget_source_topology(
+    identifier: int, reference: weakref.ReferenceType[MeshingDomainBoundarySource],
+) -> None:
+    with _TOPOLOGY_LOCK:
+        issue = _SOURCE_TOPOLOGY.get(identifier)
+        if issue is not None and issue.source is reference:
+            del _SOURCE_TOPOLOGY[identifier]
+
+
+def _forget_cover_topology(
+    identifier: int,
+    reference: weakref.ReferenceType[source_boundary_records_owner.SourceBoundaryChartCover],
+) -> None:
+    with _TOPOLOGY_LOCK:
+        issue = _COVER_TOPOLOGY.get(identifier)
+        if issue is not None and issue.cover is reference:
+            del _COVER_TOPOLOGY[identifier]
+
+
+def _issue_chart_topology(
+    source: MeshingDomainBoundarySource,
+    cover: source_boundary_records_owner.SourceBoundaryChartCover,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Publish numbers only after this source's full chart proof completes.
+
+    Weak object issuers deliberately do not survive copies or archives. A cold
+    source earns a new schedule after its own full proof; no stored completeness
+    or embedding verdict is imported into a subsequent request.
+    """
+    from .._fingerprint import array_tree_fingerprint
+    from ._affine_chart_coverage import _prepare_source_planar_topology
+
+    source.domain.require_current(source.source_id, source.source_revision)
+    definition = _topology_definition(source, budget)
+    with budget.temporary_scope():
+        budget.reserve(len(cover.simplices), cover.simplices.nbytes)
+        simplices = array_tree_fingerprint(cover.simplices)
+    cover_definition = _topology_definition(cover, budget)
+    # Reserve both issuers before either registry changes. A refused cover
+    # binding must not publish a partial source issue or retain its callbacks.
+    budget.reserve(2, 2048)
+    with _TOPOLOGY_LOCK:
+        previous = _SOURCE_TOPOLOGY.get(id(source))
+    if (
+        previous is not None
+        and previous.source() is source
+        and previous.triangulations is source.chart_triangulations
+        and previous.definition == definition
+        and previous.simplices == simplices
+    ):
+        issue = previous
+    else:
+        topology = _prepare_source_planar_topology(cover.simplices, budget)
+        if topology is None:
+            return
+        identifier = id(source)
+        issue = _SourceTopologyIssue(
+            weakref.ref(source, lambda reference: _forget_source_topology(identifier, reference)),
+            source.chart_triangulations, definition, simplices, topology,
+        )
+    cover_identifier = id(cover)
+    cover_issue = _CoverTopologyIssue(
+        weakref.ref(cover, lambda reference: _forget_cover_topology(cover_identifier, reference)),
+        weakref.ref(issue), cover_definition, cover.simplices, cover.deviation_bounds,
+    )
+    with _TOPOLOGY_LOCK:
+        _SOURCE_TOPOLOGY[id(source)] = issue
+        _COVER_TOPOLOGY[cover_identifier] = cover_issue
+
+
+def _authenticated_chart_topology(
+    cover: source_boundary_records_owner.SourceBoundaryChartCover,
+    budget: CoordinateEnclosureBudget,
+) -> _PlanarTopology | None:
+    """Authenticate live source, array owners and cover bytes on this ledger."""
+    with _TOPOLOGY_LOCK:
+        issued = _COVER_TOPOLOGY.get(id(cover))
+    if issued is None or issued.cover() is not cover:
+        return None
+    source_issue = issued.source()
+    if source_issue is None:
+        return None
+    source = source_issue.source()
+    if source is None:
+        return None
+    source.domain.require_current(source.source_id, source.source_revision)
+    budget.reserve(5)
+    if (
+        source_issue.triangulations is not source.chart_triangulations
+        or issued.simplices is not cover.simplices
+        or issued.deviations is not cover.deviation_bounds
+        or (source.source_id, source.source_revision) != (cover.source_id, cover.source_revision)
+        or _topology_definition(source, budget) != source_issue.definition
+        or _topology_definition(cover, budget) != issued.definition
+    ):
+        with _TOPOLOGY_LOCK:
+            _COVER_TOPOLOGY.pop(id(cover), None)
+            if _SOURCE_TOPOLOGY.get(id(source)) is source_issue:
+                del _SOURCE_TOPOLOGY[id(source)]
+        return None
+    return source_issue.topology
 
 
 def _physical_chart_bounds(

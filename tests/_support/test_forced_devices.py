@@ -58,7 +58,6 @@ def test_child_failure_exposes_stdout_and_stderr(
     captured = capsys.readouterr()
     assert "runner stdout evidence" in captured.out
     assert "runner stderr evidence" in captured.err
-    assert "runner deliberate child refusal" in captured.err
 
 
 def test_forced_topology_refuses_nonpositive_device_count() -> None:

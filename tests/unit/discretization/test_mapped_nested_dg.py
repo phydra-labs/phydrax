@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
+from dataclasses import replace
 from fractions import Fraction
 from typing import Literal
 
@@ -16,6 +17,8 @@ from jax import Array
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
+import phydrax.discretization._mapped_geometry_measure as measure_owner
+import phydrax.discretization.fem._topology_transfer as transfer_owner
 from phydrax import config as pxconfig
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization._cell_geometry import (
@@ -175,6 +178,51 @@ def test_curved_measures_have_outward_integration_error(
     assert 0 < errors[0] < 1e-14
 
 
+def test_exact_cell_measure_import_rechecks_tolerance_without_reintegration(
+    budget: CoordinateEnclosureBudget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mesh, geometry = curved_volume("tetrahedron")
+    expected, errors, exact = certified_cell_measures(mesh, geometry, budget=budget)
+    assert exact and errors[0] > 0
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("an identical admitted algebraic measure was reintegrated")
+
+    monkeypatch.setattr(measure_owner, "_measure_coordinate_cell", forbidden)
+    values, repeated_errors, repeated_exact = certified_cell_measures(
+        mesh, geometry, budget=budget
+    )
+    np.testing.assert_array_equal(values, expected)
+    np.testing.assert_array_equal(repeated_errors, errors)
+    assert repeated_exact
+    with pytest.raises(CellGeometryTransitionError, match="publication_error"):
+        certified_cell_measures(
+            mesh,
+            geometry,
+            absolute_tolerance=float(errors[0]) / 2,
+            relative_tolerance=0,
+            budget=budget,
+        )
+
+
+def test_exact_cell_measure_cache_binds_the_full_coefficient_bank(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, geometry = curved_volume("hexahedron")
+    first, _, _ = certified_cell_measures(mesh, geometry, budget=budget)
+    element = coordinate_lagrange_element("hexahedron", 2)
+    coordinates = np.asarray(geometry.coordinates).copy()
+    coordinates[:, 0] *= 2
+    changed = CellGeometrySpec(
+        {"volume": element},
+        {"volume": np.arange(len(coordinates), dtype=np.int64)[None]},
+        coordinates,
+    )
+    second, errors, exact = certified_cell_measures(mesh, changed, budget=budget)
+    assert exact
+    assert abs(second[0] - 2 * first[0]) <= errors[0]
+
+
 @pytest.mark.parametrize("kind", ["prism", "hexahedron", "pyramid", "tetrahedron"])
 @pytest.mark.parametrize("degree", [0, 1])
 def test_actual_scalar_dg_identity_and_component_transpose(
@@ -215,6 +263,63 @@ def test_actual_scalar_dg_identity_and_component_transpose(
     )
     assert np.all(content_defect <= content_bound + 1e-12)
     assert prepared.evidence.passed
+
+
+def test_nested_dg_retires_each_consumed_density_expansion(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    source_mesh, source_geometry = curved_volume("hexahedron")
+    outcome = adapt_mixed_mesh(source_mesh, refine_cell_ids=np.array([17]))
+    fine_mesh, _, _ = assemble_topology_edit(
+        source_mesh, outcome.edit, numeric_version="dg-lifetime", budget=budget
+    )
+    restriction = transition_nested_cell_geometry(
+        source_mesh,
+        source_geometry,
+        fine_mesh,
+        CellGeometrySpec.affine(fine_mesh),
+        refinement=outcome.edit.refinement,
+    )
+    source, fine = (
+        dg_space(source_mesh, source_geometry, 1),
+        dg_space(fine_mesh, restriction.geometry, 1),
+    )
+    prepared = transfer_owner._mapped_dg_input(
+        source,
+        fine,
+        source_geometry,
+        restriction.geometry,
+        field_name="u",
+        parent_cells=None,
+        parent_reference_vertices=None,
+        parent_reference_homogeneous=None,
+        geometry_transition=restriction,
+        nested_reference=None,
+        budget=budget,
+    )
+    before = budget.temporary_bytes_upper
+    forms = transfer_owner._mapped_dg_cell_forms(source, fine, prepared, budget=budget)
+    expected_arrays = 16 * (
+        source.dof_maps[0].global_dof_count + fine.dof_maps[0].global_dof_count
+    )
+    assert budget.temporary_bytes_upper == before + expected_arrays
+    assert forms.masses
+    for mass in forms.masses:
+        assert budget.retained_owner_objects.get(id(mass)) is mass
+        assert np.all(np.isfinite(mass))
+    before_patch = budget.temporary_bytes_upper
+    before_work = budget.work_units
+    forms = transfer_owner._mapped_dg_patch_forms(
+        source, prepared, forms, budget=budget
+    )
+    assert budget.temporary_bytes_upper == before_patch
+    assert budget.work_units > before_work
+    assert len(prepared.pairs) > 1
+    for patch in forms.mixed:
+        assert patch
+        for form in patch.values():
+            assert budget.retained_owner_objects.get(id(form)) is form
+            assert np.all(np.isfinite(form))
 
 
 @pytest.mark.parametrize("kind", ["prism", "hexahedron", "pyramid", "tetrahedron"])
@@ -297,9 +402,47 @@ def test_curved_native_refine_and_complete_patch_coarsen(
     np.testing.assert_array_equal(coarse_mesh.blocks[0].global_ids, [17])
 
 
+@pytest.mark.parametrize("kind", ["prism", "hexahedron", "pyramid", "tetrahedron"])
+def test_exact_mixed_refinement_imports_total_measure_only_after_partition(
+    kind: str, budget: CoordinateEnclosureBudget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_mesh, source_geometry = curved_volume(kind)
+    outcome = adapt_mixed_mesh(source_mesh, refine_cell_ids=np.array([17]))
+    fine_mesh, _, _ = assemble_topology_edit(
+        source_mesh, outcome.edit, numeric_version="measure-fine", budget=budget
+    )
+    original = measure_owner.certified_cell_measures
+    measured_topologies: list[str] = []
+
+    def measured(
+        mesh: CellMesh, geometry: CellGeometrySpec, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
+        measured_topologies.append(mesh.topology_id)
+        return original(mesh, geometry, budget=budget)
+
+    monkeypatch.setattr(measure_owner, "certified_cell_measures", measured)
+    transition = transition_nested_cell_geometry(
+        source_mesh,
+        source_geometry,
+        fine_mesh,
+        CellGeometrySpec.affine(fine_mesh),
+        refinement=outcome.edit.refinement,
+        budget=budget,
+    )
+    assert measured_topologies == [source_mesh.topology_id]
+    assert transition.evidence.source_measure == transition.evidence.target_measure
+    values, errors, _ = original(fine_mesh, transition.geometry, budget=budget)
+    bound = transition.evidence.target_measure_error_bound
+    assert bound is not None
+    assert abs(float(np.sum(values)) - transition.evidence.target_measure) <= (
+        float(np.sum(errors)) + bound
+    )
+
+
 @pytest.mark.parametrize("kind", ["hexahedron", "tetrahedron"])
+@pytest.mark.parametrize("request_prefix", (None, 173))
 def test_mixed_transition_charges_actual_measure_work_to_its_budget(
-    kind: str, budget: CoordinateEnclosureBudget
+    kind: str, request_prefix: int | None, budget: CoordinateEnclosureBudget
 ) -> None:
     source_mesh, source_geometry = curved_volume(kind)
     outcome = adapt_mixed_mesh(source_mesh, refine_cell_ids=np.array([17]))
@@ -308,6 +451,27 @@ def test_mixed_transition_charges_actual_measure_work_to_its_budget(
     )
 
     def transition(maximum_evaluations: int) -> CellGeometryTransition:
+        if request_prefix is not None:
+            with coordinate_reference_budget(
+                MeshCertificateLimits(maximum_work_units=1 << 27)
+            ) as shared:
+                shared.reserve(request_prefix)
+                carried = transition_nested_cell_geometry(
+                    source_mesh,
+                    source_geometry,
+                    fine_mesh,
+                    CellGeometrySpec.affine(fine_mesh),
+                    refinement=outcome.edit.refinement,
+                    policy=CellGeometryTransitionPolicy(
+                        maximum_evaluations=maximum_evaluations
+                    ),
+                    budget=shared,
+                )
+                assert carried.evidence.evaluation_count == (
+                    shared.work_units - request_prefix
+                )
+                assert shared.work_units >= request_prefix
+                return carried
         return transition_nested_cell_geometry(
             source_mesh,
             source_geometry,
@@ -926,6 +1090,15 @@ def test_authoritative_curved_surface_sources_have_enclosed_physical_area(
         maximum_fidelity=0.1,
     )
     before = np.asarray(reconstructed.geometry.coordinates).copy()
+    assert type(reconstructed).from_stored_fields(
+        reconstructed, budget=budget
+    ) is reconstructed
+    changed = replace(
+        reconstructed,
+        vertex_coordinates=reconstructed.vertex_coordinates.at[0, 0].add(0.01),
+    )
+    with pytest.raises(ValueError, match="changed restored representatives"):
+        type(reconstructed).from_stored_fields(changed, budget=budget)
     values, errors, exact = certified_cell_measures(
         mesh,
         reconstructed.geometry,

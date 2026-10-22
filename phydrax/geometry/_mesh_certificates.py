@@ -85,15 +85,20 @@ class MeshCertificateBinding(StrictModule, NonTrainableState):
         )
 
     @checked
+    def matches(self, mesh: CellMesh, geometry: CellGeometrySpec, /) -> bool:
+        """Whether the exact mesh topology, coordinates and layout are bound."""
+        return (
+            mesh.mesh_id == self.mesh_id
+            and mesh.topology_id == self.topology_id
+            and geometry.geometry_layout_id == self.geometry_layout_id
+            and cell_geometry_id(geometry) == self.geometry_id
+        )
+
+    @checked
     def require(self, mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
         """Refuse reuse for another mesh topology, coordinate array or layout."""
 
-        if (
-            mesh.mesh_id != self.mesh_id
-            or mesh.topology_id != self.topology_id
-            or geometry.geometry_layout_id != self.geometry_layout_id
-            or cell_geometry_id(geometry) != self.geometry_id
-        ):
+        if not self.matches(mesh, geometry):
             raise ValueError(
                 "MeshCertificateBinding.geometry must match its mesh, topology, coordinate array and layout; "
                 f"got mesh={mesh.mesh_id!r}, geometry={cell_geometry_id(geometry)!r}"

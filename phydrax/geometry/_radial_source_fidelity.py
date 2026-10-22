@@ -375,6 +375,25 @@ def _prepare_radial_cell(
         dtype=np.float64,
     )
     affine = source_fidelity_owner.fidelity_affine(proxy)
+    # Prove equality against the actual rounded proxy coefficients, not only
+    # corner values or an affine-degree claim. Missing terms denote exact zero.
+    budget.reserve(
+        sum(
+            len(value) + len(proxy_value)
+            for value, proxy_value in zip(polynomial, affine, strict=True)
+        )
+    )
+    same_affine = all(
+        all(
+            coefficient == proxy_value.get(index, 0)
+            for index, coefficient in value.items()
+        )
+        and all(
+            coefficient == value.get(index, 0)
+            for index, coefficient in proxy_value.items()
+        )
+        for value, proxy_value in zip(polynomial, affine, strict=True)
+    )
     relative = tuple(
         algebra.add(
             value,
@@ -383,13 +402,17 @@ def _prepare_radial_cell(
         )
         for value, center in zip(polynomial, frame[0], strict=True)
     )
-    linear = tuple(
-        algebra.add(
-            value,
-            algebra.constant(-Fraction(float(center)), 2, budget=budget),
-            budget=budget,
+    linear = (
+        relative
+        if same_affine
+        else tuple(
+            algebra.add(
+                value,
+                algebra.constant(-Fraction(float(center)), 2, budget=budget),
+                budget=budget,
+            )
+            for value, center in zip(affine, frame[0], strict=True)
         )
-        for value, center in zip(affine, frame[0], strict=True)
     )
     homotopy = algebra.sum_polynomials(
         tuple(
@@ -408,9 +431,16 @@ def _prepare_radial_cell(
             )
         )
         return None
-    squared = algebra.sum_polynomials(
-        tuple(algebra.multiply(value, value, budget=budget) for value in relative),
-        budget=budget,
+    # Identical maps in this chart and frame have the same exact dot product.
+    # Reuse only the polynomial: positivity above and radial bounds below
+    # remain independent checks with their own actual work/storage charges.
+    squared = (
+        homotopy
+        if same_affine
+        else algebra.sum_polynomials(
+            tuple(algebra.multiply(value, value, budget=budget) for value in relative),
+            budget=budget,
+        )
     )
     bound = _radial_bound(
         squared, frame, tolerance, limits, findings, entity, progress, budget=budget

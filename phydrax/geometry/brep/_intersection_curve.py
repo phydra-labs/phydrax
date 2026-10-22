@@ -18,7 +18,7 @@ chart solution, and every evaluation reports its numerical parameter bound.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from fractions import Fraction
 from typing import Any, Literal, overload, Self, TypeAlias
@@ -27,6 +27,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jax import Array
 from jax.core import Tracer
 from jax.typing import ArrayLike
@@ -189,9 +190,15 @@ class SurfaceRegion(StrictModule):
 
     @classmethod
     @checked
-    def from_stored_fields(cls: type[Self], value: SurfaceRegion, /) -> Self:
+    def from_stored_fields(
+        cls: type[Self],
+        value: SurfaceRegion,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Self:
         """Revalidate the retained surface and parameter-box projection."""
-        return cls(value.patch, value.parameter_box)
+        return cls(value.patch, value.parameter_box, budget=budget)
 
 
 class CurveRange(StrictModule):
@@ -1453,7 +1460,13 @@ class IntersectionCurve(
 
     @classmethod
     @checked
-    def from_stored_fields(cls: type[Self], value: IntersectionCurve, /) -> Self:
+    def from_stored_fields(
+        cls: type[Self],
+        value: IntersectionCurve,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Self:
         """Rebuild chart and node certificates from retained construction inputs."""
         return cls(
             value.first,
@@ -1476,6 +1489,7 @@ class IntersectionCurve(
             node_pieces=value.node_pieces,
             node_references=value.node_references,
             node_period_shifts=value.node_period_shifts,
+            budget=budget,
         )
 
     def _branch_fingerprint(self) -> str:
@@ -1880,6 +1894,24 @@ class IntersectionCurve(
             )
         return lower, upper
 
+    def transition_turns(self) -> np.ndarray:
+        """Integer native-period deck shift certified at each chart transition.
+
+        Row ``k`` maps chart ``k`` coordinates to chart ``k + 1`` coordinates
+        (the final row closes a closed branch). Representative shifts round to
+        whole periods on periodic axes; nonperiodic axes have no deck shift.
+        """
+        turns = np.zeros((self.num_charts, 4), dtype=np.int32)
+        for axis, period in enumerate(
+            (*self.first.patch.periods, *self.second.patch.periods)
+        ):
+            if period is not None:
+                turns[:, axis] = np.rint(
+                    np.asarray(self.transition_shifts[:, axis], dtype=np.float64)
+                    / period
+                ).astype(np.int32)
+        return turns
+
     def _verify_chart_witnesses(
         self,
         *,
@@ -2003,15 +2035,9 @@ class IntersectionCurve(
             lower[node], upper[node] = lo, hi
         self.node_lower, self.node_upper, self.nodes_certified = lower, upper, certified
         start_lower, start_upper = lower[:-1].copy(), upper[:-1].copy()
+        turns = self.transition_turns()
         for chart in range(1, count):
-            shifts = np.zeros(4, dtype=np.int32)
-            for axis, period in enumerate(
-                (*self.first.patch.periods, *self.second.patch.periods)
-            ):
-                if period is not None:
-                    shifts[axis] = int(
-                        round(self.transition_shifts[chart - 1, axis] / period)
-                    )
+            shifts = turns[chart - 1]
             piece_transition = not np.array_equal(
                 self.chart_pieces[chart - 1],
                 self.chart_pieces[chart],
@@ -2103,54 +2129,54 @@ class IntersectionCurve(
             raise ValueError(
                 "IntersectionCurve.preparation must retain the source curve; got a different prepared source"
             )
-        count = self.num_charts
-        if not (math.isfinite(first) and math.isfinite(last) and first <= last):
-            raise ValueError(
-                f"IntersectionCurve.interval must be finite and ordered; got {(first, last)!r}"
-            )
-        if not source_extension and not 0 <= first <= last <= count:
-            raise ValueError(
-                f"IntersectionCurve.interval must lie inside the curve parameter interval; got {(first, last)!r}"
-            )
+        return _chart_enclosures(
+            self,
+            ((first, last, minimum_chart, maximum_chart, source_extension),),
+            _preparation,
+            preparations=preparations,
+            budget=budget,
+        )[0]
 
-        last_chart = count - 1 if maximum_chart is None else maximum_chart
-        if not 0 <= minimum_chart <= last_chart < count:
-            raise ValueError(
-                f"IntersectionCurve.chart_range must lie inside the atlas; got {(minimum_chart, last_chart)!r}"
-            )
-        systems, selector = (
-            self._pairs(budget=budget) if _preparation is None else _preparation.pairs
-        )
-        head = max(minimum_chart, min(int(math.floor(first)), last_chart))
-        tail = max(head, min(int(math.ceil(last)) - 1, last_chart))
-        boxes = []
-        for chart in range(head, tail + 1):
-            query = _prepare_chart_query(
-                self, chart, first, last, head, tail, source_extension
-            )
-            if query is None:
-                return np.asarray([[np.full(4, -np.inf), np.full(4, np.inf)]])
-            # A chart box is a deterministic function of its chart and
-            # fractions; identical chart queries share one contraction.
-            memo = None if _preparation is None else _preparation.chart_boxes
-            key = (chart, float(query.fractions[0]), float(query.fractions[1]))
-            if memo is not None and key in memo:
-                boxes.append(memo[key])
-                continue
-            prepared = (
-                intersection_owner.prepare(
-                    systems[int(selector[chart])], 4, 1, preparations=preparations
+    def parameter_enclosure_batch(
+        self,
+        requests: Sequence[tuple[float, float, int, int | None, bool]],
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> list[np.ndarray]:
+        """``parameter_enclosures`` of independent requests in one chart pass.
+
+        Each request is ``(first, last, minimum_chart, maximum_chart,
+        source_extension)`` with the single-query meaning and result. Shared
+        chart queries contract once; distinct ones share batched Krawczyk
+        evaluations of the same chart program, row by row.
+        """
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    requests,
                 )
-                if _preparation is None
-                else _preparation.root(chart)
+            ) as budget:
+                return self.parameter_enclosure_batch(
+                    requests, preparations=preparations, budget=budget
+                )
+        if not self.fully_certified:
+            raise ValueError(
+                "IntersectionCurve.atlas must have certified charts, nodes and transitions; got an uncertified atlas"
             )
-            box = _contract_chart_query(
-                query, prepared, budget=budget, preparations=preparations
-            )
-            if memo is not None:
-                memo[key] = box
-            boxes.append(box)
-        return np.asarray(boxes)
+        return _chart_enclosures(
+            self,
+            requests,
+            _original_trim_intersection_preparation(
+                self, preparations=preparations, budget=budget
+            ),
+            preparations=preparations,
+            budget=budget,
+        )
 
     def _pairs(
         self, *, budget: CoordinateEnclosureBudget
@@ -2237,28 +2263,50 @@ class IntersectionCurve(
         *,
         certify: bool = True,
         preparations: TrimRequestPreparations | None = None,
-        budget: CoordinateEnclosureBudget,
+        budget: CoordinateEnclosureBudget | None,
     ) -> IntersectionCurvePoint:
         tau = jnp.asarray(parameters, dtype=jnp.float64)
         systems, selector = self._evaluation_pairs()
+        rows = _chart_capacity(selector.shape[0])
         atlas = _ChartAtlas(
             systems,
-            jnp.asarray(selector),
-            jnp.asarray(self.chart_axes),
-            jnp.asarray(self.chart_start),
-            jnp.asarray(self.chart_end),
-            jnp.asarray(self.preconditioners),
-            jnp.asarray(self.contraction),
-            jnp.asarray(self.certified),
-            jnp.asarray(self.box_lower),
-            jnp.asarray(self.box_upper),
-            minimum_chart,
-            maximum_chart,
+            jnp.asarray(_pad_rows(selector, rows)),
+            jnp.asarray(_pad_rows(self.chart_axes, rows)),
+            jnp.asarray(_pad_rows(self.chart_start, rows)),
+            jnp.asarray(_pad_rows(self.chart_end, rows)),
+            jnp.asarray(_pad_rows(self.preconditioners, rows)),
+            jnp.asarray(_pad_rows(self.contraction, rows)),
+            jnp.asarray(_pad_rows(self.certified, rows)),
+            jnp.asarray(_pad_rows(self.box_lower, rows)),
+            jnp.asarray(_pad_rows(self.box_upper, rows)),
+            jnp.asarray(minimum_chart, dtype=jnp.int32),
+            jnp.asarray(maximum_chart, dtype=jnp.int32),
+            jnp.asarray(selector.shape[0], dtype=jnp.float64),
         )
-        result = _evaluate_atlas(atlas, tau.reshape((-1,)))
-        result = jax.tree_util.tree_map(
-            lambda leaf: leaf.reshape(tau.shape + leaf.shape[1:]), result
-        )
+        if isinstance(tau, Tracer):
+            result = _evaluate_atlas(atlas, tau.reshape((-1,)))
+            result = jax.tree_util.tree_map(
+                lambda leaf: leaf.reshape(tau.shape + leaf.shape[1:]), result
+            )
+        else:
+            # Concrete queries share power-of-four compiled lane counts; the
+            # padding repeats the last independent lane and is discarded on
+            # the host, so no per-count slicing program is compiled.
+            flat = np.asarray(tau, dtype=np.float64).reshape(-1)
+            count = flat.size
+            lanes = _query_capacity(count)
+            padded = _evaluate_atlas(
+                atlas,
+                jnp.asarray(np.concatenate((flat, np.repeat(flat[-1:], lanes - count)))),
+            )
+
+            def unpad(leaf: Array) -> Array:
+                shape = tau.shape + leaf.shape[1:]
+                if isinstance(leaf, Tracer):
+                    return leaf[:count].reshape(shape)
+                return jnp.asarray(np.asarray(leaf)[:count].reshape(shape))
+
+            result = jax.tree_util.tree_map(unpad, padded)
         if certify and not isinstance(tau, Tracer) and self.fully_certified:
             values = np.asarray(tau).reshape(-1)
             if (
@@ -2276,6 +2324,8 @@ class IntersectionCurve(
             and not isinstance(result.first_parameters, Tracer)
             and self.fully_certified
         ):
+            if preparations is None:
+                preparations = TrimRequestPreparations()
             values = np.asarray(tau).reshape(-1)
             coupled = np.concatenate(
                 (
@@ -2285,17 +2335,27 @@ class IntersectionCurve(
                 axis=1,
             )
             bounds = []
-            for value, point in zip(values, coupled, strict=True):
-                boxes = self.parameter_enclosures(
-                    float(value),
-                    float(value),
-                    minimum_chart=minimum_chart,
-                    maximum_chart=maximum_chart,
+            for start in range(0, values.size, _CHART_BATCH):
+                batch = values[start : start + _CHART_BATCH]
+                plans = self.parameter_enclosure_batch(
+                    [
+                        (
+                            float(value),
+                            float(value),
+                            minimum_chart,
+                            maximum_chart,
+                            False,
+                        )
+                        for value in batch
+                    ],
                     preparations=preparations,
                     budget=budget,
                 )
-                distances = np.nextafter(np.abs(boxes - point), np.inf)
-                bounds.append(np.nextafter(np.max(distances), np.inf))
+                for boxes, point in zip(
+                    plans, coupled[start : start + _CHART_BATCH], strict=True
+                ):
+                    distances = np.nextafter(np.abs(boxes - point), np.inf)
+                    bounds.append(np.nextafter(np.max(distances), np.inf))
             result = eqx.tree_at(
                 lambda item: item.parameter_bound,
                 result,
@@ -2449,8 +2509,40 @@ def _surface_residual_branch(
     return residual
 
 
+def _chart_capacity(count: int, /) -> int:
+    """Power-of-two atlas row capacity, so branches share compiled programs."""
+    return max(8, 1 << max(count - 1, 0).bit_length())
+
+
+def _query_capacity(count: int, /) -> int:
+    """Power-of-four concrete query lane capacity (zero stays empty)."""
+    lanes = 0 if count == 0 else 4
+    while lanes < count:
+        lanes *= 4
+    return lanes
+
+
+def _pad_rows(values: ArrayLike, rows: int, /) -> Array | np.ndarray:
+    """Repeat the last per-chart row up to ``rows``; padded rows are never selected."""
+    if isinstance(values, Tracer):
+        array = jnp.asarray(values)
+        extra = rows - array.shape[0]
+        if extra == 0:
+            return array
+        return jnp.concatenate((array, jnp.repeat(array[-1:], extra, axis=0)))
+    host = np.asarray(values)
+    extra = rows - host.shape[0]
+    if extra == 0:
+        return host
+    return np.concatenate((host, np.repeat(host[-1:], extra, axis=0)))
+
+
 class _ChartAtlas(StrictModule):
-    """Device view of one continuation atlas and its defining equations."""
+    """Device view of one continuation atlas and its defining equations.
+
+    Per-chart rows are padded to a shared capacity; ``charts`` is the true
+    chart count and the dynamic chart range never selects a padded row.
+    """
 
     systems: tuple[SurfacePairSystem, ...]
     selector: Array
@@ -2462,8 +2554,9 @@ class _ChartAtlas(StrictModule):
     certified: Array
     lower: Array
     upper: Array
-    minimum_chart: int = eqx.field(static=True)
-    maximum_chart: int = eqx.field(static=True)
+    minimum_chart: Array
+    maximum_chart: Array
+    charts: Array
 
     def residual(self, chart: Array, parameters: Array, /) -> Array:
         if len(self.systems) == 1:
@@ -2483,7 +2576,7 @@ _CHART_ROOT = VectorLocalRootPlan(
 @eqx.filter_jit
 def _evaluate_atlas(atlas: _ChartAtlas, tau: Array) -> IntersectionCurvePoint:
     """Solve each chart's graph equations and derive the coupled jet and bounds."""
-    count = atlas.axes.shape[0]
+    count = atlas.charts
     permutations = jnp.asarray(_CHART_PERMUTATIONS)
 
     def one(value: Array) -> IntersectionCurvePoint:
@@ -2623,7 +2716,8 @@ class IntersectionJetPreparation:
     programs are retained and evaluated; they do not change source equations,
     inverse enclosures, root definition, chart ownership or derivative formulas.
     An unobserved preparation also retains the results of identical
-    deterministic queries; an observed one charges every evaluation.
+    deterministic queries; an observed one charges every evaluation and retains
+    results only inside an explicit ``retained_queries`` scope.
     """
 
     def __init__(
@@ -2652,9 +2746,11 @@ class IntersectionJetPreparation:
             self.prepare = prepare
             self._wrap = wrap
             self._observe_point_jet = observe_point_jet
-            self._programs: dict[tuple[int, str], Any] = {}
+            self._programs: dict[tuple[int, str, int], Any] = {}
             self._roots: dict[int, Any] = {}
+            self._batch_roots: dict[int, Any] = {}
             memoize = prepare is None and wrap is None
+            self._observed = not memoize
             self.chart_boxes: dict[tuple[int, float, float], np.ndarray] | None = (
                 {} if memoize else None
             )
@@ -2665,20 +2761,41 @@ class IntersectionJetPreparation:
                 {} if memoize else None
             )
 
-    def program(self, chart: int, kind: str, function: Any, dimension: int) -> Any:
-
+    def program(
+        self, chart: int, kind: str, function: Any, dimension: int, capacity: int = 1
+    ) -> Any:
+        """One chart program per source piece, kind and interval batch capacity."""
         index = int(self.pairs[1][chart])
-        key = (index, kind)
+        key = (index, kind, capacity)
         if key not in self._programs:
             coefficients = coefficient_enclosures(self.pairs[0][index])
             self._programs[key] = (
                 prepare_interval_function(
-                    function, dimension, batch_capacity=1, constant_bounds=coefficients
+                    function,
+                    dimension,
+                    batch_capacity=capacity,
+                    constant_bounds=coefficients,
                 )
                 if self.prepare is None
-                else self.prepare(function, dimension, coefficients)
+                else self.prepare(function, dimension, coefficients, capacity)
             )
         return self._programs[key]
+
+    @contextmanager
+    def retained_queries(self) -> Iterator[None]:
+        """Reuse identical deterministic query results within one caller scope.
+
+        Observed preparations still charge every evaluation they perform; the
+        retained boxes and jets are released when the scope exits.
+        """
+        if not self._observed:
+            yield
+            return
+        self.chart_boxes, self.jets, self.chart_jets = {}, {}, {}
+        try:
+            yield
+        finally:
+            self.chart_boxes = self.jets = self.chart_jets = None
 
     def root(self, chart: int) -> Any:
 
@@ -2693,6 +2810,25 @@ class IntersectionJetPreparation:
                 )
             )
         return self._roots[index]
+
+    def batch_root(self, chart: int) -> Any:
+        """The same chart system at a multi-box interval batch capacity.
+
+        Rows are independent interval extensions, so a batch returns exactly
+        the per-row results. Observed preparations charge every evaluated row
+        and the batch-capacity interpreter workspace through their hooks.
+        """
+        index = int(self.pairs[1][chart])
+        if index not in self._batch_roots:
+            prepared = intersection_owner.prepare(self.pairs[0][index], 4, _CHART_BATCH)
+            self._batch_roots[index] = (
+                prepared
+                if self._wrap is None
+                else _ObservedIntersectionRoot(
+                    prepared, self._wrap, self._observe_point_jet
+                )
+            )
+        return self._batch_roots[index]
 
 
 @contextmanager
@@ -2760,7 +2896,7 @@ class _ObservedIntersectionRoot:
         preparations: TrimRequestPreparations | None = None,
     ) -> np.ndarray:
         if self._observe_point_jet is not None:
-            self._observe_point_jet()
+            self._observe_point_jet(points.shape[0])
         return self._prepared.point_jacobians(
             points, budget=budget, preparations=preparations
         )
@@ -2890,37 +3026,151 @@ def _prepare_chart_query(
     return _ChartQuery(lower=lower, upper=upper, fractions=fractions, axis=axis)
 
 
-def _contract_chart_query(
-    query: _ChartQuery,
+_CHART_BATCH = 64
+
+
+def _contract_chart_queries(
+    queries: Sequence[_ChartQuery],
     prepared: Any,
     *,
     budget: CoordinateEnclosureBudget,
     preparations: TrimRequestPreparations | None,
-) -> np.ndarray:
-    lower, upper, axis = query.lower, query.upper, query.axis
+) -> list[np.ndarray]:
+    """Contract chart queries sharing one chart program and graph axis.
+
+    Krawczyk images are row-independent interval extensions; each row keeps
+    its own iterate, emptiness refusal and five-percent stopping rule, so a
+    batch returns exactly the boxes of separate contractions.
+    """
+    axis = queries[0].axis
+    if any(query.axis != axis for query in queries):
+        raise ValueError(
+            "IntersectionCurve.chart_queries must share one graph axis; got mixed axes"
+        )
     free = [index for index in range(4) if index != axis]
+    lower = np.stack([query.lower for query in queries])
+    upper = np.stack([query.upper for query in queries])
+    active = np.arange(len(queries))
     for _ in range(24):
+        if active.size == 0:
+            break
+        budget.ticket.checkpoint()
+        current_lower, current_upper = lower[active], upper[active]
         image = krawczyk(
             prepared,
-            lower[None],
-            upper[None],
+            current_lower,
+            current_upper,
             parameter_axis=axis,
             budget=budget,
             preparations=preparations,
         )
-        new_lower, new_upper = lower.copy(), upper.copy()
-        new_lower[free] = np.maximum(lower[free], image.lower[0])
-        new_upper[free] = np.minimum(upper[free], image.upper[0])
+        new_lower, new_upper = current_lower.copy(), current_upper.copy()
+        new_lower[:, free] = np.maximum(current_lower[:, free], image.lower)
+        new_upper[:, free] = np.minimum(current_upper[:, free], image.upper)
         if np.any(new_lower > new_upper):
             raise ValueError(
                 "IntersectionCurve.chart_box must retain a nonempty branch enclosure; got an empty contracted chart box"
             )
-        old_width = float(np.max(upper[free] - lower[free]))
-        new_width = float(np.max(new_upper[free] - new_lower[free]))
-        lower, upper = new_lower, new_upper
-        if new_width >= 0.95 * old_width:
-            break
-    return np.stack((lower, upper))
+        old_width = np.max(current_upper[:, free] - current_lower[:, free], axis=1)
+        new_width = np.max(new_upper[:, free] - new_lower[:, free], axis=1)
+        lower[active], upper[active] = new_lower, new_upper
+        active = active[new_width < 0.95 * old_width]
+    return [np.stack((lower[row], upper[row])) for row in range(len(queries))]
+
+
+type _ChartKey = tuple[int, float, float]
+
+
+def _chart_enclosures(
+    curve: IntersectionCurve,
+    requests: Sequence[tuple[float, float, int, int | None, bool]],
+    preparation: IntersectionJetPreparation | None,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> list[np.ndarray]:
+    """Coupled chart boxes of each ``parameter_enclosures`` request.
+
+    A chart box is a deterministic function of its chart and fractions;
+    identical chart queries share one contraction. Preparations retaining
+    query results (memoizing, or observed inside ``retained_queries``)
+    contract distinct queries of one chart program together.
+    """
+    count = curve.num_charts
+    systems, selector = (
+        curve._pairs(budget=budget) if preparation is None else preparation.pairs
+    )
+    memo = None if preparation is None else preparation.chart_boxes
+    pending: dict[_ChartKey, _ChartQuery] = {}
+    plans: list[tuple[_ChartKey, ...] | None] = []
+    for first, last, minimum_chart, maximum_chart, source_extension in requests:
+        if not (math.isfinite(first) and math.isfinite(last) and first <= last):
+            raise ValueError(
+                f"IntersectionCurve.interval must be finite and ordered; got {(first, last)!r}"
+            )
+        if not source_extension and not 0 <= first <= last <= count:
+            raise ValueError(
+                f"IntersectionCurve.interval must lie inside the curve parameter interval; got {(first, last)!r}"
+            )
+        last_chart = count - 1 if maximum_chart is None else maximum_chart
+        if not 0 <= minimum_chart <= last_chart < count:
+            raise ValueError(
+                f"IntersectionCurve.chart_range must lie inside the atlas; got {(minimum_chart, last_chart)!r}"
+            )
+        head = max(minimum_chart, min(int(math.floor(first)), last_chart))
+        tail = max(head, min(int(math.ceil(last)) - 1, last_chart))
+        keys: list[_ChartKey] = []
+        for chart in range(head, tail + 1):
+            query = _prepare_chart_query(
+                curve, chart, first, last, head, tail, source_extension
+            )
+            if query is None:
+                break
+            key = (chart, float(query.fractions[0]), float(query.fractions[1]))
+            keys.append(key)
+            if (memo is None or key not in memo) and key not in pending:
+                pending[key] = query
+        else:
+            plans.append(tuple(keys))
+            continue
+        plans.append(None)
+    groups: dict[tuple[int, int], list[_ChartKey]] = {}
+    for key, query in pending.items():
+        groups.setdefault((int(selector[key[0]]), query.axis), []).append(key)
+    contracted: dict[_ChartKey, np.ndarray] = {}
+    for (index, _), keys in groups.items():
+        if preparation is not None and memo is not None and len(keys) > 1:
+            batches = [keys]
+            prepared = preparation.batch_root(keys[0][0])
+        else:
+            batches = [[key] for key in keys]
+            prepared = (
+                intersection_owner.prepare(
+                    systems[index], 4, 1, preparations=preparations
+                )
+                if preparation is None
+                else preparation.root(keys[0][0])
+            )
+        for batch in batches:
+            boxes = _contract_chart_queries(
+                [pending[key] for key in batch],
+                prepared,
+                budget=budget,
+                preparations=preparations,
+            )
+            for key, box in zip(batch, boxes, strict=True):
+                contracted[key] = box
+                if memo is not None:
+                    memo[key] = box
+    results = []
+    available = contracted if memo is None else memo
+    for plan in plans:
+        if plan is None:
+            results.append(np.asarray([[np.full(4, -np.inf), np.full(4, np.inf)]]))
+            continue
+        results.append(np.asarray([available[key] for key in plan]))
+    return results
 
 
 class _JetBounds(StrictModule):
@@ -2953,6 +3203,78 @@ def _interval_quadratic(
     )
 
 
+def _second_jet_from_hessian(
+    hessian: tuple[np.ndarray, np.ndarray],
+    free: list[int],
+    inverse_bounds: tuple[np.ndarray, np.ndarray],
+    coupled: tuple[np.ndarray, np.ndarray],
+) -> _JetBounds:
+    """Implicit second jet from one enclosed residual-Hessian row."""
+    curvature = _interval_quadratic(hessian, coupled)
+    second = _interval_matrix_product(
+        inverse_bounds, (-curvature[1][:, None], -curvature[0][:, None])
+    )
+    second_lo, second_hi = np.zeros(4), np.zeros(4)
+    second_lo[free], second_hi[free] = second[0][:, 0], second[1][:, 0]
+    return _JetBounds(lower=second_lo, upper=second_hi)
+
+
+def _spatial_jet_from_bounds(
+    jacobian: tuple[np.ndarray, np.ndarray],
+    parameters: tuple[np.ndarray, np.ndarray],
+    hessian: tuple[np.ndarray, np.ndarray] | None = None,
+    coupled: tuple[np.ndarray, np.ndarray] | None = None,
+) -> _JetBounds:
+    """Physical chain-rule jet from enclosed spatial Jacobian/Hessian rows."""
+    physical = _interval_matrix_product(
+        jacobian,
+        (
+            parameters[0][:2, None],
+            parameters[1][:2, None],
+        ),
+    )
+    result = (physical[0][:, 0], physical[1][:, 0])
+    if hessian is not None and coupled is not None:
+        result = interval_add(
+            result,
+            _interval_quadratic(hessian, (coupled[0][:2], coupled[1][:2])),
+        )
+    return _JetBounds(
+        lower=np.asarray(result[0], dtype=np.float64),
+        upper=np.asarray(result[1], dtype=np.float64),
+    )
+
+
+def _chart_program(
+    system: SurfacePairSystem,
+    chart: int,
+    kind: str,
+    preparation: IntersectionJetPreparation | None,
+    capacity: int = 1,
+) -> Any:
+    match kind:
+        case "residual-hessian":
+            function, dimension = jax.jacfwd(jax.jacfwd(system.residual)), 4
+        case "spatial-value":
+            function, dimension = system.first.evaluate, 2
+        case "spatial-jacobian":
+            function, dimension = jax.jacfwd(system.first.evaluate), 2
+        case "spatial-hessian":
+            function, dimension = jax.jacfwd(jax.jacfwd(system.first.evaluate)), 2
+        case _:
+            raise ValueError(
+                f"IntersectionCurve.chart_program must name a graph program; got {kind!r}"
+            )
+    if preparation is None:
+        return prepare_interval_function(
+            function,
+            dimension,
+            batch_capacity=capacity,
+            constant_bounds=coefficient_enclosures(system),
+        )
+    return preparation.program(chart, kind, function, dimension, capacity)
+
+
 def _chart_second_jet(
     system: SurfacePairSystem,
     chart: int,
@@ -2962,26 +3284,9 @@ def _chart_second_jet(
     coupled: tuple[np.ndarray, np.ndarray],
     preparation: IntersectionJetPreparation | None,
 ) -> _JetBounds:
-    hessian = (
-        prepare_interval_function(
-            jax.jacfwd(jax.jacfwd(system.residual)),
-            4,
-            batch_capacity=1,
-            constant_bounds=coefficient_enclosures(system),
-        )
-        if preparation is None
-        else preparation.program(
-            chart, "residual-hessian", jax.jacfwd(jax.jacfwd(system.residual)), 4
-        )
-    )
+    hessian = _chart_program(system, chart, "residual-hessian", preparation)
     h_lo, h_hi = hessian.evaluate(box[0][None], box[1][None])
-    curvature = _interval_quadratic((h_lo[0], h_hi[0]), coupled)
-    second = _interval_matrix_product(
-        inverse_bounds, (-curvature[1][:, None], -curvature[0][:, None])
-    )
-    second_lo, second_hi = np.zeros(4), np.zeros(4)
-    second_lo[free], second_hi[free] = second[0][:, 0], second[1][:, 0]
-    return _JetBounds(lower=second_lo, upper=second_hi)
+    return _second_jet_from_hessian((h_lo[0], h_hi[0]), free, inverse_bounds, coupled)
 
 
 def _chart_spatial_jet(
@@ -2993,51 +3298,14 @@ def _chart_spatial_jet(
     parameters: tuple[np.ndarray, np.ndarray],
     preparation: IntersectionJetPreparation | None,
 ) -> _JetBounds:
-    spatial_jacobian = (
-        prepare_interval_function(
-            jax.jacfwd(system.first.evaluate),
-            2,
-            batch_capacity=1,
-            constant_bounds=coefficient_enclosures(system),
-        )
-        if preparation is None
-        else preparation.program(
-            chart, "spatial-jacobian", jax.jacfwd(system.first.evaluate), 2
-        )
-    )
+    spatial_jacobian = _chart_program(system, chart, "spatial-jacobian", preparation)
     s_lo, s_hi = spatial_jacobian.evaluate(box[None, 0, :2], box[None, 1, :2])
-    physical = _interval_matrix_product(
-        (s_lo[0], s_hi[0]),
-        (
-            parameters[0][:2, None],
-            parameters[1][:2, None],
-        ),
-    )
-    result = (physical[0][:, 0], physical[1][:, 0])
-    if order == 2:
-        spatial_hessian = (
-            prepare_interval_function(
-                jax.jacfwd(jax.jacfwd(system.first.evaluate)),
-                2,
-                batch_capacity=1,
-                constant_bounds=coefficient_enclosures(system),
-            )
-            if preparation is None
-            else preparation.program(
-                chart,
-                "spatial-hessian",
-                jax.jacfwd(jax.jacfwd(system.first.evaluate)),
-                2,
-            )
-        )
-        sh_lo, sh_hi = spatial_hessian.evaluate(box[None, 0, :2], box[None, 1, :2])
-        result = interval_add(
-            result,
-            _interval_quadratic((sh_lo[0], sh_hi[0]), (coupled[0][:2], coupled[1][:2])),
-        )
-    return _JetBounds(
-        lower=np.asarray(result[0], dtype=np.float64),
-        upper=np.asarray(result[1], dtype=np.float64),
+    if order != 2:
+        return _spatial_jet_from_bounds((s_lo[0], s_hi[0]), parameters)
+    spatial_hessian = _chart_program(system, chart, "spatial-hessian", preparation)
+    sh_lo, sh_hi = spatial_hessian.evaluate(box[None, 0, :2], box[None, 1, :2])
+    return _spatial_jet_from_bounds(
+        (s_lo[0], s_hi[0]), parameters, (sh_lo[0], sh_hi[0]), coupled
     )
 
 
@@ -3155,7 +3423,6 @@ def _chart_first_jet(
     """
 
     axis = int(curve.chart_axes[chart])
-    free = [index for index in range(4) if index != axis]
     inclusion = krawczyk(
         prepared,
         box[0][None],
@@ -3167,7 +3434,30 @@ def _chart_first_jet(
     contraction = float(inclusion.contraction[0])
     if not math.isfinite(contraction) or contraction >= 1.0:
         return None
-    inverse = inclusion.preconditioner[0]
+    jac_lo, jac_hi = evaluate_interval(
+        prepared.jacobian,
+        box[0][None],
+        box[1][None],
+        budget=budget,
+        preparations=preparations,
+    )
+    return _chart_first_jet_from_bounds(
+        curve, chart, contraction, inclusion.preconditioner[0], jac_lo[0], jac_hi[0]
+    )
+
+
+def _chart_first_jet_from_bounds(
+    curve: IntersectionCurve,
+    chart: int,
+    contraction: float,
+    inverse: np.ndarray,
+    jac_lo: np.ndarray,
+    jac_hi: np.ndarray,
+    /,
+) -> _ChartFirstJet:
+    """Apply the scalar first-jet formula to one independently enclosed row."""
+    axis = int(curve.chart_axes[chart])
+    free = [index for index in range(4) if index != axis]
     inverse_norm = np.nextafter(
         np.max(np.sum(np.abs(inverse), axis=1)) * (1 + 16 * np.finfo(np.float64).eps),
         np.inf,
@@ -3183,15 +3473,8 @@ def _chart_first_jet(
         np.nextafter(inverse - radius, -np.inf),
         np.nextafter(inverse + radius, np.inf),
     )
-    jac_lo, jac_hi = evaluate_interval(
-        prepared.jacobian,
-        box[0][None],
-        box[1][None],
-        budget=budget,
-        preparations=preparations,
-    )
     rest_lo, rest_hi = _interval_matrix_product(
-        inverse_bounds, (-jac_hi[0, :, axis, None], -jac_lo[0, :, axis, None])
+        inverse_bounds, (-jac_hi[:, axis, None], -jac_lo[:, axis, None])
     )
     advance_bounds = (
         np.nextafter(
@@ -3208,6 +3491,247 @@ def _chart_first_jet(
     first_lo[axis], first_hi[axis] = advance_bounds
     first_lo[free], first_hi[free] = rest
     return inverse_bounds, (first_lo, first_hi)
+
+
+def _prepare_chart_first_jets(
+    preparation: IntersectionJetPreparation,
+    queries: Sequence[tuple[int, np.ndarray]],
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations,
+) -> None:
+    """Batch independent first-jet inclusions into the existing request bank."""
+    memo = preparation.chart_jets
+    if memo is None:
+        return
+    curve = preparation.curve
+    pending: dict[tuple[int, bytes], np.ndarray] = {}
+    for chart, box in queries:
+        key = (chart, box.tobytes())
+        if key not in memo and np.all(np.isfinite(box)):
+            pending.setdefault(key, box)
+    groups: dict[tuple[int, int], list[tuple[int, bytes]]] = {}
+    for key in pending:
+        chart = key[0]
+        groups.setdefault(
+            (int(preparation.pairs[1][chart]), int(curve.chart_axes[chart])), []
+        ).append(key)
+    for (_, axis), keys in groups.items():
+        prepared = preparation.batch_root(keys[0][0])
+        for start in range(0, len(keys), _CHART_BATCH):
+            budget.ticket.checkpoint()
+            batch = keys[start : start + _CHART_BATCH]
+            boxes = np.stack([pending[key] for key in batch])
+            inclusion = krawczyk(
+                prepared,
+                boxes[:, 0],
+                boxes[:, 1],
+                parameter_axis=axis,
+                budget=budget,
+                preparations=preparations,
+            )
+            valid_mask = np.isfinite(inclusion.contraction) & (
+                inclusion.contraction < 1.0
+            )
+            valid = np.flatnonzero(valid_mask)
+            for row, key in enumerate(batch):
+                if not valid_mask[row]:
+                    memo[key] = None
+            if not valid.size:
+                continue
+            jac_lo, jac_hi = evaluate_interval(
+                prepared.jacobian,
+                boxes[valid, 0],
+                boxes[valid, 1],
+                budget=budget,
+                preparations=preparations,
+            )
+            for row, lower, upper in zip(valid, jac_lo, jac_hi, strict=True):
+                key = batch[int(row)]
+                memo[key] = _chart_first_jet_from_bounds(
+                    curve,
+                    key[0],
+                    float(inclusion.contraction[row]),
+                    inclusion.preconditioner[row],
+                    lower,
+                    upper,
+                )
+
+
+class CoupledCellSourceJets(StrictModule):
+    """Coupled source enclosures of one approximation cell inside one chart.
+
+    ``center_box`` is the chart's coupled box at the cell center and
+    ``center_point`` its physical image; ``first``, ``second`` and
+    ``center_first`` are the seven-column ``"all"`` jets of
+    ``intersection_derivative_bounds`` restricted to the cell's chart.
+    """
+
+    center_box: np.ndarray
+    center_point: _JetBounds
+    first: _JetBounds
+    second: _JetBounds
+    center_first: _JetBounds
+
+
+def coupled_cell_source_jets(
+    preparation: IntersectionJetPreparation,
+    cells: Sequence[tuple[int, float, float, float]],
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> list[CoupledCellSourceJets]:
+    """Batched single-chart cell jets ``(chart, first, last, center)``.
+
+    Every row equals the one-cell path through ``parameter_enclosures``,
+    ``intersection_derivative_bounds`` and the spatial value program: chart
+    contractions, first-jet inclusions and graph programs are row-independent
+    interval extensions evaluated at batch capacity. An observed preparation
+    charges every evaluated row; call inside its ``retained_queries`` scope.
+    """
+    curve = preparation.curve
+    systems, selector = preparation.pairs
+    unbounded = _JetBounds(lower=np.full(7, -np.inf), upper=np.full(7, np.inf))
+    requests: list[tuple[float, float, int, int | None, bool]] = []
+    for chart, first, last, center in cells:
+        requests.append((center, center, chart, chart, False))
+        requests.append((first, last, chart, chart, False))
+    boxes = _chart_enclosures(
+        curve, requests, preparation, preparations=preparations, budget=budget
+    )
+    centers = [boxes[2 * row][0] for row in range(len(cells))]
+    intervals = [boxes[2 * row + 1][0] for row in range(len(cells))]
+    _prepare_chart_first_jets(
+        preparation,
+        [
+            (chart, box)
+            for (chart, *_), pair in zip(cells, zip(intervals, centers), strict=True)
+            for box in pair
+        ],
+        budget=budget,
+        preparations=preparations,
+    )
+    memo = preparation.chart_jets
+    if memo is None:
+        raise ValueError(
+            "coupled_cell_source_jets.preparation must retain chart jets; got a preparation outside retained_queries"
+        )
+
+    def basis(chart: int, box: np.ndarray) -> _ChartFirstJet | None:
+        if not np.all(np.isfinite(box)):
+            return None
+        return memo[(chart, box.tobytes())]
+
+    def evaluate_rows(
+        kind: str, rows: list[tuple[int, np.ndarray]], columns: slice
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        results: list[tuple[np.ndarray, np.ndarray]] = [
+            (np.empty(0), np.empty(0)) for _ in rows
+        ]
+        groups: dict[int, list[int]] = {}
+        for position, (chart, _) in enumerate(rows):
+            groups.setdefault(int(selector[chart]), []).append(position)
+        for index, positions in groups.items():
+            program = _chart_program(
+                systems[index], rows[positions[0]][0], kind, preparation, _CHART_BATCH
+            )
+            budget.ticket.checkpoint()
+            lower, upper = program.evaluate(
+                np.stack([rows[position][1][0, columns] for position in positions]),
+                np.stack([rows[position][1][1, columns] for position in positions]),
+            )
+            for row, position in enumerate(positions):
+                results[position] = (lower[row], upper[row])
+        return results
+
+    charts = [int(chart) for chart, *_ in cells]
+    points = evaluate_rows(
+        "spatial-value", list(zip(charts, centers, strict=True)), slice(0, 2)
+    )
+    first_bases = [basis(chart, box) for chart, box in zip(charts, intervals, strict=True)]
+    center_bases = [basis(chart, box) for chart, box in zip(charts, centers, strict=True)]
+    smooth = [
+        base is not None
+        and _intersection_is_c1(
+            curve,
+            first,
+            last,
+            minimum_chart=chart,
+            maximum_chart=chart,
+            preparations=preparations,
+            budget=budget,
+        )
+        for (chart, first, last, _), base in zip(cells, first_bases, strict=True)
+    ]
+    interval_rows = [row for row, base in enumerate(first_bases) if base is not None]
+    center_rows = [row for row, base in enumerate(center_bases) if base is not None]
+    jacobians = evaluate_rows(
+        "spatial-jacobian",
+        [(charts[row], intervals[row]) for row in interval_rows]
+        + [(charts[row], centers[row]) for row in center_rows],
+        slice(0, 2),
+    )
+    interval_jacobians = dict(
+        zip(interval_rows, jacobians[: len(interval_rows)], strict=True)
+    )
+    center_jacobians = dict(
+        zip(center_rows, jacobians[len(interval_rows) :], strict=True)
+    )
+    curved_rows = [
+        (chart, box)
+        for chart, box, flag in zip(charts, intervals, smooth, strict=True)
+        if flag
+    ]
+    residual_hessians = iter(evaluate_rows("residual-hessian", curved_rows, slice(None)))
+    spatial_hessians = iter(evaluate_rows("spatial-hessian", curved_rows, slice(0, 2)))
+
+    def jet(
+        spatial: _JetBounds, parameters: tuple[np.ndarray, np.ndarray]
+    ) -> _JetBounds:
+        return _JetBounds(
+            lower=np.concatenate((spatial.lower, parameters[0])),
+            upper=np.concatenate((spatial.upper, parameters[1])),
+        )
+
+    results = []
+    for row, chart in enumerate(charts):
+        axis = int(curve.chart_axes[chart])
+        free = [index for index in range(4) if index != axis]
+        first_base, center_base = first_bases[row], center_bases[row]
+        first_jet = second_jet = center_jet = unbounded
+        if first_base is not None:
+            inverse_bounds, coupled = first_base
+            spatial = interval_jacobians[row]
+            first_jet = jet(_spatial_jet_from_bounds(spatial, coupled), coupled)
+            if smooth[row]:
+                second = _second_jet_from_hessian(
+                    next(residual_hessians), free, inverse_bounds, coupled
+                )
+                parameters = (second.lower, second.upper)
+                second_jet = jet(
+                    _spatial_jet_from_bounds(
+                        spatial, parameters, next(spatial_hessians), coupled
+                    ),
+                    parameters,
+                )
+        if center_base is not None:
+            center_spatial = center_jacobians[row]
+            center_coupled = center_base[1]
+            center_jet = jet(
+                _spatial_jet_from_bounds(center_spatial, center_coupled), center_coupled
+            )
+        point_lower, point_upper = points[row]
+        results.append(
+            CoupledCellSourceJets(
+                center_box=centers[row],
+                center_point=_JetBounds(lower=point_lower, upper=point_upper),
+                first=first_jet,
+                second=second_jet,
+                center_first=center_jet,
+            )
+        )
+    return results
 
 
 class IntersectionPCurve(AbstractTrimCurve):
@@ -3492,6 +4016,21 @@ class IntersectionPCurve(AbstractTrimCurve):
                     raise ValueError(
                         f"IntersectionPCurve.side must name a generating side; got {self.side!r}"
                     )
+
+    def host_points(self, parameters: ArrayLike, /) -> np.ndarray:
+        """Concrete rows through the shared bucketed atlas program."""
+        first_chart = min(int(math.floor(self.first)), self.curve.num_charts - 1)
+        last_chart = min(int(math.ceil(self.last)) - 1, self.curve.num_charts - 1)
+        result = self.curve._evaluate_in_chart_range(
+            _host_carrier(self, np.asarray(parameters, dtype=np.float64)),
+            first_chart,
+            last_chart,
+            certify=False,
+            budget=None,
+        )
+        return np.asarray(
+            result.first_parameters if self.side == "first" else result.second_parameters
+        )
 
     def shares_endpoint(
         self,
@@ -4688,6 +5227,18 @@ class CurveTrimSegment(AbstractTrimCurve):
                 budget=budget,
             )
 
+    def host_points(self, parameters: ArrayLike, /) -> np.ndarray:
+        """Concrete rows through the shared atlas program for intersection carriers."""
+        values = _trim_carrier_host(
+            self.curve,
+            _host_source_parameters(self, np.asarray(parameters, dtype=np.float64)),
+            self.first,
+            self.last,
+        )
+        if values is None:
+            return AbstractTrimCurve.host_points(self, parameters)
+        return values
+
     def is_c1_on(
         self,
         first: float,
@@ -4862,6 +5413,53 @@ class CurveTrimSegment(AbstractTrimCurve):
             budget=budget,
         )
 
+    def enclosures(
+        self,
+        intervals: npt.ArrayLike,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        """Row-wise ``enclosure`` of independent ``(first, last)`` intervals."""
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    intervals,
+                )
+            ) as budget:
+                return self.enclosures(
+                    intervals, preparations=preparations, budget=budget
+                )
+        rows = np.asarray(intervals, dtype=np.float64).reshape(-1, 2)
+        carriers = np.asarray(
+            [
+                self.carrier_parameter_enclosure(
+                    float(first), float(last), preparations=preparations, budget=budget
+                )
+                for first, last in rows
+            ],
+            dtype=np.float64,
+        ).reshape(-1, 2)
+        return _trim_carrier_enclosures(
+            self.curve,
+            carriers,
+            self.first,
+            self.last,
+            preparations=preparations,
+            budget=budget,
+        )
+
+    def arc_partition_binding(self) -> tuple[tuple[object, ...], bool]:
+        """Carrier, carrier range and endpoint roots; ``reversed`` maps s to 1 - s."""
+        return (
+            (self.curve, self.first, self.last, self.first_root, self.last_root),
+            self.reversed,
+        )
+
 
 def pcurve_chart_support(
     curve: IntersectionPCurve, first: float, last: float, /
@@ -4936,6 +5534,53 @@ def _trim_carrier_evaluate(
             raise TypeError(
                 f"CurveTrimSegment.curve must provide a native curve or trim curve; got {type(curve).__name__}"
             )
+
+
+def _host_carrier(curve: IntersectionPCurve, parameters: np.ndarray, /) -> np.ndarray:
+    """``IntersectionPCurve._carrier`` on concrete host parameters."""
+    return curve.first + curve.last - parameters if curve.reversed else parameters
+
+
+def _host_source_parameters(segment: CurveTrimSegment, local: np.ndarray, /) -> np.ndarray:
+    """``CurveTrimSegment.source_parameters`` on concrete host parameters."""
+    fraction = 1.0 - local if segment.reversed else local
+    return segment.first + fraction * (segment.last - segment.first)
+
+
+def _trim_carrier_host(
+    curve: CurveEvaluator,
+    parameters: np.ndarray,
+    first: float,
+    last: float,
+    /,
+) -> np.ndarray | None:
+    """``_trim_carrier_evaluate`` on concrete parameters through the bucketed atlas.
+
+    Returns ``None`` unless the carrier reduces to an intersection p-curve,
+    whose atlas program is shared across branches and ranges.
+    """
+    match curve:
+        case PeriodicPCurve():
+            inner = _trim_carrier_host(curve.source_curve, parameters, first, last)
+            return None if inner is None else inner + np.asarray(curve.offset_value)
+        case AffinePCurve():
+            inner = _trim_carrier_host(curve.curve, parameters, first, last)
+            return (
+                None
+                if inner is None
+                else inner @ np.asarray(curve.matrix_value).T
+                + np.asarray(curve.offset_value)
+            )
+        case IntersectionPCurve():
+            head, tail = pcurve_chart_support(curve, first, last)
+            result = curve.curve._evaluate_in_chart_range(
+                _host_carrier(curve, parameters), head, tail, certify=False, budget=None
+            )
+            return np.asarray(
+                result.first_parameters if curve.side == "first" else result.second_parameters
+            )
+        case _:
+            return None
 
 
 def _trim_carrier_is_c1(
@@ -5125,6 +5770,157 @@ def _trim_carrier_enclosure(
         images.append(np.stack((lo[0], hi[0])))
     boxes = np.asarray(images)
     return np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
+
+
+def _trim_carrier_enclosures(
+    curve: CurveEvaluator,
+    intervals: np.ndarray,
+    first: float,
+    last: float,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Row-wise ``_trim_carrier_enclosure``; branch carriers share chart passes."""
+    if intervals.shape[0] == 0:
+        return np.empty((0, 2, 2), dtype=np.float64)
+    if isinstance(curve, PeriodicPCurve):
+        return np.stack(
+            [
+                curve._transport_bounds(box)
+                for box in _trim_carrier_enclosures(
+                    curve.source_curve,
+                    intervals,
+                    first,
+                    last,
+                    preparations=preparations,
+                    budget=budget,
+                )
+            ]
+        )
+    if isinstance(curve, AffinePCurve):
+        return np.stack(
+            [
+                curve._transport_bounds(box, translate=True)
+                for box in _trim_carrier_enclosures(
+                    curve.curve,
+                    intervals,
+                    first,
+                    last,
+                    preparations=preparations,
+                    budget=budget,
+                )
+            ]
+        )
+    if isinstance(curve, IntersectionPCurve):
+        head, tail = pcurve_chart_support(curve, first, last)
+        requests = []
+        for lower, upper in intervals.tolist():
+            values = sorted(
+                (float(curve._carrier(lower)), float(curve._carrier(upper)))
+            )
+            requests.append((values[0], values[1], head, tail, True))
+        columns = curve._columns()
+        return np.stack(
+            [
+                np.stack(
+                    (
+                        np.min(boxes[:, 0, columns], axis=0),
+                        np.max(boxes[:, 1, columns], axis=0),
+                    )
+                )
+                for boxes in curve.curve.parameter_enclosure_batch(
+                    requests, preparations=preparations, budget=budget
+                )
+            ]
+        )
+    return np.stack(
+        [
+            np.asarray(
+                _trim_carrier_enclosure(
+                    curve,
+                    float(lower),
+                    float(upper),
+                    first,
+                    last,
+                    preparations=preparations,
+                    budget=budget,
+                ),
+                dtype=np.float64,
+            )
+            for lower, upper in intervals
+        ]
+    )
+
+
+def prepare_trim_first_jets(
+    cells: Sequence[tuple[AbstractTrimCurve, float, float]],
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Prepare implicit trim derivatives without changing their scalar formulas.
+
+    The ordinary derivative methods still own range validation, UV transport,
+    scaling, orientation and the returned enclosures. This batches only the
+    shared chart inclusions that those methods would otherwise compute one by
+    one; non-intersection carriers keep their existing derivative implementation.
+    """
+    groups: dict[
+        int,
+        tuple[
+            IntersectionJetPreparation,
+            list[tuple[float, float, int, int | None, bool]],
+        ],
+    ] = {}
+    for trim, lower, upper in cells:
+        if not isinstance(trim, CurveTrimSegment):
+            continue
+        source: CurveEvaluator = trim
+        first, last = trim.parameter_interval
+        while True:
+            if isinstance(source, CurveTrimSegment):
+                bounds = source.carrier_parameter_enclosure(
+                    lower, upper, preparations=preparations, budget=budget
+                )
+                lower, upper = float(bounds[0]), float(bounds[1])
+                first, last = source.first, source.last
+                source = source.curve
+            elif isinstance(source, PeriodicPCurve):
+                source = source.source_curve
+            elif isinstance(source, AffinePCurve):
+                source = source.curve
+            else:
+                break
+        if not isinstance(source, IntersectionPCurve):
+            continue
+        preparation = _original_trim_intersection_preparation(
+            source.curve, preparations=preparations, budget=budget
+        )
+        if preparation is None or preparation.chart_jets is None:
+            continue
+        head, tail = pcurve_chart_support(source, first, last)
+        values = sorted(
+            (float(source._carrier(lower)), float(source._carrier(upper)))
+        )
+        entry = groups.setdefault(id(preparation), (preparation, []))
+        entry[1].append((values[0], values[1], head, tail, True))
+    for preparation, requests in groups.values():
+        curve = preparation.curve
+        plans = _chart_enclosures(
+            curve, requests, preparation, preparations=preparations, budget=budget
+        )
+        queries = []
+        for request, boxes in zip(requests, plans, strict=True):
+            first, _, minimum_chart, maximum_chart, _ = request
+            last_chart = curve.num_charts - 1 if maximum_chart is None else maximum_chart
+            head = max(minimum_chart, min(int(math.floor(first)), last_chart))
+            queries.extend((head + offset, box) for offset, box in enumerate(boxes))
+        _prepare_chart_first_jets(
+            preparation, queries, preparations=preparations, budget=budget
+        )
 
 
 def trim_source_jet(

@@ -894,7 +894,7 @@ def _facet_classes(
         rows.reshape(-1, mesh.topological_dimension),
         classes,
         tuple(
-            tuple(patches[k].name for k in np.flatnonzero(row[1 : 1 + len(patches)]))
+            tuple(patches.names[k] for k in np.flatnonzero(row[1 : 1 + len(patches)]))
             for row in table
         ),
         tuple(None if row[0] < 0 else zones[row[0]].name for row in table),

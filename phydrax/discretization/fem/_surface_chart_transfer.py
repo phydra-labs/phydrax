@@ -710,6 +710,57 @@ class _MaterialDgMassSolution(StrictModule):
     conservative: bool
 
 
+def _batched_mass_solutions(
+    masses: Sequence[_FloatArray], right_hand_sides: Sequence[_FloatArray]
+) -> list[tuple[_FloatArray, _FloatArray]]:
+    """Factor every local physical mass with the native SVD, one batch per size.
+
+    Right-hand sides of one batch are padded with zero columns, whose solutions
+    are discarded; each cell keeps its own rank, spectrum and solution.
+    """
+    groups: dict[int, list[int]] = {}
+    for cell, matrix in enumerate(masses):
+        groups.setdefault(matrix.shape[0], []).append(cell)
+    solutions: list[tuple[_FloatArray, _FloatArray] | None] = [None] * len(masses)
+    for size, cells in groups.items():
+        width = max(right_hand_sides[cell].shape[1] for cell in cells)
+        stacked = np.stack([masses[cell] for cell in cells])
+        padded = np.zeros((len(cells), size, width), dtype=np.float64)
+        for index, cell in enumerate(cells):
+            padded[index, :, : right_hand_sides[cell].shape[1]] = right_hand_sides[cell]
+        factor = factorize(
+            DenseLinearOperator(
+                stacked,
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "surface-chart-dg-local-mass-batch",
+                        "values": array_tree_fingerprint(stacked),
+                    }
+                ),
+            ),
+            FactorizationPolicy("svd"),
+        )
+        if np.any(np.asarray(factor.rank()).reshape(len(cells)) != size):
+            raise ValueError(
+                "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG target physical mass is rank deficient."
+            )
+        spectra = np.asarray(factor.singular_values()).reshape(len(cells), size)
+        solved = factor.solve(jnp.asarray(padded, dtype=jnp.float64))
+        if not bool(np.all(np.asarray(solved.successful))):
+            raise ValueError(
+                "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG native mass solve failed."
+            )
+        values = np.asarray(solved.value, dtype=np.float64).reshape(
+            len(cells), size, width
+        )
+        for index, cell in enumerate(cells):
+            solutions[cell] = (
+                values[index, :, : right_hand_sides[cell].shape[1]],
+                spectra[index],
+            )
+    return [solution for solution in solutions if solution is not None]
+
+
 def _solve_material_dg_masses(
     sc: tuple[MappedDgCell, ...],
     tc: tuple[MappedDgCell, ...],
@@ -728,6 +779,7 @@ def _solve_material_dg_masses(
     denominator = np.zeros(ss, dtype=np.float64)
     condition, solve_defect, correction_bound = 1.0, 0.0, 0.0
     conservative = semantics == "conservative-density"
+    inputs: list[tuple[list[int], _IntArray, _IntArray, _FloatArray]] = []
     for cell, matrix in enumerate(masses):
         parents = sorted(mixed[cell])
         if not parents:
@@ -742,31 +794,12 @@ def _solve_material_dg_masses(
         # enclosed forms do not share identical publication errors; enforce these
         # functionals using the same native mass inverse, not relaxed claims.
         extra = tm[route] if conservative else matrix.sum(axis=1) - rhs.sum(axis=1)
-        full_rhs = np.column_stack((rhs, extra))
-        factor = factorize(
-            DenseLinearOperator(
-                matrix,
-                operator_id=canonical_fingerprint(
-                    {
-                        "kind": "surface-chart-dg-local-mass",
-                        "values": array_tree_fingerprint(matrix),
-                    }
-                ),
-            ),
-            FactorizationPolicy("svd"),
-        )
-        if int(np.asarray(factor.rank())) != matrix.shape[0]:
-            raise ValueError(
-                "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG target physical mass is rank deficient."
-            )
-        spectrum = np.asarray(factor.singular_values())
+        inputs.append((parents, old_routes, route, np.column_stack((rhs, extra))))
+    solutions = _batched_mass_solutions(masses, [entry[3] for entry in inputs])
+    for cell, matrix in enumerate(masses):
+        _, old_routes, route, full_rhs = inputs[cell]
+        full_value, spectrum = solutions[cell]
         condition = max(condition, float(spectrum[0] / spectrum[-1]))
-        solved = factor.solve(jnp.asarray(full_rhs, dtype=jnp.float64))
-        if not bool(np.all(np.asarray(solved.successful))):
-            raise ValueError(
-                "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG native mass solve failed."
-            )
-        full_value = np.asarray(solved.value, dtype=np.float64)
         value, lift = full_value[:, :-1], full_value[:, -1]
         if not np.all(np.isfinite(full_value)):
             raise ValueError(

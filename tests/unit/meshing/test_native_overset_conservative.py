@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Test mixed/polyhedral cell inventories separately from point interpolation."""
 
+from copy import copy
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -374,3 +376,130 @@ def test_rigid_native_motion_preserves_sparse_authority_scope_and_refreshes_sour
     assert new_edge.source_entities.entity_ids() != old_edge.source_entities.entity_ids()
     assert new_edge.parent_association_id == old_edge.association_id
     np.testing.assert_array_equal(new_edge.parent_ids, old_edge.target_global_ids)
+
+
+@pytest.mark.parametrize("motion_kind", ("rigid", "interior"))
+def test_native_motion_handover_authenticates_actual_source_and_target(
+    motion_kind: str,
+) -> None:
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+    from phydrax.discretization._mapped_geometry_measure import certified_cell_measures
+    from phydrax.meshing._native_preparation import _require_native_completed_source
+    from phydrax.meshing.providers._native_publication import coordinate_budget
+    from phydrax.meshing.qualification import (
+        deform_planar_interior,
+        execute_native_consumer,
+        native_planar_part,
+        rigid_planar_successor,
+    )
+    from phydrax.meshing.qualification._moving_overset import _prepare_planar_motion_issue
+    from tools.meshing_qualification._runtime import qualification_failure
+
+    source, plan = native_planar_part("moving", 1.0, size=0.7)
+    before = certified_carrier(source)
+    if motion_kind == "rigid":
+        moved, _ = rigid_planar_successor(
+            source, np.asarray((0.05, 0.0)), motion_id="issued-rigid", plan=plan,
+        )
+    else:
+        coordinates = np.asarray(before.mesh.coordinates).copy()
+        authority = before.geometry.exact_source
+        assert isinstance(authority, phx.discretization.ExactPlcCellGeometrySource)
+        incidence = before.mesh.connectivity
+        assert isinstance(incidence, PolygonalConnectivity)
+        boundary = np.unique(
+            np.asarray(incidence.edges)[np.asarray(incidence.boundary_edges)]
+        )
+        interior = int(np.setdiff1d(
+            np.flatnonzero(np.asarray(authority.vertex_strata) == 0), boundary,
+        )[0])
+        coordinates[interior, 0] += 0.005
+        moved = deform_planar_interior(
+            source, coordinates, motion_id="issued-interior", plan=plan,
+        )
+    target = certified_carrier(moved)
+    receipt = target.execution_evidence
+    previous = before.execution_evidence
+    assert receipt is not None and previous is not None
+    assert receipt is not previous
+    assert receipt.preparation_evidence is None
+    assert len(receipt.history_evidence) == 1
+    assert receipt.history_evidence[0] is previous
+    assert int(np.asarray(receipt.total_work_units)) == int(
+        np.asarray(receipt.work_counters.construction_work)
+    )
+    with NativeExecutionScope(plan.specification.limits.native_limits()):
+        _require_native_completed_source(target, receipt)
+        with pytest.raises(ValueError, match="actual issued weak owner"):
+            _require_native_completed_source(copy(target), receipt)
+        with pytest.raises(ValueError, match="actual issued weak owner"):
+            _require_native_completed_source(target, previous)
+        with pytest.raises(ValueError, match="actual issued weak owner"):
+            _require_native_completed_source(target, copy(receipt))
+        original = target.mesh.coordinates
+        try:
+            object.__setattr__(target.mesh, "coordinates", jnp.array(original, copy=True))
+            with pytest.raises(ValueError, match="owners|fields"):
+                _require_native_completed_source(target, receipt)
+        finally:
+            object.__setattr__(target.mesh, "coordinates", original)
+        _require_native_completed_source(target, receipt)
+    with NativeExecutionScope(plan.specification.limits.native_limits()) as scope:
+        with pytest.raises(ValueError, match="actual issued weak owner"):
+            _prepare_planar_motion_issue(
+                moved, copy(before), scope, coordinate_budget(plan.specification.limits),
+            )
+
+    def measure(budget: CoordinateEnclosureBudget) -> np.ndarray:
+        values, errors, exact = certified_cell_measures(
+            target.mesh, target.geometry, budget=budget,
+        )
+        assert exact
+        assert np.all(np.isfinite(errors)) and np.all(errors >= 0.0)
+        # Exact rational integration still reports outward binary64 rounding.
+        assert abs(float(np.sum(values)) - 4.0) <= float(np.sum(errors)) + (
+            values.size * np.spacing(4.0)
+        )
+        return values
+
+    consumed = execute_native_consumer(
+        target, plan.specification.limits, measure, failure_factory=qualification_failure,
+    )
+    assert consumed.result.execution_evidence is not None
+    assert consumed.result.execution_evidence.preparation_evidence is receipt
+    assert consumed.result.mesh is target.mesh
+    assert float(np.sum(consumed.value)) == pytest.approx(4.0, rel=0.0, abs=1.0e-12)
+
+
+def test_native_motion_failed_handover_releases_prepaid_publication() -> None:
+    from phydrax._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionScope
+    from phydrax.meshing.providers._native_publication import coordinate_budget
+    from phydrax.meshing.qualification import native_planar_part, rigid_planar_successor
+    from phydrax.meshing.qualification._moving_overset import (
+        _ended_planar_motion,
+        _prepare_planar_motion_issue,
+    )
+
+    source, plan = native_planar_part("moving", 1.0, size=0.7)
+    moved, _ = rigid_planar_successor(
+        source, np.asarray((0.05, 0.0)), motion_id="failed-handover", plan=plan,
+    )
+    before = certified_carrier(source)
+    original = np.asarray(before.mesh.coordinates).copy()
+    limits = plan.specification.limits
+    with pytest.raises(MeshcoreError):
+        with NativeExecutionScope(limits.native_limits()) as scope:
+            issue = _prepare_planar_motion_issue(
+                moved, before, scope, coordinate_budget(limits),
+            )
+            storage = issue._storage
+            scope.charge(work=scope.remaining().remaining_work_units + 1)
+    assert scope.completed_evidence().status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert storage is not None
+    assert storage.bound == 0
+    with pytest.raises(RuntimeError, match="completed metadata-only root lease"):
+        _ended_planar_motion(moved, before, limits, scope, issue)
+    assert issue._storage is None
+    assert issue._source is None
+    np.testing.assert_array_equal(before.mesh.coordinates, original)

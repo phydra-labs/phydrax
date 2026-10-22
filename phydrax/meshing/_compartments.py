@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager, ExitStack, nullcontext
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from time import monotonic
@@ -30,11 +30,14 @@ from phydrax.meshing._contracts import MeshingLimits, VolumeMeshingSpec
 from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
 from .._meshcore import (
+    current_native_execution_scope,
     MeshcoreError,
     MeshcoreStatus,
+    NativeBatchTicket,
     NativeExecutionEvidence,
     NativeExecutionScope,
     NativeHostStorageWorkspace,
+    NativeScopeTicket,
 )
 from .._resource_ticket import BatchTicket, HostBatchTicket
 from .._strict import StrictModule
@@ -43,6 +46,9 @@ from ..discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._exact_rational_geometry import affine_image_geometry_from_routes
+from ..discretization._reference_cell import reference_cell_topology
+from ..discretization._reference_cell_types import CellBlock
 from ..geometry._compartments import CompartmentMeshingSource
 from ..geometry._domain_coverage import (
     certify_domain_coverage,
@@ -53,15 +59,21 @@ from ..geometry._global_embedding import (
     certify_global_embedding,
     GlobalEmbeddingCertificate,
 )
+from ..geometry._mapped_reference_domain import MappedReferenceDomain
 from ..geometry._supermesh import (
     CommonRefinementCoverage,
     CommonRefinementStatus,
     PreparedCommonRefinement,
 )
 from ..geometry.multiregion_surface._label_extraction import LabelFieldVolumeBinding
+from ..linalg._small_batched import prepare_exact_small_linear_actions
 from ..typing import checked
 from . import _lineage_records as lineage_owner, _result as result_owner
-from ._certified_unit_cells import CertifiedSourceLattice, signed_dyadic_cell_length
+from ._certified_unit_cells import (
+    affine_image_geometry,
+    CertifiedSourceLattice,
+    signed_dyadic_cell_length,
+)
 from ._lineage_records import EntityLineageKind
 from ._measurements import (
     measure_phase,
@@ -72,9 +84,11 @@ from ._measurements import (
 from ._organization_records import (
     material_interface_facets,
     MeshPatch,
+    MeshPatchBank,
     MeshZone,
     MeshZoneRole,
     RegionMeshingEvidence,
+    RegionSourceDomain,
 )
 from ._plc_source import PiecewiseLinearComplex
 from ._scope import mesh_entity_scope
@@ -97,6 +111,8 @@ class CompartmentConstruction:
 
     volume: VolumeConstruction
     region_evidence: RegionMeshingEvidence
+    outer_domain: PiecewiseLinearDomain | MappedReferenceDomain | None = None
+    outer_certificate: DomainCoverageCertificate | None = None
 
 
 _IMAGE_FACE_AXES = ((1, 2), (2, 0), (0, 1))
@@ -158,6 +174,9 @@ class _ImagePreparationBudget:
     work_units: int = 0
     geometry_queries: int = 0
     certified_lattice: CertifiedSourceLattice | None = None
+    exact_vertex_coordinates: tuple[tuple[Fraction, ...], ...] | None = None
+    mapped_domain: MappedReferenceDomain | None = None
+    mapped_outer_domain: MappedReferenceDomain | None = None
 
     def admit_storage(self, bytes_upper: int, /) -> None:
         """Observe live bounded preparation storage without native per-item calls."""
@@ -276,6 +295,12 @@ def _image_certificate_budget(
             maximum_queries = limits_.maximum_distance_evaluations
         case _ as unreachable:
             assert_never(unreachable)
+    if budget is not None and not budget.ticket.settled:
+        with budget.bound_stage(
+            limits_.maximum_work_units, limits_.maximum_scratch_bytes
+        ):
+            yield budget
+        return
     remaining = scope.remaining()
     ticket = scope.batch(
         min(limits_.maximum_work_units, remaining.remaining_work_units),
@@ -700,6 +725,42 @@ def _prepare_compartment_complex_bound(
         budget.admit_storage(scratch_bytes)
         complex_ = _compile_compartment_faces(source, code, region_ids, budget=budget)
         budget.checkpoint()
+    if budget.exact_vertex_coordinates is not None:
+        work_upper = limits.maximum_work_units - budget.work_units
+        queries_upper = limits.maximum_geometry_queries - budget.geometry_queries
+        bytes_upper = limits.maximum_scratch_bytes
+        if scope is not None:
+            remaining = scope.remaining()
+            work_upper = min(work_upper, remaining.remaining_work_units)
+            queries_upper = min(queries_upper, remaining.remaining_geometry_queries)
+            bytes_upper = min(bytes_upper, remaining.remaining_managed_bytes)
+        with _image_preparation_batch(
+            limits, work_upper, queries_upper, bytes_upper, scope=scope
+        ) as ticket:
+            coordinate_budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with coordinate_budget.activate():
+                complex_ = _exact_compartment_source_geometry(
+                    complex_, source, budget.exact_vertex_coordinates,
+                    budget=coordinate_budget,
+                )
+                budget.mapped_domain, budget.mapped_outer_domain = (
+                    _exact_compartment_domains(
+                        source, code, region_ids, budget=coordinate_budget
+                    )
+                )
+            budget.work_units += ticket.work_units
+            budget.geometry_queries += ticket.geometry_queries
+            _check_image_preparation_limits(
+                limits,
+                (
+                    ("maximum_work_units", budget.work_units),
+                    ("maximum_geometry_queries", budget.geometry_queries),
+                ),
+            )
     record_elapsed(record_phase, "image_interpretation", started)
     return complex_, budget
 
@@ -804,7 +865,191 @@ def _compile_compartment_faces(
             scale,
         )
     budget.checkpoint()
+    if source.outer_geometry is not None:
+        budget.consume(3 * len(retained_keys))
+        budget.exact_vertex_coordinates = tuple(
+            tuple(Fraction(value, 2) for value in key) for key in retained_keys
+        )
     return complex_
+
+
+def _exact_compartment_source_geometry(
+    complex_: PiecewiseLinearComplex,
+    source: CompartmentMeshingSource,
+    coordinates: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> PiecewiseLinearComplex:
+    """Retain the declared index affine independently of native PLC rounding."""
+    triangles = []
+    loops = tuple(
+        complex_.polygon_vertices[first:last]
+        for first, last in zip(
+            complex_.polygon_offsets[:-1], complex_.polygon_offsets[1:], strict=True
+        )
+    )
+    for loop in loops:
+        for index in range(1, len(loop) - 1):
+            budget.reserve(12)
+            row = (int(loop[0]), int(loop[index]), int(loop[index + 1]))
+            first, second, third = (coordinates[vertex] for vertex in row)
+            edge = tuple(b - a for a, b in zip(first, second, strict=True))
+            other = tuple(b - a for a, b in zip(first, third, strict=True))
+            if any(
+                edge[a] * other[b] != edge[b] * other[a]
+                for a, b in ((0, 1), (0, 2), (1, 2))
+            ):
+                triangles.append(row)
+    geometry = affine_image_geometry_from_routes(
+        source.labels.asset.spatial_affine.matrix,
+        coordinates,
+        {"material-source": cell_geometry_owner.coordinate_lagrange_element("triangle", 1)},
+        {"material-source": np.asarray(triangles, dtype=np.int32)},
+        budget=budget,
+    )
+    return PiecewiseLinearComplex(
+        complex_.vertices,
+        loops,
+        complex_.polygon_facets,
+        complex_.facet_regions,
+        complex_.region_ids,
+        segments=complex_.segments,
+        boundary=complex_.boundary,
+        geometry=geometry,
+    )
+
+
+def _exact_compartment_domains(
+    source: CompartmentMeshingSource,
+    code: np.ndarray,
+    region_ids: tuple[str, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[MappedReferenceDomain, MappedReferenceDomain]:
+    """Declare independent occupied index cells and the unchanged authored affine."""
+    topology = reference_cell_topology("hexahedron")
+    occupied = np.argwhere(code >= 0)
+    budget.reserve(32 * occupied.shape[0], 2048 * occupied.shape[0])
+    corner_keys = tuple(
+        tuple(
+            tuple(2 * int(index[axis]) + 2 * int(corner[axis]) - 1 for axis in range(3))
+            for corner in topology.vertices
+        )
+        for index in occupied
+    )
+    keys = tuple(sorted({key for cell in corner_keys for key in cell}))
+    lookup = {key: row for row, key in enumerate(keys)}
+    cells = np.asarray(
+        [[lookup[key] for key in cell] for cell in corner_keys], dtype=np.int32
+    )
+    reference_points = np.asarray(keys, dtype=np.float64) * 0.5
+    regions = np.asarray([int(code[tuple(index)]) for index in occupied], dtype=np.int64)
+    root_ids = np.ravel_multi_index(occupied.T, code.shape).astype(np.int64)
+    reference_mesh = cell_mesh_owner.CellMesh(
+        reference_points,
+        (CellBlock("occupied-image-roots", "hexahedron", cells, global_ids=root_ids),),
+        numeric_version=source.source_revision,
+    )
+    root_geometry = affine_image_geometry(
+        reference_mesh,
+        source.labels.asset.spatial_affine.matrix,
+        tuple(tuple(Fraction(value, 2) for value in key) for key in keys),
+        budget=budget,
+    )
+    facets, pairs = [], []
+    for index, cell, own in zip(occupied, cells, regions.tolist(), strict=True):
+        for face in topology.entities[2]:
+            budget.reserve(12)
+            axis = next(
+                axis
+                for axis in range(3)
+                if len({topology.vertices[vertex][axis] for vertex in face}) == 1
+            )
+            neighbor = index.copy()
+            neighbor[axis] += (
+                1 if topology.vertices[face[0]][axis] == 1.0 else -1
+            )
+            other = (
+                int(code[tuple(neighbor)])
+                if np.all(neighbor >= 0) and np.all(neighbor < code.shape)
+                else -1
+            )
+            if own == other or (other >= 0 and own > other):
+                continue
+            loop = [int(cell[vertex]) for vertex in face]
+            facets.extend(((loop[0], loop[1], loop[2]), (loop[0], loop[2], loop[3])))
+            pairs.extend(((own, other), (own, other)))
+    reference_domain = PiecewiseLinearDomain(
+        reference_points,
+        np.asarray(facets, dtype=np.int64),
+        np.asarray(pairs, dtype=np.int64),
+        region_ids,
+        source_id=source.source_id,
+    )
+    material = MappedReferenceDomain(
+        reference_domain,
+        reference_mesh,
+        root_geometry,
+        regions,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        budget=budget,
+    )
+    outer_geometry = source.outer_geometry
+    if outer_geometry is None:
+        raise ValueError(
+            "exact_compartment_domains.outer_geometry must retain the independently authored outer map; got no source geometry"
+        )
+    outer_points = outer_geometry.rational_source_coordinates(budget=budget)
+    affine = np.asarray(source.labels.asset.spatial_affine.matrix, dtype=np.float64)
+    matrix = tuple(tuple(Fraction(float(value)) for value in row[:3]) for row in affine[:3])
+    offset = tuple(Fraction(float(value)) for value in affine[:3, 3])
+    inverse = prepare_exact_small_linear_actions(
+        matrix,
+        tuple(
+            tuple(point[axis] - offset[axis] for point in outer_points)
+            for axis in range(3)
+        ),
+        budget=budget,
+    )
+    if inverse.actions is None or inverse.determinant == 0:
+        raise ValueError(
+            "exact_compartment_domains.affine must be exactly invertible; got a singular declared image map"
+        )
+    exact_outer = tuple(zip(*inverse.actions, strict=True))
+    outer_reference = np.asarray(exact_outer, dtype=np.float64)
+    if any(
+        Fraction(float(representative)) != exact
+        for row, point in zip(outer_reference, exact_outer, strict=True)
+        for representative, exact in zip(row, point, strict=True)
+    ):
+        raise ValueError(
+            "exact_compartment_domains.outer_geometry must admit exact binary64 reference vertices; got unrepresentable reference coordinates"
+        )
+    outer_faces = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in source.outer_surface.mesh.blocks]
+    )
+    outer_pairs = np.empty((outer_faces.shape[0], 2), dtype=np.int64)
+    outer_pairs[:, 0], outer_pairs[:, 1] = 0, -1
+    outer_reference_domain = PiecewiseLinearDomain(
+        outer_reference,
+        outer_faces,
+        outer_pairs,
+        ("occupied-domain",),
+        source_id=source.source_id,
+    )
+    outer = MappedReferenceDomain(
+        outer_reference_domain,
+        reference_mesh,
+        root_geometry,
+        np.zeros(regions.shape, dtype=np.int64),
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        budget=budget,
+    )
+    return material, outer
 
 
 def _material_patches(
@@ -912,7 +1157,13 @@ def _prepare_compartment_outer_domain(
     *,
     budget: _ImagePreparationBudget,
     scope: NativeExecutionScope,
-) -> PiecewiseLinearDomain:
+) -> RegionSourceDomain:
+    if source.outer_geometry is not None:
+        if budget.mapped_outer_domain is None:
+            raise ValueError(
+                "compartment_outer_domain.exact_geometry must retain its independently prepared mapped domain; got no source declaration"
+            )
+        return budget.mapped_outer_domain
     outer = source.outer_surface.mesh
     face_count = sum(block.vertices.shape[0] for block in outer.blocks)
     bytes_upper = outer.coordinates.size * 8 + 64 * face_count
@@ -1037,7 +1288,9 @@ def _generate_compartment_volume(
         outer_domain = _prepare_compartment_outer_domain(
             source, budget=budget, scope=scope
         )
-        workspace.retain_owner((complex_, outer_domain, budget.certified_lattice))
+        workspace.retain_owner(
+            (complex_, outer_domain, budget.certified_lattice, budget.mapped_domain)
+        )
         volume = generate_plc_volume(
             complex_,
             specification,
@@ -1049,6 +1302,7 @@ def _generate_compartment_volume(
             record_phase=record_phase,
             source_work_units=budget.work_units,
             certified_lattice=budget.certified_lattice,
+            source_domain=budget.mapped_domain,
             scope=scope,
         )
         mesh = volume.mesh
@@ -1106,7 +1360,7 @@ def _generate_compartment_volume(
         # The declared outer surface is checked independently with all materials
         # merged. This admits a coarse outer triangulation but cannot silently
         # replace an incompatible envelope with the image-cell boundary.
-        _certify_coverage_stage(
+        outer_certificate = _certify_coverage_stage(
             mesh,
             geometry,
             outer_domain,
@@ -1119,7 +1373,7 @@ def _generate_compartment_volume(
             coordinate_budget,
             "outer-source coverage",
             record_phase,
-        )
+        ).coverage
         started = phase_started(record_phase)
         assignments = tuple(
             complex_.region_ids[value] for value in volume.cell_regions.tolist()
@@ -1200,7 +1454,8 @@ def _generate_compartment_volume(
             specification.limits, MeshingStageKind.CERTIFICATION, scope=scope
         )
         return CompartmentConstruction(
-            replace(volume, zones=zones, patches=patches), evidence
+            replace(volume, zones=zones, patches=patches), evidence,
+            outer_domain, outer_certificate,
         )
 
 
@@ -1257,7 +1512,7 @@ class _ReconstructedRegionOrganization(StrictModule):
 def _prepare_reconstructed_region_organization(
     source: LabelFieldVolumeBinding,
     mesh: cell_mesh_owner.CellMesh,
-    domain: PiecewiseLinearDomain,
+    domain: RegionSourceDomain,
     cell_regions: np.ndarray,
     source_zones: tuple[MeshZone, ...],
     specification: VolumeMeshingSpec,
@@ -1492,6 +1747,7 @@ def _generate_reconstructed_image_volume(
 
 @dataclass(frozen=True, slots=True)
 class RegionMeshingRenewal:
+    """Renewed scientific owners; borrowed requests leave receipt binding to their caller."""
     zones: tuple[MeshZone, ...]
     patches: tuple[MeshPatch, ...]
     region_evidence: RegionMeshingEvidence
@@ -1505,7 +1761,7 @@ def revalidate_region_evidence(
     mesh: cell_mesh_owner.CellMesh,
     geometry: cell_geometry_owner.CellGeometrySpec,
     zones: tuple[MeshZone, ...],
-    patches: tuple[MeshPatch, ...],
+    patches: tuple[MeshPatch, ...] | MeshPatchBank,
     /,
     *,
     lineage: lineage_owner.MeshLineage | None = None,
@@ -1513,18 +1769,58 @@ def revalidate_region_evidence(
     compartment_source: CompartmentMeshingSource | None = None,
     certificate_limits: MeshCertificateLimits | None = None,
     limits: MeshingLimits | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+    publication_coverage: DomainCoverageCertificate | None = None,
 ) -> RegionMeshingRenewal:
     """Renew source, material and outer certificates under one source allowance.
 
     Omitted certificate controls inherit the material evidence's retained
-    controls. ``limits`` bounds the entire independent renewal operation.
+    controls. An explicit ``budget`` borrows its current native request and
+    retains its counters and source preparations; it never opens an allowance.
+    Without one, ``limits`` bounds this standalone renewal operation.
+    ``publication_coverage`` is a nonstate, genuinely reearned current proof for
+    the unchanged publication domain, never authority reconstructed from bytes.
     """
     renewal_limits = MeshingLimits() if limits is None else limits
-    with native_volume_execution_budget(
-        renewal_limits,
-        stage=MeshingStageKind.SOURCE_INSPECTION,
-    ) as budget:
-        with budget.host_workspace() as workspace:
+    owns_request = budget is None
+    caller_scope = current_native_execution_scope()
+    if budget is not None:
+        if caller_scope is None or (
+            not budget.ticket.settled and not budget.ticket.native_accounting
+        ):
+            raise ValueError(
+                "region_renewal.budget must belong to a current native request; got no native caller."
+            )
+        if isinstance(budget.ticket, (NativeBatchTicket, NativeScopeTicket)):
+            origin_root = budget.ticket.scope
+            while origin_root.parent is not None:
+                origin_root = origin_root.parent
+            caller_root = caller_scope
+            while caller_root.parent is not None:
+                caller_root = caller_root.parent
+            if origin_root is not caller_root:
+                raise ValueError(
+                    "region_renewal.budget must retain the same actual native request; got a different request root."
+                )
+    with (
+        native_volume_execution_budget(
+            renewal_limits, stage=MeshingStageKind.SOURCE_INSPECTION
+        ) if owns_request else nullcontext(caller_scope)
+    ) as scope, ExitStack() as handover:
+        if scope is None:
+            raise RuntimeError("region_renewal.scope must retain its native request.")
+        if budget is None:
+            initial = scope.batch(0)
+            initial.settle()
+            budget = CoordinateEnclosureBudget(
+                initial,
+                maximum_work_units=renewal_limits.maximum_work_units,
+                maximum_memory_bytes=renewal_limits.maximum_scratch_bytes,
+            )
+        if budget.ticket.settled:
+            handover.enter_context(budget.bind_ticket(scope.ticket_view()))
+        handover.enter_context(budget.ticket.native_target())
+        with scope.host_workspace() as workspace:
             renewal = _renew_region_evidence(
                 source,
                 mesh,
@@ -1536,10 +1832,16 @@ def revalidate_region_evidence(
                 compartment_source=compartment_source,
                 certificate_limits=certificate_limits,
                 limits=renewal_limits,
-                scope=budget,
+                scope=scope,
                 workspace=workspace,
+                coordinate_budget=budget,
+                publication_coverage=publication_coverage,
             )
-    return replace(renewal, native_execution_evidence=budget.evidence)
+            budget.retain_owner(renewal)
+    return (
+        replace(renewal, native_execution_evidence=scope.evidence)
+        if owns_request else renewal
+    )
 
 
 class _MaterialAssignments(StrictModule):
@@ -1685,12 +1987,12 @@ def _prepare_material_assignments(
 
 
 class _RenewedRegionSource(StrictModule):
-    domain: PiecewiseLinearDomain
+    domain: RegionSourceDomain
     revision: str = eqx.field(static=True)
     complex_id: str = eqx.field(static=True)
     definitions: tuple[tuple[str, str, str, bool], ...] = eqx.field(static=True)
     preparation: PreparedPlcSource | None
-    outer_domain: PiecewiseLinearDomain | None
+    outer_domain: RegionSourceDomain | None
 
 
 def _prepare_renewed_region_source(
@@ -1701,6 +2003,9 @@ def _prepare_renewed_region_source(
     budget: _ImagePreparationBudget,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    publication_coverage: DomainCoverageCertificate | None = None,
 ) -> _RenewedRegionSource:
     domain = evidence.domain
     revision = evidence.source_revision
@@ -1709,6 +2014,7 @@ def _prepare_renewed_region_source(
     source_preparation = None
     outer_domain = None
     if compartment_source is not None:
+        compartment_source.validate_source_integrity()
         if (
             compartment_source.coordinate_contract.spatial_id
             != source.coordinate_contract.spatial_id
@@ -1717,7 +2023,10 @@ def _prepare_renewed_region_source(
                 "region_renewal.compartment_source must retain the spatial contract; got a different contract"
             )
         if tuple(
-            value.compartment_id for value in compartment_source.compartments.compartments
+            sorted(
+                value.compartment_id
+                for value in compartment_source.compartments.compartments
+            )
         ) != tuple(sorted(evidence.domain.region_ids)):
             raise ValueError(
                 "region_renewal.compartment_source must retain material identities; got changed material IDs"
@@ -1731,21 +2040,47 @@ def _prepare_renewed_region_source(
             compartment_source, budget=budget, scope=scope
         )
         workspace.retain_owner((complex_, outer_domain))
-        source_preparation = prepare_plc_source(
-            complex_,
-            compartment_source.source_id,
-            compartment_source.source_revision,
-            source.coordinate_contract,
-            limits=renewal_limits,
-            source_work_units=budget.work_units,
-            source_geometry_queries=budget.geometry_queries,
-            scope=scope,
-        )
-        budget.work_units += dict(source_preparation.preparation_counters)["work_units"]
-        _check_image_preparation_limits(
-            renewal_limits, (("maximum_work_units", budget.work_units),)
-        )
-        domain = source_preparation.association_transfer.domain
+        if budget.mapped_domain is not None:
+            domain = budget.mapped_domain
+        else:
+            publication = source.certification
+            unchanged_source = (
+                coordinate_budget is not None
+                and publication is not None
+                and publication.passed
+                and isinstance(publication.request.domain, PiecewiseLinearDomain)
+                and publication.request.domain.domain_id == evidence.domain.domain_id
+                and evidence.domain.source_id == compartment_source.source_id
+                and evidence.source_revision == compartment_source.source_revision
+                and evidence.source_complex_id == compartment_source.compartments.complex_id
+                and evidence.interface_definitions == compartment_source.interface_definitions
+            )
+            if publication_coverage is not None and not unchanged_source:
+                raise ValueError(
+                    "region_renewal.publication_coverage must bind the unchanged source; got a changed source binding."
+                )
+            # Native recovery may legally choose another triangulation. Only
+            # the unchanged, fully reauthenticated source can retain its actual
+            # publication domain; prepare_plc_source still proves current full
+            # coordinates, facets, regions, frame and issued coverage ownership.
+            source_preparation = prepare_plc_source(
+                complex_,
+                compartment_source.source_id,
+                compartment_source.source_revision,
+                source.coordinate_contract,
+                limits=renewal_limits,
+                source_work_units=budget.work_units,
+                source_geometry_queries=budget.geometry_queries,
+                scope=scope,
+                coordinate_budget=coordinate_budget,
+                source_result=source if unchanged_source else None,
+                publication_coverage=publication_coverage,
+            )
+            budget.work_units += dict(source_preparation.preparation_counters)["work_units"]
+            _check_image_preparation_limits(
+                renewal_limits, (("maximum_work_units", budget.work_units),)
+            )
+            domain = source_preparation.association_transfer.domain
         revision = compartment_source.source_revision
         complex_id = compartment_source.compartments.complex_id
         definitions = compartment_source.interface_definitions
@@ -1769,10 +2104,10 @@ def _prepare_renewed_region_organization(
     evidence: RegionMeshingEvidence,
     target_ids: tuple[int, ...],
     assignments: tuple[str, ...],
-    domain: PiecewiseLinearDomain,
+    domain: RegionSourceDomain,
     definitions: tuple[tuple[str, str, str, bool], ...],
     zones: tuple[MeshZone, ...],
-    patches: tuple[MeshPatch, ...],
+    patches: tuple[MeshPatch, ...] | MeshPatchBank,
 ) -> _RenewedRegionOrganization:
     region_ids = tuple(sorted(domain.region_ids))
     old_zones = {value.zone_id: value for value in source.zones}
@@ -1849,7 +2184,7 @@ class _RegionCertification(StrictModule):
 def _certify_coverage_stage(
     mesh: cell_mesh_owner.CellMesh,
     geometry: cell_geometry_owner.CellGeometrySpec,
-    domain: PiecewiseLinearDomain,
+    domain: RegionSourceDomain,
     regions: np.ndarray,
     embedding: GlobalEmbeddingCertificate,
     limits: MeshingLimits,
@@ -1884,24 +2219,36 @@ def _certify_renewed_region(
     geometry: cell_geometry_owner.CellGeometrySpec,
     target_ids: tuple[int, ...],
     assignments: tuple[str, ...],
-    domain: PiecewiseLinearDomain,
-    outer_domain: PiecewiseLinearDomain | None,
+    domain: RegionSourceDomain,
+    outer_domain: RegionSourceDomain | None,
     renewal_limits: MeshingLimits,
     certificate_limits: MeshCertificateLimits | None,
     scope: NativeExecutionScope,
     coordinate_storage: ExitStack,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> _RegionCertification:
     native_volume_checkpoint(renewal_limits, MeshingStageKind.CERTIFICATION, scope=scope)
     with ExitStack() as validity_storage:
         with _image_certificate_budget(
-            renewal_limits, scope=scope, storage=validity_storage
+            renewal_limits, scope=scope, storage=validity_storage, budget=budget
         ) as validity_budget:
             validity = certify_cell_geometry_validity(
                 geometry, mesh=mesh, budget=validity_budget
             )
     del validity_budget
+    if budget is not None:
+        certificate_bounds = (
+            MeshCertificateLimits() if certificate_limits is None else certificate_limits
+        )
+        coordinate_storage.enter_context(
+            budget.bound_stage(
+                certificate_bounds.maximum_work_units,
+                certificate_bounds.maximum_scratch_bytes,
+            )
+        )
     with _image_certificate_budget(
-        certificate_limits, scope=scope, storage=coordinate_storage
+        certificate_limits, scope=scope, storage=coordinate_storage, budget=budget
     ) as coordinate_budget:
         embedding = certify_global_embedding(
             mesh,
@@ -1958,7 +2305,7 @@ def _renew_region_evidence(
     mesh: cell_mesh_owner.CellMesh,
     geometry: cell_geometry_owner.CellGeometrySpec,
     zones: tuple[MeshZone, ...],
-    patches: tuple[MeshPatch, ...],
+    patches: tuple[MeshPatch, ...] | MeshPatchBank,
     /,
     *,
     lineage: lineage_owner.MeshLineage | None = None,
@@ -1968,6 +2315,8 @@ def _renew_region_evidence(
     limits: MeshingLimits | None = None,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    publication_coverage: DomainCoverageCertificate | None = None,
 ) -> RegionMeshingRenewal:
     """Remap material ancestry, rebuild organization, and refresh coverage.
 
@@ -2026,7 +2375,9 @@ def _renew_region_evidence(
         )
         assignments = material.regions
         renewed_source = _prepare_renewed_region_source(
-            source, evidence, compartment_source, renewal_limits, budget, scope, workspace
+            source, evidence, compartment_source, renewal_limits, budget, scope, workspace,
+            coordinate_budget=coordinate_budget,
+            publication_coverage=publication_coverage,
         )
         domain, revision, complex_id, definitions, source_preparation, outer_domain = (
             renewed_source.domain,
@@ -2066,6 +2417,7 @@ def _renew_region_evidence(
             certificate_limits,
             scope,
             coordinate_storage,
+            budget=coordinate_budget,
         )
         coverage = certification.coverage
         renewed = RegionMeshingEvidence(

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import final
+from typing import final, Self
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,7 +19,7 @@ import phydrax.geometry._meshing_domain as domain_owner
 import phydrax.geometry._source_fidelity as source_fidelity_owner
 import phydrax.geometry.brep._planar_arrangement as planar_arrangement_owner
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint, tree_content_equal
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import unique_identifiers
@@ -500,6 +500,24 @@ class CadSourceDomain(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[Self],
+        value: CadSourceDomain,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Self:
+        """Rebuild the actual B-Rep authority and its declared single-region domain."""
+        if type(value) is not cls:
+            raise TypeError("CadSourceDomain.stored_fields must retain the declared owner type")
+        model = BRepModel.from_stored_fields(value.model, budget=budget)
+        rebuilt = cls(model, region_ids=value.region_ids, embedding=value.embedding)
+        if not tree_content_equal(value, rebuilt):
+            raise ValueError("CadSourceDomain.stored_fields must retain its reconstructed source facts")
+        return rebuilt
+
     @property
     def source_id(self) -> str:
         return self.model.source_id
@@ -514,11 +532,13 @@ class CadSourceDomain(StrictModule, NonTrainableState):
 
     def boundary_source(
         self,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> domain_boundary_owner.MeshingDomainBoundarySource | EmbeddedPlanarBoundarySource:
         """Return the whole native boundary of the declared CAD region."""
         if self.embedding is not None:
             return EmbeddedPlanarBoundarySource(self.model, self.embedding)
-        domain = domain_owner.MeshingDomain.from_brep(self.model)
+        domain = domain_owner.MeshingDomain.from_brep(self.model, budget=budget)
         return domain_boundary_owner.MeshingDomainBoundarySource(
             domain, tuple(range(len(domain.patches)))
         )

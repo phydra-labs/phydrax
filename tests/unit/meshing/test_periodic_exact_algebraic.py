@@ -1,6 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Declared radical coordinates govern periodic statistics and durable source identity."""
 
+import math
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import fields
@@ -22,6 +23,7 @@ from phydrax.discretization import (
     PeriodicMeshTopology,
 )
 from phydrax.discretization._cell_geometry import coordinate_lagrange_element
+from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
@@ -29,6 +31,7 @@ from phydrax.discretization._coordinate_budget import (
 from phydrax.discretization._exact_algebraic_geometry import (
     ExactAlgebraicCellGeometrySource,
     RadicalElement,
+    rounded_rational_square_root,
 )
 from phydrax.discretization._exact_rational_geometry import rational_source_layouts
 from phydrax.geometry._affine_mapped_contact import interiors_overlap
@@ -72,6 +75,50 @@ def budget() -> Iterator[CoordinateEnclosureBudget]:
         ).activate() as ledger,
     ):
         yield ledger
+
+
+@pytest.mark.parametrize(
+    "lower",
+    (
+        0.0,
+        float(np.nextafter(0.0, 1.0)),
+        float(np.nextafter(np.finfo(np.float64).tiny, 0.0)),
+        float(np.finfo(np.float64).tiny),
+        1.0,
+        float(np.nextafter(1.0, 2.0)),
+        float(np.nextafter(2.0, 1.0)),
+        float(np.finfo(np.float64).max),
+    ),
+)
+def test_rational_square_root_rounds_exact_ieee_midpoints(lower: float) -> None:
+    with np.errstate(over="ignore"):
+        upper = float(np.nextafter(lower, math.inf))
+    first = Fraction(lower)
+    last = Fraction(2) ** 1024 if math.isinf(upper) else Fraction(upper)
+    midpoint = (first + last) / 2
+    squared = midpoint * midpoint
+    displacement = (last - first) ** 2 / 16
+    assert rounded_rational_square_root(squared - displacement) == lower
+    assert rounded_rational_square_root(squared + displacement) == upper
+    even_lower = int(np.float64(lower).view(np.uint64)) % 2 == 0
+    assert rounded_rational_square_root(squared) == (lower if even_lower else upper)
+
+
+@pytest.mark.parametrize(
+    "root",
+    (
+        Fraction(0),
+        Fraction(1, 3),
+        Fraction(7, 5),
+        Fraction(1, 2**1074),
+        Fraction(1, 2**1075),
+        Fraction(1, 2**1076),
+        Fraction(2) ** 1023,
+        Fraction(float(np.finfo(np.float64).max)),
+    ),
+)
+def test_rational_square_root_preserves_exact_square_rounding(root: Fraction) -> None:
+    assert rounded_rational_square_root(root * root) == float(root)
 
 
 def _algebraic_strip(
@@ -349,6 +396,28 @@ def test_float_only_periodic_evidence_remains_bitwise_unchanged(
     repeated, repeated_growth = periodic_edge_size_evidence(mesh)
     assert repeated.tobytes() == lengths.tobytes()
     assert repeated_growth == growth
+
+
+def test_quotient_evidence_restores_only_through_its_bound_measure_route(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, geometry, _ = _algebraic_strip(RadicalElement.sqrt(3) / 2, budget)
+    exact = PeriodicQuotientEvidence(mesh, geometry=geometry, budget=budget)
+    carrier = PeriodicQuotientEvidence(mesh)
+    assert exact.mesh_id == carrier.mesh_id == mesh.mesh_id
+    assert exact.measure_geometry_id == cell_geometry_id(geometry)
+    assert carrier.measure_geometry_id is None
+    restored = PeriodicQuotientEvidence.from_stored_fields(
+        exact, mesh=mesh, geometry=geometry, budget=budget
+    )
+    assert tree_content_equal(exact, restored)
+    # Neither route may stand in for the other, even where the measures agree.
+    with pytest.raises(ValueError, match="measure_geometry_id"):
+        PeriodicQuotientEvidence.from_stored_fields(exact, mesh=mesh)
+    with pytest.raises(ValueError, match="measure_geometry_id"):
+        PeriodicQuotientEvidence.from_stored_fields(
+            carrier, mesh=mesh, geometry=geometry, budget=budget
+        )
 
 
 def test_exact_periodic_edge_evidence_reconstruction_refuses_changed_lengths(
@@ -756,7 +825,10 @@ def test_periodic_membership_preparation_reuses_only_the_same_live_inputs() -> N
                 transfer.source_associations(
                     changed, scope=scope, budget=budget, _prepared_source=preparation
                 )
-            assert budget.work_units > work
+            # The changed result re-runs the full proof and comparison; its
+            # degree-one corner images may be served from this ledger's own
+            # retained coordinate caches, so no additional work is required.
+            assert budget.work_units >= work
 
 
 def test_periodic_membership_receipt_crosses_ended_preparation_scope(
@@ -768,7 +840,7 @@ def test_periodic_membership_receipt_crosses_ended_preparation_scope(
     from phydrax.meshing import _adaptation as adaptation_owner
     from phydrax.meshing._adaptation import (
         _admit_periodic_source_proofs,
-        _periodic_preparation_execution_limits,
+        _preparation_execution_limits,
     )
     from tests._support.periodic_meshing import periodic_seed_request
 
@@ -792,7 +864,7 @@ def test_periodic_membership_receipt_crosses_ended_preparation_scope(
             association_transfer=transfer,
         ),
     )
-    native_limits, evidence = _periodic_preparation_execution_limits(prepared)
+    native_limits, evidence = _preparation_execution_limits(prepared)
     assert evidence is not None
     assert native_limits.maximum_work_units == (
         specification.limits.maximum_work_units
@@ -808,12 +880,12 @@ def test_periodic_membership_receipt_crosses_ended_preparation_scope(
         patch.setattr(
             adaptation_owner.time, "monotonic", lambda: receipt.expires_at - 0.25
         )
-        delayed, _ = _periodic_preparation_execution_limits(prepared)
+        delayed, _ = _preparation_execution_limits(prepared)
         assert delayed.maximum_seconds == 0.25
         patch.setattr(
             adaptation_owner.time, "monotonic", lambda: receipt.expires_at + 1.0
         )
-        expired, _ = _periodic_preparation_execution_limits(prepared)
+        expired, _ = _preparation_execution_limits(prepared)
         assert expired.maximum_seconds == 0.0
     with NativeExecutionScope(native_limits) as execution:
         _admit_periodic_source_proofs(prepared, execution)
@@ -933,6 +1005,135 @@ def test_periodic_algebraic_refinement_binds_child_layouts(
         refined.target.mesh.coordinates.at[vertex, 0].set(np.nextafter(value, np.inf)),
     )
     assert not is_affine_cell_geometry(changed, target, budget=budget)
+
+
+# Rounds to the same binary64 apex as sqrt(3)/2, yet every slanted edge is
+# exactly longer than the unit horizontal edge.
+_RATIONAL_APEX = Fraction(math.sqrt(3) / 2) + Fraction(1, 2**54) - Fraction(1, 2**60)
+
+
+@pytest.mark.parametrize(
+    ("height", "slanted"),
+    (
+        (RadicalElement.sqrt(3) / 2 + Fraction(1, 2**100), True),
+        (RadicalElement(_RATIONAL_APEX), True),
+        (RadicalElement.sqrt(3) / 2, None),
+    ),
+    ids=("radical", "rational", "exact-tie"),
+)
+def test_periodic_bisection_selects_declared_longest_edge_orbit(
+    height: RadicalElement,
+    slanted: bool | None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    import phydrax as phx
+
+    mesh, geometry, _ = _algebraic_strip(height, budget)
+    result = phx.meshing.certify_cell_mesh(
+        mesh, phx.SpatialCoordinateContract.si(), geometry=geometry
+    )
+    source = result.mesh
+    first = np.asarray(source.blocks[0].vertices)[0].tolist()
+    pairs = ((first[0], first[1]), (first[1], first[2]), (first[0], first[2]))
+    coordinates = np.asarray(source.coordinates)
+    horizontal = [
+        pair for pair in pairs if coordinates[pair[0], 1] == coordinates[pair[1], 1]
+    ]
+    assert len(horizontal) == 1
+    # Rounded coordinates rank the horizontal edge at least as long as both
+    # slanted edges, so only declared geometry decides correctly.
+    rounded = {
+        pair: float(np.linalg.norm(coordinates[pair[1]] - coordinates[pair[0]]))
+        for pair in pairs
+    }
+    assert all(rounded[horizontal[0]] >= value for value in rounded.values())
+    if slanted is None:
+        topology = source.periodic_topology
+        assert topology is not None
+        orbit = np.asarray(topology.orbits(1)[0])
+        keys = topology.entity_keys(1)
+        rows = {
+            tuple(sorted(edge)): row
+            for row, edge in enumerate(simplex_entity_corners(source, 1).tolist())
+        }
+        local = {pair: int(orbit[rows[tuple(sorted(pair))]]) for pair in pairs}
+        squared = periodic_edge_squared_lengths(
+            source, geometry=result.geometry, budget=budget
+        )
+        assert all(squared[value] == 1 for value in local.values())
+        slanted = (
+            min(local.values(), key=lambda value: keys[value]) != local[horizontal[0]]
+        )
+    refined = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            result,
+            phx.meshing.MarkedMeshAdaptation(np.asarray(source.blocks[0].global_ids)[:1]),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+    assert refined.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    created = np.asarray(refined.target.mesh.coordinates)[
+        ~np.isin(
+            np.asarray(refined.target.mesh.vertex_global_ids),
+            np.asarray(source.vertex_global_ids),
+        )
+    ]
+    assert created.shape[0] > 0
+    apex = max(coordinates[vertex, 1] for vertex in first)
+    np.testing.assert_array_equal(
+        created[:, 1], np.full(created.shape[0], apex / 2 if slanted else 0.0)
+    )
+
+
+@pytest.mark.parametrize(
+    "height",
+    (RadicalElement.sqrt(3) / 2 + Fraction(1, 2**100), RadicalElement(_RATIONAL_APEX)),
+    ids=("radical", "rational"),
+)
+def test_periodic_refinement_orders_declared_longest_edges(
+    height: RadicalElement, budget: CoordinateEnclosureBudget
+) -> None:
+    import phydrax as phx
+
+    mesh, geometry, _ = _algebraic_strip(height, budget)
+    coordinates = np.asarray(mesh.coordinates)
+    apex = float(coordinates[3, 1])
+    # Both slanted edges of every strip triangle are exactly longer than its unit
+    # horizontal edge, while rounded coordinates rank the horizontal edge first.
+    assert Fraction(1, 4) + height * height > 1
+    assert np.linalg.norm(coordinates[1] - coordinates[0]) > np.linalg.norm(
+        coordinates[3] - coordinates[0]
+    )
+    uniform = phx.meshing.refine_periodic_mesh(mesh, source_geometry=geometry)
+    topology = uniform.mesh.periodic_topology
+    assert topology is not None
+    vertex_orbits = np.asarray(topology.orbits(0)[0])
+    refined = np.asarray(uniform.mesh.coordinates)
+    children = np.concatenate(
+        [np.asarray(block.vertices) for block in uniform.mesh.blocks]
+    )
+    for parent in range(mesh.blocks[0].cell_count):
+        rows = children[np.asarray(uniform.parent_cells) == parent]
+        assert rows.shape[0] == 4
+        # The first split of a parent leaves its midpoint in all four children.
+        (first,) = set.intersection(*(set(vertex_orbits[row].tolist()) for row in rows))
+        np.testing.assert_array_equal(refined[vertex_orbits == first, 1], apex / 2)
+    local = phx.meshing.refine_periodic_mesh(
+        mesh, cells=np.asarray((0,), dtype=np.int64), source_geometry=geometry
+    )
+    assert local.bisected_edges == 1
+    source_points = {tuple(point) for point in coordinates.tolist()}
+    created = np.asarray(
+        [
+            point
+            for point in np.asarray(local.mesh.coordinates).tolist()
+            if tuple(point) not in source_points
+        ]
+    )
+    assert created.shape[0] > 0
+    np.testing.assert_array_equal(created[:, 1], apex / 2)
 
 
 def test_algebraic_source_refuses_mismatched_declared_layout(
@@ -1080,3 +1281,93 @@ def test_periodic_stratum_vertex_factorization_preserves_entity_decisions(
             np.all(vertices[rows], axis=1),
             source_entity_contains(points[rows], source),
         )
+
+
+@pytest.mark.parametrize("algebraic", (False, True))
+def test_lattice_overlap_images_streams_exact_extrema_without_repricing(
+    algebraic: bool,
+) -> None:
+    from itertools import chain
+
+    from phydrax.discretization._exact_algebraic_geometry import reserve_algebraic_work
+    from phydrax.geometry._periodic_image_frame import lattice_overlap_images
+
+    offset = RadicalElement.sqrt(2) / 7 if algebraic else Fraction(2, 7)
+    row_bank = np.asarray(
+        ((offset, 0), (offset + 2, 0), (offset, 3), (offset + 2, 3)), dtype=object
+    )
+    vectors = np.asarray(((Fraction(1), 0), (Fraction(1, 4), 1)), dtype=object)
+    peaks = []
+    for repeats in (1, 256):
+        points = np.tile(row_bank, (repeats, 1))
+        ticket = HostBatchTicket(10_000_000, bytes_upper=64_000)
+        with (
+            ticket,
+            CoordinateEnclosureBudget(
+                ticket, maximum_work_units=10_000_000, maximum_memory_bytes=64_000
+            ).activate() as ledger,
+        ):
+            # Price precisely the previous complete arithmetic bank, without
+            # materializing its obsolete all-point result storage.
+            reserve_algebraic_work(
+                chain(points.flat, vectors.flat), 32 * points.size, 0, 4, budget=ledger
+            )
+            expected_work = ledger.work_units
+            temporary = ledger.temporary_bytes_upper
+            retained = ledger.retained_basis_bytes
+            ranges = lattice_overlap_images(points, vectors, budget=ledger)
+            assert ranges == (range(-2, 3), range(-3, 4))
+            assert ledger.work_units == 2 * expected_work
+            assert ledger.temporary_bytes_upper == temporary
+            assert ledger.retained_basis_bytes == retained
+            peaks.append(ledger.peak_bytes_upper)
+    assert peaks[0] == peaks[1]
+
+
+def test_algebraic_source_rounding_streams_witness_with_identical_work() -> None:
+    from phydrax.discretization._exact_algebraic_geometry import (
+        _rounding_precision_bound,
+        algebraic_source_limits,
+    )
+
+    root = RadicalElement.sqrt(2)
+    bank = tuple(
+        (root / 7, RadicalElement(Fraction(index, 512)))
+        for index in range(512)
+    )
+    element = coordinate_lagrange_element("triangle", 1)
+    layouts = rational_source_layouts(
+        {"rounding": element}, {"rounding": np.asarray(((0, 1, 2),))}
+    )
+    work, bits = algebraic_source_limits(bank)
+    source = ExactAlgebraicCellGeometrySource(
+        bank, layouts, source_identity="streamed-exact-rounding",
+        maximum_work=work, maximum_bits=bits,
+    )
+    with HostBatchTicket(10_000_000, bytes_upper=256_000_000) as ticket:
+        oracle = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=10_000_000, maximum_memory_bytes=256_000_000
+        )
+        oracle.reserve(2 * len(bank))
+        pairs = tuple(tuple(value.rounded(budget=oracle) for value in row) for row in bank)
+        expected_work = oracle.work_units
+    numeric = np.asarray([[value for value, _ in row] for row in pairs])
+    expected_error = max(error for row in pairs for _, error in row)
+    count = sum(len(value.terms) + 1 for row in bank for value in row)
+    precision = max(_rounding_precision_bound(value) for row in bank for value in row)
+    old_all_scalar_storage = (
+        4096 * (count + len(layouts) + 1)
+        + 128 * count * ((max(bits, precision) + 7) // 8)
+    )
+    assert source.preparation_bounds()[1] < 81_920_000 < old_all_scalar_storage
+    with HostBatchTicket(10_000_000, bytes_upper=81_920_000) as ticket:
+        ledger = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=10_000_000, maximum_memory_bytes=81_920_000
+        )
+        before = ledger.temporary_bytes_upper
+        witness = source.prepare(numeric, budget=ledger)
+        assert witness.operation_count == expected_work
+        assert witness.maximum_rounding_error == expected_error
+        assert ledger.temporary_bytes_upper == before
+        assert ledger.peak_bytes_upper < source.preparation_bounds()[1]
+        np.testing.assert_array_equal(source.representatives(budget=ledger), numeric)

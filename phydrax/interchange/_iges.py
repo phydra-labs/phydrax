@@ -31,7 +31,13 @@ instances (308/408) become rigid native assembly occurrences. Unsupported
 required geometry is refused with its dependency chain.
 
 Writing emits B-Rep topology, parameter-space carriers and rigid subfigure
-occurrences. Carriers without a supported IGES entity are refused.
+occurrences. Carriers without a supported IGES entity are refused. Explicit
+coupled approximations carry their complete bounded-representation law in
+length-framed Start-section descriptive text (IGES 5.3 §2.2.4.2). Global
+minimum resolution remains coordinate discernibility (§2.2.4.3.19), never a
+generic edge/surface gap allowance. Import validates the separate declared
+law and independently certifies the actual stored carriers before publication;
+ordinary sources retain the original import policy.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from fractions import Fraction
+from functools import partial
 from math import cos, degrees, isfinite, radians, sin
 from typing import assert_never, final
 
@@ -53,6 +60,10 @@ from .._external_resource import (
 from .._fingerprint import canonical_fingerprint
 from .._publication import PublicationMode, publish_bytes
 from .._strict import StrictModule
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from ..geometry.brep._model import (
     BRepAssemblyContainer,
     BRepGeometry,
@@ -82,6 +93,7 @@ from ..geometry.brep._patches import (
 )
 from ..typing import checked, ConvertibleToArray
 from ._cad import (
+    bounded_approximation_descriptor,
     build_cad_export_report,
     CadCurveApproximation,
     CadExportPolicy,
@@ -90,6 +102,7 @@ from ._cad import (
     CadImportResult,
     CadInterchangeError,
     CadStage,
+    decode_bounded_approximation_descriptor,
     explicit_carrier,
     length_factor,
     natural_box,
@@ -113,6 +126,7 @@ from ._report import AdapterFormatProfile, AdapterLoss, AdapterReport, AdapterSt
 _FORMAT = "iges"
 _SCHEMA = "iges-5.3"
 _SECTIONS = "SGDPT"
+_BOUNDED_DESCRIPTOR_PREFIX = "PhydraxBoundedApproximation:"
 
 # IGES global unit flags: (standard name, rational meters per unit).
 _UNITS: dict[int, tuple[str, Fraction]] = {
@@ -181,10 +195,6 @@ _DROPPABLE = frozenset(
         430,
     )
 )
-
-
-def _profile() -> AdapterFormatProfile:
-    return AdapterFormatProfile(_FORMAT, qualifiers={"profile": _SCHEMA})
 
 
 # ------------------------------------------------------------------ sections
@@ -338,6 +348,8 @@ class _File:
     unit_meters: Fraction
     entries: dict[int, _Entry]
     attributes: int
+    bounded_descriptor: str | None
+    minimum_resolution: _Parameter
 
 
 def _lines(data: bytes, label: str) -> dict[str, list[str]]:
@@ -473,6 +485,59 @@ def _units(values: list[_Parameter]) -> tuple[int, Fraction]:
     return flag, _UNITS[flag][1]
 
 
+def _bounded_descriptor(lines: list[str]) -> str | None:
+    """Read length-framed descriptive metadata, never a Global gap tolerance."""
+    headers = [
+        index
+        for index, line in enumerate(lines)
+        if line[:72].startswith(_BOUNDED_DESCRIPTOR_PREFIX)
+    ]
+    if not headers:
+        return None
+    if len(headers) != 1:
+        raise refuse(
+            "malformed", "S",
+            "iges.bounded_approximation must have one complete descriptor; got duplicate headers",
+        )
+    index = headers[0]
+    size = lines[index][len(_BOUNDED_DESCRIPTOR_PREFIX):72].strip()
+    if not size.isascii() or not size.isdigit() or int(size) < 1:
+        raise refuse(
+            "malformed", "S",
+            "iges.bounded_approximation.length must be a positive decimal integer; got invalid framing",
+        )
+    count = int(size)
+    records = (count + 71) // 72
+    if records > len(lines) - index - 1:
+        raise refuse(
+            "malformed", "S",
+            "iges.bounded_approximation must contain its complete descriptor; got truncated metadata",
+        )
+    text = "".join(line[:72] for line in lines[index + 1:index + 1 + records])
+    if text[count:].strip():
+        raise refuse(
+            "malformed", "S",
+            "iges.bounded_approximation.padding must be blank; got trailing descriptor content",
+        )
+    return text[:count]
+
+
+def _bounded_qualifiers(descriptor: str | None, digest: str) -> dict[str, str]:
+    if descriptor is None:
+        return {}
+    return {
+        "representation": "bounded-coupled-approximation",
+        "bounded-approximation-descriptor": descriptor,
+        "bounded-representation-id": canonical_fingerprint(
+            {
+                "kind": "iges-bounded-coupled-approximation",
+                "descriptor": descriptor,
+                "artifact-sha256": digest,
+            }
+        ),
+    }
+
+
 def _decode(data: bytes, policy: CadImportPolicy) -> _File:
     sections = _lines(data, "file")
     limits = policy.limits
@@ -549,7 +614,11 @@ def _decode(data: bytes, policy: CadImportPolicy) -> _File:
             second[7].strip(),
             tuple(values[1:]),
         )
-    return _File(unit_flag, unit_meters, entries, attributes)
+    return _File(
+        unit_flag, unit_meters, entries, attributes,
+        _bounded_descriptor(sections["S"]),
+        global_values[18] if len(global_values) > 18 else None,
+    )
 
 
 # ------------------------------------------------------------------ resolution
@@ -1129,10 +1198,11 @@ class _Resolver:
 
     def parameter_curve(
         self, pointer: int, patch: AbstractSurfacePatch, chain: tuple[str, ...]
-    ) -> AbstractCurve:
-        """Decode a UV carrier without treating dimensionless parameters as lengths."""
+    ) -> tuple[AbstractCurve, tuple[float, float]]:
+        """Decode a UV carrier and its active file interval without length-scaling parameters."""
         entry = self.entry(pointer, chain, (100, 102, 104, 110, 126))
         if entry.entity_type == 102:
+            self._admit_composite(pointer, chain)
             pieces = self.parameter_segments(pointer, patch, chain)
             if len(pieces) != 1:
                 raise refuse(
@@ -1231,8 +1301,12 @@ class _Resolver:
                 case _:
                     assert_never(result)
         try:
-            return transform_pcurve(
-                result, factors, 1.0, (2.0 * np.pi, 0.0) if revolution else (0.0, 0.0)
+            return (
+                transform_pcurve(
+                    result, factors, 1.0,
+                    (2.0 * np.pi, 0.0) if revolution else (0.0, 0.0),
+                ),
+                domain,
             )
         except ValueError as error:
             raise refuse(
@@ -1240,19 +1314,16 @@ class _Resolver:
             ) from error
 
     def align_parameter_curve(
-        self, curve: AbstractCurve, edge: int, patch: AbstractSurfacePatch
+        self, curve: AbstractCurve, domain: tuple[float, float],
+        edge: int, patch: AbstractSurfacePatch,
     ) -> AbstractCurve:
-        """Affine reparameterization of a file UV carrier to the staged edge range."""
+        """Map the active file interval, not the full spline knot support, to the edge."""
         first, last = self.stage.edge_ranges[edge]
         if isinstance(curve, BSplineCurve):
-            domain = curve.parameter_domain
-            if domain is None:
-                raise refuse(
-                    "inconsistent-geometry",
-                    f"edge:{edge}",
-                    "iges.pcurve.domain must be finite; got an unbounded spline domain",
-                )
             lower, upper = domain
+            # IGES 126's final V(0), V(1) parameters can select a strict
+            # subinterval of the knot domain. Keep that trim when determining
+            # direction and affinely mapping every knot onto the edge phase.
             # Closed edges have identical endpoint vertices; interior carrier
             # correspondence, not endpoint coincidence, owns their direction.
             samples = np.asarray((0.0, 0.25, 0.5, 0.75, 1.0), dtype=np.float64)
@@ -1315,22 +1386,21 @@ class _Resolver:
                     "iges.loop.pcurve must contain one segment; got a multi-segment carrier",
                     chain,
                 )
-            pcurve = (
+            parameter = (
                 self.parameter_curve(self.integer(entry, position + 6), patch, chain)
-                if curves
-                else None
+                if curves else None
             )
+            pcurve, domain = parameter if parameter is not None else (None, None)
             position += 5 + 2 * curves
             if kind == 1:
                 vertex = self.vertex(list_pointer, index, chain)
-                if pcurve is None or pcurve.parameter_domain is None:
+                if pcurve is None or domain is None:
                     raise refuse(
                         "unsupported-entity",
                         entry.name,
                         "iges.loop.vertex_use must have a bounded p-curve; got an unbounded carrier",
                         chain,
                     )
-                domain = pcurve.parameter_domain
                 if (
                     isinstance(pcurve, BSplineCurve)
                     and pcurve.degree == 1
@@ -1363,7 +1433,8 @@ class _Resolver:
             else:
                 edge = self.edge(list_pointer, index, chain)
                 if pcurve is not None:
-                    pcurve = self.align_parameter_curve(pcurve, edge, patch)
+                    assert domain is not None
+                    pcurve = self.align_parameter_curve(pcurve, domain, edge, patch)
             coedges.append(
                 StagedCoedge(
                     edge, 1 if agrees else -1, pcurve, f"{entry.name}[{len(coedges)}]"
@@ -1658,8 +1729,11 @@ class _Resolver:
                 "iges.boundary.model_curve must be present; got no model-space curve",
                 chain,
             )
+        self._admit_composite(model_curve, chain)
         segments = self._segments(model_curve, chain)
         parameter_pointer = self.integer(entry, 2, 0)
+        if parameter_pointer:
+            self._admit_composite(parameter_pointer, chain)
         parameters = (
             self.parameter_segments(parameter_pointer, patch, chain)
             if parameter_pointer
@@ -1713,15 +1787,53 @@ class _Resolver:
                 )
             except ValueError as error:
                 raise refuse("inconsistent-geometry", label, str(error), chain) from error
-            pcurve = parameters[index]
-            if pcurve is not None:
-                pcurve = self.align_parameter_curve(pcurve, edge, patch)
+            parameter = parameters[index]
+            if parameter is None:
+                pcurve = None
+            else:
+                pcurve, domain = parameter
+                pcurve = self.align_parameter_curve(pcurve, domain, edge, patch)
             coedges.append(StagedCoedge(edge, 1, pcurve, label))
         return coedges
 
+    def _admit_composite(self, pointer: int, chain: tuple[str, ...]) -> None:
+        """Bound unfolded composite-curve references before expanding segments.
+
+        Repeated member references are segment multiplicity, so expansion keeps
+        every use in order. Each shared composite's unfolded total is counted
+        once, so admission is linear in the distinct referenced graph and
+        refuses before any segment list is allocated.
+        """
+        limit = self.policy.limits.max_attributes
+        unfolded: dict[int, int] = {}
+
+        def visit(pointer: int, chain: tuple[str, ...]) -> int:
+            entry = self.entry(pointer, chain, (100, 102, 104, 110, 126))
+            if entry.entity_type != 102:
+                return 0
+            if pointer in unfolded:
+                return unfolded[pointer]
+            chain = (*chain, entry.name)
+            self.active.append(pointer)
+            total = 0
+            for k in range(self.count(entry, 0)):
+                total += 1 + visit(self.integer(entry, 1 + k), chain)
+                if total > limit:
+                    raise refuse(
+                        "limit",
+                        entry.name,
+                        f"iges.composite_curve.unfolded_references must not exceed {limit}; got more repeated member uses",
+                        chain,
+                    )
+            self.active.pop()
+            unfolded[pointer] = total
+            return total
+
+        visit(pointer, chain)
+
     def parameter_segments(
         self, pointer: int, patch: AbstractSurfacePatch, chain: tuple[str, ...]
-    ) -> list[AbstractCurve]:
+    ) -> list[tuple[AbstractCurve, tuple[float, float]]]:
         entry = self.entry(pointer, chain, (100, 102, 104, 110, 126))
         if entry.entity_type != 102:
             return [self.parameter_curve(pointer, patch, chain)]
@@ -1873,10 +1985,23 @@ class _Resolver:
 # ------------------------------------------------------------------ reader
 
 
-def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportResult:
+def _import(
+    resource: BoundedResource, policy: CadImportPolicy, /, *,
+    coordinate_budget: CoordinateEnclosureBudget | None,
+) -> CadImportResult:
     file = _decode(resource.data, policy)
     factor = length_factor(file.unit_meters, policy.coordinate_contract)
     resolver = _Resolver(file, policy, factor)
+    if file.bounded_descriptor is not None:
+        # IGES 5.3 §2.2.4.3.19 defines G19 as coordinate discernibility,
+        # not an edge/surface gap allowance. Only this separate complete law
+        # declares a bounded representation; publication still proves the
+        # actual stored carriers' continuous gap independently.
+        resolver.stage.bounded_approximation_gap = (
+            decode_bounded_approximation_descriptor(
+                file.bounded_descriptor, length_factor=factor
+            )
+        )
     vertex_lists = [e for e in file.entries.values() if e.entity_type == 502]
     points = [
         resolver.reals(e, 1 + 3 * k, 3) * factor
@@ -1954,6 +2079,7 @@ def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportR
         import_policy_id=policy.policy_id,
         tessellation=policy.tessellation,
         default_occurrences=False,
+        coordinate_budget=coordinate_budget,
     )
     losses = [
         AdapterLoss(
@@ -1966,6 +2092,19 @@ def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportR
         )
         for entity_type, count in sorted(dropped.items())
     ]
+    if file.bounded_descriptor is not None:
+        representation = _bounded_qualifiers(file.bounded_descriptor, digest)
+        losses.append(
+            AdapterLoss(
+                "bounded-coupled-approximation", "import", "transformed",
+                f"Declared bounded representation {representation['bounded-representation-id']}; "
+                f"artifact SHA-256 {digest}; complete source/approximation law "
+                f"{file.bounded_descriptor}. Source-vs-approximation loss is declared "
+                "by the exporter; import preserves this bounded representation. "
+                "Actual stored carrier gap independently certified.",
+                changes_interpretation=False,
+            )
+        )
     stage = resolver.stage
     if stage.pcurves_fitted:
         losses.append(
@@ -1986,19 +2125,37 @@ def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportR
         losses=len(losses),
     )
     unit_name = _UNITS[file.unit_flag][0]
+    resolution_qualifiers: dict[str, str] = {}
+    if file.minimum_resolution is not None:
+        # Retain G19 as descriptive coordinate-discernibility metadata only.
+        # Its physical unit conversion does not enter any gap admission path.
+        resolution = _real(file.minimum_resolution, "G19")
+        resolution_qualifiers = {
+            "minimum-coordinate-discernibility-source-units": _string(file.minimum_resolution),
+            "minimum-coordinate-discernibility-target-units": format(resolution * factor, ".17g"),
+        }
     report = AdapterReport(
         AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
         _FORMAT,
         "phydrax-brep",
         source_id=identity,
         target_id=model.model_id,
-        source_profile=_profile(),
+        source_profile=AdapterFormatProfile(
+            _FORMAT,
+            qualifiers={
+                "profile": _SCHEMA,
+                "artifact-sha256": digest,
+            } | resolution_qualifiers | _bounded_qualifiers(file.bounded_descriptor, digest),
+        ),
         coordinate_mapping=(
             f"IGES unit {unit_name} -> {policy.coordinate_contract.length_unit.symbol} "
             f"(factor {factor!r})",
         ),
         preserved_fields=(
-            "exact-carriers",
+            (
+                "represented-carriers"
+                if file.bounded_descriptor is not None else "exact-carriers"
+            ),
             "oriented-topology",
             "voids",
             "p-curves",
@@ -2026,7 +2183,8 @@ def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportR
 
 @checked
 def decode_iges_resource(
-    resource: BoundedResource, policy: CadImportPolicy, /
+    resource: BoundedResource, policy: CadImportPolicy, /, *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Decode one bounded IGES 5.3 resource into one native `BRepModel`.
 
@@ -2041,12 +2199,18 @@ def decode_iges_resource(
             "resource.manifest.limits must match policy.limits; got unequal limits"
         )
     try:
-        return _import(resource, policy)
+        if coordinate_budget is not None:
+            coordinate_budget.ticket.checkpoint()
+        return _import(resource, policy, coordinate_budget=coordinate_budget)
     except CadInterchangeError as error:
         error.resource_manifest = resource.manifest
         raise
     except ResourceReadError as error:
         resource_refusal(error)
+    except CoordinateEnclosureResourceError as error:
+        failure = refuse("limit", "coordinate-budget", str(error))
+        failure.resource_manifest = resource.manifest
+        raise failure from error
     except (ValueError, TypeError, OverflowError, np.linalg.LinAlgError) as error:
         failure = refuse("malformed", "file", str(error), ("file",))
         failure.resource_manifest = resource.manifest
@@ -2055,11 +2219,14 @@ def decode_iges_resource(
 
 @checked
 def decode_iges_bytes(
-    data: bytes, policy: CadImportPolicy, /, *, source_path: str | None = None
+    data: bytes, policy: CadImportPolicy, /, *, source_path: str | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Bound and decode in-memory IGES bytes."""
     return decode_cad_bytes(
-        data, policy, decoder=decode_iges_resource, source_path=source_path
+        data, policy,
+        decoder=partial(decode_iges_resource, coordinate_budget=coordinate_budget),
+        source_path=source_path, coordinate_budget=coordinate_budget,
     )
 
 
@@ -2070,10 +2237,13 @@ def read_iges(
     /,
     *,
     trusted_root: str | os.PathLike[str],
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Descriptor-read and decode one bounded local IGES file."""
     return read_cad_file(
-        path, policy, decoder=decode_iges_resource, trusted_root=trusted_root
+        path, policy,
+        decoder=partial(decode_iges_resource, coordinate_budget=coordinate_budget),
+        trusted_root=trusted_root, coordinate_budget=coordinate_budget,
     )
 
 
@@ -2230,9 +2400,11 @@ class _ParameterFrame(StrictModule):
 class _IgesWriter:
     model: BRepModel
     policy: CadExportPolicy
+    coordinate_budget: CoordinateEnclosureBudget | None = None
     entities: list[_Out] = field(default_factory=list)
     byte_count: int = _METADATA_RESERVATION_BYTES
     approximations: tuple[CadCurveApproximation, ...] = ()
+    bounded_descriptor: str | None = None
 
     def add(
         self,
@@ -2918,7 +3090,12 @@ class _IgesWriter:
                 "iges.export.model_geometry must be present; got no B-Rep geometry",
             )
         geometry, _, self.approximations = prepare_cad_export_geometry(
-            model, geometry, self.policy, format_name=_FORMAT
+            model, geometry, self.policy, format_name=_FORMAT,
+            coordinate_budget=self.coordinate_budget,
+        )
+        self.bounded_descriptor = bounded_approximation_descriptor(
+            model, self.approximations, self.policy,
+            coordinate_budget=self.coordinate_budget,
         )
         if (
             not model.patches
@@ -3027,6 +3204,8 @@ class _IgesWriter:
             "1",
             "1.0",
             _hollerith(timestamp),
+            # IGES 5.3 §2.2.4.3.19: minimum discernible coordinate distance.
+            # Preserve this resolution independently of the bounded gap law.
             "1.0E-07",
             _real_text(max(extent, 1.0)),
             _hollerith(""),
@@ -3037,7 +3216,25 @@ class _IgesWriter:
         ]
         global_length = sum(len(value) + 1 for value in global_values)
         global_records = (global_length + _GLOBAL_COLUMNS - 1) // _GLOBAL_COLUMNS
-        global_bytes = _RECORD_BYTES * (global_records + 2)
+        label = (
+            "Phydrax native CAD export with declared approximations"
+            if self.approximations
+            else "Phydrax native exact B-Rep export"
+        )
+        start_text = [label]
+        if self.bounded_descriptor is not None:
+            start_text.append(
+                f"{_BOUNDED_DESCRIPTOR_PREFIX}{len(self.bounded_descriptor)}"
+            )
+            start_text.extend(
+                self.bounded_descriptor[offset:offset + 72]
+                for offset in range(0, len(self.bounded_descriptor), 72)
+            )
+        start = [
+            text.ljust(72) + f"S{index + 1:7d}"
+            for index, text in enumerate(start_text)
+        ]
+        global_bytes = _RECORD_BYTES * (global_records + len(start) + 1)
         if (
             self.byte_count - _METADATA_RESERVATION_BYTES + global_bytes
             > self.policy.maximum_bytes
@@ -3045,14 +3242,8 @@ class _IgesWriter:
             raise refuse(
                 "limit",
                 "export",
-                "iges.export.metadata_bytes must fit the remaining byte budget; got excessive global records",
+                "iges.export.metadata_bytes must fit the remaining byte budget; got excessive Start/Global records",
             )
-        label = (
-            "Phydrax native CAD export with declared approximations"
-            if self.approximations
-            else "Phydrax native exact B-Rep export"
-        )
-        start = [label.ljust(72) + "S0000001"]
         glob = _wrap(global_values, ",", ";", 72)
         global_lines = [text.ljust(72) + f"G{i + 1:7d}" for i, text in enumerate(glob)]
         directory: list[str] = []
@@ -3108,6 +3299,7 @@ def write_iges(
     *,
     policy: CadExportPolicy | None = None,
     mode: PublicationMode = "exclusive",
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadExportResult:
     """Publish IGES carriers using the caller's branch approximation policy.
 
@@ -3116,9 +3308,13 @@ def write_iges(
     unit (declared in the global section). The global timestamps are fixed so
     identical models produce identical bytes.
     """
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     policy_ = CadExportPolicy() if policy is None else policy
-    writer = _IgesWriter(model, policy_)
+    writer = _IgesWriter(model, policy_, coordinate_budget=coordinate_budget)
     data = writer.encode()
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     receipt = publish_bytes(path, data, maximum_bytes=policy_.maximum_bytes, mode=mode)
     counts: dict[str, int] = {}
     for entity in writer.entities:
@@ -3129,7 +3325,10 @@ def write_iges(
         policy_,
         writer.approximations,
         format_name=_FORMAT,
-        qualifiers={"profile": _SCHEMA},
+        qualifiers={
+            "profile": _SCHEMA,
+            "artifact-sha256": receipt.content_sha256,
+        } | _bounded_qualifiers(writer.bounded_descriptor, receipt.content_sha256),
         target_id=receipt.receipt_id,
         stage="adapter",
         loss_field_prefix="intersection-curve ",

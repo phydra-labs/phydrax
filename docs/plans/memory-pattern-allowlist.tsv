@@ -1,9 +1,11 @@
 path	symbol	rule	rationale
 phydrax/_array_archive.py	_save_array	payload-tobytes	bounded/static: At most max(64KiB, one dtype element) per streaming NPY chunk, independent of array length.
 phydrax/_execution_sampling.py	_darwin_system	array-cache	external-provider: Keyless singleton native libc handle retained for process lifetime; no array payload.
-phydrax/_fingerprint.py	_logical_shard_array_chunks	payload-tobytes	bounded/static: Each selected shard is sliced to maximum_chunk_bytes (default 1MiB) before byte encoding, and admission requires one dtype element to fit that ceiling.
+phydrax/_fingerprint.py	_routed_piece_payloads	payload-tobytes	bounded/static: Padded all-gather output is at most maximum_chunk_bytes (default 1MiB); when an element cannot fit the per-process share, original bounded broadcasts preserve one-element admission without increasing the limit.
+phydrax/_fingerprint.py	_local_piece_chunks	payload-tobytes	bounded/static: Each selected fully addressable shard piece is at most maximum_chunk_bytes (default 1MiB) before C-order byte encoding.
+phydrax/_fingerprint.py	logical_array_payloads	payload-tobytes	bounded/static: The admitted leading-axis prefix streams selected replica pieces of at most maximum_chunk_bytes (default 1MiB); no whole-array host staging.
 phydrax/_fingerprint.py	logical_array_collection_digest	whole-buffer	bounded/static: The BytesIO result contains only the NPY metadata header for one primitive numeric dtype and at most 32 shape extents; numerical content streams separately through admitted chunks.
-phydrax/_fingerprint.py	logical_array_value_collection_digest.content.host_chunks	payload-tobytes	bounded/static: Buffered C-order nditer chunks contain at most maximum_chunk_bytes (default 1MiB), with one dtype element admitted before streaming.
+phydrax/_fingerprint.py	_host_array_chunks	payload-tobytes	bounded/static: Buffered C-order nditer chunks contain at most maximum_chunk_bytes (default 1MiB), with one primitive numeric dtype element admitted before streaming.
 phydrax/_meshcore.py	_resolve	array-cache	external-provider: Process-lifetime native meshcore library handle, not a numerical table.
 phydrax/_numerics/_quadrature_rules.py	gauss_kronrod_data	array-cache	bounded/static: Closed six-order published Gauss-Kronrod domain: 15, 21, 31, 41, 51, 61.
 phydrax/_trainable.py	_code_global_names	array-cache	bounded/static: Count-bounded 4096-entry frozenset-of-name metadata cache; values contain no numerical arrays.

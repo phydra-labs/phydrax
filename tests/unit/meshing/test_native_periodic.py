@@ -1,7 +1,10 @@
+import json
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from fractions import Fraction
-from itertools import product
+from functools import cmp_to_key
+from itertools import permutations, product
+from math import isqrt
 from pathlib import Path
 from time import perf_counter
 
@@ -30,9 +33,14 @@ from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
+from phydrax.geometry._embedding_state import (
+    coordinate_certificate_request,
+    MeshCertificateLimits,
+)
 from phydrax.meshing import PeriodicAssociationTransfer
 from phydrax.meshing._periodic import (
     integer_cell_bounds,
+    periodic_size_control_issues,
     require_periodic_topology,
     simplex_entity_corners,
 )
@@ -226,18 +234,20 @@ def test_default_affine_multiblock_route_preserves_full_mapped_contact_decisions
         assert mapped.coordinate_scope == "exact_source_group_images"
         assert mapped.global_embedding is not None
         assert mapped.global_embedding.status == "certified"
-        assert affine.image_count == mapped.image_count == 9
+        # The closed 2D affine torus is decided by the degree-one theorem,
+        # which quantifies every image without enumerating any.
+        assert mapped.global_embedding.periodic_affine_degree is not None
+        assert affine.image_count == 9 and mapped.image_count == 0
         limits = MeshCertificateLimits(maximum_periodic_images=1)
         with pytest.raises(ValueError):
             certify_periodic_embedding(mesh, limits=limits)
-        with pytest.raises(ValueError):
-            certify_periodic_embedding(mesh, geometry=geometry, limits=limits)
     else:
-        # Unjoined seam contacts remain nonincident closed contacts, even though
-        # their open cell interiors are disjoint.
-        with pytest.raises(ValueError, match="periodic_mapped_cell_overlap"):
+        # Unjoined seam contacts leave an unclosed quotient, which the default
+        # and mapped affine routes' degree theorem refuses as a manifold
+        # violation before any contact enumeration.
+        with pytest.raises(ValueError, match="periodic_affine_torus_manifold"):
             certify_periodic_embedding(mesh)
-        with pytest.raises(ValueError, match="periodic_mapped_cell_overlap"):
+        with pytest.raises(ValueError, match="periodic_affine_torus_manifold"):
             certify_periodic_embedding(mesh, geometry=geometry)
     np.testing.assert_array_equal(mesh.coordinates, coordinates)
     for block in mesh.blocks:
@@ -282,7 +292,7 @@ def test_affine_multiblock_embedding_rejects_cross_block_contact_with_foreign_id
     mesh = CellMesh(coordinates, blocks, periodic_topology=topology)
     with pytest.raises(ValueError, match="scientific IDs 41, 73"):
         certify_periodic_embedding(mesh)
-    with pytest.raises(ValueError, match="overlap"):
+    with pytest.raises(ValueError, match="periodic_affine_torus_manifold"):
         certify_periodic_embedding(mesh, geometry=CellGeometrySpec.affine(mesh))
 
 
@@ -507,6 +517,141 @@ def test_orbit_preserving_refinement_keeps_the_quotient_valid(dimension: int) ->
     )
 
 
+def test_native_periodic_size_refinement_stops_on_exact_edge_lengths() -> None:
+    M = phx.meshing
+    # One quotient vertex on the lattice (1, 0), (1, 5): edges a, b - a and b.
+    # The rounded norm of b = (1, 5) equals float(sqrt(26)), the soft maximum,
+    # although sqrt(26) itself is exactly longer.
+    maximum = float(np.sqrt(26.0))
+    assert Fraction(maximum) ** 2 < 26
+    assert float(np.linalg.norm((1.0, 5.0))) == maximum
+    domain = M.publish_periodic_simplices(
+        np.zeros((1, 2)),
+        np.zeros((2, 3), dtype=np.int64),
+        np.asarray((((0, 0), (1, 0), (0, 1)), ((1, 0), (1, 1), (0, 1)))),
+        PeriodicCell(np.asarray(((1.0, 0.0), (1.0, 5.0)))),
+    )
+    source = M.NativePeriodicSource(domain, "skew-torus", "r1")
+    scope = M.MeshingScope(
+        "skew-torus", "r1", M.MeshingEntityKind.GEOMETRY, 2, "regions", np.asarray((0,))
+    )
+    specification = M.SurfaceMeshingSpec(
+        M.CellMeshingTarget(2, 2, M.CellFamilyPolicy(required=("triangle",))),
+        scope,
+        planar_embedding=phx.geometry.PlanarEmbedding(
+            (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)
+        ),
+        size_controls=(
+            M.UniformSizeControl(
+                scope, 2.0, maximum_size=maximum, strength=M.SizeControlStrength.SOFT
+            ),
+        ),
+    )
+    result = (
+        M.NativeMeshingProvider(M.NativeMeshingOptions("periodic_delaunay"))
+        .plan(
+            source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
+        )
+        .execute()
+    )
+    assert result.audit.passed
+    cells = np.concatenate([np.asarray(block.vertices) for block in result.mesh.blocks])
+    coordinates = np.asarray(result.mesh.coordinates)
+
+    def squared(first: int, second: int) -> Fraction:
+        return sum(
+            (
+                (Fraction(float(end)) - Fraction(float(start))) ** 2
+                for start, end in zip(
+                    coordinates[first], coordinates[second], strict=True
+                )
+            ),
+            Fraction(0),
+        )
+
+    # One longest-first uniform split leaves b / 2 and its median as the longest
+    # published lifted edges, both exactly within the maximum.
+    assert cells.shape[0] == 8
+    assert max(
+        squared(first, second)
+        for row in cells.tolist()
+        for first, second in ((row[0], row[1]), (row[1], row[2]), (row[0], row[2]))
+    ) == Fraction(13, 2)
+
+
+def test_native_periodic_hard_minimum_compares_exact_edge_lengths() -> None:
+    M = phx.meshing
+    # A one-vertex Kuhn torus on lattice rows (2, -1, 0), (1, 2, 0), (0, 0, 3)
+    # has exactly two sqrt(5) quotient edges; all others are longer. The hard
+    # minimum 2 * float(sqrt(5)) with relative tolerance 1/2 admits lengths from
+    # float(sqrt(5)) on, which is above sqrt(5) though its rounded norm is equal.
+    bound = float(np.sqrt(5.0))
+    assert Fraction(bound) ** 2 > 5
+    assert float(np.linalg.norm((2.0, -1.0, 0.0))) == bound
+    shifts = np.asarray(
+        [(bit & 1, (bit >> 1) & 1, (bit >> 2) & 1) for bit in range(8)], dtype=np.int64
+    )
+    tetrahedra = []
+    for order in permutations(range(3)):
+        corner, path = 0, [0]
+        for axis in order:
+            corner |= 1 << axis
+            path.append(corner)
+        if np.linalg.det((shifts[path[1:]] - shifts[path[0]]).astype(float)) < 0.0:
+            path[1], path[2] = path[2], path[1]
+        tetrahedra.append(path)
+    corners = shifts[np.asarray(tetrahedra)]
+    domain = M.publish_periodic_simplices(
+        np.zeros((1, 3)),
+        np.zeros(corners.shape[:2], dtype=np.int64),
+        corners,
+        PeriodicCell(np.asarray(((2.0, -1.0, 0.0), (1.0, 2.0, 0.0), (0.0, 0.0, 3.0)))),
+    )
+    topology = require_periodic_topology(domain)
+    # Independent oracle on rational squared lengths: the source's shortest
+    # quotient edge is sqrt(5).
+    vectors = ((2, -1, 0), (1, 2, 0), (0, 0, 3))
+    assert (
+        min(
+            sum(
+                (sum(step * row[axis] for step, row in zip(shift, vectors, strict=True)))
+                ** 2
+                for axis in range(3)
+            )
+            for shift in product((-1, 0, 1), repeat=3)
+            if any(shift)
+        )
+        == 5
+    )
+    source = M.NativePeriodicSource(domain, "skew-kuhn", "r1")
+
+    def scope(degree: int, ids: np.ndarray) -> phx.meshing.MeshingScope:
+        return M.MeshingScope(
+            "skew-kuhn", "r1", M.MeshingEntityKind.GEOMETRY, degree, f"e{degree}", ids
+        )
+
+    specification = M.VolumeMeshingSpec(
+        M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("tetrahedron",))),
+        scope(2, np.asarray(topology.quotient.entities(2).entity_ids)),
+        M.VolumeFillStrategy.SIMPLEX,
+        size_controls=(
+            M.UniformSizeControl(
+                scope(3, np.asarray((0,), dtype=np.int64)),
+                5.0,
+                minimum_size=2.0 * bound,
+                strength=M.SizeControlStrength.HARD,
+            ),
+        ),
+        size_compliance=M.SizeCompliancePolicy(relative_tolerance=0.5),
+    )
+    plan = M.NativeMeshingProvider(M.NativeMeshingOptions("periodic_delaunay")).plan(
+        source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
+    )
+    with pytest.raises(M.MeshingFailure, match="minimum_size") as refused:
+        plan.execute()
+    assert refused.value.category is M.MeshingFailureCategory.COMPLIANCE_FAILED
+
+
 def _periodic_poisson_error(mesh: phx.discretization.CellMesh) -> tuple[float, float]:
     discretization = FiniteElementPlan(
         mesh,
@@ -655,10 +800,17 @@ def test_native_provider_publishes_periodic_seed_size_and_quotient_evidence() ->
     assert np.max(np.linalg.norm(edge_points[:, 1] - edge_points[:, 0], axis=1)) <= 0.35
 
 
-@pytest.mark.parametrize("count", (4, 8), ids=("skew-res4", "skew-res8"))
-def test_skew_periodic_frontal_construction_meets_exact_hard_statistics(
+def _skew_seed_request(
     count: int,
-) -> None:
+    strength: phx.meshing.SizeControlStrength,
+    *,
+    limits: phx.meshing.MeshingLimits | None = None,
+) -> tuple[
+    phx.meshing.NativePeriodicSource,
+    phx.meshing.SurfaceMeshingSpec,
+    phx.meshing.UniformSizeControl,
+]:
+    """Skew point-orbit torus with a zero-tolerance size control at 1/count."""
     M = phx.meshing
     vectors = np.asarray(((1.0, 0.0), (0.25, 1.0)), dtype=np.float64)
     source = M.NativePeriodicSource(
@@ -676,7 +828,9 @@ def test_skew_periodic_frontal_construction_meets_exact_hard_statistics(
         "regions",
         np.asarray((0,), dtype=np.int64),
     )
-    control = M.UniformSizeControl(scope, 1.0 / count, maximum_size=1.5 / count)
+    control = M.UniformSizeControl(
+        scope, 1.0 / count, maximum_size=1.5 / count, strength=strength
+    )
     specification = M.SurfaceMeshingSpec(
         M.CellMeshingTarget(2, 2, M.CellFamilyPolicy(required=("triangle",))),
         scope,
@@ -703,8 +857,165 @@ def test_skew_periodic_frontal_construction_meets_exact_hard_statistics(
             maximum_cavity_cells=20000,
             maximum_geometry_queries=1280000,
             maximum_wall_seconds=120.0,
-        ),
+        )
+        if limits is None
+        else limits,
     )
+    return source, specification, control
+
+
+@pytest.mark.parametrize("count", (4, 8), ids=("skew-res4", "skew-res8"))
+def test_skew_periodic_binary64_sites_refuse_zero_tolerance_hard_statistics(
+    count: int,
+) -> None:
+    from phydrax.meshing.providers._native_periodic import (
+        _PeriodicSupportAllowance,
+        _realize_target_size_sites,
+    )
+
+    M = phx.meshing
+    source, specification, control = _skew_seed_request(count, M.SizeControlStrength.HARD)
+    limits = specification.limits
+    orbits = source.domain
+    assert isinstance(orbits, M.PeriodicPointOrbits)
+    # Independent unrounded oracle on the deterministic binary64 frontal sites:
+    # binary64 reference rows plus exact lattice translations.
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        state, _ = _realize_target_size_sites(
+            np.asarray(orbits.representatives),
+            orbits.cell,
+            [control],
+            specification.size_compliance,
+            limits,
+            perf_counter(),
+            M.MeshingStageKind.SURFACE_MESHING,
+            min(limits.maximum_vertices, limits.maximum_scratch_bytes // 80),
+            source_binding_id=source.binding_id,
+            scope=scope,
+            allowance=_PeriodicSupportAllowance(limits, scope=scope, budget=budget),
+        )
+    rows = state.points + state.reference_lifts.astype(np.float64) @ state.vectors
+    relative = (
+        state.keys[:, 2:]
+        - state.reference_lifts[state.keys[:, 1]]
+        + state.reference_lifts[state.keys[:, 0]]
+    )
+    lattice = [[Fraction(float(value)) for value in row] for row in state.vectors]
+    bank = [
+        sum(
+            (
+                (
+                    Fraction(float(rows[second, axis]))
+                    + sum(
+                        (int(step) * row[axis] for step, row in zip(shift, lattice)),
+                        Fraction(0),
+                    )
+                    - Fraction(float(rows[first, axis]))
+                )
+                ** 2
+                for axis in range(2)
+            ),
+            Fraction(0),
+        )
+        for (first, second), shift in zip(
+            state.keys[:, :2].tolist(), relative.tolist(), strict=True
+        )
+    ]
+    squared = sorted(bank)
+    target = Fraction(control.target_size) ** 2
+    for quantile in (0.5, 0.95):
+        # Rounded quotient norms meet the target; the exact lengths do not.
+        assert float(np.quantile(state.lengths, quantile)) == control.target_size
+        rank = quantile * (len(squared) - 1)
+        lower, upper = squared[int(rank)], squared[min(int(rank) + 1, len(squared) - 1)]
+        # Both bracketing rational squares lie strictly on one side of the target.
+        assert (lower < target and upper < target) or (lower > target and upper > target)
+    # The binary64 route's numerical contract is the exact hard verdict.
+    with coordinate_certificate_request(MeshCertificateLimits()) as exact_budget:
+        issues = periodic_size_control_issues(
+            np.asarray(bank, dtype=object),
+            state.keys[:, :2],
+            control,
+            specification.size_compliance,
+            budget=exact_budget,
+        )
+    assert issues == [
+        f"target_size_p50:{control.control_id}",
+        f"target_size_p95:{control.control_id}",
+    ]
+
+
+def test_dyadic_skew_torus_admits_no_zero_tolerance_target_plateau() -> None:
+    """No binary64-coordinate triangulation of the skew torus meets exact statistics.
+
+    The lattice (1, 0), (1/4, 1) and every binary64 coordinate are dyadic, so every
+    quotient edge vector is dyadic. By 2-adic descent ``x^2 + y^2 = 4^m`` has only
+    axis solutions, so an edge of exact length ``2^-k`` is axis-aligned. A
+    nondegenerate triangle has at most two such edges, and then its third edge has
+    length ``sqrt(2) 2^-k``. On a closed torus ``E = 3V`` and ``F = 2V``; with ``A``
+    target edges and ``L`` longer edges, ``2A <= F + 2L``. Exact linear quantiles
+    p50 = p95 = target force every rank from the p50 lower index through the last
+    weighted p95 index onto the target (a p50 interpolation across the target
+    would put p95 above it), contradicting that bound at every vertex count.
+    """
+    for exponent in range(8):
+        square, root = 4**exponent, 2**exponent
+        for x in range(-root, root + 1):
+            y = isqrt(square - x * x)
+            if y * y == square - x * x:
+                assert x == 0 or y == 0
+    for vertices in range(1, 20001):
+        edges, faces = 3 * vertices, 2 * vertices
+        lower = int(float(np.float64(0.5) * np.float64(edges - 1)))
+        rank = float(np.float64(0.95) * np.float64(edges - 1))
+        last = min(int(rank) + int(rank != int(rank)), edges - 1)
+        assert 2 * (last - lower + 1) > faces + 2 * (edges - 1 - last)
+
+
+type _Q3 = tuple[Fraction, Fraction]
+
+
+def _q3_add(a: _Q3, b: _Q3) -> _Q3:
+    return a[0] + b[0], a[1] + b[1]
+
+
+def _q3_sub(a: _Q3, b: _Q3) -> _Q3:
+    return a[0] - b[0], a[1] - b[1]
+
+
+def _q3_mul(a: _Q3, b: _Q3) -> _Q3:
+    return a[0] * b[0] + 3 * a[1] * b[1], a[0] * b[1] + a[1] * b[0]
+
+
+def _q3_sign(value: _Q3) -> int:
+    """Exact sign of ``p + q sqrt(3)``; ``sqrt(3)`` is irrational."""
+    rational, radical = value
+    if not radical:
+        return (rational > 0) - (rational < 0)
+    if not rational or (rational > 0) == (radical > 0):
+        return 1 if radical > 0 else -1
+    if rational * rational > 3 * radical * radical:
+        return 1 if rational > 0 else -1
+    return 1 if radical > 0 else -1
+
+
+@pytest.mark.parametrize("count", (4, 8), ids=("skew-res4", "skew-res8"))
+def test_skew_periodic_zero_tolerance_statistics_publish_exact_orbit_lattice_bands(
+    count: int,
+) -> None:
+    M = phx.meshing
+    from tools.meshing_qualification.scenarios.periodic import (
+        _periodic_exact_generation_oracle,
+    )
+
+    source, specification, control = _skew_seed_request(count, M.SizeControlStrength.HARD)
     result = (
         M.NativeMeshingProvider(M.NativeMeshingOptions("periodic_delaunay"))
         .plan(
@@ -714,12 +1025,159 @@ def test_skew_periodic_frontal_construction_meets_exact_hard_statistics(
         )
         .execute()
     )
+    assert result.compliance.passed and result.audit.passed
+    assert result.certification is not None and result.certification.passed
+    payload = dict(json.loads(result.provenance.content_json)["items"])
+    assert payload["route"] == "periodic_exact_source"
+    assert payload["construction"] == "orbit_lattice_algebraic_equilateral_bands"
     achieved = dict(result.compliance.achieved)
     prefix = f"size:{control.control_id}"
+    assert achieved[f"{prefix}:p50_edge"] == achieved[f"{prefix}:p95_edge"] == 1 / count
+    mesh = result.mesh
+    periodic = require_periodic_topology(mesh)
+    exact = result.geometry.exact_source
+    assert isinstance(exact, phx.discretization.ExactAlgebraicCellGeometrySource)
+
+    def field(value: phx.discretization.RadicalElement) -> _Q3:
+        terms = dict(value.terms)
+        assert set(terms) <= {1, 3}
+        return terms.get(1, Fraction(0)), terms.get(3, Fraction(0))
+
+    # Independent Q(sqrt 3) oracle over the declared lifted coordinate rows.
+    rows = [(field(x), field(y)) for x, y in exact.coefficients]
+    assert len(rows) == np.asarray(mesh.coordinates).shape[0]
+    vertices = [rows[int(row)] for row in np.asarray(periodic.orbit_representatives(0))]
+    assert len(vertices) == 2 * count * count
+    orbits = source.domain
+    assert isinstance(orbits, M.PeriodicPointOrbits)
+    for sx, sy in np.asarray(orbits.representatives).tolist():
+        # Lattice (1, 0), (1/4, 1): fractional coordinates are (x - y/4, y).
+        matches = [
+            index
+            for index, (x, y) in enumerate(vertices)
+            if not x[1]
+            and not y[1]
+            and (y[0] - Fraction(sy)).denominator == 1
+            and (x[0] - Fraction(sx) - (y[0] - Fraction(sy)) / 4).denominator == 1
+        ]
+        assert len(matches) == 1
+    cells = np.asarray(mesh.blocks[0].vertices)
+    assert cells.shape == (4 * count * count, 3)
+    doubled_area: _Q3 = (Fraction(0), Fraction(0))
+    for cell in cells.tolist():
+        (ax, ay), (bx, by), (cx, cy) = (rows[index] for index in cell)
+        cross = _q3_sub(
+            _q3_mul(_q3_sub(bx, ax), _q3_sub(cy, ay)),
+            _q3_mul(_q3_sub(by, ay), _q3_sub(cx, ax)),
+        )
+        assert _q3_sign(cross) > 0
+        doubled_area = _q3_add(doubled_area, cross)
+    assert doubled_area == (Fraction(2), Fraction(0))
+    quotient = M.PeriodicQuotientEvidence(mesh)
+    assert quotient.euler_characteristic == 0 and quotient.boundary_facet_count == 0
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, phx.discretization.PolygonalConnectivity)
+    edges = np.asarray(connectivity.edges)[np.asarray(periodic.orbit_representatives(1))]
+    assert edges.shape[0] == 3 * len(vertices)
+    squares = []
+    for first, second in edges.tolist():
+        dx = _q3_sub(rows[second][0], rows[first][0])
+        dy = _q3_sub(rows[second][1], rows[first][1])
+        squares.append(_q3_add(_q3_mul(dx, dx), _q3_mul(dy, dy)))
+    squares.sort(key=cmp_to_key(lambda a, b: _q3_sign(_q3_sub(a, b))))
+    target: _Q3 = (Fraction(1, count * count), Fraction(0))
+    for quantile in (0.5, 0.95):
+        rank = float(np.float64(quantile) * np.float64(len(squares) - 1))
+        lower = int(rank)
+        assert squares[lower] == target
+        assert squares[min(lower + 1, len(squares) - 1)] == target
+    maximum: _Q3 = (Fraction(9, 4 * count * count), Fraction(0))
+    assert _q3_sign(_q3_sub(maximum, squares[-1])) >= 0
+    assert len(result.associations) == 3
+    for degree, association in enumerate(result.associations):
+        association.validate_target(mesh.entity_set(degree))
+        assert association.complete and association.exact
+        np.testing.assert_array_equal(
+            np.asarray(association.source_indices),
+            np.zeros(mesh.entity_set(degree).count, dtype=np.int64),
+        )
+    source_case = {
+        "vectors": np.asarray(orbits.cell.vectors).tolist(),
+        "denominator": count,
+        "fractional_seed_numerators": [
+            [i, j] for i in range(count) for j in range(count)
+        ],
+        "expected_material_measures": {"0": 1.0},
+        "protected_feature_ids": [],
+        "source_binding_id": source.binding_id,
+        "source_id": source.source_id,
+        "source_revision": source.source_revision,
+        "frozen_size_control": {
+            "target_size": control.target_size,
+            "maximum_size": control.maximum_size,
+        },
+    }
+    oracle = _periodic_exact_generation_oracle(result, source_case)
+    assert oracle["passed"] and all(oracle["checks"].values())
+    assert oracle["source_binding_id"] == source.binding_id
+    changed = {
+        **source_case,
+        "frozen_size_control": {
+            **source_case["frozen_size_control"],
+            "target_size": float(np.nextafter(control.target_size, np.inf)),
+        },
+    }
+    with pytest.raises(RuntimeError, match="original|Original"):
+        _periodic_exact_generation_oracle(result, changed)
+    refined = M.execute_mesh_adaptation(
+        M.prepare_mesh_adaptation(
+            result,
+            M.MarkedMeshAdaptation(np.asarray(mesh.blocks[0].global_ids)),
+            policy=M.MeshAdaptationPolicy(
+                M.MeshAdaptationRoute.NATIVE_BISECTION,
+                limits=specification.limits,
+                association_transfer=PeriodicAssociationTransfer(source, specification),
+            ),
+        )
+    )
+    assert refined.status is M.MeshAdaptationStatus.COMPLETE
+    assert (
+        sum(block.cell_count for block in refined.target.mesh.blocks) > cells.shape[0]
+    )
+
+
+def test_skew_orbit_lattice_admission_refusal_never_selects_binary64_sites() -> None:
+    M = phx.meshing
+    source, specification, _ = _skew_seed_request(
+        4, M.SizeControlStrength.HARD, limits=M.MeshingLimits(maximum_work_units=8)
+    )
+    with pytest.raises(M.MeshingFailure, match=r"periodic\.algebraic\.admission") as refused:
+        M.NativeMeshingProvider(M.NativeMeshingOptions("periodic_delaunay")).plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+    assert refused.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+
+
+@pytest.mark.parametrize("count", (4, 8), ids=("skew-res4", "skew-res8"))
+def test_skew_periodic_seed_publication_transfers_exact_associations(
+    count: int,
+) -> None:
+    M = phx.meshing
+    source, specification, control = _skew_seed_request(count, M.SizeControlStrength.SOFT)
+    result = (
+        M.NativeMeshingProvider(M.NativeMeshingOptions("periodic_delaunay"))
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
     assert result.compliance.passed
-    assert achieved[f"{prefix}:p50_edge"] == 1.0 / count
-    assert achieved[f"{prefix}:p95_edge"] == 1.0 / count
-    assert achieved[f"{prefix}:maximum_edge"] <= 1.5 / count
+    achieved = dict(result.compliance.achieved)
+    assert achieved[f"size:{control.control_id}:maximum_edge"] <= 1.5 / count
     quotient = M.PeriodicQuotientEvidence(result.mesh)
     assert quotient.euler_characteristic == 0 and quotient.boundary_facet_count == 0
     np.testing.assert_allclose(quotient.total_measure, 1.0, atol=_UNIT_QUOTIENT_ATOL)
@@ -766,6 +1224,7 @@ def test_skew_periodic_frontal_construction_meets_exact_hard_statistics(
 def test_represented_periodic_front_preserves_subdivided_winding_support() -> None:
     from phydrax.meshing.providers import _native_periodic_constraints as constraints
     from phydrax.meshing.providers._native_periodic import (
+        _PeriodicSupportAllowance,
         _refine_target_size_sites,
         _triangulate_target_size_sites,
     )
@@ -788,6 +1247,13 @@ def test_represented_periodic_front_preserves_subdivided_winding_support() -> No
     vectors = np.asarray(strata.cell.vectors, dtype=np.float64)
     started = perf_counter()
     with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
         state, work = _triangulate_target_size_sites(
             seeds,
             vectors,
@@ -818,6 +1284,7 @@ def test_represented_periodic_front_preserves_subdivided_winding_support() -> No
             limits.maximum_vertices,
             work,
             scope=scope,
+            allowance=_PeriodicSupportAllowance(limits, scope=scope, budget=budget),
         )
         assert total_work > work
         assert refined.points.shape[0] > seeds.shape[0]
@@ -1231,6 +1698,9 @@ def test_grouped_skew_periodic_field_transfer_refine_coarsen_refine(
             parent_reference_vertices=None
             if coarsening
             else adaptation.parent_reference_vertices,
+            parent_reference_homogeneous=None
+            if coarsening
+            else adaptation.parent_reference_homogeneous,
             source_geometry=adaptation.source.geometry,
             target_geometry=adaptation.target.geometry,
             coarsening_witnesses=witnesses if coarsening else None,
@@ -1468,6 +1938,56 @@ def test_periodic_accuracy_coarsening_marks_use_physical_error_density() -> None
     )
 
 
+def test_periodic_completion_requires_runtime_evidence_not_status_labels() -> None:
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification.scenarios.periodic import (
+        _periodic_qualification_obligations,
+    )
+
+    args = QualificationControls()
+    record = {
+        "status": "passed",
+        "mandatory_workflow_completion": "complete",
+        "positive_completion": True,
+        "end_to_end_seconds": 1.0,
+        "physical_error": 0.0,
+    }
+    obligations = _periodic_qualification_obligations(record, args)
+    assert obligations and not any(obligations.values())
+
+
+@pytest.mark.parametrize("name", ("u", "vector", "flux"))
+def test_periodic_completion_rejects_disconnected_transferred_state(name: str) -> None:
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification.scenarios.periodic import (
+        _periodic_qualification_obligations,
+    )
+
+    before = {field: f"before-{field}" for field in ("u", "vector", "flux")}
+    after = {field: f"after-{field}" for field in before}
+    fields = {
+        field: {
+            "passed": True,
+            "evidence_id": f"evidence-{field}",
+            "source_state_fingerprint": before[field],
+            "target_state_fingerprint": after[field],
+        }
+        for field in before
+    }
+    record = {
+        "transitions": [{"transfers": fields}],
+        "epochs": [
+            {"field_fingerprints": before},
+            {"incoming_field_fingerprints": after},
+            {},
+        ],
+    }
+    args = QualificationControls()
+    assert _periodic_qualification_obligations(record, args)["all_accepted_fields_transferred"]
+    fields[name]["source_state_fingerprint"] = "different-accepted-state"
+    assert not _periodic_qualification_obligations(record, args)["all_accepted_fields_transferred"]
+
+
 def test_periodic_coarsening_selection_matches_complete_execution(
     grouped_skew_transfer_cycle: tuple[
         phx.meshing.MeshAdaptationResult,
@@ -1660,3 +2180,407 @@ def test_partial_periodic_coarsening_preserves_kept_fine_cell_actions() -> None:
             coarse.lineage,
             NestedReferenceWitnesses(fine, coarse_ids, changed),
         )
+
+
+@pytest.mark.parametrize("base_case", ("skew-lattice", "skew-material-feature"))
+@pytest.mark.parametrize("resolution", (4, 8))
+def test_exact_periodic_profiles_preserve_original_authored_inputs(
+    base_case: str, resolution: int
+) -> None:
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification.scenarios.periodic import (
+        _periodic_binary64_exclusion,
+        _periodic_qualification_fixture,
+        _periodic_qualification_source_reference,
+    )
+
+    original, old_spec, _, old_case = _periodic_qualification_fixture(
+        QualificationControls(periodic_case=base_case, resolution=resolution)
+    )
+    positive_name = f"{base_case}-exact-algebraic"
+    positive, exact_spec, _, exact_case = _periodic_qualification_fixture(
+        QualificationControls(periodic_case=positive_name, resolution=resolution)
+    )
+    assert original.source_id != positive.source_id
+    assert original.source_revision != positive.source_revision
+    assert original.source_revision == old_case["authored_geometry_digest"]
+    assert old_case["authored_geometry_digest"] == exact_case["authored_geometry_digest"]
+    assert old_case["vectors"] == exact_case["vectors"]
+    assert old_case["fractional_seed_numerators"] == exact_case["fractional_seed_numerators"]
+    assert old_case["frozen_size_control"] == exact_case["frozen_size_control"]
+    assert old_spec.size_compliance.policy_id == exact_spec.size_compliance.policy_id
+    assert old_spec.limits.limits_id == exact_spec.limits.limits_id
+    assert phx.array_tree_fingerprint(original.domain) == phx.array_tree_fingerprint(
+        positive.domain
+    )
+    np.testing.assert_array_equal(original.cell_regions, positive.cell_regions)
+    for old, exact in zip(
+        old_spec.protected_features, exact_spec.protected_features, strict=True
+    ):
+        np.testing.assert_array_equal(old.scope.entity_ids, exact.scope.entity_ids)
+        assert old.feature_kind == exact.feature_kind
+        assert old.maximum_deviation == exact.maximum_deviation
+    for old, exact in zip(old_spec.region_controls, exact_spec.region_controls, strict=True):
+        np.testing.assert_array_equal(old.scope.entity_ids, exact.scope.entity_ids)
+        assert (old.region_name, old.material_id, old.role, old.meshing_enabled) == (
+            exact.region_name, exact.material_id, exact.role, exact.meshing_enabled
+        )
+    for name, source, case in (
+        (base_case, original, old_case),
+        (positive_name, positive, exact_case),
+    ):
+        reference = _periodic_qualification_source_reference(name, resolution)
+        assert reference["source_id"] == source.source_id
+        assert reference["source_revision"] == source.source_revision
+        assert reference["authored_geometry_digest"] == case["authored_geometry_digest"]
+    exclusion = _periodic_binary64_exclusion(original, old_spec, old_case)
+    assert exclusion["passed"]
+    assert exclusion["minimum_incidence_contradiction"] > 0
+    assert not exclusion["algebraic_carriers_excluded"]
+    with pytest.raises(ValueError, match="original dyadic hard target"):
+        _periodic_binary64_exclusion(positive, exact_spec, exact_case)
+
+
+def test_periodic_source_classification_releases_corner_scratch_before_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.meshing.providers import _native_periodic as owner
+
+    M, D = phx.meshing, phx.discretization
+    source, specification, _ = _skew_seed_request(4, M.SizeControlStrength.HARD)
+    result = (
+        M.NativeMeshingProvider(M.NativeMeshingOptions("periodic_delaunay"))
+        .plan(source, specification, coordinate_contract=phx.SpatialCoordinateContract.si())
+        .execute()
+    )
+    classify = owner.is_affine_cell_geometry
+    associate = owner.periodic_source_associations
+    observed: list[tuple[int, int]] = []
+
+    def measured_classification(
+        mesh: D.CellMesh,
+        geometry: D.CellGeometrySpec,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> bool:
+        assert budget is not None
+        before = budget.temporary_bytes_upper
+        verdict = classify(mesh, geometry, budget=budget)
+        observed.append((before, budget.temporary_bytes_upper))
+        return verdict
+
+    def measured_association(
+        source: owner.NativePeriodicSource,
+        specification: M.SurfaceMeshingSpec | M.VolumeMeshingSpec,
+        target: D.CellMesh,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+        geometry: D.CellGeometrySpec | None = None,
+        _prepared_cover: owner._PeriodicSourceAssociationPreparation | None = None,
+    ) -> tuple[M.GeometryAssociation, ...]:
+        # Degree-one simplex rows release their corner scratch per row, so the
+        # classifier may leave none; coverage must still start from `before`.
+        assert observed and observed[-1][1] >= observed[-1][0]
+        assert budget.temporary_bytes_upper == observed[-1][0]
+        return associate(
+            source, specification, target, scope=scope, budget=budget,
+            geometry=geometry, _prepared_cover=_prepared_cover,
+        )
+
+    monkeypatch.setattr(owner, "is_affine_cell_geometry", measured_classification)
+    monkeypatch.setattr(owner, "periodic_source_associations", measured_association)
+    limits = specification.limits
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        ticket = scope.batch(0)
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        ticket.settle()
+        association, degrees = M.PeriodicAssociationTransfer(
+            source, specification
+        ).source_associations(result, scope=scope, budget=ledger)
+    assert association.exact and association.complete and degrees == (1, 2)
+
+
+@pytest.mark.parametrize("operation", ("refine", "coarsen"))
+def test_periodic_qualification_adaptation_observes_its_actual_request(
+    operation: str,
+    grouped_skew_transfer_cycle: tuple[
+        phx.meshing.MeshAdaptationResult,
+        phx.meshing.MeshAdaptationResult,
+        phx.meshing.MeshAdaptationResult,
+    ],
+) -> None:
+    from time import perf_counter
+
+    from tools.meshing_qualification._records import _result_identity
+    from tools.meshing_qualification._runtime import Deadline, StageLedger
+    from tools.meshing_qualification.scenarios.periodic import (
+        _periodic_qualification_adaptation,
+    )
+
+    M = phx.meshing
+    previous = grouped_skew_transfer_cycle[0]
+    source = previous.target
+    source_receipt = source.execution_evidence
+    assert source_receipt is not None
+    ids = source.mesh.entity_set(2).entity_ids
+    request = M.MarkedMeshAdaptation(
+        ids if operation == "refine" else (),
+        ids if operation == "coarsen" else (),
+        hierarchy=previous.hierarchy,
+    )
+    policy = M.MeshAdaptationPolicy(M.MeshAdaptationRoute.NATIVE_BISECTION)
+    deadline = Deadline(perf_counter() + 120.0)
+    record = {"stages_seconds": {}}
+    target, adaptation, coarsen_count = _periodic_qualification_adaptation(
+        source, request, policy, operation, 0, record,
+        StageLedger(record, deadline=deadline), deadline,
+    )
+    assert adaptation.status is M.MeshAdaptationStatus.COMPLETE
+    assert adaptation.target is target
+    assert adaptation.source is source
+    if adaptation.transition is not None:
+        assert adaptation.transition.target is target
+    assert source.execution_evidence is source_receipt
+    receipt = target.execution_evidence
+    assert receipt is not None
+    receipt.require_valid()
+    assert receipt.total_managed_admission_peak_bytes_upper is not None
+    assert 0 <= receipt.total_managed_admission_peak_bytes_upper <= policy.limits.maximum_scratch_bytes
+    assert float(np.asarray(receipt.total_elapsed_seconds)) <= 120.0
+    assert int(np.asarray(receipt.total_work_units)) <= policy.limits.maximum_work_units
+    exported = _result_identity(target)["execution_evidence"]
+    assert isinstance(exported, dict)
+    assert exported["phases"][exported["root"]]["managed_admission_peak_bytes_upper"] is not None
+    assert (coarsen_count > 0) == (operation == "coarsen")
+
+    import equinox as eqx
+
+    from phydrax.lifecycle._meshing_field_records import (
+        rebind_meshing_adaptation_execution_endpoints,
+    )
+    from phydrax.meshing._measurements import NativeExecutionRecord
+
+    changed = eqx.tree_at(
+        lambda value: value.geometry.coordinates,
+        target,
+        target.geometry.coordinates + 0.125,
+    )
+    with pytest.raises(ValueError, match="changed scientific content"):
+        rebind_meshing_adaptation_execution_endpoints(adaptation, source, changed)
+    for history_only in (False, True):
+        with NativeExecutionScope(policy.limits.native_limits()) as scope:
+            pass
+        unrelated = NativeExecutionRecord(
+            scope.completed_evidence(),
+            owner_id=receipt.owner_id,
+            history_evidence=(receipt,) if history_only else (),
+        )
+        changed = target.with_execution_evidence(unrelated)
+        with pytest.raises(ValueError, match="actual preceding receipt"):
+            rebind_meshing_adaptation_execution_endpoints(adaptation, source, changed)
+    assert adaptation.target is target
+    assert adaptation.target.execution_evidence is receipt
+
+
+@pytest.mark.parametrize("observe_preparation", (False, True))
+def test_periodic_adaptation_observation_keeps_missing_preparation_incomplete(
+    observe_preparation: bool,
+    grouped_skew_transfer_cycle: tuple[
+        phx.meshing.MeshAdaptationResult,
+        phx.meshing.MeshAdaptationResult,
+        phx.meshing.MeshAdaptationResult,
+    ],
+) -> None:
+    M = phx.meshing
+    previous = grouped_skew_transfer_cycle[0]
+    source = previous.target
+    policy = M.MeshAdaptationPolicy(M.MeshAdaptationRoute.NATIVE_BISECTION)
+    preparation = M.prepare_mesh_adaptation(
+        source,
+        M.MarkedMeshAdaptation(
+            source.mesh.entity_set(2).entity_ids, hierarchy=previous.hierarchy
+        ),
+        policy=policy,
+        observe_managed_admission=observe_preparation,
+    )
+    adaptation = M.execute_mesh_adaptation(
+        preparation, observe_managed_admission=True
+    )
+    assert adaptation.status is M.MeshAdaptationStatus.COMPLETE
+    receipt = adaptation.target.execution_evidence
+    assert receipt is not None
+    assert receipt.managed_admission_peak_bytes_upper is not None
+    assert receipt.preparation_evidence is not None
+    assert (
+        receipt.preparation_evidence.managed_admission_peak_bytes_upper is not None
+    ) is observe_preparation
+    assert (
+        receipt.total_managed_admission_peak_bytes_upper is not None
+    ) is observe_preparation
+    # Observation is deliberately not retroactive and does not alter the
+    # default-off historical request supplied to this new adaptation.
+    source_receipt = source.execution_evidence
+    assert source_receipt is not None
+    assert source_receipt.managed_admission_peak_bytes_upper is None
+
+
+def test_original_periodic_refinement_solver_epoch_retains_observed_endpoints() -> None:
+    from time import perf_counter
+
+    from phydrax.meshing.qualification import prepare_periodic_accepted_epoch
+    from tools.meshing_qualification._controls import QualificationControls
+    from tools.meshing_qualification._runtime import (
+        Deadline,
+        qualification_failure,
+        StageLedger,
+    )
+    from tools.meshing_qualification.scenarios import periodic as owner
+
+    M = phx.meshing
+    args = QualificationControls(
+        timeout=300.0, maximum_scratch_bytes=256_000_000, repeats=1
+    )
+    source, specification, options, case = owner._periodic_qualification_fixture(args)
+    carrier = M.NativeMeshingProvider(options).plan(
+        source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
+    ).execute()
+    policy = M.MeshAdaptationPolicy(
+        M.MeshAdaptationRoute.NATIVE_BISECTION,
+        limits=specification.limits,
+        association_transfer=M.PeriodicAssociationTransfer(source, specification),
+    )
+    started = perf_counter()
+    deadline = Deadline(started + args.timeout)
+    record = {
+        "stages_seconds": {}, "epochs": [], "case": case,
+        "time_to_target_error_seconds": None,
+    }
+    target, adaptation, _ = owner._periodic_qualification_adaptation(
+        carrier, M.MarkedMeshAdaptation(carrier.mesh.entity_set(2).entity_ids),
+        policy, "refine", 0, record, StageLedger(record, deadline=deadline), deadline,
+    )
+    spaces, problem, kept, weights = owner._periodic_qualification_spaces(target, case)
+    state = owner._periodic_qualification_initial_fields(spaces, case)
+    owner._periodic_qualification_solve(
+        target, spaces, problem, kept, weights, state, args, record, started
+    )
+    epoch = prepare_periodic_accepted_epoch(
+        target, spaces, state, 1, transition=adaptation,
+        failure_factory=qualification_failure,
+    )
+    assert epoch.carrier is target
+    assert epoch.transition is adaptation
+    assert adaptation.target is target and adaptation.source is carrier
+    assert adaptation.transition is not None
+    assert adaptation.transition.target is target
+    receipt = target.execution_evidence
+    assert receipt is not None
+    assert receipt.total_managed_admission_peak_bytes_upper is not None
+    assert receipt.managed_admission_peak_bytes_upper is not None
+    assert receipt.consumer_evidence is not None
+    assert receipt.consumer_evidence.managed_admission_peak_bytes_upper is not None
+    assert receipt.consumer_evidence.preparation_evidence is not None
+    assert receipt.consumer_evidence.preparation_evidence.total_managed_admission_peak_bytes_upper is not None
+    exported = record["epochs"][0]["result"]["execution_evidence"]
+    assert exported["phases"][exported["root"]]["managed_admission_peak_bytes_upper"] is not None
+
+    # Preserve the original workflow's nonuniform partial sibling closure:
+    # its closed-mark owner differs from the already-accounted preparation.
+    coarse_errors, coarse_measures = owner._periodic_qualification_cell_errors(
+        spaces["u"], state["u"], case
+    )
+    fine, refined, _ = owner._periodic_qualification_adaptation(
+        target,
+        M.MarkedMeshAdaptation(
+            target.mesh.entity_set(2).entity_ids, hierarchy=adaptation.hierarchy
+        ),
+        policy, "refine", 1, record, StageLedger(record, deadline=deadline), deadline,
+    )
+    assert isinstance(refined.hierarchy, M.PeriodicRefinement)
+    coarsen_ids = owner._periodic_qualification_coarsening_marks(
+        coarse_errors, coarse_measures, np.asarray(refined.hierarchy.parent_cells),
+        np.asarray(fine.mesh.entity_set(2).entity_ids), args.target_error,
+    )
+    fine_count = sum(block.cell_count for block in fine.mesh.blocks)
+    assert 0 < coarsen_ids.size < fine_count
+    coarse, coarsened, closed_count = owner._periodic_qualification_adaptation(
+        fine,
+        M.MarkedMeshAdaptation((), coarsen_ids, hierarchy=refined.hierarchy),
+        policy, "coarsen", 2, record, StageLedger(record, deadline=deadline), deadline,
+    )
+    assert closed_count > 0
+    assert coarsened.source is fine and coarsened.target is coarse
+    assert sum(block.cell_count for block in coarse.mesh.blocks) < fine_count
+    closed_receipt = coarse.execution_evidence
+    assert closed_receipt is not None
+    assert closed_receipt.total_managed_admission_peak_bytes_upper is not None
+    execution = closed_receipt.consumer_evidence
+    assert execution is not None
+    closure = execution.preparation_evidence
+    assert closure is not None and closure.preparation_evidence is not None
+    original_preparation = closure.preparation_evidence
+    assert closure.owner_id != original_preparation.owner_id
+    assert original_preparation.receipt_hex() in closure.imported_preparation_hex()
+    assert all(value is not original_preparation for value in closure.history_evidence)
+    closure.require_valid()
+
+
+@pytest.mark.parametrize("ancestry", ("consumer", "preparation", "history"))
+def test_restored_periodic_endpoint_requires_current_request_ancestry(
+    ancestry: str,
+    tmp_path: Path,
+    grouped_skew_transfer_cycle: tuple[
+        phx.meshing.MeshAdaptationResult,
+        phx.meshing.MeshAdaptationResult,
+        phx.meshing.MeshAdaptationResult,
+    ],
+) -> None:
+    from phydrax.lifecycle import (
+        read_meshing_source_closure,
+        write_meshing_source_closure,
+    )
+    from phydrax.lifecycle._meshing_field_records import (
+        rebind_meshing_adaptation_execution_endpoints,
+    )
+    from phydrax.meshing._measurements import NativeExecutionRecord
+
+    adaptation = grouped_skew_transfer_cycle[0]
+    prior = adaptation.target.execution_evidence
+    assert prior is not None
+    with NativeExecutionScope(adaptation.policy.limits.native_limits()) as scope:
+        pass
+    current = NativeExecutionRecord(
+        scope.completed_evidence(),
+        owner_id=prior.owner_id,
+        consumer_evidence=prior if ancestry == "consumer" else None,
+        preparation_evidence=prior if ancestry == "preparation" else None,
+        history_evidence=(prior,) if ancestry == "history" else (),
+    )
+    archive = write_meshing_source_closure(tmp_path / "current-receipt", current)
+    restored = read_meshing_source_closure(
+        archive.path, expected_content_id=archive.content_id
+    )
+    assert isinstance(restored, NativeExecutionRecord)
+    assert restored is not current
+    assert restored.to_record() == current.to_record()
+    updated = adaptation.target.with_execution_evidence(restored)
+    if ancestry == "history":
+        with pytest.raises(ValueError, match="actual preceding receipt"):
+            rebind_meshing_adaptation_execution_endpoints(
+                adaptation, adaptation.source, updated
+            )
+    else:
+        rebound = rebind_meshing_adaptation_execution_endpoints(
+            adaptation, adaptation.source, updated
+        )
+        assert rebound.target is updated
+        assert rebound.target.execution_evidence is restored
+        assert rebound.transition is not None
+        assert rebound.transition.target is updated

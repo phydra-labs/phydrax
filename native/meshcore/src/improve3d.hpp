@@ -60,6 +60,13 @@ Insertion try_split_edge(TetMesh& mesh, int32_t a, int32_t b, const double* posi
 bool try_collapse_edge(TetMesh& mesh, int32_t remove, int32_t keep,
                        bool require_improvement);
 
+// Directional collapse of a curved-source surface vertex: the same volume
+// link/orientation preparation, then the curved boundary transaction. With
+// `inspection` the validated candidate is reported and nothing changes.
+bool try_collapse_curved_edge(TetMesh& mesh, int32_t remove, int32_t keep,
+                              bool require_improvement, const CurvedCollapseClaims* claims,
+                              CurvedCollapseInspection* inspection);
+
 // Certifies the protected star, source stratum and local quality before a
 // coordinate/witness commit. Interior vertices and conforming facet/segment
 // vertices may move within their source geometry; fixed vertices do not move.
@@ -88,6 +95,17 @@ struct ImproveOptions {
 // Cells below the angle target, with uncertain construction, or at/below the
 // canonical-chart determinant floor are candidates. A floor repair may insert
 // one interior edge-star vertex whose children all exceed the floor.
+// Accepted cavities enqueue their affected unmet children in the same pass,
+// including angle failures. Coordinate proposals jointly solve positive
+// dihedral-cosine violations for the owning cell's eligible vertices. A
+// stationary residual may expand that same private proposal to its complete
+// 3--7-cell edge ring (at most nine vertices); only full feasibility selects
+// the expanded cavity. Complete incident unions retain single-star fallback.
+// Trial state remains private; one exact source/region/protection-checked batch
+// admission strictly raises the cavity minimum. Relocation never requeues an
+// already visited ordinary cell within the requested pass.
+// Complete local geometric negatives survive only edits outside their stars;
+// resource/transaction refusals never certify a negative.
 // counters receives PHX_MC_TET_MESH_IMPROVE_COUNTERS; mesh.unmet() the remaining cells.
 int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, TetMeshImproveCounters& counters);
 
@@ -107,6 +125,8 @@ struct ExudeOptions {
 // No globally regular connectivity is claimed. Output weights are scientific
 // evidence, not coordinate displacement. Counters: trials, flips, weighted
 // vertices, passes, remaining slivers, work. Unmet quality remains failure.
+// Trials count every proposal decided, including those decided by reused
+// weight-independent evaluation; work counts only evaluation performed.
 int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
                    NativeVector<double>& weights, TetMeshExudeCounters& counters);
 

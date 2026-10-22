@@ -76,12 +76,8 @@ def _published_target() -> CellMeshingResult:
     )
     assert partitioned.layout.vertex_capacity == 32
     assert partitioned.layout.cell_capacity == 32
-    update = phx.discretization.refine_adaptive_simplex_parts(
-        partitioned.layout,
-        partitioned.parts,
-        partitioned.states,
-        partitioned.states.mesh.cell_active,
-    )
+    update = phx.discretization.refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states,
+    partitioned.states.mesh.cell_active,)
     for shard in update.report.status.addressable_shards:
         np.testing.assert_array_equal(
             np.asarray(shard.data), np.zeros(shard.data.shape, dtype=np.int32)

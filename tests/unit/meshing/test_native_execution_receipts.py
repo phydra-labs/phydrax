@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import nullcontext
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -32,6 +33,7 @@ from phydrax._meshcore import (
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.meshing import (
+    CellMeshingResult,
     CurveMeshingSpec,
     MeshingFailure,
     MeshingFailureCategory,
@@ -43,12 +45,17 @@ from phydrax.meshing._association import PlcAssociationTransfer
 from phydrax.meshing._failures import CutStageError
 from phydrax.meshing._hex_cut_generation import cut_stage
 from phydrax.meshing._measurements import (
+    _NATIVE_EXECUTION_RECORD_ARRAY_BYTES,
     NativeExecutionDeviceMemoryCounters,
     NativeExecutionDeviceWorkCounters,
     NativeExecutionImports,
     NativeExecutionRecord,
 )
-from phydrax.meshing._native_preparation import native_preparation_ledger
+from phydrax.meshing._native_preparation import (
+    native_preparation_ledger,
+    NativePreparationOverlap,
+    stage_native_completed_source_issue,
+)
 from phydrax.meshing._volume_generation import (
     native_volume_execution_budget,
 )
@@ -204,7 +211,9 @@ def test_live_preparation_refuses_exhausted_parent_without_registration() -> Non
     assert not ledger.live_contains(prepared)
 
 
-def _counter_evidence(construction_work: int = 11) -> NativeExecutionEvidence:
+def _counter_evidence(
+    construction_work: int = 11, *, managed_peak: int | None = None
+) -> NativeExecutionEvidence:
     return NativeExecutionEvidence(
         NativeExecutionWorkCounters(construction_work, 7, 5, 3, 2, 1),
         NativeExecutionMemoryCounters(1024, 16, 32, 64, 4, 1),
@@ -215,6 +224,7 @@ def _counter_evidence(construction_work: int = 11) -> NativeExecutionEvidence:
         9,
         10,
         20,
+        managed_peak,
         0.125,
     )
 
@@ -345,24 +355,32 @@ def test_native_execution_record_refuses_inadequate_restored_counter_leaves(
         corrupted.require_valid()
 
 
-def test_native_execution_named_records_have_current_identity_recipes() -> None:
-    receipt = NativeExecutionRecord(
-        _counter_evidence(), owner_id="execution-counter-ledger"
+@pytest.mark.parametrize("managed_peak", (None, 80), ids=("unobserved", "observed"))
+def test_native_execution_named_records_have_current_identity_recipes(
+    managed_peak: int | None,
+) -> None:
+    evidence = _counter_evidence(managed_peak=managed_peak)
+    receipt = NativeExecutionRecord(evidence, owner_id="execution-counter-ledger")
+    repeated = NativeExecutionRecord(evidence, owner_id=receipt.owner_id)
+    changed = NativeExecutionRecord(
+        replace(evidence, managed_admission_peak_bytes_upper=81),
+        owner_id=receipt.owner_id,
     )
     fingerprint = array_tree_fingerprint(receipt)
-    assert (
-        fingerprint["sha256"]
-        == "f5ebf49a2bdbfe50c0d88700a1ae9a826da6e210806b483854db836aeab6ddcd"
-    )
-    assert len(fingerprint["signature"]) == 26
-    assert (
-        canonical_fingerprint(receipt.to_record())
-        == "08d6935ef304ee6a88f62b83fafd145ba4cca42b3e672bc8bbd9fb8c6c109ee0"
+    assert fingerprint == array_tree_fingerprint(repeated)
+    assert len(fingerprint["signature"]) == 26 + int(managed_peak is not None)
+    assert fingerprint != array_tree_fingerprint(changed)
+    assert receipt.receipt_hex() == repeated.receipt_hex()
+    assert receipt.receipt_hex() != changed.receipt_hex()
+    assert canonical_fingerprint(receipt.to_record()) != canonical_fingerprint(
+        changed.to_record()
     )
 
 
+@pytest.mark.parametrize("managed_peak", (None, 80), ids=("unobserved", "observed"))
 def test_native_execution_named_record_archive_restores_shared_phase_graph(
     tmp_path: Path,
+    managed_peak: int | None,
 ) -> None:
     from phydrax.lifecycle._meshing_sources import (
         read_meshing_source_closure,
@@ -370,10 +388,10 @@ def test_native_execution_named_record_archive_restores_shared_phase_graph(
     )
 
     previous = NativeExecutionRecord(
-        _counter_evidence(), owner_id="execution-counter-ledger"
+        _counter_evidence(managed_peak=managed_peak), owner_id="execution-counter-ledger"
     )
     receipt = NativeExecutionRecord(
-        _counter_evidence(),
+        _counter_evidence(managed_peak=managed_peak),
         preparation_evidence=previous,
         consumer_evidence=previous,
         owner_id=previous.owner_id,
@@ -387,6 +405,194 @@ def test_native_execution_named_record_archive_restores_shared_phase_graph(
     assert restored.preparation_evidence is restored.consumer_evidence
     assert restored.to_record() == receipt.to_record()
     assert array_tree_fingerprint(restored) == array_tree_fingerprint(receipt)
+
+
+@pytest.mark.parametrize("managed_peak", (None, 0, 80), ids=("missing", "zero", "observed"))
+def test_managed_admission_receipt_roundtrip_and_owned_array_capacity(
+    managed_peak: int | None,
+) -> None:
+    receipt = NativeExecutionRecord(_counter_evidence(managed_peak=managed_peak))
+    leaf = receipt.managed_admission_peak_bytes_upper
+    if managed_peak is None:
+        assert leaf is None
+        assert receipt.total_managed_admission_peak_bytes_upper is None
+    else:
+        assert leaf is not None and leaf.shape == () and leaf.dtype == jnp.uint64
+        assert int(leaf) == managed_peak
+        total = receipt.total_managed_admission_peak_bytes_upper
+        assert total is not None and int(total) == managed_peak
+    assert receipt.native_evidence().managed_admission_peak_bytes_upper == managed_peak
+    assert receipt.to_record()["phases"][0]["managed_admission_peak_bytes_upper"] == (
+        managed_peak
+    )
+    owned_bytes = sum(value.nbytes for value in jax.tree_util.tree_leaves(receipt))
+    assert owned_bytes == _NATIVE_EXECUTION_RECORD_ARRAY_BYTES - (
+        np.dtype(np.uint64).itemsize if managed_peak is None else 0
+    )
+
+
+@pytest.mark.parametrize("defect", ("shape", "dtype"))
+def test_managed_admission_receipt_refuses_invalid_restored_leaf(defect: str) -> None:
+    receipt = NativeExecutionRecord(_counter_evidence(managed_peak=80))
+    invalid = (
+        jnp.zeros((1,), dtype=jnp.uint64)
+        if defect == "shape"
+        else jnp.asarray(80, dtype=jnp.int64)
+    )
+    corrupted = eqx.tree_at(
+        lambda value: value.managed_admission_peak_bytes_upper, receipt, invalid
+    )
+    with pytest.raises(
+        ValueError, match=r"managed_admission_peak_bytes_upper must be a scalar uint64"
+    ):
+        corrupted.require_valid()
+
+
+def test_managed_admission_receipt_identity_binds_changed_observation() -> None:
+    receipt = NativeExecutionRecord(_counter_evidence(managed_peak=80))
+    corrupted = eqx.tree_at(
+        lambda value: value.managed_admission_peak_bytes_upper,
+        receipt,
+        jnp.asarray(81, dtype=jnp.uint64),
+    )
+    with pytest.raises(ValueError, match=r"receipt_id must bind"):
+        corrupted.require_valid()
+
+
+@pytest.mark.parametrize("missing", (None, "root", "preparation", "consumer"))
+def test_managed_admission_total_requires_complete_same_request_graph(
+    missing: str | None,
+) -> None:
+    preparation = NativeExecutionRecord(
+        _counter_evidence(managed_peak=None if missing == "preparation" else 100)
+    )
+    consumer = NativeExecutionRecord(
+        _counter_evidence(managed_peak=None if missing == "consumer" else 200),
+        preparation_evidence=preparation,
+    )
+    # Shared preparation is visited once; completed historical requests do not
+    # impose either their large peak or their missing observation on this request.
+    historical = (
+        NativeExecutionRecord(_counter_evidence(31, managed_peak=10_000)),
+        NativeExecutionRecord(_counter_evidence(32)),
+    )
+    receipt = NativeExecutionRecord(
+        _counter_evidence(managed_peak=None if missing == "root" else 150),
+        preparation_evidence=preparation,
+        consumer_evidence=consumer,
+        history_evidence=historical,
+    )
+    total = receipt.total_managed_admission_peak_bytes_upper
+    if missing is None:
+        assert total is not None and int(total) == 200
+    else:
+        assert total is None
+    assert int(receipt.total_work_units) == 22
+    assert int(receipt.total_geometry_queries) == 14
+    assert len(receipt.history_evidence) == 2
+    assert receipt.receipt_hex() != NativeExecutionRecord(
+        receipt.native_evidence(),
+        preparation_evidence=preparation,
+        consumer_evidence=consumer,
+    ).receipt_hex()
+
+
+@pytest.mark.parametrize("managed_peak", (None, 80), ids=("missing", "observed"))
+def test_preparation_normalization_preserves_managed_admission_observation(
+    managed_peak: int | None,
+) -> None:
+    evidence = _counter_evidence(managed_peak=managed_peak)
+    normalized = NativePreparationOverlap(
+        work=1, geometry_queries=1, external_work=1, live_elapsed_seconds=0.125
+    ).normalize(evidence)
+    assert normalized.managed_admission_peak_bytes_upper == managed_peak
+    assert normalized.memory_counters is evidence.memory_counters
+    assert normalized.host_storage_peak_bytes_upper == evidence.host_storage_peak_bytes_upper
+    assert normalized.work_counters.construction_work == 10
+
+
+@pytest.mark.parametrize("historical_peak", (None, 10_000), ids=("missing", "observed"))
+def test_managed_admission_archive_roundtrip_retains_history_only_as_provenance(
+    tmp_path: Path, historical_peak: int | None,
+) -> None:
+    from phydrax.lifecycle._meshing_sources import (
+        read_meshing_source_closure,
+        write_meshing_source_closure,
+    )
+
+    historical = NativeExecutionRecord(_counter_evidence(managed_peak=historical_peak))
+    receipt = NativeExecutionRecord(
+        _counter_evidence(managed_peak=80), history_evidence=(historical,)
+    )
+    archive = write_meshing_source_closure(tmp_path / "managed-history", receipt)
+    restored = read_meshing_source_closure(
+        archive.path, expected_content_id=archive.content_id
+    )
+    assert isinstance(restored, NativeExecutionRecord)
+    assert restored.to_record() == receipt.to_record()
+    assert len(restored.history_evidence) == 1
+    assert restored.history_evidence[0].native_evidence().managed_admission_peak_bytes_upper == (
+        historical_peak
+    )
+    assert int(restored.total_managed_admission_peak_bytes_upper) == 80
+
+
+@pytest.mark.parametrize("managed_peak", (None, 80), ids=("missing", "observed"))
+@pytest.mark.parametrize("with_history", (False, True), ids=("empty-history", "history"))
+def test_raw_execution_controls_decode_optional_managed_leaf_and_strict_history(
+    managed_peak: int | None, with_history: bool,
+) -> None:
+    from phydrax._array_archive import (
+        ArrayArchiveCorruptionError,
+        DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    )
+    from phydrax._model._structure import (
+        model_array_catalog,
+        model_recipe_array_values,
+        model_structure_recipe,
+    )
+    from phydrax.lifecycle._meshing_sources import (
+        _ExecutionControlSelection,
+        _restore_execution_controls,
+        register_meshing_source_artifacts,
+    )
+
+    historical = NativeExecutionRecord(_counter_evidence())
+    receipt = NativeExecutionRecord(
+        _counter_evidence(managed_peak=managed_peak),
+        history_evidence=(historical,) if with_history else (),
+    )
+    controls = (receipt, _plan_limits())
+    register_meshing_source_artifacts()
+    recipe = model_structure_recipe(controls)
+    table, catalog = model_array_catalog(
+        recipe, prefix="source-record", limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+    receipt_index, limit_index = table.nodes[-1]["items"]
+    selection = _ExecutionControlSelection(
+        table, catalog, receipt_index, limit_index, {}, None, receipt_index, (), ()
+    )
+    arrays = {
+        name: np.asarray(value)
+        for name, value in model_recipe_array_values(
+            controls, recipe, prefix="source-record"
+        ).items()
+    }
+    restored = _restore_execution_controls(selection, arrays)
+    assert restored.record.to_record() == receipt.to_record()
+    assert restored.record.native_evidence().managed_admission_peak_bytes_upper == (
+        managed_peak
+    )
+    assert len(restored.record.history_evidence) == int(with_history)
+    # The new optional field must not open a generic None escape for required
+    # numerical observations.
+    names = tuple(member.name for member in fields(NativeExecutionRecord))
+    required_index = table.nodes[receipt_index]["items"][
+        names.index("externally_charged_work")
+    ]
+    table.nodes[required_index] = {"kind": "literal", "value": None}
+    with pytest.raises(ArrayArchiveCorruptionError, match="declared optional receipt data"):
+        _restore_execution_controls(selection, arrays)
 
 
 @_NATIVE
@@ -1002,6 +1208,21 @@ def test_matched_preparation_overlap_normalizes_additive_counts_once(
     )
 
 
+def _issued_consumer_source(source: CellMeshingResult) -> CellMeshingResult:
+    with NativeExecutionScope(_plan_limits(100_000).native_limits()) as root:
+        with root.batch(3, queries_upper=2) as ticket:
+            ticket.consume(3, geometry_queries=2)
+        issue = stage_native_completed_source_issue(
+            root, source, owner_id="receipt-source",
+        )
+    receipt = NativeExecutionRecord(
+        root.completed_evidence(), owner_id="receipt-source",
+    )
+    bound = source.with_execution_evidence(receipt)
+    issue.complete(bound)
+    return bound
+
+
 @_NATIVE
 @pytest.mark.parametrize("continuations", (1, 2))
 def test_native_consumers_count_each_ended_preparation_once(continuations: int) -> None:
@@ -1014,18 +1235,22 @@ def test_native_consumers_count_each_ended_preparation_once(continuations: int) 
         np.asarray(((0, 1, 2),), dtype=np.int64),
     )
     source = phx.meshing.certify_cell_mesh(mesh, SpatialCoordinateContract.si())
-    receipt = _actual_source_receipt()
-    result = source.with_execution_evidence(receipt)
+    result = _issued_consumer_source(source)
+    receipt = result.execution_evidence
+    assert receipt is not None
     limits = MeshingLimits(
         maximum_work_units=100_000,
         maximum_geometry_queries=2 + continuations,
         maximum_scratch_bytes=32 * 1024**2,
         maximum_wall_seconds=120.0,
     )
+    scopes = []
 
-    def consume() -> int:
+    def consume(budget: phx.discretization.CoordinateEnclosureBudget) -> int:
         scope = current_native_execution_scope()
         assert scope is not None
+        assert budget.ticket.native_accounting
+        scopes.append(scope)
         with scope.batch(5, queries_upper=1) as ticket:
             ticket.consume(5, geometry_queries=1)
         return 7
@@ -1036,7 +1261,7 @@ def test_native_consumers_count_each_ended_preparation_once(continuations: int) 
             f"got {(operation, message, details)!r}"
         )
 
-    expected_work = 3
+    expected_work = int(np.asarray(receipt.total_work_units))
     for index in range(1, continuations + 1):
         previous = result.execution_evidence
         consumed = execute_native_consumer(
@@ -1045,13 +1270,88 @@ def test_native_consumers_count_each_ended_preparation_once(continuations: int) 
         result = consumed.result
         current = result.execution_evidence
         assert current is not None
-        expected_work += 5 + index
+        own_work = int(np.asarray(current.work_counters.construction_work))
+        assert own_work >= 5 + index
+        expected_work += own_work
+        # Publication authentication is paid work too. The actual live root
+        # independently reports the complete request, including each imported
+        # predecessor exactly once, not just the five scientific units.
+        assert expected_work == (
+            scopes[-1].completed_evidence().work_counters.construction_work
+        )
         assert consumed.value == 7
         assert current.preparation_evidence is previous
         assert int(np.asarray(current.total_work_units)) == expected_work
         assert int(np.asarray(current.total_geometry_queries)) == 2 + index
         assert result.mesh.mesh_id == source.mesh.mesh_id
         assert result.certification is source.certification
+
+
+@_NATIVE
+@pytest.mark.parametrize("slack", (0, -1), ids=("R", "R-1"))
+def test_native_geometry_consumer_uses_the_producing_request_budget(
+    monkeypatch: pytest.MonkeyPatch, slack: int
+) -> None:
+    import phydrax as phx
+    import phydrax.geometry._embedding_state as embedding_state
+    from phydrax._meshcore import MeshcoreError
+    from phydrax.meshing.qualification import execute_native_consumer
+
+    mesh = phx.discretization.CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64),
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+    )
+    source = phx.meshing.certify_cell_mesh(mesh, SpatialCoordinateContract.si())
+    result = _issued_consumer_source(source)
+    initial = result.execution_evidence
+    assert initial is not None
+    oracle_work = []
+
+    def no_fresh_host_ticket(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Native geometry consumer must use its explicit native budget")
+
+    monkeypatch.setattr(embedding_state, "HostBatchTicket", no_fresh_host_ticket)
+
+    def consume(budget: phx.discretization.CoordinateEnclosureBudget) -> str:
+        assert budget.ticket.native_accounting
+        certificate = phx.geometry.certify_global_embedding(
+            result.mesh, result.geometry, result.audit.validity, budget=budget
+        )
+        assert certificate.status == "certified"
+        oracle_work.append(budget.work_units)
+        return certificate.certificate_id
+
+    def failure(operation: str, message: str, details: dict[str, object]) -> Exception:
+        return RuntimeError(f"{operation}: {message}; {details!r}")
+
+    def limits(work: int) -> MeshingLimits:
+        return MeshingLimits(
+            maximum_work_units=work,
+            maximum_geometry_queries=100_000,
+            maximum_scratch_bytes=32 * 1024**2,
+            maximum_wall_seconds=120.0,
+        )
+
+    measured = execute_native_consumer(
+        result, limits(100_000), consume, failure_factory=failure
+    )
+    receipt = measured.result.execution_evidence
+    assert receipt is not None
+    required = int(np.asarray(receipt.total_work_units))
+    assert oracle_work[-1] > 0
+    assert required >= int(np.asarray(initial.total_work_units)) + oracle_work[-1]
+    if slack < 0:
+        with pytest.raises(MeshcoreError):
+            execute_native_consumer(
+                result, limits(required + slack), consume, failure_factory=failure
+            )
+    else:
+        repeated = execute_native_consumer(
+            result, limits(required), consume, failure_factory=failure
+        )
+        assert repeated.value == measured.value
+        assert repeated.result.execution_evidence is not None
+        assert int(np.asarray(repeated.result.execution_evidence.total_work_units)) == required
 
 
 @_NATIVE
@@ -1103,7 +1403,7 @@ def test_cross_operation_consumer_binds_its_exact_imported_preparation(
         with NativeExecutionScope(limits.native_limits()) as child:
             with child.batch(5, queries_upper=1) as ticket:
                 ticket.consume(5, geometry_queries=1)
-            imports = NativeExecutionImports(child)
+            imports = NativeExecutionImports(child, preparation=source)
         consumer = NativeExecutionRecord(
             child.completed_evidence(),
             owner_id="adaptation-operation",
@@ -1142,6 +1442,7 @@ def test_cross_operation_consumer_refuses_unrelated_preparation(imported: bool) 
         if imported:
             native_preparation_ledger(scope).import_receipt(scope, other)
         imports = NativeExecutionImports(scope)
+        chained = NativeExecutionImports(scope, preparation=source)
     consumer = NativeExecutionRecord(
         scope.completed_evidence(), owner_id="adaptation-operation", imports=imports
     )
@@ -1159,7 +1460,7 @@ def test_cross_operation_consumer_refuses_unrelated_preparation(imported: bool) 
             scope.completed_evidence(),
             owner_id="adaptation-operation",
             preparation_evidence=source,
-            imports=imports,
+            imports=chained,
         )
 
 
@@ -1205,3 +1506,250 @@ def test_restored_preparation_import_digest_refuses_forged_identity() -> None:
     )
     with pytest.raises(ValueError, match=r"NativeExecutionRecord.receipt_id must bind"):
         corrupted.require_valid()
+
+
+@_NATIVE
+@pytest.mark.parametrize("managed_peak", (None, 80), ids=("missing", "observed"))
+def test_managed_admission_leaf_is_owned_before_receipt_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+    reference_budget: CoordinateEnclosureBudget,
+    managed_peak: int | None,
+) -> None:
+    import phydrax as phx
+    import phydrax.meshing.providers._native_publication as publication
+
+    mesh = phx.discretization.CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64),
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+    )
+    result = phx.meshing.certify_cell_mesh(mesh, SpatialCoordinateContract.si())
+    retained = publication.model_array_bytes((result, None, ()))
+    expected = retained + _NATIVE_EXECUTION_RECORD_ARRAY_BYTES - (
+        np.dtype(np.uint64).itemsize if managed_peak is None else 0
+    )
+
+    def refuse_before_allocation(retained_bytes: int, limits: MeshingLimits) -> None:
+        assert retained_bytes == expected
+        raise RuntimeError("receipt ownership refused")
+
+    def unowned_allocation(*args: object, **kwargs: object) -> None:
+        pytest.fail("receipt arrays allocated before their retained-byte admission")
+
+    monkeypatch.setattr(publication, "_require_retained_bytes", refuse_before_allocation)
+    monkeypatch.setattr(jax, "device_put", unowned_allocation)
+    with pytest.raises(RuntimeError, match="receipt ownership refused"):
+        publication.bind_native_execution_result(
+            result, _counter_evidence(managed_peak=managed_peak), _plan_limits(), 0.0
+        )
+
+
+@pytest.mark.parametrize(
+    ("aggregate", "value"),
+    (
+        ("source_preparation_work_units", 1),
+        ("source_preparation_geometry_queries", 1),
+        ("preparation_seconds", 0.125),
+    ),
+)
+@pytest.mark.parametrize("nested", (False, True), ids=("root", "consumer"))
+def test_managed_admission_total_requires_observation_of_aggregate_only_preparation(
+    aggregate: str, value: int | float, nested: bool,
+) -> None:
+    phase = NativeExecutionRecord(
+        _counter_evidence(managed_peak=80),
+        source_preparation_work_units=int(value) if aggregate == "source_preparation_work_units" else None,
+        source_preparation_geometry_queries=int(value) if aggregate == "source_preparation_geometry_queries" else None,
+        preparation_seconds=float(value) if aggregate == "preparation_seconds" else None,
+    )
+    receipt = (
+        NativeExecutionRecord(
+            _counter_evidence(managed_peak=100), consumer_evidence=phase
+        )
+        if nested
+        else phase
+    )
+    assert phase.native_evidence().managed_admission_peak_bytes_upper == 80
+    assert phase.preparation_evidence is None
+    assert phase.total_managed_admission_peak_bytes_upper is None
+    assert receipt.total_managed_admission_peak_bytes_upper is None
+    assert int(phase.total_work_units) == 11 + int(
+        aggregate == "source_preparation_work_units"
+    )
+    assert int(phase.total_geometry_queries) == 7 + int(
+        aggregate == "source_preparation_geometry_queries"
+    )
+    assert float(phase.total_elapsed_seconds) == 0.375 + (
+        float(value) if aggregate == "preparation_seconds" else 0.0
+    )
+
+
+@_NATIVE
+def test_imported_envelope_preparation_keeps_source_owner_and_new_plan_owner() -> None:
+    import phydrax.meshing as meshing
+    from phydrax.meshing.providers._native import NativeMeshingPlan
+    from tests._support.envelope_meshing import (
+        envelope_policy,
+        envelope_sheet,
+        envelope_specification,
+    )
+
+    envelope = meshing.wrap_surface_envelope(envelope_sheet(), envelope_policy())
+    source = meshing.NativeSurfaceEnvelopeSource(envelope, "wrapped-solid")
+    receipt = envelope.execution_evidence
+    assert receipt is not None and receipt.owner_id == envelope.envelope_id
+    specification = envelope_specification(source)
+    provider = NativeMeshingProvider(
+        meshing.NativeMeshingOptions(
+            "surface_envelope_tetrahedral",
+            volume_schedule=meshing.NativeVolumeSchedule(
+                refinement_rounds=1,
+                improvement_passes=1,
+                minimum_dihedral_degrees=0.0,
+            ),
+        )
+    )
+    with native_volume_execution_budget(specification.limits) as root:
+        plan = provider.plan(
+            source, specification, coordinate_contract=SpatialCoordinateContract.si()
+        )
+        preparation = plan.preparation_evidence
+        assert preparation is not None
+        assert preparation.owner_id == plan.plan_id != receipt.owner_id
+        assert preparation.preparation_evidence is receipt
+        assert receipt.receipt_hex() in preparation.imported_preparation_hex()
+        assert preparation.history_evidence == ()
+        before = root.remaining()
+        ledger = native_preparation_ledger(root)
+        ledger.import_receipt(root, preparation)
+        ledger.import_receipt(root, receipt)
+        after = root.remaining()
+        assert after.remaining_work_units == before.remaining_work_units
+        assert after.remaining_geometry_queries == before.remaining_geometry_queries
+    assert envelope.execution_evidence is receipt
+    assert receipt.owner_id == envelope.envelope_id
+    assert int(np.asarray(preparation.source_preparation_work_units)) == int(
+        np.asarray(receipt.total_work_units)
+    )
+    assert int(np.asarray(preparation.source_preparation_geometry_queries)) == int(
+        np.asarray(receipt.total_geometry_queries)
+    )
+    restored = NativeMeshingPlan(
+        plan.source,
+        plan.specification,
+        plan.options,
+        plan.support,
+        plan.coordinate_contract,
+        plan.prepared,
+        preparation_evidence=preparation,
+    )
+    assert restored.plan_id == plan.plan_id
+    assert restored.preparation_evidence is preparation
+    with pytest.raises(ValueError, match="owner_id must bind this plan"):
+        NativeMeshingPlan(
+            plan.source,
+            plan.specification,
+            plan.options,
+            plan.support,
+            plan.coordinate_contract,
+            plan.prepared,
+            preparation_evidence=receipt,
+        )
+
+
+@pytest.mark.parametrize("missing", (None, "root", "preparation", "consumer"))
+def test_json_receipt_validator_preserves_complete_same_request_observation(
+    missing: str | None,
+) -> None:
+    from phydrax.meshing._measurements import validate_native_execution_interchange
+
+    preparation = NativeExecutionRecord(
+        _counter_evidence(managed_peak=None if missing == "preparation" else 100),
+        owner_id="same-request",
+    )
+    consumer = NativeExecutionRecord(
+        _counter_evidence(managed_peak=None if missing == "consumer" else 200),
+        owner_id="same-request",
+        preparation_evidence=preparation,
+    )
+    history = NativeExecutionRecord(
+        _counter_evidence(31, managed_peak=None), owner_id="previous-request",
+    )
+    root = NativeExecutionRecord(
+        _counter_evidence(managed_peak=None if missing == "root" else 150),
+        owner_id="same-request",
+        preparation_evidence=preparation,
+        consumer_evidence=consumer,
+        history_evidence=(history,),
+    )
+    observation = validate_native_execution_interchange(root.to_record())
+    assert observation["root_receipt_id"] == root.receipt_hex()
+    assert observation["owner_id"] == "same-request"
+    assert observation["preparation_complete"] is True
+    assert len(observation["current_phase_indexes"]) == 3
+    assert observation["managed_admission_peak_bytes_upper"] == (
+        200 if missing is None else None
+    )
+
+
+@pytest.mark.parametrize(
+    "defect",
+    (
+        "missing-field", "unknown-field", "status", "boolean-counter",
+        "counter-overflow", "digest", "imports", "aggregate", "foreign-owner",
+        "cycle", "disconnected", "out-of-range-edge",
+    ),
+)
+def test_json_receipt_validator_rejects_incomplete_or_foreign_graph(defect: str) -> None:
+    from copy import deepcopy
+
+    from phydrax.meshing._measurements import validate_native_execution_interchange
+
+    preparation = NativeExecutionRecord(_counter_evidence(managed_peak=100), owner_id="request")
+    root = NativeExecutionRecord(
+        _counter_evidence(managed_peak=200), owner_id="request",
+        preparation_evidence=preparation,
+    )
+    record = cast(dict[str, Any], root.to_record())
+    phase = record["phases"][0]
+    if defect == "missing-field":
+        del phase["managed_admission_peak_bytes_upper"]
+    elif defect == "unknown-field":
+        phase["unrecognized_scope"] = True
+    elif defect == "status":
+        phase["status_name"] = "OK-but-unended"
+    elif defect == "boolean-counter":
+        phase["work_counters"]["construction_work"] = True
+    elif defect == "counter-overflow":
+        phase["memory_counters"]["peak_bytes"] = 1 << 64
+    elif defect == "digest":
+        phase["receipt_id"] = "0" * 64
+    elif defect == "imports":
+        phase["imported_preparation_ids"] = ["f" * 64, "0" * 64]
+    elif defect == "aggregate":
+        phase["source_preparation_work_units"] += 1
+    elif defect == "foreign-owner":
+        record["phases"][1]["owner_id"] = "foreign-request"
+    elif defect == "cycle":
+        phase["preparation_evidence"] = 0
+    elif defect == "disconnected":
+        record["phases"].append(deepcopy(record["phases"][1]))
+    else:
+        phase["consumer_evidence"] = len(record["phases"])
+    with pytest.raises((TypeError, ValueError)):
+        validate_native_execution_interchange(record)
+
+
+def test_json_receipt_validator_does_not_fill_aggregate_only_preparation_from_history() -> None:
+    from phydrax.meshing._measurements import validate_native_execution_interchange
+
+    historical = NativeExecutionRecord(_counter_evidence(managed_peak=1_000))
+    root = NativeExecutionRecord(
+        _counter_evidence(managed_peak=100),
+        source_preparation_work_units=11,
+        source_preparation_geometry_queries=7,
+        preparation_seconds=0.5,
+        history_evidence=(historical,),
+    )
+    observation = validate_native_execution_interchange(root.to_record())
+    assert observation["preparation_complete"] is False
+    assert observation["managed_admission_peak_bytes_upper"] is None

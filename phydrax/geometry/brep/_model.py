@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 import phydrax.geometry.brep._correspondence as correspondence_owner
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint, tree_content_equal
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
@@ -344,6 +344,33 @@ def _certify_edge_face_gap_bounds(
                 )
             )
         if squared is None:
+            if declared_bounds is not None and declared_bounds[coedge] > 0.0 and curve_index != -1:
+                # An external bounded representation must prove its emitted
+                # carriers, independently of its descriptor/provenance. Exact
+                # rational shortcuts are optional, never a prerequisite for
+                # admitting a continuously certified spline/quadric gap.
+                pcurve = pcurves[coedge]
+                witness = correspondence_owner.certify_curve_surface(
+                    curves[curve_index],
+                    pcurve,
+                    patches[face],
+                    pcurve.bounding_box(first, last, budget=budget),
+                    first,
+                    last,
+                    point=np.zeros(3, dtype=np.float64),
+                    tolerance=declared_bounds[coedge],
+                    endpoint_roots=(
+                        (None, None) if coedge_endpoint_roots is None
+                        else coedge_endpoint_roots[coedge]
+                    ),
+                    budget=budget,
+                )
+                if not witness.complete or witness.deviation_bound > declared_bounds[coedge]:
+                    raise ValueError(
+                        "BRepGeometry.edge_face_gap_bounds must independently enclose emitted carrier distances; got unproved or exceeded bound"
+                    )
+                result.append(witness.deviation_bound)
+                continue
             if declared_bounds is None and exact_unsupported and curve_index != -1:
                 _certify_generated_zero_face_gap(
                     curves[curve_index],
@@ -1348,7 +1375,13 @@ class BRepGeometry(StrictModule):
 
     @classmethod
     @checked
-    def from_stored_fields(cls: type[Self], value: BRepGeometry, /) -> Self:
+    def from_stored_fields(
+        cls: type[Self],
+        value: BRepGeometry,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Self:
         """Reconstruct stored inputs through the validated construction phases.
 
         The structure-recipe boundary admits the registered type and field set.
@@ -1379,6 +1412,7 @@ class BRepGeometry(StrictModule):
             coedge_endpoint_roots=value.coedge_endpoint_roots,
             edge_vertex_gap_bounds=value.edge_vertex_gap_bounds,
             edge_face_gap_bounds=value.edge_face_gap_bounds,
+            budget=budget,
         )
 
     def _prepare_geometry_sources(
@@ -2897,6 +2931,35 @@ def _validate_coedge_roots(
     return True
 
 
+@dataclass(frozen=True, slots=True)
+class _BRepCoedgeProof:
+    """A successful whole-coedge proof earned by this exact immutable owner."""
+
+    owner: BRepModel
+    model_id: str
+    geometry_id: str
+    tolerance: float
+    bounds: np.ndarray
+
+
+def _retain_coedge_proof(
+    model: BRepModel, bounds: np.ndarray, budget: CoordinateEnclosureBudget
+) -> None:
+    geometry = model.geometry
+    if geometry is None:
+        return
+    with budget.live_storage() as storage:
+        storage.set_bound(bounds.nbytes + 256, work=1)
+        retained = np.array(bounds, dtype=np.float64, copy=True)
+        retained.setflags(write=False)
+        proof = _BRepCoedgeProof(
+            model, model.model_id, geometry.geometry_id,
+            model.report.curve_surface_tolerance, retained,
+        )
+        budget.retain_owner(proof, temporary_storage_credit=storage)
+        budget.brep_coedge_proof_cache[id(model)] = proof
+
+
 def _certify_coedge(
     geometry: BRepGeometry,
     patch: AbstractSurfacePatch,
@@ -2997,7 +3060,9 @@ def _certify_coedge(
             return _CoedgeValidationPhase(
                 deviation=square_root_interval(certified_gap)[1], uv=uv
             )
-    correspondence_limit = curve_surface_tolerance if stored_gaps is None else 0.0
+    correspondence_limit = (
+        curve_surface_tolerance if stored_gaps is None else stored_gaps[coedge]
+    )
     witness = correspondence_owner.certify_curve_surface(
         source_curve,
         geometry.pcurves[coedge],
@@ -3152,20 +3217,6 @@ def _validate_exact_geometry(
             )
         )
         return np.full((len(geometry.coedge_edges),), np.inf, dtype=np.float64)
-    if geometry.edge_face_gap_bounds is not None:
-        _certify_edge_face_gap_bounds(
-            geometry.curves,
-            geometry.edge_curves,
-            np.asarray(geometry.edge_ranges),
-            geometry.pcurves,
-            geometry.coedge_edges,
-            geometry.coedge_faces,
-            patches,
-            budget=budget,
-            declared_bounds=geometry.edge_face_gap_bounds,
-            edge_endpoint_roots=geometry.edge_endpoint_roots,
-            coedge_endpoint_roots=geometry.coedge_endpoint_roots,
-        )
     points = np.asarray(geometry.vertex_points)
     ranges = np.asarray(geometry.edge_ranges)
     witnesses = np.full((len(geometry.coedge_edges),), np.inf, dtype=np.float64)
@@ -3427,6 +3478,7 @@ class _ModelCorrespondencePhase(StrictModule):
     """Validated host arrays from one model construction lifecycle phase."""
 
     correspondence: np.ndarray
+    proved_correspondence: np.ndarray
 
 
 class _ModelOccurrencePhase(StrictModule):
@@ -3860,6 +3912,7 @@ def _prepare_model_correspondence(
             findings=findings,
         )
     )
+    proved_correspondence = correspondence
     if coedge_deviation_bounds is not None and (not findings):
         retained = np.asarray(coedge_deviation_bounds, dtype=np.float64)
         if (
@@ -3877,7 +3930,9 @@ def _prepare_model_correspondence(
                 )
             )
         correspondence = retained
-    return _ModelCorrespondencePhase(correspondence=correspondence)
+    return _ModelCorrespondencePhase(
+        correspondence=correspondence, proved_correspondence=proved_correspondence
+    )
 
 
 def _prepare_model_occurrences(
@@ -4303,10 +4358,17 @@ class BRepModel(StrictModule):
             )
             self.model_id = identity.model_id
             self.tessellation_id = identity.tessellation_id
+            _retain_coedge_proof(self, correspondence_phase.proved_correspondence, budget)
 
     @classmethod
     @checked
-    def from_stored_fields(cls: type[Self], value: BRepModel, /) -> Self:
+    def from_stored_fields(
+        cls: type[Self],
+        value: BRepModel,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Self:
         """Reconstruct stored inputs through the validated construction phases.
 
         The structure-recipe boundary admits the registered type and field set.
@@ -4316,6 +4378,17 @@ class BRepModel(StrictModule):
         if type(value) is not cls:
             raise TypeError(
                 f"BRepModel.stored_fields must have the declared node type; got {type(value).__name__}"
+            )
+        geometry = (
+            None if value.geometry is None
+            else BRepGeometry.from_stored_fields(value.geometry, budget=budget)
+        )
+        if geometry is not None and value.geometry is not None and (
+            geometry.geometry_id != value.geometry.geometry_id
+            or not tree_content_equal(value.geometry, geometry)
+        ):
+            raise ValueError(
+                "BRepModel.geometry stored fields must match their independently restored numerical facts"
             )
         return cls(
             patches=value.patches,
@@ -4330,7 +4403,7 @@ class BRepModel(StrictModule):
             triangle_parameters=value.triangle_parameters,
             physical_tags=value.physical_tags,
             report=value.report,
-            geometry=value.geometry,
+            geometry=geometry,
             tessellation_deviation_bounds=value.tessellation_deviation_bounds,
             tessellation_normal_bounds=value.tessellation_normal_bounds,
             mesh_vertex_source_dimensions=value.mesh_vertex_source_dimensions,
@@ -4343,6 +4416,7 @@ class BRepModel(StrictModule):
             coedge_deviation_bounds=value.coedge_deviation_bounds,
             triangle_occurrence_ids=value.triangle_occurrence_ids,
             vertex_occurrence_ids=value.vertex_occurrence_ids,
+            budget=budget,
         )
 
     def _commit_model(
@@ -4477,13 +4551,22 @@ class BRepModel(StrictModule):
         budget: CoordinateEnclosureBudget | None = None,
         preparations: TrimRequestPreparations | None = None,
     ) -> np.ndarray:
-        """Recompute spatial curve/trim bounds without retained tessellation limits."""
+        """Return this request's earned whole-coedge proof, or independently prove it."""
         geometry = self.require_geometry()
         preparations = TrimRequestPreparations() if preparations is None else preparations
         findings: list[BRepValidationFinding] = []
         with coordinate_source_request(
             (self,), budget=budget, rows=len(geometry.coedge_edges)
         ) as admitted:
+            cached = admitted.brep_coedge_proof_cache.get(id(self))
+            if cached is not None and (
+                cached.owner is self
+                and cached.model_id == self.model_id
+                and cached.geometry_id == geometry.geometry_id
+                and cached.tolerance == self.report.curve_surface_tolerance
+            ):
+                admitted.ticket.checkpoint()
+                return cached.bounds
             bounds = _validate_exact_geometry(
                 geometry,
                 self.patches,
@@ -4496,6 +4579,7 @@ class BRepModel(StrictModule):
                 findings=findings,
             )
             BRepValidationReport(findings=tuple(findings)).require_valid()
+            _retain_coedge_proof(self, bounds, admitted)
             return bounds
 
     def _prepare_identity(self) -> _ModelIdentityPhase:

@@ -107,7 +107,7 @@ def volume_specification(
     region_seeds: tuple[RegionSeed, ...] = (),
     strength: SizeControlStrength = SizeControlStrength.SOFT,
 ) -> VolumeMeshingSpec:
-    """Request tetrahedra inside the PLC with its complete, revision-bound facet scope."""
+    """Request tetrahedra inside the PLC with a revision-bound scope over every facet."""
     scope = MeshingScope(
         source.source_id,
         source.source_revision,

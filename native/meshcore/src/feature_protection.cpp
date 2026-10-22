@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include "intersections.hpp"
@@ -90,6 +91,127 @@ double point_triangle_distance(const double* p, const double* a, const double* b
                        a[2] + ab[2] * v + ac[2] * w};
   return distance(p, q);
 }
+
+struct ProtectionWorkLimit {};
+
+// Bounds enclose the *computed* closest points of the existing point/segment
+// kernels, not merely the ideal geometric primitives. In particular the rounded
+// segment endpoint a + (b - a) need not equal b. For every finite clamped t,
+// monotonic multiplication and addition put a + t * (b - a) between a and that
+// reconstructed endpoint. NaN distances cannot decrease std::min's first operand.
+// Triangle Voronoi arithmetic has no such simple enclosure and stays exhaustive.
+class ProtectionIndex {
+  struct Node {
+    double lower[3]{}, upper[3]{};
+    std::size_t left = 0, right = 0;
+    std::size_t row = std::numeric_limits<std::size_t>::max();
+  };
+
+ public:
+  template <class Visit>
+  void build(const double* points, std::size_t count, std::span<const int32_t> edges,
+             Visit& visit) {
+    const bool segments = !edges.empty();
+    const std::size_t size = segments ? edges.size() / 2 : count;
+    if (size == 0) return;
+    if (size > nodes_.max_size() / 2) throw std::bad_alloc();
+    // NativeVector reserves against the active bounded allocator before storage
+    // is acquired. Construction order and query candidates are bounded by size.
+    nodes_.reserve(2 * size - 1);
+    NativeVector<std::size_t> order(size);
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    for (std::size_t row = 0; row < size; ++row) {
+      visit();
+      Node node;
+      node.row = row;
+      const double* a = points + 3 * (segments ? edges[2 * row] : row);
+      for (int axis = 0; axis < 3; ++axis) {
+        node.lower[axis] = node.upper[axis] = a[axis];
+        if (segments) {
+          const double b = points[3 * static_cast<std::size_t>(edges[2 * row + 1]) + axis];
+          const double reconstructed = a[axis] + (b - a[axis]);
+          if (std::isfinite(reconstructed)) {
+            node.lower[axis] = std::min({a[axis], b, reconstructed});
+            node.upper[axis] = std::max({a[axis], b, reconstructed});
+          } else {
+            node.lower[axis] = -std::numeric_limits<double>::infinity();
+            node.upper[axis] = std::numeric_limits<double>::infinity();
+          }
+        }
+      }
+      nodes_.push_back(node);
+    }
+    const auto build_range = [&](auto&& self, std::size_t first, std::size_t end)
+        -> std::size_t {
+      if (end - first == 1) return order[first];
+      Node node = nodes_[order[first]];
+      node.row = std::numeric_limits<std::size_t>::max();
+      for (std::size_t i = first + 1; i < end; ++i) {
+        visit();
+        for (int axis = 0; axis < 3; ++axis) {
+          node.lower[axis] = std::min(node.lower[axis], nodes_[order[i]].lower[axis]);
+          node.upper[axis] = std::max(node.upper[axis], nodes_[order[i]].upper[axis]);
+        }
+      }
+      int axis = 0;
+      for (int k = 1; k < 3; ++k) {
+        if (node.upper[k] - node.lower[k] > node.upper[axis] - node.lower[axis]) axis = k;
+      }
+      const auto center = [&](std::size_t row) {
+        const double value = std::midpoint(nodes_[row].lower[axis], nodes_[row].upper[axis]);
+        return std::isfinite(value) ? value : 0.0;
+      };
+      const std::size_t middle = first + (end - first) / 2;
+      std::nth_element(order.begin() + first, order.begin() + middle, order.begin() + end,
+                       [&](std::size_t a, std::size_t b) {
+                         visit();
+                         const double x = center(a), y = center(b);
+                         return x < y || (x == y && a < b);
+                       });
+      node.left = self(self, first, middle);
+      node.right = self(self, middle, end);
+      visit();
+      const std::size_t index = nodes_.size();
+      nodes_.push_back(node);
+      return index;
+    };
+    root_ = build_range(build_range, 0, size);
+  }
+
+  template <class Visit>
+  void candidates(const double* point, double reach, NativeVector<std::size_t>& rows,
+                  Visit& visit) const {
+    rows.clear();
+    if (nodes_.empty()) return;
+    const auto query = [&](auto&& self, std::size_t index) -> void {
+      visit();
+      const Node& node = nodes_[index];
+      const double nearest[3] = {
+          std::clamp(point[0], node.lower[0], node.upper[0]),
+          std::clamp(point[1], node.lower[1], node.upper[1]),
+          std::clamp(point[2], node.lower[2], node.upper[2])};
+      // The same subtraction/square/add/sqrt order is monotone in each absolute
+      // coordinate difference, including underflow and overflow. Thus this is a
+      // lower bound for the actual floating-point distance kernel as well.
+      if (0.5 * distance(point, nearest) >= reach) return;
+      if (node.row != std::numeric_limits<std::size_t>::max()) rows.push_back(node.row);
+      else {
+        self(self, node.left);
+        self(self, node.right);
+      }
+    };
+    query(query, root_);
+    // Preserve the original primitive order, including first-equal minima.
+    std::sort(rows.begin(), rows.end(), [&](std::size_t a, std::size_t b) {
+      visit();
+      return a < b;
+    });
+  }
+
+ private:
+  NativeVector<Node> nodes_;
+  std::size_t root_ = 0;
+};
 
 
 // Exact strict betweenness of a point already exactly collinear with (a, b).
@@ -166,6 +288,21 @@ NativeVector<double> protection_radii(const double* points, int64_t point_count,
     incident[static_cast<std::size_t>(edges[e + 1])].push_back(edges[e]);
   }
   NativeVector<double> radii(count, 0.0);
+  ProtectionIndex point_index, segment_index;
+  NativeVector<std::size_t> rows;
+  bool indexed = false;
+  const auto visit = [&]() {
+    if (!spend()) throw ProtectionWorkLimit{};
+  };
+  const auto candidates = [&](const ProtectionIndex& index, const double* point,
+                              double reach) {
+    try {
+      index.candidates(point, reach, rows, visit);
+      return true;
+    } catch (const ProtectionWorkLimit&) {
+      return false;
+    }
+  };
   for (std::size_t v = 0; v < count; ++v) {
     const double* p = points + 3 * v;
     const NativeVector<int32_t>& around = incident[v];
@@ -185,6 +322,16 @@ NativeVector<double> protection_radii(const double* points, int64_t point_count,
     if (!acute) {
       continue;
     }
+    if (!indexed) {
+      try {
+        point_index.build(points, count, {}, visit);
+        if (!edges.empty()) segment_index.build(points, 0, edges, visit);
+        rows.reserve(std::max(count, edges.size() / 2));
+      } catch (const ProtectionWorkLimit&) {
+        return {};
+      }
+      indexed = true;
+    }
     double reach = std::numeric_limits<double>::infinity();
     for (int32_t other : around) {
       if (!spend()) {
@@ -192,7 +339,8 @@ NativeVector<double> protection_radii(const double* points, int64_t point_count,
       }
       reach = std::min(reach, distance(p, points + 3 * static_cast<std::size_t>(other)) / 3.0);
     }
-    for (std::size_t u = 0; u < count; ++u) {
+    if (!candidates(point_index, p, reach)) return {};
+    for (std::size_t u : rows) {
       if (u != v) {
         if (!spend()) {
           return {};
@@ -200,7 +348,9 @@ NativeVector<double> protection_radii(const double* points, int64_t point_count,
         reach = std::min(reach, 0.5 * distance(p, points + 3 * u));
       }
     }
-    for (std::size_t e = 0; e + 1 < edges.size(); e += 2) {
+    if (!candidates(segment_index, p, reach)) return {};
+    for (std::size_t row : rows) {
+      const std::size_t e = 2 * row;
       if (static_cast<std::size_t>(edges[e]) != v && static_cast<std::size_t>(edges[e + 1]) != v) {
         if (!spend()) {
           return {};

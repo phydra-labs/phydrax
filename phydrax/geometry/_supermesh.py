@@ -30,7 +30,9 @@ through :class:`CommonRefinementStatus` with evidence.
 from __future__ import annotations
 
 import math
-from contextlib import nullcontext
+from collections.abc import Iterable, Iterator
+from contextlib import closing, contextmanager, nullcontext
+from dataclasses import fields
 from enum import IntEnum, StrEnum
 from typing import NamedTuple
 
@@ -44,15 +46,24 @@ import phydrax._meshcore as meshcore_owner
 import phydrax.discretization._cell_complex as cell_complex_owner
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
 from .._geometry_predicates import orient2d_host, orient3d_host, PredicateMode
+from .._host_storage import declared_integer_storage_bytes
 from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_integer
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
-from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
+)
 from ..discretization._reference_cell_types import CellBlock, PolyhedralBlock
 from ..ein import contract
 from ..typing import checked, parse
@@ -105,8 +116,10 @@ class CommonRefinementPolicy(StrictModule):
 
     ``maximum_candidate_pairs`` bounds broad-phase cell pairs,
     ``maximum_accepted_pairs`` bounds positive-measure entries, and
-    ``maximum_memory_bytes`` bounds the retained artifact plus the narrow-phase
-    working set.  ``second_moments`` fills the overlap second moments and
+    ``maximum_memory_bytes`` bounds admitted host decomposition, broad-phase,
+    retained artifact and narrow-phase storage. Memory refusal raises before
+    allocation, including when even failure evidence cannot fit.
+    ``second_moments`` fills the overlap second moments and
     ``overlap_simplices`` retains the entire simplex partition of every overlap,
     with intersection classifications determined by exact predicates.
     """
@@ -201,6 +214,9 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
     Coverage defects are ``covered - measure`` per cell (negative for gaps,
     positive for double coverage) and the tolerances are the per-cell ``t_i`` of
     :class:`CommonRefinementPolicy`.  ``piece_pair_count`` counts native clips.
+    ``working_bytes`` is the historical producing request's observed working
+    storage, not a reproducible geometric invariant. Restoration retains that
+    observation; its new certification is charged to the current caller budget.
     """
 
     status: CommonRefinementStatus = eqx.field(static=True)
@@ -313,7 +329,7 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
                 "CommonRefinementEvidence.from_stored_fields.value must have the registered evidence type; "
                 f"got {type(value).__name__}."
             )
-        return cls(
+        rebuilt = cls(
             status=value.status,
             reason=value.reason,
             source_coverage_defects=np.asarray(value.source_coverage_defects),
@@ -333,6 +349,12 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
             retained_bytes=value.retained_bytes,
             working_bytes=value.working_bytes,
         )
+        if not tree_content_equal(value, rebuilt):
+            raise ValueError(
+                "CommonRefinementEvidence.stored_fields must reproduce its historical "
+                "observations and derived evidence; got changed evidence."
+            )
+        return rebuilt
 
 
 def _relative_maximum(defects: np.ndarray, measures: np.ndarray, /) -> float:
@@ -341,6 +363,26 @@ def _relative_maximum(defects: np.ndarray, measures: np.ndarray, /) -> float:
     if not np.any(measured):
         return 0.0
     return float(np.max(np.abs(defects[measured]) / measures[measured]))
+
+
+def _canonical_cell_indices(
+    values: np.ndarray, cell_count: int, name: str, /
+) -> np.ndarray:
+    """Validate cell indices before narrowing to their stored representation."""
+    indices = np.asarray(values)
+    if indices.dtype.kind not in "iu":
+        raise TypeError(
+            f"PreparedCommonRefinement.entries.{name} must have an integer dtype; got {indices.dtype}."
+        )
+    if (
+        np.any(indices < 0)
+        or np.any(indices > np.iinfo(np.int32).max)
+        or np.any(indices >= cell_count)
+    ):
+        raise ValueError(
+            f"PreparedCommonRefinement.entries.{name} must contain int32 cell indices in [0, {cell_count}); got out-of-range indices."
+        )
+    return np.asarray(indices, dtype=np.int32)
 
 
 class PreparedCommonRefinement(StrictModule, NonTrainableState):
@@ -356,6 +398,11 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
     ascending order.  Cells are indexed by their position in the concatenated
     mesh blocks.  Entries exist whenever the narrow phase ran; consumers must
     check :attr:`status`.
+
+    Identity fingerprints the canonical stored arrays: cell indices and CSR
+    offsets use int32, while overlap volumes and first moments use float64.
+    Cell indices must have an integer dtype and lie within the mesh and int32
+    range before conversion; replay requires the exact stored dtypes and values.
     """
 
     status: CommonRefinementStatus = eqx.field(static=True)
@@ -402,35 +449,41 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
     ) -> None:
         dimension = source.first_moments.shape[1]
         count = entries.volumes.shape[0]
-        offsets = np.zeros((target.cell_count + 1,), dtype=np.int32)
-        np.cumsum(
-            np.bincount(entries.target_cells, minlength=target.cell_count),
-            out=offsets[1:],
+        if count > np.iinfo(np.int32).max:
+            raise ValueError(
+                "PreparedCommonRefinement.entries must fit int32 CSR offsets; got too many entries."
+            )
+        source_cells = _canonical_cell_indices(
+            entries.source_cells, source.cell_count, "source_cells"
         )
+        target_cells = _canonical_cell_indices(
+            entries.target_cells, target.cell_count, "target_cells"
+        )
+        volumes = np.asarray(entries.volumes, dtype=np.float64)
+        first_moments = np.asarray(entries.first_moments, dtype=np.float64)
         if (
-            entries.source_cells.shape != (count,)
-            or entries.target_cells.shape != (count,)
-            or entries.first_moments.shape != (count, dimension)
-            or np.any(np.diff(entries.target_cells) < 0)
+            source_cells.shape != (count,)
+            or target_cells.shape != (count,)
+            or first_moments.shape != (count, dimension)
+            or np.any(np.diff(target_cells) < 0)
         ):
             raise ValueError(
                 "PreparedCommonRefinement.entries must be target-grouped CSR; got incompatible arrays or row ordering."
             )
+        offsets = np.zeros((target.cell_count + 1,), dtype=np.int32)
+        np.cumsum(
+            np.bincount(target_cells, minlength=target.cell_count),
+            out=offsets[1:],
+        )
         self.status = evidence.status
         self.dimension = dimension
         self.source_cell_count = source.cell_count
         self.target_cell_count = target.cell_count
-        self.target_offsets = jax.device_put(np.asarray(offsets))
-        self.target_cells = jax.device_put(
-            np.asarray(entries.target_cells, dtype=np.int32)
-        )
-        self.source_cells = jax.device_put(
-            np.asarray(entries.source_cells, dtype=np.int32)
-        )
-        self.volumes = jax.device_put(np.asarray(entries.volumes, dtype=np.float64))
-        self.first_moments = jax.device_put(
-            np.asarray(entries.first_moments, dtype=np.float64)
-        )
+        self.target_offsets = jax.device_put(offsets)
+        self.target_cells = jax.device_put(target_cells)
+        self.source_cells = jax.device_put(source_cells)
+        self.volumes = jax.device_put(volumes)
+        self.first_moments = jax.device_put(first_moments)
         self.second_moments = (
             None
             if entries.second_moments is None
@@ -494,9 +547,9 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
                 "policy": policy.policy_id,
                 "evidence": evidence.evidence_id,
                 "target_offsets": array_tree_fingerprint(offsets),
-                "source_cells": array_tree_fingerprint(entries.source_cells),
-                "volumes": array_tree_fingerprint(entries.volumes),
-                "first_moments": array_tree_fingerprint(entries.first_moments),
+                "source_cells": array_tree_fingerprint(source_cells),
+                "volumes": array_tree_fingerprint(volumes),
+                "first_moments": array_tree_fingerprint(first_moments),
             }
         )
 
@@ -511,13 +564,15 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
         target_mesh: CellMesh,
         source_geometry: CellGeometrySpec | None = None,
         target_geometry: CellGeometrySpec | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PreparedCommonRefinement:
-        """Repeat certification from retained meshes and coordinate geometry owners.
+        """Reprove science, then canonically replay the historical public record.
 
-        Decompositions and overlap entries are derived construction inputs, not
-        recoverable from the stored measures or array shapes. Registered replay
-        authenticates every result field, including coverage and resource
-        evidence, against the stored refinement.
+        Every field must reproduce bitwise except the fresh phase's observed
+        ``evidence.working_bytes`` and its dependent evidence/refinement IDs.
+        Those historical fields are reconstructed, never overwritten with new
+        observations. A supplied request retains the independently earned fresh
+        evidence through sealing; standalone validation is invocation-local.
         """
         if type(value) is not cls:
             raise TypeError(
@@ -541,13 +596,112 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
             raise ValueError(
                 "PreparedCommonRefinement.target_geometry must retain its declared construction input; got missing geometry."
             )
-        return prepare_common_refinement(
+        policy = CommonRefinementPolicy(
+            **{
+                member.name: getattr(value.policy, member.name)
+                for member in fields(value.policy)
+                if member.name != "policy_id"
+            }
+        )
+        if not tree_content_equal(value.policy, policy):
+            raise ValueError(
+                "stored_fields.PreparedCommonRefinement must reproduce its stored "
+                "content; got changed policy."
+            )
+        if budget is not None and budget.ticket.settled:
+            scope = meshcore_owner.current_native_execution_scope()
+            if scope is None:
+                ticket = HostBatchTicket(
+                    policy.maximum_exact_work,
+                    queries_upper=policy.maximum_candidate_pairs,
+                    bytes_upper=policy.maximum_memory_bytes,
+                )
+            else:
+                remaining = scope.remaining()
+                ticket = scope.batch(
+                    min(policy.maximum_exact_work, remaining.remaining_work_units),
+                    queries_upper=min(
+                        policy.maximum_exact_work, remaining.remaining_geometry_queries
+                    ),
+                    bytes_upper=min(
+                        policy.maximum_memory_bytes, remaining.remaining_managed_bytes
+                    ),
+                )
+            with budget.bind_ticket(ticket), budget.activate():
+                return cls.from_stored_fields(
+                    value,
+                    source_mesh=source_mesh,
+                    target_mesh=target_mesh,
+                    source_geometry=source_geometry,
+                    target_geometry=target_geometry,
+                    budget=budget,
+                )
+        fresh = prepare_common_refinement(
             source_mesh,
             target_mesh,
-            policy=value.policy,
+            policy=policy,
             source_geometry=source_geometry,
             target_geometry=target_geometry,
+            budget=budget,
         )
+        historical_evidence = CommonRefinementEvidence.from_stored_fields(
+            value.evidence,
+            source_measures=fresh.source_measures,
+            target_measures=fresh.target_measures,
+        )
+        for member in fields(fresh.evidence):
+            if member.name in ("working_bytes", "evidence_id"):
+                continue
+            if not tree_content_equal(
+                getattr(historical_evidence, member.name),
+                getattr(fresh.evidence, member.name),
+            ):
+                raise ValueError(
+                    "CommonRefinementEvidence.stored_fields must reproduce fresh "
+                    f"scientific evidence; got changed {member.name}."
+                )
+        for member in fields(fresh):
+            if member.name in ("evidence", "refinement_id"):
+                continue
+            if not tree_content_equal(
+                getattr(value, member.name), getattr(fresh, member.name)
+            ):
+                raise ValueError(
+                    "stored_fields.PreparedCommonRefinement must reproduce its "
+                    f"stored content; got changed {member.name}."
+                )
+        historical_id = canonical_fingerprint(
+            {
+                "kind": "prepared-common-refinement",
+                "source_mesh": fresh.source_mesh_id,
+                "target_mesh": fresh.target_mesh_id,
+                "source_geometry": fresh.source_geometry_id,
+                "target_geometry": fresh.target_geometry_id,
+                "volume_errors": array_tree_fingerprint(fresh.volume_error_bounds),
+                "policy": policy.policy_id,
+                "evidence": historical_evidence.evidence_id,
+                "target_offsets": array_tree_fingerprint(fresh.target_offsets),
+                "source_cells": array_tree_fingerprint(fresh.source_cells),
+                "volumes": array_tree_fingerprint(fresh.volumes),
+                "first_moments": array_tree_fingerprint(fresh.first_moments),
+            }
+        )
+        if value.refinement_id != historical_id:
+            raise ValueError(
+                "stored_fields.PreparedCommonRefinement must reproduce its stored "
+                "content; got changed refinement_id."
+            )
+        historical = eqx.tree_at(
+            lambda record: record.evidence, value, historical_evidence
+        )
+        if not tree_content_equal(value, historical):
+            raise ValueError(
+                "stored_fields.PreparedCommonRefinement must reproduce its stored "
+                "content; got changed refinement_id."
+            )
+        if budget is not None:
+            budget.retain_owner(historical)
+        return historical
 
     @property
     def succeeded(self) -> bool:
@@ -602,15 +756,158 @@ class _PieceSigns(NamedTuple):
     certain: np.ndarray
 
 
+class _RefinementStorage:
+    """Preadmit host banks on one live request lease, including metadata."""
+
+    def __init__(
+        self, budget: CoordinateEnclosureBudget, lease: CoordinateLiveStorage, /
+    ) -> None:
+        lease.set_bound(8192)
+        self.budget = budget
+        self.lease = lease
+        self.counts = Counts(0, 0, 0, 0, 0, 0)
+        self.banks: dict[str, int] = {}
+        self.peak = 8192
+
+    def set(self, name: str, size: int, /) -> None:
+        total = 8192 + sum(self.banks.values()) - self.banks.get(name, 0) + size
+        self.lease.set_bound(total)
+        self.banks[name] = size
+        self.peak = max(self.peak, total)
+
+    def transfer(self, source: str, target: str, size: int, /) -> None:
+        """Move live aliases between banks without releasing their admission."""
+        available = self.banks[source]
+        if size < 0 or size > available:
+            raise RuntimeError(
+                "CommonRefinement.storage_transfer must fit its admitted source; "
+                f"got requested={size}, available={available}."
+            )
+        self.banks[source] = available - size
+        self.banks[target] = self.banks.get(target, 0) + size
+
+    @contextmanager
+    def scratch(self, name: str, size: int, /) -> Iterator[None]:
+        previous = self.banks.get(name, 0)
+        self.set(name, size)
+        try:
+            yield
+        finally:
+            self.set(name, previous)
+
+    def publish(self, result: PreparedCommonRefinement, /) -> PreparedCommonRefinement:
+        self.budget.retain_owner(result, temporary_storage_credit=self.lease)
+        return result
+
+
+def _array_bank_bytes(arrays: Iterable[np.ndarray | None], /) -> int:
+    """Release-only measurement of banks whose construction was preadmitted."""
+    return sum(256 + array.nbytes for array in arrays if array is not None)
+
+
+def _decomposition_bytes(part: Decomposition, /) -> int:
+    return 1024 + _array_bank_bytes(part[1:9])
+
+
+def _decomposition_bound(mesh: CellMesh, storage: _RefinementStorage, /) -> int:
+    """Derive cone/padding bounds from actual row and face incidences."""
+    connectivity = mesh.connectivity
+    polyhedral = isinstance(connectivity, cell_complex_owner.PolyhedralConnectivity)
+    scan = 2048
+    if polyhedral:
+        scan += 16 * (
+            connectivity.cell_face_offsets.size
+            + connectivity.cell_face_values.size
+            + connectivity.face_vertex_offsets.size
+        )
+    with storage.scratch("incidence-scan", scan):
+        if polyhedral:
+            cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+            cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+            face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+        dimension = mesh.topological_dimension
+        cells = pieces = padded_facets = vertices = width = first = 0
+        for block in mesh.blocks:
+            count, arity = block.vertices.shape
+            cells += count
+            vertices += count * arity
+            if dimension == 2:
+                pieces += count * arity
+                padded_facets += count * arity
+                width = max(width, arity, 3)
+            elif block.cell_kind == "polyhedron":
+                maximum = total = 0
+                for row in range(first, first + count):
+                    triangles = 0
+                    for slot in range(int(cell_offsets[row]), int(cell_offsets[row + 1])):
+                        face = int(cell_faces[slot])
+                        triangles += int(face_offsets[face + 1] - face_offsets[face]) - 2
+                    maximum = max(maximum, triangles)
+                    total += triangles
+                padded_facets += count * maximum
+                pieces += total
+            else:
+                triangles = sum(
+                    len(route) - 2
+                    for route in cell_complex_owner.POLYHEDRAL_FACE_ROUTES[
+                        block.cell_kind
+                    ]
+                )
+                padded_facets += count * triangles
+                pieces += count * triangles
+            first += count
+        # Block parts coexist with joined/sorted banks. Cone workspace has
+        # <= padded_facets rows: 128 float64-equivalent lanes cover masks,
+        # nonzero indices, gathered points and orientation-filter temporaries.
+        # Moments and at most twelve joined/indexed piece banks coexist.
+        piece_width = width * dimension if dimension == 2 else 12
+        scalar = declared_integer_storage_bytes(
+            max(
+                cells, pieces, padded_facets, vertices, mesh.coordinates.size
+            ).bit_length()
+        )
+        metadata = 16384 + len(mesh.blocks) * (128 * 256 + 64 * scalar)
+        return (
+            metadata
+            + 32 * mesh.coordinates.size
+            + 8 * (12 * vertices + 128 * padded_facets + 32 * cells)
+            + 8 * pieces * (12 * piece_width + 32 + 16 * dimension)
+        )
+
+
+def _bvh_storage_bound(count: int, dimension: int, /) -> int:
+    # Median tree: <= 2N-1 nodes and <= N*leaf_size payload slots.
+    # Levels, sort keys, casts, packed logical JAX banks and traversal host
+    # conversions coexist until the candidate stream closes.
+    nodes = 2 * count - 1
+    depth = max(1, count.bit_length())
+    return (
+        16384
+        + 256 * (64 + 8 * depth)
+        + 8 * (count * (48 + 16 * dimension) + nodes * (40 + 8 * dimension))
+        + 2 * count * 16 * 8
+    )
+
+
 # ---------------------------------------------------------------- decomposition
 
 
-def _orientation(points: tuple[np.ndarray, ...], mode: PredicateMode, /) -> _PieceSigns:
+def _orientation(
+    points: tuple[np.ndarray, ...],
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> _PieceSigns:
     match len(points):
         case 3:
-            result = orient2d_host(*points, mode=mode)
+            result = orient2d_host(
+                *points, mode=mode, budget=budget, memoize_native=False
+            )
         case 4:
-            result = orient3d_host(*points, mode=mode)
+            result = orient3d_host(
+                *points, mode=mode, budget=budget, memoize_native=False
+            )
         case _:
             raise ValueError(
                 f"CommonRefinement.orientation_points must contain three or four points; got {len(points)}."
@@ -626,6 +923,8 @@ def cone_decomposition(
     candidate_valid: np.ndarray,
     mode: PredicateMode,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Certify cones of oriented boundary facets ``(n, F, d)`` from cell vertices.
 
@@ -656,6 +955,7 @@ def cone_decomposition(
                     coordinates[local[rows, slots, k]] for k in range(facets.shape[2])
                 ),
                 mode,
+                budget=budget,
             )
             signs[rows, slots] = evaluated.signs
             certain[rows, slots] = evaluated.certain
@@ -732,7 +1032,12 @@ class _BlockPieces(NamedTuple):
 
 
 def _polygon_block_pieces(
-    coordinates: np.ndarray, cells: np.ndarray, mode: PredicateMode, /
+    coordinates: np.ndarray,
+    cells: np.ndarray,
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> _BlockPieces:
     """Convex cells stay whole; other polygons become certified triangle cones."""
 
@@ -740,7 +1045,9 @@ def _polygon_block_pieces(
     previous = np.roll(cells, 1, axis=1)
     following = np.roll(cells, -1, axis=1)
     turns = _orientation(
-        (coordinates[previous], coordinates[cells], coordinates[following]), mode
+        (coordinates[previous], coordinates[cells], coordinates[following]),
+        mode,
+        budget=budget,
     )
     known = turns.certain
     positive = np.any(known & (turns.signs == 1), axis=1)
@@ -758,6 +1065,7 @@ def _polygon_block_pieces(
         np.sort(cells[concave], axis=1),
         np.ones((concave.size, arity), dtype=np.bool_),
         mode,
+        budget=budget,
     )
     cone_rows, cone_slots = np.nonzero(keep)
     triangles = np.stack(
@@ -879,6 +1187,8 @@ def _volume_block_pieces(
     triangle_valid: np.ndarray,
     mode: PredicateMode,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> _BlockPieces:
     ordered = np.sort(np.where(vertex_valid, cells, np.iinfo(np.int64).max), axis=1)
     candidate_valid = ordered != np.iinfo(np.int64).max
@@ -889,6 +1199,7 @@ def _volume_block_pieces(
         np.where(candidate_valid, ordered, 0),
         candidate_valid,
         mode,
+        budget=budget,
     )
     rows, slots = np.nonzero(keep)
     tetrahedra = np.concatenate((apex[rows, None], triangles[rows, slots]), axis=1)
@@ -902,11 +1213,13 @@ def _block_pieces(
     coordinates: np.ndarray,
     mode: PredicateMode,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> _BlockPieces:
     cells = np.asarray(block.vertices, dtype=np.int64)
     match block.cell_kind:
         case "triangle" | "quadrilateral" | "polygon":
-            return _polygon_block_pieces(coordinates, cells, mode)
+            return _polygon_block_pieces(coordinates, cells, mode, budget=budget)
         case "tetrahedron" | "hexahedron" | "prism" | "pyramid":
             triangles = _standard_face_triangles(cells, block.cell_kind)
             triangle_valid = np.ones(triangles.shape[:2], dtype=np.bool_)
@@ -939,17 +1252,24 @@ def _block_pieces(
         triangles,
         triangle_valid,
         mode,
+        budget=budget,
     )
 
 
-def _decompose(mesh: CellMesh, mode: PredicateMode, /) -> Decomposition:
+def _decompose(
+    mesh: CellMesh,
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> Decomposition:
     coordinates = np.asarray(jax.device_get(mesh.coordinates), dtype=np.float64)
     dimension = mesh.topological_dimension
     cell_parts, vertex_parts, count_parts = [], [], []
     minima, maxima, invalid, uncertain, identifiers = [], [], [], [], []
     first_cell = 0
     for block in mesh.blocks:
-        pieces = _block_pieces(mesh, block, first_cell, coordinates, mode)
+        pieces = _block_pieces(mesh, block, first_cell, coordinates, mode, budget=budget)
         cells = np.asarray(block.vertices, dtype=np.int64)
         lower, upper = _cell_bounds(
             coordinates, cells, np.asarray(block.vertex_valid, dtype=np.bool_)
@@ -1020,27 +1340,58 @@ def _outside_exact_domain(mesh: CellMesh, /) -> bool:
 
 
 def _candidate_pairs(
-    source: Decomposition, target: Decomposition, limit: int, /
+    source: Decomposition,
+    target: Decomposition,
+    limit: int,
+    storage: _RefinementStorage,
+    /,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """All positive-extent box overlaps sorted by (target, source); None if refused."""
-
-    target_bvh = prepare_bvh(target.bbox_min, target.bbox_max, dtype=jnp.float64)
-    source_bvh = prepare_bvh(source.bbox_min, source.bbox_max, dtype=jnp.float64)
-    targets, sources = [], []
-    total = 0
-    for target_items, source_items in bvh_overlap_pair_blocks(target_bvh, source_bvh):
-        total += target_items.size
-        if total > limit:
-            return None
-        targets.append(target_items)
-        sources.append(source_items)
-    if not targets:
-        empty = np.empty((0,), dtype=np.int64)
-        return empty, empty.copy()
-    target_cells = np.concatenate(targets)
-    source_cells = np.concatenate(sources)
-    order = np.lexsort((source_cells, target_cells))
-    return target_cells[order], source_cells[order]
+    """Preadmit BVHs and stream blocks, then sort only actual candidate rows."""
+    dimension = source.first_moments.shape[1]
+    bvh_bytes = _bvh_storage_bound(source.cell_count, dimension) + _bvh_storage_bound(
+        target.cell_count, dimension
+    )
+    with storage.scratch("bvh", bvh_bytes), storage.scratch("traversal", 0):
+        target_bvh = prepare_bvh(target.bbox_min, target.bbox_max, dtype=jnp.float64)
+        source_bvh = prepare_bvh(source.bbox_min, source.bbox_max, dtype=jnp.float64)
+        targets, sources = [], []
+        total = 0
+        storage.set("candidates", 2048)
+        with closing(
+            bvh_overlap_pair_blocks(
+                target_bvh,
+                source_bvh,
+                traversal_storage=lambda size: storage.set("traversal", size),
+            )
+        ) as blocks:
+            for target_items, source_items in blocks:
+                total += target_items.size
+                storage.counts = storage.counts._replace(candidates=total)
+                if total > limit:
+                    del target_items, source_items
+                    return None
+                # The yielded copies were already admitted by traversal. Move
+                # their ownership without charging the same live aliases twice,
+                # then admit retained list/array metadata before appending.
+                storage.transfer(
+                    "traversal",
+                    "candidates",
+                    _array_bank_bytes((target_items, source_items)),
+                )
+                storage.set("candidates", 2048 + 16 * total + 1024 * (len(targets) + 1))
+                targets.append(target_items)
+                sources.append(source_items)
+        # The iterator is closed, so no frontier or leaf scratch survives while
+        # joins, sort keys and indexed sorted copies are allocated.
+        storage.set("traversal", 0)
+        storage.set("candidates", 2048 + 80 * total + 1024 * len(targets))
+        if not targets:
+            empty = np.empty((0,), dtype=np.int64)
+            return empty, empty.copy()
+        target_cells = np.concatenate(targets)
+        source_cells = np.concatenate(sources)
+        order = np.lexsort((source_cells, target_cells))
+        return target_cells[order], source_cells[order]
 
 
 # ---------------------------------------------------------------- narrow phase
@@ -1257,7 +1608,7 @@ class _NarrowResult(NamedTuple):
     working_bytes: int
 
 
-def _entries_bytes(parts: list[_BatchResult], dimension: int, /) -> int:
+def _entries_bytes(parts: Iterable[_BatchResult], dimension: int, /) -> int:
     total = 0
     for part in parts:
         total += part.volumes.size * (4 + 4 + 8 + 8 * dimension)
@@ -1268,6 +1619,28 @@ def _entries_bytes(parts: list[_BatchResult], dimension: int, /) -> int:
     return total
 
 
+def _piece_pairs_in_rows(
+    source: Decomposition,
+    target: Decomposition,
+    target_cells: np.ndarray,
+    source_cells: np.ndarray,
+    start: int,
+    stop: int,
+    /,
+) -> int:
+    return sum(
+        int(
+            source.piece_offsets[int(source_cells[row]) + 1]
+            - source.piece_offsets[int(source_cells[row])]
+        )
+        * int(
+            target.piece_offsets[int(target_cells[row]) + 1]
+            - target.piece_offsets[int(target_cells[row])]
+        )
+        for row in range(start, stop)
+    )
+
+
 def _narrow_phase(
     source: Decomposition,
     target: Decomposition,
@@ -1276,35 +1649,114 @@ def _narrow_phase(
     policy: CommonRefinementPolicy,
     base_bytes: int,
     /,
+    *,
+    storage: _RefinementStorage,
 ) -> _NarrowResult:
     dimension = source.first_moments.shape[1]
     pair_bytes = _piece_pair_bytes(source, target, policy)
     simplices = policy.second_moments or policy.overlap_simplices
+    total_clips = _piece_pairs_in_rows(
+        source, target, target_cells, source_cells, 0, target_cells.size
+    )
+    marks = max(0, (total_clips * pair_bytes - 1) // max(_BATCH_BYTES, pair_bytes))
+    storage.set(
+        "batch-boundaries",
+        8192
+        + 96 * target_cells.size
+        + 16 * marks
+        + 16 * (source.cell_count + target.cell_count),
+    )
     bounds = _batch_bounds(source, target, target_cells, source_cells, pair_bytes)
     parts: list[_BatchResult] = []
     kept_pairs: list[np.ndarray] = []
     accepted = piece_pairs = uncertain = failures = 0
     working = base_bytes
     for start, stop in zip(bounds[:-1], bounds[1:], strict=True):
-        batch = _clip_batch(
-            source, target, target_cells[start:stop], source_cells[start:stop], simplices
+        clips = _piece_pairs_in_rows(
+            source, target, target_cells, source_cells, int(start), int(stop)
         )
-        piece_pairs += batch.pair.size
-        working = max(working, base_bytes + batch.pair.size * pair_bytes)
-        result = _reduce_batch(batch, stop - start, policy, dimension)
-        parts.append(result)
-        kept_pairs.append(np.flatnonzero(result.keep) + start)
-        accepted += result.volumes.size
-        uncertain += result.uncertain
-        failures += result.failures
-        retained = _entries_bytes(parts, dimension)
-        counts = Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
-        if (
-            accepted > policy.maximum_accepted_pairs
-            or retained + working > policy.maximum_memory_bytes
-        ):
-            return _NarrowResult(None, counts, retained, working)
+        # Admit gathered inputs and index expansion before clipping. Native
+        # outputs stay on the original native owner; reduction does not reserve
+        # nonexistent maximum-capacity simplex products before their counts exist.
+        input_bytes = (
+            2 * 12 * 8
+            if dimension == 3
+            else (source.pieces.shape[1] + target.pieces.shape[1]) * 2 * 8 + 8
+        )
+        rows = int(stop - start)
+        batch_bytes = (
+            65536
+            + 8 * (source.cell_count + target.cell_count)
+            + clips * (input_bytes + 192)
+            + 128 * rows
+        )
+        with storage.scratch("clip-batch", batch_bytes):
+            batch = _clip_batch(
+                source,
+                target,
+                target_cells[start:stop],
+                source_cells[start:stop],
+                simplices,
+            )
+            piece_pairs += batch.pair.size
+            working = max(working, base_bytes + batch.pair.size * pair_bytes)
+            # Gathered inputs have expired. The only ordinary NumPy payload in
+            # _Batch is pair; meshcore owns moment/status/simplex buffers.
+            storage.set("clip-batch", 8192 + batch.pair.nbytes)
+            partition = batch.partition
+            capacity = 0 if partition is None else partition.simplices.shape[1]
+            flat_count = (
+                0 if partition is None else sum(int(count) for count in partition.counts)
+            )
+            reduction_bytes = (
+                65536
+                + 8 * capacity
+                + 4 * clips
+                + clips * capacity
+                + 8 * rows * (8 + 4 * dimension)
+                + flat_count * (8 * (2 + 3 * (dimension + 1) * dimension) + 1)
+            )
+            if policy.second_moments:
+                reduction_bytes += 32 * rows * dimension**2 + 8 * flat_count * (
+                    8 * dimension**2 + 8 * dimension + 16
+                )
+            with storage.scratch("clip-reduction", reduction_bytes):
+                result = _reduce_batch(batch, rows, policy, dimension)
+                accepted += result.volumes.size
+                uncertain += result.uncertain
+                failures += result.failures
+                counts = Counts(
+                    target_cells.size, accepted, piece_pairs, uncertain, 0, failures
+                )
+                storage.counts = counts
+                if accepted > policy.maximum_accepted_pairs:
+                    return _NarrowResult(
+                        None,
+                        counts,
+                        _entries_bytes(parts, dimension)
+                        + _entries_bytes((result,), dimension),
+                        working,
+                    )
+                retained_part = 2048 + _array_bank_bytes(
+                    (result.keep, result.volumes, result.moments, result.second)
+                )
+                if result.partition is not None:
+                    retained_part += _array_bank_bytes(
+                        (result.partition.counts, result.partition.simplices)
+                    )
+                retained_part += 512 + 8 * result.volumes.size
+                storage.transfer("clip-reduction", "accepted-parts", retained_part)
+                parts.append(result)
+                kept_pairs.append(np.flatnonzero(result.keep) + start)
+                del result
+            del batch, partition
     counts = Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
+    # Exact retained sizes are now known; joins coexist with all accepted parts.
+    retained = _entries_bytes(parts, dimension)
+    storage.set(
+        "entries",
+        16384 + 2 * retained + 64 * accepted + 1024 * len(parts),
+    )
     selected = np.concatenate(kept_pairs) if kept_pairs else np.empty((0,), np.int64)
     entries = Entries(
         target_cells=target_cells[selected],
@@ -1454,6 +1906,44 @@ def _validate_meshes(
         )
 
 
+def _admit_minimum_publication(
+    source: CellMesh,
+    target: CellMesh,
+    policy: CommonRefinementPolicy,
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> None:
+    """Refuse an impossible canonical negative artifact before any host bank.
+
+    Even empty overlaps retain real per-cell measures, first moments, IDs,
+    coverage defects/tolerances and the target CSR offsets. This lower bound
+    excludes headers and construction scratch; it never invents zero measures.
+    """
+    source_count = sum(block.cell_count for block in source.blocks)
+    target_count = sum(block.cell_count for block in target.blocks)
+    payload = (
+        8 * (source.topological_dimension + 4) * (source_count + target_count)
+        + 4 * (target_count + 1)
+        + (4 if policy.overlap_simplices else 0)
+    )
+    completed = (
+        0
+        if budget is None
+        else (budget.retained_basis_bytes + budget.temporary_bytes_upper)
+    )
+    limit = policy.maximum_memory_bytes
+    if budget is not None:
+        limit = min(limit, budget.maximum_memory_bytes)
+    if completed + payload > limit:
+        raise CoordinateEnclosureResourceError(
+            "polynomial_storage",
+            limit,
+            completed + payload,
+            completed,
+            admission=completed > limit,
+        )
+
+
 def _decomposition_failure(
     outside: bool, counts: Counts, /
 ) -> tuple[CommonRefinementStatus, str] | None:
@@ -1490,8 +1980,13 @@ def prepare_common_refinement(
     """Certify the common refinement of two cell meshes of one dimension.
 
     Requires meshcore (raises :class:`MeshcoreUnavailableError` otherwise).
-    Geometric failures never raise: they are reported by the returned status,
-    with empty entries when the narrow phase could not run.
+    Geometric failures are reported by the returned status, with empty entries
+    when the narrow phase could not run. Storage admission refuses before
+    allocation, raising ``CoordinateEnclosureResourceError`` if no result fits.
+    A live native budget owns host and native banks on its original ticket.
+    A standalone host budget remains supported, but its native coverage is
+    explicitly partial: native work uses the finite policy/supplied scope,
+    not a newly minted allowance on the host ticket.
     """
 
     # _exact_power_refinement consumes these policy and result declarations; import after they load.
@@ -1545,14 +2040,53 @@ def prepare_common_refinement(
             return exact_power_refinement_owner.prepare_exact_power_refinement(
                 source, target, source_geometry, target_geometry, policy, budget=view
             )
+    _admit_minimum_publication(source, target, policy, budget)
+    if (
+        budget is not None
+        and not budget.ticket.settled
+        and budget.ticket.native_accounting
+    ):
+        execution = scope or meshcore_owner.current_native_execution_scope()
+        if execution is None:
+            raise RuntimeError(
+                "prepare_common_refinement.budget must execute inside its native "
+                "request scope; got no active scope."
+            )
+        return prepare_common_refinement_active(
+            source, target, policy=policy, scope=execution, budget=budget
+        )
     with (
         meshcore_owner.NativeExecutionScope(policy.native_limits())
         if scope is None
         else nullcontext(scope)
     ) as execution:
         return prepare_common_refinement_active(
-            source, target, policy=policy, scope=execution
+            source, target, policy=policy, scope=execution, budget=budget
         )
+
+
+def _refinement_native_limits(
+    policy: CommonRefinementPolicy,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> meshcore_owner.NativeExecutionLimits:
+    """Tighten native residuals without reserving or replenishing the request."""
+    work = queries = policy.maximum_exact_work
+    if budget.ticket.native_accounting:
+        # Scope.remaining() at a reserved root would subtract this ticket's
+        # reservation again. The original ticket exposes its true residual;
+        # the borrowed native window also enforces every ancestor's limits.
+        work = min(work, budget.ticket.remaining_work_units)
+        queries = min(queries, budget.ticket.remaining_geometry_queries)
+    # Host q=0 says nothing about standalone native coverage; that API remains
+    # explicitly partial and uses the existing finite native policy/scope.
+    memory = max(
+        0,
+        min(policy.maximum_memory_bytes, budget.maximum_memory_bytes)
+        - budget.retained_basis_bytes
+        - budget.temporary_bytes_upper,
+    )
+    return meshcore_owner.NativeExecutionLimits(work, queries, 0, memory, math.inf)
 
 
 @checked
@@ -1563,22 +2097,85 @@ def prepare_common_refinement_active(
     *,
     policy: CommonRefinementPolicy,
     scope: meshcore_owner.NativeExecutionScope,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PreparedCommonRefinement:
-    """Prepare native intersections under the request's explicit execution scope."""
+    """Prepare bounded banks, sharing the native ledger when supplied.
+
+    Host-only tickets retain their standalone API and account host storage and
+    preparation work only (PARTIAL native coverage). They are not promoted to a
+    qualified whole-native request by this helper.
+    """
     _validate_meshes(source, target, policy)
+    _admit_minimum_publication(source, target, policy, budget)
     meshcore_owner.load_meshcore()
+    if budget is None or budget.ticket.settled:
+        remaining = scope.remaining()
+        ticket = scope.batch(
+            min(policy.maximum_exact_work, remaining.remaining_work_units),
+            queries_upper=min(
+                policy.maximum_exact_work, remaining.remaining_geometry_queries
+            ),
+            bytes_upper=min(
+                policy.maximum_memory_bytes, remaining.remaining_managed_bytes
+            ),
+        )
+        if budget is None:
+            view = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=policy.maximum_exact_work,
+                maximum_memory_bytes=policy.maximum_memory_bytes,
+            )
+            with ticket, view.activate():
+                return prepare_common_refinement_active(
+                    source, target, policy=policy, scope=scope, budget=view
+                )
+        with budget.bind_ticket(ticket):
+            return prepare_common_refinement_active(
+                source, target, policy=policy, scope=scope, budget=budget
+            )
+    with (
+        budget.activate(),
+        budget.bound_stage(policy.maximum_exact_work, policy.maximum_memory_bytes),
+        budget.ticket.native_target()
+        if budget.ticket.native_accounting
+        else nullcontext(),
+        # Enter after the original target: this is a tightening of its existing
+        # pool/ledger, not another native reservation or a replacement ticket.
+        # A memory window excludes its entry host baseline, so subtract that
+        # live baseline from the allowed additional bytes.
+        meshcore_owner.NativeExecutionScope(_refinement_native_limits(policy, budget)),
+        budget.live_storage() as lease,
+    ):
+        storage = _RefinementStorage(budget, lease)
+        result = _prepare_common_refinement_host(source, target, policy, storage)
+        return storage.publish(result)
+
+
+def _prepare_common_refinement_host(
+    source: CellMesh,
+    target: CellMesh,
+    policy: CommonRefinementPolicy,
+    storage: _RefinementStorage,
+    /,
+) -> PreparedCommonRefinement:
     identities = (
         source.mesh_id,
         target.mesh_id,
         source.topology_id,
         target.topology_id,
     )
-    outside = _outside_exact_domain(source) or _outside_exact_domain(target)
-    # Outside the supported coordinate-exponent range, native predicates refuse;
-    # the filter still yields evidence measures while the status fails closed.
+    with storage.scratch(
+        "exact-domain-scan",
+        8192 + 32 * max(source.coordinates.size, target.coordinates.size),
+    ):
+        outside = _outside_exact_domain(source) or _outside_exact_domain(target)
     mode = PredicateMode.FILTERED if outside else policy.predicate_mode
-    first = _decompose(source, mode)
-    second = _decompose(target, mode)
+    storage.set("source-decomposition", _decomposition_bound(source, storage))
+    first = _decompose(source, mode, budget=storage.budget)
+    storage.set("source-decomposition", _decomposition_bytes(first))
+    storage.set("target-decomposition", _decomposition_bound(target, storage))
+    second = _decompose(target, mode, budget=storage.budget)
+    storage.set("target-decomposition", _decomposition_bytes(second))
     base_bytes = sum(
         array.nbytes
         for part in (first, second)
@@ -1587,12 +2184,65 @@ def prepare_common_refinement_active(
     counts = Counts(
         0, 0, 0, first.uncertain + second.uncertain, first.invalid + second.invalid, 0
     )
+    storage.counts = counts
     failure = _decomposition_failure(outside, counts)
     if failure is not None:
         return _prepared(
-            first, second, None, counts, *failure, identities, policy, 0, base_bytes
+            first,
+            second,
+            None,
+            counts,
+            *failure,
+            identities,
+            policy,
+            0,
+            base_bytes,
+            storage=storage,
         )
-    candidates = _candidate_pairs(first, second, policy.maximum_candidate_pairs)
+    try:
+        return _prepare_common_refinement_pairs(
+            first, second, counts, identities, policy, base_bytes, storage
+        )
+    except CoordinateEnclosureResourceError as error:
+        if error.resource == "coefficient_work":
+            raise
+        failure_reason = str(error)
+    # The failed helper and its traceback have expired. Release only retired
+    # broad/narrow banks; real cell measures/bounds remain live for evidence.
+    for name in (
+        "candidates",
+        "accepted-parts",
+        "batch-boundaries",
+        "entries",
+        "publication",
+    ):
+        storage.set(name, 0)
+    return _prepared(
+        first,
+        second,
+        None,
+        storage.counts,
+        CommonRefinementStatus.RESOURCE_LIMIT,
+        f"accepted pairs or memory exceed the policy limits; {failure_reason}",
+        identities,
+        policy,
+        0,
+        storage.peak,
+        storage=storage,
+    )
+
+
+def _prepare_common_refinement_pairs(
+    first: Decomposition,
+    second: Decomposition,
+    counts: Counts,
+    identities: tuple[str, str, str, str],
+    policy: CommonRefinementPolicy,
+    base_bytes: int,
+    storage: _RefinementStorage,
+    /,
+) -> PreparedCommonRefinement:
+    candidates = _candidate_pairs(first, second, policy.maximum_candidate_pairs, storage)
     if candidates is None:
         counts = counts._replace(candidates=policy.maximum_candidate_pairs + 1)
         return _prepared(
@@ -1606,23 +2256,17 @@ def prepare_common_refinement_active(
             policy,
             0,
             base_bytes,
+            storage=storage,
         )
     target_cells, source_cells = candidates
+    storage.set("candidates", _array_bank_bytes(candidates) + 1024)
     base_bytes += target_cells.nbytes + source_cells.nbytes
-    if base_bytes > policy.maximum_memory_bytes:
-        return _prepared(
-            first,
-            second,
-            None,
-            counts._replace(candidates=target_cells.size),
-            CommonRefinementStatus.RESOURCE_LIMIT,
-            "decomposition and candidates exceed maximum_memory_bytes",
-            identities,
-            policy,
-            0,
-            base_bytes,
-        )
-    narrow = _narrow_phase(first, second, target_cells, source_cells, policy, base_bytes)
+    narrow = _narrow_phase(
+        first, second, target_cells, source_cells, policy, base_bytes, storage=storage
+    )
+    # _narrow_phase's local parts, masks and boundary banks have expired.
+    storage.set("accepted-parts", 0)
+    storage.set("batch-boundaries", 0)
     if narrow.entries is None:
         return _prepared(
             first,
@@ -1635,7 +2279,9 @@ def prepare_common_refinement_active(
             policy,
             narrow.retained_bytes,
             narrow.working_bytes,
+            storage=storage,
         )
+    storage.set("entries", _array_bank_bytes(narrow.entries) + 1024)
     return _prepared(
         first,
         second,
@@ -1647,6 +2293,7 @@ def prepare_common_refinement_active(
         policy,
         narrow.retained_bytes,
         narrow.working_bytes,
+        storage=storage,
     )
 
 
@@ -1662,8 +2309,27 @@ def _prepared(
     retained_bytes: int,
     working_bytes: int,
     /,
+    *,
+    storage: _RefinementStorage,
 ) -> PreparedCommonRefinement:
     dimension = source.first_moments.shape[1]
+    record_bytes = (
+        0
+        if entries is None
+        else sum(array.nbytes for array in entries if array is not None)
+    )
+    cells = source.cell_count + target.cell_count
+    accepted = 0 if entries is None else entries.volumes.size
+    # Coverage vectors, CSR count/cumsum/diff buffers, dtype conversions,
+    # logical published arrays, hashing byte images and object metadata.
+    storage.set(
+        "publication",
+        65536
+        + 4 * record_bytes
+        + 256 * cells
+        + 64 * accepted
+        + 4 * (target.cell_count + 1),
+    )
     records = _empty_entries(dimension, policy) if entries is None else entries
     source_defects = (
         np.bincount(

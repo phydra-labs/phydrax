@@ -1162,6 +1162,9 @@ def _hcurl_transfer(
             parent_reference_vertices=(
                 adaptation.parent_reference_vertices if parents is not None else None
             ),
+            parent_reference_homogeneous=(
+                adaptation.parent_reference_homogeneous if parents is not None else None
+            ),
             source_geometry=adaptation.source.geometry,
             target_geometry=adaptation.target.geometry,
             geometry_transition=adaptation.geometry_transition,

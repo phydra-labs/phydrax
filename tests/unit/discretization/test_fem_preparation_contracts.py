@@ -181,6 +181,37 @@ def _host_owner_compiles(counter: CompileCounter, owners: tuple[str, ...]) -> in
     return count
 
 
+@pytest.mark.parametrize(
+    "form_degree,proxy", [(1, "circulation"), (2, "flux")], ids=["hcurl", "hdiv"]
+)
+def test_shared_entity_moment_cache_reproduces_uncached_transforms(
+    form_degree: int, proxy: Literal["circulation", "flux"]
+) -> None:
+    from phydrax.discretization.fem._form_basis_types import EntityMomentCache
+
+    basis = form_element(
+        "hexahedron",
+        form_degree,
+        2,
+        family="tensor-trimmed",
+        proxy=proxy,
+        twist="untwisted",
+    ).form_basis
+    assert basis is not None
+    rng = np.random.default_rng(7)
+    cache = EntityMomentCache()
+    orderings = [tuple(range(8))] + [
+        tuple(int(value) for value in rng.permutation(64)[:8]) for _ in range(12)
+    ]
+    for vertices in orderings:
+        np.testing.assert_array_equal(
+            np.asarray(basis.entity_permutation_matrix(vertices, cache=cache)),
+            np.asarray(basis.entity_permutation_matrix(vertices)),
+        )
+    # Traces are prepared once per local entity, not once per vertex ordering.
+    assert len(cache.entities) <= 12 + 6 + 1
+
+
 @pytest.mark.parametrize("family", ("nodal", "cell", "form"))
 def test_host_dof_routes_do_not_compile_or_reorder(
     family: Literal["nodal", "cell", "form"],
@@ -393,8 +424,10 @@ def test_multiblock_local_geometry_retains_ordered_routes_and_affine_moments() -
     ]
     jacobian = np.swapaxes(corners[:, 1:] - corners[:, :1], -1, -2)
     measure = np.abs(np.linalg.det(jacobian))
+    assert geometry.coordinate_basis.ndim == 2
+    assert geometry.coordinate_table_rows.size == 0
     expected_points = corners[:, None, 0, :] + np.asarray(geometry.coordinate_basis)[
-        :, :, 1:
+        None, :, 1:
     ] @ np.swapaxes(jacobian, -1, -2)
     # Affine evaluation and the 2D determinant each have at most eight operations.
     epsilon = np.finfo(np.float64).eps

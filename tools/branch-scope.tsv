@@ -510,4 +510,3 @@ tools/audit_prose.py	0
 tools/check_native_dependency_isolation.py	0
 tools/generate_facades.py	0
 tools/meshing_benchmarks.py	0
-tools/meshing_qualification.py	0

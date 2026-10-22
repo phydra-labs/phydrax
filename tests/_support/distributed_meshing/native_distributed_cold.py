@@ -141,6 +141,7 @@ def packed_cold_replay(
                     phx.meshing.MarkedMeshAdaptation(hierarchy=hierarchy),
                     policy=restart_policy,
                 ),
+                proof=phx.meshing.SimplexRestartRepackProof(repack),
             )
         checks["packed_cold_replay_refusal_49"].append(True)
         for value, original in zip(jax.tree_util.tree_leaves(saved), before, strict=True):

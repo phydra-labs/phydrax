@@ -1,5 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,12 +15,15 @@ from phydrax.discretization._cell_complex import (
     TetrahedralConnectivity,
 )
 from phydrax.discretization._hexahedral import HexahedralConnectivity
+from phydrax.discretization._simplicial_locator import mapped_physical_points
 from phydrax.discretization.fem import (
     FiniteElementDiscretization,
+    FiniteElementFieldReconstructionKernel,
     FiniteElementFieldSpec,
     FiniteElementPlan,
     FiniteElementSpec,
     lagrange_element,
+    PreparedFiniteElementCellMap,
 )
 from phydrax.lifecycle import Composition, CompositionEntry, CompositionTransport
 from phydrax.meshing import (
@@ -36,6 +41,7 @@ from phydrax.meshing._coupling import CouplingSearchStatus
 from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 from phydrax.meshing._mesh_part import MeshPart
 from phydrax.meshing._overset import (
+    _PacketLocator,
     OversetCellStatus,
     OversetConnectivity,
     OversetConnectivityError,
@@ -185,6 +191,150 @@ def test_moving_overlap_affine_order_and_transpose(dimension: int) -> None:
             )
         with pytest.raises(ValueError, match=r"MeshPart\.scope"):
             connectivity.assembly.part("moving").require_scope(_boundary(target))
+
+
+@pytest.mark.parametrize("dimension", [2, 3])
+def test_mapped_point_projection_preserves_nonpower_shape_and_derivatives(
+    dimension: int,
+) -> None:
+    count = 17
+    corners = np.vstack((np.zeros(dimension), np.eye(dimension)))
+    transform = np.eye(dimension) + np.triu(np.full((dimension, dimension), 0.071), 1)
+    points = np.concatenate(
+        [
+            corners @ transform + np.asarray([2.0 * cell + 0.13] + [0.27] * (dimension - 1))
+            for cell in range(count)
+        ]
+    )
+    cells = np.arange(count * (dimension + 1)).reshape((count, dimension + 1))
+    source = _part("projection", points, cells)
+    field = _field(source)
+    mapping = PreparedFiniteElementCellMap(field, 0)
+    coordinates = field.default_runtime.coordinates
+    indices = jnp.arange(count, dtype=jnp.int32)
+    references = jnp.asarray(
+        np.random.default_rng(8).uniform(0.05, 0.15, size=(count, dimension))
+    )
+
+    def ordinary(coords: jax.Array, sites: jax.Array) -> jax.Array:
+        return mapping.evaluate(coords, indices, sites).physical_points
+
+    def projected(coords: jax.Array, sites: jax.Array) -> jax.Array:
+        return mapped_physical_points(mapping.numerical, coords, indices, sites)
+
+    np.testing.assert_array_equal(
+        projected(coordinates, references), ordinary(coordinates, references)
+    )
+    directions = (jnp.full_like(coordinates, 0.02), jnp.full_like(references, 0.03))
+    _, expected_tangent = jax.jvp(ordinary, (coordinates, references), directions)
+    _, actual_tangent = jax.jvp(projected, (coordinates, references), directions)
+    np.testing.assert_array_equal(actual_tangent, expected_tangent)
+    _, expected_transpose = jax.vjp(ordinary, coordinates, references)
+    _, actual_transpose = jax.vjp(projected, coordinates, references)
+    cotangent = jnp.ones((count, dimension), dtype=jnp.float64)
+    for actual, expected in zip(
+        actual_transpose(cotangent), expected_transpose(cotangent), strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("dimension", [2, 3])
+def test_retained_inverse_rechecks_geometry_sites_and_mask(dimension: int) -> None:
+    connectivity = _simple_registration(dimension)
+    source = connectivity.assembly.part("background")
+    route = prepare_overset_field_transfer(connectivity, {source.name: _field(source)}, "u")
+    packet = connectivity.packets[0]
+    kernel = route.queries[0].reconstruction.kernel
+    assert isinstance(kernel, FiniteElementFieldReconstructionKernel)
+    locator = kernel.locator
+    assert isinstance(locator, _PacketLocator)
+    located = locator.locate(packet.points)
+    assert bool(jnp.all(located.successful))
+    np.testing.assert_array_equal(located.reference_coordinates, packet.reference_coordinates)
+    np.testing.assert_array_equal(located.iterations, 0)
+    excluded = locator.locate(
+        packet.points, cell_mask=jnp.zeros(locator.admissible_cells.shape, dtype=jnp.bool_)
+    )
+    assert not bool(jnp.any(excluded.successful))
+
+    shifted_sites = packet.points + 0.01
+    shifted = locator.locate(shifted_sites)
+    independently_located = locator.base.locate(shifted_sites)
+    np.testing.assert_array_equal(shifted.reference_coordinates, independently_located.reference_coordinates)
+    assert shifted.locator_id == locator.base.locator_id
+    assert not np.array_equal(shifted.reference_coordinates, packet.reference_coordinates)
+
+    changed_geometry = eqx.tree_at(
+        lambda item: item.coordinates, locator, locator.coordinates + 0.125
+    )
+    refused = changed_geometry.locate(packet.points)
+    assert not bool(jnp.any(refused.successful))
+    assert bool(jnp.all(refused.geometry_residual > locator.policy.residual_tolerance))
+
+    def inverse(points: jax.Array, coordinates: jax.Array) -> jax.Array:
+        current = eqx.tree_at(
+            lambda item: (item.points, item.coordinates), locator,
+            (points, coordinates),
+        )
+        return current._verify_retained_inverse(current.admissible_cells).reference_coordinates
+
+    point_direction = jnp.full_like(packet.points, 0.2)
+    geometry_direction = jnp.full_like(locator.coordinates, 0.1)
+    _, tangent = jax.jvp(
+        inverse, (packet.points, locator.coordinates),
+        (point_direction, geometry_direction),
+    )
+    np.testing.assert_allclose(tangent, 0.025, rtol=0.0, atol=1.0e-12)
+    _, transpose = jax.vjp(inverse, packet.points, locator.coordinates)
+    point_dual, geometry_dual = transpose(jnp.ones_like(packet.reference_coordinates))
+    np.testing.assert_allclose(point_dual, 0.25, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(
+        jnp.sum(geometry_dual), -packet.points.size / 4.0, rtol=0.0, atol=1.0e-12
+    )
+
+    def uncached(points: jax.Array) -> jax.Array:
+        return locator.base.locate(points).reference_coordinates
+
+    _, direct_tangent = jax.jvp(uncached, (packet.points,), (point_direction,))
+    np.testing.assert_allclose(direct_tangent, 0.05, rtol=0.0, atol=1.0e-12)
+    direct_dual = jax.grad(lambda points: jnp.sum(uncached(points)))(packet.points)
+    np.testing.assert_allclose(direct_dual, 0.25, rtol=0.0, atol=1.0e-12)
+
+    def public_inverse(points: jax.Array) -> jax.Array:
+        return locator.locate(points).reference_coordinates
+
+    _, public_tangent = jax.jvp(public_inverse, (packet.points,), (point_direction,))
+    np.testing.assert_allclose(public_tangent, direct_tangent, rtol=0.0, atol=1.0e-12)
+    public_dual = jax.grad(lambda points: jnp.sum(public_inverse(points)))(packet.points)
+    np.testing.assert_allclose(public_dual, direct_dual, rtol=0.0, atol=1.0e-12)
+
+
+@pytest.mark.parametrize("field", ["points", "reference_coordinates"])
+def test_retained_inverse_refuses_mutated_packet_binding(field: str) -> None:
+    connectivity = _simple_registration(2)
+    packet = connectivity.packets[0]
+    corrupted = eqx.tree_at(
+        lambda item: getattr(item, field), packet, getattr(packet, field) + 0.01
+    )
+    corrupted_connectivity = eqx.tree_at(
+        lambda item: item.packets, connectivity,
+        (corrupted, *connectivity.packets[1:]),
+    )
+    source = connectivity.assembly.part("background")
+    with pytest.raises(ValueError, match="exact sites, inverse, and current source revisions"):
+        prepare_overset_field_transfer(corrupted_connectivity, {source.name: _field(source)}, "u")
+
+
+def test_retained_inverse_refuses_old_source_revision_after_motion() -> None:
+    previous = _simple_registration(2)
+    source = previous.assembly.part("background")
+    candidate = previous.moved(
+        {source.name: certified_carrier(source).mesh.coordinates + 0.05}
+    )
+    stale = eqx.tree_at(lambda item: item.packets, candidate, previous.packets)
+    moved_source = candidate.assembly.part(source.name)
+    with pytest.raises(ValueError, match="exact sites, inverse, and current source revisions"):
+        prepare_overset_field_transfer(stale, {source.name: _field(moved_source)}, "u")
 
 
 @pytest.mark.parametrize("dimension", [2, 3])

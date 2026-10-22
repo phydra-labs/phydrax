@@ -366,18 +366,22 @@ def _absolute_fe_complex(
 
 
 def _boundary_entity_closure(
-    topology: CellComplexTopology, boundary_mask: ArrayLike | None, /
+    mesh: CellMesh, boundary_mask: ArrayLike | None, /
 ) -> list[np.ndarray]:
+    topology = mesh.topology
+    physical = imported_assembly._physical_boundary_entity_masks(mesh)
+    if boundary_mask is None:
+        return list(physical)
     n = topology.dimension
-    facet_boundary = np.asarray(topology.entity_sets[n - 1].subset("boundary").mask)
-    selected = facet_boundary if boundary_mask is None else np.asarray(boundary_mask)
+    facet_boundary = physical[n - 1]
+    selected = np.asarray(boundary_mask)
     if (
         selected.dtype != np.bool_
         or selected.shape != facet_boundary.shape
         or np.any(selected & ~facet_boundary)
     ):
         raise ValueError(
-            "boundary_entity_closure.boundary_mask must select topological boundary facets; got boundary_mask must select topological boundary facets."
+            "boundary_entity_closure.boundary_mask must select physical boundary facets; got an incompatible or artificial closure selection."
         )
     closure = [
         np.zeros((entities.count,), dtype=np.bool_) for entities in topology.entity_sets
@@ -977,7 +981,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         self, /, *, boundary_mask: ArrayLike | None = None
     ) -> ComplexMap:
         """Outward-oriented restriction to the selected boundary facet closure."""
-        closure = _boundary_entity_closure(self.topology, boundary_mask)
+        closure = _boundary_entity_closure(self.mesh, boundary_mask)
         active, orientation = _boundary_moment_selection(
             self.discretization, closure, self.cell_counts
         )
@@ -1024,7 +1028,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         boundary = parse(boundary, ComplexBoundary, "boundary")
         components = prod(self.discretization.elements[degree][0].value_shape) or 1
         vertices = self.mesh.coordinates.shape[0]
-        nodal_mask = np.asarray(self.mesh.topology.entity_sets[0].subset("boundary").mask)
+        nodal_mask = imported_assembly._physical_boundary_entity_masks(self.mesh)[0]
         selected = (
             np.arange(vertices, dtype=np.int32)
             if boundary == "absolute"

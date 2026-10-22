@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.sharding import Mesh, PartitionSpec
+from jax.core import Tracer
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 
 from phydrax.discretization._periodic_exact import identification_id
@@ -2002,48 +2003,6 @@ def _execution_sparse_map(
     )
 
 
-def _execution_halo(
-    original: DistributedHaloPlan, dof_capacity: int, message_capacity: int, /
-) -> DistributedHaloPlan:
-    count = original.local_capacity
-    if count > dof_capacity or original.message_capacity > message_capacity:
-        raise ValueError(
-            "execution.halo must fit the declared bucket; got excess halo routes"
-        )
-    padding = dof_capacity - count
-    identifiers = np.concatenate(
-        (
-            owner_local_host_array(original.local_global_ids),
-            np.arange(-padding, 0, dtype=np.int64),
-        )
-    )
-    valid = np.arange(dof_capacity) < count
-    owned = np.zeros((dof_capacity,), dtype=np.bool_)
-    owned[:count] = owner_local_host_array(original.local_owned)
-    width_padding = message_capacity - original.message_capacity
-    pads = ((0, 0), (0, width_padding))
-    return DistributedHaloPlan.from_owner_local(
-        original.part_count,
-        local_global_ids=identifiers,
-        local_owned=owned,
-        local_valid=valid,
-        global_entity_count=original.entity_count,
-        partition_index=int(owner_local_host_array(original.partition_index)),
-        phase_send_indices=np.pad(
-            owner_local_host_array(original.phase_send_indices), pads
-        ),
-        phase_receive_indices=np.pad(
-            owner_local_host_array(original.phase_receive_indices), pads
-        ),
-        phase_send_valid=np.pad(owner_local_host_array(original.phase_send_valid), pads),
-        phase_receive_valid=np.pad(
-            owner_local_host_array(original.phase_receive_valid), pads
-        ),
-        permutations=original.permutations,
-        evidence_id=original.evidence_id,
-    )
-
-
 class FiniteElementClosurePreparation(StrictModule, NonTrainableState):
     "Retain scientific closure consumers and ended preparation work."
 
@@ -2476,7 +2435,7 @@ class OwnerLocalFiniteElementDiscretization(StrictModule, NonTrainableState):
         stiffness = _execution_sparse_map(
             source.stiffness, scalar_count, scalar_count, stiffness_routes
         )
-        halo = _execution_halo(source.halo, dofs, messages)
+        halo = source.halo.execution_bucket(dofs, messages)
         return replace(
             source,
             mass=mass,
@@ -3024,6 +2983,22 @@ def prepare_owner_local_finite_element_transfer(
     )
 
 
+def _owner_local_transfer_action(
+    direction: FiniteElementTransferDirection,
+    local: OwnerLocalFiniteElementTransfer,
+    values: Array,
+) -> tuple[Array, ...]:
+    match direction:
+        case "forward":
+            return (local.apply(values),)
+        case "transpose":
+            return (local.pullback(values),)
+        case "adjoint":
+            return (local.adjoint(values),)
+        case _:
+            assert_never(direction)
+
+
 @checked
 def execute_owner_local_finite_element_transfer(
     transfers: Sequence[OwnerLocalFiniteElementTransfer],
@@ -3040,31 +3015,10 @@ def execute_owner_local_finite_element_transfer(
         direction, FiniteElementTransferDirection, "owner_local_transfer.direction"
     )
 
-    def action(
-        local: OwnerLocalFiniteElementDiscretization | OwnerLocalFiniteElementTransfer,
-        values: Array,
-    ) -> tuple[Array, ...]:
-        match local:
-            case OwnerLocalFiniteElementTransfer():
-                match direction:
-                    case "forward":
-                        return (local.apply(values),)
-                    case "transpose":
-                        return (local.pullback(values),)
-                    case "adjoint":
-                        return (local.adjoint(values),)
-                    case _:
-                        assert_never(direction)
-            case _:
-                raise TypeError(
-                    "owner_local_transfer.program must be OwnerLocalFiniteElementTransfer; "
-                    f"got {type(local).__name__}"
-                )
-
     return map_owner_local_finite_element(
         transfers,
         (local_values,),
-        action,
+        eqx.Partial(_owner_local_transfer_action, direction),
         devices,
         execution_limits=execution_limits,
         input_sides=("source" if direction == "forward" else "target",),
@@ -3106,8 +3060,8 @@ def _execution_transfer(
         local_map=_execution_sparse_map(
             original.local_map, source_dofs, target_dofs, routes
         ),
-        source_halo=_execution_halo(original.source_halo, source_dofs, messages),
-        target_halo=_execution_halo(original.target_halo, target_dofs, messages),
+        source_halo=original.source_halo.execution_bucket(source_dofs, messages),
+        target_halo=original.target_halo.execution_bucket(target_dofs, messages),
         source_cells=jnp.pad(
             original.source_cells, (0, source_cells - original.source_cells.size)
         ),
@@ -3401,8 +3355,178 @@ def _prepare_execution_buckets(
     return tuple(prepared), padded_inputs
 
 
+def _owner_local_execution_skeleton(
+    program: OwnerLocalFiniteElementDiscretization | OwnerLocalFiniteElementTransfer,
+) -> OwnerLocalFiniteElementDiscretization | OwnerLocalFiniteElementTransfer:
+    """Project compile metadata, not a scientific/restorable program."""
+    match program:
+        case OwnerLocalFiniteElementDiscretization():
+            skeleton = eqx.tree_at(
+                lambda local: (
+                    local.local_discretization,
+                    local.construction_plan,
+                    local.construction_ownership,
+                    local.execution_source,
+                ),
+                program,
+                (None, None, None, None),
+                is_leaf=lambda value: value is None,
+            )
+        case OwnerLocalFiniteElementTransfer():
+            skeleton = eqx.tree_at(
+                lambda local: (
+                    local.field_transfer,
+                    local.source_authority,
+                    local.target_authority,
+                    local.source_program,
+                    local.target_program,
+                    local.execution_source,
+                ),
+                program,
+                (None, None, None, None, None, None),
+                is_leaf=lambda value: value is None,
+            )
+        case _:
+            assert_never(program)
+    return eqx.filter(skeleton, lambda value: not eqx.is_array(value))
+
+
+@eqx.filter_jit
+def _execute_owner_local_finite_element(
+    skeleton: OwnerLocalFiniteElementDiscretization | OwnerLocalFiniteElementTransfer,
+    metadata: tuple[StrictModule | Array | None, ...],
+    structure: jax.tree_util.PyTreeDef,
+    numeric: tuple[Array, ...],
+    action: Callable[..., tuple[Array, ...]],
+    mesh: Mesh,
+    inputs: tuple[Array, ...],
+) -> tuple[Array, ...]:
+    """Stage the whole collective, with every execution leaf an argument."""
+    spec = PartitionSpec(mesh.axis_names[0])
+
+    def execute(
+        local_leaves: tuple[Array, ...], *local_inputs: Array
+    ) -> tuple[Array, ...]:
+        fields = eqx.combine(
+            jax.tree_util.tree_unflatten(
+                structure, tuple(value[0] for value in local_leaves)
+            ),
+            metadata,
+        )
+        local = eqx.tree_at(
+            _owner_local_execution_fields,
+            skeleton,
+            fields,
+            is_leaf=lambda value: value is None,
+        )
+        outputs = action(local, *(value[0] for value in local_inputs))
+        return tuple(value[None, ...] for value in outputs)
+
+    return jax.shard_map(
+        execute,
+        mesh=mesh,
+        in_specs=(spec,) + (spec,) * len(inputs),
+        out_specs=spec,
+        check_vma=False,
+    )(numeric, *inputs)
+
+
+class OwnerLocalFiniteElementExecution(StrictModule):
+    """Admitted owner-local FE execution, reusable without host collectives.
+
+    ``numeric`` and ``inputs`` are ordinary dynamic PyTree leaves, not cached
+    data or constants captured by a compiled closure. The array-free skeleton
+    carries only the program structure; each rank receives its own numerical
+    execution fields. Source mesh/provenance arrays are not executable fields.
+
+    Calling without arguments reuses the admitted inputs. ``pack_inputs``
+    places replacement logical inputs with exactly the admitted shapes and
+    dtypes; pass its returned arrays as positional arguments to this object.
+    Concrete packed inputs must retain that owner-local sharding; replicated
+    or differently placed payloads are refused rather than implicitly moved.
+    Traced inputs retain JAX's transformation semantics without a host check.
+    New programs or input layouts require fresh preparation and admission.
+    """
+
+    numeric: tuple[Array, ...]
+    inputs: tuple[Array, ...]
+    _skeleton: OwnerLocalFiniteElementDiscretization | OwnerLocalFiniteElementTransfer
+    metadata: tuple[StrictModule | Array | None, ...]
+    action: Callable[..., tuple[Array, ...]]
+    structure: jax.tree_util.PyTreeDef = eqx.field(static=True)
+    mesh: Mesh = eqx.field(static=True)
+    local_parts: tuple[int, ...] = eqx.field(static=True)
+    input_shapes: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
+    input_dtypes: tuple[tuple[str, ...], ...] = eqx.field(static=True)
+
+    def pack_inputs(self, inputs: Sequence[Sequence[ArrayLike]], /) -> tuple[Array, ...]:
+        """Pad and place new values without repeating bucket/resource admission."""
+        if len(inputs) != len(self.inputs) or any(
+            len(values) != len(self.local_parts) for values in inputs
+        ):
+            raise ValueError(
+                "execution.inputs must match the admitted input and partition counts; got incompatible counts"
+            )
+        packed = []
+        for values, shapes, dtypes, admitted in zip(
+            inputs, self.input_shapes, self.input_dtypes, self.inputs, strict=True
+        ):
+            arrays = tuple(jnp.asarray(value) for value in values)
+            if any(
+                array.shape != shape or str(array.dtype) != dtype
+                for array, shape, dtype in zip(arrays, shapes, dtypes, strict=True)
+            ):
+                raise ValueError(
+                    "execution.inputs must retain the admitted logical shapes and dtypes; got an incompatible payload"
+                )
+            packed.append(
+                make_owner_local_field_array(
+                    tuple(
+                        jnp.pad(
+                            array,
+                            ((0, admitted.shape[1] - array.shape[0]),)
+                            + ((0, 0),) * (array.ndim - 1),
+                        )
+                        for array in arrays
+                    ),
+                    self.local_parts,
+                    tuple(self.mesh.devices.flat),
+                    axis_name=self.mesh.axis_names[0],
+                )
+            )
+        return tuple(packed)
+
+    def __call__(self, *inputs: Array) -> tuple[Array, ...]:
+        values = tuple(inputs) if inputs else self.inputs
+        if len(values) != len(self.inputs) or any(
+            value.shape != admitted.shape or value.dtype != admitted.dtype
+            for value, admitted in zip(values, self.inputs, strict=True)
+        ):
+            raise ValueError(
+                "execution.inputs must use the admitted packed shapes and dtypes; got an incompatible payload"
+            )
+        placement = NamedSharding(self.mesh, PartitionSpec(self.mesh.axis_names[0]))
+        if any(
+            not isinstance(value, Tracer)
+            and not value.sharding.is_equivalent_to(placement, value.ndim)
+            for value in values
+        ):
+            raise ValueError(
+                "execution.inputs must retain the admitted owner-local placement; got incompatible sharding"
+            )
+        return _execute_owner_local_finite_element(
+            self._skeleton,
+            self.metadata,
+            self.structure,
+            self.numeric,
+            self.action,
+            self.mesh,
+            values,
+        )
+
+
 @checked
-def map_owner_local_finite_element(
+def prepare_owner_local_finite_element_execution(
     programs: Sequence[
         OwnerLocalFiniteElementDiscretization | OwnerLocalFiniteElementTransfer
     ],
@@ -3414,8 +3538,25 @@ def map_owner_local_finite_element(
     execution_limits: FiniteElementExecutionLimits | None = None,
     input_sides: tuple[FiniteElementInputSide, ...] | None = None,
     budget: CoordinateEnclosureBudget | None,
-) -> tuple[Array, ...]:
-    """Launch the local kernels, never logical mesh payloads."""
+) -> OwnerLocalFiniteElementExecution:
+    """Admit and pack local kernels once for repeated compiled execution.
+
+    This is the preparation half of ``map_owner_local_finite_element``.
+    Limits, collective bucket agreement, storage admission and placement are
+    identical; retained execution can subsequently run without host admission,
+    padding or repacking. Reuse a stable callable (or ``eqx.Partial``) to reuse
+    compilation across preparations with the same program structure.
+
+    ``action`` receives an execution-only view, not a restorable scientific
+    program. FE actions may use mass/stiffness, pairing, halo, ownership and
+    global-ID banks, collective metadata, and their operator/solve/certificate
+    methods. Transfer actions may use the local map, source/target halos,
+    cell and metadata banks, and apply/pullback/adjoint/certificate methods.
+    Scalar program metadata and execution capacities remain available.
+    Construction plans, local discretizations, source authorities, field
+    transfers, and execution-source provenance are absent from that view;
+    callers must retain the original programs for scientific bindings.
+    """
     local_programs = tuple(programs)
     assigned = tuple(devices)
     if not local_programs:
@@ -3460,6 +3601,12 @@ def map_owner_local_finite_element(
             "execution.inputs must provide one array per process-addressable partition; "
             "got incompatible input counts"
         )
+    input_shapes = tuple(
+        tuple(jnp.asarray(value).shape for value in values) for values in inputs
+    )
+    input_dtypes = tuple(
+        tuple(str(jnp.asarray(value).dtype) for value in values) for values in inputs
+    )
     mesh = Mesh(np.asarray(assigned, dtype=object), (axis,))
     spec = PartitionSpec(axis)
     local_programs, inputs = _prepare_execution_buckets(
@@ -3527,26 +3674,58 @@ def map_owner_local_finite_element(
         for values in inputs
     )
 
-    def execute(
-        local_leaves: tuple[Array, ...], *local_inputs: Array
-    ) -> tuple[Array, ...]:
-        fields = eqx.combine(
-            jax.tree_util.tree_unflatten(
-                structure, tuple(value[0] for value in local_leaves)
-            ),
-            metadata,
-        )
-        local = eqx.tree_at(_owner_local_execution_fields, prototype, fields)
-        outputs = action(local, *(value[0] for value in local_inputs))
-        return tuple(value[None, ...] for value in outputs)
-
-    return jax.shard_map(
-        execute,
+    return OwnerLocalFiniteElementExecution(
+        numeric=packed,
+        inputs=input_arrays,
+        _skeleton=_owner_local_execution_skeleton(prototype),
+        metadata=metadata,
+        action=action,
+        structure=structure,
         mesh=mesh,
-        in_specs=(spec,) + (spec,) * len(input_arrays),
-        out_specs=spec,
-        check_vma=False,
-    )(packed, *input_arrays)
+        local_parts=ranks,
+        input_shapes=input_shapes,
+        input_dtypes=input_dtypes,
+    )
+
+
+@checked
+def map_owner_local_finite_element(
+    programs: Sequence[
+        OwnerLocalFiniteElementDiscretization | OwnerLocalFiniteElementTransfer
+    ],
+    inputs: Sequence[Sequence[ArrayLike]],
+    action: Callable[..., tuple[Array, ...]],
+    devices: Sequence[jax.Device],
+    /,
+    *,
+    execution_limits: FiniteElementExecutionLimits | None = None,
+    input_sides: tuple[FiniteElementInputSide, ...] | None = None,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[Array, ...]:
+    """Admit and execute local kernels, never logical mesh payloads.
+
+    The complete numerical shard map is staged as one reusable computation.
+    For repeated calls on an unchanged program/input layout, retain
+    ``prepare_owner_local_finite_element_execution`` to amortize admission and
+    packing as well. Its documented execution-only action boundary applies.
+    """
+    return prepare_owner_local_finite_element_execution(
+        programs,
+        inputs,
+        action,
+        devices,
+        execution_limits=execution_limits,
+        input_sides=input_sides,
+        budget=budget,
+    )()
+
+
+def _owner_local_operator_action(
+    kind: FiniteElementOperatorKind,
+    program: OwnerLocalFiniteElementDiscretization,
+    value: Array,
+) -> tuple[Array, ...]:
+    return (program.operator(kind).mv(value),)
 
 
 @checked
@@ -3564,12 +3743,53 @@ def execute_owner_local_finite_element_operator(
     (result,) = map_owner_local_finite_element(
         programs,
         (local_values,),
-        lambda program, value: (program.operator(kind).mv(value),),
+        eqx.Partial(_owner_local_operator_action, kind),
         devices,
         execution_limits=execution_limits,
         budget=budget,
     )
     return result
+
+
+def _owner_local_mass_action(
+    policy: DistributedKrylovPolicy,
+    program: OwnerLocalFiniteElementDiscretization,
+    rhs: Array,
+    guess: Array,
+) -> tuple[Array, ...]:
+    result = program.solve_mass(rhs, policy, initial=guess)
+    breakdown = result.solve.breakdown
+    blocking = (breakdown != int(KrylovBreakdownStatus.NONE)) & (
+        breakdown != int(KrylovBreakdownStatus.HAPPY)
+    )
+    status = jnp.where(
+        result.accepted,
+        int(LinearSolveStatus.SUCCESS),
+        jnp.where(
+            blocking,
+            int(LinearSolveStatus.BREAKDOWN),
+            int(LinearSolveStatus.MAXIMUM_STEPS_REACHED),
+        ),
+    ).astype(jnp.int32)
+    status = jnp.where(
+        breakdown == int(KrylovBreakdownStatus.STAGNATION),
+        int(LinearSolveStatus.STAGNATION),
+        status,
+    ).astype(jnp.int32)
+    status = jnp.where(
+        breakdown == int(KrylovBreakdownStatus.NONFINITE_ACTION),
+        int(LinearSolveStatus.NONFINITE_OUTPUT),
+        status,
+    ).astype(jnp.int32)
+    return (
+        result.solve.value,
+        status,
+        result.solve.iterations,
+        result.solve.residual_norm,
+        breakdown,
+        result.collective_certified,
+        result.accepted,
+    )
 
 
 @checked
@@ -3593,47 +3813,10 @@ def execute_owner_local_finite_element_mass(
         else tuple(initial)
     )
 
-    def solve(
-        program: OwnerLocalFiniteElementDiscretization, rhs: Array, guess: Array
-    ) -> tuple[Array, ...]:
-        result = program.solve_mass(rhs, policy, initial=guess)
-        breakdown = result.solve.breakdown
-        blocking = (breakdown != int(KrylovBreakdownStatus.NONE)) & (
-            breakdown != int(KrylovBreakdownStatus.HAPPY)
-        )
-        status = jnp.where(
-            result.accepted,
-            int(LinearSolveStatus.SUCCESS),
-            jnp.where(
-                blocking,
-                int(LinearSolveStatus.BREAKDOWN),
-                int(LinearSolveStatus.MAXIMUM_STEPS_REACHED),
-            ),
-        ).astype(jnp.int32)
-        status = jnp.where(
-            breakdown == int(KrylovBreakdownStatus.STAGNATION),
-            int(LinearSolveStatus.STAGNATION),
-            status,
-        ).astype(jnp.int32)
-        status = jnp.where(
-            breakdown == int(KrylovBreakdownStatus.NONFINITE_ACTION),
-            int(LinearSolveStatus.NONFINITE_OUTPUT),
-            status,
-        ).astype(jnp.int32)
-        return (
-            result.solve.value,
-            status,
-            result.solve.iterations,
-            result.solve.residual_norm,
-            breakdown,
-            result.collective_certified,
-            result.accepted,
-        )
-
     values = map_owner_local_finite_element(
         local_programs,
         (right_hand_sides, guesses),
-        solve,
+        eqx.Partial(_owner_local_mass_action, policy),
         devices,
         execution_limits=execution_limits,
         budget=budget,
@@ -3813,6 +3996,7 @@ __all__ = [
     "PartitionedFiniteElementDofMap",
     "OwnerLocalFiniteElementDiscretization",
     "OwnerLocalFiniteElementSolveResult",
+    "OwnerLocalFiniteElementExecution",
     "OwnerLocalFiniteElementExecutionResult",
     "distributed_finite_element_mortar_plan",
     "execute_owner_local_finite_element_mass",
@@ -3822,4 +4006,5 @@ __all__ = [
     "finite_element_partition_workset_plan",
     "partition_cells_cost_aware",
     "prepare_owner_local_finite_element",
+    "prepare_owner_local_finite_element_execution",
 ]

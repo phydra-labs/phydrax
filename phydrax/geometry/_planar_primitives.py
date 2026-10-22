@@ -11,7 +11,7 @@ import sys
 from contextlib import nullcontext
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import final, overload
+from typing import cast, final, overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -51,6 +51,7 @@ class PolygonIntersectionPreparation:
     upper: Point
     halfplanes: tuple[Point, ...]
     bits: int
+    point_membership: tuple[tuple[Point, int, int], ...] = ()
 
 
 @final
@@ -151,11 +152,31 @@ def prepare_polygon_intersection(
     orientation: int,
     *,
     budget: CoordinateEnclosureBudget,
+    point_membership: bool = False,
 ) -> PolygonIntersectionPreparation:
-    """Retain clipping coefficients using the caller's earned orientation."""
-    lower, upper = polygon_bounds(polygon, budget=budget)
+    """Retain clipping coefficients using the caller's earned orientation.
+
+    For an interval that orientation is the sign of its exact signed measure,
+    so it already orders the two endpoints without another comparison.
+    """
+    if len(polygon) == 2 and len(polygon[0]) == 1:
+        lower, upper = polygon if orientation > 0 else polygon[::-1]
+    else:
+        lower, upper = polygon_bounds(polygon, budget=budget)
+    halfplanes, bits = _prepared_polygon_halfplanes(polygon, orientation, budget=budget)
+    membership = (
+        _prepare_point_membership(halfplanes, bits, budget)
+        if point_membership and halfplanes else ()
+    )
+    return PolygonIntersectionPreparation(polygon, lower, upper, halfplanes, bits, membership)
+
+
+def _prepared_polygon_halfplanes(
+    polygon: Polygon, orientation: int, *, budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[Point, ...], int]:
+    """Construct supporting operands after the caller has prepared exact bounds."""
     halfplanes: tuple[Point, ...] = ()
-    if len(lower) == 2:
+    if len(polygon[0]) == 2:
         reserve_fraction_work(
             polygon, 8 * len(polygon), 3 * len(polygon), 8, budget=budget
         )
@@ -172,7 +193,43 @@ def prepare_polygon_intersection(
         halfplanes = tuple(rows)
     budget.reserve(sum(len(row) for row in (*polygon, *halfplanes)))
     bits = max(_scalar_bits(value) for row in (*polygon, *halfplanes) for value in row)
-    return PolygonIntersectionPreparation(polygon, lower, upper, halfplanes, bits)
+    return halfplanes, bits
+
+
+def _prepare_point_membership(
+    planes: tuple[Point, ...], bits_upper: int, budget: CoordinateEnclosureBudget, /
+) -> tuple[tuple[Point, int, int], ...]:
+    """Normalize actual rational supporting lines once, not membership verdicts."""
+    budget.reserve(0, 128 + 128 * len(planes))
+    result = []
+    for plane in planes:
+        budget.reserve(len(plane))
+        if any(type(value) is not Fraction for value in plane):
+            return ()
+        reserve_polynomial(4, 1, 0, 2 * bits_upper + 2, budget=budget)
+        divisor = abs(plane[0] if plane[0] else plane[1])
+        if not divisor:
+            return ()
+        normalized = plane
+        if divisor != 1:
+            reserve_polynomial(3, 3, 0, 4 * bits_upper + 4, budget=budget)
+            normalized = tuple(value / divisor for value in plane)
+        budget.reserve(len(normalized))
+        bits = max(_scalar_bits(value) for value in normalized)
+        budget.reserve(1)
+        if normalized[1] == 0:
+            budget.reserve(1)
+            kind = 1 if normalized[0] > 0 else -1
+        else:
+            budget.reserve(1)
+            if normalized[0] == 0:
+                budget.reserve(1)
+                kind = 2 if normalized[1] > 0 else -2
+            else:
+                budget.reserve(1)
+                kind = 3 if normalized[0] > 0 else -3
+        result.append((normalized, bits, kind))
+    return tuple(result)
 
 
 def _prepared_separated(
@@ -193,6 +250,21 @@ def _prepared_separated(
         for axis in range(len(first.lower))
     ):
         return True
+    return _prepared_supports_separated(first, second, budget=budget, sides=sides)
+
+
+def _prepared_supports_separated(
+    first: PolygonIntersectionPreparation,
+    second: PolygonIntersectionPreparation,
+    *,
+    budget: CoordinateEnclosureBudget,
+    sides: PolygonSidePreparation | None = None,
+) -> bool:
+    """Inspect exact supporting lines after the caller has tested exact boxes."""
+    if sides is not None and sides._budget is not budget:
+        raise ValueError(
+            "PolygonSidePreparation.budget must match the current request; got a different coefficient ledger"
+        )
     for prepared, other in ((first, second), (second, first)):
         for plane in prepared.halfplanes:
             if sides is None:
@@ -219,6 +291,49 @@ def _prepared_separated(
             if separated:
                 return True
     return False
+
+
+def prepared_point_inside(
+    container: PolygonIntersectionPreparation,
+    point: Point,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Decide closed membership with the clipping halfplane side values.
+
+    Each halfplane charges and evaluates the side value one Sutherland-Hodgman
+    clipping pass evaluates for this point. A polygon whose every vertex is
+    inside is returned unchanged by that clipping, so its intersection measure
+    is its own measure. The first negative side ends the decision.
+    """
+    if len(container.lower) != 2:
+        raise ValueError(
+            "prepared_point_inside.container must prepare a planar polygon; got another dimension"
+        )
+    if container.point_membership:
+        budget.reserve(len(point))
+        if all(type(value) is Fraction for value in point):
+            budget.reserve(len(point))
+            point_bits = max(_scalar_bits(value) for value in point)
+            for plane, plane_bits, kind in container.point_membership:
+                bits = max(point_bits, plane_bits)
+                work = 1 if kind in (1, 2) else 2 if kind in (-1, -2) else 4
+                reserve_polynomial(work, 4, 0, 4 * bits + 4, budget=budget)
+                if kind in (1, -1):
+                    inside = (point[0] if kind == 1 else -point[0]) <= plane[2]
+                elif kind in (2, -2):
+                    inside = (point[1] if kind == 2 else -point[1]) <= plane[2]
+                else:
+                    first = plane[2] - point[0] if kind == 3 else plane[2] + point[0]
+                    inside = first - plane[1] * point[1] >= 0
+                if not inside:
+                    return False
+            return True
+    for plane in container.halfplanes:
+        reserve_fraction_work((point, plane), 5, 1, 6, budget=budget)
+        if plane[2] - plane[0] * point[0] - plane[1] * point[1] < 0:
+            return False
+    return True
 
 
 def reserve_fraction_work(
@@ -378,6 +493,49 @@ def plane_key(
     points: Polygon, *, budget: CoordinateEnclosureBudget
 ) -> tuple[Point, tuple[int, ...], int, int] | None:
     dimension = len(points[0])
+    if (
+        dimension == 3 and len(points) >= 3
+        and len(points[1]) == 3 and len(points[2]) == 3
+    ):
+        # The normal input traversal still admits every actual coefficient,
+        # including later polygon vertices; this is not a coplanarity proof.
+        budget.reserve(sum(len(point) for point in points))
+        if all(type(value) is Fraction for point in points for value in point):
+            rational = cast("ScalarPolygon[Fraction]", points)
+            bits = max(_scalar_bits(value) for point in rational for value in point)
+            for pivot, projection in enumerate(((1, 2), (2, 0), (0, 1))):
+                budget.reserve(1)
+                if rational[0][pivot] != rational[1][pivot]:
+                    continue
+                budget.reserve(1)
+                if rational[0][pivot] != rational[2][pivot]:
+                    continue
+                # Four differences, two products, one subtraction. The
+                # unreduced determinant integers fit 8 input bit bounds + 3.
+                reserve_polynomial(7, 9, 0, 8 * bits + 3, budget=budget)
+                a, b = projection
+                first_a = rational[1][a] - rational[0][a]
+                first_b = rational[1][b] - rational[0][b]
+                second_a = rational[2][a] - rational[0][a]
+                second_b = rational[2][b] - rational[0][b]
+                determinant = first_a * second_b - first_b * second_a
+                budget.reserve(1)
+                if not determinant:
+                    return None
+                # Two exact constants and the offset negation, then a fresh
+                # determinant sign. No zero cross terms or normalization
+                # divisions are evaluated on this branch.
+                reserve_polynomial(3, 4, 0, bits, budget=budget)
+                zero, one = Fraction(0), Fraction(1)
+                normal = ((one, zero, zero), (zero, one, zero), (zero, zero, one))[pivot]
+                offset = -rational[0][pivot]
+                budget.reserve(1)
+                sign = 1 if determinant.numerator > 0 else -1
+                return (*normal, offset), projection, 1, sign
+            # The coefficient scan above already paid the ordinary Fraction
+            # profile; retain the unchanged generic expression circuit.
+            reserve_polynomial(21, 13, 0, 51 * bits + 5, budget=budget)
+            return prepared_plane_key(points)
     # Differences, cross products, normalization and the plane offset use at
     # most ((normal input occurrences * 2) + 1) * dimension operands.
     reserve_fraction_work(
@@ -580,6 +738,27 @@ def intersection(
             )
         ):
             measure = Fraction(0)
+        elif (
+            subject_preparation is not None
+            and target_preparation is not None
+            and len(subject_preparation.lower) == 1
+            and len(target_preparation.lower) == 1
+            and all(
+                isinstance(value, Fraction)
+                for value in (
+                    *subject_preparation.lower, *subject_preparation.upper,
+                    *target_preparation.lower, *target_preparation.upper,
+                )
+            )
+        ):
+            # The two admitted interval boxes are the intervals themselves.
+            # Nonseparation above proves their intersection is nonempty, so
+            # reuse its endpoints instead of constructing/reprofiling a polygon.
+            bits = max(subject_preparation.bits, target_preparation.bits)
+            reserve_polynomial(3, 1, 0, 2 * bits + 2, budget=budget)
+            low = max(subject_preparation.lower[0], target_preparation.lower[0])
+            high = min(subject_preparation.upper[0], target_preparation.upper[0])
+            measure = high - low
         else:
             measure = abs(
                 signed_measure(

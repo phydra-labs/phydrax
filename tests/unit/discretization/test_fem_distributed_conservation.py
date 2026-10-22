@@ -29,6 +29,7 @@ from phydrax.discretization import (
     prepare_owner_local_halo_plans,
     resolve_owner_local_field_values,
 )
+from phydrax.discretization._distributed_field import resolve_owner_local_record_values
 from phydrax.discretization.fem import (
     discontinuous_element,
     execute_owner_local_finite_element_mass,
@@ -36,6 +37,7 @@ from phydrax.discretization.fem import (
     execute_owner_local_finite_element_transfer,
     finite_element_dof_identity_keys,
     FiniteElementDofOwnershipPlan,
+    FiniteElementExecutionLimits,
     FiniteElementFieldSpec,
     FiniteElementGlobalDofOwnership,
     FiniteElementPlan,
@@ -49,6 +51,9 @@ from phydrax.discretization.fem import (
     prepare_nested_field_transfer,
     prepare_owner_local_finite_element,
     prepare_owner_local_finite_element_transfer,
+)
+from phydrax.discretization.fem._distributed import (
+    prepare_owner_local_finite_element_execution,
 )
 from phydrax.linalg import DistributedKrylovPolicy
 from tests._support.cell_meshes import storage
@@ -109,6 +114,61 @@ def test_scientific_dof_keys_follow_ids_not_coordinates_or_local_rows() -> None:
         )
 
     assert keys(np.asarray((0, 1, 2)), 0.0) == keys(np.asarray((2, 0, 1)), 7.0)
+
+
+@pytest.mark.parametrize("degree", (1, 2))
+@pytest.mark.parametrize("order", ((0, 1, 2), (2, 0, 1)))
+def test_owner_local_h1_boundary_uses_physical_facet_ids_not_closure_cuts(
+    degree: int, order: tuple[int, ...]
+) -> None:
+    permutation = np.asarray(order)
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))[permutation]
+    identifiers = np.asarray((41, 73, 109), dtype=np.int64)[permutation]
+    dense = CellMesh(
+        points,
+        (CellBlock("cells", "triangle", np.argsort(permutation)[None, :]),),
+        vertex_global_ids=identifiers,
+    )
+    ids = tuple(entity.entity_ids for entity in dense.topology.entity_sets)
+    # Only the edge 41--73 is physical; the other two edges cut the closure.
+    assert isinstance(dense.connectivity, PolygonalConnectivity)
+    edge_ids = np.asarray(dense.vertex_global_ids)[np.asarray(dense.connectivity.edges)]
+    physical = np.all(np.sort(edge_ids, axis=1) == (41, 73), axis=1)
+    closure = CellMeshStorage(
+        tuple(entity.count for entity in dense.topology.entity_sets),
+        ids,
+        tuple(np.zeros(value.shape, dtype=np.int32) for value in ids),
+        partition_index=0,
+        partition_count=2,
+        logical_topology_id=dense.topology_id,
+        logical_geometry_id=dense.geometry_layout_id,
+        evidence_id=canonical_fingerprint(("physical-boundary", order)),
+        logical_arrays=(("coordinates", dense.coordinates),),
+        local_coordinates=points,
+        local_blocks=dense.blocks,
+        local_physical_boundary_facets=physical,
+        local_physical_boundary_entities=(
+            np.isin(identifiers, (41, 73)),
+            physical,
+            np.zeros((dense.entity_set(2).count,), dtype=np.bool_),
+        ),
+    )
+    mesh = CellMesh(points, dense.blocks, storage=closure)
+    prepared = FiniteElementPlan(
+        mesh, FiniteElementFieldSpec("u", lagrange_element("triangle", degree))
+    ).prepare()
+    dofs = prepared.dof_maps[0]
+    expected = np.asarray(dofs.dof_coordinates)[:, 1] == 0.0
+    np.testing.assert_array_equal(dofs.boundary_dof_mask, expected)
+    assert np.count_nonzero(expected) == degree + 1
+    without_receipts = eqx.tree_at(
+        lambda value: value.local_physical_boundary_entities, closure, None
+    )
+    with pytest.raises(ValueError, match="missing boundary projection receipts"):
+        FiniteElementPlan(
+            CellMesh(points, dense.blocks, storage=without_receipts),
+            FiniteElementFieldSpec("u", lagrange_element("triangle", degree)),
+        ).prepare()
 
 
 @pytest.mark.parametrize("family", ("H1", "Hdiv", "Hcurl"))
@@ -288,8 +348,10 @@ def _owner_local_simplex_source() -> CellMesh:
 
 def _owner_local_simplex_pair(
     devices: tuple[jax.Device, ...],
+    *,
+    unequal: bool = False,
 ) -> tuple[OwnerLocalFiniteElementDiscretization, ...]:
-    """sharded logical arrays; preparation sees only each five-row closure."""
+    """Real logical shards with five-row or unequal five/six-row closures."""
     sharding = NamedSharding(
         Mesh(np.asarray(devices, dtype=object), ("parts",)), PartitionSpec("parts")
     )
@@ -328,9 +390,20 @@ def _owner_local_simplex_pair(
     evidence = canonical_fingerprint(
         {"kind": "test-simplex-pair-ownership", "vertices": 6, "cells": 4}
     )
-    topology = _owner_local_simplex_source().topology_id
+    source = _owner_local_simplex_source()
+    topology = source.topology_id
     geometry = canonical_fingerprint({"kind": "test-two-unit-squares"})
     vertex_owner = {10: 0, 20: 0, 30: 1, 40: 0, 50: 1, 60: 1}
+    boundary_by_id = tuple(
+        dict(
+            zip(
+                np.asarray(entities.entity_ids).tolist(),
+                np.asarray(entities.subset("boundary").mask).tolist(),
+                strict=True,
+            )
+        )
+        for entities in source.topology.entity_sets
+    )
     meshes = []
     for rank, (points, vertices, ids, cell_ids, cell_owners) in enumerate(
         (
@@ -342,6 +415,15 @@ def _owner_local_simplex_pair(
                 (0, 0, 1),
             ),
             (
+                (
+                    (0.0, 0.0), (1.0, 0.0), (2.0, 0.0),
+                    (0.0, 1.0), (1.0, 1.0), (2.0, 1.0),
+                ),
+                ((0, 1, 3), (1, 4, 3), (1, 2, 4), (2, 5, 4)),
+                (10, 20, 30, 40, 50, 60),
+                (100, 200, 300, 400),
+                (0, 0, 1, 1),
+            ) if unequal else (
                 ((1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0)),
                 ((0, 3, 2), (0, 1, 3), (1, 4, 3)),
                 (20, 30, 40, 50, 60),
@@ -394,6 +476,13 @@ def _owner_local_simplex_pair(
             logical_arrays=logical_arrays,
             local_coordinates=local.coordinates,
             local_blocks=local.blocks,
+            local_physical_boundary_entities=tuple(
+                np.asarray(
+                    [boundary_by_id[degree][int(identifier)] for identifier in identifiers],
+                    dtype=np.bool_,
+                )
+                for degree, identifiers in enumerate(entity_ids)
+            ),
         )
         mesh = CellMesh(
             local.coordinates,
@@ -406,7 +495,7 @@ def _owner_local_simplex_pair(
         0,
         devices=devices,
         axis_name="parts",
-        message_capacity=2,
+        message_capacity=3 if unequal else 2,
     )
     return tuple(
         prepare_owner_local_finite_element(
@@ -525,6 +614,9 @@ def test_source_owned_field_transfer_matches_global_primal_and_paired_pullbacks(
             logical_arrays=original_storage.logical_arrays,
             local_coordinates=mesh.coordinates,
             local_blocks=mesh.blocks,
+            local_physical_boundary_entities=tuple(
+                entities.subset("boundary").mask for entities in mesh.topology.entity_sets
+            ),
         )
         local_plans.append(
             FiniteElementPlan(
@@ -584,6 +676,19 @@ def test_source_owned_field_transfer_matches_global_primal_and_paired_pullbacks(
         np.testing.assert_allclose(
             np.asarray(adjoint)[rank], jnp.where(mask, expected_adjoint[index], 0)
         )
+
+    execution = prepare_owner_local_finite_element_execution(
+        paired,
+        (tuple(values[index] for index in rows),),
+        lambda local, value: (local.apply(value),),
+        devices,
+        budget=None,
+    )
+    (packed_duals,) = execution.pack_inputs((tuple(duals[index] for index in rows),))
+    gradient = jax.grad(
+        lambda value: jnp.vdot(packed_duals, execution(value)[0])
+    )(execution.inputs[0])
+    np.testing.assert_allclose(gradient, transpose, atol=_P1_OWNED_MASS_IMAGE_ATOL)
 
 
 @requires_two_devices
@@ -709,6 +814,197 @@ def test_owner_local_p1_collective_mass_stiffness_and_solve() -> None:
 
 
 @requires_two_devices
+def test_owner_local_staged_execution_reuses_unequal_numeric_payloads() -> None:
+    devices = tuple(reversed(jax.local_devices()[:2]))
+    programs = _owner_local_simplex_pair(devices, unequal=True)
+    assert tuple(program.local_dof_count for program in programs) == (5, 6)
+    limits = FiniteElementExecutionLimits(6, 4, 64, 3, 1_000_000)
+    values = tuple(
+        jnp.where(program.owned_mask, program.global_ids / 10.0, 0)
+        for program in programs
+    )
+    traces = []
+
+    def action(
+        program: OwnerLocalFiniteElementDiscretization, value: Array
+    ) -> tuple[Array, Array]:
+        traces.append(None)
+        return (program.operator("mass").mv(value), program.global_ids)
+
+    execution = prepare_owner_local_finite_element_execution(
+        programs, (values,), action, devices, execution_limits=limits, budget=None
+    )
+    first, identifiers = execution()
+    jax.block_until_ready(first)
+    traced = len(traces)
+    assert traced > 0
+    assert not any(
+        eqx.is_array(leaf) for leaf in jax.tree_util.tree_leaves(execution._skeleton)
+    )
+    assert isinstance(execution._skeleton, OwnerLocalFiniteElementDiscretization)
+    assert execution._skeleton.local_discretization is None
+    assert execution._skeleton.construction_plan is None
+    assert execution._skeleton.execution_source is None
+    # Independent assembly of the four area-1/2 P1 triangle mass tensors:
+    # each has diagonal 2/24 and off-diagonal 1/24.
+    expected = {10: 8, 20: 34, 30: 30, 40: 26, 50: 50, 60: 20}
+    for rank, program in enumerate(programs):
+        np.testing.assert_array_equal(
+            identifiers[rank, :program.local_dof_count], program.global_ids
+        )
+        np.testing.assert_allclose(
+            first[rank, :program.local_dof_count],
+            [
+                expected[int(identifier)] / 24 if owned else 0
+                for identifier, owned in zip(
+                    np.asarray(program.global_ids),
+                    np.asarray(program.owned_mask),
+                    strict=True,
+                )
+            ],
+            atol=_P1_OWNED_MASS_IMAGE_ATOL,
+        )
+    assert tuple(first.sharding.mesh.devices.flat) == devices
+    assert first.shape == (2, 6)
+    np.testing.assert_array_equal(first[0, 5:], 0)
+
+    changed_inputs = execution.pack_inputs((tuple(3 * value for value in values),))
+    changed, _ = execution(*changed_inputs)
+    np.testing.assert_allclose(changed, 3 * first, atol=_P1_OWNED_MASS_IMAGE_ATOL)
+    assert len(traces) == traced
+
+    # A new current program with the same numerical layout must pass its own
+    # leaves, not arrays retained from the first trace or the first partition.
+    scaled_programs = tuple(
+        eqx.tree_at(
+            lambda program: program.mass.coefficients,
+            program,
+            (rank + 2) * program.mass.coefficients,
+        )
+        for rank, program in enumerate(programs)
+    )
+    rebound = prepare_owner_local_finite_element_execution(
+        scaled_programs, (values,), action, devices, execution_limits=limits, budget=None
+    )
+    scaled_image, _ = rebound()
+    # First two owned triangles have coefficient 2; last two have coefficient 3.
+    expected_scaled = {10: 16, 20: 80, 30: 90, 40: 52, 50: 134, 60: 60}
+    for rank, program in enumerate(programs):
+        np.testing.assert_allclose(
+            scaled_image[rank, :program.local_dof_count],
+            [
+                expected_scaled[int(identifier)] / 24 if owned else 0
+                for identifier, owned in zip(
+                    np.asarray(program.global_ids),
+                    np.asarray(program.owned_mask),
+                    strict=True,
+                )
+            ],
+            atol=_P1_OWNED_MASS_IMAGE_ATOL,
+        )
+    assert len(traces) == traced
+
+    mapped, _ = map_owner_local_finite_element(
+        programs,
+        (tuple(4 * value for value in values),),
+        action,
+        devices,
+        execution_limits=limits,
+        budget=None,
+    )
+    np.testing.assert_allclose(mapped, 4 * first, atol=_P1_OWNED_MASS_IMAGE_ATOL)
+    assert len(traces) == traced
+
+    # The global owned mass is symmetric; differentiation through the staged
+    # collective must return its action, including zero ghost/padding duals.
+    gradient = jax.grad(
+        lambda value: 0.5 * jnp.vdot(value, execution(value)[0])
+    )(execution.inputs[0])
+    np.testing.assert_allclose(gradient, first, atol=_P1_OWNED_MASS_IMAGE_ATOL)
+    with pytest.raises(ValueError, match="admitted logical shapes and dtypes"):
+        execution.pack_inputs(((values[0][:-1], values[1]),))
+    with pytest.raises(ValueError, match="admitted packed shapes and dtypes"):
+        execution(execution.inputs[0][:, :-1])
+    replicated = jax.device_put(
+        execution.inputs[0], NamedSharding(execution.mesh, PartitionSpec())
+    )
+    with pytest.raises(ValueError, match="admitted owner-local placement"):
+        execution(replicated)
+    misplaced = jax.device_put(
+        execution.inputs[0],
+        NamedSharding(
+            Mesh(np.asarray(tuple(reversed(devices)), dtype=object), ("parts",)),
+            PartitionSpec("parts"),
+        ),
+    )
+    with pytest.raises(ValueError, match="admitted owner-local placement"):
+        execution(misplaced)
+
+    # Every existing capacity/storage refusal remains on the preparation path.
+    for bounds in (
+        (5, 4, 64, 3, 1_000_000),
+        (6, 3, 64, 3, 1_000_000),
+        (6, 4, 1, 3, 1_000_000),
+        (6, 4, 64, 2, 1_000_000),
+        (6, 4, 64, 3, 1),
+    ):
+        with pytest.raises(ValueError, match=r"execution\.(worksets|storage_bytes)"):
+            prepare_owner_local_finite_element_execution(
+                programs, (values,), action, devices,
+                execution_limits=FiniteElementExecutionLimits(*bounds), budget=None,
+            )
+
+
+@requires_two_devices
+def test_owner_local_staged_pcg_reuses_unequal_closures() -> None:
+    devices = tuple(jax.local_devices()[:2])
+    programs = _owner_local_simplex_pair(devices, unequal=True)
+    limits = FiniteElementExecutionLimits(6, 4, 64, 3, 1_000_000)
+    values = tuple(
+        jnp.where(program.owned_mask, program.global_ids / 10.0, 0)
+        for program in programs
+    )
+    rhs = execute_owner_local_finite_element_operator(
+        programs, values, "mass", devices=devices, execution_limits=limits
+    )
+    local_rhs = tuple(
+        rhs[rank, :program.local_dof_count]
+        for rank, program in enumerate(programs)
+    )
+    policy = DistributedKrylovPolicy(
+        16, relative_tolerance=1.0e-10, absolute_tolerance=1.0e-12
+    )
+    traces = []
+
+    def solve(
+        program: OwnerLocalFiniteElementDiscretization, value: Array
+    ) -> tuple[Array, Array]:
+        traces.append(None)
+        result = program.solve_mass(value, policy)
+        return (result.solve.value, result.accepted)
+
+    execution = prepare_owner_local_finite_element_execution(
+        programs, (local_rhs,), solve, devices, execution_limits=limits, budget=None
+    )
+    first, accepted = execution()
+    np.testing.assert_array_equal(accepted, True)
+    for rank, program in enumerate(programs):
+        np.testing.assert_allclose(
+            first[rank, :program.local_dof_count],
+            values[rank],
+            atol=_P1_OWNED_SOLVE_VALUES_ATOL,
+        )
+    traced = len(traces)
+    assert traced > 0
+    second, accepted = execution(
+        *execution.pack_inputs((tuple(2 * value for value in local_rhs),))
+    )
+    np.testing.assert_array_equal(accepted, True)
+    np.testing.assert_allclose(second, 2 * first, atol=_P1_OWNED_SOLVE_VALUES_ATOL)
+    assert len(traces) == traced
+
+
+@requires_two_devices
 def test_owner_local_collective_rejects_mismatched_stable_id_routes() -> None:
 
     devices = tuple(jax.local_devices()[:2])
@@ -743,9 +1039,11 @@ def test_owner_local_collective_rejects_mismatched_stable_id_routes() -> None:
 
 
 @requires_two_devices
-def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_move() -> (
-    None
-):
+@pytest.mark.parametrize("empty_rank", (None, 0, 1))
+@pytest.mark.parametrize("scalar", (False, True))
+def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_move(
+    empty_rank: int | None, scalar: bool,
+) -> None:
 
     devices = tuple(jax.local_devices()[:2])
     programs = _owner_local_simplex_pair(devices)
@@ -774,6 +1072,8 @@ def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_mo
             dtype=jnp.float64,
         ),
     )
+    if scalar:
+        fields = tuple(field[:, 0] for field in fields)
     fields = tuple(
         jax.device_put(field, device)
         for field, device in zip(fields, devices, strict=True)
@@ -786,6 +1086,15 @@ def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_mo
         np.asarray((1, 0, 1, 0), dtype=np.int32),
         np.asarray((0, 1, 0), dtype=np.int32),
     )
+    if empty_rank is not None:
+        queries = tuple(
+            ids[:0] if rank == empty_rank else ids
+            for rank, ids in enumerate(queries)
+        )
+        owners = tuple(
+            placement[:0] if rank == empty_rank else placement
+            for rank, placement in enumerate(owners)
+        )
     moved = tuple(reversed(devices))
     resolved = resolve_owner_local_field_values(
         meshes,
@@ -804,6 +1113,12 @@ def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_mo
         ),
         np.asarray(((2.0, 7.0, 11.0), (43.0, 47.0, 53.0), (3.0, 13.0, 17.0))),
     )
+    expected = tuple(
+        (value[:, 0] if scalar else value)[:0]
+        if rank == empty_rank
+        else (value[:, 0] if scalar else value)
+        for rank, value in enumerate(expected)
+    )
     for value, target, device in zip(resolved, expected, moved, strict=True):
         np.testing.assert_array_equal(value, target)
         assert value.devices() == {device}
@@ -821,6 +1136,113 @@ def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_mo
             axis_name="parts",
             message_capacity=2,
         )
+
+
+@requires_two_devices
+@pytest.mark.parametrize("empty_owner", (None, 0, 1))
+@pytest.mark.parametrize("permuted", (False, True))
+def test_owned_record_queries_preserve_components_and_empty_owners(
+    empty_owner: int | None, permuted: bool,
+) -> None:
+    devices = tuple(jax.local_devices()[:2])
+    if permuted:
+        devices = tuple(reversed(devices))
+    ranks = (1, 0) if permuted else (0, 1)
+    source_ids = {
+        rank: np.asarray(
+            () if rank == empty_owner else (10 + rank, 20 + rank), dtype=np.int64
+        )
+        for rank in ranks
+    }
+    values = {
+        rank: jax.device_put(
+            np.stack((ids, ids + 100, ids + 200), axis=1), devices[rank]
+        )
+        for rank, ids in source_ids.items()
+    }
+    query = np.concatenate(tuple(source_ids[rank] for rank in ranks))[::-1].copy()
+    owners = np.asarray(
+        [int(identifier % 10) for identifier in query], dtype=np.int32
+    )
+    resolved = resolve_owner_local_record_values(
+        tuple(source_ids[rank] for rank in ranks),
+        tuple(values[rank] for rank in ranks),
+        (query, query[:0]),
+        (owners, owners[:0]),
+        ranks=ranks,
+        devices=devices,
+        axis_name="parts",
+        message_capacity=4,
+        identity="authenticated-predecessor-records",
+    )
+    np.testing.assert_array_equal(
+        resolved[0], np.stack((query, query + 100, query + 200), axis=1)
+    )
+    assert resolved[1].shape == (0, 3)
+    for rank, result in zip(ranks, resolved, strict=True):
+        assert result.is_fully_addressable
+        assert result.devices() == {devices[rank]}
+    for rank in ranks:
+        np.testing.assert_array_equal(
+            values[rank],
+            np.stack(
+                (source_ids[rank], source_ids[rank] + 100, source_ids[rank] + 200),
+                axis=1,
+            ),
+        )
+
+
+@requires_two_devices
+@pytest.mark.parametrize(
+    "corruption", ("missing", "duplicate-local", "duplicate-peer", "shape", "owner")
+)
+def test_owned_record_query_refusal_is_atomic_and_retryable(corruption: str) -> None:
+    devices = tuple(jax.local_devices()[:2])
+    source = (np.asarray((10, 20), dtype=np.int64), np.asarray((11,), dtype=np.int64))
+    values = (
+        jax.device_put(np.asarray((100, 200), dtype=np.int64), devices[0]),
+        jax.device_put(np.asarray((110,), dtype=np.int64), devices[1]),
+    )
+    queries = (np.asarray((11,), dtype=np.int64), np.asarray((20,), dtype=np.int64))
+    owners = (np.asarray((1,), dtype=np.int32), np.asarray((0,), dtype=np.int32))
+    bad_source, bad_values, bad_queries, bad_owners = source, values, queries, owners
+    if corruption == "missing":
+        bad_queries = (np.asarray((99,), dtype=np.int64), queries[1])
+    elif corruption == "duplicate-local":
+        bad_source = (np.asarray((10, 10), dtype=np.int64), source[1])
+    elif corruption == "duplicate-peer":
+        bad_source = (source[0], np.asarray((10,), dtype=np.int64))
+    elif corruption == "shape":
+        bad_values = (values[0][:1], values[1])
+    else:
+        bad_owners = (np.asarray((2,), dtype=np.int32), owners[1])
+    with pytest.raises(ValueError, match="record_queries|absent transfer query ID"):
+        resolve_owner_local_record_values(
+            bad_source,
+            bad_values,
+            bad_queries,
+            bad_owners,
+            ranks=(0, 1),
+            devices=devices,
+            axis_name="parts",
+            message_capacity=2,
+            identity="authenticated-predecessor-records",
+        )
+    restored = resolve_owner_local_record_values(
+        source,
+        values,
+        queries,
+        owners,
+        ranks=(0, 1),
+        devices=devices,
+        axis_name="parts",
+        message_capacity=2,
+        identity="authenticated-predecessor-records",
+    )
+    np.testing.assert_array_equal(restored[0], (110,))
+    np.testing.assert_array_equal(restored[1], (200,))
+    np.testing.assert_array_equal(values[0], (100, 200))
+    np.testing.assert_array_equal(values[1], (110,))
 
 
 @requires_two_devices
@@ -867,6 +1289,7 @@ def test_owner_local_p1_mass_uses_original_curved_coordinate_bank_by_default() -
         coordinate_global_ids=owner.coordinate_global_ids,
         coordinate_owner=owner.coordinate_owner,
         local_geometry=geometry,
+        local_physical_boundary_entities=owner.local_physical_boundary_entities,
     )
     meshes = tuple(
         CellMesh(root.coordinates, root.blocks, storage=storage)

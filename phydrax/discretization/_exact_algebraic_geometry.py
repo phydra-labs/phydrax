@@ -32,6 +32,46 @@ type RationalScalar = int | np.integer | Fraction
 type AlgebraicLayouts = tuple[tuple[str, str, int, str, str], ...]
 
 
+def rounded_rational_square_root(value: Fraction, /) -> float:
+    """Round a nonnegative rational square root to nearest-even binary64.
+
+    The square root's binade determines its binary64 spacing (including
+    subnormals). Integer square root gives the lower representable endpoint;
+    comparison with the *exact squared midpoint* decides rounding, including
+    ties, without a precision heuristic or factoring the rational radicand.
+    """
+    numerator, denominator = value.numerator, value.denominator
+    if numerator < 0:
+        raise ValueError("Rational square root must have a nonnegative radicand")
+    if numerator == 0:
+        return 0.0
+    logarithm = numerator.bit_length() - denominator.bit_length()
+    if (
+        numerator < denominator << logarithm
+        if logarithm >= 0
+        else numerator << -logarithm < denominator
+    ):
+        logarithm -= 1
+    exponent = logarithm // 2
+    if exponent > 1023:
+        return math.inf
+    spacing = max(exponent - 52, -1074)
+    if spacing < 0:
+        scaled_numerator = numerator << (-2 * spacing)
+        scaled_denominator = denominator
+    else:
+        scaled_numerator = numerator
+        scaled_denominator = denominator << (2 * spacing)
+    lower = math.isqrt(scaled_numerator // scaled_denominator)
+    comparison = 4 * scaled_numerator - scaled_denominator * (2 * lower + 1) ** 2
+    if comparison > 0 or comparison == 0 and lower % 2:
+        lower += 1
+    try:
+        return math.ldexp(float(lower), spacing)
+    except OverflowError:
+        return math.inf
+
+
 def _squarefree(
     value: int, /, *, budget: CoordinateEnclosureBudget | None = None
 ) -> tuple[int, int]:
@@ -136,6 +176,7 @@ class RadicalElement(StrictModule, NonTrainableState):
         /,
         *,
         terms: RadicalTerms = (),
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         if isinstance(value, _CanonicalRadicalTerms):
             if terms:
@@ -149,7 +190,7 @@ class RadicalElement(StrictModule, NonTrainableState):
         if rational:
             coefficients[1] = rational
         for radicand, coefficient in terms:
-            outside, inside = _squarefree(radicand)
+            outside, inside = _squarefree(radicand, budget=budget)
             coefficients[inside] = coefficients.get(
                 inside, Fraction(0)
             ) + outside * _rational(coefficient)
@@ -195,8 +236,14 @@ class RadicalElement(StrictModule, NonTrainableState):
 
     @classmethod
     @checked
-    def from_stored_fields(cls, value: RadicalElement, /) -> RadicalElement:
-        renewed = cls(terms=value.terms)
+    def from_stored_fields(
+        cls,
+        value: RadicalElement,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> RadicalElement:
+        renewed = cls(terms=value.terms, budget=budget)
         if renewed.terms != value.terms:
             raise ValueError(
                 "RadicalElement.terms must retain normalized nonzero squarefree coefficients; got an unnormalized restored bank"
@@ -718,9 +765,9 @@ class ExactAlgebraicCellGeometrySource(StrictModule, NonTrainableState):
                 )
         bank = tuple(
             tuple(
-                RadicalElement.from_stored_fields(value)
+                RadicalElement.from_stored_fields(value, budget=budget)
                 if isinstance(value, RadicalElement)
-                else RadicalElement(value)
+                else RadicalElement(value, budget=budget)
                 for value in row
             )
             for row in coordinates
@@ -778,22 +825,35 @@ class ExactAlgebraicCellGeometrySource(StrictModule, NonTrainableState):
     def preparation_query_upper(self) -> int:
         return 0
 
-    def preparation_bounds(self) -> tuple[int, int]:
+    def _preparation_resources(self) -> tuple[int, int, int]:
         count = sum(len(value.terms) + 1 for row in self.coefficients for value in row)
+        largest = max(len(value.terms) + 1 for row in self.coefficients for value in row)
         precision = max(
-            _rounding_precision_bound(value) for row in self.coefficients for value in row
+            80,
+            max(_rounding_precision_bound(value) for row in self.coefficients for value in row),
         )
-        return (
-            algebraic_source_limits(self.coefficients)[0]
-            + 128 * (count + len(self.layouts) + 1),
+        retained = (
             4096 * (count + len(self.layouts) + 1)
-            + 128 * count * ((max(self.maximum_bits, precision) + 7) // 8),
+            + 128 * count * ((self.maximum_bits + 7) // 8)
         )
+        scalar = 128 * largest * ((max(self.maximum_bits, precision) + 7) // 8)
+        work = algebraic_source_limits(self.coefficients)[0] + 128 * (count + len(self.layouts) + 1)
+        return work, retained, scalar
+
+    def preparation_bounds(self) -> tuple[int, int]:
+        work, retained, scalar = self._preparation_resources()
+        # Keep the original complete rounding work; only one interval circuit
+        # and the retained maximum-error scalar coexist with the numeric bank.
+        return work, retained + 2 * scalar
 
     @classmethod
     @checked
     def from_stored_fields(
-        cls, value: ExactAlgebraicCellGeometrySource, /
+        cls,
+        value: ExactAlgebraicCellGeometrySource,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> ExactAlgebraicCellGeometrySource:
         renewed = cls(
             value.coefficients,
@@ -801,6 +861,7 @@ class ExactAlgebraicCellGeometrySource(StrictModule, NonTrainableState):
             source_identity=value.source_identity,
             maximum_work=value.maximum_work,
             maximum_bits=value.maximum_bits,
+            budget=budget,
         )
         if renewed.authority_binding != value.authority_binding:
             raise ValueError(
@@ -813,18 +874,15 @@ class ExactAlgebraicCellGeometrySource(StrictModule, NonTrainableState):
             raise ValueError(
                 "ExactAlgebraicCellGeometrySource.authority_binding must authenticate coefficients, layouts and source identity; got a mismatched binding"
             )
-        budget.reserve(
-            sum(len(row) for row in self.coefficients),
-            8 * sum(len(row) for row in self.coefficients),
-        )
-        numeric = np.asarray(
-            [
-                [value.rounded(budget=budget)[0] for value in row]
-                for row in self.coefficients
-            ],
-            dtype=np.float64,
-        )
-        budget.retain_basis((numeric,))
+        count = sum(len(row) for row in self.coefficients)
+        with budget.temporary_scope():
+            budget.reserve(count, 8 * count)
+            numeric = np.empty((len(self.coefficients), len(self.coefficients[0])), dtype=np.float64)
+            for row, values in enumerate(self.coefficients):
+                for axis, value in enumerate(values):
+                    with budget.temporary_scope():
+                        numeric[row, axis] = value.rounded(budget=budget)[0]
+            budget.retain_basis((numeric,))
         return numeric
 
     def prepare(
@@ -846,44 +904,43 @@ class ExactAlgebraicCellGeometrySource(StrictModule, NonTrainableState):
         cached = budget.algebraic_witness_cache.get(key)
         if cached is not None:
             return cached
-        work_upper, memory_upper = self.preparation_bounds()
-        budget.admit_work_bound(work_upper, storage_upper=memory_upper)
+        work_upper, retained_upper, scalar_upper = self._preparation_resources()
+        budget.admit_work_bound(work_upper, storage_upper=retained_upper + 2 * scalar_upper)
         start = budget.work_units
-        budget.reserve(shape[0] * shape[1], 24 * shape[0] * shape[1])
-        pairs = tuple(
-            tuple(value.rounded(budget=budget) for value in row)
-            for row in self.coefficients
-        )
-        representatives = np.asarray(
-            [[value for value, _ in row] for row in pairs], dtype=np.float64
-        )
-        if not np.array_equal(representatives.view(np.uint64), rounded.view(np.uint64)):
-            raise ValueError(
-                "ExactAlgebraicCellGeometrySource.representatives must correctly round the declared field coefficients; got differing binary64 bytes"
-            )
-        work = budget.work_units - start
-        if work > self.maximum_work:
-            raise CoordinateEnclosureResourceError(
-                "coefficient_work", self.maximum_work, work, 0
-            )
-        prepared = PreparedExactAlgebraicGeometry(
-            self.coefficients,
-            (False,) * shape[0],
-            self.source_id,
-            work,
-            max(value.coefficient_bits for row in self.coefficients for value in row),
-            max((error for row in pairs for _, error in row), default=Fraction(0)),
-        )
-        budget.retain_basis(
-            (
-                key,
+        with budget.temporary_scope():
+            budget.reserve(shape[0] * shape[1], 8 * shape[0] * shape[1] + scalar_upper)
+            representatives = np.empty(shape, dtype=np.float64)
+            maximum_error = Fraction(0)
+            for row, values in enumerate(self.coefficients):
+                for axis, value in enumerate(values):
+                    # Intervals and rejected precision refinements die with
+                    # this scalar. Only its float and the running maximum error
+                    # survive; no all-coordinate (float, error) bank is built.
+                    with budget.temporary_scope():
+                        representative, error = value.rounded(budget=budget)
+                        representatives[row, axis] = representative
+                        maximum_error = max(maximum_error, error)
+            if not np.array_equal(representatives.view(np.uint64), rounded.view(np.uint64)):
+                raise ValueError(
+                    "ExactAlgebraicCellGeometrySource.representatives must correctly round the declared field coefficients; got differing binary64 bytes"
+                )
+            work = budget.work_units - start
+            if work > self.maximum_work:
+                raise CoordinateEnclosureResourceError(
+                    "coefficient_work", self.maximum_work, work, 0
+                )
+            prepared = PreparedExactAlgebraicGeometry(
                 self.coefficients,
-                prepared.on_entity,
-                prepared.maximum_rounding_error,
-                prepared,
+                (False,) * shape[0],
+                self.source_id,
+                work,
+                max(value.coefficient_bits for row in self.coefficients for value in row),
+                maximum_error,
             )
-        )
-        budget.algebraic_witness_cache[key] = prepared
+            budget.retain_basis(
+                (key, self.coefficients, prepared.on_entity, prepared.maximum_rounding_error, prepared)
+            )
+            budget.algebraic_witness_cache[key] = prepared
         return prepared
 
     @checked

@@ -13,7 +13,7 @@ update per tree level.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -1931,6 +1931,34 @@ def bvh_host_minima(
     return minima, winners, node_visits, item_visits
 
 
+def _host_pair_frontier_bytes(
+    pending: list[tuple[np.ndarray, np.ndarray]],
+    active: tuple[np.ndarray, np.ndarray] | None,
+    /,
+) -> int:
+    """Release-only profile of already admitted frontier payload owners.
+
+    Slices retain their complete root allocation. Shared roots are counted once,
+    while view headers, the pending list/tuples, and this small owner index have
+    a declared bound per live pair of arrays.
+    """
+    total = 2048 * (len(pending) + 2)
+    owners: set[int] = set()
+    for index in range(len(pending) + (active is not None)):
+        pair = pending[index] if index < len(pending) else active
+        assert pair is not None
+        for array in pair:
+            total += 256
+            owner = array
+            while isinstance(owner.base, np.ndarray):
+                owner = owner.base
+            identifier = id(owner)
+            if identifier not in owners:
+                owners.add(identifier)
+                total += 256 + owner.nbytes
+    return total
+
+
 def _host_pair_blocks(
     first: tuple[np.ndarray, ...],
     second: tuple[np.ndarray, ...],
@@ -1939,7 +1967,8 @@ def _host_pair_blocks(
     *,
     visit: Callable[[int], None] | None = None,
     maximum_block_pairs: int | None = None,
-) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    traversal_storage: Callable[[int], None] | None = None,
+) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
     first_min, first_max, first_left, first_right, first_leaf, first_items = first[:6]
     second_min, second_max, second_left, second_right, second_leaf, second_items = second[
         :6
@@ -1969,6 +1998,16 @@ def _host_pair_blocks(
         else min(_HOST_ITEM_PAIR_BLOCK, maximum_block_pairs)
     )
     second_item_min, second_item_max = second[6:]
+    dimension = first_min.shape[1]
+    # The two node-size vectors persist through traversal. Initial differences,
+    # root-box comparisons and fixed array/closure/scalar metadata are admitted
+    # before even the first NumPy allocation in the generator.
+    fixed_bytes = 16384 + 8 * (first_min.shape[0] + second_min.shape[0])
+    if traversal_storage is not None:
+        traversal_storage(
+            fixed_bytes + 8 * max(first_min.shape[0], second_min.shape[0]) * dimension
+            + 8192 + 128 * dimension
+        )
     first_size = np.sum(first_max - first_min, axis=-1)
     second_size = np.sum(second_max - second_min, axis=-1)
     leaf_pair_block = max(
@@ -1993,12 +2032,32 @@ def _host_pair_blocks(
             )
             first_nodes = first_nodes[:node_pair_block]
             second_nodes = second_nodes[:node_pair_block]
+        frontier_bytes = 0
+        node_bytes = 64 * first_nodes.size
+        if traversal_storage is not None:
+            frontier_bytes = _host_pair_frontier_bytes(
+                pending, (first_nodes, second_nodes)
+            )
+            traversal_storage(fixed_bytes + frontier_bytes + node_bytes)
         first_is_leaf = first_leaf[first_nodes] >= 0
         second_is_leaf = second_leaf[second_nodes] >= 0
         both_leaf = first_is_leaf & second_is_leaf
         leaf_first = first_leaf[first_nodes[both_leaf]]
         leaf_second = second_leaf[second_nodes[both_leaf]]
         for offset in range(0, leaf_first.shape[0], leaf_pair_block):
+            if traversal_storage is not None:
+                leaves = min(leaf_pair_block, leaf_first.size - offset)
+                product = leaves * first_items.shape[1] * second_items.shape[1]
+                # Both gathered payloads, padded broadcasts, filtered indices,
+                # masks, four gathered boxes, overlap-test temporaries (including
+                # tolerance scaling), and yielded copies can coexist.
+                leaf_bytes = (
+                    8 * leaves * (first_items.shape[1] + second_items.shape[1])
+                    + product * (64 + 128 * dimension)
+                )
+                traversal_storage(
+                    fixed_bytes + frontier_bytes + node_bytes + leaf_bytes
+                )
             items_a = first_items[leaf_first[offset : offset + leaf_pair_block]]
             items_b = second_items[leaf_second[offset : offset + leaf_pair_block]]
             shape = (items_a.shape[0], items_a.shape[1], items_b.shape[1])
@@ -2015,6 +2074,16 @@ def _host_pair_blocks(
             )
             if np.any(hit):
                 yield items_a[hit], items_b[hit]
+            del items_a, items_b, present, hit
+        del leaf_first, leaf_second
+        if traversal_storage is not None:
+            # Every current node pair has at most two children. Include old
+            # masks/parents, both child banks and their gathered test arguments,
+            # and the new filtered pending bank before constructing any of them.
+            child_bytes = first_nodes.size * (192 + 256 * dimension)
+            traversal_storage(
+                fixed_bytes + frontier_bytes + node_bytes + child_bytes
+            )
         descend_first = ~first_is_leaf & (
             second_is_leaf | (first_size[first_nodes] >= second_size[second_nodes])
         )
@@ -2045,6 +2114,15 @@ def _host_pair_blocks(
         )
         if np.any(keep):
             pending.append((child_first[keep], child_second[keep]))
+        del (
+            first_nodes, second_nodes, first_is_leaf, second_is_leaf, both_leaf,
+            descend_first, descend_second, first_parents, second_parents,
+            child_first, child_second, keep,
+        )
+        if traversal_storage is not None:
+            traversal_storage(
+                fixed_bytes + _host_pair_frontier_bytes(pending, None)
+            )
 
 
 @checked
@@ -2094,7 +2172,8 @@ def bvh_overlap_pair_blocks(
     visit: Callable[[int], None] | None = None,
     maximum_block_pairs: int | None = None,
     retain_owner: Callable[[object], None] | None = None,
-) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    traversal_storage: Callable[[int], None] | None = None,
+) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
     """Enumerate overlapping item pairs in bounded host blocks.
 
     Blocks arrive in deterministic traversal order and together contain every
@@ -2106,6 +2185,13 @@ def bvh_overlap_pair_blocks(
     bounds node batches and leaf-item batches (one leaf product is indivisible).
     ``retain_owner`` receives the retained host-array bank after its caller
     has admitted construction and traversal scratch.
+    ``traversal_storage`` admits a total live bound before each actual frontier,
+    leaf-product or child-bank allocation. It includes pending-array root owners,
+    not just sliced views, and generated output blocks while the generator is
+    suspended. The caller separately admits host-bank conversion and retained
+    output aliases, and releases this traversal owner only after exhausting or
+    closing the generator. Callback refusal propagates before the allocation;
+    the default traversal order, block capacities and ``visit`` prices do not change.
     """
     if visit is not None and not callable(visit):
         raise TypeError(
@@ -2114,6 +2200,11 @@ def bvh_overlap_pair_blocks(
     if retain_owner is not None and not callable(retain_owner):
         raise TypeError(
             f"bvh_overlap_pair_blocks.retain_owner must be callable or None; got {type(retain_owner).__name__}"
+        )
+    if traversal_storage is not None and not callable(traversal_storage):
+        raise TypeError(
+            "bvh_overlap_pair_blocks.traversal_storage must be callable or None; "
+            f"got {type(traversal_storage).__name__}"
         )
     if maximum_block_pairs is not None and maximum_block_pairs < 1:
         raise ValueError(
@@ -2128,6 +2219,7 @@ def bvh_overlap_pair_blocks(
         test,
         visit=visit,
         maximum_block_pairs=maximum_block_pairs,
+        traversal_storage=traversal_storage,
     )
 
 

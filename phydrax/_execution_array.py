@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.sharding import Sharding
 from jax.typing import ArrayLike
 
 from ._execution_runtime import ExecutionGroup
@@ -42,6 +43,30 @@ def _project_local_leading_axes(
         for entry, value in zip(entries, selected, strict=True):
             result[entry[0]] = value
     return tuple(result)
+
+
+def _place_process_local_array(value: Array, sharding: Sharding, /) -> Array:
+    """Assemble current global placement from a complete process-local operand.
+
+    Only current addressable device buffers are produced. No host fetch,
+    cross-host device transfer, or global bank materialization is performed.
+    Callers agree local admission before entering a numerical collective.
+    """
+    if not value.is_fully_addressable or value.is_deleted():
+        raise ValueError(
+            "collective.operand must retain a complete live process-local array."
+        )
+    if sharding.is_fully_addressable:
+        return jax.device_put(value, sharding)
+    indices = sharding.addressable_devices_indices_map(value.shape)
+    if not indices or any(index is None for index in indices.values()):
+        raise ValueError(
+            "collective.placement must identify current process-addressable slices."
+        )
+    buffers = [
+        jax.device_put(value[index], device) for device, index in indices.items()
+    ]
+    return jax.make_array_from_single_device_arrays(value.shape, sharding, buffers)
 
 
 def shard_array_axis(

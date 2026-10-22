@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from contextlib import nullcontext
 from fractions import Fraction
 from itertools import product
@@ -437,6 +438,7 @@ class PeriodicPowerPreparation(StrictModule, NonTrainableState):
         maximum_images: int,
         maximum_work_units: int = 1 << 26,
         budget: CoordinateEnclosureBudget | None = None,
+        admit_host_output: Callable[[int], None] | None = None,
     ) -> None:
         work_limit = positive_integer(maximum_work_units, "maximum_work_units")
         image_limit = positive_integer(
@@ -472,6 +474,7 @@ class PeriodicPowerPreparation(StrictModule, NonTrainableState):
                 periodic_group,
                 maximum_images=image_limit,
                 budget=ledger,
+                admit_host_output=admit_host_output,
             )
         self.maximum_images = image_limit
         self.maximum_work_units = work_limit
@@ -481,10 +484,14 @@ class PeriodicPowerPreparation(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[PeriodicPowerPreparation], value: PeriodicPowerPreparation, /
+        cls: type[PeriodicPowerPreparation],
+        value: PeriodicPowerPreparation,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PeriodicPowerPreparation:
         """Authenticate stored source fields and preserve the preparation instance."""
-        value.validate_restored()
+        value.validate_restored(budget=budget)
         return value
 
     @checked
@@ -585,6 +592,7 @@ class PeriodicPowerPreparation(StrictModule, NonTrainableState):
         *,
         maximum_images: int,
         budget: CoordinateEnclosureBudget,
+        admit_host_output: Callable[[int], None] | None = None,
     ) -> None:
 
         source = _power_source(
@@ -596,6 +604,26 @@ class PeriodicPowerPreparation(StrictModule, NonTrainableState):
         sites, values, domain = source.sites, source.values, source.domain
         generators, orders = orbits.generators, orbits.orders
         action_rows, action_count = actions.rows, actions.count
+        if admit_host_output is not None:
+            # Concrete action/image counts, never maximum_images: source and
+            # generator copies, site-axis arange/tile, exponent repeat, retained
+            # coordinate banks and the largest fingerprint byte serialization.
+            # The eight array headers follow the declared 256-byte convention.
+            image_count = len(sites) * action_count
+            payload = (
+                sites.nbytes + values.nbytes + domain.nbytes + generators.nbytes
+                + image_count * (4 + action_rows.shape[1] * 8)
+                + bank.offsets.nbytes + bank.components.nbytes
+            )
+            largest_bank = max(
+                sites.nbytes, domain.nbytes, generators.nbytes,
+                image_count * action_rows.shape[1] * 8,
+                bank.offsets.nbytes, bank.components.nbytes,
+            )
+            admit_host_output(
+                8 * 256 + payload + 256 + len(sites) * 4
+                + 256 + largest_bank + 16 * 256
+            )
         self.points = frozen_array(sites.copy())
         self.weights = frozen_array(values.copy())
         self.domain_points = frozen_array(domain.copy())

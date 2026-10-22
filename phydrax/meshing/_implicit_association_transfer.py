@@ -26,6 +26,7 @@ from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_transfer import is_affine_cell_geometry
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..geometry._source_fidelity import ImplicitProjectionBoundarySource
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.surface import (
@@ -118,9 +119,11 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
 
     @checked
     def source_associations(
-        self, source: CellMeshingResult, /
+        self, source: CellMeshingResult, /, *, budget: CoordinateEnclosureBudget | None = None
     ) -> tuple[GeometryAssociation, tuple[int, ...]]:
-        self.profile.require_bound(self.profile.geometry, source.coordinate_contract)
+        self.profile.require_bound(
+            self.profile.geometry, source.coordinate_contract, budget=budget
+        )
         mesh = source.mesh
         top = mesh.topological_dimension
         family = "triangle" if top == 2 else "tetrahedron"
@@ -130,7 +133,7 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 f"ImplicitAssociationTransfer.source_mesh must be a triangular surface or tetrahedral volume in three dimensions; got dimensions {(top, mesh.ambient_dimension)!r}, cell kinds {tuple(block.cell_kind for block in mesh.blocks)!r}"
             )
-        if not is_affine_cell_geometry(mesh, source.geometry):
+        if not is_affine_cell_geometry(mesh, source.geometry, budget=budget):
             raise ValueError(
                 f"ImplicitAssociationTransfer.source_geometry must be affine; got geometry {source.geometry.geometry_layout_id!r} on mesh {mesh.mesh_id!r}"
             )
@@ -198,15 +201,19 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
                 raise TypeError(
                     f"ImplicitAssociationTransfer.fidelity_source must be an AnalyticImplicitProfile; got {type(actual_profile).__name__}"
                 )
-        actual_profile.require_bound(self.profile.geometry, source.coordinate_contract)
+        actual_profile.require_bound(
+            self.profile.geometry, source.coordinate_contract, budget=budget
+        )
         if actual_profile.profile_id != self.profile.profile_id:
             raise ValueError(
                 f"ImplicitAssociationTransfer.profile_id must match the fidelity profile; got {actual_profile.profile_id!r}, expected {self.profile.profile_id!r}"
             )
         return association, (2,)
 
-    def classes(self, source: CellMeshingResult, /) -> tuple[ImplicitEntityClasses, ...]:
-        self.source_associations(source)
+    def classes(
+        self, source: CellMeshingResult, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> tuple[ImplicitEntityClasses, ...]:
+        self.source_associations(source, budget=budget)
         mesh = source.mesh
         result = []
         for degree in range(mesh.topological_dimension + 1):
@@ -227,9 +234,10 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         return tuple(result)
 
     def _require_lineage(
-        self, source: CellMeshingResult, lineage: MeshLineage, target: CellMesh
+        self, source: CellMeshingResult, lineage: MeshLineage, target: CellMesh,
+        *, budget: CoordinateEnclosureBudget,
     ) -> GeometryAssociation:
-        association, _ = self.source_associations(source)
+        association, _ = self.source_associations(source, budget=budget)
         record = lineage.entity_lineage(2)
         require_transfer_lineage(
             source.mesh,
@@ -247,26 +255,29 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         target_ids = _implicit_face_ids(target)
         relevant = np.isin(np.asarray(record.target_global_ids), target_ids)
         source_ids = np.asarray(association.target_global_ids)
-        if np.intersect1d(
+        created_boundary = np.intersect1d(
             np.asarray(record.created_target_ids), target_ids
-        ).size or np.any(
-            ~np.isin(np.asarray(record.source_global_ids)[relevant], source_ids)
-        ):
+        )
+        foreign_parents = np.setdiff1d(
+            np.asarray(record.source_global_ids)[relevant], source_ids
+        )
+        if created_boundary.size or foreign_parents.size:
             raise ValueError(
-                f"ImplicitAssociationTransfer.face_lineage must derive every target face from declared parents; got created IDs {np.asarray(record.created_target_ids)!r}"
+                f"ImplicitAssociationTransfer.face_lineage must derive every target boundary face from declared source boundary parents; got created boundary IDs {created_boundary!r}, foreign source IDs {foreign_parents!r}; target boundary faces={target_ids.size}, total target faces={target.entity_set(2).count}, total created faces={np.asarray(record.created_target_ids).size}"
             )
         supported = np.asarray(
             (
                 EntityLineageKind.PRESERVED,
                 EntityLineageKind.REFINED_FROM,
                 EntityLineageKind.COARSENED_INTO,
+                EntityLineageKind.COLLAPSED_INTO,
                 EntityLineageKind.RELOCATED,
             ),
             dtype=np.int32,
         )
         if not np.all(np.isin(np.asarray(record.relation_kinds)[relevant], supported)):
             raise ValueError(
-                f"ImplicitAssociationTransfer.face_lineage.relation_kinds must preserve, refine, coarsen, or relocate faces; got {np.asarray(record.relation_kinds)!r}"
+                f"ImplicitAssociationTransfer.face_lineage.relation_kinds must preserve, refine, coarsen, collapse, or relocate faces; got {np.asarray(record.relation_kinds)!r}"
             )
         if not np.array_equal(
             np.unique(np.asarray(record.target_global_ids)[relevant]),
@@ -286,9 +297,10 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         geometry: CellGeometrySpec,
+        budget: CoordinateEnclosureBudget,
     ) -> tuple[GeometryAssociation, ...]:
-        association = self._require_lineage(source, lineage, target)
-        if not is_affine_cell_geometry(target, geometry):
+        association = self._require_lineage(source, lineage, target, budget=budget)
+        if not is_affine_cell_geometry(target, geometry, budget=budget):
             raise ValueError(
                 f"ImplicitAssociationTransfer.target_geometry must be affine; got layout {geometry.geometry_layout_id!r}"
             )
@@ -298,6 +310,8 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 f"ImplicitAssociationTransfer.maximum_queries must admit target faces; got count {count}, limit {self.maximum_queries}"
             )
+        # Each target face centre evaluates the source boundary field once.
+        budget.reserve_geometry_queries(count)
         record = lineage.entity_lineage(2)
         relevant = np.isin(np.asarray(record.target_global_ids), identifiers)
         source_ids, target_ids = (
@@ -347,9 +361,10 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         geometry: CellGeometrySpec,
+        budget: CoordinateEnclosureBudget,
     ) -> SurfaceModel:
-        self._require_lineage(source, lineage, target)
-        if not is_affine_cell_geometry(target, geometry):
+        self._require_lineage(source, lineage, target, budget=budget)
+        if not is_affine_cell_geometry(target, geometry, budget=budget):
             raise ValueError(
                 f"ImplicitAssociationTransfer.target_geometry must be affine for boundary remapping; got layout {geometry.geometry_layout_id!r}"
             )

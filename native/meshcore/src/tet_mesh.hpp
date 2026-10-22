@@ -185,6 +185,55 @@ struct SourceComplex {
   const double* witness_parameters = nullptr;  // per point x 2
 };
 
+// Host-declared curved (smooth) face sources of an own source complex. A
+// listed face source group is a smooth surface whose fidelity only its host
+// owner can certify: `tolerances` bound every host-claimed deviation of its
+// constrained faces from that surface and `digests` (32 bytes per source) bind
+// the claims to the host source/profile/limits identity. `face_claims` gives
+// the host-claimed certified deviation of every initial constrained face (NaN
+// exactly for faces of undeclared sources). Native code retains claims bound
+// to (accepted generation, exact face coordinates, source, digest); a claim is
+// never native proof and every publication recertifies it from its source.
+struct CurvedSourceDeclaration {
+  int64_t source_count = 0;
+  const int32_t* sources = nullptr;
+  const double* tolerances = nullptr;
+  const std::uint8_t* digests = nullptr;
+  const double* face_claims = nullptr;
+};
+
+// Claims supplied for one curved boundary collapse: exactly the proposal's
+// new constrained faces (vertex triples and their exact coordinates), each
+// with its host-certified deviation, under the declared source and digest of
+// the accepted state `generation` they were computed from.
+struct CurvedCollapseClaims {
+  int32_t source = -1;
+  int64_t generation = -1;
+  const std::uint8_t* digest = nullptr;
+  int64_t count = 0;
+  const int32_t* faces = nullptr;       // count x 3
+  const double* coordinates = nullptr;  // count x 9
+  const double* deviations = nullptr;   // count
+};
+
+// A validated, unpublished curved collapse candidate: its curved source,
+// the accepted generation it was validated in and its new constrained faces,
+// each oriented from the source stratum's first material side.
+struct CurvedCollapseInspection {
+  int32_t source = -1;
+  int64_t generation = -1;
+  NativeVector<std::array<int32_t, 3>> faces;
+};
+
+// One retained delegated host claim: a curved source row and its binding.
+// It is host evidence for a curved authority, never a planar PLC proof.
+struct CurvedRowClaim {
+  int32_t row;
+  int32_t source;
+  double deviation;
+  int64_t generation;
+};
+
 // A refused ancestry-backed construction on represented edge (v[0], v[1]):
 // the source row it would join and its certified deviation against the
 // declared bound of that row.
@@ -240,7 +289,8 @@ class TetMesh {
                 const int32_t* regions, int64_t face_count, const int32_t* faces,
                 const int32_t* face_sources, int64_t segment_count, const int32_t* segments,
                 const int32_t* segment_sources, const double* protection,
-                const SourceComplex* source = nullptr);
+                const SourceComplex* source = nullptr,
+                const CurvedSourceDeclaration* curved = nullptr);
 
  private:
   int32_t prepare_source_points(int64_t source_count, const SourceComplex& source);
@@ -248,6 +298,9 @@ class TetMesh {
   static bool source_bound_admitted(double value);
   int32_t build_source_faces(int64_t source_count, const SourceComplex& source);
   int32_t build_source_segments(int64_t source_count, const SourceComplex& source);
+  void build_source_face_index();
+  void source_face_candidates(int32_t source, const double* lower, const double* upper,
+                              NativeVector<int32_t>& rows) const;
   void tighten_source_segment_bounds();
   int32_t build_source_witnesses(int64_t point_count, const SourceComplex& source);
 
@@ -256,7 +309,13 @@ class TetMesh {
                       const int32_t* faces, const int32_t* face_sources,
                       int64_t segment_count, const int32_t* segments,
                       const int32_t* segment_sources, const double* protection,
-                      const SourceComplex* source);
+                      const SourceComplex* source, const CurvedSourceDeclaration* curved);
+
+  // Retains the curved declaration on the own source complex (row i is input
+  // face i): every face of a declared source carries a finite claim within
+  // its tolerance and no other face carries one.
+  int32_t declare_curved_sources(int64_t face_count, const int32_t* face_sources,
+                                 const CurvedSourceDeclaration& curved);
 
   // Source rows, their declared bounds and the natively certified witness
   // of every initial point (deviation recomputed, never trusted).
@@ -304,7 +363,7 @@ class TetMesh {
   void mark_broken() { broken_ = true; }
   int64_t work() const { return work_; }
   int64_t accepted_generation() const noexcept { return accepted_generation_; }
-  void mark_accepted_state() noexcept { ++accepted_generation_; }
+  void mark_accepted_state() noexcept { cancel_prepared_edit(); ++accepted_generation_; }
   void set_work_limit(int64_t budget);
   int64_t work_ceiling() const noexcept { return work_limit_; }
   void restore_work_ceiling(int64_t ceiling) noexcept {
@@ -358,6 +417,22 @@ class TetMesh {
                      NativeVector<int32_t>& contributors) const;
   bool facet_witness_admitted(const int32_t* vertices, int32_t source,
                               const SourceWitness& witness) const;
+  // Exact memo of the constrained-face ancestry CSR published by source
+  // evidence. A lookup reuses it only when every face (vertices, source),
+  // every face-vertex coordinate and every face-vertex witness equals the
+  // stored inputs bit for bit (one visit charged per face); build() and any
+  // differing input invalidate it. Storage lives in the mesh's managed pool
+  // and is attempted only when that pool reports room; a refused store
+  // leaves the memo empty and never changes the published evidence.
+  bool cached_face_ancestry(std::span<const std::array<int32_t, 4>> faces,
+                            NativeVector<int64_t>& offsets, NativeVector<int32_t>& rows) const;
+  void store_face_ancestry(std::span<const std::array<int32_t, 4>> faces,
+                           std::span<const int64_t> offsets,
+                           std::span<const int32_t> rows) const;
+  // Returns the memo's managed storage; build() and a memo miss call it. An
+  // accepted change keeps the memo: a lookup decides reuse from the faces,
+  // coordinates and witnesses themselves, and a no-op change must not drop it.
+  void release_face_ancestry() const noexcept;
   int32_t original_segment_ancestor(int32_t a, int32_t b, int32_t source) const {
     const int32_t support[2] = {a, b};
     return source_ancestor(SourceStratum::kSegment, source, support);
@@ -369,6 +444,12 @@ class TetMesh {
   std::span<const double> segment_tolerances() const { return segment_tolerance_; }
   const SourceWitness& witness(int32_t v) const { return witnesses_[static_cast<std::size_t>(v)]; }
   std::span<const SourceRefusal> source_refusals() const { return source_refusals_; }
+  // Declared curved tolerance of face source `source`, or NaN when the
+  // source is not curved.
+  double curved_tolerance(int32_t source) const;
+  const std::uint8_t* curved_digest(int32_t source) const;
+  // Every retained host claim (initial and committed curved rows), by row.
+  std::span<const CurvedRowClaim> curved_claims() const { return curved_claims_; }
   void clear_source_refusals() { source_refusals_.clear(); }
   bool protect_vertices(int64_t count, const int32_t* vertices);
   // Maximum certified deviation of the live vertices from their source rows:
@@ -394,6 +475,11 @@ class TetMesh {
   bool construct_edge_point(int32_t a, int32_t b, double* position, double* parameter = nullptr,
                             double preferred_fraction = 0.0);
   bool construct_facet_point(int32_t a, int32_t b, int32_t c, double* position);
+  // Rounded carrier of an interior fraction of an edge without a segment,
+  // strictly inside it along its dominant axis. It is an interior vertex
+  // candidate only: constrained faces through the edge still require their
+  // plane to contain the final position, and cavity orientation decides.
+  bool construct_interior_edge_point(int32_t a, int32_t b, double fraction, double* position);
 
   bool finite(int32_t t) const { return !is_ghost(tet(t)); }
   void corners(int32_t t, const double** p) const {
@@ -413,6 +499,11 @@ class TetMesh {
     const int carrier = orient3d(point(v[0]), point(v[1]), point(v[2]), point(v[3]));
     return carrier > 0 && source_orientation(v, carrier) > 0;
   }
+  // Whether existing vertex e lies strictly inside the circumsphere of finite
+  // tetrahedron t: exact insphere on the binary64 carriers, or on the exact
+  // source positions when any of the five vertices has a bounded witness
+  // (false when such a position is unavailable).
+  bool vertex_conflicts(int32_t t, int32_t e) const;
   // orient3d of tetrahedron t with v[slot] replaced by p.
   int orient_with(int32_t t, int slot, const double* p) const;
   double min_dihedral(int32_t t) const;
@@ -423,10 +514,13 @@ class TetMesh {
   template <class Allocator>
   bool vertex_star(int32_t a, std::vector<int32_t, Allocator>& star);
 
-  // A live tetrahedron containing edge (a, b), or -1.
+  // A live tetrahedron containing edge (a, b), or -1.  The breadth-first
+  // star walk of a stops at the first cell (in vertex_star order) that
+  // contains b, so only the visits up to it are made and charged.
   int32_t edge_tet(int32_t a, int32_t b);
 
-  // A finite tetrahedron with face (a, b, c) and the slot opposite it.
+  // A finite tetrahedron with face (a, b, c) and the slot opposite it: the
+  // first such cell in vertex_star order of a, found by the same early-exit walk.
   bool find_face(int32_t a, int32_t b, int32_t c, int32_t& t, int& slot);
 
   // Target size at p by clamped barycentric interpolation in finite
@@ -472,13 +566,26 @@ class TetMesh {
   std::span<const int32_t> cavity() const { return cavity_; }
   std::span<const BoundaryFacet> cavity_boundary() const { return boundary_; }
 
+  // Whether tetrahedron t belongs to the pending conflict cavity: O(1) from
+  // the preparation stamp (no other walk may run between prepare and use).
+  bool in_prepared_cavity(int32_t t) const {
+    return pending_ != kNoPending && !pending_edge_star_ && marked(t);
+  }
+
+  // Constrained faces interior to the pending conflict cavity (both sides
+  // removed). Every face created by an insertion contains the new vertex,
+  // so a committed insertion retires these vertex triples permanently.
+  std::size_t crossed_count() const {
+    return pending_ == kNoPending || pending_edge_star_ ? 0 : crossed_.size();
+  }
+  FaceKey crossed_face(std::size_t i) const;
+
   // Commits the prepared insertion; the new vertex gets `size`.
   Insertion commit(InsertKind kind, double size);
 
   // Abandons a prepared insertion (nothing was written).
   void abandon() {
-    pending_ = kNoPending;
-    pending_edge_star_ = false;
+    cancel_prepared_edit();
   }
 
   std::span<const int32_t> created() const { return edit_.created(); }
@@ -546,7 +653,11 @@ class TetMesh {
   Insertion select_edge_insertion_seed(int32_t a, int32_t b, const double* position, int32_t source, bool bounded, std::span<const int32_t> star, InsertKind& kind, int32_t& seed);
   Insertion admit_cavity_protection(const double* position);
 
-  struct Crossed;
+  struct Crossed {
+    int32_t tet;
+    int32_t slot;
+    int32_t source;
+  };
 
   // Both direct and inspected star routes retain the same protection, source,
   // surface and work admission before their one atomic cavity transaction.
@@ -628,6 +739,43 @@ class TetMesh {
                                    std::span<const int32_t> star,
                                    std::span<const int32_t> keep_star);
 
+  // Contract an unprotected vertex interior to one declared curved face
+  // source (no incident segment) onto `keep`. The caller proves the volume
+  // link condition and positive star cells. The patch keeps one material
+  // stratum, its surface link condition and its exact oriented boundary
+  // chain, and the staged cells validate. Inspection reports the validated
+  // candidate and retains the existing edit owner with all accepted constraint
+  // marks restored. A commit requires exactly the new constrained faces and
+  // bitwise current coordinates in the supplied vertex order, the source, its
+  // declared digest and current accepted generation, each deviation finite and
+  // within tolerance. Native candidate orientation remains independently proved;
+  // delegated row permutations retain their existing source-point identities.
+  // Committed faces become delegated-claim
+  // rows of the curved source.
+  EditStatus collapse_curved_boundary_edge(int32_t remove, int32_t keep,
+                                           std::span<const int32_t> star,
+                                           std::span<const int32_t> keep_star,
+                                           const CurvedCollapseClaims* claims,
+                                           CurvedCollapseInspection* inspection);
+
+ private:
+  struct PreparedBinding {
+    enum class Operation { kReplacement, kCollapse, kInsertion };
+    Operation operation = Operation::kReplacement;
+    int32_t first = -1, second = -1, source = -1;
+    bool require_improvement = false;
+    InsertKind kind = InsertKind::kInterior;
+    std::array<double, 7> input{};
+    std::array<double, 6> endpoints{};
+    std::array<std::uint8_t, 32> digest{};
+    double tolerance = 0.0;
+    std::size_t cell_limit = 0, cavity_size = 0;
+    NativeVector<std::array<int32_t, 3>> faces;
+    NativeVector<Crossed> retired;
+    NativeUnorderedMap<std::uint64_t, int32_t> segments;
+  };
+
+ public:
   class PreparedReplacement {
    public:
     PreparedReplacement() = default;
@@ -635,7 +783,8 @@ class TetMesh {
     PreparedReplacement& operator=(const PreparedReplacement&) = delete;
     PreparedReplacement(PreparedReplacement&& other) noexcept
         : owner_(other.owner_), generation_(other.generation_),
-          revision_(other.revision_), status_(other.status_) { other.owner_ = nullptr; }
+          revision_(other.revision_), status_(other.status_),
+          binding_(std::move(other.binding_)) { other.owner_ = nullptr; }
     PreparedReplacement& operator=(PreparedReplacement&& other) noexcept {
       if (this != &other) {
         discard();
@@ -644,15 +793,14 @@ class TetMesh {
         generation_ = other.generation_;
         revision_ = other.revision_;
         status_ = other.status_;
+        binding_ = std::move(other.binding_);
       }
       return *this;
     }
     ~PreparedReplacement() { discard(); }
     EditStatus status() const noexcept { return status_; }
     EditStatus commit() {
-      if (owner_ == nullptr || status_ != EditStatus::kOk ||
-          owner_->accepted_generation_ != generation_ ||
-          owner_->edit_.staging_revision() != revision_) {
+      if (!current()) {
         return EditStatus::kBoundaryMismatch;
       }
       TetMesh* owner = owner_;
@@ -661,6 +809,11 @@ class TetMesh {
       return result;
     }
    private:
+    bool current() const noexcept {
+      return owner_ != nullptr && status_ == EditStatus::kOk &&
+             owner_->accepted_generation_ == generation_ &&
+             owner_->edit_.staging_revision() == revision_;
+    }
     friend class TetMesh;
     explicit PreparedReplacement(EditStatus status) noexcept : status_(status) {}
     PreparedReplacement(TetMesh& owner, EditStatus status) noexcept
@@ -676,12 +829,34 @@ class TetMesh {
     int64_t generation_ = -1;
     uint64_t revision_ = 0;
     EditStatus status_ = EditStatus::kNotLive;
+    PreparedBinding binding_;
   };
 
   // The one existing edit_ retains the validated source/region/cavity proof.
   // The scoped token never copies a mesh, source bank or allocation arena.
   PreparedReplacement prepare_replacement(std::span<const int32_t> removed,
                      std::span<const std::array<int32_t, 4>> proposed);
+
+  // There is one validated CavityEdit, owned either by a scoped replacement
+  // token or this retained token, never a parallel prepared-edit cache.
+  void cancel_prepared_edit() noexcept {
+    const uint64_t revision = edit_.staging_revision();
+    retained_edit_ = PreparedReplacement{};
+    if (edit_.staging_revision() == revision) edit_.rollback();
+    pending_ = kNoPending;
+    pending_edge_star_ = false;
+  }
+  bool reuse_curved_collapse(int32_t remove, int32_t keep, bool require_improvement,
+                             const CurvedCollapseClaims& claims, bool& applied);
+  void bind_curved_collapse(bool require_improvement) noexcept {
+    retained_edit_.binding_.require_improvement = require_improvement;
+  }
+  Insertion retain_edge_insertion(int32_t a, int32_t b, const double* witness,
+                                  const double* position, double fraction,
+                                  std::size_t cell_limit, InsertKind kind);
+  bool reuse_edge_insertion(int32_t a, int32_t b, const double* witness,
+                            const double* position, double fraction,
+                            std::size_t cell_limit, InsertKind& kind) const noexcept;
 
   // Replaces `removed` by `proposed` tetrahedra (region of the first removed
   // tetrahedron, no new constraints) through one validated transaction.
@@ -708,16 +883,18 @@ class TetMesh {
  private:
   friend class MeasuredTetStage;
   EditStatus commit_prepared_replacement();
+  EditStatus commit_curved_collapse(PreparedReplacement& prepared,
+                                    const CurvedCollapseClaims& claims,
+                                    bool claims_validated);
+  Insertion stage_insertion(InsertKind kind);
+  Insertion commit_retained_insertion(InsertKind kind, double size);
   static MemoryOwner checked_memory_owner(MemoryOwner owner);
   static MemoryOwner select_memory_owner(std::size_t bytes);
   static constexpr int32_t kNoPending = std::numeric_limits<int32_t>::min();
   static constexpr std::uint8_t kInCavity = 1;
+  // A cavity cell queued for re-examination by shrink (still in the cavity).
+  static constexpr std::uint8_t kInCavityRecheck = 2;
 
-  struct Crossed {
-    int32_t tet;
-    int32_t slot;
-    int32_t source;
-  };
 
   struct BoundaryCurve {
     int32_t other = -1;
@@ -752,7 +929,8 @@ class TetMesh {
     NativeVector<Crossed> retired;
   };
 
-  EditStatus collect_boundary_curve(int32_t remove, int32_t keep, BoundaryCurve& curve);
+  EditStatus collect_boundary_curve(int32_t remove, int32_t keep,
+                                    std::span<const int32_t> star, BoundaryCurve& curve);
   EditStatus admit_boundary_curve(int32_t remove, int32_t keep, const BoundaryCurve& curve, NativeUnorderedMap<std::uint64_t, int32_t>& staged_segments);
   Expansion boundary_projected_area(const int32_t* f, int axis) const;
   bool describe_boundary_face(int32_t t, int slot, const int32_t* f, BoundaryStratum& stratum, int& axis, int& reference_sign, bool add_plane, BoundaryCollapseProof& proof);
@@ -775,11 +953,7 @@ class TetMesh {
     ~EditTransaction() {
       if (active_) {
         mesh_.edit_.rollback();
-        if (marks_retired_) {
-          for (const Crossed& face : retired_) {
-            mesh_.complex_.set_facet_constraint(face.tet, face.slot, face.source);
-          }
-        }
+        restore_constraints();
         mesh_.transaction_open_ = false;
         mesh_.pending_ = kNoPending;
       }
@@ -790,6 +964,19 @@ class TetMesh {
       for (const Crossed& face : retired_) {
         mesh_.complex_.set_facet_constraint(face.tet, face.slot, kNoConstraint);
       }
+    }
+    void restore_constraints() noexcept {
+      if (marks_retired_) {
+        for (const Crossed& face : retired_) {
+          mesh_.complex_.set_facet_constraint(face.tet, face.slot, face.source);
+        }
+        marks_retired_ = false;
+      }
+      mesh_.transaction_open_ = false;
+    }
+    void retain() noexcept {
+      restore_constraints();
+      active_ = false;
     }
     void release() noexcept {
       active_ = false;
@@ -853,7 +1040,8 @@ class TetMesh {
   void next_stamp();
   bool marked(int32_t t) const {
     const Tetrahedron& current = tet(t);
-    return current.stamp == stamp_ && current.state == kInCavity;
+    return current.stamp == stamp_ &&
+           (current.state == kInCavity || current.state == kInCavityRecheck);
   }
   void mark(int32_t t) {
     Tetrahedron& current = complex_.tets[static_cast<std::size_t>(t)];
@@ -861,6 +1049,10 @@ class TetMesh {
     current.state = kInCavity;
   }
   void unmark(int32_t t) { complex_.tets[static_cast<std::size_t>(t)].state = 0; }
+
+  // First cell of vertex_star(a) order containing b (and, when `face`, also
+  // c, finite cells only), or -1; the walk stops at that cell.
+  int32_t first_star_cell(int32_t a, int32_t b, int32_t c, bool face);
 
   bool coincident(int32_t t, const double* p) const;
 
@@ -873,6 +1065,8 @@ class TetMesh {
   // Removes cavity tetrahedra whose cone over a boundary facet would not be
   // positively oriented (and ghosts cut off from their finite facet) until
   // the cavity is star-shaped from p; the tetrahedra containing p must stay.
+  // One sweep examines every cell; afterwards only the cavity neighbors of
+  // dropped cells are re-examined (worklist), one charged unit per check.
   Insertion shrink(int32_t origin);
 
   // Boundary facets, crossed constrained faces and the new constrained faces
@@ -897,6 +1091,17 @@ class TetMesh {
   NativeVector<double> original_points_{NativeAllocator<double>(memory_owner_)};
   NativeVector<std::array<int32_t, 4>> original_faces_{
       NativeAllocator<std::array<int32_t, 4>>(memory_owner_)};
+  // Immutable original-row broad phase, partitioned by logical source.
+  // Bounds are exact coordinate extrema; internal nodes enclose both children.
+  struct SourceFaceNode {
+    double lower[3], upper[3];
+    std::size_t left = 0, right = 0;
+    int32_t row = -1;
+  };
+  NativeVector<SourceFaceNode> source_face_nodes_{
+      NativeAllocator<SourceFaceNode>(memory_owner_)};
+  NativeVector<std::pair<int32_t, std::size_t>> source_face_roots_{
+      NativeAllocator<std::pair<int32_t, std::size_t>>(memory_owner_)};
   NativeVector<std::array<int32_t, 3>> original_segments_{
       NativeAllocator<std::array<int32_t, 3>>(memory_owner_)};
   NativeVector<double> face_tolerance_{NativeAllocator<double>(memory_owner_)};
@@ -908,6 +1113,27 @@ class TetMesh {
       NativeAllocator<std::pair<int32_t, int32_t>>(memory_owner_)};
   NativeVector<SourceWitness> witnesses_{NativeAllocator<SourceWitness>(memory_owner_)};
   NativeVector<SourceRefusal> source_refusals_{NativeAllocator<SourceRefusal>(memory_owner_)};
+  struct CurvedSource {
+    int32_t source;
+    double tolerance;
+    std::array<std::uint8_t, 32> digest;
+  };
+  // Sorted by source; empty without a curved declaration.
+  NativeVector<CurvedSource> curved_sources_{NativeAllocator<CurvedSource>(memory_owner_)};
+  NativeVector<CurvedRowClaim> curved_claims_{NativeAllocator<CurvedRowClaim>(memory_owner_)};
+  // Committed claimed rows (source, row), sorted; the authored-row index
+  // never contains them, so candidate queries scan them separately.
+  NativeVector<std::pair<int32_t, int32_t>> claimed_rows_{
+      NativeAllocator<std::pair<int32_t, int32_t>>(memory_owner_)};
+  // Face-ancestry memo (see cached_face_ancestry); mutable cache state only.
+  mutable NativeVector<std::array<int32_t, 4>> ancestry_faces_{
+      NativeAllocator<std::array<int32_t, 4>>(memory_owner_)};
+  mutable NativeVector<double> ancestry_points_{NativeAllocator<double>(memory_owner_)};
+  mutable NativeVector<SourceWitness> ancestry_witnesses_{
+      NativeAllocator<SourceWitness>(memory_owner_)};
+  mutable NativeVector<int64_t> ancestry_offsets_{NativeAllocator<int64_t>(memory_owner_)};
+  mutable NativeVector<int32_t> ancestry_rows_{NativeAllocator<int32_t>(memory_owner_)};
+  mutable bool ancestry_cached_ = false;
   bool work_exhausted_ = false;
   NativeVector<int8_t> dimension_{NativeAllocator<int8_t>(memory_owner_)};
   NativeVector<double> protection_{NativeAllocator<double>(memory_owner_)};
@@ -942,11 +1168,16 @@ class TetMesh {
   NativeVector<int32_t> cavity_{NativeAllocator<int32_t>(memory_owner_)};
   NativeVector<int32_t> stack_{NativeAllocator<int32_t>(memory_owner_)};
   NativeVector<int32_t> scratch_star_{NativeAllocator<int32_t>(memory_owner_)};
+  // Discarded edge rings, collapse neighbors and source-facet contributors.
+  NativeVector<int32_t> scratch_ring_{NativeAllocator<int32_t>(memory_owner_)};
+  NativeVector<int32_t> facet_contributors_{NativeAllocator<int32_t>(memory_owner_)};
   NativeVector<BoundaryFacet> boundary_{NativeAllocator<BoundaryFacet>(memory_owner_)};
   NativeVector<Crossed> crossed_{NativeAllocator<Crossed>(memory_owner_)};
   NativeVector<std::uint64_t> boundary_edges_{NativeAllocator<std::uint64_t>(memory_owner_)};
   NativeVector<std::pair<std::uint64_t, int32_t>> new_faces_{
       NativeAllocator<std::pair<std::uint64_t, int32_t>>(memory_owner_)};
+  // Declared last so its destructor rolls back before edit_ is destroyed.
+  PreparedReplacement retained_edit_;
 };
 
 // A call-local allowance can only narrow the owning cumulative allowance.

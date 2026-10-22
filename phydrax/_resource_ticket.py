@@ -92,6 +92,10 @@ class BatchTicket(Protocol):
         self, owner: ManagedBytesContributor, bound: int | None, /
     ) -> None: ...
 
+    def managed_storage_headroom(self, owner: ManagedBytesContributor, /) -> int:
+        """Return the largest bound ``owner`` can take now without a refusal."""
+        ...
+
     def __enter__(self) -> BatchTicket: ...
 
     def __exit__(
@@ -151,6 +155,12 @@ class ManagedBytesContributor:
         self.ticket.set_managed_storage(self, bound)
         self._bound = bound
 
+    def headroom(self) -> int | None:
+        """Return the largest admissible bound, or ``None`` once closed."""
+        if self._closed:
+            return None
+        return self.ticket.managed_storage_headroom(self)
+
     def close(self) -> None:
         if not self._closed:
             self.ticket.set_managed_storage(self, None)
@@ -185,6 +195,8 @@ class HostBatchTicket:
 
     Root bounds are supplied by the request's existing domain limits. Capacity
     counters are simultaneous live values; settled evidence retains their peaks.
+    A refusal while children are live raises its evidence immediately, admits
+    only releases, and settles when the last child settles.
     """
 
     def __init__(
@@ -221,11 +233,19 @@ class HostBatchTicket:
         self._lock = threading.RLock()
         self._entered = False
         self._settled = False
+        self._refused = False
 
     def _require_live(self) -> None:
         if self._settled:
             raise RuntimeError(
                 f"HostBatchTicket.settled must be false; got {self._settled}."
+            )
+
+    def _require_unrefused(self) -> None:
+        self._require_live()
+        if self._refused:
+            raise RuntimeError(
+                f"HostBatchTicket.refused must be false; got {self._refused}."
             )
 
     @property
@@ -253,7 +273,7 @@ class HostBatchTicket:
 
     def __enter__(self) -> HostBatchTicket:
         with self._lock:
-            self._require_live()
+            self._require_unrefused()
             if self._entered:
                 raise RuntimeError(
                     f"HostBatchTicket.entered must be false; got {self._entered}."
@@ -273,7 +293,7 @@ class HostBatchTicket:
         work = _bound(work, "work")
         queries = _bound(geometry_queries, "geometry_queries")
         with self._lock:
-            self._require_live()
+            self._require_unrefused()
             cavity = (
                 self._own_cavity
                 if cavity_cells is None
@@ -324,7 +344,7 @@ class HostBatchTicket:
         )
 
     def managed_storage(self) -> ManagedBytesContributor:
-        self._require_live()
+        self._require_unrefused()
         return ManagedBytesContributor(self)
 
     def set_managed_storage(
@@ -337,15 +357,21 @@ class HostBatchTicket:
         amount = 0 if bound is None else _bound(bound, "managed_bytes")
         with self._lock:
             prior = self._managed_components.get(owner, 0)
-            if self._settled:
+            if self._settled or self._refused:
                 if amount > prior:
                     raise RuntimeError(
-                        f"HostBatchTicket.managed_storage must only release capacity after settlement; got amount={amount}, prior={prior}."
+                        f"HostBatchTicket.managed_storage must only release capacity after refusal or settlement; got amount={amount}, prior={prior}."
                     )
             else:
                 aggregate = self._own_bytes - prior + amount
                 if aggregate > self.bytes_upper - self._reserved_bytes:
                     self.refuse(0, bytes_upper=aggregate)
+            if (
+                bound is not None
+                and owner in self._managed_components
+                and amount == prior
+            ):
+                return
             if bound is None:
                 self._managed_components.pop(owner, None)
             else:
@@ -356,6 +382,18 @@ class HostBatchTicket:
             self._observe_capacity()
         if not self._settled and self._parent is not None:
             self._parent._observe_descendant_capacity()
+
+    def managed_storage_headroom(self, owner: ManagedBytesContributor, /) -> int:
+        if owner.ticket is not self:
+            raise ValueError(
+                f"HostBatchTicket.owner.ticket must be this ticket; got {type(owner.ticket).__qualname__} with different identity."
+            )
+        with self._lock:
+            prior = self._managed_components.get(owner, 0)
+            if self._settled or self._refused:
+                return prior
+            # set_managed_storage refuses aggregate > bytes_upper - reserved.
+            return prior + self.bytes_upper - self._reserved_bytes - self._own_bytes
 
     def _observe_descendant_capacity(self) -> None:
         with self._lock:
@@ -379,7 +417,7 @@ class HostBatchTicket:
             cavity_upper=cavity_upper,
         )
         with self._lock:
-            self._require_live()
+            self._require_unrefused()
             if (
                 child.work_upper > self.remaining_work_units
                 or child.queries_upper > self.remaining_geometry_queries
@@ -400,7 +438,7 @@ class HostBatchTicket:
         return child
 
     def checkpoint(self) -> None:
-        self._require_live()
+        self._require_unrefused()
 
     def settle(self) -> None:
         with self._lock:
@@ -421,6 +459,9 @@ class HostBatchTicket:
                 parent._children_work += self.work_units + self._children_work
                 parent._children_queries += self.geometry_queries + self._children_queries
                 parent._observe_capacity()
+                if parent._refused and not parent._children:
+                    parent.settle()
+                    return
             if parent._parent is not None:
                 parent._parent._observe_descendant_capacity()
 
@@ -439,17 +480,24 @@ class HostBatchTicket:
             _bound(cavity_upper, "cavity_upper"),
             _bound(bytes_upper, "bytes_upper"),
         )
-        evidence = (
-            self.remaining_work_units,
-            self.remaining_geometry_queries,
-            self.cavity_upper - self._own_cavity - self._reserved_cavity,
-            self.bytes_upper - self._own_bytes - self._reserved_bytes,
-            self.work_units + self._children_work,
-            self.geometry_queries + self._children_queries,
-            self.cavity_cells,
-            self.managed_bytes,
-        )
-        self.settle()
+        with self._lock:
+            self._require_unrefused()
+            evidence = (
+                self.remaining_work_units,
+                self.remaining_geometry_queries,
+                self.cavity_upper - self._own_cavity - self._reserved_cavity,
+                self.bytes_upper - self._own_bytes - self._reserved_bytes,
+                self.work_units + self._children_work,
+                self.geometry_queries + self._children_queries,
+                self.cavity_cells,
+                self.managed_bytes,
+            )
+            # Live children keep their reservations until they unwind; the last
+            # child's settlement commits this refused prefix exactly once.
+            if self._children:
+                self._refused = True
+            else:
+                self.settle()
         raise HostBatchEstimateError(requested, evidence)
 
     def __exit__(
@@ -458,5 +506,15 @@ class HostBatchTicket:
         error: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        if not self._settled:
-            self.settle()
+        if self._settled:
+            return
+        try:
+            for child in tuple(self._children):
+                child.__exit__(error_type, error, traceback)
+            with self._lock:
+                if not self._settled:
+                    self.settle()
+        except BaseException as failure:
+            if error is None:
+                raise
+            error.add_note(f"Host batch settlement also failed: {failure}")

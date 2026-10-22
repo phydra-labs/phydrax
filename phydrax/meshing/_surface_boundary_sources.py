@@ -83,8 +83,10 @@ import phydrax.meshing._surface_boundary_operations as boundary_operations_owner
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cell_complex import PolygonalConnectivity
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._triangular import TriangleConnectivity
 from ..geometry._embedding_state import MeshCertificateFinding
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartCover,
@@ -299,6 +301,108 @@ def _prepare_chart_cover_images(
     )
 
 
+def _triangle_side_ids(mesh: cell_mesh_owner.CellMesh) -> np.ndarray:
+    """Resolve ordered triangle sides through nominal vertex incidence."""
+    if mesh.topological_dimension != 2 or any(
+        block.cell_kind != "triangle" for block in mesh.blocks
+    ):
+        raise ValueError("Boundary occurrence subdivision requires triangular incidence")
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, (TriangleConnectivity, PolygonalConnectivity)):
+        edges = np.asarray(connectivity.edges)
+    elif isinstance(connectivity, cell_mesh_owner.SimplicialConnectivity):
+        edges = np.asarray(connectivity.entities[1])
+    else:
+        raise ValueError("Boundary occurrence subdivision requires triangular incidence")
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids)
+    lookup = {
+        tuple(sorted((int(first), int(last)))): int(identifier)
+        for (first, last), identifier in zip(edges, edge_ids, strict=True)
+    }
+    triangles = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
+    return np.asarray(
+        [
+            [lookup[tuple(sorted((int(cell[first]), int(cell[last]))))]
+             for first, last in ((0, 1), (1, 2), (2, 0))]
+            for cell in triangles
+        ],
+        dtype=np.int64,
+    ).reshape((-1, 3))
+
+
+def _subdivide_boundary_occurrences(
+    source: domain_boundary_owner.MeshingDomainBoundarySource,
+    mesh: cell_mesh_owner.CellMesh,
+    lineage: lineage_owner.MeshLineage,
+    target: cell_mesh_owner.CellMesh,
+) -> domain_boundary_owner.MeshingDomainBoundarySource:
+    """Transport nominal sides only through cell and edge lineage identities."""
+    if (
+        source.boundary_cell_ids is None
+        or source.boundary_patch_ids is None
+        or source.boundary_occurrences is None
+    ):
+        raise ValueError("Subdivision requires authored root boundary occurrences")
+    before_edges = _triangle_side_ids(mesh)
+    after_edges = _triangle_side_ids(target)
+    lineage.validate_complete(mesh, target)
+    cell_ids = np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
+    target_ids = np.concatenate([np.asarray(block.global_ids) for block in target.blocks])
+    source_rows = {int(value): row for row, value in enumerate(source.boundary_cell_ids)}
+    mesh_rows = {int(value): row for row, value in enumerate(cell_ids)}
+    if set(source_rows) != set(mesh_rows):
+        raise ValueError("Boundary occurrence cells must exactly cover the subdivision root")
+    cells = lineage.entity_lineage(2)
+    edges = lineage.entity_lineage(1)
+    cell_parents: dict[int, set[int]] = {}
+    edge_parents: dict[int, set[int]] = {}
+    for record, parents in ((cells, cell_parents), (edges, edge_parents)):
+        for parent, child in zip(
+            np.asarray(record.source_global_ids), np.asarray(record.target_global_ids), strict=True
+        ):
+            parents.setdefault(int(child), set()).add(int(parent))
+    bank = np.full((target_ids.size, 3, 3), -1, dtype=np.int32)
+    patches = np.empty(target_ids.size, dtype=np.int32)
+    covered: set[tuple[int, int]] = set()
+    for row, identifier in enumerate(target_ids):
+        parents = cell_parents.get(int(identifier), set())
+        if len(parents) != 1:
+            raise ValueError("Subdivision cell requires one explicit parent occurrence")
+        parent = next(iter(parents))
+        if parent not in source_rows:
+            raise ValueError("Subdivision references a foreign parent cell")
+        source_row = source_rows[parent]
+        patches[row] = source.boundary_patch_ids[source_row]
+        for side, edge in enumerate(after_edges[row]):
+            inherited = edge_parents.get(int(edge), set())
+            candidates = [
+                slot for slot, original_edge in enumerate(before_edges[mesh_rows[parent]])
+                if int(original_edge) in inherited
+            ]
+            if len(candidates) > 1:
+                raise ValueError("Subdivision side has ambiguous parent side identity")
+            if candidates:
+                bank[row, side] = source.boundary_occurrences[source_row, candidates[0]]
+                covered.add((source_row, candidates[0]))
+            elif inherited:
+                raise ValueError("Subdivision side refers to a foreign parent side")
+    required = {
+        (int(row), int(side))
+        for row, side in np.argwhere(np.any(source.boundary_occurrences != -1, axis=2))
+    }
+    if not required.issubset(covered):
+        raise ValueError("Subdivision is missing a child for an authored parent side")
+    return domain_boundary_owner.MeshingDomainBoundarySource(
+        source.domain,
+        source.patches,
+        resolution=source.resolution,
+        chart_triangulations=source.chart_triangulations,
+        boundary_cell_ids=target_ids.astype(np.int64),
+        boundary_patch_ids=patches,
+        boundary_occurrences=bank,
+    )
+
+
 @final
 class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
     """Bind a lineage subdivision chain to source chart coverage and coordinate bounds."""
@@ -307,6 +411,7 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
     support: surface_source_support_owner.PreparedSurfaceSourceSupport
     lineages: tuple[lineage_owner.MeshLineage, ...]
     targets: tuple[cell_mesh_owner.CellMesh, ...]
+    current_boundary_source: domain_boundary_owner.MeshingDomainBoundarySource
     geometry: cell_geometry_owner.CellGeometrySpec
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
@@ -349,6 +454,8 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
                 "SurfaceSubdivisionBoundarySource.targets must contain one mesh for each nonempty lineage epoch; got misaligned or empty epochs"
             )
         topology = support.root_topology_id
+        current_source = root
+        current_mesh = original.mesh
         for lineage, target in zip(lineages, targets, strict=True):
             if (
                 lineage.source_topology_id != topology
@@ -359,6 +466,10 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
                     "SurfaceSubdivisionBoundarySource.lineages must chain serial root and target topologies; got an incompatible epoch"
                 )
             topology = target.topology_id
+            current_source = _subdivide_boundary_occurrences(
+                current_source, current_mesh, lineage, target
+            )
+            current_mesh = target
         restriction = geometry.restriction_source
         if restriction is not None:
             if (
@@ -376,6 +487,7 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
             geometry,
         )
         self.source_id, self.source_revision = root.source_id, root.source_revision
+        self.current_boundary_source = current_source
 
     @property
     def ambient_dimension(self) -> int:
@@ -390,6 +502,8 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
     def require_current(self) -> None:
         """Re-establish source support identity and every retained binding after restoration."""
         self.support.require_current()
+        self.root.require_current()
+        self.current_boundary_source.require_current()
         rebuilt = SurfaceSubdivisionBoundarySource(
             self.root, self.support, self.lineages, self.targets, self.geometry
         )
@@ -400,6 +514,11 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
             raise ValueError(
                 "SurfaceSubdivisionBoundarySource.source must retain root identity and revision; got different source metadata"
             )
+        if (
+            rebuilt.current_boundary_source.boundary_occurrence_id
+            != self.current_boundary_source.boundary_occurrence_id
+        ):
+            raise ValueError("Restored subdivision boundary occurrences differ from exact lineage")
 
     @checked
     def boundary_chart_cover(
@@ -441,6 +560,9 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
                 self.source_revision,
                 findings=tuple(findings),
                 resource_counts=cover.resource_counts,
+                affine_chain_resources=tuple(
+                    row.as_source() for row in cover.affine_chain_resources
+                ),
             )
         prepared = _prepare_subdivision_cover(root, cover, proof)
         root_coordinates, root_vertex_ids = (
@@ -515,6 +637,9 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
             self.source_revision,
             findings=tuple(findings),
             resource_counts=cover.resource_counts,
+            affine_chain_resources=tuple(
+                row.as_source() for row in cover.affine_chain_resources
+            ),
         )
 
     @staticmethod
@@ -593,15 +718,33 @@ class SurfaceChartBoundarySource(StrictModule, NonTrainableState):
         | sphere_deformation_owner.PreparedSphereChartDeformation,
         predecessor_fidelity: source_fidelity_owner.SourceFidelityCertificate,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
+        """Bind one chart epoch; a sphere correspondence is proved under ``budget``.
 
+        The constructing request's ledger owns the sphere proof (reusing its
+        producer's proof inside the same request); without one, the records
+        owner proves it under a single restoration ticket.
+        """
         support.require_current()
-        deformation.require_bound(
-            deformation.source_mesh,
-            deformation.source_geometry,
-            deformation.target_mesh,
-            deformation.target_geometry,
-        )
+        if isinstance(
+            deformation, sphere_deformation_owner.PreparedSphereChartDeformation
+        ):
+            deformation.require_bound(
+                deformation.source_mesh,
+                deformation.source_geometry,
+                deformation.target_mesh,
+                deformation.target_geometry,
+                budget=budget,
+            )
+        else:
+            deformation.require_bound(
+                deformation.source_mesh,
+                deformation.source_geometry,
+                deformation.target_mesh,
+                deformation.target_geometry,
+            )
         predecessor_fidelity.binding.require(
             deformation.source_mesh, deformation.source_geometry
         )
@@ -637,15 +780,48 @@ class SurfaceChartBoundarySource(StrictModule, NonTrainableState):
 
     def require_current(self) -> None:
         self.support.require_current()
-        self.deformation.require_bound(
-            self.deformation.source_mesh,
-            self.deformation.source_geometry,
-            self.deformation.target_mesh,
-            self.deformation.target_geometry,
-        )
+        # The immutable sphere correspondence was proved when this epoch was
+        # bound; consumers that read its pieces validate them under their own
+        # request ledger.
+        if not isinstance(
+            self.deformation, sphere_deformation_owner.PreparedSphereChartDeformation
+        ):
+            self.deformation.require_bound(
+                self.deformation.source_mesh,
+                self.deformation.source_geometry,
+                self.deformation.target_mesh,
+                self.deformation.target_geometry,
+            )
         self.predecessor_fidelity.binding.require(
             self.deformation.source_mesh, self.deformation.source_geometry
         )
+
+    def require_target_binding(
+        self,
+        mesh: cell_mesh_owner.CellMesh,
+        geometry: cell_geometry_owner.CellGeometrySpec,
+        /,
+    ) -> None:
+        """Bind this epoch's correspondence to one live target mesh and map.
+
+        A sphere correspondence was proved when this epoch was bound, so only
+        its endpoint identities are compared here.
+        """
+        deformation = self.deformation
+        if not isinstance(
+            deformation, sphere_deformation_owner.PreparedSphereChartDeformation
+        ):
+            deformation.require_bound(
+                deformation.source_mesh, deformation.source_geometry, mesh, geometry
+            )
+            return
+        if (mesh.mesh_id, cell_geometry_id(geometry)) != (
+            deformation.target_mesh.mesh_id,
+            deformation.target_geometry_id,
+        ):
+            raise ValueError(
+                "sphere_chart.require_bound.binding must satisfy the declared geometry and cell identities; got Sphere correspondence is stale for these coordinate maps or cells."
+            )
 
     def boundary_distance(self, points: np.ndarray, /) -> SourceBoundaryDistance:
         return self.root.boundary_distance(points)
@@ -687,9 +863,13 @@ class SurfaceChartBoundarySource(StrictModule, NonTrainableState):
                 return original
             findings = original.findings
             resource_counts = original.resource_counts
+            affine_chain_resources = tuple(
+                row.as_source() for row in original.affine_chain_resources
+            )
         else:
             findings = ()
             resource_counts = ()
+            affine_chain_resources = ()
         mesh = self.deformation.target_mesh
 
         if mesh.entity_set(2).count > maximum_patches:
@@ -705,6 +885,8 @@ class SurfaceChartBoundarySource(StrictModule, NonTrainableState):
                         "source_chart_cover_capacity", "unresolved", "mesh"
                     ),
                 ),
+                resource_counts=resource_counts,
+                affine_chain_resources=affine_chain_resources,
             )
         prepared = _prepare_chart_cover_images(self, budget)
         return SourceBoundaryChartCover(
@@ -716,6 +898,7 @@ class SurfaceChartBoundarySource(StrictModule, NonTrainableState):
             self.source_revision,
             findings=findings,
             resource_counts=resource_counts,
+            affine_chain_resources=affine_chain_resources,
         )
 
 

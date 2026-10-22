@@ -17,8 +17,10 @@ dependency chain.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from contextlib import nullcontext
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from fractions import Fraction
 from math import atan2, isfinite, pi
 from typing import assert_never, Literal, Never, TypeAlias
@@ -34,6 +36,10 @@ from .._physical import SpatialCoordinateContract
 from .._publication import PublicationReceipt
 from .._strict import StrictModule
 from .._validation import finite_real_scalar, positive_finite_float, positive_integer
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from ..geometry._atlas import (
     AbstractTrimCurve,
     CurveTrimLoop,
@@ -42,6 +48,7 @@ from ..geometry._atlas import (
     TrimDomain,
 )
 from ..geometry._interval_enclosure import prepare_interval_function
+from ..geometry.brep._carrier_pieces import admit_carrier_fingerprint, carrier_payload
 from ..geometry.brep._constructors import (
     assemble_brep_model,
     brep_trim_domain,
@@ -60,16 +67,21 @@ from ..geometry.brep._curve_approximation_bounds import (
     CoupledApproximationEvidence,
 )
 from ..geometry.brep._curve_approximation_topology import (
+    branch_homotopy_box,
     BranchApproximationTopologyEvidence,
     BranchApproximationTopologyResourceError,
     BranchTrimHomotopyTube,
+    BranchTrimJunction,
     BranchTrimSeparationEvidence,
     certify_branch_approximation_topology,
     certify_branch_trim_separation,
+    prepare_root_gauge,
 )
 from ..geometry.brep._gap_evidence import BRepGapEvidence, certify_brep_gaps
 from ..geometry.brep._intersection import (
+    CurveSurfaceIntersectionRoot,
     NativePeriodEndpoint,
+    original_curve_surface_root_preparation,
     RootEndpoint,
     TrimIntersectionRoot,
     TrimRootEndpoint,
@@ -123,6 +135,7 @@ from ..geometry.brep._patches import (
     TorusPatch,
 )
 from ..geometry.brep._placed import PlacedSurface
+from ..geometry.brep._request_preparations import TrimRequestPreparations
 from ..geometry.brep._root_bindings import (
     BRepCurveSurfaceLift,
     BRepRootSupport,
@@ -735,11 +748,12 @@ def build_cad_import_tolerance_evidence(
     /,
     *,
     unrepresentable_losses: Sequence[AdapterLoss] = (),
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportToleranceEvidence:
     """Carry source tolerances beside certified gaps under the model declared limit."""
     return CadImportToleranceEvidence(
         model,
-        certify_brep_gaps(model),
+        certify_brep_gaps(model, budget=coordinate_budget),
         declared,
         unrepresentable_losses=unrepresentable_losses,
     )
@@ -1247,6 +1261,8 @@ def certified_cad_export_tolerances(
     model: BRepModel,
     approximations: Sequence[CadCurveApproximation] = (),
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadExportTolerances:
     """Return entity tolerances and uncertainty from gap and substitution proofs.
 
@@ -1260,7 +1276,7 @@ def certified_cad_export_tolerances(
             model.source_id,
             "BRepModel.geometry must be present for CAD export; got None",
         )
-    evidence = certify_brep_gaps(model)
+    evidence = certify_brep_gaps(model, budget=coordinate_budget)
     bounds = _gap_entity_bounds(evidence)
     substitutions = _cad_export_substitution_bounds(model, geometry, approximations)
     for entity, deviation in substitutions.items():
@@ -1289,6 +1305,206 @@ def certified_cad_export_tolerances(
         face_bounds=rows[2],
         uncertainty=max((value for row in rows for value in row), default=0.0),
     )
+
+
+def _export_content_payload(value: object) -> object:
+    """Describe live export inputs without trusting their declared identities."""
+    if isinstance(value, StrictModule):
+        return carrier_payload(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            item.name: _export_content_payload(getattr(value, item.name))
+            for item in fields(value)
+        }
+    if isinstance(value, Fraction):
+        return (value.numerator, value.denominator)
+    if isinstance(value, Mapping):
+        return {key: _export_content_payload(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return tuple(_export_content_payload(item) for item in value)
+    return value
+
+
+def _export_content_binding(
+    values: tuple[object, ...], budget: CoordinateEnclosureBudget
+) -> str:
+    with budget.temporary_scope():
+        admit_carrier_fingerprint(values, budget)
+        return canonical_fingerprint(_export_content_payload(values))
+
+
+def bounded_approximation_descriptor(
+    model: BRepModel,
+    approximations: Sequence[CadCurveApproximation],
+    policy: CadExportPolicy,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
+) -> str | None:
+    """Describe a new bounded representation, not a relaxed source import.
+
+    The declared gap uses the frozen export distance/parameter limits, never
+    an achieved residual. A Jacobian Frobenius bound on every certified UV
+    homotopy box bounds the surface lift of the whole straight UV homotopy.
+    Import independently proves the actual emitted carrier gap.
+    """
+    if not approximations:
+        return None
+    geometry = model.geometry
+    fit = policy.intersection_approximation
+    if geometry is None or fit is None:
+        raise refuse("inexact-export", "bounded-approximation", "A bounded representation requires source geometry and its frozen fit policy.")
+    branches = {
+        curve.branch_id: curve
+        for curve in geometry.curves
+        if isinstance(curve, IntersectionCurve)
+    }
+    rows: list[dict[str, str | float]] = []
+    gap_values: list[float] = []
+    request = (
+        coordinate_source_request((geometry, tuple(approximations)))
+        if coordinate_budget is None
+        else nullcontext(coordinate_budget)
+    )
+    with request as budget:
+        source_binding = _export_content_binding(
+            (model, geometry, model.report, policy), budget
+        )
+        descriptor_binding = _export_content_binding(
+            (source_binding, tuple(approximations)), budget
+        )
+        cache_key = (id(model), id(geometry), policy.policy_id)
+        prepared = budget.cad_export_preparation_cache.get(cache_key)
+        if (
+            prepared is not None
+            and prepared.owner is model
+            and prepared.source_geometry is geometry
+            and prepared.source_binding == source_binding
+            and prepared.descriptor_binding == descriptor_binding
+            and prepared.descriptor is not None
+        ):
+            return prepared.descriptor
+        for approximation in approximations:
+            branch = branches[approximation.branch_id]
+            spatial = fit.tolerance * approximation.distance_scale
+            parameter = fit.tolerance * approximation.parameter_scale
+            proof = approximation.continuous_evidence
+            if (
+                approximation.policy_id != fit.policy_id
+                or proof.distance_bound > spatial
+                or proof.parameter_bound > parameter
+            ):
+                raise refuse("inexact-export", approximation.branch_id, "The continuous approximation must meet its unchanged frozen export bounds.")
+            lipschitz = 0.0
+            for region, columns in (
+                (branch.first, slice(3, 5)),
+                (branch.second, slice(5, 7)),
+            ):
+                boxes = approximation.topology_evidence.homotopy_boxes[:, :, columns]
+                with budget.temporary_scope():
+                    budget.reserve(boxes.size + 64, 512)
+                    box = np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
+                    lower, upper = region.patch.derivative_bounds(box, order=1, budget=budget)
+                    # Frobenius dominates the Euclidean operator norm. The hull
+                    # encloses every cell's whole source-to-fit UV segment.
+                    bound = norm_upper(np.maximum(np.abs(lower), np.abs(upper)).reshape(-1))
+                    lipschitz = max(lipschitz, bound)
+            gap = _written_upper_bound(float(np.nextafter(
+                spatial + float(np.nextafter(lipschitz * parameter, np.inf)),
+                np.inf,
+            )))
+            gap_values.append(gap)
+            rows.append({
+                "source_branch_id": approximation.branch_id,
+                "approximation_id": approximation.approximation_id,
+                "spatial_bound": spatial,
+                "parameter_bound": parameter,
+                "distance_bound": proof.distance_bound,
+                "parameter_error": proof.parameter_bound,
+                "surface_jacobian_lipschitz": lipschitz,
+                "gap_bound": gap,
+            })
+        source_gap = certified_cad_export_tolerances(model, coordinate_budget=budget).uncertainty
+        descriptor = {
+            "representation": "bounded-coupled-approximation",
+            "source_model_id": model.model_id,
+            "source_geometry_id": geometry.geometry_id,
+            "rows": rows,
+            "source_gap_bound": source_gap,
+            "gap_bound": max(source_gap, *gap_values),
+        }
+        text = json.dumps(descriptor, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        decode_bounded_approximation_descriptor(text)
+        if prepared is not None and (
+            prepared.owner is model
+            and prepared.source_geometry is geometry
+            and prepared.source_binding == source_binding
+        ):
+            updated = replace(
+                prepared, descriptor_binding=descriptor_binding, descriptor=text
+            )
+            budget.retain_owner(updated)
+            budget.cad_export_preparation_cache[cache_key] = updated
+        return text
+
+
+def decode_bounded_approximation_descriptor(
+    text: str, *, length_factor: float = 1.0
+) -> float:
+    """Validate a complete frozen gap law; this is not a carrier-gap proof."""
+    def invalid() -> Never:
+        raise refuse("inconsistent-geometry", "bounded-approximation", "The bounded representation must carry a complete finite frozen distance + surface-Jacobian-Lipschitz * parameter-error law.")
+
+    try:
+        value = json.loads(text)
+    except (ValueError, TypeError):
+        invalid()
+    keys = {
+        "representation", "source_model_id", "source_geometry_id",
+        "rows", "source_gap_bound", "gap_bound",
+    }
+    if not isinstance(value, dict) or set(value) != keys:
+        invalid()
+    if (
+        value["representation"] != "bounded-coupled-approximation"
+        or any(not isinstance(value[key], str) or not value[key] for key in ("source_model_id", "source_geometry_id"))
+        or not isinstance(value["rows"], list) or not value["rows"]
+    ):
+        invalid()
+
+    def finite_bound(number: object) -> float:
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or not isfinite(number) or number < 0.0:
+            invalid()
+        return float(number)
+
+    row_keys = {
+        "source_branch_id", "approximation_id", "spatial_bound", "parameter_bound",
+        "distance_bound", "parameter_error", "surface_jacobian_lipschitz", "gap_bound",
+    }
+    gaps = [finite_bound(value["source_gap_bound"])]
+    for row in value["rows"]:
+        if not isinstance(row, dict) or set(row) != row_keys:
+            invalid()
+        if any(not isinstance(row[key], str) or not row[key] for key in ("source_branch_id", "approximation_id")):
+            invalid()
+        numbers = {key: finite_bound(row[key]) for key in row_keys - {"source_branch_id", "approximation_id"}}
+        if numbers["distance_bound"] > numbers["spatial_bound"] or numbers["parameter_error"] > numbers["parameter_bound"]:
+            invalid()
+        expected = _written_upper_bound(float(np.nextafter(
+            numbers["spatial_bound"] + float(np.nextafter(
+                numbers["surface_jacobian_lipschitz"] * numbers["parameter_bound"], np.inf
+            )), np.inf
+        )))
+        if numbers["gap_bound"] != expected:
+            invalid()
+        gaps.append(numbers["gap_bound"])
+    gap = finite_bound(value["gap_bound"])
+    factor = finite_bound(length_factor)
+    if factor <= 0.0 or gap != max(gaps):
+        invalid()
+    converted = gap * factor
+    if not isfinite(converted):
+        invalid()
+    return float(np.nextafter(converted, np.inf)) if factor != 1.0 else gap
 
 
 # --------------------------------------------------------------------- units
@@ -1462,9 +1678,9 @@ def explicit_carrier(curve: AbstractCurve, /) -> AbstractCurve:
     Format writers emit only these families. A periodic p-curve sheet is its
     source translated by the binary representative of its symbolic
     native-period multiple; a diagonal affine UV transport maps the source
-    coefficientwise; an isoline of a source sphere or torus is the closed-form
-    circle it parameterizes. Nothing is sampled or refitted. Curves without
-    such a rule are returned unchanged for the writer to refuse.
+    coefficientwise; analytic source isolines become the line or circle they
+    parameterize. Nothing is sampled or refitted. Curves without such a rule
+    are returned unchanged for the writer to refuse.
     """
     match curve:
         case PeriodicPCurve() | AffinePCurve():
@@ -1490,6 +1706,23 @@ def explicit_carrier(curve: AbstractCurve, /) -> AbstractCurve:
                 )
             except ValueError:
                 return curve
+        case SurfaceIsoparametricCurve(surface=CylinderPatch() as cylinder):
+            first = np.asarray(cylinder.first_axis)
+            second = np.asarray(cylinder.second_axis)
+            axis = np.asarray(cylinder.axis)
+            origin = np.asarray(cylinder.origin)
+            if curve.fixed_axis == 0:
+                radial = (
+                    np.cos(curve.fixed_value) * first
+                    + np.sin(curve.fixed_value) * second
+                )
+                return LineCurve(origin + float(cylinder.radius) * radial, axis)
+            return CircleCurve(
+                origin + curve.fixed_value * axis,
+                first,
+                second,
+                cylinder.radius,
+            )
         case SurfaceIsoparametricCurve(surface=SpherePatch() as sphere) if (
             curve.fixed_axis == 0
         ):
@@ -2327,11 +2560,16 @@ class CadStage:
     solids and occurrences; `CadStage.publish` recovers missing p-curves,
     seam representatives, pole edges and parameter boxes and publishes one
     validated `BRepModel`.
+    Winding conic bands use source-proved chart cuts: source-ring subdivisions
+    propagate through every incident face, authored vertices remain present,
+    and each derived chart seam cancels between its two opposite uses.
+    Toleranced authored incidences are not promoted to zero-gap source proofs.
     """
 
     scale: float
     fit_policy: CadCurveFitPolicy | None
     relative_geometric_tolerance: float = 1.0e-8
+    bounded_approximation_gap: float | None = None
     vertices: list[np.ndarray] = field(default_factory=list)
     curves: list[AbstractCurve] = field(default_factory=list)
     edge_curves: list[int] = field(default_factory=list)
@@ -2354,6 +2592,11 @@ class CadStage:
         int,
         tuple[AbstractSurfacePatch | None, Literal[0, 1] | None, Fraction],
     ] = field(default_factory=dict)
+    split_endpoint_phases: dict[
+        int, tuple[Fraction | None, Fraction | None]
+    ] = field(default_factory=dict)
+    split_period_surfaces: dict[int, AbstractSurfacePatch] = field(default_factory=dict)
+    _coordinate_budget: CoordinateEnclosureBudget | None = field(default=None, init=False)
 
     @property
     def tolerance(self) -> float:
@@ -2898,7 +3141,9 @@ class CadStage:
         first, last = self.edge_ranges[coedge.edge]
         parameter = first if (coedge.sense > 0) == start else last
 
-        with coordinate_source_request((pcurve, parameter)) as budget:
+        with coordinate_source_request(
+            (pcurve, parameter), budget=self._coordinate_budget
+        ) as budget:
             return exact_curve_parameter_point(
                 pcurve, Fraction(parameter), coordinate_budget=budget
             )
@@ -3069,7 +3314,11 @@ class CadStage:
         for loop in loops:
             for coedge, pcurve in loop:
                 first, last = self.edge_ranges[coedge.edge]
-                boxes.append(np.asarray(pcurve.bounding_box(first, last)))
+                boxes.append(
+                    np.asarray(
+                        pcurve.bounding_box(first, last, budget=self._coordinate_budget)
+                    )
+                )
         stacked = np.stack(boxes)
         box = np.stack((np.min(stacked[:, 0], axis=0), np.max(stacked[:, 1], axis=0)))
         natural = natural_box(patch)
@@ -3079,10 +3328,404 @@ class CadStage:
         # the represented source; only a source-declared domain may clip here.
         return box
 
+    @staticmethod
+    def _ring_frame_phase(
+        patch: AbstractSurfacePatch, curve: AbstractCurve, /
+    ) -> tuple[Fraction, int] | None:
+        """Prove a native quarter-turn from frame coefficients, never an angle fit."""
+        if not isinstance(patch, (CylinderPatch, TorusPatch)) or not isinstance(
+            curve, CircleCurve
+        ):
+            return None
+        x, y = np.asarray(patch.first_axis), np.asarray(patch.second_axis)
+        frames = ((x, y), (y, -x), (-x, -y), (-y, x))
+        for quarter, (first, second) in enumerate(frames):
+            if np.array_equal(curve.first_axis, first):
+                for sense in (1, -1):
+                    if np.array_equal(curve.second_axis, sense * second):
+                        return Fraction(quarter if quarter < 3 else -1, 4), sense
+        return None
+
+    def _ring_pcurve(
+        self, face: StagedFace, coedge: StagedCoedge, /
+    ) -> AbstractCurve:
+        curve = self.curves[self.edge_curves[coedge.edge]]
+        pcurve = self._coedge_pcurve(face, coedge)
+        frame = self._ring_frame_phase(face.patch, curve)
+        if (
+            coedge.pcurve is not None
+            or frame is None
+            or not isinstance(pcurve, LineCurve)
+        ):
+            return pcurve
+        phase, sense = frame
+        if not phase:
+            return pcurve
+        # A rational affine map of a native period keeps its irrational atom.
+        # The source frame, not the rounded atan2 recovery, owns this phase.
+        source = LineCurve(
+            (0.0, float(pcurve.origin[1])), (float(Fraction(sense) / phase), 0.0)
+        )
+        return AffinePCurve(
+            PeriodicPCurve(source, face.patch, (1, 0)),
+            ((phase, Fraction()), (Fraction(), Fraction(1))),
+            (Fraction(), Fraction()),
+        )
+
+    def _split_periodic_bands(self) -> None:
+        """Refine all incident uses before cutting winding faces into chart loops.
+
+        Original curve definitions and authored vertices remain in their banks.
+        Only topology is subdivided, with explicit source-entity ancestry. The
+        canonical source interval is one native turn; every original endpoint
+        remains a split point rather than being discarded by seam rebasing.
+        """
+        plans = []
+        cuts: dict[int, set[Fraction]] = {}
+        owners: dict[int, AbstractSurfacePatch] = {}
+        for face in self.faces:
+            if len(face.loops) != 2 or any(len(loop) != 1 for loop in face.loops):
+                continue
+            rings = [loop[0] for loop in face.loops]
+            frames = []
+            for ring in rings:
+                edge = ring.edge
+                first, last = self.edge_ranges[edge]
+                index = self.edge_curves[edge]
+                frame = (
+                    None
+                    if index < 0
+                    else self._ring_frame_phase(face.patch, self.curves[index])
+                )
+                if (
+                    frame is None
+                    or self.edge_vertices[edge][0] != self.edge_vertices[edge][1]
+                    or last != first + _TWO_PI
+                ):
+                    break
+                frames.append(frame)
+            if len(frames) != 2:
+                continue
+            if frames[0][1] * rings[0].sense != -frames[1][1] * rings[1].sense:
+                continue
+            phases = [(-phase * sense) % 1 for phase, sense in frames]
+            plans.append((face, phases))
+            for ring, phase in zip(rings, phases, strict=True):
+                cuts.setdefault(ring.edge, {Fraction()}).add(phase)
+                owners.setdefault(ring.edge, face.patch)
+        if not plans:
+            return
+        replacements: dict[int, list[int]] = {}
+        cut_vertices: dict[tuple[int, Fraction], int] = {}
+        labels = dict(self.provenance)
+        for edge, phases in sorted(cuts.items()):
+            curve_index = self.edge_curves[edge]
+            curve = self.curves[curve_index]
+            assert isinstance(curve, CircleCurve)
+            original_vertex = self.edge_vertices[edge][0]
+            original_parameter = self.edge_ranges[edge][0]
+            axes = (
+                np.asarray(curve.first_axis),
+                np.asarray(curve.second_axis),
+                -np.asarray(curve.first_axis),
+                -np.asarray(curve.second_axis),
+            )
+            radial_exact = tuple(
+                Fraction(float(value)) - Fraction(float(center))
+                for value, center in zip(
+                    self.vertices[original_vertex], np.asarray(curve.center), strict=True
+                )
+            )
+            original_phase = None
+            for quarter, axis in enumerate(axes):
+                direction = tuple(Fraction(float(value)) for value in axis)
+                if (
+                    sum(a * b for a, b in zip(radial_exact, direction, strict=True)) > 0
+                    and all(
+                        radial_exact[i] * direction[j] == radial_exact[j] * direction[i]
+                        for i, j in ((0, 1), (0, 2), (1, 2))
+                    )
+                ):
+                    original_phase = Fraction(quarter, 4)
+                    phases.add(original_phase)
+                    break
+            if (
+                original_parameter == 0.0
+                and original_phase == 0
+                and phases == {Fraction()}
+            ):
+                # No subdivision: retain the authored edge identity verbatim.
+                replacements[edge] = [edge]
+                cut_vertices[edge, Fraction()] = original_vertex
+                continue
+            parameter = original_parameter % _TWO_PI
+            source_label = labels[f"edge:{edge}"]
+            self.provenance = [
+                (f"curve:{curve_index}", value) if key == f"edge:{edge}" else (key, value)
+                for key, value in self.provenance
+            ]
+            points: dict[float, tuple[int, Fraction | None]] = {}
+            for phase in sorted(phases):
+                value = float(phase) * _TWO_PI
+                if phase == original_phase:
+                    vertex = original_vertex
+                else:
+                    quarter = int(4 * phase)
+                    vertex = self.vertex(
+                        np.asarray(curve.center) + float(curve.radius) * axes[quarter],
+                        f"{source_label}:DERIVED:chart-cut:{phase}",
+                    )
+                points[value] = (vertex, phase)
+                cut_vertices[edge, phase] = vertex
+            if original_phase is None:
+                # The original literal vertex selects a ray, not a snapped
+                # native angle. Isolate its circle/meridian-plane intersection.
+                radial = self.vertices[original_vertex] - np.asarray(curve.center)
+                normal = np.cross(curve.first_axis, curve.second_axis)
+                plane = PlanePatch(curve.center, radial, normal)
+                center = np.asarray((parameter, 1.0, 0.0))
+                radius = 1.0e-6 * np.maximum(1.0, np.abs(center))
+                region = SurfaceRegion(plane, np.asarray(((0.5, -0.5), (1.5, 0.5))))
+                root = CurveSurfaceIntersectionRoot(
+                    curve,
+                    region,
+                    parameter_lower=center - radius,
+                    parameter_upper=center + radius,
+                    budget=self._coordinate_budget,
+                )
+                endpoint = TrimRootEndpoint(root, "first")
+                lower, upper = endpoint.parameter_enclosure(budget=self._coordinate_budget)
+                parameter = 0.5 * (lower + upper)
+                if parameter in points:
+                    # Coincident numerical representatives are not authority
+                    # to discard the authored vertex or weld it to a new cut.
+                    raise refuse(
+                        "unsupported-entity",
+                        source_label,
+                        "Authored vertex and chart cut require a certified shared root before subdivision.",
+                    )
+                # This is still the authored tolerance vertex. The isolated
+                # ray root selects its scalar representative; it does not
+                # authorize an exact vertex/surface correspondence on every
+                # incident (possibly independently rounded) source surface.
+                points[parameter] = (original_vertex, None)
+            zero = points[0.0]
+            points[_TWO_PI] = (zero[0], Fraction(1))
+            ordered = sorted(points.items())
+            segments = []
+            self.native_phases.pop(edge, None)
+            for position, ((first, start), (last, end)) in enumerate(
+                zip(ordered[:-1], ordered[1:], strict=True)
+            ):
+                child = edge if position == 0 else len(self.edge_curves)
+                if position:
+                    self.edge_curves.append(curve_index)
+                    self.edge_ranges.append((first, last))
+                    self.edge_vertices.append((start[0], end[0]))
+                else:
+                    self.edge_ranges[child] = (first, last)
+                    self.edge_vertices[child] = (start[0], end[0])
+                self.provenance.append(
+                    (f"edge:{child}", f"{source_label}:DERIVED:subedge:{position}")
+                )
+                self.split_endpoint_phases[child] = start[1], end[1]
+                self.split_period_surfaces[child] = owners[edge]
+                segments.append(child)
+            replacements[edge] = segments
+        # Propagate the same source subdivision through EVERY incident face,
+        # including planar caps and other periodic charts.
+        for face in self.faces:
+            loops = []
+            for loop in face.loops:
+                refined = []
+                for coedge in loop:
+                    children = replacements.get(coedge.edge)
+                    if children is None:
+                        refined.append(coedge)
+                        continue
+                    pcurve = self._ring_pcurve(face, coedge)
+                    for child in children if coedge.sense > 0 else reversed(children):
+                        refined.append(
+                            StagedCoedge(child, coedge.sense, pcurve, coedge.label)
+                        )
+                loops.append(refined)
+            face.loops = loops
+        for face, phases in plans:
+            rings = face.loops
+            starts = []
+            heights = []
+            for ring, phase in zip(rings, phases, strict=True):
+                # Each original source edge's children retain its curve bank.
+                source_edge = next(
+                    edge
+                    for edge, children in replacements.items()
+                    if ring[0].edge in children
+                )
+                vertex = cut_vertices[source_edge, phase]
+                position = next(
+                    index
+                    for index, use in enumerate(ring)
+                    if self.edge_vertices[use.edge][0 if use.sense > 0 else 1] == vertex
+                )
+                ring[:] = ring[position:] + ring[:position]
+                starts.append(vertex)
+                assert ring[0].pcurve is not None
+                ends = self._ends(ring[0], ring[0].pcurve)
+                heights.append(float(ends[0, 1]))
+                target = 0.0 if ends[1, 0] > ends[0, 0] else _TWO_PI
+                shift = round((target - ends[0, 0]) / _TWO_PI)
+                for use in ring:
+                    assert use.pcurve is not None
+                    use.pcurve = PeriodicPCurve(use.pcurve, face.patch, (shift, 0))
+            lower, upper = sorted(heights)
+            label = f"{face.label}:DERIVED:periodic-chart-identification"
+            seam_curve = SurfaceIsoparametricCurve(
+                face.patch, 0, 0.0, parameter_range=(lower, upper)
+            )
+            increasing = heights[0] < heights[1]
+            seam = self.edge(
+                seam_curve,
+                starts[0] if increasing else starts[1],
+                starts[1] if increasing else starts[0],
+                label,
+                parameter_range=(lower, upper),
+            )
+            sense = 1 if increasing else -1
+            face.loops = [
+                [
+                    *rings[0],
+                    StagedCoedge(
+                        seam,
+                        sense,
+                        PeriodicPCurve(seam_curve.p_curve(), face.patch, (1, 0)),
+                        label,
+                    ),
+                    *rings[1],
+                    StagedCoedge(
+                        seam,
+                        -sense,
+                        PeriodicPCurve(seam_curve.p_curve(), face.patch, (0, 0)),
+                        label,
+                    ),
+                ]
+            ]
+
+    def _periodic_band(
+        self, face: StagedFace, /
+    ) -> list[tuple[StagedCoedge, AbstractCurve]] | None:
+        """Cut two authored winding rings along their common chart isoline.
+
+        The derived edge is a chart identification, used twice with opposite
+        senses, not another physical boundary. Full-turn source roots and exact
+        affine coefficients establish the winding; proximity to a period or to
+        a common phase is deliberately insufficient.
+        """
+        if (
+            len(face.loops) != 2
+            or any(len(loop) != 1 for loop in face.loops)
+            or "two_pi" not in face.patch.native_period_symbols()
+        ):
+            return None
+        rings = [loop[0] for loop in face.loops]
+        for ring in rings:
+            edge = ring.edge
+            if (
+                edge not in self.native_phases
+                or self.edge_ranges[edge] != (0.0, _TWO_PI)
+                or self.edge_vertices[edge][0] != self.edge_vertices[edge][1]
+            ):
+                return None
+        curves = [self._coedge_pcurve(face, ring) for ring in rings]
+        coefficients = [
+            affine_curve_coefficients(
+                explicit_carrier(curve), np.empty((2,), dtype=np.float64)
+            )
+            for curve in curves
+        ]
+        if any(coefficient is None for coefficient in coefficients):
+            return None
+        first, second = coefficients
+        assert first is not None and second is not None
+        constant, direction = first
+        other_constant, other_direction = second
+        for moving in (0, 1):
+            fixed = 1 - moving
+            if (
+                face.patch.native_period_symbols()[moving] != "two_pi"
+                or face.patch.periods[moving] != _TWO_PI
+                or direction[fixed] != 0
+                or other_direction[fixed] != 0
+                or abs(direction[moving]) != 1
+                or abs(other_direction[moving]) != 1
+                or direction[moving] * rings[0].sense
+                != -other_direction[moving] * rings[1].sense
+                or constant[moving] != other_constant[moving]
+                or constant[fixed] == other_constant[fixed]
+            ):
+                continue
+            # Both carriers start at the authored common phase. A decreasing
+            # carrier uses the adjacent sheet without changing its winding.
+            resolved = []
+            for ring, curve, derivative in zip(
+                rings, curves, (direction, other_direction), strict=True
+            ):
+                turns = [0, 0]
+                turns[moving] = int(derivative[moving] < 0)
+                resolved.append(
+                    (ring, PeriodicPCurve(curve, face.patch, (turns[0], turns[1])))
+                )
+            lower, upper = sorted((float(constant[fixed]), float(other_constant[fixed])))
+            increasing = constant[fixed] < other_constant[fixed]
+            vertices = tuple(self.edge_vertices[ring.edge][0] for ring in rings)
+            label = f"{face.label}:DERIVED:periodic-chart-identification"
+            axis: Literal[0, 1] = 0 if moving == 0 else 1
+            seam_curve = SurfaceIsoparametricCurve(
+                face.patch,
+                axis,
+                float(constant[moving]),
+                parameter_range=(lower, upper),
+            )
+            seam = self.edge(
+                seam_curve,
+                vertices[0] if increasing else vertices[1],
+                vertices[1] if increasing else vertices[0],
+                label,
+                parameter_range=(lower, upper),
+            )
+            seam_source = seam_curve.p_curve()
+            first_turns = [0, 0]
+            second_turns = [0, 0]
+            forward = direction[moving] * rings[0].sense > 0
+            first_turns[moving] = int(forward)
+            second_turns[moving] = int(not forward)
+            sense = 1 if increasing else -1
+            return [
+                resolved[0],
+                (
+                    StagedCoedge(seam, sense, None, label),
+                    PeriodicPCurve(
+                        seam_source, face.patch, (first_turns[0], first_turns[1])
+                    ),
+                ),
+                resolved[1],
+                (
+                    StagedCoedge(seam, -sense, None, label),
+                    PeriodicPCurve(
+                        seam_source, face.patch, (second_turns[0], second_turns[1])
+                    ),
+                ),
+            ]
+        return None
+
     def _resolve_face(
         self, face: StagedFace, /
     ) -> tuple[list[list[tuple[StagedCoedge, AbstractCurve]]], np.ndarray]:
-        loops = [self._resolve_loop(face, loop) for loop in face.loops]
+        band = self._periodic_band(face)
+        loops = (
+            [band]
+            if band is not None
+            else [self._resolve_loop(face, loop) for loop in face.loops]
+        )
         areas = [self._signed_area(self._loop_polygon(loop)) for loop in loops]
         if face.loops_by_containment:
             # The format bounds the region by containment, not by curve
@@ -3194,7 +3837,7 @@ class CadStage:
         tuple[tuple[RootEndpoint | None, RootEndpoint | None], ...] | None,
     ]:
         """Bind symbolic native-turn endpoints to each edge carrier and coedge p-curve."""
-        if not self.native_phases:
+        if not self.native_phases and not self.split_endpoint_phases:
             return None, None
         edge_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = [
             (None, None)
@@ -3213,8 +3856,14 @@ class CadStage:
             index = self.edge_curves[edge]
             carrier = pcurves[uses[0]] if index < 0 else self.curves[index]
             edge_roots[edge] = (
-                NativePeriodEndpoint(carrier, patch, axis, rational=rational, turns=0),
-                NativePeriodEndpoint(carrier, patch, axis, rational=rational, turns=1),
+                NativePeriodEndpoint(
+                    carrier, patch, axis, rational=rational, turns=0,
+                    budget=self._coordinate_budget,
+                ),
+                NativePeriodEndpoint(
+                    carrier, patch, axis, rational=rational, turns=1,
+                    budget=self._coordinate_budget,
+                ),
             )
             for coedge in uses:
                 pcurve = pcurves[coedge]
@@ -3229,6 +3878,7 @@ class CadStage:
                         axis,
                         rational=rational,
                         turns=0,
+                        budget=self._coordinate_budget,
                     ),
                     NativePeriodEndpoint(
                         pcurve,
@@ -3236,8 +3886,32 @@ class CadStage:
                         axis,
                         rational=rational,
                         turns=1,
+                        budget=self._coordinate_budget,
                     ),
                 )
+        for edge, phases in self.split_endpoint_phases.items():
+            carrier = self.curves[self.edge_curves[edge]]
+            patch = self.split_period_surfaces[edge]
+            roots: list[RootEndpoint | None] = [None, None]
+            for endpoint, phase in enumerate(phases):
+                if phase is not None:
+                    roots[endpoint] = NativePeriodEndpoint(
+                        carrier, turns=phase, budget=self._coordinate_budget
+                    )
+            edge_roots[edge] = roots[0], roots[1]
+            for coedge, source in enumerate(coedge_edges):
+                if source != edge:
+                    continue
+                endpoints = [
+                    None
+                    if phase is None
+                    else NativePeriodEndpoint(
+                        pcurves[coedge], patch, 0, turns=phase,
+                        budget=self._coordinate_budget,
+                    )
+                    for phase in phases
+                ]
+                coedge_roots[coedge] = endpoints[0], endpoints[1]
         return tuple(edge_roots), tuple(coedge_roots)
 
     def _junction_window(
@@ -3258,7 +3932,7 @@ class CadStage:
         if pcurve.parameter_domain is not None:
             domain_lower, domain_upper = pcurve.parameter_domain
             lower, upper = max(lower, domain_lower), min(upper, domain_upper)
-        return CurveTrimSegment(pcurve, lower, upper)
+        return CurveTrimSegment(pcurve, lower, upper, budget=self._coordinate_budget)
 
     def _prepare_incidence_junctions(
         self,
@@ -3294,10 +3968,13 @@ class CadStage:
                             reversed=coedge_senses[coedge] < 0,
                             first_root=uses[coedge][0],
                             last_root=uses[coedge][1],
+                            budget=self._coordinate_budget,
                         )
                         for coedge in (first, second)
                     ]
-                    if not segments[0].shares_endpoint(segments[1]):
+                    if not segments[0].shares_endpoint(
+                        segments[1], budget=self._coordinate_budget
+                    ):
                         if any(
                             self.edge_curves[coedge_edges[coedge]] < 0
                             for coedge in (first, second)
@@ -3351,6 +4028,7 @@ class CadStage:
                         pcurves[coedge],
                         max(window.first, lower),
                         min(window.last, upper),
+                        budget=self._coordinate_budget,
                     )
                 operands.append(window)
                 # Whole-edge and local incidence proofs use separate
@@ -3362,6 +4040,7 @@ class CadStage:
                         pcurves[coedge],
                         SurfaceRegion(patch, resolved[face][1]),
                         *self.edge_ranges[edge],
+                        budget=self._coordinate_budget,
                     )
                 )
                 lifts.append(
@@ -3370,10 +4049,13 @@ class CadStage:
                         pcurves[coedge],
                         SurfaceRegion(
                             patch,
-                            pcurves[coedge].bounding_box(window.first, window.last),
+                            pcurves[coedge].bounding_box(
+                                window.first, window.last, budget=self._coordinate_budget
+                            ),
                         ),
                         window.first,
                         window.last,
+                        budget=self._coordinate_budget,
                     )
                 )
             root = TrimIntersectionRoot(
@@ -3381,8 +4063,9 @@ class CadStage:
                 operands[1],
                 parameter_lower=np.zeros(2, dtype=np.float64),
                 parameter_upper=np.ones(2, dtype=np.float64),
+                budget=self._coordinate_budget,
             )
-            supports.append(BRepRootSupport(patch, root))
+            supports.append(BRepRootSupport(patch, root, budget=self._coordinate_budget))
             bindings.extend(
                 (
                     (first, end, TrimRootEndpoint(root, "first")),
@@ -3397,6 +4080,7 @@ class CadStage:
             primary,
             aliases=tuple(support for support in supports if support is not primary),
             source_edge_lifts=tuple(lifts),
+            budget=self._coordinate_budget,
         )
         return _IncidenceVertex(definition=definition, bindings=tuple(bindings))
 
@@ -3451,7 +4135,7 @@ class CadStage:
                                 f"BRepGeometry.coedge_endpoint_roots must bind every incident coedge; got edge={edge}, endpoint={endpoint}, bindings={candidates!r}"
                             )
                         intervals = [
-                            root.parameter_enclosure()
+                            root.parameter_enclosure(budget=self._coordinate_budget)
                             for root in candidates
                             if root is not None
                         ]
@@ -3469,7 +4153,7 @@ class CadStage:
                         parameters = list(self.edge_ranges[edge])
                         parameters[endpoint] = 0.5 * (lower + upper)
                         self.edge_ranges[edge] = parameters[0], parameters[1]
-                box = definition.point_enclosure()
+                box = definition.point_enclosure(budget=self._coordinate_budget)
                 displacement = np.nextafter(
                     box - self.vertices[vertex],
                     np.where(box < self.vertices[vertex], -np.inf, np.inf),
@@ -3481,6 +4165,8 @@ class CadStage:
                     )
                 self.vertices[vertex] = np.mean(box, axis=0)
                 vertices[vertex] = definition
+            except CoordinateEnclosureResourceError:
+                raise
             except ValueError as error:
                 if not committed:
                     # A bounded external tolerance vertex remains a literal
@@ -3500,9 +4186,15 @@ class CadStage:
         import_policy_id: str,
         tessellation: BRepTessellationPolicy | None,
         default_occurrences: bool,
+        coordinate_budget: CoordinateEnclosureBudget | None = None,
     ) -> BRepModel:
+        self._coordinate_budget = coordinate_budget
+        if coordinate_budget is not None:
+            coordinate_budget.ticket.checkpoint()
         boxes = [
-            self.curves[index].bounding_box(*self.edge_ranges[edge])
+            self.curves[index].bounding_box(
+                *self.edge_ranges[edge], budget=coordinate_budget
+            )
             for edge, index in enumerate(self.edge_curves)
             if index >= 0
         ]
@@ -3522,6 +4214,7 @@ class CadStage:
                 source_id,
                 f"CadStage.scale must be finite and positive for the physical source enclosure; got {self.scale!r}",
             )
+        self._split_periodic_bands()
         resolved = [self._resolve_face(face) for face in self.faces]
         pcurves: list[AbstractCurve] = []
         coedge_edges: list[int] = []
@@ -3574,6 +4267,11 @@ class CadStage:
             vertex_roots=vertex_roots,
             edge_endpoint_roots=edge_roots,
             coedge_endpoint_roots=coedge_roots,
+            edge_face_gap_bounds=(
+                None if self.bounded_approximation_gap is None
+                else (self.bounded_approximation_gap,) * len(coedge_edges)
+            ),
+            budget=coordinate_budget,
         )
         self.scale = brep_physical_scale(geometry)
         try:
@@ -3593,6 +4291,7 @@ class CadStage:
                 converted_surface_count=0,
                 tessellation=tessellation,
                 curve_surface_tolerance=self.relative_geometric_tolerance * self.scale,
+                budget=coordinate_budget,
             )
         except BRepValidationError as error:
             finding = error.report.require_coedge_failure()
@@ -3717,8 +4416,11 @@ def validate_export_trims(
     /,
     *,
     trim_domains: Sequence[TrimDomain | None] | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> None:
     """Require face trims to match the external codec's coedges."""
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     if any(
         occurrence.placement_evidence is not None
         and occurrence.placement_evidence.point_deviation_bound > 0.0
@@ -3745,6 +4447,8 @@ def validate_export_trims(
             strict=True,
         )
     ):
+        if coordinate_budget is not None:
+            coordinate_budget.ticket.checkpoint()
         if domain is None:
             raise refuse(
                 "inexact-export",
@@ -3838,6 +4542,8 @@ def _certify_approximation_candidate(
     scale: float,
     parameter_scale: float,
     state: _ApproximationAccumulator,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    preparations: TrimRequestPreparations | None = None,
 ) -> _ApproximationAccumulator:
     if state.cells >= policy.maximum_certificate_cells:
         raise ApproximationResourceError(
@@ -3864,6 +4570,8 @@ def _certify_approximation_candidate(
             maximum_cells=policy.maximum_certificate_cells - state.cells,
             maximum_depth=policy.maximum_certificate_depth,
             maximum_bytes=policy.maximum_certificate_bytes,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
     except ApproximationResourceError as exhausted:
         raise ApproximationResourceError(
@@ -3916,6 +4624,8 @@ def _certify_approximation_candidate(
             maximum_cells=policy.maximum_certificate_cells - state.cells,
             maximum_depth=policy.maximum_certificate_depth,
             maximum_bytes=remaining_bytes,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
     except BranchApproximationTopologyResourceError as exhausted:
         raise ApproximationResourceError(
@@ -3945,6 +4655,7 @@ def approximate_intersection_curve(
     /,
     *,
     required_parameters: Sequence[float] = (),
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadCurveApproximation:
     """Fit and continuously certify a coupled source-branch substitution.
 
@@ -3953,7 +4664,48 @@ def approximate_intersection_curve(
     straight homotopy in XYZ and both UV lifts. Failed geometric candidates
     refine within the source control budget; unresolved proof resources
     refuse immediately and never reset or relax the policy.
+
+    A supplied budget retains each complete approximation for its request,
+    keyed by the live branch payload, every fit-policy value and the required
+    parameters, so later exports of the same branch reuse the full certificate.
     """
+    if coordinate_budget is None:
+        return _fit_intersection_curve(curve, policy, required_parameters, None)
+    coordinate_budget.ticket.checkpoint()
+    required = np.asarray(required_parameters, dtype=np.float64)
+    with coordinate_budget.temporary_scope():
+        # iter_array_bytes uses at most a 65536-byte noncontiguous-array buffer.
+        coordinate_budget.reserve(0, 65536)
+        admit_carrier_fingerprint(
+            (curve, asdict(policy), required), coordinate_budget
+        )
+        key = canonical_fingerprint(
+            {
+                "branch": carrier_payload(curve),
+                "policy": asdict(policy),
+                "required_parameters": required,
+            }
+        )
+    cached = coordinate_budget.cad_curve_approximation_cache.get(key)
+    if cached is not None:
+        coordinate_budget.ticket.checkpoint()
+        return cached
+    result = _fit_intersection_curve(curve, policy, required, coordinate_budget)
+    coordinate_budget.retain_owner((key, result))
+    coordinate_budget.ticket.checkpoint()
+    coordinate_budget.cad_curve_approximation_cache[key] = result
+    return result
+
+
+def _fit_intersection_curve(
+    curve: IntersectionCurve,
+    policy: CadCurveFitPolicy,
+    required_parameters: Sequence[float] | np.ndarray,
+    coordinate_budget: CoordinateEnclosureBudget | None,
+    /,
+) -> CadCurveApproximation:
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     if not curve.fully_certified:
         raise ValueError(
             f"IntersectionCurve.fully_certified must be true before approximation; got {curve.fully_certified}"
@@ -3970,8 +4722,15 @@ def approximate_intersection_curve(
             f"approximate_intersection_curve.required_parameters must be finite and within the branch interval; got parameters={required!r}, interval=({first}, {last})"
         )
     cache: dict[str, np.ndarray] = {}
+    preparations = TrimRequestPreparations()
+    if coordinate_budget is not None:
+        coordinate_budget.reserve_geometry_queries(1)
     anchor_result = jax.device_get(
-        curve.evaluate(jnp.asarray((first,), dtype=jnp.float64))
+        curve.evaluate(
+            jnp.asarray((first,), dtype=jnp.float64),
+            budget=coordinate_budget,
+            preparations=preparations,
+        )
     )
     anchor = np.concatenate(
         (
@@ -3980,25 +4739,44 @@ def approximate_intersection_curve(
             np.asarray(anchor_result.second_parameters)[0],
         )
     )
-    closure_axes = np.r_[
-        np.ones(3, dtype=np.bool_),
-        np.asarray(curve.node_period_shifts[-1])
-        == np.asarray(curve.node_period_shifts[0]),
-    ]
+    # Chart coordinates switch native-period sheets at seam transitions; the
+    # proposal samples the continuous lift the topology/coupled proofs certify.
+    roots = prepare_root_gauge(curve)
+    lift = np.zeros((curve.num_charts, 7), dtype=np.float64)
+    for axis, period in enumerate(roots.periods):
+        if period is not None:
+            lift[:, 3 + axis] = roots.gauge[:, axis] * period
+    closure_axes = np.r_[np.ones(3, dtype=np.bool_), roots.winding == 0]
 
     def coupled(parameters: np.ndarray) -> np.ndarray:
+        if coordinate_budget is not None:
+            coordinate_budget.ticket.checkpoint()
         key = array_bytes_digest(np.asarray(parameters, dtype=np.float64))
         if key not in cache:
+            if coordinate_budget is not None:
+                coordinate_budget.reserve_geometry_queries(parameters.size)
             result = jax.device_get(
-                curve.evaluate(jnp.asarray(parameters, dtype=jnp.float64))
+                curve.evaluate(
+                    jnp.asarray(parameters, dtype=jnp.float64),
+                    budget=coordinate_budget,
+                    preparations=preparations,
+                )
             )
-            cache[key] = np.concatenate(
-                (
-                    np.asarray(result.point),
-                    np.asarray(result.first_parameters),
-                    np.asarray(result.second_parameters),
-                ),
-                axis=1,
+            charts = np.clip(
+                np.floor(np.asarray(parameters, dtype=np.float64)),
+                0,
+                curve.num_charts - 1,
+            ).astype(np.int64)
+            cache[key] = (
+                np.concatenate(
+                    (
+                        np.asarray(result.point),
+                        np.asarray(result.first_parameters),
+                        np.asarray(result.second_parameters),
+                    ),
+                    axis=1,
+                )
+                + lift[charts]
             )
             if curve.closed:
                 terminal = np.flatnonzero(np.asarray(parameters) == last)
@@ -4008,8 +4786,16 @@ def approximate_intersection_curve(
         return cache[key]
 
     exact_checks = coupled(np.linspace(first, last, policy.check_samples))
-    source_box = np.asarray(curve.bounding_box(first, last))
-    parameter_boxes = np.asarray(curve.parameter_enclosures(first, last))
+    source_box = np.asarray(
+        curve.bounding_box(
+            first, last, budget=coordinate_budget, preparations=preparations
+        )
+    )
+    parameter_boxes = np.asarray(
+        curve.parameter_enclosures(
+            first, last, budget=coordinate_budget, preparations=preparations
+        )
+    )
     scale = max(
         1.0, float(np.nextafter(0.5 * np.max(source_box[1] - source_box[0]), np.inf))
     )
@@ -4032,7 +4818,9 @@ def approximate_intersection_curve(
     def accept(spline: BSplineCurve) -> bool:
         nonlocal state
         state = _certify_approximation_candidate(
-            curve, spline, policy, scale, parameter_scale, state
+            curve, spline, policy, scale, parameter_scale, state,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
         return state.accepted is not None
 
@@ -4121,6 +4909,133 @@ def _certify_export_quotient_closure(
                     )
 
 
+def _root_parameter_bounds(
+    root: RootEndpoint | None,
+    parameter: float,
+    direction: int,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> tuple[float, float]:
+    """Vertex root parameter enclosure, never degenerate.
+
+    An exact endpoint widens by one ulp toward its use: the enclosure query
+    then covers a superset of the vertex.
+    """
+    if root is None:
+        lower = upper = parameter
+    else:
+        lower, upper = np.asarray(
+            root.parameter_enclosure(preparations=preparations, budget=coordinate_budget),
+            dtype=np.float64,
+        )
+        lower, upper = float(min(lower, parameter)), float(max(upper, parameter))
+    if lower == upper:
+        if direction > 0:
+            upper = float(np.nextafter(upper, np.inf))
+        else:
+            lower = float(np.nextafter(lower, -np.inf))
+    return lower, upper
+
+
+def _export_trim_junctions(
+    geometry: BRepGeometry,
+    approximation: CadCurveApproximation,
+    branch_coedges: tuple[int, ...],
+    other: int,
+    trim: BranchTrimHomotopyTube | CurveTrimSegment,
+    fitted: dict[str, CadCurveApproximation],
+    ranges: np.ndarray,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> tuple[BranchTrimJunction, ...]:
+    """Pair each branch-use vertex with the other trim's endpoints at that vertex."""
+    source = geometry.pcurves[branch_coedges[0]]
+    assert isinstance(source, IntersectionPCurve)
+    fits = (approximation.curve, approximation.first_pcurve, approximation.second_pcurve)
+    other_edge = geometry.coedge_edges[other]
+    other_vertices = geometry.edge_vertices[other_edge]
+    other_roots = geometry.coedge_endpoint_roots[other]
+    other_range = tuple(map(float, ranges[other_edge]))
+    junctions: dict[tuple[float, int, float, int], BranchTrimJunction] = {}
+    for coedge in branch_coedges:
+        edge = geometry.coedge_edges[coedge]
+        vertices = geometry.edge_vertices[edge]
+        roots = geometry.coedge_endpoint_roots[coedge]
+        bounds = tuple(map(float, ranges[edge]))
+        for end, direction in ((0, 1), (1, -1)):
+            for trim_end, trim_direction in ((0, 1), (1, -1)):
+                if vertices[end] != other_vertices[trim_end]:
+                    continue
+                match trim:
+                    case BranchTrimHomotopyTube():
+                        trim_parameter = other_range[trim_end]
+                    case CurveTrimSegment():
+                        trim_parameter = float(trim_end)
+                key = (bounds[end], direction, trim_parameter, trim_direction)
+                if key in junctions:
+                    continue
+                lower, upper = _root_parameter_bounds(
+                    roots[end], bounds[end], direction, preparations, coordinate_budget
+                )
+                branch_box = branch_homotopy_box(
+                    source.curve,
+                    fits,
+                    lower,
+                    upper,
+                    root=roots[end],
+                    preparations=preparations,
+                    coordinate_budget=coordinate_budget,
+                )
+                match trim:
+                    case BranchTrimHomotopyTube():
+                        other_source = geometry.pcurves[other]
+                        assert isinstance(other_source, IntersectionPCurve)
+                        other_fit = fitted[other_source.curve.branch_id]
+                        trim_lower, trim_upper = _root_parameter_bounds(
+                            other_roots[trim_end],
+                            trim_parameter,
+                            trim_direction,
+                            preparations,
+                            coordinate_budget,
+                        )
+                        columns = slice(3, 5) if other_source.side == "first" else slice(5, 7)
+                        trim_box = branch_homotopy_box(
+                            other_source.curve,
+                            (
+                                other_fit.curve,
+                                other_fit.first_pcurve,
+                                other_fit.second_pcurve,
+                            ),
+                            trim_lower,
+                            trim_upper,
+                            root=other_roots[trim_end],
+                            preparations=preparations,
+                            coordinate_budget=coordinate_budget,
+                        )[:, columns]
+                    case CurveTrimSegment():
+                        # The unit segment's bound at a rooted end encloses the root.
+                        trim_box = np.asarray(
+                            trim.bounding_box(
+                                *(
+                                    (0.0, float(np.nextafter(0.0, 1.0)))
+                                    if trim_end == 0
+                                    else (float(np.nextafter(1.0, 0.0)), 1.0)
+                                ),
+                                preparations=preparations,
+                                budget=coordinate_budget,
+                            )
+                        )
+                junctions[key] = BranchTrimJunction(
+                    bounds[end],
+                    direction,
+                    branch_box,
+                    trim_parameter,
+                    trim_direction,
+                    trim_box,
+                )
+    return tuple(junctions.values())
+
+
 def _certify_export_trim_pair(
     geometry: BRepGeometry,
     source: IntersectionPCurve,
@@ -4129,13 +5044,21 @@ def _certify_export_trim_pair(
     policy: CadCurveFitPolicy,
     ranges: np.ndarray,
     face: int,
-    coedge: int,
+    branch_coedges: tuple[int, ...],
     other: int,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadCurveApproximation:
-    """Certify one exported branch against another trim within retained proof budgets."""
+    """Certify one exported branch's face uses against another trim of the face.
+
+    Shared vertices are certified as junction neighborhoods within the fit's
+    parameter tolerance of the exact vertex; all other contact is excluded.
+    """
+    coedge = branch_coedges[0]
     other_source = geometry.pcurves[other]
     other_edge = geometry.coedge_edges[other]
     first, last = map(float, ranges[other_edge])
+    trim: BranchTrimHomotopyTube | CurveTrimSegment
     if (
         isinstance(other_source, IntersectionPCurve)
         and other_source.curve.branch_id in fitted
@@ -4147,6 +5070,7 @@ def _certify_export_trim_pair(
             (first, last),
         )
         borrowed_bytes = other_approximation.topology_evidence.bytes_used
+        trim_range: tuple[float | None, float | None] = (first, last)
     else:
         roots = geometry.coedge_endpoint_roots[other]
         trim = CurveTrimSegment(
@@ -4155,8 +5079,12 @@ def _certify_export_trim_pair(
             last,
             first_root=roots[0],
             last_root=roots[1],
+            budget=coordinate_budget,
+            preparations=preparations,
         )
         borrowed_bytes = 0
+        # The segment is reparameterized over its own unit interval.
+        trim_range = (None, None)
     remaining_cells = policy.maximum_certificate_cells - approximation.certification_cells
     retained_bytes = (
         approximation.continuous_evidence.bytes_used
@@ -4172,31 +5100,68 @@ def _certify_export_trim_pair(
             f"CadCurveFitPolicy.maximum_certificate_cells must leave trim-separation work and maximum_certificate_bytes must leave workspace; got remaining_cells={remaining_cells}, remaining_bytes={remaining_bytes}, retained_bytes={retained_bytes}",
             (f"face:{face}", f"coedge:{coedge}"),
         )
-    try:
-        separation = certify_branch_trim_separation(
-            approximation.topology_evidence,
-            trim,
-            side=source.side,
-            maximum_cells=remaining_cells,
-            maximum_depth=policy.maximum_certificate_depth,
-            maximum_bytes=remaining_bytes,
-            first=first,
-            last=last,
-        )
-    except BranchApproximationTopologyResourceError as error:
-        raise refuse(
-            "limit",
-            f"coedge:{other}",
-            str(error),
-            (f"face:{face}", f"coedge:{coedge}"),
-        ) from error
-    except (TypeError, ValueError) as error:
+    request = (
+        coordinate_source_request((geometry, approximation))
+        if coordinate_budget is None
+        else nullcontext(coordinate_budget)
+    )
+    with request as active_budget:
+        try:
+            junctions = _export_trim_junctions(
+                geometry,
+                approximation,
+                branch_coedges,
+                other,
+                trim,
+                fitted,
+                ranges,
+                preparations,
+                active_budget,
+            )
+            separation = certify_branch_trim_separation(
+                approximation.topology_evidence,
+                trim,
+                side=source.side,
+                maximum_cells=remaining_cells,
+                maximum_depth=policy.maximum_certificate_depth,
+                maximum_bytes=remaining_bytes,
+                first=trim_range[0],
+                last=trim_range[1],
+                branch_ranges=tuple(
+                    (
+                        float(ranges[geometry.coedge_edges[item]][0]),
+                        float(ranges[geometry.coedge_edges[item]][1]),
+                    )
+                    for item in branch_coedges
+                ),
+                junctions=junctions,
+                preparations=preparations,
+                coordinate_budget=active_budget,
+            )
+        except BranchApproximationTopologyResourceError as error:
+            raise refuse(
+                "limit",
+                f"coedge:{other}",
+                str(error),
+                (f"face:{face}", f"coedge:{coedge}"),
+            ) from error
+        except CoordinateEnclosureResourceError:
+            raise
+        except (TypeError, ValueError) as error:
+            raise refuse(
+                "inexact-export",
+                f"coedge:{other}",
+                str(error),
+                (f"face:{face}", f"coedge:{coedge}"),
+            ) from error
+    parameter_tolerance = policy.tolerance * approximation.parameter_scale
+    if not separation.junction_diameter_upper_bound <= parameter_tolerance:
         raise refuse(
             "inexact-export",
             f"coedge:{other}",
-            str(error),
+            f"BranchTrimSeparationEvidence.junction_diameter_upper_bound must lie within the fit parameter tolerance of the shared vertex; got {separation.junction_diameter_upper_bound:.17g}, tolerance={parameter_tolerance:.17g}",
             (f"face:{face}", f"coedge:{coedge}"),
-        ) from error
+        )
     approximation = replace(
         approximation,
         trim_separation_evidence=(
@@ -4217,49 +5182,93 @@ def _certify_export_face_trims(
     fitted: dict[str, CadCurveApproximation],
     policy: CadCurveFitPolicy,
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> dict[str, CadCurveApproximation]:
-    """Require continuous trim separation on each emitted face."""
+    """Require continuous trim separation on each emitted face.
+
+    One request preparation retains every coedge root enclosure, so repeated
+    trim-piece queries do not re-isolate the same vertex roots.
+    """
 
     ranges = np.asarray(geometry.edge_ranges)
     checked: set[tuple[int, str, str, int]] = set()
     result = dict(fitted)
-    for face, loops in enumerate(geometry.face_loops):
-        coedges = tuple(coedge for loop in loops for coedge in loop)
-        for coedge in coedges:
-            source = geometry.pcurves[coedge]
-            if (
-                not isinstance(source, IntersectionPCurve)
-                or source.curve.branch_id not in fitted
-            ):
-                continue
-            branch_id = source.curve.branch_id
-            approximation = result[branch_id]
-            _certify_export_quotient_closure(
-                geometry, source, approximation, loops, ranges, face, coedge
+    with original_curve_surface_root_preparation(
+        tuple(root for roots in geometry.coedge_endpoint_roots for root in roots)
+    ) as preparations:
+        for face, loops in enumerate(geometry.face_loops):
+            result = _certify_export_face(
+                geometry,
+                result,
+                fitted,
+                policy,
+                ranges,
+                face,
+                loops,
+                checked,
+                preparations,
+                coordinate_budget,
             )
-            for other in coedges:
-                other_source = geometry.pcurves[other]
-                if (
-                    isinstance(other_source, IntersectionPCurve)
-                    and other_source.curve.branch_id == branch_id
-                ):
-                    continue  # The full branch homotopy already proves these pairs.
-                key = (face, branch_id, source.side, other)
-                if key in checked:
-                    continue
-                checked.add(key)
-                approximation = _certify_export_trim_pair(
-                    geometry,
-                    source,
-                    approximation,
-                    fitted,
-                    policy,
-                    ranges,
-                    face,
-                    coedge,
-                    other,
-                )
-                result[branch_id] = approximation
+    return result
+
+
+def _certify_export_face(
+    geometry: BRepGeometry,
+    result: dict[str, CadCurveApproximation],
+    fitted: dict[str, CadCurveApproximation],
+    policy: CadCurveFitPolicy,
+    ranges: np.ndarray,
+    face: int,
+    loops: tuple[tuple[int, ...], ...],
+    checked: set[tuple[int, str, str, int]],
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget | None,
+) -> dict[str, CadCurveApproximation]:
+    """Certify every exported branch use of one face against its other trims."""
+    result = dict(result)
+    coedges = tuple(coedge for loop in loops for coedge in loop)
+    for coedge in coedges:
+        source = geometry.pcurves[coedge]
+        if not isinstance(source, IntersectionPCurve) or source.curve.branch_id not in fitted:
+            continue
+        branch_id = source.curve.branch_id
+        approximation = result[branch_id]
+        _certify_export_quotient_closure(
+            geometry, source, approximation, loops, ranges, face, coedge
+        )
+        branch_coedges = tuple(
+            item
+            for item in coedges
+            if isinstance(use := geometry.pcurves[item], IntersectionPCurve)
+            and use.curve.branch_id == branch_id
+            and use.side == source.side
+        )
+        for other in coedges:
+            other_source = geometry.pcurves[other]
+            if (
+                isinstance(other_source, IntersectionPCurve)
+                and other_source.curve.branch_id == branch_id
+            ):
+                continue  # The full branch homotopy already proves these pairs.
+            key = (face, branch_id, source.side, other)
+            if key in checked:
+                continue
+            checked.add(key)
+            approximation = _certify_export_trim_pair(
+                geometry,
+                source,
+                approximation,
+                fitted,
+                policy,
+                ranges,
+                face,
+                branch_coedges,
+                other,
+                preparations,
+                coordinate_budget=coordinate_budget,
+            )
+            result[branch_id] = approximation
     return result
 
 
@@ -4267,6 +5276,7 @@ def _retain_export_source_bindings(
     geometry: BRepGeometry,
     branches: dict[str, tuple[IntersectionCurve, list[int]]],
     fitted: dict[str, CadCurveApproximation],
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> None:
     """Retain source root definitions and physical enclosures before substitution."""
     source_error_bounds = np.asarray(geometry.vertex_evaluation_bounds)
@@ -4282,7 +5292,9 @@ def _retain_export_source_bindings(
         boxes = []
         errors = []
         for vertex, root in rooted:
-            box = np.asarray(root.point_enclosure(), dtype=np.float64).copy()
+            box = np.asarray(
+                root.point_enclosure(budget=coordinate_budget), dtype=np.float64
+            ).copy()
             error = float(source_error_bounds[vertex])
             if (
                 box.shape != (2, 3)
@@ -4333,6 +5345,7 @@ def _substitute_export_geometry(
     pcurves: list[AbstractCurve | IntersectionPCurve],
     affected_vertices: set[int],
     format_name: str,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> _ExportGeometry:
     """Clear substituted root bindings and construct the export trim closure."""
     vertex_roots = tuple(
@@ -4365,6 +5378,7 @@ def _substitute_export_geometry(
             vertex_roots=vertex_roots,
             edge_endpoint_roots=edge_roots,
             coedge_endpoint_roots=coedge_roots,
+            budget=coordinate_budget,
         )
         bounds = np.asarray(model.parameter_bounds)
         domains = []
@@ -4404,13 +5418,70 @@ def _substitute_export_geometry(
                     model.patches[face],
                     tolerance=tolerance,
                     parameter_bounds=bounds[face],
+                    budget=coordinate_budget,
                 )
             )
+    except CoordinateEnclosureResourceError:
+        raise
     except (TypeError, ValueError) as error:
         raise refuse("inexact-export", "branch topology", str(error)) from error
     local_domains = tuple(domains)
-    validate_export_trims(model, substituted, format_name, trim_domains=local_domains)
+    validate_export_trims(
+        model, substituted, format_name, trim_domains=local_domains,
+        coordinate_budget=coordinate_budget,
+    )
     return _ExportGeometry(geometry=substituted, trim_domains=local_domains)
+
+
+def _export_sheet_pcurve(
+    branch: IntersectionCurve,
+    side: str,
+    lifted: BSplineCurve,
+    edge_range: tuple[float, ...],
+    coedge: int,
+    chain: tuple[str, ...],
+) -> AbstractCurve:
+    """Place the branch's continuous lifted p-curve on the coedge's chart sheet.
+
+    Source charts change native-period sheet only at their transitions. A coedge
+    whose charts share one integer gauge is the lifted fit moved by exactly
+    that many native periods; a coedge spanning a sheet change has no single
+    p-curve sheet and is refused.
+    """
+    first, last = edge_range
+    columns = slice(0, 2) if side == "first" else slice(2, 4)
+    head = min(max(int(np.floor(first)), 0), branch.num_charts - 1)
+    tail = max(head, min(int(np.ceil(last)) - 1, branch.num_charts - 1))
+    gauge = prepare_root_gauge(branch).gauge[head : tail + 1, columns]
+    if np.any(gauge != gauge[0]):
+        raise refuse(
+            "inexact-export",
+            f"coedge:{coedge}",
+            f"BRepGeometry.edge_ranges must keep each intersection coedge on one native-period sheet; got side={side}, range={edge_range!r}, gauges={gauge.tolist()!r}",
+            chain,
+        )
+    if not np.any(gauge[0]):
+        return lifted
+    patch = branch.first.patch if side == "first" else branch.second.patch
+    return PeriodicPCurve(lifted, patch, (-int(gauge[0, 0]), -int(gauge[0, 1])))
+
+
+@dataclass(frozen=True, slots=True)
+class _CadExportPreparation:
+    """Format-independent substitution proof retained by one admitted request."""
+
+    owner: BRepModel
+    source_geometry: BRepGeometry
+    source_model_id: str
+    source_geometry_id: str
+    policy_id: str
+    geometry: BRepGeometry
+    trim_domains: tuple[TrimDomain | None, ...]
+    approximations: tuple[CadCurveApproximation, ...]
+    source_binding: str
+    prepared_binding: str
+    descriptor_binding: str | None = None
+    descriptor: str | None = None
 
 
 @checked
@@ -4421,6 +5492,7 @@ def prepare_cad_export_geometry(
     /,
     *,
     format_name: str = "native CAD",
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     BRepGeometry, tuple[TrimDomain | None, ...], tuple[CadCurveApproximation, ...]
 ]:
@@ -4432,7 +5504,30 @@ def prepare_cad_export_geometry(
     publication. Native archive preserves source definitions without approximation.
     """
 
-    validate_export_trims(model, geometry, format_name)
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
+        source_binding = _export_content_binding(
+            (model, geometry, model.report, policy), coordinate_budget
+        )
+        cached = coordinate_budget.cad_export_preparation_cache.get(
+            (id(model), id(geometry), policy.policy_id)
+        )
+        if cached is not None and (
+            cached.owner is model
+            and cached.source_geometry is geometry
+            and cached.source_model_id == model.model_id
+            and cached.source_geometry_id == geometry.geometry_id
+            and cached.policy_id == policy.policy_id
+            and cached.source_binding == source_binding
+            and cached.prepared_binding == _export_content_binding(
+                (cached.geometry, cached.trim_domains, cached.approximations),
+                coordinate_budget,
+            )
+        ):
+            return cached.geometry, cached.trim_domains, cached.approximations
+    validate_export_trims(
+        model, geometry, format_name, coordinate_budget=coordinate_budget
+    )
     ranges = np.asarray(geometry.edge_ranges)
     branches: dict[str, tuple[IntersectionCurve, list[int]]] = {}
     for edge, index in enumerate(geometry.edge_curves):
@@ -4459,6 +5554,7 @@ def prepare_cad_export_geometry(
                 curve,
                 policy.intersection_approximation,
                 required_parameters=parameters,
+                coordinate_budget=coordinate_budget,
             )
         except (
             ApproximationResourceError,
@@ -4470,6 +5566,8 @@ def prepare_cad_export_geometry(
                 str(error),
                 tuple(f"edge:{edge}" for edge in edges),
             ) from error
+        except CoordinateEnclosureResourceError:
+            raise
         except ValueError as error:
             raise refuse(
                 "inexact-export",
@@ -4502,22 +5600,31 @@ def prepare_cad_export_geometry(
                 (f"face:{geometry.coedge_faces[coedge]}", f"edge:{edge}"),
             )
         approximation = fitted[branch.branch_id]
-        pcurves[coedge] = (
+        pcurves[coedge] = _export_sheet_pcurve(
+            branch,
+            pcurve.side,
             approximation.first_pcurve
             if pcurve.side == "first"
-            else approximation.second_pcurve
+            else approximation.second_pcurve,
+            tuple(float(value) for value in ranges[edge]),
+            coedge,
+            (f"face:{geometry.coedge_faces[coedge]}", f"edge:{edge}"),
         )
     fitted = _certify_export_face_trims(
-        geometry, fitted, policy.intersection_approximation
+        geometry, fitted, policy.intersection_approximation,
+        coordinate_budget=coordinate_budget,
     )
     affected_edges = {edge for _, edges in branches.values() for edge in edges}
     affected_vertices = {
         vertex for edge in affected_edges for vertex in geometry.edge_vertices[edge]
     }
 
-    _retain_export_source_bindings(geometry, branches, fitted)
+    _retain_export_source_bindings(
+        geometry, branches, fitted, coordinate_budget=coordinate_budget
+    )
     view = _substitute_export_geometry(
-        model, geometry, curves, pcurves, affected_vertices, format_name
+        model, geometry, curves, pcurves, affected_vertices, format_name,
+        coordinate_budget=coordinate_budget,
     )
     substituted, local_domains = view.geometry, view.trim_domains
     fitted = {
@@ -4528,7 +5635,22 @@ def prepare_cad_export_geometry(
         )
         for branch_id, approximation in fitted.items()
     }
-    return substituted, local_domains, tuple(fitted.values())
+    approximations = tuple(fitted.values())
+    if coordinate_budget is not None:
+        prepared = _CadExportPreparation(
+            model, geometry, model.model_id, geometry.geometry_id, policy.policy_id,
+            substituted, local_domains, approximations,
+            source_binding,
+            _export_content_binding(
+                (substituted, local_domains, approximations), coordinate_budget
+            ),
+        )
+        coordinate_budget.retain_owner(prepared)
+        coordinate_budget.ticket.checkpoint()
+        coordinate_budget.cad_export_preparation_cache[
+            (id(model), id(geometry), policy.policy_id)
+        ] = prepared
+    return substituted, local_domains, approximations
 
 
 __all__ = [

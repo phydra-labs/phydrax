@@ -368,7 +368,7 @@ class ParabolicChartSource(ParabolicTriangleSource):
         self, maximum_patches: int, /, *, budget: CoordinateEnclosureBudget
     ) -> Any:
         corners = self.graph(np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))))
-        # Independent exact calculus: h-L = c*(x*x+y*y-x-y), whose
+        # Independent polynomial calculus: h-L = c*(x*x+y*y-x-y), whose
         # absolute maximum over this entire closed chart triangle is c/2.
         return phx.geometry.SourceBoundaryChartCover(
             corners[None],
@@ -594,8 +594,8 @@ def bumped_square(first: Any, second: Any) -> Any:
 
     corners = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     cells = np.asarray(((0, 1, 2), (2, 3, 0)), dtype=np.int32)
-    # The exact-lattice coordinate element: its k/3 reference nodes give both
-    # cells the same exact diagonal chart, so only authored bumps separate traces.
+    # The rational-lattice coordinate element: its k/3 reference nodes give both
+    # cells the same diagonal chart, so only authored bumps separate traces.
     element = coordinate_lagrange_element("triangle", 3)
     reference = [
         tuple(Fraction(float(value)).limit_denominator(3) for value in node)
@@ -737,7 +737,7 @@ def mixed_degree_hexes(bulge: float) -> tuple[Any, Any]:
 
 
 def halved_tapered_restriction() -> tuple[Any, Any]:
-    """Two tapered trilinear roots, each restricted to two exact half-x charts."""
+    """Two tapered trilinear roots, each restricted to two rational half-x charts."""
 
     def taper(local: np.ndarray) -> np.ndarray:
         tapered = local.copy()
@@ -755,7 +755,7 @@ def halved_tapered_restriction() -> tuple[Any, Any]:
             [taper(nodes + np.asarray((origin, 0.0, 0.0))) for origin in (0.0, 1.0)]
         ),
     )
-    # Each root is halved in x; the children are exact affine source charts.
+    # Each root is halved in x; the children are affine source restrictions.
     logical = np.asarray(tuple(np.ndindex((5, 2, 2))), dtype=np.float64) * np.asarray(
         (0.5, 1.0, 1.0)
     )

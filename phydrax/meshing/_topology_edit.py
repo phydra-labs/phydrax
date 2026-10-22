@@ -7,14 +7,17 @@
 A route describes its target mesh relative to the source in global identities:
 vertices and cells by global ID, intermediate entities by sorted
 vertex-global-ID keys. ``CellTopologyEdit`` carries fixed-family or packed
-polyhedral blocks, lineage relations, vertex stencils, oriented shared-face
-closure, and reference-coordinate geometry witnesses of nested operations.
-``assemble_topology_edit`` builds a ``CellMesh`` with deterministic intermediate
-entity IDs, ``MeshLineage``, and a sparse vertex interpolation stencil.
+polyhedral blocks, lineage relations, vertex stencils (optionally with their rational
+homogeneous bank), oriented shared-face closure, and reference-coordinate geometry
+witnesses of nested operations. ``assemble_topology_edit`` builds a ``CellMesh``
+with deterministic intermediate entity IDs, ``MeshLineage``, and a sparse vertex
+interpolation stencil.
 """
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from fractions import Fraction
 from typing import assert_never, Literal, NamedTuple, TYPE_CHECKING
 
 import numpy as np
@@ -29,9 +32,14 @@ from phydrax.discretization._reference_cell_types import PolyhedralBlock
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..discretization._cell_complex import (
     polyhedral_connectivity,
+    PolyhedralConnectivity,
 )
 from ..discretization._cell_geometry import CellGeometrySpec
-from ..discretization._cell_geometry_transition_types import NestedReferenceWitnesses
+from ..discretization._cell_geometry_transition_types import (
+    NestedReferenceWitnesses,
+    reference_homogeneous_preparation_bounds,
+    require_reference_homogeneous,
+)
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._coordinate_enclosure import prepared_coordinate_source_bank
@@ -206,6 +214,13 @@ class CellTopologyEdit(NamedTuple):
     refinement witnesses have target fine cells in source coarse cells (preserved
     cells map onto themselves with the identity correspondence); coarsening witnesses
     have source fine cells in target coarse cells.
+
+    ``stencil_homogeneous`` optionally retains exact source-owned stencil rows on
+    the ``stencil_valid`` support: finite sign-bit-free binary64 homogeneous
+    weights (``+0.0`` elsewhere) with a positive exact sum in every row, whose
+    rational barycentrics ``h_j / sum(h)`` the ``stencil_weights`` round to nearest
+    bitwise. Refinement witnesses of such an edit retain the exact reference bank
+    ``exact_nested_reference_vertices`` derives from these rows.
     """
 
     operation: TopologyEditOperation
@@ -222,6 +237,7 @@ class CellTopologyEdit(NamedTuple):
     coarsening: NestedReferenceWitnesses | None = None
     periodic_orbits: PeriodicVertexOrbitWitness | None = None
     target_periodic_topology: PeriodicMeshTopology | None = None
+    stencil_homogeneous: np.ndarray | None = None
 
 
 def source_family_blocks(
@@ -245,6 +261,29 @@ def source_family_blocks(
     )
 
 
+def _coarse_corner_matches(
+    fine_sources: np.ndarray, coarse_rows: np.ndarray, /
+) -> np.ndarray:
+    """Match ``(C, d+1, w)`` fine stencil supports to ``(C, d+1)`` coarse corners."""
+
+    if fine_sources.ndim != 3 or coarse_rows.ndim != 2:
+        raise ValueError(
+            "CellTopologyEdit.stencils must have (C, d+1, w) stencils and (C, d+1) rows; got incompatible shapes."
+        )
+    if fine_sources.shape[:2] != coarse_rows.shape:
+        raise ValueError(
+            "CellTopologyEdit.stencils must give fine and coarse simplices equal vertex counts; got incompatible counts."
+        )
+    matches = (fine_sources[..., :, None] == coarse_rows[:, None, None, :]) & (
+        fine_sources[..., :, None] >= 0
+    )
+    if np.any(np.any(matches, axis=-1) != (fine_sources >= 0)):
+        raise ValueError(
+            "CellTopologyEdit.stencils must reference vertices inside their coarse cell; got an outside vertex."
+        )
+    return matches
+
+
 def nested_reference_vertices(
     fine_sources: np.ndarray,
     fine_weights: np.ndarray,
@@ -264,24 +303,174 @@ def nested_reference_vertices(
 
     sources = np.asarray(fine_sources, dtype=np.int64)
     weights = np.asarray(fine_weights, dtype=np.float64)
-    rows = np.asarray(coarse_rows, dtype=np.int64)
-    if sources.ndim != 3 or weights.shape != sources.shape or rows.ndim != 2:
+    if weights.shape != sources.shape:
         raise ValueError(
             "CellTopologyEdit.stencils must have (C, d+1, w) stencils and (C, d+1) rows; got incompatible shapes."
         )
-    if sources.shape[:2] != rows.shape:
-        raise ValueError(
-            "CellTopologyEdit.stencils must give fine and coarse simplices equal vertex counts; got incompatible counts."
-        )
-    matches = (sources[..., :, None] == rows[:, None, None, :]) & (
-        sources[..., :, None] >= 0
-    )
-    if np.any(np.any(matches, axis=-1) != (sources >= 0)):
-        raise ValueError(
-            "CellTopologyEdit.stencils must reference vertices inside their coarse cell; got an outside vertex."
-        )
+    matches = _coarse_corner_matches(sources, np.asarray(coarse_rows, dtype=np.int64))
     barycentric = np.sum(np.where(matches, weights[..., None], 0.0), axis=2)
     return barycentric[..., 1:]
+
+
+_BINARY64_MAX = Fraction(float(np.finfo(np.float64).max))
+
+
+def _nested_array_bytes(cells: int, corners: int, width: int, /) -> int:
+    # Corner matches with their comparison temporaries, contributions, positive
+    # masks and rounded contributions, plus per-corner counts and banks.
+    return 24 * cells * corners * width * corners + 32 * cells * corners * corners
+
+
+def _corner_lookup_bytes(cells: int, corners: int, width: int, /) -> int:
+    # Fine and coarse corner IDs with sorted lookup positions, plus the gathered
+    # stencil sources, masks and homogeneous rows of every fine corner.
+    return cells * corners * (48 + 32 * width)
+
+
+def _aggregation_bounds(pairs: int, corners: int, width: int, /) -> tuple[int, int]:
+    # Per aggregated fine corner and coarse corner: ``width`` conversions and
+    # sums, four binary64-exactness operations (bound, round, convert, compare),
+    # the total, one quotient and two roundings; two fine corners' Fractions are
+    # live at once.
+    return pairs * corners * (2 * width + 8), lineage_owner.exact_fraction_bytes(
+        2 * (2 * corners + width + 1), max(width, corners)
+    )
+
+
+def _exact_nested_reference_bounds(
+    cells: int, corners: int, width: int, /
+) -> tuple[int, int]:
+    """Upper bound ``exact_nested_reference_vertices`` when every corner aggregates."""
+    rounding_work, rounding_bytes = lineage_owner.homogeneous_rounding_bounds(
+        cells * corners, width
+    )
+    aggregation_work, aggregation_bytes = _aggregation_bounds(
+        cells * corners, corners, width
+    )
+    return (
+        rounding_work + aggregation_work,
+        rounding_bytes + aggregation_bytes + _nested_array_bytes(cells, corners, width),
+    )
+
+
+def exact_nested_reference_vertices(
+    fine_sources: np.ndarray,
+    fine_homogeneous: np.ndarray,
+    coarse_rows: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact coarse-simplex reference banks of fine-simplex vertices.
+
+    ``fine_homogeneous[c, i]`` is the exact homogeneous stencil (as in
+    ``CellTopologyEdit.stencil_homogeneous``) of fine vertex ``i`` over
+    ``fine_sources[c, i]``, on the support ``fine_sources >= 0``. The bank
+    ``H[c, i, j]`` sums the weights naming coarse corner ``j`` and must be exactly representable in
+    binary64; the exact reference coordinate ``j`` is ``H[c, i, j] / sum(H[c, i])``
+    in rational arithmetic. Returns the correctly rounded reference vertices
+    (coordinates ``1..d``, as ``nested_reference_vertices``) and ``H``.
+
+    A ``budget`` admits the vectorized banks and the stencil-rounding bound before
+    validation and charges the rational work of every aggregated fine corner
+    before aggregating it; ``None`` declares unbounded host validation.
+    """
+
+    sources = np.asarray(fine_sources, dtype=np.int64)
+    weights = np.asarray(fine_homogeneous, dtype=np.float64)
+    if weights.shape != sources.shape or sources.ndim != 3:
+        raise ValueError(
+            "CellTopologyEdit.stencil_homogeneous must align (C, d+1, w) weights with their stencil sources; got incompatible shapes."
+        )
+    cells, corners, width = sources.shape
+    with nullcontext() if budget is None else budget.temporary_scope():
+        if budget is not None:
+            rounding_work, rounding_bytes = lineage_owner.homogeneous_rounding_bounds(
+                cells * corners, width
+            )
+            array_bytes = _nested_array_bytes(cells, corners, width)
+            budget.admit_work_bound(
+                rounding_work, storage_upper=rounding_bytes + array_bytes
+            )
+            budget.reserve(0, array_bytes)
+        rounded = lineage_owner.rounded_homogeneous_barycentrics(
+            weights, sources >= 0, budget=budget
+        )
+        matches = _coarse_corner_matches(sources, np.asarray(coarse_rows, dtype=np.int64))
+        contributions = np.where(matches, weights[..., None], 0.0)
+        homogeneous = np.sum(contributions, axis=2)
+        # With at most one positive weight per corner, every corner sum is exactly representable and
+        # its rounded coordinate is the rounded stencil weight naming that corner.
+        reference = np.sum(np.where(matches, rounded[..., None], 0.0), axis=2)
+        aggregated = np.argwhere(
+            np.any(np.count_nonzero(contributions > 0.0, axis=2) > 1, axis=2)
+        )
+        if budget is not None and aggregated.shape[0]:
+            budget.reserve(*_aggregation_bounds(aggregated.shape[0], corners, width))
+        for cell, vertex in aggregated.tolist():
+            exact = [
+                sum((Fraction(float(value)) for value in column), Fraction(0))
+                for column in np.asarray(contributions[cell, vertex]).T.tolist()
+            ]
+            if any(value > _BINARY64_MAX for value in exact) or any(
+                Fraction(float(value)) != value for value in exact
+            ):
+                raise ValueError(
+                    "CellTopologyEdit.stencil_homogeneous must aggregate each coarse corner exactly in binary64; got an inexact corner sum."
+                )
+            total = sum(exact, Fraction(0))
+            homogeneous[cell, vertex] = [float(value) for value in exact]
+            reference[cell, vertex] = [float(value / total) for value in exact]
+    return reference[..., 1:], homogeneous
+
+
+def topology_edit_exact_preparation_bounds(edit: CellTopologyEdit, /) -> tuple[int, int]:
+    """Upper bound the exact-bank work and bytes ``assemble_topology_edit`` charges.
+
+    Zero without exact banks. Otherwise the shape-only bound covers the stencil
+    rounding, the refinement conversion of every witnessed fine corner with its
+    corner lookups, and coarsening reference-bank validation.
+    """
+    work = storage = 0
+    exact = edit.stencil_homogeneous
+    refinement = edit.refinement
+    coarsening = edit.coarsening
+    coarse_bank = None if coarsening is None else coarsening.fine_reference_homogeneous
+    if (
+        (exact is not None and np.ndim(exact) != 2)
+        or (
+            exact is not None
+            and refinement is not None
+            and np.ndim(refinement.fine_reference_vertices) != 3
+        )
+        or (coarse_bank is not None and np.ndim(coarse_bank) != 3)
+    ):
+        raise ValueError(
+            "CellTopologyEdit.exact_banks must have (V, w) stencils and (C, corners, d) reference rows; got incompatible ranks."
+        )
+    if exact is not None:
+        rows, width = np.shape(exact)
+        stencil_work, stencil_bytes = lineage_owner.homogeneous_rounding_bounds(
+            rows, width
+        )
+        work += stencil_work
+        storage += stencil_bytes
+        if refinement is not None:
+            cells = np.size(refinement.fine_cell_ids)
+            corners = np.shape(refinement.fine_reference_vertices)[2] + 1
+            nested_work, nested_bytes = _exact_nested_reference_bounds(
+                cells, corners, width
+            )
+            work += nested_work
+            storage += nested_bytes + _corner_lookup_bytes(cells, corners, width)
+    if coarse_bank is not None:
+        cells, padded, homogeneous_width = np.shape(coarse_bank)
+        coarse_work, coarse_bytes = reference_homogeneous_preparation_bounds(
+            cells * padded, homogeneous_width
+        )
+        work += coarse_work
+        storage += coarse_bytes
+    return work, storage
 
 
 def _target_entity_ids(
@@ -335,15 +524,13 @@ def _target_entity_ids(
     return identifiers
 
 
-@checked
-def build_mesh(
+def _lifted_mesh(
     edit: CellTopologyEdit,
     numeric_version: str,
     entity_ids: dict[int, np.ndarray] | None,
     /,
-    *,
-    budget: CoordinateEnclosureBudget,
-) -> cell_mesh_owner.CellMesh:
+) -> tuple[cell_mesh_owner.CellMesh, PolyhedralConnectivity | None]:
+    """Build the edit's nonperiodic lifted carrier and its packed connectivity."""
     blocks: list[reference_cell_types_owner.CellBlock | PolyhedralBlock] = []
     entries: list[tuple[str, np.ndarray] | tuple[np.ndarray, ...]] = []
     for block in edit.blocks:
@@ -412,17 +599,47 @@ def build_mesh(
         numeric_version=numeric_version,
         polyhedral_connectivity=packed,
     )
-    if edit.target_periodic_topology is not None:
-        descriptor = edit.target_periodic_topology.rebuilt(target, budget=budget)
-        target = cell_mesh_owner.CellMesh(
-            target.coordinates,
-            target.blocks,
-            vertex_global_ids=target.vertex_global_ids,
-            entity_global_ids=entity_ids,
-            numeric_version=numeric_version,
-            polyhedral_connectivity=packed,
-            periodic_topology=descriptor,
-        )
+    return target, packed
+
+
+@checked
+def build_mesh(
+    edit: CellTopologyEdit,
+    numeric_version: str,
+    entity_ids: dict[int, np.ndarray] | None,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> cell_mesh_owner.CellMesh:
+    """Build the edit target, rebuilding and proving its periodic quotient once.
+
+    A periodic target is a deterministic function of its lifted carrier, numeric
+    version and authored descriptor; one earned in this request is reused.
+    """
+    target, packed = _lifted_mesh(edit, numeric_version, entity_ids)
+    periodic = edit.target_periodic_topology
+    if periodic is None:
+        return target
+    key = (
+        target.mesh_id, str(numeric_version),
+        canonical_fingerprint(array_tree_fingerprint(periodic)),
+    )
+    earned = budget.periodic_lifted_mesh_cache.get(key)
+    if earned is not None:
+        return earned
+    descriptor = periodic.rebuilt(target, budget=budget)
+    target = cell_mesh_owner.CellMesh(
+        target.coordinates,
+        target.blocks,
+        vertex_global_ids=target.vertex_global_ids,
+        entity_global_ids=entity_ids,
+        numeric_version=numeric_version,
+        polyhedral_connectivity=packed,
+        periodic_topology=descriptor,
+        budget=budget,
+    )
+    budget.retain_owner(target)
+    budget.periodic_lifted_mesh_cache[key] = target
     return target
 
 
@@ -706,11 +923,101 @@ def _require_nested(
     _cell_rows(coarse, coarse_ids)
 
 
-@checked
-def power_domain_root(
-    geometry: CellGeometrySpec, *, budget: CoordinateEnclosureBudget
-) -> ExactPowerCellGeometrySource:
+def _simplex_vertex_ids(
+    mesh: cell_mesh_owner.CellMesh, blocks: np.ndarray, rows: np.ndarray, /
+) -> np.ndarray:
+    """Vertex global IDs, in local order, of simplex cells named by block and row."""
 
+    dimension = mesh.topological_dimension
+    identifiers = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    result = np.empty((rows.size, dimension + 1), dtype=np.int64)
+    for index in np.unique(blocks).tolist():
+        block = mesh.blocks[index]
+        cells = np.asarray(block.vertices, dtype=np.int64)
+        if block.cell_kind == "polyhedron" or cells.shape[1] != dimension + 1:
+            raise ValueError(
+                f"CellTopologyEdit.stencil_homogeneous must nest simplex cells; got {block.cell_kind!r} cells."
+            )
+        selected = blocks == index
+        result[selected] = identifiers[cells[rows[selected]]]
+    return result
+
+
+def _bitwise_equal(stored: object, expected: np.ndarray, /) -> bool:
+    value = np.ascontiguousarray(stored, dtype=np.float64)
+    return value.shape == expected.shape and np.array_equal(
+        value.view(np.uint64), np.ascontiguousarray(expected).view(np.uint64)
+    )
+
+
+def _require_exact_refinement(
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    edit: CellTopologyEdit,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Bind refinement reference banks to the rational stencils of the fine corners."""
+
+    witnesses = edit.refinement
+    bank = None if witnesses is None else witnesses.fine_reference_homogeneous
+    if edit.stencil_homogeneous is None:
+        if bank is not None:
+            raise ValueError(
+                "CellTopologyEdit.refinement must derive exact reference banks from stencil_homogeneous; got a rational bank without rational stencils."
+            )
+        return
+    exact = np.asarray(edit.stencil_homogeneous, dtype=np.float64)
+    if exact.ndim != 2 or exact.shape != np.shape(edit.stencil_sources):
+        raise ValueError(
+            f"CellTopologyEdit.stencil_homogeneous must align with stencil_sources; got shapes {exact.shape}/{np.shape(edit.stencil_sources)}."
+        )
+    if witnesses is None:
+        return
+    if bank is None:
+        raise ValueError(
+            "CellTopologyEdit.refinement must retain the exact reference bank of exact stencils; got rounded witnesses only."
+        )
+    fine_ids = np.asarray(witnesses.fine_cell_ids, dtype=np.int64)
+    with budget.temporary_scope():
+        budget.reserve(
+            0,
+            _corner_lookup_bytes(
+                fine_ids.size, target.topological_dimension + 1, exact.shape[-1]
+            ),
+        )
+        fine = _simplex_vertex_ids(target, *_cell_rows(target, fine_ids))
+        coarse = _simplex_vertex_ids(
+            source,
+            *_cell_rows(source, np.asarray(witnesses.coarse_cell_ids, dtype=np.int64)),
+        )
+        identifiers = np.asarray(edit.vertex_global_ids, dtype=np.int64)
+        order = np.argsort(identifiers, kind="stable")
+        position = np.minimum(np.searchsorted(identifiers[order], fine), order.size - 1)
+        if np.any(identifiers[order][position] != fine):
+            raise ValueError(
+                "CellTopologyEdit.refinement must reference stenciled target vertices; got an unstenciled corner."
+            )
+        rows = order[position]
+        valid = np.asarray(edit.stencil_valid, dtype=np.bool_)[rows]
+        vertices, homogeneous = exact_nested_reference_vertices(
+            np.where(valid, np.asarray(edit.stencil_sources, dtype=np.int64)[rows], -1),
+            exact[rows],
+            coarse,
+            budget=budget,
+        )
+        if not (
+            _bitwise_equal(witnesses.fine_reference_vertices, vertices)
+            and _bitwise_equal(bank, homogeneous)
+        ):
+            raise ValueError(
+                "CellTopologyEdit.refinement must be the rational reference conversion of the fine-corner stencils; got different reference banks."
+            )
+
+
+def power_domain_source(geometry: CellGeometrySpec, /) -> ExactPowerCellGeometrySource:
+    """Return the authored exact-power root retaining the PLC and periodic controls."""
     current = geometry.exact_source
     visited = set()
     while True:
@@ -737,9 +1044,17 @@ def power_domain_root(
         raise ValueError(
             "CellTopologyEdit.geometry_source must retain domain source and periodic constraints; got missing domain/control data."
         )
-
-    prepared_coordinate_source_bank(geometry, budget=budget)
     return current
+
+
+@checked
+def power_domain_root(
+    geometry: CellGeometrySpec, *, budget: CoordinateEnclosureBudget
+) -> ExactPowerCellGeometrySource:
+    """Return the authored root after preparing ``geometry``'s exact coordinates."""
+    root = power_domain_source(geometry)
+    prepared_coordinate_source_bank(geometry, budget=budget)
+    return root
 
 
 def _nonnested_binding(authority: PeriodicNonnestedGeometryAuthority) -> str:
@@ -946,8 +1261,12 @@ def prepare_topology_edit_target(
     budget: CoordinateEnclosureBudget,
     numeric_version: str,
 ) -> cell_mesh_owner.CellMesh:
-    """Stage lifted IDs before certifying a nonnested periodic overlap."""
-    probe = build_mesh(edit, numeric_version, None, budget=budget)
+    """Stage lifted IDs before certifying a nonnested periodic overlap.
+
+    Entity keys depend only on the lifted carrier, so the ID probe skips the
+    periodic quotient; the published target rebuilds and proves it once.
+    """
+    probe, _ = _lifted_mesh(edit, numeric_version, None)
     entity_ids = {
         degree: _target_entity_ids(source, probe, degree, edit.prescribed_entity_ids)
         for degree in range(1, source.topological_dimension)
@@ -968,7 +1287,11 @@ def assemble_topology_edit(
     lineage_owner.MeshLineage,
     lineage_owner.VertexInterpolationStencil | None,
 ]:
-    """Build target and lineage; return no interpolation when target rows are unknown."""
+    """Build target and lineage; return no interpolation when target rows are unknown.
+
+    Exact-bank validation charges ``budget`` before each rational phase, within
+    ``topology_edit_exact_preparation_bounds``.
+    """
 
     if source.periodic_topology is not None:
         if edit.periodic_orbits is None:
@@ -1027,8 +1350,15 @@ def assemble_topology_edit(
         _require_shared_faces(target, edit.shared_faces)
     if edit.refinement is not None:
         _require_nested(target, source, edit.refinement, "Refinement")
+    _require_exact_refinement(source, target, edit, budget=budget)
     if edit.coarsening is not None:
         _require_nested(source, target, edit.coarsening, "Coarsening")
+        require_reference_homogeneous(
+            np.asarray(edit.coarsening.fine_reference_vertices, dtype=np.float64),
+            edit.coarsening.fine_reference_homogeneous,
+            "CellTopologyEdit.coarsening",
+            budget=budget,
+        )
     if nested:
         refined_ids = (
             np.asarray(edit.refinement.fine_cell_ids, dtype=np.int64)
@@ -1062,8 +1392,12 @@ def assemble_topology_edit(
             edit.stencil_weights,
             edit.stencil_valid,
             preserves_constants=True,
+            homogeneous_weights=edit.stencil_homogeneous,
+            budget=budget,
         )
-        if np.all(np.any(edit.stencil_valid, axis=1))
+        # A rational bank admits only full rows; the stencil refuses others.
+        if edit.stencil_homogeneous is not None
+        or np.all(np.any(edit.stencil_valid, axis=1))
         else None
     )
     return target, lineage, stencil
@@ -1080,6 +1414,8 @@ __all__ = [
     "TopologyEditBlock",
     "TopologyEditOperation",
     "assemble_topology_edit",
+    "exact_nested_reference_vertices",
     "nested_reference_vertices",
     "source_family_blocks",
+    "topology_edit_exact_preparation_bounds",
 ]

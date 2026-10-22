@@ -25,7 +25,11 @@ from jax.typing import ArrayLike
 
 import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
 import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.discretization._exact_power_geometry as _dependency_phydrax_discretization__exact_power_geometry
+import phydrax.geometry._approximate_source_coverage as cad_coverage_owner
+import phydrax.geometry._domain_boundary as domain_boundary_owner
 import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._domain_planar_boundary as cad_domain_owner
 import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
 import phydrax.geometry._global_embedding as global_embedding_owner
 import phydrax.geometry._mapped_reference_domain as _dependency_phydrax_geometry__mapped_reference_domain
@@ -54,6 +58,89 @@ from ..typing import checked, parse
 _QUALITY_ISSUES = ("minimum_measure", "minimum_mean_ratio", "maximum_aspect_ratio")
 _VALIDITY_NAMES = ("invalid_geometry", "unresolved_geometry_validity")
 _LARGEST = float(np.finfo(np.float64).max)
+
+type _CoverageCertificate = (
+    domain_coverage_owner.DomainCoverageCertificate
+    | cad_coverage_owner.ApproximateSourceCoverageCertificate
+)
+
+
+def _rebuild_cad_coverage(
+    coverage: cad_coverage_owner.ApproximateSourceCoverageCertificate,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+    *,
+    require_issued: bool = False,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None = None,
+) -> cad_coverage_owner.ApproximateSourceCoverageCertificate:
+    """Reconstruct the actual CAD coverage variant without inventing region measures."""
+    domain, source = request.domain, request.source
+    if (
+        not isinstance(domain, cad_domain_owner.CadSourceDomain)
+        or request.cell_regions is None
+        or source is None
+        or request.fidelity_tolerance is None
+    ):
+        raise ValueError("CAD coverage must retain its authored domain, source and assignments")
+    coverage.binding.require(mesh, geometry)
+    fidelity = coverage.fidelity
+    fidelity.binding.require(mesh, geometry)
+    if (
+        coverage.binding.limits_id != request.limits.limits_id
+        or fidelity.binding.limits_id != request.limits.limits_id
+        or (coverage.binding.source_id, coverage.binding.source_revision)
+        != (domain.source_id, domain.source_revision)
+        or (source.source_id, source.source_revision)
+        != (domain.source_id, domain.source_revision)
+        or fidelity.tolerance != request.fidelity_tolerance
+        or fidelity.target_facet_ids is not None
+        or fidelity.source_scope_id is not None
+        or not np.array_equal(coverage.cell_regions, np.asarray(request.cell_regions))
+        or not tree_content_equal(coverage.embedding, embedding)
+    ):
+        raise ValueError("CAD coverage must bind the current source, geometry, limits and whole region")
+    if isinstance(source, domain_boundary_owner.MeshingDomainBoundarySource):
+        if (
+            source.domain.authority_id != domain.model.model_id
+            or set(source.patches) != set(range(len(domain.model.patches)))
+        ):
+            raise ValueError("CAD coverage must retain the complete original B-Rep boundary")
+    elif isinstance(source, cad_domain_owner.EmbeddedPlanarBoundarySource):
+        if source.model.model_id != domain.model.model_id:
+            raise ValueError("CAD planar coverage must retain its original B-Rep authority")
+    else:
+        raise TypeError("CAD coverage must retain its native authored boundary query")
+    closure = fidelity.cad_closure
+    if require_issued:
+        if closure is None or not isinstance(
+            source, domain_boundary_owner.MeshingDomainBoundarySource
+        ):
+            raise ValueError("Prepared CAD coverage must retain its issued whole-boundary source closure")
+        source_fidelity_owner.require_issued_cad_boundary_closure(
+            mesh, geometry, closure, request.limits, source=source, budget=budget
+        )
+        if (
+            closure.authority_id != domain.model.model_id
+            or not isinstance(source, domain_boundary_owner.MeshingDomainBoundarySource)
+            or closure.source_scope_id != source.source_scope_id
+        ):
+            raise ValueError("Prepared CAD closure must bind the current whole authored source scope")
+    rebuilt = cad_coverage_owner.ApproximateSourceCoverageCertificate(
+        coverage.binding,
+        embedding,
+        fidelity,
+        domain,
+        request.cell_regions,
+        coverage.findings,
+        boundary_degree_id=coverage.boundary_degree_id,
+        distance_upper=coverage.distance_upper,
+    )
+    if not tree_content_equal(coverage, rebuilt):
+        raise ValueError("CAD coverage identity must match its reconstructed physical premises")
+    return rebuilt
 
 
 @final
@@ -143,7 +230,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
     geometry_layout_id: str = eqx.field(static=True)
     audit_report_id: str = eqx.field(static=True)
     embedding: global_embedding_owner.GlobalEmbeddingCertificate | None
-    coverage: domain_coverage_owner.DomainCoverageCertificate | None
+    coverage: _CoverageCertificate | None
     fidelity: source_fidelity_owner.SourceFidelityCertificate | None
     scoped_fidelity: tuple[source_fidelity_owner.SourceFidelityCertificate, ...]
     outcomes: tuple[MeshCertificationOutcome, ...]
@@ -163,7 +250,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         /,
         *,
         embedding: global_embedding_owner.GlobalEmbeddingCertificate | None,
-        coverage: domain_coverage_owner.DomainCoverageCertificate | None,
+        coverage: _CoverageCertificate | None,
         fidelity: source_fidelity_owner.SourceFidelityCertificate | None,
         request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs,
         scoped_fidelity: tuple[source_fidelity_owner.SourceFidelityCertificate, ...] = (),
@@ -216,7 +303,15 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 )
         requested: list[tuple[str, float]] = []
         achieved: list[tuple[str, float]] = []
-        if coverage is not None:
+        if isinstance(coverage, cad_coverage_owner.ApproximateSourceCoverageCertificate):
+            if embedding is None or fidelity is None:
+                raise ValueError("MeshCertificationReport.CAD coverage must retain both physical premises")
+            _rebuild_cad_coverage(coverage, mesh, geometry, request, embedding)
+            if coverage.fidelity.certificate_id != fidelity.certificate_id:
+                raise ValueError("MeshCertificationReport.CAD fidelity must match its coverage premise")
+            requested.append(("region_hausdorff_deviation", fidelity.tolerance))
+            achieved.append(("region_hausdorff_deviation", coverage.distance_upper))
+        elif coverage is not None:
             for region, wanted, measured in zip(
                 coverage.region_ids,
                 coverage.requested_region_measures,
@@ -401,7 +496,7 @@ def _quality_outcome(
 def _certificate_outcome(
     check: _leaf_phydrax_meshing__certification_schedule.MeshCertificationCheck,
     certificate: global_embedding_owner.GlobalEmbeddingCertificate
-    | domain_coverage_owner.DomainCoverageCertificate
+    | _CoverageCertificate
     | source_fidelity_owner.SourceFidelityCertificate,
     /,
 ) -> MeshCertificationOutcome:
@@ -432,7 +527,7 @@ def _certificate_outcome(
 def _certificate_finding_quantities(
     certificates: tuple[
         global_embedding_owner.GlobalEmbeddingCertificate
-        | domain_coverage_owner.DomainCoverageCertificate
+        | _CoverageCertificate
         | source_fidelity_owner.SourceFidelityCertificate
         | None,
         ...,
@@ -594,7 +689,7 @@ class MeshCertificationPremiseFailure(MeshingFailure):
         request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs,
         validity: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate,
         embedding: global_embedding_owner.GlobalEmbeddingCertificate,
-        coverage: domain_coverage_owner.DomainCoverageCertificate,
+        coverage: _CoverageCertificate,
         /,
         *,
         budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
@@ -608,42 +703,47 @@ class MeshCertificationPremiseFailure(MeshingFailure):
         self.coverage = coverage
         self.ledger = budget
         requested, achieved = _certificate_finding_quantities((embedding, coverage))
-        requested = (
-            *requested,
-            *(
-                (f"region_measure[{region}]", wanted)
-                for region, wanted in zip(
-                    coverage.region_ids, coverage.requested_region_measures, strict=True
-                )
-                if np.isfinite(wanted)
-            ),
-        )
-        achieved = (
-            *achieved,
-            *(
-                (f"region_measure[{region}]", measured)
-                for region, measured in zip(
-                    coverage.region_ids, coverage.achieved_region_measures, strict=True
-                )
-                if measured is not None and np.isfinite(measured)
-            ),
-        )
-        self.unbounded_region_measures = (
-            *(
-                (region, "requested", wanted)
-                for region, wanted in zip(
-                    coverage.region_ids, coverage.requested_region_measures, strict=True
-                )
-                if not np.isfinite(wanted)
-            ),
-            *(
-                (region, "achieved", measured)
-                for region, measured in zip(
-                    coverage.region_ids, coverage.achieved_region_measures, strict=True
-                )
-                if measured is None or not np.isfinite(measured)
-            ),
-        )
+        if isinstance(coverage, domain_coverage_owner.DomainCoverageCertificate):
+            requested = (
+                *requested,
+                *(
+                    (f"region_measure[{region}]", wanted)
+                    for region, wanted in zip(
+                        coverage.region_ids, coverage.requested_region_measures, strict=True
+                    )
+                    if np.isfinite(wanted)
+                ),
+            )
+            achieved = (
+                *achieved,
+                *(
+                    (f"region_measure[{region}]", measured)
+                    for region, measured in zip(
+                        coverage.region_ids, coverage.achieved_region_measures, strict=True
+                    )
+                    if measured is not None and np.isfinite(measured)
+                ),
+            )
+            self.unbounded_region_measures = (
+                *(
+                    (region, "requested", wanted)
+                    for region, wanted in zip(
+                        coverage.region_ids, coverage.requested_region_measures, strict=True
+                    )
+                    if not np.isfinite(wanted)
+                ),
+                *(
+                    (region, "achieved", measured)
+                    for region, measured in zip(
+                        coverage.region_ids, coverage.achieved_region_measures, strict=True
+                    )
+                    if measured is None or not np.isfinite(measured)
+                ),
+            )
+        else:
+            requested = (*requested, ("region_hausdorff_deviation", coverage.fidelity.tolerance))
+            achieved = (*achieved, ("region_hausdorff_deviation", coverage.distance_upper))
+            self.unbounded_region_measures = ()
         # Optional measures, bounds, SCI and reference source data stay in
         # coverage and geometry rather than this failure summary.
         outcome = _certificate_outcome("domain_coverage", coverage)
@@ -710,7 +810,7 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
         _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate
     )
     embedding: global_embedding_owner.GlobalEmbeddingCertificate
-    coverage: domain_coverage_owner.DomainCoverageCertificate
+    coverage: _CoverageCertificate
     mesh_arrays_id: str = eqx.field(static=True)
     validity_arrays_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
@@ -725,9 +825,11 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
         *,
         schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule,
         domain: domain_coverage_owner.PiecewiseLinearDomain
-        | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+        | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+        | cad_domain_owner.CadSourceDomain,
         cell_regions: ArrayLike,
         embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None,
+        coverage: cad_coverage_owner.ApproximateSourceCoverageCertificate | None = None,
         limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
         | None = None,
         source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
@@ -788,6 +890,22 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"MeshCertificationPreparedEvidence.validity must certify all mesh cells; got all_certified={validity.all_certified!r}, status_count={validity.status.shape[0]}"
                 )
+            cad_fidelity = None
+            if isinstance(domain, cad_domain_owner.CadSourceDomain):
+                if source is None or fidelity_tolerance is None:
+                    raise ValueError("Prepared CAD volume must retain its whole-source fidelity request")
+                cad_fidelity = (
+                    source_fidelity_owner.certify_source_fidelity(
+                        mesh, geometry, source,
+                        tolerance=fidelity_tolerance,
+                        sample_order=fidelity_sample_order,
+                        limits=request.limits,
+                        budget=budget,
+                    )
+                    if coverage is None else coverage.fidelity
+                )
+            elif coverage is not None:
+                raise ValueError("Prepared CAD coverage must be supplied only for a CAD source domain")
             embedding_ = (
                 global_embedding_owner.certify_global_embedding(
                     mesh,
@@ -795,35 +913,57 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
                     validity,
                     limits=request.limits,
                     budget=budget,
+                    cad_boundary=None if cad_fidelity is None else cad_fidelity.cad_closure,
                 )
                 if embedding is None
                 else embedding
             )
             require_prepared_embedding(
-                mesh, geometry, validity, embedding_, request.limits
+                mesh, geometry, validity, embedding_, request.limits, budget=budget
             )
+            _require_mapped_derived_regions(embedding_, request, budget=budget)
             if request.domain is None or request.cell_regions is None:
                 raise ValueError(
                     "MeshCertificationPreparedEvidence.request must retain domain and cell_regions; got missing coverage inputs"
                 )
-            coverage = domain_coverage_owner.certify_domain_coverage(
-                mesh,
-                geometry,
-                request.domain,
-                request.cell_regions,
-                embedding=embedding_,
-                limits=request.limits,
-                budget=budget,
-            )
-            if coverage.status != "certified" or coverage.findings:
-                raise MeshCertificationPremiseFailure(
-                    mesh, geometry, request, validity, embedding_, coverage, budget=budget
+            accepted_coverage: _CoverageCertificate
+            if isinstance(request.domain, cad_domain_owner.CadSourceDomain):
+                if cad_fidelity is None:
+                    raise ValueError("Prepared CAD volume must retain its source fidelity")
+                accepted_coverage = (
+                    cad_coverage_owner.certify_approximate_source_coverage(
+                        mesh, geometry, request.domain, request.cell_regions,
+                        embedding=embedding_,
+                        fidelity=cad_fidelity,
+                        source=source,
+                        limits=request.limits,
+                        budget=budget,
+                    )
+                    if coverage is None else coverage
                 )
-            _require_prepared_coverage(coverage, request.limits)
+                _rebuild_cad_coverage(
+                    accepted_coverage, mesh, geometry, request, embedding_,
+                    require_issued=True, budget=budget,
+                )
+            else:
+                accepted_coverage = domain_coverage_owner.certify_domain_coverage(
+                    mesh,
+                    geometry,
+                    request.domain,
+                    request.cell_regions,
+                    embedding=embedding_,
+                    limits=request.limits,
+                    budget=budget,
+                )
+            if accepted_coverage.status != "certified" or accepted_coverage.findings:
+                raise MeshCertificationPremiseFailure(
+                    mesh, geometry, request, validity, embedding_, accepted_coverage, budget=budget
+                )
+            _require_prepared_coverage(accepted_coverage, request.limits)
             self.request = request
             self.validity = validity
             self.embedding = embedding_
-            self.coverage = coverage
+            self.coverage = accepted_coverage
             self.mesh_arrays_id = canonical_fingerprint(array_tree_fingerprint(mesh))
             self.validity_arrays_id = canonical_fingerprint(
                 array_tree_fingerprint(validity)
@@ -834,7 +974,7 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
                     "request": request.request_id,
                     "validity": validity.certificate_id,
                     "embedding": embedding_.certificate_id,
-                    "coverage": coverage.certificate_id,
+                    "coverage": accepted_coverage.certificate_id,
                     "mesh_arrays": self.mesh_arrays_id,
                     "validity_arrays": self.validity_arrays_id,
                 }
@@ -879,60 +1019,66 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
             self.validity,
             self.embedding,
             request.limits,
+            budget=budget,
         )
+        _require_mapped_derived_regions(self.embedding, request, budget=budget)
         coverage = self.coverage
-        if not isinstance(
-            coverage,
-            domain_coverage_owner.DomainCoverageCertificate,
-        ):
-            raise TypeError(
-                f"MeshCertificationPreparedEvidence.coverage must be DomainCoverageCertificate; got {type(coverage).__name__}"
-            )
         coverage.binding.require(mesh, geometry)
         _require_prepared_coverage(coverage, request.limits)
         domain = request.domain
-        if (
-            domain is None
-            or coverage.status != "certified"
-            or coverage.findings
-            or coverage.domain_id != domain.domain_id
-            or coverage.region_ids != domain.region_ids
-            or coverage.embedding_certificate_id != self.embedding.certificate_id
-            or coverage.binding.limits_id != request.limits.limits_id
-            or coverage.binding.source_id != domain.source_id
-            or coverage.binding.source_revision != domain.source_revision
-            or coverage.source_facet_count != domain.facets.shape[0]
-            or coverage.covered_source_facet_count != coverage.source_facet_count
-        ):
-            raise ValueError(
-                f"MeshCertificationPreparedEvidence.coverage must bind the governed domain and region assignments; got certificate_id={coverage.certificate_id!r}"
+        rebuilt: _CoverageCertificate
+        if isinstance(coverage, cad_coverage_owner.ApproximateSourceCoverageCertificate):
+            rebuilt = _rebuild_cad_coverage(
+                coverage, mesh, geometry, request, self.embedding,
+                require_issued=True, budget=budget,
             )
-        rebuilt = domain_coverage_owner.DomainCoverageCertificate(
-            coverage.binding,
-            coverage.embedding_certificate_id,
-            domain,
-            coverage.findings,
-            measures=domain_coverage_owner.CoverageMeasures(
-                coverage.requested_region_measures,
-                coverage.achieved_region_measures,
-                coverage.requested_region_measure_bounds,
-                coverage.achieved_region_measure_bounds,
-                coverage.integration_error_bounds,
-            ),
-            evidence=domain_coverage_owner.CoverageEvidence(
-                coverage.covered_source_facet_count,
-                coverage.facet_source_overlaps,
-                coverage.premise_certificate_ids,
-                coverage.candidate_pair_count,
-                coverage.subdivision_piece_count,
-                coverage.maximum_subdivision_depth_reached,
-            ),
-            expression_work=domain_coverage_owner.CoverageExpressionWork(
-                coverage.source_expression_work_units,
-                coverage.source_expression_required_work_units,
-                coverage.source_expression_peak_bytes,
-            ),
-        )
+        else:
+            if (
+                not isinstance(
+                    domain,
+                    (domain_coverage_owner.PiecewiseLinearDomain,
+                     _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain),
+                )
+                or coverage.status != "certified"
+                or coverage.findings
+                or coverage.domain_id != domain.domain_id
+                or coverage.region_ids != domain.region_ids
+                or coverage.embedding_certificate_id != self.embedding.certificate_id
+                or coverage.binding.limits_id != request.limits.limits_id
+                or coverage.binding.source_id != domain.source_id
+                or coverage.binding.source_revision != domain.source_revision
+                or coverage.source_facet_count != domain.facets.shape[0]
+                or coverage.covered_source_facet_count != coverage.source_facet_count
+            ):
+                raise ValueError(
+                    f"MeshCertificationPreparedEvidence.coverage must bind the governed domain and region assignments; got certificate_id={coverage.certificate_id!r}"
+                )
+            rebuilt = domain_coverage_owner.DomainCoverageCertificate(
+                coverage.binding,
+                coverage.embedding_certificate_id,
+                domain,
+                coverage.findings,
+                measures=domain_coverage_owner.CoverageMeasures(
+                    coverage.requested_region_measures,
+                    coverage.achieved_region_measures,
+                    coverage.requested_region_measure_bounds,
+                    coverage.achieved_region_measure_bounds,
+                    coverage.integration_error_bounds,
+                ),
+                evidence=domain_coverage_owner.CoverageEvidence(
+                    coverage.covered_source_facet_count,
+                    coverage.facet_source_overlaps,
+                    coverage.premise_certificate_ids,
+                    coverage.candidate_pair_count,
+                    coverage.subdivision_piece_count,
+                    coverage.maximum_subdivision_depth_reached,
+                ),
+                expression_work=domain_coverage_owner.CoverageExpressionWork(
+                    coverage.source_expression_work_units,
+                    coverage.source_expression_required_work_units,
+                    coverage.source_expression_peak_bytes,
+                ),
+            )
         identity = canonical_fingerprint(
             {
                 "kind": "mesh-certification-prepared-evidence",
@@ -951,7 +1097,7 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
 
 
 def _require_prepared_coverage(
-    coverage: domain_coverage_owner.DomainCoverageCertificate,
+    coverage: _CoverageCertificate,
     limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     /,
 ) -> None:
@@ -959,6 +1105,17 @@ def _require_prepared_coverage(
         raise ValueError(
             f"MeshCertificationPreparedEvidence.coverage must be certified without findings; got status={coverage.status!r}, finding_count={len(coverage.findings)}"
         )
+    if isinstance(coverage, cad_coverage_owner.ApproximateSourceCoverageCertificate):
+        closure = coverage.fidelity.cad_closure
+        if (
+            not np.isfinite(coverage.distance_upper)
+            or coverage.distance_upper > coverage.fidelity.tolerance
+            or coverage.binding.limits_id != limits.limits_id
+            or (closure is not None
+                and closure.homotopy_piece_count > limits.maximum_subdivision_pieces)
+        ):
+            raise ValueError("Prepared CAD coverage must fit its original distance and proof-work bounds")
+        return
     for measured, bounds, error in zip(
         coverage.achieved_region_measures,
         coverage.achieved_region_measure_bounds,
@@ -1000,6 +1157,93 @@ def _require_prepared_coverage(
         )
 
 
+def _require_mapped_derived_regions(
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+    request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget | None,
+) -> None:
+    """Bind a proved derived assignment to this actual target's declared owner."""
+    evidence = embedding.periodic_mapped_restriction
+    if evidence is None:
+        return
+    if request.domain is None or request.cell_regions is None:
+        raise ValueError("Mapped periodic partition requires actual target domain and regions")
+    if budget is not None:
+        budget.reserve(request.cell_regions.size, 128 + 16 * request.cell_regions.size)
+    if evidence.target_regions != tuple(int(value) for value in np.asarray(request.cell_regions)):
+        raise ValueError("Mapped periodic derived regions must equal the actual target assignment")
+    if evidence.source_domain is not request.domain:
+        from ..lifecycle._meshing_source_records import stored_record_content_id
+
+        if stored_record_content_id(
+            evidence.source_domain, excluded="", budget=budget
+        ) != stored_record_content_id(request.domain, excluded="", budget=budget):
+            raise ValueError("Mapped periodic derived assignment must retain the exact target domain")
+
+
+def _require_prepared_cad_degree(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> None:
+    """Authenticate the actual CAD theorem and recount its topological premises."""
+    closure, degree = embedding.cad_boundary_closure, embedding.boundary_degree
+    count = sum(block.cell_count for block in mesh.blocks)
+    if (
+        closure is None or degree is None
+        or mesh.topological_dimension != 3 or mesh.ambient_dimension != 3
+        or mesh.periodic_topology is not None or mesh.storage is not None
+        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+        or degree.status != "embedded" or degree.failed_premise is not None
+        or degree.maximum_degree != 1 or any(degree.shell_exterior_degrees)
+        or degree.oriented_cell_count != count
+        or degree.boundary_pair_count != 0
+        or degree.tangent_cone_contact_count != 0
+        or closure.homotopy_piece_count < 1
+    ):
+        raise ValueError("Prepared CAD embedding must retain its complete oriented degree-one theorem")
+    source_fidelity_owner.require_issued_cad_boundary_closure(
+        mesh, geometry, closure, limits, budget=budget
+    )
+    with _certificate_budget(limits, budget) as budget:
+        # Every tetrahedron contributes four vertex and six edge incidences.
+        # The issuer counts repeated incidences after each first exact image.
+        budget.reserve(10 * count, 4096 + 512 * count)
+        cells = np.concatenate(
+            [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
+        )
+        edge_vertices = np.asarray(
+            ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64
+        )
+        edges = np.sort(cells[:, edge_vertices].reshape((-1, 2)), axis=1)
+        matched = 10 * count - np.unique(cells).size - np.unique(edges, axis=0).shape[0]
+        facets = _dependency_phydrax_geometry__embedding_state.mesh_facets(
+            mesh, geometry=geometry, budget=budget
+        )
+        rows = facets.rows[facets.boundary, :3]
+        identifiers = _dependency_phydrax_geometry__embedding_state.facet_entity_ids(mesh, rows)
+        _, unbalanced = global_embedding_owner.boundary_shells(
+            global_embedding_owner.Boundary(
+                rows, identifiers, rows, np.arange(rows.shape[0], dtype=np.int64)
+            ),
+            3,
+        )
+        if (
+            degree.conforming_entity_count != matched
+            or degree.boundary_facet_count != rows.shape[0]
+            or degree.shell_count != unbalanced.size
+            or len(degree.shell_exterior_degrees) != unbalanced.size
+            or not unbalanced.size or np.any(unbalanced)
+            or not np.array_equal(np.sort(identifiers), np.sort(closure.target_facet_ids))
+        ):
+            raise ValueError("Prepared CAD embedding degree counts must match the actual complete mesh")
+
+
 @checked
 def require_prepared_embedding(
     mesh: CellMesh,
@@ -1008,6 +1252,9 @@ def require_prepared_embedding(
     embedding: global_embedding_owner.GlobalEmbeddingCertificate,
     limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None = None,
 ) -> None:
     rebuilt_validity = _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate(
         validity.status,
@@ -1051,17 +1298,51 @@ def require_prepared_embedding(
     complete = {"cell_validity"}
     if mesh.periodic_topology is not None:
         complete.update(
-            (
-                "periodic_authored_group_identity",
-                "periodic_full_source_hulls",
-                "periodic_image_sufficiency",
-                "periodic_mapped_trace_equivariance",
-                "periodic_mapped_self_image_embedding",
-            )
+            ("periodic_authored_group_identity", "periodic_mapped_trace_equivariance")
         )
+        if embedding.periodic_restriction is not None:
+            # The exact parent partition transfers the complete source quotient
+            # embedding; the certificate validates the evidence and its checks.
+            complete.update(
+                (
+                    "periodic_restriction_source_embedding",
+                    "periodic_restriction_parent_partition",
+                    "periodic_restriction_boundary_subdivision",
+                )
+            )
+        elif embedding.periodic_mapped_restriction is not None:
+            complete.update(
+                (
+                    "periodic_mapped_restriction_source_embedding",
+                    "periodic_mapped_restriction_parent_partition",
+                    "periodic_mapped_restriction_common_subcomplex",
+                    "periodic_mapped_restriction_derived_region_assignment",
+                )
+            )
+        else:
+            complete.update(
+                (
+                    "periodic_full_source_hulls",
+                    "periodic_image_sufficiency",
+                    "periodic_mapped_self_image_embedding",
+                )
+            )
     elif embedding.binding.coordinate_scope == "mapped":
         complete.add("facet_pairing")
-        if "mapped_affine_source_maps" in checks:
+        if embedding.cad_boundary_closure is not None:
+            _require_prepared_cad_degree(mesh, geometry, embedding, limits, budget=budget)
+            complete.update(
+                (
+                    "mapped_trace_continuity",
+                    "mapped_closed_cell_orientation",
+                    "mapped_shared_entity_conformity",
+                    "mapped_boundary_injectivity",
+                    "mapped_shell_exterior_degree",
+                    "mapped_boundary_degree",
+                    "mapped_cad_boundary_homotopy_reuse",
+                )
+            )
+        elif "mapped_affine_source_maps" in checks:
             complete.update(
                 (
                     "mapped_affine_source_maps",
@@ -1081,6 +1362,25 @@ def require_prepared_embedding(
                 )
             else:
                 complete.add("mapped_trace_continuity")
+    elif isinstance(
+        geometry.exact_source,
+        (
+            _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometrySource,
+            _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryRestrictionSource,
+            _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryLinearActionSource,
+        ),
+    ):
+        # The exact power theorem proves every facet contact and interior
+        # disjointness of the PLC-restricted cells on their source witnesses.
+        complete.update(
+            (
+                "facet_pairing",
+                "exact_power_source_witnesses",
+                "exact_polyhedral_facets",
+                "exact_polyhedral_contacts",
+                "exact_power_cell_nonoverlap",
+            )
+        )
     else:
         complete.update(("boundary_contact", "exterior_degree"))
         complete.add("facet_pairing")
@@ -1102,11 +1402,33 @@ def require_prepared_embedding(
         or embedding.ray_test_count > limits.maximum_ray_tests
         or embedding.subdivision_piece_count > limits.maximum_subdivision_pieces
     ):
+        governed_counts = (
+            (embedding.candidate_pair_count, limits.maximum_candidate_pairs),
+            (embedding.ray_test_count, limits.maximum_ray_tests),
+            (embedding.subdivision_piece_count, limits.maximum_subdivision_pieces),
+        )
+        finding_reasons = tuple(
+            (
+                finding.check, finding.status, finding.resource,
+                finding.requested, finding.achieved, finding.observations,
+            )
+            for finding in embedding.findings[:3]
+        )
         raise ValueError(
-            f"MeshCertificationPreparedEvidence.embedding must contain sufficient governed evidence; got certificate_id={embedding.certificate_id!r}"
+            "MeshCertificationPreparedEvidence.embedding must contain sufficient governed evidence; "
+            f"got certificate_id={embedding.certificate_id!r}, "
+            f"scope={embedding.binding.coordinate_scope!r}, status={embedding.status!r}, "
+            f"findings={len(embedding.findings)}, finding_reasons={finding_reasons!r}, "
+            f"missing_checks={tuple(sorted(complete - checks))!r}, "
+            f"validity_ids={(embedding.validity_certificate_id, validity.certificate_id)!r}, "
+            f"limit_ids={(embedding.binding.limits_id, limits.limits_id)!r}, "
+            f"junctions={len(embedding.binding.junction_vertices)}, "
+            f"cells={(embedding.cell_count, sum(block.vertices.shape[0] for block in mesh.blocks))!r}, "
+            f"counts_and_limits={governed_counts!r}"
+            f", governed_work_scratch={(limits.maximum_work_units, limits.maximum_scratch_bytes)!r}"
         )
     rebuilt = global_embedding_owner.GlobalEmbeddingCertificate.from_stored_fields(
-        embedding
+        embedding, budget=budget
     )
     if not tree_content_equal(embedding, rebuilt):
         raise ValueError(
@@ -1140,6 +1462,7 @@ class _AcceptanceInputs(StrictModule, NonTrainableState):
     domain: (
         domain_coverage_owner.PiecewiseLinearDomain
         | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+        | cad_domain_owner.CadSourceDomain
         | None
     )
     cell_regions: ArrayLike | None
@@ -1165,10 +1488,11 @@ class _AcceptanceInputs(StrictModule, NonTrainableState):
 @final
 class _SpatialAcceptanceEvidence(StrictModule, NonTrainableState):
     embedding: global_embedding_owner.GlobalEmbeddingCertificate
-    coverage: domain_coverage_owner.DomainCoverageCertificate | None
+    coverage: _CoverageCertificate | None
     request: (
         _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs | None
     )
+    fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None
 
 
 def _certify_spatial_acceptance(
@@ -1178,6 +1502,7 @@ def _certify_spatial_acceptance(
     inputs: _AcceptanceInputs,
     volume: MeshCertificationPreparedEvidence | None,
     prepared_embedding: global_embedding_owner.GlobalEmbeddingCertificate | None,
+    prepared_fidelity: source_fidelity_owner.SourceFidelityCertificate | None,
 ) -> _SpatialAcceptanceEvidence:
     schedule = inputs.schedule
     domain = inputs.domain
@@ -1191,6 +1516,20 @@ def _certify_spatial_acceptance(
     budget = inputs.budget
     coverage_inputs = domain is not None or cell_regions is not None
     request = None
+    cad_fidelity = None
+    if isinstance(domain, cad_domain_owner.CadSourceDomain) and volume is None:
+        if source is None or fidelity_tolerance is None:
+            raise ValueError("CAD spatial certification requires whole-source fidelity first")
+        cad_fidelity = (
+            source_fidelity_owner.certify_source_fidelity(
+                mesh, geometry, source,
+                tolerance=fidelity_tolerance,
+                sample_order=fidelity_sample_order,
+                limits=limits,
+                budget=budget,
+            )
+            if prepared_fidelity is None else prepared_fidelity
+        )
     if volume is not None:
         request = (
             _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs(
@@ -1215,6 +1554,8 @@ def _certify_spatial_acceptance(
             )
         embedding = volume.embedding
         coverage = volume.coverage
+        if isinstance(coverage, cad_coverage_owner.ApproximateSourceCoverageCertificate):
+            cad_fidelity = coverage.fidelity
     else:
         if prepared_embedding is None:
             embedding = global_embedding_owner.certify_global_embedding(
@@ -1224,6 +1565,7 @@ def _certify_spatial_acceptance(
                 limits=limits,
                 junction_vertices=junction_vertices,
                 budget=budget,
+                cad_boundary=None if cad_fidelity is None else cad_fidelity.cad_closure,
             )
         else:
             prepared_embedding.binding.require(mesh, geometry)
@@ -1243,7 +1585,22 @@ def _certify_spatial_acceptance(
                 )
             embedding = prepared_embedding
         coverage = None
-        if domain is not None and cell_regions is not None:
+        if isinstance(domain, cad_domain_owner.CadSourceDomain) and cell_regions is not None:
+            if cad_fidelity is None:
+                raise ValueError("CAD spatial certification must retain the issued source-fidelity theorem")
+            coverage = cad_coverage_owner.certify_approximate_source_coverage(
+                mesh, geometry, domain, cell_regions,
+                embedding=embedding,
+                fidelity=cad_fidelity,
+                source=source,
+                limits=limits,
+                budget=budget,
+            )
+        elif isinstance(
+            domain,
+            (domain_coverage_owner.PiecewiseLinearDomain,
+             _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain),
+        ) and cell_regions is not None:
             coverage = domain_coverage_owner.certify_domain_coverage(
                 mesh,
                 geometry,
@@ -1257,7 +1614,7 @@ def _certify_spatial_acceptance(
             raise ValueError(
                 "certify_meshing_acceptance.domain_coverage must supply both domain and cell_regions; got missing coverage inputs"
             )
-    return _SpatialAcceptanceEvidence(embedding, coverage, request)
+    return _SpatialAcceptanceEvidence(embedding, coverage, request, cad_fidelity)
 
 
 @final
@@ -1274,6 +1631,9 @@ def _certify_fidelity_acceptance(
     request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
     | None,
     prepared_fidelity: source_fidelity_owner.SourceFidelityCertificate | None,
+    predecessor: source_fidelity_owner.SourceFidelityPredecessor | None,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+    coverage: _CoverageCertificate | None,
 ) -> _FidelityAcceptanceEvidence:
     schedule = inputs.schedule
     domain = inputs.domain
@@ -1285,10 +1645,34 @@ def _certify_fidelity_acceptance(
     junction_vertices = inputs.junction_vertices
     scoped_fidelity = inputs.scoped_fidelity
     budget = inputs.budget
+    if budget is None:
+        raise ValueError("Fidelity acceptance must retain the owning certification request budget")
     required = schedule.required_checks
     fidelity_inputs = source is not None or fidelity_tolerance is not None
     fidelity = None
     if source is not None and fidelity_tolerance is not None:
+        if prepared_fidelity is None:
+            if (
+                predecessor is not None
+                and isinstance(
+                    domain,
+                    (domain_coverage_owner.PiecewiseLinearDomain,
+                     _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain),
+                )
+                and cell_regions is not None
+                and isinstance(coverage, domain_coverage_owner.DomainCoverageCertificate)
+                and coverage.status == "certified"
+                and embedding.status == "certified"
+            ):
+                prepared_fidelity = source_fidelity_owner.prepare_domain_boundary_fidelity(
+                    predecessor, mesh, geometry, source, domain,
+                    np.asarray(cell_regions, dtype=np.int64), embedding, coverage,
+                    _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits()
+                    if limits is None else limits,
+                    tolerance=fidelity_tolerance,
+                    sample_order=fidelity_sample_order,
+                    budget=budget,
+                )
         if prepared_fidelity is None:
             fidelity = source_fidelity_owner.certify_source_fidelity(
                 mesh,
@@ -1360,15 +1744,18 @@ class PreparedVolumeAcceptance(StrictModule, NonTrainableState):
 
     volume: MeshCertificationPreparedEvidence
     fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None
+    fidelity_predecessor: source_fidelity_owner.SourceFidelityPredecessor | None = None
 
     @checked
     def __init__(
         self,
         volume: MeshCertificationPreparedEvidence,
         fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None,
+        fidelity_predecessor: source_fidelity_owner.SourceFidelityPredecessor | None = None,
     ) -> None:
         self.volume = volume
         self.fidelity = fidelity
+        self.fidelity_predecessor = fidelity_predecessor
 
 
 @final
@@ -1377,15 +1764,18 @@ class PreparedBoundaryAcceptance(StrictModule, NonTrainableState):
 
     embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None
     fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None
+    fidelity_predecessor: source_fidelity_owner.SourceFidelityPredecessor | None = None
 
     @checked
     def __init__(
         self,
         embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None,
         fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None,
+        fidelity_predecessor: source_fidelity_owner.SourceFidelityPredecessor | None = None,
     ) -> None:
         self.embedding = embedding
         self.fidelity = fidelity
+        self.fidelity_predecessor = fidelity_predecessor
 
 
 type PreparedMeshingAcceptance = PreparedVolumeAcceptance | PreparedBoundaryAcceptance
@@ -1401,6 +1791,7 @@ def certify_meshing_acceptance(
     schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule,
     domain: domain_coverage_owner.PiecewiseLinearDomain
     | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+    | cad_domain_owner.CadSourceDomain
     | None = None,
     cell_regions: ArrayLike | None = None,
     source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
@@ -1438,16 +1829,21 @@ def certify_meshing_acceptance(
 
     with _certificate_budget(limits, budget) as budget:
         match prepared:
-            case PreparedVolumeAcceptance(volume=volume, fidelity=prepared_fidelity):
+            case PreparedVolumeAcceptance(
+                volume=volume, fidelity=prepared_fidelity,
+                fidelity_predecessor=fidelity_predecessor,
+            ):
                 prepared_embedding = None
             case PreparedBoundaryAcceptance(
-                embedding=prepared_embedding, fidelity=prepared_fidelity
+                embedding=prepared_embedding, fidelity=prepared_fidelity,
+                fidelity_predecessor=fidelity_predecessor,
             ):
                 volume = None
             case None:
                 volume = None
                 prepared_embedding = None
                 prepared_fidelity = None
+                fidelity_predecessor = None
             case _:
                 raise TypeError(
                     "certify_meshing_acceptance.prepared must contain prepared acceptance evidence; got unsupported variant"
@@ -1494,15 +1890,18 @@ def certify_meshing_acceptance(
             budget,
         )
         spatial = _certify_spatial_acceptance(
-            mesh, geometry, audit, inputs, volume, prepared_embedding
+            mesh, geometry, audit, inputs, volume, prepared_embedding, prepared_fidelity
         )
         embedding, coverage, request = (
             spatial.embedding,
             spatial.coverage,
             spatial.request,
         )
+        if spatial.fidelity is not None:
+            prepared_fidelity = spatial.fidelity
         fidelity_phase = _certify_fidelity_acceptance(
-            mesh, geometry, inputs, request, prepared_fidelity
+            mesh, geometry, inputs, request, prepared_fidelity,
+            fidelity_predecessor, embedding, coverage,
         )
         fidelity = fidelity_phase.fidelity
         request = fidelity_phase.request
@@ -1530,7 +1929,7 @@ def certify_meshing_acceptance(
             _certificate_outcome("source_fidelity", certificate)
             for certificate in scoped_certificates
         )
-        return MeshCertificationReport(
+        report = MeshCertificationReport(
             schedule,
             mesh,
             geometry,
@@ -1542,6 +1941,34 @@ def certify_meshing_acceptance(
             request=request,
             scoped_fidelity=scoped_certificates,
         )
+        if (
+            report.passed
+            and isinstance(
+                domain,
+                (domain_coverage_owner.PiecewiseLinearDomain,
+                 _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain),
+            )
+            and cell_regions is not None
+            and source is not None
+            and isinstance(coverage, domain_coverage_owner.DomainCoverageCertificate)
+            and fidelity is not None
+            and fidelity.target_facet_ids is None
+            and fidelity.source_scope_id is None
+            and mesh.storage is None
+            and mesh.periodic_topology is None
+            and mesh.topological_dimension == mesh.ambient_dimension
+        ):
+            source_fidelity_owner.issue_domain_fidelity_source(
+                source_fidelity_owner.SourceFidelityPredecessor(
+                    mesh, geometry, source, domain,
+                    np.asarray(cell_regions, dtype=np.int64),
+                    embedding, coverage, fidelity,
+                    _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits()
+                    if limits is None else limits,
+                ),
+                budget=budget,
+            )
+        return report
 
 
 @checked

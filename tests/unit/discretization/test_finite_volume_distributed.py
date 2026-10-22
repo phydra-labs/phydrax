@@ -2,7 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-
+import socket
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import equinox as eqx
@@ -21,7 +22,11 @@ from phydrax.discretization.finite_volume import (
     execute_owner_local_finite_volume_advance,
     PreparedUnstructuredFiniteVolumeDynamics,
 )
+from phydrax.discretization.finite_volume._unstructured_dynamics import (
+    prepare_owner_local_finite_volume_execution,
+)
 from tests._support import cell_meshes
+from tests._support.forced_devices import gloo_rank_environment, run_on_forced_devices
 
 
 # Empirical `test_owner_local_fv_flux_advance_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
@@ -365,14 +370,24 @@ def test_owner_local_fv_executor_respects_reversed_placement_and_owned_inventory
         devices,
     )
     seeds = jnp.stack((state.at[1::2].set(state[::2]), state.at[::2].set(state[1::2])))
-    result = execute_owner_local_finite_volume_advance(
+    execution = prepare_owner_local_finite_volume_execution(
         ((right, right_halo), (left, left_halo)),
-        seeds,
-        jnp.asarray(0.0),
-        jnp.asarray(0.01),
         group,
         axis_name="parts",
+        maximum_cells=4,
+        maximum_faces=8,
+        maximum_message_entries=2,
+        maximum_storage_bytes=1 << 20,
     )
+    # Equal closures need no padding: the execution layout is the closure layout.
+    assert (execution.cell_capacity, execution.local_cell_counts) == (4, (4, 4))
+    result = execute_owner_local_finite_volume_advance(
+        execution,
+        execution.pack_state((seeds[0], seeds[1])),
+        jnp.asarray(0.0),
+        jnp.asarray(0.01),
+    )
+    assert result.logical_state_bytes == result.execution_state_bytes
     serial, _, _ = _owner_local_fv(1, 0)
     expected = state + 0.01 * serial(jnp.asarray(0.0), state)
     owned = result.state[0].at[1::2].set(result.state[1, 1::2])
@@ -389,6 +404,70 @@ def test_owner_local_fv_executor_respects_reversed_placement_and_owned_inventory
     assert result.admissibility_checked and bool(result.admissible)
     np.testing.assert_array_equal(result.state[0, 1::2], seeds[0, 1::2])
     np.testing.assert_array_equal(result.state[1, ::2], seeds[1, ::2])
+
+
+@pytest.mark.parametrize("mode", ("buffered", "vectorized"))
+def test_unequal_owner_closures_advance_on_collectively_agreed_buckets(
+    mode: str,
+) -> None:
+    record = run_on_forced_devices(
+        "tests._support.finite_volume_owner_local",
+        "two_device_unequal_closures",
+        (mode,),
+        devices=2,
+        env={},
+        timeout_seconds=600,
+    )
+    first, second = record["cell_counts"]
+    assert first != second
+    assert record["cell_capacity"] == max(first, second)
+    assert record["logical_cell_count"] == first + second
+    assert record["logical_owned_face_count"] == record["global_face_count"]
+    assert record["refusals"] == {
+        "overflow": "owner_local.capacities",
+        "storage": "owner_local.storage_bytes",
+        "halo": "halo and closure stable IDs",
+        "missing": "a local program admission failure",
+        "family": "one execution family",
+    }
+    assert record["zero_density"] == {"finite": False, "admissible": False}
+
+
+def test_two_process_unequal_closures_advance_and_refuse_collectively() -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        address = f"127.0.0.1:{listener.getsockname()[1]}"
+
+    def run_rank(rank: int) -> dict[str, Any]:
+        return run_on_forced_devices(
+            "tests._support.finite_volume_owner_local",
+            "two_process_unequal_closures",
+            (),
+            devices=1,
+            env=gloo_rank_environment(address, rank),
+            timeout_seconds=600,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        records = tuple(executor.map(run_rank, range(2)))
+    counts = [record["cell_count"] for record in records]
+    assert counts[0] != counts[1]
+    assert all(record["cell_capacity"] == max(counts) for record in records)
+    assert all(record["logical_cell_count"] == sum(counts) for record in records)
+    assert records[0]["inventory_after"] == records[1]["inventory_after"]
+    assert all(
+        record["refusals"]
+        == {
+            "halo": "halo and closure stable IDs",
+            "missing": "a local program admission failure",
+            "family": "one execution family",
+        }
+        for record in records
+    )
+    assert all(
+        record["zero_density"] == {"finite": False, "admissible": False}
+        for record in records
+    )
 
 
 def test_owner_local_fv_uses_original_curved_coordinate_bank_by_default() -> None:

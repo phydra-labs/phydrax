@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, core as jax_core
 
 from phydrax.ein import contract
 
@@ -33,6 +33,7 @@ from ._policy import ImplicitSurfacePolicy, ImplicitSurfaceStatus
 from ._projection import (
     ImplicitPointProjectionEvidence,
     ImplicitPointProjectionPlan,
+    ImplicitPointProjectionResult,
 )
 
 
@@ -292,8 +293,52 @@ class ImplicitSurfaceRealization(StrictModule):
         )
 
 
+def _design_state_id(state: DesignState, /) -> str:
+    """Exact identity of one concrete design state: schema entries and values."""
+    return canonical_fingerprint(
+        {
+            "kind": "implicit-surface-initial-state",
+            "parameters": tuple(str(item) for item in state.schema.parameter_ids),
+            "values": tuple(np.asarray(value) for value in state.values),
+        }
+    )
+
+
+def _initial_evidence_id(
+    source_id: str,
+    topology_id: str,
+    state_id: str,
+    vertices: Any,
+    evidence: ImplicitSurfaceEvidence,
+    /,
+) -> str:
+    """Bind every retained proof leaf to its exact source state and coordinates."""
+    return canonical_fingerprint(
+        {
+            "kind": "implicit-surface-initial-realization",
+            "source_id": source_id,
+            "topology_id": topology_id,
+            "state": state_id,
+            "vertices": np.asarray(vertices, dtype=np.float64),
+            "proof": {
+                jax.tree_util.keystr(path): np.asarray(value)
+                for path, value in jax.tree_util.tree_flatten_with_path(evidence)[0]
+            },
+            "projection_plan": evidence.projection.plan_id,
+            "geometry_contract": evidence.projection.geometry.contract_id,
+            "geometry_margins": evidence.projection.geometry.margin_names,
+        }
+    )
+
+
 class ImplicitSurfacePlan(StrictModule):
-    """Fixed-topology dual surface with differentiable coordinate realization."""
+    """Fixed-topology dual surface with differentiable coordinate realization.
+
+    The plan retains the complete accepted proof of its discovery state.
+    Initial execution recomputes only projection/QEF coordinates and reuses
+    that exact-state proof; changed or traced states realize afresh. Discovery
+    fallback coordinates and connectivity remain unchanged and are not copied.
+    """
 
     kernel: GeometryKernel
     grid_points: Array
@@ -308,12 +353,15 @@ class ImplicitSurfacePlan(StrictModule):
     faces: Array
     base_face_normals: Array
     intersection_pairs: Array
+    initial_evidence: ImplicitSurfaceEvidence
     schema: ParameterSchema = eqx.field(static=True)
     tolerance: GeometryTolerance = eqx.field(static=True)
     policy: ImplicitSurfacePolicy = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    initial_state_id: str = eqx.field(static=True)
+    initial_evidence_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -335,7 +383,15 @@ class ImplicitSurfacePlan(StrictModule):
         policy: ImplicitSurfacePolicy,
         source_id: str,
         topology_id: str,
+        initial_state: DesignState,
     ) -> None:
+        if not isinstance(initial_state, DesignState) or initial_state.schema != (
+            geometry.schema
+        ):
+            raise ValueError(
+                "ImplicitSurfacePlan.initial_state must be a DesignState using the discovery schema; "
+                "got an incompatible state"
+            )
         arrays = {
             "grid_points": np.asarray(grid_points, dtype=np.float64),
             "inside_pattern": np.asarray(inside_pattern, dtype=np.bool_),
@@ -404,10 +460,7 @@ class ImplicitSurfacePlan(StrictModule):
                 "source_id": source_id,
                 "topology_id": topology_id,
                 "projection_id": projection.plan_id,
-                "grid_points": arrays["grid_points"],
-                "faces": arrays["faces"],
-                "qef_regularization": arrays["qef_regularization"],
-                "intersection_pairs": arrays["intersection_pairs"],
+                "arrays": arrays,
                 "policy": repr(policy),
             }
         )
@@ -429,7 +482,44 @@ class ImplicitSurfacePlan(StrictModule):
         self.policy = policy
         self.source_id = str(source_id)
         self.topology_id = str(topology_id)
+        # Realize the discovery state once with the structural identity, then
+        # bind the retained result into the final plan identity.
         self.plan_id = identifier
+        initial = type(self).realize(self, initial_state)
+        if not bool(initial.evidence.accepted):
+            raise ValueError(
+                "ImplicitSurfacePlan.initial_realization.accepted must be true; "
+                "got rejected runtime evidence"
+            )
+        self.initial_state_id = _design_state_id(initial_state)
+        self.initial_evidence_id = _initial_evidence_id(
+            self.source_id,
+            self.topology_id,
+            self.initial_state_id,
+            initial.vertices,
+            initial.evidence,
+        )
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "implicit-surface-plan",
+                "structure": identifier,
+                "initial_evidence": self.initial_evidence_id,
+            }
+        )
+        # Exclude this derived back-reference from the proof digest to avoid
+        # a circular identity while public evidence names its actual owner.
+        self.initial_evidence = ImplicitSurfaceEvidence(
+            projection=initial.evidence.projection,
+            sign_pattern_unchanged=initial.evidence.sign_pattern_unchanged,
+            qef_solve_status=initial.evidence.qef_solve_status,
+            minimum_face_area=initial.evidence.minimum_face_area,
+            minimum_orientation_margin=initial.evidence.minimum_orientation_margin,
+            intersection_free=initial.evidence.intersection_free,
+            finite=initial.evidence.finite,
+            status=initial.evidence.status,
+            plan_id=self.plan_id,
+            topology_id=self.topology_id,
+        )
 
     @classmethod
     @checked
@@ -439,8 +529,12 @@ class ImplicitSurfacePlan(StrictModule):
         *,
         geometry: CompiledGeometry,
     ) -> ImplicitSurfacePlan:
-        """Reconstruct retained surface data and validate it with the source geometry."""
-        return cls(
+        """Reconstruct retained surface data and validate it with the source geometry.
+
+        The retained initial realization is recomputed from the source state and
+        must match the stored leaves and identities exactly.
+        """
+        restored = cls(
             geometry=geometry,
             grid_points=value.grid_points,
             inside_pattern=value.inside_pattern,
@@ -457,20 +551,94 @@ class ImplicitSurfacePlan(StrictModule):
             policy=value.policy,
             source_id=value.source_id,
             topology_id=value.topology_id,
+            initial_state=geometry.state,
+        )
+        stored = (
+            getattr(value, "initial_state_id", None),
+            getattr(value, "initial_evidence_id", None),
+            getattr(value, "plan_id", None),
+        )
+        if stored != (
+            restored.initial_state_id,
+            restored.initial_evidence_id,
+            restored.plan_id,
+        ) or jax.tree_util.tree_structure(
+            value.initial_evidence
+        ) != jax.tree_util.tree_structure(restored.initial_evidence) or not all(
+            np.array_equal(np.asarray(retained), np.asarray(recomputed))
+            for retained, recomputed in zip(
+                jax.tree_util.tree_leaves(value.initial_evidence),
+                jax.tree_util.tree_leaves(restored.initial_evidence),
+                strict=True,
+            )
+        ):
+            raise ValueError(
+                "ImplicitSurfacePlan.initial_realization must equal the realization of the "
+                "restored geometry state; got mismatched retained evidence"
+            )
+        return restored
+
+    def binds_initial_state(self, state: DesignState, /) -> bool:
+        """Whether ``state`` is concretely the discovery state of the retained realization.
+
+        Traced states or retained leaves never bind, so differentiated
+        executions always realize through the fixed route.
+        """
+        if not isinstance(state, DesignState) or state.schema != self.schema:
+            return False
+        leaves = jax.tree_util.tree_leaves(
+            (state, self.initial_evidence)
+        )
+        if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
+            return False
+        return _design_state_id(state) == self.initial_state_id
+
+    def retained_initial_realization(
+        self, state: DesignState, /
+    ) -> ImplicitSurfaceRealization:
+        """Recompute coordinates, but reuse the complete exact-state proof.
+
+        Coordinates cannot alias the discovery fallback: projection and QEF
+        need not reproduce that bank bitwise. No second bank is retained.
+        Every proof leaf and the recomputed coordinates must match the bound
+        initial evidence before publication.
+        """
+        if not self.binds_initial_state(state):
+            raise ValueError(
+                "ImplicitSurfacePlan.initial_realization must use its concrete "
+                "discovery state; got a changed or traced state"
+            )
+        vertices, _, _, _ = self._realize_coordinates(state)
+        evidence = self.initial_evidence
+        if not bool(evidence.accepted) or (
+            evidence.plan_id != self.plan_id
+            or evidence.topology_id != self.topology_id
+            or _initial_evidence_id(
+                self.source_id,
+                self.topology_id,
+                self.initial_state_id,
+                vertices,
+                evidence,
+            )
+            != self.initial_evidence_id
+        ):
+            raise ValueError(
+                "ImplicitSurfacePlan.initial_realization must match its bound evidence; "
+                "got edited retained leaves"
+            )
+        return ImplicitSurfaceRealization(
+            vertices, vertices, self.faces, evidence, source_id=self.source_id
         )
 
-    def realize(self, state: DesignState, /) -> ImplicitSurfaceRealization:
+    def _realize_coordinates(
+        self, state: DesignState, /
+    ) -> tuple[Array, ImplicitPointProjectionResult, Array, Array]:
         if not isinstance(state, DesignState) or state.schema != self.schema:
             raise ValueError(
                 "ImplicitSurfacePlan.state must be a DesignState using the discovery schema; "
                 "got an incompatible state"
             )
         projection = self.projection.realize(state)
-        field = self.kernel.boundary_field(state, self.grid_points)
-        sign_pattern = field < 0.0
-        sign_unchanged = jnp.all(sign_pattern == self.inside_pattern) & jnp.all(
-            jnp.abs(field) > self.policy.lattice_zero_tolerance
-        )
         points = projection.proposed_points[self.vertex_anchor_indices]
         normals = projection.normals[self.vertex_anchor_indices]
         mask = self.vertex_anchor_mask.astype(points.dtype)
@@ -505,6 +673,15 @@ class ImplicitSurfacePlan(StrictModule):
             policy=_QEF_POLICY,
         )
         proposed = mass + qef.value
+        return proposed, projection, jnp.all(qef.successful), qef.status
+
+    def realize(self, state: DesignState, /) -> ImplicitSurfaceRealization:
+        proposed, projection, qef_success, qef_status = self._realize_coordinates(state)
+        field = self.kernel.boundary_field(state, self.grid_points)
+        sign_pattern = field < 0.0
+        sign_unchanged = jnp.all(sign_pattern == self.inside_pattern) & jnp.all(
+            jnp.abs(field) > self.policy.lattice_zero_tolerance
+        )
         finite = (
             jnp.all(jnp.isfinite(field))
             & jnp.all(jnp.isfinite(proposed))
@@ -536,7 +713,6 @@ class ImplicitSurfacePlan(StrictModule):
             intersection_free = ~jnp.any(intersections)
         else:
             intersection_free = jnp.asarray(True)
-        qef_success = jnp.all(qef.successful)
         status = jnp.asarray(int(ImplicitSurfaceStatus.SUCCESS), dtype=jnp.int32)
         status = status | jnp.where(
             projection.evidence.geometry.accepted,
@@ -581,7 +757,7 @@ class ImplicitSurfacePlan(StrictModule):
         evidence = ImplicitSurfaceEvidence(
             projection=projection.evidence,
             sign_pattern_unchanged=sign_unchanged,
-            qef_solve_status=qef.status,
+            qef_solve_status=qef_status,
             minimum_face_area=minimum_area,
             minimum_orientation_margin=minimum_orientation,
             intersection_free=intersection_free,

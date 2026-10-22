@@ -7,8 +7,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal, localcontext
 from fractions import Fraction
@@ -17,31 +15,22 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from phydrax._resource_ticket import HostBatchTicket
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry.brep._boolean import boolean_brep
 from phydrax.geometry.brep._boolean_core import BRepBooleanFailure
 from phydrax.geometry.brep._constructors import brep_cylinder
-from phydrax.geometry.brep._model import BRepModel
+from phydrax.geometry.brep._model import BRepGeometry, BRepModel, BRepOccurrence
 from phydrax.geometry.brep._sewing import BRepSewingFailure, sew_brep
 from phydrax.interchange._cad import CadInterchangeError
 from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
 from phydrax.interchange._cad_carriers import RigidPlacement
 from phydrax.interchange._step import decode_step_bytes, write_step
-from tests._support.cad_models import CONTRACT, native_solid
+from tests._support.cad_models import (
+    CONTRACT,
+    native_repeated_assembly,
+    native_solid,
+    placement_budget,
+)
 from tests.unit.interchange.test_step import POLICY
-
-
-@contextmanager
-def _budget() -> Iterator[CoordinateEnclosureBudget]:
-    with HostBatchTicket(100_000_000, bytes_upper=256 << 20) as ticket:
-        budget = CoordinateEnclosureBudget(
-            ticket,
-            maximum_work_units=100_000_000,
-            maximum_memory_bytes=256 << 20,
-        )
-        with budget.activate():
-            yield budget
 
 
 def _assembly(
@@ -50,7 +39,13 @@ def _assembly(
     frames: tuple[np.ndarray, ...],
     *,
     scale: float = 1.0,
+    origin_axis: tuple[float, float, float] | None = None,
+    origin_reference: tuple[float, float, float] | None = None,
+    origin_location: tuple[float, float, float] | None = None,
+    translation: tuple[float, float, float] | None = None,
+    empty_levels: int = 0,
 ) -> bytes:
+    """Map ``model`` by ``frames``; ``empty_levels`` nests shared solid-free maps."""
     write_step(model, path)
     text = path.read_text()
     representation = re.search(
@@ -76,7 +71,25 @@ def _assembly(
 
     definition = add(f"ADVANCED_BREP_SHAPE_REPRESENTATION({body})")
     origin = add("CARTESIAN_POINT('',(0.,0.,0.))")
-    frame = add(f"AXIS2_PLACEMENT_3D('',{origin},$,$)")
+
+    def point(values: tuple[float, float, float] | None) -> str:
+        if values is None:
+            return origin
+        return add(
+            "CARTESIAN_POINT('',(" + ",".join(format(v, ".17E") for v in values) + "))"
+        )
+
+    origin_directions = [
+        "$"
+        if direction is None
+        else add("DIRECTION('',(" + ",".join(repr(value) for value in direction) + "))")
+        for direction in (origin_axis, origin_reference)
+    ]
+    frame = add(
+        f"AXIS2_PLACEMENT_3D('',{point(origin_location)},"
+        f"{origin_directions[0]},{origin_directions[1]})"
+    )
+    location = point(translation)
     mapping = add(f"REPRESENTATION_MAP({frame},{definition})")
     items = []
     for rotation in frames:
@@ -86,9 +99,19 @@ def _assembly(
         ]
         operator = add(
             f"CARTESIAN_TRANSFORMATION_OPERATOR_3D('',{directions[0]},{directions[1]},"
-            f"{origin},{scale},{directions[2]})"
+            f"{location},{scale},{directions[2]})"
         )
         items.append(add(f"MAPPED_ITEM('',{mapping},{operator})"))
+    if empty_levels:
+        # Each level maps the previous solid-free representation twice.
+        nested = add(f"SHAPE_REPRESENTATION('',({frame}),{context.group(1)})")
+        for _ in range(empty_levels):
+            shared = add(f"REPRESENTATION_MAP({frame},{nested})")
+            identity = add(f"CARTESIAN_TRANSFORMATION_OPERATOR_3D('',$,$,{origin},1.,$)")
+            uses = [add(f"MAPPED_ITEM('',{shared},{identity})") for _ in range(2)]
+            nested = add(
+                f"SHAPE_REPRESENTATION('',({','.join(uses)}),{context.group(1)})"
+            )
     replacement = (
         f"#{identifier}=SHAPE_REPRESENTATION('',({','.join(items)}),{context.group(1)});"
     )
@@ -99,7 +122,7 @@ def _assembly(
 
 
 def _import(data: bytes, maximum_deviation: float = 1.0e-12) -> BRepModel:
-    with _budget() as budget:
+    with placement_budget() as budget:
         return decode_step_bytes(
             data,
             replace(POLICY, maximum_placement_deviation=maximum_deviation),
@@ -247,7 +270,7 @@ def test_scale_one_plus_micro_refuses(tmp_path: Path) -> None:
         _import(data)
     assert caught.value.refusal.reason == "unsupported-entity"
     matrix = np.concatenate(((1.0 + 1.0e-6) * np.eye(3), np.zeros((3, 1))), axis=1)
-    with _budget() as budget, pytest.raises(CadInterchangeError):
+    with placement_budget() as budget, pytest.raises(CadInterchangeError):
         RigidPlacement.from_certified_matrix(
             matrix, "scaled", maximum_deviation=1.0, coordinate_budget=budget
         )
@@ -281,7 +304,7 @@ def test_direct_shear_and_reflection_refuse() -> None:
     shear = np.asarray(((1.0, 0.01, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
     for rotation in (shear, np.diag((1.0, 1.0, -1.0))):
         matrix = np.concatenate((rotation, np.zeros((3, 1))), axis=1)
-        with _budget() as budget, pytest.raises(CadInterchangeError):
+        with placement_budget() as budget, pytest.raises(CadInterchangeError):
             RigidPlacement.from_certified_matrix(
                 matrix, "nonrigid", maximum_deviation=1.0, coordinate_budget=budget
             )
@@ -290,7 +313,7 @@ def test_direct_shear_and_reflection_refuse() -> None:
 def test_matrix_gram_bound_uses_rational_defect() -> None:
     c = np.sqrt(3.0) / 2.0
     matrix = np.asarray(((c, -0.5, 0.0, 0.0), (0.5, c, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0)))
-    with _budget() as budget:
+    with placement_budget() as budget:
         placement = RigidPlacement.from_certified_matrix(
             matrix, "rounded", maximum_deviation=1.0e-12, coordinate_budget=budget
         )
@@ -332,7 +355,7 @@ def test_composed_source_poses_enclose_rotation_and_translation() -> None:
     second = np.stack(
         (np.asarray((2.0, -1.0, 1.0)), np.zeros(3), np.asarray((1.0, 4.0, 2.0))), axis=1
     )
-    with _budget() as budget:
+    with placement_budget() as budget:
         outer = RigidPlacement.from_source_directions(
             first[:, 0], first[:, 2], np.asarray((1.0, 2.0, 3.0)), "outer", budget
         )
@@ -392,3 +415,168 @@ def test_composed_source_poses_enclose_rotation_and_translation() -> None:
             Decimal(0),
         ).sqrt()
         assert inverse_error <= _decimal(inverse.translation_deviation_bound)
+
+
+def test_default_limit_refuses_rounded_mapping_origin(tmp_path: Path) -> None:
+    data = _assembly(
+        native_solid("box"),
+        tmp_path / "origin.step",
+        (np.eye(3),),
+        origin_reference=(1.0, 1.0, 0.0),
+    )
+    with pytest.raises(CadInterchangeError) as caught:
+        decode_step_bytes(data, POLICY)
+    assert caught.value.refusal.reason == "unsupported-entity"
+    assert "AXIS2_PLACEMENT_3D" in caught.value.refusal.entity
+    occurrence = _import(data).require_geometry().occurrences[0]
+    evidence = occurrence.placement_evidence
+    assert evidence is not None and evidence.point_deviation_bound > 0.0
+    with localcontext() as context:
+        context.prec = 100
+        # The mapped item applies the inverse of the 45-degree source frame.
+        half = Decimal(2).sqrt() / 2
+        placed = occurrence.place(np.asarray((1.0, 0.0, 0.0)))
+        distance = sum(
+            (
+                (_decimal(value) - ideal) ** 2
+                for value, ideal in zip(placed, (half, -half, Decimal(0)), strict=True)
+            ),
+            Decimal(0),
+        ).sqrt()
+        assert distance <= _decimal(evidence.rotation_deviation_bound) + _decimal(
+            evidence.translation_deviation_bound
+        )
+
+
+@pytest.mark.parametrize(
+    ("axis", "reference", "inverse"),
+    (
+        pytest.param(
+            None,
+            (0.0, 1.0, 0.0),
+            ((0.0, 1.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+            id="quarter-turn",
+        ),
+        pytest.param(
+            (1.0, 0.0, 0.0),
+            None,
+            ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+            id="x-axis-default-reference",
+        ),
+    ),
+)
+def test_rigid_mapping_origin_decodes_identically_under_both_limits(
+    tmp_path: Path,
+    axis: tuple[float, float, float] | None,
+    reference: tuple[float, float, float] | None,
+    inverse: tuple[tuple[float, float, float], ...],
+) -> None:
+    data = _assembly(
+        native_solid("box"),
+        tmp_path / "rigid-origin.step",
+        (np.eye(3),),
+        origin_axis=axis,
+        origin_reference=reference,
+    )
+    default = decode_step_bytes(data, POLICY).model.require_geometry().occurrences[0]
+    near = _import(data).require_geometry().occurrences[0]
+    for occurrence in (default, near):
+        assert occurrence.placement_evidence is None
+        np.testing.assert_array_equal(np.asarray(occurrence.rotation), inverse)
+        np.testing.assert_array_equal(np.asarray(occurrence.translation), np.zeros(3))
+
+
+def _rotated_usage(rotation: np.ndarray) -> BRepModel:
+    """Two independent box instances; the second is placed by ``rotation``."""
+    source = native_repeated_assembly(declared=False)
+    geometry = source.require_geometry()
+    first, second = geometry.occurrences
+    placed = BRepGeometry(
+        vertex_points=geometry.vertex_points,
+        curves=geometry.curves,
+        edge_curves=geometry.edge_curves,
+        edge_ranges=geometry.edge_ranges,
+        edge_vertices=geometry.edge_vertices,
+        pcurves=geometry.pcurves,
+        coedge_edges=geometry.coedge_edges,
+        coedge_senses=geometry.coedge_senses,
+        face_loops=geometry.face_loops,
+        shell_faces=geometry.shell_faces,
+        shell_orientations=geometry.shell_orientations,
+        solid_shells=geometry.solid_shells,
+        occurrences=(
+            first,
+            BRepOccurrence(second.path, second.solid, rotation, second.translation),
+        ),
+        assembly_containers=geometry.assembly_containers,
+        vertex_roots=geometry.vertex_roots,
+        edge_endpoint_roots=geometry.edge_endpoint_roots,
+        coedge_endpoint_roots=geometry.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=geometry.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=geometry.edge_face_gap_bounds,
+    )
+    return source.evolve(geometry=placed)
+
+
+def test_default_limit_refuses_rounded_usage_placement(tmp_path: Path) -> None:
+    cosine = np.sqrt(3.0) / 2.0
+    frame = np.asarray(((cosine, -0.5, 0.0), (0.5, cosine, 0.0), (0.0, 0.0, 1.0)))
+    path = tmp_path / "usage.step"
+    write_step(_rotated_usage(frame), path)
+    data = path.read_bytes()
+    with pytest.raises(CadInterchangeError) as caught:
+        decode_step_bytes(data, POLICY)
+    assert caught.value.refusal.reason == "unsupported-entity"
+    assert "AXIS2_PLACEMENT_3D" in caught.value.refusal.entity
+    (placed,) = (
+        occurrence
+        for occurrence in _import(data).require_geometry().occurrences
+        if occurrence.placement_evidence is not None
+    )
+    evidence = placed.placement_evidence
+    assert evidence is not None
+    reference = _reference_frame(frame)
+    with localcontext() as context:
+        context.prec = 100
+        squared = sum(
+            (
+                (_decimal(placed.rotation[row][column]) - reference[row][column]) ** 2
+                for row in range(3)
+                for column in range(3)
+            ),
+            Decimal(0),
+        )
+        assert squared.sqrt() <= _decimal(evidence.rotation_deviation_bound)
+
+
+def test_default_limit_refuses_rounded_mapped_composition(tmp_path: Path) -> None:
+    # Both frames are rigid, but 1 - 1e-17 rounds to 1 in the composed pose.
+    data = _assembly(
+        native_solid("box"),
+        tmp_path / "shifted.step",
+        (np.eye(3),),
+        origin_location=(1.0e-17, 0.0, 0.0),
+        translation=(1.0, 0.0, 0.0),
+    )
+    with pytest.raises(CadInterchangeError) as caught:
+        decode_step_bytes(data, POLICY)
+    assert caught.value.refusal.reason == "unsupported-entity"
+    assert "MAPPED_ITEM" in caught.value.refusal.entity
+    occurrence = _import(data).require_geometry().occurrences[0]
+    evidence = occurrence.placement_evidence
+    assert evidence is not None and evidence.translation_deviation_bound > 0.0
+    ideal = Fraction(1.0) - Fraction(1.0e-17)
+    assert abs(Fraction(occurrence.translation[0]) - ideal) <= Fraction(
+        evidence.translation_deviation_bound
+    )
+
+
+def test_shared_solid_free_maps_publish_no_occurrences(tmp_path: Path) -> None:
+    # Sixteen levels each map the previous solid-free representation twice.
+    data = _assembly(
+        native_solid("box"), tmp_path / "empty.step", (np.eye(3),), empty_levels=16
+    )
+    occurrences = decode_step_bytes(data, POLICY).model.require_geometry().occurrences
+    assert len(occurrences) == 1
+    np.testing.assert_array_equal(np.asarray(occurrences[0].rotation), np.eye(3))
+    np.testing.assert_array_equal(np.asarray(occurrences[0].translation), np.zeros(3))

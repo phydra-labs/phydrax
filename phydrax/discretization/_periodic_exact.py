@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from fractions import Fraction
 from itertools import product
@@ -146,6 +146,24 @@ def require_proper_isometries(matrices: np.ndarray, /) -> None:
             )
 
 
+def _isometry_group_content_id(
+    generators: np.ndarray,
+    orders: tuple[int, ...],
+    linear_orders: tuple[int, ...],
+    translation_periods: tuple[int, ...],
+    tolerance: float,
+) -> str:
+    """Authenticate retained group content before reusing its admission."""
+    return canonical_fingerprint({
+        "kind": "periodic-isometry-group",
+        "generators": array_tree_fingerprint(generators),
+        "orders": list(orders),
+        "linear_orders": list(linear_orders),
+        "translation_periods": list(translation_periods),
+        "tolerance": tolerance,
+    })
+
+
 @final
 class PeriodicIsometryGroup(StrictModule, NonTrainableState):
     """Abelian group of proper Euclidean isometries identifying a periodic mesh.
@@ -212,15 +230,8 @@ class PeriodicIsometryGroup(StrictModule, NonTrainableState):
         self.translation_periods = translation_periods
         self.tolerance = threshold
         self.ambient_dimension = matrices.shape[1] - 1
-        self.group_id = canonical_fingerprint(
-            {
-                "kind": "periodic-isometry-group",
-                "generators": array_tree_fingerprint(matrices),
-                "orders": list(orders),
-                "linear_orders": list(linear_orders),
-                "translation_periods": list(translation_periods),
-                "tolerance": threshold,
-            }
+        self.group_id = _isometry_group_content_id(
+            matrices, orders, linear_orders, translation_periods, threshold
         )
 
     def validate_restored(self) -> None:
@@ -613,9 +624,23 @@ def exact_periodic_generators(
                 0 if axis else 1 for axis in cell.periodic_axes
             )
         case PeriodicIsometryGroup():
-            admission = admit_exact_isometry_group(
-                np.asarray(cell.generators), budget=budget
-            )
+            matrices = np.asarray(cell.generators)
+            if (
+                matrices.shape != (cell.rank, cell.ambient_dimension + 1, cell.ambient_dimension + 1)
+                or _isometry_group_content_id(
+                    matrices, cell.orders, cell.linear_orders,
+                    cell.translation_periods, cell.tolerance,
+                ) != cell.group_id
+            ):
+                raise PeriodicIsometryIdentityError(
+                    "PeriodicIsometryGroup.group_id must bind current generators and metadata before admission reuse; got changed content"
+                )
+            # ``group_id`` binds the full binary64 generators and metadata; an
+            # admission earned under this request's budget is reused verbatim.
+            earned = budget.periodic_generator_cache.get(cell.group_id)
+            if earned is not None:
+                return earned
+            admission = admit_exact_isometry_group(matrices, budget=budget)
             if (
                 admission.orders,
                 admission.linear_orders,
@@ -624,7 +649,10 @@ def exact_periodic_generators(
                 raise PeriodicIsometryIdentityError(
                     "PeriodicIsometryGroup.orders must follow retained generator actions with linear_orders and translation_periods; got mismatched metadata"
                 )
-            return admission.matrices, admission.orders
+            earned = (admission.matrices, admission.orders)
+            budget.retain_owner(earned)
+            budget.periodic_generator_cache[cell.group_id] = earned
+            return earned
         case _:
             raise TypeError(
                 "periodic_identification.cell must be a PeriodicCell or PeriodicIsometryGroup; got another identification kind"
@@ -649,6 +677,129 @@ def exact_periodic_element(
             budget=budget,
         )
     return result
+
+
+type ExactIsometry = tuple[tuple[Fraction, ...], ...]
+
+
+class ExactPeriodicActionLattice:
+    """Evaluate ``exact_periodic_element`` for a bank of exponents once each.
+
+    The element of exponents ``e`` is the ordered word
+    ``G_0^{e_0} ... G_{r-1}^{e_{r-1}}`` with finite exponents reduced modulo
+    their orders and negative infinite-order exponents using the exact inverse.
+    When every exponent after axis ``g`` vanishes, that word equals the word one
+    step nearer zero on axis ``g`` right-multiplied by ``G_g`` or its inverse:
+    rational associativity alone gives the identity, so generator commutation
+    is never assumed. Requested reduced exponents are visited in the
+    deterministic order (absolute sum, exponents); an element whose neighbour
+    is retained costs one multiplication, and any other is evaluated directly,
+    so the charged work never exceeds direct evaluation of each distinct
+    element. Instances live for one caller request on its ledger.
+    """
+
+    def __init__(
+        self, matrices: tuple[ExactIsometry, ...], orders: tuple[int, ...], /
+    ) -> None:
+        if not matrices or len(matrices) != len(orders):
+            raise ValueError(
+                "ExactPeriodicActionLattice.orders must align with nonempty generators; "
+                f"got {len(matrices)} generators and {len(orders)} orders"
+            )
+        self.matrices, self.orders = matrices, tuple(int(order) for order in orders)
+        self.size = len(matrices[0])
+        self.elements: dict[tuple[int, ...], ExactIsometry] = {}
+        self.inverses: dict[int, ExactIsometry] = {}
+
+    def key(self, exponents: Sequence[int], /) -> tuple[int, ...]:
+        """Return the reduced exponent key naming one group element."""
+        values = tuple(int(value) for value in exponents)
+        if len(values) != len(self.orders):
+            raise ValueError(
+                "ExactPeriodicActionLattice.exponents must have one entry per generator; "
+                f"got {len(values)}"
+            )
+        return tuple(
+            value % order if order else value
+            for value, order in zip(values, self.orders, strict=True)
+        )
+
+    def prepare(
+        self,
+        exponents: Sequence[Sequence[int]],
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[ExactIsometry, ...]:
+        """Admit the planned exact work, then return elements in caller order."""
+        keys = tuple(self.key(row) for row in exponents)
+        pending = sorted(
+            set(keys) - set(self.elements),
+            key=lambda value: (sum(map(abs, value)), value),
+        )
+        budget.admit_work_bound(self._planned_work(pending))
+        for key in pending:
+            self.elements[key] = self._element(key, budget=budget)
+        return tuple(self.elements[key] for key in keys)
+
+    def _nearer(self, key: tuple[int, ...], /) -> tuple[int, tuple[int, ...]] | None:
+        axis = next((index for index in reversed(range(len(key))) if key[index]), None)
+        if axis is None:
+            return None
+        step = 1 if key[axis] > 0 else -1
+        return axis, tuple(
+            value - step if index == axis else value for index, value in enumerate(key)
+        )
+
+    def _planned_work(self, pending: Sequence[tuple[int, ...]], /) -> int:
+        square, cube = self.size**2, self.size**3
+        known, inverses, work = set(self.elements), set(self.inverses), 0
+        for key in pending:
+            nearer = self._nearer(key)
+            if nearer is None:
+                work += square
+            elif nearer[1] in known or not any(nearer[1]):
+                if nearer[1] not in known:
+                    work += square
+                    known.add(nearer[1])
+                if key[nearer[0]] < 0 and nearer[0] not in inverses:
+                    work += 2 * cube + square
+                    inverses.add(nearer[0])
+                work += cube
+            else:
+                work += square
+                for exponent in key:
+                    magnitude = abs(exponent)
+                    work += square + cube * (exponent < 0) + cube
+                    if magnitude:
+                        work += cube * (magnitude.bit_count() + magnitude.bit_length() - 1)
+            known.add(key)
+        return work
+
+    def _element(
+        self, key: tuple[int, ...], /, *, budget: CoordinateEnclosureBudget
+    ) -> ExactIsometry:
+        nearer = self._nearer(key)
+        if nearer is None:
+            return exact_isometry_identity(self.size - 1, budget=budget)
+        axis, previous = nearer
+        neighbour = self.elements.get(previous)
+        if neighbour is None and not any(previous):
+            neighbour = self.elements[previous] = exact_isometry_identity(
+                self.size - 1, budget=budget
+            )
+        if neighbour is None:
+            return exact_periodic_element(self.matrices, self.orders, key, budget=budget)
+        if key[axis] > 0:
+            factor = self.matrices[axis]
+        else:
+            inverse = self.inverses.get(axis)
+            if inverse is None:
+                inverse = self.inverses[axis] = exact_isometry_power(
+                    self.matrices[axis], -1, budget=budget
+                )
+            factor = inverse
+        return exact_isometry_multiply(neighbour, factor, budget=budget)
 
 
 type PeriodicMeshIdentification = PeriodicCell | PeriodicIsometryGroup

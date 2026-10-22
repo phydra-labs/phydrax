@@ -6,9 +6,11 @@
 
 Docstrings, exception messages, and comments are scanned without importing the
 package. By default, error formatting is checked in branch-changed files only;
-explicit paths check all messages. With ``--changed-since REV``, policy-listed,
-added and untracked files are scanned whole and other changed files only on the
-lines added or rewritten since REV. Findings are ordered by file and location.
+explicit paths check all messages. With ``--changed-since REV``, the default
+selection also takes every policy-listed, added and untracked Python file under
+``phydrax/``, ``tests/`` and ``tools/``; those files are scanned whole and other
+changed files only on the lines added or rewritten since REV. Findings are
+ordered by file and location.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from tools._branch_scope import (
     changed_lines,
     in_scope,
     load_policy,
+    ROOTS,
     whole_files,
 )
 
@@ -94,6 +97,18 @@ ALLOWLIST = (
         r"\bexact (?:rationals?|integers?|orientations?|signs?|division|zeros?|"
         r"determinants?|solves?|cancellation)\b",
         "Exactly computed mathematical quantity, not emphasis.",
+    ),
+    AllowedPhrase(
+        r"\bexact[ -](?:(?:source[- ]owned|homogeneous|rational|algebraic|affine|"
+        r"barycentric|coefficient|reference|quotient|squared|P1|source|vertex|child|"
+        r"parent|coarse-simplex|polynomial|level-set|lattice|edge|length) )*"
+        r"(?:roots?|positions?|coordinates?|corners?|points?|images?|rows?|banks?|"
+        r"weights?|stencils?|actions?|maps?|charts?|sources?|geometry|lengths?|"
+        r"barycentrics|sums?|translations?|squares?|endpoints?|subdivision|"
+        r"restrictions?|vertices|trajectories)\b",
+        "Unrounded mathematical value contrasted with its rounded binary64 carrier.",
+        r"\b(?:binary64|round(?:ed|ing|s)?|round-to-nearest|RNE|carriers?|dyadic|"
+        r"Fractions?|rational|inexact|bit length)\b",
     ),
     AllowedPhrase(r"\bcanonical ordering\b", "Deterministic record ordering."),
     AllowedPhrase(r"\bcanonical fingerprints?\b", "Deterministic identity encoding."),
@@ -384,14 +399,23 @@ def audit(
 ) -> tuple[list[Finding], int]:
     """Return findings and scanned-file count for the selected scope."""
     files = _files(scope_paths() if paths is None else paths)
-    public_names = _public_names(files)
     whole: set[Path] = set()
     lines: dict[Path, frozenset[int]] = {}
+    changed: set[Path] | None = None
     if changed_since is not None:
         changed = changed_files(ROOT, changed_since)
-        files = [path for path in files if path in changed]
         whole = whole_files(ROOT, changed_since)
         lines = changed_lines(ROOT, changed_since)
+        if paths is None:
+            # Branch-authored files enter whole; other changed files stay
+            # limited to the default selection.
+            authored = [
+                path for path in whole if path.relative_to(ROOT).parts[0] in ROOTS
+            ]
+            files = sorted({*files, *_files(authored)})
+    public_names = _public_names(files)
+    if changed is not None:
+        files = [path for path in files if path in changed]
     message_files = (
         set(files)
         if paths is not None or changed_since is not None

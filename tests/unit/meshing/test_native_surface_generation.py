@@ -109,6 +109,165 @@ def _case(name: str) -> tuple[AnalyticSurface, float, Any]:
     )
 
 
+def test_surface_publication_retains_immutable_dynamic_chart_owners() -> None:
+    import jax
+
+    from phydrax._fingerprint import array_tree_fingerprint
+    from phydrax._host_storage import immutable_host_array_layout
+    from phydrax._model._structure import (
+        model_from_logical_array_recipe,
+        model_recipe_array_values,
+        model_structure_recipe,
+    )
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.lifecycle import register_meshing_source_artifacts
+    from phydrax.meshing._certification_inputs import _immutable_host_leaf
+
+    _, _, result = _case("capped_cylinder")
+    charts = result.surface_source
+    assert charts is not None
+    assert result.certification is not None
+    source = result.certification.request.source
+    assert isinstance(source, MeshingDomainBoundarySource)
+    banks = [charts.root_parameters, charts.root_patches]
+    assert source.boundary_occurrences is not None
+    assert source.boundary_cell_ids is not None
+    assert source.boundary_patch_ids is not None
+    banks.extend(
+        (source.boundary_occurrences, source.boundary_cell_ids, source.boundary_patch_ids)
+    )
+    np.testing.assert_array_equal(
+        source.boundary_cell_ids,
+        np.sort(np.concatenate([np.asarray(block.global_ids) for block in result.mesh.blocks])),
+    )
+    assert source.boundary_occurrences.shape == (source.boundary_cell_ids.size, 3, 3)
+    assert set(np.unique(source.boundary_patch_ids)) == set(source.patches)
+    for original, retained in zip(
+        charts.boundary_source.chart_triangulations, source.chart_triangulations, strict=True
+    ):
+        assert original[0] == retained[0]
+        for before, after in zip(original[1:], retained[1:], strict=True):
+            assert after is before
+            banks.append(before)
+    leaves = jax.tree_util.tree_leaves(charts)
+    for bank in banks:
+        assert immutable_host_array_layout(bank) is not None
+        assert _immutable_host_leaf(bank) is bank
+        assert any(leaf is bank for leaf in leaves)
+        with pytest.raises(ValueError):
+            bank.setflags(write=True)
+    register_meshing_source_artifacts()
+    recipe = model_structure_recipe(charts)
+    arrays = model_recipe_array_values(charts, recipe, prefix="source-charts")
+    restored = model_from_logical_array_recipe(recipe, arrays, prefix="source-charts")
+    assert restored.source_chart_id == charts.source_chart_id
+    assert restored._identity() == charts._identity()
+    assert array_tree_fingerprint(restored) == array_tree_fingerprint(charts)
+    assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(charts)
+    restored.boundary_source.require_current()
+    assert restored.boundary_source.boundary_occurrence_id == source.boundary_occurrence_id
+    for bank in (restored.root_parameters, restored.root_patches):
+        assert immutable_host_array_layout(bank) is not None
+
+
+@pytest.mark.parametrize(
+    "mismatch", ("none", "equal-domain", "source-id", "revision", "patches", "request")
+)
+def test_surface_certification_shares_only_the_actual_declared_source(mismatch: str) -> None:
+    from copy import copy
+
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.meshing._domain import compile_surface_domain
+    from phydrax.meshing.providers._native_surface import _certification_request
+
+    domain = capped_cylinder_surface().domain
+    source = M.NativeSurfaceSource(domain)
+    specification = surface_specification(domain, 0.3)
+    compiled = compile_surface_domain(domain, specification)
+    boundary = MeshingDomainBoundarySource(domain, tuple(compiled.patches.tolist()))
+    if mismatch == "equal-domain":
+        boundary = MeshingDomainBoundarySource(copy(domain), boundary.patches)
+    elif mismatch == "source-id":
+        object.__setattr__(source, "source_id", "foreign-source")
+    elif mismatch == "revision":
+        object.__setattr__(source, "source_revision", "foreign-revision")
+    elif mismatch == "patches":
+        boundary = MeshingDomainBoundarySource(domain, (boundary.patches[0],))
+    elif mismatch == "request":
+        object.__setattr__(compiled, "specification_id", "foreign-request")
+    if mismatch == "none":
+        request = _certification_request(source, specification, compiled, boundary)
+        assert request.fidelity_source is boundary
+        assert request.source_id == source.source_id
+        assert request.source_revision == source.source_revision
+    else:
+        with pytest.raises(ValueError, match="actual source"):
+            _certification_request(source, specification, compiled, boundary)
+
+
+@pytest.mark.parametrize("name", ["sphere", "capped_cylinder"])
+def test_surface_metric_reuses_certified_restriction_charts(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.meshing import _surface_association_transfer, _surface_metric
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    surface, _, source = _case(name)
+    charts = source.surface_source
+    transfer = M.SurfaceAssociationTransfer(
+        PreparedSurfaceSourceSupport(
+            surface.domain, source, charts.root_parameters, charts.boundary_source
+        )
+    )
+    with coordinate_reference_budget() as budget:
+        proof = _surface_association_transfer.source_proof(
+            transfer.support, source, transfer.receipts, budget=budget
+        )
+        original_work = budget.work_units
+
+    def forbid_reproof(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("certified native restrictions must not be proved twice")
+
+    monkeypatch.setattr(_surface_association_transfer, "source_proof", forbid_reproof)
+    with coordinate_reference_budget() as budget:
+        witness = _surface_metric.prepare_surface_metric_source(
+            source, transfer, budget=budget
+        )
+        reused_work = budget.work_units
+    rows = {int(cell): row for row, cell in enumerate(proof.cell_ids)}
+    order = [rows[int(cell)] for cell in witness.cell_global_ids]
+    np.testing.assert_array_equal(witness.patches, proof.patches[order])
+    np.testing.assert_array_equal(
+        witness.charts, np.asarray(proof.source_corners, dtype=np.float64)[order]
+    )
+    assert reused_work < original_work
+
+
+def test_surface_metric_restriction_reuse_rejects_changed_geometry() -> None:
+    import equinox as eqx
+
+    from phydrax.meshing import _surface_metric
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    surface, _, source = _case("capped_cylinder")
+    charts = source.surface_source
+    transfer = M.SurfaceAssociationTransfer(
+        PreparedSurfaceSourceSupport(
+            surface.domain, source, charts.root_parameters, charts.boundary_source
+        )
+    )
+    changed = eqx.tree_at(
+        lambda result: result.geometry.coordinates,
+        source,
+        source.geometry.coordinates + 0.125,
+    )
+    with coordinate_reference_budget() as budget:
+        with pytest.raises(ValueError):
+            _surface_metric.prepare_surface_metric_source(
+                changed, transfer, budget=budget
+            )
+
+
 def _arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
     vertices = np.asarray(result.mesh.coordinates, dtype=np.float64)
     faces = np.asarray(result.mesh.blocks[0].vertices, dtype=np.int64)
@@ -424,6 +583,37 @@ def test_exhausted_work_budget_refuses_publication() -> None:
             ),
         )
     assert refused.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+
+
+# Measured ABI0d11 default-limit baseline of the public sphere request at size 0.2:
+# the ledger spends 32_087 units before the first surface_reconnect, whose mandatory
+# source validation over 250 triangles costs 250 * (4 + 3 * 10) = 8_500 units.
+_FIRST_RECONNECT_LEDGER_WORK = 32_087
+_FIRST_RECONNECT_FACES = 250
+_FIRST_RECONNECT_VALIDATION_WORK = 8_500
+
+
+@pytest.mark.parametrize("shortfall", (1, 0))
+def test_reconnect_source_validation_budget_refuses_publication(
+    shortfall: int,
+) -> None:
+    domain = sphere_surface().domain
+    original_id = domain.domain_id
+    corners = np.asarray(domain.corner_points).copy()
+    budget = _FIRST_RECONNECT_LEDGER_WORK + _FIRST_RECONNECT_VALIDATION_WORK - shortfall
+    limits = M.MeshingLimits(maximum_work_units=budget)
+    with pytest.raises(M.MeshingFailure) as refused:
+        surface_mesh(domain, surface_specification(domain, 0.2, limits=limits))
+    assert refused.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    achieved = dict(refused.value.achieved)
+    assert achieved["faces"] == _FIRST_RECONNECT_FACES
+    # One unit short, the unvalidated source is refused without charging work;
+    # the precisely sized allowance validates (and charges) it before refinement exhausts.
+    assert achieved["work_units"] == (
+        _FIRST_RECONNECT_LEDGER_WORK if shortfall else budget
+    )
+    assert domain.domain_id == original_id
+    np.testing.assert_array_equal(domain.corner_points, corners)
 
 
 @pytest.mark.parametrize(
@@ -2016,3 +2206,83 @@ def test_public_native_surface_default_archive_retains_original_chart_boundary(
         maximum_support_queries=restored_charts.maximum_support_queries,
     )
     support.require_current()
+
+
+@pytest.mark.parametrize("name", ("capped_cylinder", "annulus", "cylinder_sheet"))
+def test_boundary_occurrences_preserve_nominal_identity_and_permuted_ids(name: str) -> None:
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+
+    domain = _CASES[name][0]().domain
+    rows = [
+        (patch, loop, ordinal, 1 if use.last > use.first else -1)
+        for patch, surface in enumerate(domain.patches)
+        for loop, uses in enumerate(surface.loops)
+        for ordinal, use in enumerate(uses)
+        if isinstance(use, PatchCurveUse)
+    ]
+    bank = np.full((len(rows), 3, 3), -1, dtype=np.int32)
+    patches = np.asarray([row[0] for row in rows], dtype=np.int32)
+    identifiers = np.arange(len(rows), dtype=np.int64)[::-1] * 17 + 29
+    bank[:, 0] = np.asarray([row[1:] for row in rows], dtype=np.int32)
+    source = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches))),
+        boundary_occurrences=bank,
+        boundary_cell_ids=identifiers,
+        boundary_patch_ids=patches,
+    )
+    source.require_current()
+    order = np.argsort(identifiers)
+    np.testing.assert_array_equal(source.boundary_cell_ids, identifiers[order])
+    np.testing.assert_array_equal(source.boundary_occurrences, bank[order])
+    equivalent = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches))),
+        boundary_occurrences=bank[order],
+        boundary_cell_ids=identifiers[order],
+        boundary_patch_ids=patches[order],
+    )
+    assert equivalent.boundary_occurrence_id == source.boundary_occurrence_id
+    assert set(bank[:, 0, 2]) == {-1, 1}
+    with pytest.raises(ValueError, match="unique global cells"):
+        MeshingDomainBoundarySource(
+            domain, source.patches,
+            boundary_occurrences=bank,
+            boundary_cell_ids=np.zeros_like(identifiers),
+            boundary_patch_ids=patches,
+        )
+    for replacement in ((-1, 0, -1), (999, 0, 1), (0, 999, 1)):
+        invalid = bank.copy()
+        invalid[0, 0] = replacement
+        with pytest.raises(ValueError):
+            MeshingDomainBoundarySource(
+                domain, source.patches,
+                boundary_occurrences=invalid,
+                boundary_cell_ids=identifiers,
+                boundary_patch_ids=patches,
+            )
+    invalid = bank.copy()
+    invalid[0, 0, 2] *= -1
+    with pytest.raises(ValueError, match="orientation"):
+        MeshingDomainBoundarySource(
+            domain, source.patches,
+            boundary_occurrences=invalid,
+            boundary_cell_ids=identifiers,
+            boundary_patch_ids=patches,
+        )
+    missing = bank.copy()
+    missing[0, 0] = -1
+    with pytest.raises(ValueError, match="missing an authored"):
+        MeshingDomainBoundarySource(
+            domain, source.patches,
+            boundary_occurrences=missing,
+            boundary_cell_ids=identifiers,
+            boundary_patch_ids=patches,
+        )
+    import equinox as eqx
+
+    mutated = eqx.tree_at(
+        lambda value: value.boundary_cell_ids,
+        source,
+        replace=identifiers[order] + 1000,
+    )
+    with pytest.raises(ValueError, match="not canonical"):
+        mutated.require_current()

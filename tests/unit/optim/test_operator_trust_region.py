@@ -185,3 +185,51 @@ def test_bounded_least_squares_uses_residual_model_and_never_leaves_box() -> Non
         assert jnp.allclose(result.parameters, jnp.asarray([1.0, 0.0]), atol=1e-7)
         assert float(result.diagnostics.primal_feasibility) == 0.0
         assert result.provenance.globalization == "projected-residual-trust-region"
+
+
+def test_newton_trust_region_uses_fixed_spd_preconditioner_without_changing_optimality() -> None:
+    diagonal = jnp.asarray([1.0, 1.0e6])
+    target = jnp.asarray([0.25, -0.5])
+    initial = jnp.zeros_like(target)
+    accelerator = la.DiagonalPreconditioner(
+        diagonal, space=la.PyTreeSpace(initial), positive_definite=True
+    )
+    result = opt.minimize(
+        opt.MinimizationProblem(
+            lambda parameters, _: 0.5 * jnp.sum(diagonal * (parameters - target) ** 2)
+        ),
+        initial,
+        method=opt.NewtonTrustRegion(preconditioner=accelerator),
+        termination=_optimization_termination(),
+    )
+    assert bool(result.successful)
+    assert float(jnp.linalg.norm(diagonal * (result.parameters - target))) <= 1e-9
+    assert int(result.diagnostics.hvp_evaluations) > 0
+    assert jnp.allclose(result.parameters, target, rtol=0.0, atol=1e-12)
+    assert result.provenance.method == "newton-trust-region/steihaug-toint/fixed-spd"
+    assert isinstance(result.method_evidence, tuple)
+    retained = result.method_evidence[1]
+    assert isinstance(retained, la.DiagonalPreconditioner)
+    assert jnp.array_equal(retained.inverse_diagonal, accelerator.inverse_diagonal)
+
+
+def test_newton_trust_region_refuses_incompatible_or_non_spd_preconditioner() -> None:
+    initial = jnp.zeros((2,))
+    problem = opt.MinimizationProblem(
+        lambda parameters, _: 0.5 * jnp.sum((parameters - 1.0) ** 2)
+    )
+    foreign = la.IdentityPreconditioner(la.PyTreeSpace(jnp.zeros((3,))))
+    indefinite = la.DiagonalPreconditioner(
+        jnp.asarray([1.0, -1.0]), space=la.PyTreeSpace(initial)
+    )
+    for accelerator, message in (
+        (foreign, "space is incompatible"),
+        (indefinite, "fixed linear SPD evidence"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            opt.minimize(
+                problem,
+                initial,
+                method=opt.NewtonTrustRegion(preconditioner=accelerator),
+                termination=_optimization_termination(),
+            )

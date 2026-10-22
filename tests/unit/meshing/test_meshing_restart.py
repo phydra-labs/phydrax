@@ -869,6 +869,56 @@ def test_nonaddressable_native_source_checkpoint_restores_and_recertifies(
         _assert_restored_scientific_arrays(record)
 
 
+def test_nonaddressable_accepted_epoch_fields_restore_on_changed_owner_count(
+    tmp_path: Path,
+) -> None:
+    from phydrax._meshcore import meshcore_available
+    from tests._support.forced_devices import run_on_forced_devices
+
+    if not meshcore_available():
+        pytest.skip("native meshcore library is unavailable")
+    producers = run_restart_workers(tmp_path, "accepted_epoch_checkpoint_publish")
+    assert [producer["process_index"] for producer in producers] == [0, 1]
+    for producer in producers:
+        assert producer["nonaddressable_fields"]
+        assert producer["missing"] == []
+        assert producer["published"]
+    epoch_id = producers[0]["epoch_id"]
+    aliases = producers[0]["field_aliases"]
+    assert all(producer["epoch_id"] == epoch_id for producer in producers)
+    assert all(producer["field_aliases"] == aliases for producer in producers)
+    # One deterministic bank per array: equal-shaped fields stay distinct, while the
+    # history retained by two roles shares one epoch-bound bank.
+    assert set(aliases) == {"accepted-history", "density", "history", "u"}
+    assert aliases["history"] == aliases["accepted-history"]
+    assert len({aliases[name] for name in ("density", "history", "u")}) == 3
+    assert all(epoch_id in alias for alias in aliases.values())
+    restored = run_on_forced_devices(
+        "tests._support.distributed_meshing.restart",
+        "accepted_epoch_checkpoint_restore",
+        (
+            str(tmp_path / "multiprocess-repository"),
+            json.dumps(
+                {
+                    str(producer["process_index"]): producer["state_id"]
+                    for producer in producers
+                }
+            ),
+        ),
+        devices=1,
+        env={},
+    )
+    assert restored["process_count"] == 1
+    assert restored["source_owner_indices"] == [0, 1]
+    assert restored["epoch_ids"] == [[epoch_id]] * 3
+    assert restored["history_shares_accepted_history"]
+    reference = producers[0]["reference"]
+    expected = {**reference, "accepted-history": reference["history"]}
+    assert set(restored["fields"]) == set(expected)
+    for name, values in expected.items():
+        np.testing.assert_array_equal(restored["fields"][name], values)
+
+
 def test_native_numpy_source_checkpoint_restores_immutable_authored_coefficients(
     tmp_path: Path,
 ) -> None:

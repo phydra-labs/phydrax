@@ -394,6 +394,7 @@ def compose_layer_controls(
         return zones, construction.patches
     authored = layer_source_face_ancestry(source, work=work)
     cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
+    work.charge(2 * cells.size + mesh.coordinates.shape[0] + mesh.entity_set(2).count)
     block_ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )

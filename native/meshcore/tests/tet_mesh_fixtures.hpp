@@ -116,6 +116,30 @@ inline Domain reconstruction_hinge_domain() {
   return domain;
 }
 
+// A reconstruction hinge whose interior edge 1--2 has a narrow visibility
+// interval toward its ring centroid. Every former sample down to 1/16 inverts
+// a neighboring cone, while the interval interior admits all ten children.
+inline Domain reconstruction_narrow_hinge_domain() {
+  Domain domain;
+  domain.points = {
+      0x1.1ec1b930f6634p-3, -0x1.9f1b3f4a88cb4p-3, -0x1.5d1e03f1508c0p-5,
+      0x1.691b5beea4c35p-3, -0x1.34b1814a48423p-3, -0x1.83627df92957ap-4,
+      0x1.6f5574f8a1ab0p-3, -0x1.82fd265d0bed0p-3, -0x1.d94b4076ba25cp-6,
+      0x1.6f5574f8a1ab0p-3, -0x1.2e7768404b5a8p-3, -0x1.8c601b1899a7fp-4,
+      0x1.ad1a88cf28e3cp-3, -0x1.6c3c7c16d2936p-3, -0x1.2345ee44ef590p-6,
+      0x1.c61ef441a967bp-3, -0x1.2e7768404b5a8p-3, -0x1.eb6949d8f3792p-6,
+      0x1.dff94c02df1b8p-3, -0x1.c2ceb80dca602p-4, -0x1.5d1e03f1508c0p-5};
+  domain.tets = {0, 1, 2, 3, 0, 1, 6, 2, 1, 2, 3, 4, 1, 2, 4, 5, 1, 2, 5, 6};
+  domain.regions = {0, 0, 0, 0, 0};
+  domain.faces = {0, 1, 3, 0, 1, 6, 0, 2, 3, 0, 2, 6, 1, 3, 4,
+                  1, 4, 5, 1, 5, 6, 2, 3, 4, 2, 4, 5, 2, 5, 6};
+  domain.face_sources = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  domain.segments = {0, 1, 0, 2, 0, 3, 0, 6, 1, 3, 1, 4, 1, 5, 1, 6,
+                     2, 3, 2, 4, 2, 5, 2, 6, 3, 4, 4, 5, 5, 6};
+  domain.segment_sources = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+  return domain;
+}
+
 // Deterministic dyadic sample: a lattice of `per_side` points per axis on
 // [0, 1]^3 plus `interior` pseudo-random points with 1/1024 resolution.
 inline std::vector<double> box_points(int per_side, int interior, std::uint64_t seed) {
@@ -256,6 +280,11 @@ inline phx_mc_tet_mesh* create_mesh(const Domain& domain, int32_t policy,
       .witness_strata = nullptr,
       .witness_entities = nullptr,
       .witness_parameters = nullptr,
+      .curved_source_count = 0,
+      .curved_sources = nullptr,
+      .curved_tolerances = nullptr,
+      .curved_digests = nullptr,
+      .face_claims = nullptr,
       .boundary_policy = policy,
       .max_vertices = max_vertices,
       .max_tetrahedra = max_tetrahedra,

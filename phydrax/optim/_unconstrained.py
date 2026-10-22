@@ -28,6 +28,7 @@ from .._tree_math import (
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
 from ..linalg import (
+    AbstractPreconditioner,
     DenseLinearOperator,
     DenseLU,
     FunctionLinearOperator,
@@ -937,9 +938,17 @@ class NewtonTrustRegionState(_AbstractScalarExtensionState):
 
 
 class NewtonTrustRegion(AbstractScalarIterativeMethod):
-    """Matrix-free Newton method with a Steihaug--Toint trust region."""
+    """Matrix-free Newton method with a Steihaug--Toint trust region.
+
+    ``preconditioner`` is an optional fixed native SPD action on the exact
+    parameter PyTree space. It accelerates the quadratic subproblem only;
+    objective, true gradient convergence, trust radius and work limits are
+    unchanged. The actual prepared action is retained in ``method_evidence``.
+    ``None`` preserves the unpreconditioned method and its provenance.
+    """
 
     subproblem: SteihaugToint
+    preconditioner: AbstractPreconditioner | None
     initial_radius: float = eqx.field(static=True)
     maximum_radius: float = eqx.field(static=True)
     minimum_radius: float = eqx.field(static=True)
@@ -953,6 +962,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         self,
         *,
         subproblem: SteihaugToint | None = None,
+        preconditioner: AbstractPreconditioner | None = None,
         initial_radius: float = 1.0,
         maximum_radius: float = 1e4,
         minimum_radius: float = 1e-12,
@@ -965,6 +975,10 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         subproblem_ = SteihaugToint() if subproblem is None else subproblem
         if not isinstance(subproblem_, SteihaugToint):
             raise TypeError("subproblem must be SteihaugToint or None.")
+        if preconditioner is not None and not isinstance(
+            preconditioner, AbstractPreconditioner
+        ):
+            raise TypeError("preconditioner must be AbstractPreconditioner or None.")
         values = tuple(
             float(value)
             for value in (
@@ -989,6 +1003,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         if not 0.0 < values[6] < 1.0 or values[7] <= 1.0:
             raise ValueError("Radius factors must shrink below and expand above one.")
         self.subproblem = subproblem_
+        self.preconditioner = preconditioner
         (
             self.initial_radius,
             self.maximum_radius,
@@ -1002,7 +1017,11 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
 
     @property
     def method_id(self) -> str:
-        return "newton-trust-region/steihaug-toint"
+        return (
+            "newton-trust-region/steihaug-toint"
+            if self.preconditioner is None
+            else "newton-trust-region/steihaug-toint/fixed-spd"
+        )
 
     @property
     def globalization_id(self) -> str:
@@ -1143,6 +1162,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
                     state.trust_radius,
                 ),
                 method=self.subproblem,
+                preconditioner=self.preconditioner,
             )
             direction = subproblem.step
             candidate = _tree_add_scaled(parameters_, direction, 1.0)
@@ -1286,7 +1306,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         args: Any,
         iteration: IterationPlan | None = None,
     ) -> MinimizationResult:
-        return solve_scalar_iterative(
+        result = solve_scalar_iterative(
             self,
             problem,
             initial_parameters,
@@ -1294,6 +1314,16 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
             args=args,
             iteration=iteration,
         )
+        if self.preconditioner is not None:
+            # Retain the actual fixed action, not only an algorithm label. Its
+            # dynamic factor arrays participate in result/archive identities.
+            result = eqx.tree_at(
+                lambda value: value.method_evidence,
+                result,
+                (result.method_evidence, self.preconditioner),
+                is_leaf=lambda value: value is None,
+            )
+        return result
 
 
 __all__ = [

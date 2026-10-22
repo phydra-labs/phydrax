@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from math import sqrt
 
 import jax.numpy as jnp
@@ -11,6 +12,7 @@ import numpy as np
 import pytest
 
 from phydrax._meshcore import (
+    MeshcoreError,
     meshcore_available,
     NativeExecutionScope,
     NativeHostStorageWorkspace,
@@ -22,7 +24,10 @@ from phydrax.discretization import (
     PreparedUnstructuredConservativeRemap,
     UnstructuredFiniteVolumePlan,
 )
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from phydrax.discretization.finite_volume import MappedSurfaceChartRemapEvidence
 from phydrax.equations import MaterialTransaction
 from phydrax.geometry import (
@@ -325,3 +330,91 @@ def test_chart_material_transaction_refuses_foreign_deformation_identity(
     assert expected is not None
     assert remap.route.deformation.deformation_id != expected.chart_correspondence_id
     _assert_material_route_rejected(chart_fields, remap)
+
+
+def test_chart_transaction_uses_complete_active_request_work_allowance(
+    chart_fields: RationalMetricFieldState,
+) -> None:
+    fields = chart_fields
+    scenario = fields.scenario
+    source = scenario.source_fixture.source
+    accepted = FiniteElementAcceptedState(
+        (scenario.source_temperature,),
+        jnp.asarray(0.0, dtype=jnp.float64),
+        1,
+        source.mesh.topology_id,
+        scenario.source_space.prepared_id,
+        scenario.source_problem.compilation_id,
+        materials=fields.source_material,
+        state_version=1,
+    )
+    history = RationalMaterialHistory(
+        scenario.adaptation,
+        fields.old_fv,
+        fields.new_fv,
+        scenario.chart,
+        fields.remap_plan,
+        fields.history,
+        fields.carried_temperature,
+        fields.bound,
+        scenario.target,
+    )
+    transaction = FiniteElementTopologyTransaction(
+        history.certify_material,
+        fields=(scenario.field,),
+        material_transfer=history.move_material,
+        surface_chart_semantics={"temperature": "intensive"},
+        callback_owners=(history,),
+    )
+    limits = scenario.adaptation.policy.limits
+
+    with pytest.raises(TypeError, match="budget"):
+        transaction.execute(
+            accepted,
+            source.mesh,
+            scenario.adaptation,
+            budget="another-ledger",  # ty: ignore[invalid-argument-type]
+        )
+
+    def execute(cap: int) -> int:
+        native_limits = replace(limits.native_limits(), maximum_work_units=cap)
+        with NativeExecutionScope(native_limits) as scope:
+            initial = scope.batch(0)
+            initial.settle()
+            ledger = CoordinateEnclosureBudget(
+                initial,
+                maximum_work_units=cap,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with ledger.bind_ticket(scope.ticket_view()):
+                # Preparation and transfer share this pre-consumed request.
+                ledger.reserve(7)
+                result = transaction.execute(
+                    accepted,
+                    source.mesh,
+                    scenario.adaptation,
+                    compiled_layout_id=fields.problem.compilation_id,
+                    budget=ledger,
+                )
+                assert bool(result.committed), result.diagnostics
+                assert result.execution_evidence is None
+                assert len(result.material_remaps) == 1
+                assert all(transfer.evidence.passed for transfer in result.transfers)
+                assert result.state.materials is not None
+                np.testing.assert_allclose(
+                    result.state.materials.state("surface-temperature-history").committed,
+                    fields.carried_history,
+                    rtol=1e-12,
+                    atol=1e-12,
+                )
+        assert scope.evidence is not None
+        return scope.evidence.work_counters.construction_work
+
+    required = execute(limits.maximum_work_units)
+    assert required > 7
+    assert execute(required) == required
+    with pytest.raises((MeshcoreError, CoordinateEnclosureResourceError)):
+        execute(required - 1)
+    assert accepted.state_version == 1
+    assert accepted.materials is fields.source_material
+    np.testing.assert_array_equal(accepted.fields[0], scenario.source_temperature)

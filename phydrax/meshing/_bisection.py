@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from itertools import combinations
-from typing import final, NamedTuple
+from typing import final, Literal, NamedTuple
 
 import equinox as eqx
 import jax
@@ -51,6 +51,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import NativeExecutionScope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ..discretization import CellMesh
 from ..typing import checked, parse
 
@@ -67,13 +68,21 @@ class BisectionCompatibility(StrEnum):
     uniform generation is conforming and bounds the closure, whose size estimate
     holds for arbitrary initial refinement edges (Karkulik, Pavlicek, Praetorius
     2013). From a labeled start the closure splits only source edges, so each
-    source triangle yields at most four children. Tetrahedral closure relies on
-    the matching condition; incompatible tetrahedral labels stay refused.
+    source triangle yields at most four children. ``WHOLE_EDGE_STAR`` instead
+    splits complete tetrahedral stars of source edges. It needs no matching
+    labels and makes no newest-vertex shape-class claim for the entire forest.
+    Its records retain each actual ordered subdivision edge with tag three;
+    that split's children inherit tag two. A later announced edge starts a new
+    tagged reference closure, not the original source's similarity class.
     """
 
     REJECT = "reject"
     UNIFORM_REFINEMENT = "uniform_refinement"
     CONFORMING_CLOSURE = "conforming_closure"
+    WHOLE_EDGE_STAR = "whole_edge_star"
+
+
+type BisectionRefinementRule = Literal["maubach", "whole_edge_star"]
 
 
 @final
@@ -865,7 +874,7 @@ def _prepare_hierarchy_issuers(
 
 @final
 class BisectionHierarchy(StrictModule, NonTrainableState):
-    """Persistent Maubach labels and bisection forest of one bisection mesh.
+    """Persistent tagged labels and exact binary forest of one bisection mesh.
 
     Active cells are listed by ascending global ID with their lexicographic Maubach
     tuple (vertex global IDs), tag, and generation. Each forest record is one
@@ -879,12 +888,19 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
     authored block ownership of every issued cell, including inactive parents.
     Descendants inherit it at birth; coordinate presentation regrouping never
     rewrites it. The forest's source-block rows remain presentation routing.
+    For ``whole_edge_star``, a record's ordered tuple is the actual parent
+    relabeling: its first and tag-three vertices are the announced edge, and
+    its two children inherit the corresponding tag-two tuples. Unsplit cells
+    retain their labels. Each relabeling requires its own exact geometric
+    reference proof; no finite similarity closure over arbitrary edge sequences
+    is asserted.
 
     A hierarchy applies to a mesh iff its active cell IDs equal the mesh cell IDs
     and every cell has the same vertex-ID set in both.
     """
 
     dimension: int = eqx.field(static=True)
+    refinement_rule: BisectionRefinementRule = eqx.field(static=True)
     cell_global_ids: Array
     ordered_vertices: Array
     tags: Array
@@ -929,10 +945,18 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         uniform_refinement: BisectionUniformRefinement | None,
         scientific_cell_ids: ArrayLike,
         scientific_block_ids: ArrayLike,
+        refinement_rule: BisectionRefinementRule,
     ) -> None:
         if isinstance(dimension, bool) or dimension not in (2, 3):
             raise ValueError(
                 f"BisectionHierarchy.dimension must be two or three; got {dimension!r}"
+            )
+        refinement_rule = parse(
+            refinement_rule, BisectionRefinementRule, "refinement_rule"
+        )
+        if refinement_rule == "whole_edge_star" and dimension != 3:
+            raise ValueError(
+                f"BisectionHierarchy.refinement_rule must select a supported dimensional subdivision law; got {(refinement_rule, dimension)!r}"
             )
         arrays = host_kernel.validated_forest(
             dimension,
@@ -969,6 +993,7 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         )
         vertex_counter, cell_counter = issuers.vertex_counter, issuers.cell_counter
         self.dimension = dimension
+        self.refinement_rule = refinement_rule
         _host_cell_global_ids = np.asarray(arrays["cell_global_ids"])
         _host_ordered_vertices = np.asarray(arrays["ordered_vertices"])
         _host_tags = np.asarray(arrays["tags"])
@@ -1026,6 +1051,7 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
             {
                 "kind": "bisection-hierarchy",
                 "dimension": dimension,
+                "refinement_rule": refinement_rule,
                 "arrays": array_tree_fingerprint(arrays),
                 "scientific_blocks": array_tree_fingerprint(
                     (canonical_scientific_ids, canonical_scientific_blocks)
@@ -1068,6 +1094,7 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
             uniform_refinement=value.uniform_refinement,
             scientific_cell_ids=value.scientific_cell_ids,
             scientific_block_ids=value.scientific_block_ids,
+            refinement_rule=value.refinement_rule,
         )
 
 
@@ -1250,6 +1277,8 @@ def execute_bisection(
     cell_classes: np.ndarray,
     facet_classes: np.ndarray,
     maximum_closure_iterations: int,
+    refinement_generations: int,
+    refinement_target_cells: int | None,
     maximum_cavity_cells: int,
     maximum_cells: int,
     maximum_vertices: int,
@@ -1257,6 +1286,8 @@ def execute_bisection(
     maximum_scratch_bytes: int,
     maximum_wall_seconds: float,
     maximum_geometry_queries: int,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> BisectionOutcome:
     """Refine and coarsen one simplex mesh by compatible Maubach bisection.
 
@@ -1272,6 +1303,26 @@ def execute_bisection(
     """
 
     compatibility = parse(compatibility, BisectionCompatibility, "compatibility")
+    refinement_generations = positive_integer(refinement_generations, "refinement_generations")
+    if refinement_target_cells is not None:
+        refinement_target_cells = positive_integer(
+            refinement_target_cells, "refinement_target_cells"
+        )
+    if (
+        refinement_generations != 1 or refinement_target_cells is not None
+    ) and compatibility is not BisectionCompatibility.WHOLE_EDGE_STAR:
+        raise ValueError("Bisection.refinement_generations/target_cells require WHOLE_EDGE_STAR")
+    if compatibility is BisectionCompatibility.WHOLE_EDGE_STAR and mesh.topological_dimension != 3:
+        raise ValueError("Bisection.WHOLE_EDGE_STAR requires tetrahedral cells")
+    if (
+        hierarchy is not None
+        and hierarchy.refinement_rule == "whole_edge_star"
+        and refine_cell_ids.size
+        and compatibility is not BisectionCompatibility.WHOLE_EDGE_STAR
+    ):
+        raise ValueError(
+            "Bisection.compatibility must retain WHOLE_EDGE_STAR for further refinement of its forest"
+        )
     if source_result.mesh.mesh_id != mesh.mesh_id:
         raise ValueError(
             f"Bisection.source_result must bind the accepted source mesh; got {(source_result.mesh.mesh_id, mesh.mesh_id)!r}"
@@ -1301,8 +1352,8 @@ def execute_bisection(
         maximum_cavity_cells,
     )
     with (
-        host_kernel.uniform_execution(allowance) as scope,
-        host_kernel.uniform_budget(allowance, scope=scope) as budget,
+        host_kernel.uniform_budget(allowance, scope=scope, budget=budget),
+        budget.temporary_scope(),
     ):
         start = host_kernel.prepared_start(
             source,
@@ -1315,7 +1366,10 @@ def execute_bisection(
             budget=budget,
         )
         refinement = host_kernel.refinement(
-            start, request, capacity, dimension, scope=scope, budget=budget
+            start, request, capacity, dimension, compatibility=compatibility,
+            refinement_generations=refinement_generations,
+            refinement_target_cells=refinement_target_cells,
+            coordinates=source.coordinates, scope=scope, budget=budget
         )
         blocked = np.isin(start.front.cells.ids, refinement.records.parent_ids)
         coarsening = host_kernel.coarsening(
@@ -1343,13 +1397,23 @@ def execute_bisection(
             restored_cells=coarsening.restored.ids.size,
             rejected_coarsening_ids=coarsening.rejected_ids,
         )
-        return BisectionOutcome(
+        outcome = BisectionOutcome(
             edit,
             host_kernel.target_hierarchy(
-                source, start, cells, records, retired, refinement.front, prior=hierarchy
+                source, start, cells, records, retired, refinement.front, prior=hierarchy,
+                refinement_rule=(
+                    "whole_edge_star"
+                    if (
+                        compatibility is BisectionCompatibility.WHOLE_EDGE_STAR
+                        or (hierarchy is not None and hierarchy.refinement_rule == "whole_edge_star")
+                    )
+                    else "maubach"
+                ),
             ),
             evidence,
         )
+        budget.retain_owner(outcome)
+        return outcome
 
 
 __all__ = [

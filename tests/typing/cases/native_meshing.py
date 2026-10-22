@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 from phydrax import SpatialCoordinateContract
 from phydrax._meshcore import NativeExecutionScope
 from phydrax.discretization import CellMesh, PreparedTensorGrid
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry import (
     BoundaryAtlas,
     CompiledGeometry,
@@ -20,6 +21,7 @@ from phydrax.geometry import (
 from phydrax.meshing import (
     BlockInterfaceControl,
     CellMeshingResult,
+    MeshAdaptationResult,
     MeshCertificationReport,
     NativeCurveSource,
     NativeImplicitSource,
@@ -42,6 +44,11 @@ from phydrax.meshing import (
     SweepControl,
     TransfiniteBlock,
     VolumeMeshingSpec,
+)
+from phydrax.solver import (
+    FiniteElementAcceptedState,
+    FiniteElementTopologyResult,
+    FiniteElementTopologyTransaction,
 )
 
 
@@ -194,3 +201,19 @@ def explicit_power_sites(
 def hybrid_hex_schedule() -> None:
     options = NativeMeshingOptions("plc_hex_dominant", hex_core_fraction=0.75)
     assert_type(options.hex_core_fraction, float | None)
+
+
+def explicit_transaction_budget(
+    transaction: FiniteElementTopologyTransaction,
+    accepted: FiniteElementAcceptedState,
+    mesh: CellMesh,
+    adaptation: MeshAdaptationResult,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    assert_type(
+        transaction.execute(accepted, mesh, adaptation, budget=budget),
+        FiniteElementTopologyResult,
+    )
+    transaction.execute(
+        accepted, mesh, adaptation, budget="another-ledger"  # ty: ignore[invalid-argument-type]
+    )

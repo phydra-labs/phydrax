@@ -5,6 +5,7 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -149,3 +150,42 @@ def test_fem_libparanumal_absorption_scenario_3() -> None:
     value = jnp.arange(1.0, 4.0)
 
     assert jnp.allclose(preconditioner.apply(value), value)
+
+
+def test_dirichlet_constrained_exact_diagonal_restricts_the_structural_diagonal() -> None:
+    vertices = jnp.asarray(
+        [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0], [0.7, 0.4], [1.4, 0.6]]
+    )
+    cells = jnp.asarray(
+        [[0, 1, 4], [1, 5, 4], [1, 2, 5], [2, 3, 5], [3, 4, 5], [3, 0, 4]],
+        dtype=jnp.int32,
+    )
+    discretization = phx.discretization.FiniteElementPlan(
+        phx.discretization.CellMesh.from_triangles(vertices, cells),
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+    form = phx.equations.FiniteElementForm(
+        "poisson", "u", (phx.equations.DiffusionAction("u", 3.0),)
+    )
+    constraint = phx.discretization.dirichlet_constraint(discretization, "u")
+    free = jnp.asarray(constraint.free_dofs)
+    full = phx.equations.compile_finite_element_problem(form, discretization)
+    constrained = phx.equations.compile_finite_element_problem(
+        form, discretization, constraint=constraint
+    )
+    expected = jnp.diag(jnp.asarray(full.to_scipy_csr().toarray()))[free]
+
+    eager = constrained.exact_diagonal()
+    traced = eqx.filter_jit(lambda problem: problem.exact_diagonal())(constrained)
+    system, _ = constrained.linear_system()
+    basis = jnp.eye(free.size)
+    columns = jnp.stack([system.operator.mv(column) for column in basis], axis=1)
+
+    assert free.size == 2
+    assert eager.method == traced.method == "constrained-workset"
+    assert jnp.array_equal(eager.diagonal, traced.diagonal)
+    assert jnp.allclose(eager.diagonal, expected, rtol=1.0e-14, atol=0.0)
+    assert jnp.allclose(eager.diagonal, jnp.diag(columns), rtol=1.0e-14, atol=0.0)
+    assert not bool(jnp.any(eager.zero_mask | eager.negative_mask))

@@ -35,7 +35,9 @@ def _box_edge(axis: int) -> tuple[phx.geometry.BRepModel, int]:
         )
         if abs(direction[axis]) == _EXTENTS[axis] and np.count_nonzero(direction) == 1:
             return box, index
-    raise RuntimeError("Box range fixture has no edge on the requested axis")
+    raise RuntimeError(
+        f"box_fixture.edge must lie on the requested axis; got no edge for axis {axis}"
+    )
 
 
 @pytest.mark.parametrize("axis", (0, 1, 2))

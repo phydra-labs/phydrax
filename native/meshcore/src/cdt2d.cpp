@@ -6,8 +6,12 @@
 // Pipeline: Delaunay triangulation of the input points (triangulation2d.hpp),
 // segment recovery by exact walks and Anglada's pseudo-polygon
 // retriangulation, optional hull constraints, carving by flood fill over
-// unconstrained edges, then Delaunay refinement by Lawson insertion (splits
-// plus flips that never cross constrained edges).
+// unconstrained edges, optional equilateral-lattice seeding of the carved
+// domain, then Delaunay refinement. A circumcenter replaces the
+// constrained Delaunay cavity already gathered for its encroachment test by
+// the fan from the new vertex (constrained Bowyer-Watson); subsegment splits
+// and cavities that are not a disk strictly visible from the center use
+// Lawson insertion (splits plus flips that never cross constrained edges).
 // Hard cavity/work limits share the pointset budget through recovery, carving
 // and refinement. Exact scratch allocation requests use its one native owner.
 // Refusals return CAPACITY_EXCEEDED without publishing a partially accepted
@@ -111,6 +115,12 @@ bool snap_to_domain(double* xy) {
   return true;
 }
 
+// Representative of value modulo a positive modulus in [0, modulus).
+int64_t floor_mod(int64_t value, int64_t modulus) {
+  const int64_t remainder = value % modulus;
+  return remainder < 0 ? remainder + modulus : remainder;
+}
+
 struct BadTriangle {
   double badness;
   int32_t v[3];  // rotated to start at the smallest vertex
@@ -131,6 +141,16 @@ struct Quality {
   double badness = 0.0;
 };
 
+// One current entry per triangulation slot, never historical triangles. Vertex
+// coordinates and chain ancestry are append-only during one refinement, and the
+// mesher's quality controls are fixed. Its complete ordered vertex/constraint
+// tuple therefore binds this computation even after flips or slot recycling.
+struct CachedQuality {
+  int32_t vertices[3] = {-1, -1, -1};
+  int32_t constraints[3] = {kFree, kFree, kFree};
+  Quality value;
+};
+
 struct SplitWitness {
   int32_t a = -1;
   int32_t b = -1;
@@ -141,11 +161,12 @@ struct SplitWitness {
 class ConstrainedMesher {
  public:
   ConstrainedMesher(Triangulation2D& triangulation, int32_t input_count, double min_angle_degrees,
-                    double max_area, int64_t max_steiner, int64_t max_triangles,
-                    bool retain_witnesses)
+                    double max_area, double max_edge_length, int64_t max_steiner,
+                    int64_t max_triangles, bool retain_witnesses)
       : tri_(triangulation),
         input_count_(input_count),
         max_area_(max_area),
+        max_edge_length_(max_edge_length),
         max_steiner_(max_steiner),
         max_triangles_(max_triangles),
         angle_enabled_(min_angle_degrees > 0.0),
@@ -195,9 +216,95 @@ class ConstrainedMesher {
     }
   }
 
+  // Inserts the interior sites of the equilateral lattice
+  //   P(i, j) = o + i (s, 0) + j (s / 2, s sqrt(3) / 2),
+  // o the lower corner of the input bounding box, coarse to fine without any
+  // sort: level L visits the sites whose lattice coordinates are multiples of
+  // 2^L but not both multiples of 2^(L + 1) (the edge midpoints of the
+  // equilateral sublattice of spacing 2^(L + 1) s), so walks and cavities stay
+  // local. Rows of one level alternate direction and every walk starts in the
+  // star of the previous site. Every visited row and site is charged.
+  void seed_lattice(double spacing) {
+    if (spacing == 0.0) {
+      return;
+    }
+    double lower[2] = {0.0, 0.0};
+    double upper[2] = {0.0, 0.0};
+    int32_t start = -1;
+    for (int32_t v = 0; v < input_count_; ++v) {
+      tri_.budget.charge();
+      const int32_t incident = tri_.vertex_triangle[static_cast<std::size_t>(v)];
+      if (incident < 0) {
+        continue;
+      }
+      const double* p = tri_.point(v);
+      for (int axis = 0; axis < 2; ++axis) {
+        lower[axis] = start < 0 ? p[axis] : std::min(lower[axis], p[axis]);
+        upper[axis] = start < 0 ? p[axis] : std::max(upper[axis], p[axis]);
+      }
+      start = incident;
+    }
+    if (start < 0) {
+      throw std::logic_error("cdt2d: empty triangulation");
+    }
+    const double rise = spacing * (0.5 * std::sqrt(3.0));
+    const double columns = (upper[0] - lower[0]) / spacing;
+    const double rows = (upper[1] - lower[1]) / rise;
+    constexpr double kMaxLatticeExtent = 2147483647.0;
+    if (!(columns <= kMaxLatticeExtent && rows <= kMaxLatticeExtent)) {
+      throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
+    }
+    const int64_t last_row = static_cast<int64_t>(std::floor(rows));
+    // Above the coarsest level every coordinate pair is (0, 0).
+    const int64_t span = static_cast<int64_t>(std::ceil(columns)) + last_row + 1;
+    int coarsest = 0;
+    while ((int64_t{1} << coarsest) <= span) {
+      ++coarsest;
+    }
+    const double clearance = 0.25 * spacing * spacing;
+    for (int level = coarsest; level >= 0; --level) {
+      const int64_t step = int64_t{1} << level;
+      bool forward = true;
+      for (int64_t j = 0; j <= last_row; j += step) {
+        tri_.budget.charge();
+        // On rows j = 0 mod 2^(L + 1) of a finer level only odd multiples of
+        // 2^L are new; first/last are the extreme admissible columns.
+        const bool even_row = level < coarsest && (j / step) % 2 == 0;
+        const int64_t stride = even_row ? 2 * step : step;
+        const int64_t residue = even_row ? step : 0;
+        const int64_t lowest = -(j / 2);
+        const int64_t highest =
+            static_cast<int64_t>(std::floor(columns - 0.5 * static_cast<double>(j)));
+        const int64_t first = lowest + floor_mod(residue - lowest, stride);
+        const int64_t last = highest - floor_mod(highest - residue, stride);
+        const bool ascending = forward;
+        forward = !forward;
+        if (first > last) {
+          continue;
+        }
+        for (int64_t i = ascending ? first : last; ascending ? i <= last : i >= first;
+             i += ascending ? stride : -stride) {
+          tri_.budget.charge();
+          if (steiner_count_ >= max_steiner_) {
+            return;
+          }
+          double site[2] = {
+              lower[0] + (static_cast<double>(i) + 0.5 * static_cast<double>(j)) * spacing,
+              lower[1] + static_cast<double>(j) * rise};
+          if (snap_to_domain(site)) {
+            start = seed_site(start, site, clearance);
+          }
+        }
+      }
+    }
+  }
+
   // Ruppert/Chew refinement; returns OK or REFINEMENT_LIMIT.
   int32_t refine() {
     count_segment_degrees();
+    // Segment degrees are the final fixed source-angle premise for this
+    // refinement. No entry from an earlier refinement may bypass that premise.
+    quality_cache_.clear();
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
       tri_.budget.charge();
       const int32_t slot = static_cast<int32_t>(t);
@@ -273,12 +380,15 @@ class ConstrainedMesher {
 
  private:
   Triangulation2D& tri_;
-  int32_t input_count_;
-  double max_area_;
+  const int32_t input_count_;
+  const double max_area_;
+  // Unconstrained edges longer than this binary64 length make a domain
+  // triangle bad; +infinity disables the criterion.
+  const double max_edge_length_;
   int64_t max_steiner_;
   int64_t max_triangles_;
-  bool angle_enabled_;
-  double sin_min_angle_;
+  const bool angle_enabled_;
+  const double sin_min_angle_;
   int64_t steiner_count_ = 0;
   bool retain_witnesses_;
   // Per appended vertex: immediate construction parents, not chain endpoints.
@@ -292,6 +402,7 @@ class ConstrainedMesher {
   NativeVector<int32_t> flip_stack_;
   NativeVector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
+  NativeVector<CachedQuality> quality_cache_;
 
   int32_t any_vertex() const {
     for (int32_t v = 0; v < tri_.vertex_count(); ++v) {
@@ -393,9 +504,12 @@ class ConstrainedMesher {
     const double* pa = tri_.point(a);
     const double* pb = tri_.point(b);
     tri_.budget.cavity(1);
-    NativeVector<int32_t> crossed{first};
-    NativeVector<int32_t> left_chain{left};
-    NativeVector<int32_t> right_chain{right};
+    NativeVector<int32_t>& crossed = recover_crossed_;
+    NativeVector<int32_t>& left_chain = recover_left_;
+    NativeVector<int32_t>& right_chain = recover_right_;
+    crossed.assign(1, first);
+    left_chain.assign(1, left);
+    right_chain.assign(1, right);
     int32_t current = first;
     int32_t end = -1;
     for (;;) {
@@ -446,11 +560,6 @@ class ConstrainedMesher {
   void retriangulate(NativeVector<int32_t>& region_triangles, int32_t a, int32_t end,
                      const NativeVector<int32_t>& left_chain,
                      const NativeVector<int32_t>& right_chain) {
-    struct Boundary {
-      std::uint64_t key;
-      int32_t outside;
-      int32_t constraint;
-    };
     auto key_of = [](int32_t u, int32_t w) {
       return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(u)) << 32) |
              static_cast<std::uint32_t>(w);
@@ -460,7 +569,8 @@ class ConstrainedMesher {
       tri_.budget.charge();
       return l < r;
     });
-    NativeVector<Boundary> boundary;
+    NativeVector<RecoveryBoundary>& boundary = recover_boundary_;
+    boundary.clear();
     for (int32_t t : region_triangles) {
       const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
       for (int k = 0; k < 3; ++k) {
@@ -475,22 +585,21 @@ class ConstrainedMesher {
         }
       }
     }
-    std::sort(boundary.begin(), boundary.end(), [&](const Boundary& l, const Boundary& r) {
+    std::sort(boundary.begin(), boundary.end(), [&](const RecoveryBoundary& l, const RecoveryBoundary& r) {
       tri_.budget.charge();
       return l.key < r.key;
     });
     const uint8_t region = tri_.region[static_cast<std::size_t>(region_triangles[0])];
     // Plan every Anglada predicate and allocation before releasing the cavity.
-    NativeVector<Triangle2D> planned;
+    NativeVector<Triangle2D>& planned = recover_planned_;
+    planned.clear();
     anglada(a, end, left_chain, planned);
     anglada(end, a, right_chain, planned);
-    NativeVector<int32_t> created;
+    NativeVector<int32_t>& created = recover_created_;
+    created.clear();
     created.reserve(planned.size());
-    struct Half {
-      std::uint64_t key;
-      int32_t t;
-    };
-    NativeVector<Half> halves;
+    NativeVector<RecoveryHalf>& halves = recover_halves_;
+    halves.clear();
     halves.reserve(3 * planned.size());
     for (std::size_t i = 0; i < planned.size(); ++i) {
       const Triangle2D& triangle = planned[i];
@@ -500,20 +609,22 @@ class ConstrainedMesher {
                           static_cast<int32_t>(i)});
       }
     }
-    std::sort(halves.begin(), halves.end(), [&](const Half& l, const Half& r) {
+    std::sort(halves.begin(), halves.end(), [&](const RecoveryHalf& l, const RecoveryHalf& r) {
       tri_.budget.charge();
       return l.key < r.key;
     });
     // Stage neighbors/constraints and validate every link before commit.
-    NativeVector<int32_t> ids(3 * planned.size(), kFree);
-    NativeVector<uint8_t> inner_edge(3 * planned.size(), 0);
+    NativeVector<int32_t>& ids = recover_ids_;
+    NativeVector<uint8_t>& inner_edge = recover_inner_;
+    ids.assign(3 * planned.size(), kFree);
+    inner_edge.assign(3 * planned.size(), 0);
     for (std::size_t i = 0; i < planned.size(); ++i) {
       for (int k = 0; k < 3; ++k) {
         tri_.budget.charge();
         const int32_t u = planned[i].v[next3(k)];
         const int32_t w = planned[i].v[prev3(k)];
         auto inner = std::lower_bound(halves.begin(), halves.end(), key_of(w, u),
-                                     [&](const Half& h, std::uint64_t key) {
+                                     [&](const RecoveryHalf& h, std::uint64_t key) {
                                        tri_.budget.charge();
                                        return h.key < key;
                                      });
@@ -522,7 +633,7 @@ class ConstrainedMesher {
           inner_edge[3 * i + k] = 1;
         } else {
           auto outer = std::lower_bound(boundary.begin(), boundary.end(), key_of(u, w),
-                                       [&](const Boundary& e, std::uint64_t key) {
+                                       [&](const RecoveryBoundary& e, std::uint64_t key) {
                                          tri_.budget.charge();
                                          return e.key < key;
                                        });
@@ -561,14 +672,11 @@ class ConstrainedMesher {
   // (chain listed from the u side to the w side, all left of u -> w).
   void anglada(int32_t u, int32_t w, const NativeVector<int32_t>& chain,
                NativeVector<Triangle2D>& planned) {
-    struct Job {
-      int32_t u, w;
-      std::size_t lo, hi;
-    };
-    NativeVector<Job> jobs{{u, w, 0, chain.size()}};
+    NativeVector<AngladaJob>& jobs = anglada_jobs_;
+    jobs.assign(1, AngladaJob{u, w, 0, chain.size()});
     while (!jobs.empty()) {
       tri_.budget.charge();
-      const Job job = jobs.back();
+      const AngladaJob job = jobs.back();
       jobs.pop_back();
       if (job.lo >= job.hi) {
         continue;
@@ -612,9 +720,24 @@ class ConstrainedMesher {
     return v < input_count_ && segment_degree_[static_cast<std::size_t>(v)] >= 2;
   }
 
-  Quality quality(int32_t t) const {
+  Quality quality(int32_t t) {
+    const auto slot = static_cast<std::size_t>(t);
+    if (quality_cache_.size() < tri_.triangles.size()) {
+      // NativeVector admits the actual old/new allocation overlap against the
+      // same owning native scratch ledger before constructing any cache slot.
+      quality_cache_.resize(tri_.triangles.size());
+    }
+    const Triangle2D& triangle = tri_.triangles[slot];
+    const int32_t constraints[3] = {
+        tri_.constraint(t, 0), tri_.constraint(t, 1), tri_.constraint(t, 2)};
+    CachedQuality& cached = quality_cache_[slot];
+    // The owning enqueue/final loop already charges the actual face/key visit.
+    // Only a genuinely new numerical quality computation earns its unit here.
+    if (std::equal(triangle.v, triangle.v + 3, cached.vertices) &&
+        std::equal(constraints, constraints + 3, cached.constraints)) {
+      return cached.value;
+    }
     tri_.budget.charge();
-    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     const double* p[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
                           tri_.point(triangle.v[2])};
     double squared[3];
@@ -657,6 +780,23 @@ class ConstrainedMesher {
         result.badness = std::max(result.badness, ratio);
       }
     }
+    if (std::isfinite(max_edge_length_)) {
+      // Binary64 sqrt(dx*dx + dy*dy) of each edge that is not an input
+      // segment piece, matching the published-coordinate norm bit for bit.
+      for (int k = 0; k < 3; ++k) {
+        if (tri_.constraint(t, k) >= 0) {
+          continue;
+        }
+        const double ratio = std::sqrt(squared[k]) / max_edge_length_;
+        if (std::sqrt(squared[k]) > max_edge_length_) {
+          result.bad = true;
+        }
+        result.badness = std::max(result.badness, ratio);
+      }
+    }
+    cached.value = result;
+    std::copy_n(triangle.v, 3, cached.vertices);
+    std::copy_n(constraints, 3, cached.constraints);
     return result;
   }
 
@@ -722,6 +862,17 @@ class ConstrainedMesher {
       }
       t = tri_.triangles[static_cast<std::size_t>(t)].n[next3(tri_.index_of(t, m))];
     } while (t != start);
+  }
+
+  // The fan just created is the complete star of m: its triangles are
+  // checked directly, without walking the star again.
+  void after_fan_insertion() {
+    ++steiner_count_;
+    for (int32_t t : created_) {
+      if (tri_.region[static_cast<std::size_t>(t)] != 0) {
+        enqueue_triangle_checks(t);
+      }
+    }
   }
 
   int32_t new_vertex(const double* xy, std::pair<int32_t, int32_t> ends = {-1, -1},
@@ -1106,7 +1257,8 @@ class ConstrainedMesher {
     if (!snap_to_domain(center)) {
       return;
     }
-    NativeVector<std::pair<int32_t, int32_t>> to_split;
+    NativeVector<std::pair<int32_t, int32_t>>& to_split = to_split_;
+    to_split.clear();
     std::pair<int32_t, int> blocked{-1, -1};
     const int32_t located = tri_.walk(t, center, &blocked);
     if (located < 0) {
@@ -1134,6 +1286,11 @@ class ConstrainedMesher {
         collect_encroached_by(located, center, to_split);
       }
       if (to_split.empty()) {
+        // The cavity just gathered is the constrained Delaunay cavity of the
+        // center: replace it by the fan instead of re-deriving it by flips.
+        if (insert_cavity(center)) {
+          return;
+        }
         const int32_t v = new_vertex(center);
         if (zero_count == 1) {
           split_edge(located, zero_edge, v, kFree);
@@ -1166,7 +1323,8 @@ class ConstrainedMesher {
 
   // Constrained edges on the boundary of the constrained Delaunay cavity of
   // `center` (conflict region reachable from `start` without crossing
-  // constraints) that `center` encroaches upon.
+  // constraints) that `center` encroaches upon. The cavity triangles and its
+  // boundary edges are retained for insert_cavity.
   void collect_encroached_by(int32_t start, const double* center,
                              NativeVector<std::pair<int32_t, int32_t>>& out) {
     const int32_t id = tri_.vertex_count();
@@ -1178,24 +1336,34 @@ class ConstrainedMesher {
     const std::uint64_t outside = epoch_ + 1;
     uint64_t cavity_cells = 1;
     tri_.budget.cavity(cavity_cells);
-    NativeVector<int32_t> stack{start};
+    cavity_.clear();
+    cavity_boundary_.clear();
+    cavity_stack_.assign(1, start);
     marks_[static_cast<std::size_t>(start)] = inside;
-    while (!stack.empty()) {
+    while (!cavity_stack_.empty()) {
       tri_.budget.charge();
-      const int32_t t = stack.back();
-      stack.pop_back();
+      const int32_t t = cavity_stack_.back();
+      cavity_stack_.pop_back();
+      cavity_.push_back(t);
       const Triangle2D triangle = tri_.triangles[static_cast<std::size_t>(t)];
       for (int k = 0; k < 3; ++k) {
         tri_.budget.charge();
-        if (tri_.constraint(t, k) != kFree) {
+        const int32_t nb = triangle.n[k];
+        const CavityEdge edge{triangle.v[next3(k)], triangle.v[prev3(k)], nb,
+                              tri_.constraint(t, k)};
+        if (edge.constraint != kFree) {
           if (encroaches(t, k, center)) {
-            out.emplace_back(triangle.v[next3(k)], triangle.v[prev3(k)]);
+            out.emplace_back(edge.u, edge.w);
           }
+          cavity_boundary_.push_back(edge);
           continue;
         }
-        const int32_t nb = triangle.n[k];
         const std::uint64_t mark = marks_[static_cast<std::size_t>(nb)];
-        if (mark == inside || mark == outside || tri_.is_ghost(nb)) {
+        if (mark == inside) {
+          continue;
+        }
+        if (mark == outside || tri_.is_ghost(nb)) {
+          cavity_boundary_.push_back(edge);
           continue;
         }
         const Triangle2D& other = tri_.triangles[static_cast<std::size_t>(nb)];
@@ -1203,18 +1371,207 @@ class ConstrainedMesher {
                          center, other.v[0], other.v[1], other.v[2], id) > 0) {
           tri_.budget.cavity(++cavity_cells);
           marks_[static_cast<std::size_t>(nb)] = inside;
-          stack.push_back(nb);
+          cavity_stack_.push_back(nb);
         } else {
           marks_[static_cast<std::size_t>(nb)] = outside;
+          cavity_boundary_.push_back(edge);
         }
       }
     }
+    cavity_inside_ = inside;
   }
+
+  // Bowyer-Watson insertion of `center` over the cavity gathered by
+  // collect_encroached_by: its triangles are replaced by the fan joining the
+  // new vertex to the boundary edges, which is exactly the constrained
+  // Delaunay triangulation Lawson flips would reach. A free boundary edge
+  // whose outer triangle does not conflict separates the center strictly
+  // (the two circumcircles meet only on the edge's line). Constrained or hull
+  // boundary edges are checked by exact orientation, and the cavity must be a
+  // disk (|boundary| = |cavity| + 2, each boundary vertex starting exactly one
+  // edge); otherwise nothing changes and false selects the Lawson path.
+  // `examine` queues the fan for refinement checks; lattice seeding instead
+  // leaves every check to refinement's initial scan.
+  bool insert_cavity(const double* center, bool examine = true) {
+    const std::size_t vertices = static_cast<std::size_t>(tri_.vertex_count());
+    if (cavity_boundary_.size() != cavity_.size() + 2) {
+      return false;
+    }
+    for (const CavityEdge& edge : cavity_boundary_) {
+      if (edge.constraint == kFree && !tri_.is_ghost(edge.outside)) {
+        continue;
+      }
+      if (marks_[static_cast<std::size_t>(edge.outside)] == cavity_inside_ ||
+          tri_.budget.orient(tri_.point(edge.u), tri_.point(edge.w), center) <= 0) {
+        return false;
+      }
+    }
+    if (fan_marks_.size() < vertices) {
+      fan_marks_.resize(vertices, 0);
+      fan_slots_.resize(vertices, -1);
+    }
+    ++fan_epoch_;
+    for (const CavityEdge& edge : cavity_boundary_) {
+      std::uint64_t& mark = fan_marks_[static_cast<std::size_t>(edge.u)];
+      if (mark == fan_epoch_) {
+        return false;
+      }
+      mark = fan_epoch_;
+    }
+    for (const CavityEdge& edge : cavity_boundary_) {
+      if (fan_marks_[static_cast<std::size_t>(edge.w)] != fan_epoch_) {
+        return false;
+      }
+    }
+    // Stage capacity, slots and the vertex before releasing any triangle.
+    const std::size_t allocations = cavity_boundary_.size();
+    const std::size_t releases = cavity_.size();
+    tri_.budget.cavity(releases);
+    if (static_cast<int64_t>(allocations - releases) > max_triangles_ - tri_.finite_count) {
+      throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
+    }
+    tri_.prepare_slots(allocations, releases);
+    created_.clear();
+    created_.reserve(allocations);
+    tri_.budget.charge(allocations + releases);
+    const uint8_t region = tri_.region[static_cast<std::size_t>(cavity_.front())];
+    const int32_t v = new_vertex(center);
+    // Commit uses only reserved storage and cannot encounter a refusal.
+    for (int32_t t : cavity_) {
+      tri_.release(t);
+    }
+    for (const CavityEdge& edge : cavity_boundary_) {
+      const int32_t t = tri_.allocate();
+      created_.push_back(t);
+      tri_.set_triangle(t, edge.u, edge.w, v, kFree, kFree, edge.constraint);
+      tri_.region[static_cast<std::size_t>(t)] = region;
+      tri_.triangles[static_cast<std::size_t>(t)].n[2] = edge.outside;
+      const int j = tri_.edge_index(edge.outside, edge.w, edge.u);
+      tri_.triangles[static_cast<std::size_t>(edge.outside)].n[j] = t;
+      fan_slots_[static_cast<std::size_t>(edge.u)] = t;
+    }
+    // Fan triangle (u, w, v) meets (w, x, v) across w - v.
+    for (int32_t t : created_) {
+      Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
+      const int32_t other = fan_slots_[static_cast<std::size_t>(triangle.v[1])];
+      triangle.n[0] = other;
+      tri_.triangles[static_cast<std::size_t>(other)].n[1] = t;
+    }
+    ++tri_.budget.insertions;
+    if (examine) {
+      after_fan_insertion();
+    } else {
+      ++steiner_count_;
+    }
+    return true;
+  }
+
+  // One lattice site of seed_lattice; returns a live triangle that starts the
+  // next walk. The site is skipped, with the topology unchanged, when it lies
+  // outside the meshed region, on a vertex or a constrained edge, encroaches a
+  // constrained subsegment on its constrained Delaunay cavity, or would be
+  // joined to an input vertex at squared distance below `clearance`. Sites of
+  // a finer level are midpoints of coarser lattice edges, so a site on a free
+  // edge is regular. A disk cavity is replaced by its fan; otherwise the site
+  // splits its triangle (or free edge) and Lawson flips that never cross a
+  // constraint restore the constrained Delaunay property. Seeds are free
+  // Steiner vertices and leave the refinement queues untouched.
+  int32_t seed_site(int32_t start, const double* site, double clearance) {
+    const int32_t located = tri_.walk(start, site);
+    if (tri_.is_ghost(located) || tri_.region[static_cast<std::size_t>(located)] == 0) {
+      return located;
+    }
+    const Triangle2D& host = tri_.triangles[static_cast<std::size_t>(located)];
+    int zero_count = 0;
+    int zero_edge = -1;
+    for (int k = 0; k < 3; ++k) {
+      if (tri_.budget.orient(tri_.point(host.v[next3(k)]), tri_.point(host.v[prev3(k)]),
+                             site) == 0) {
+        ++zero_count;
+        zero_edge = k;
+      }
+    }
+    if (zero_count >= 2 || (zero_count == 1 && tri_.constraint(located, zero_edge) != kFree)) {
+      return located;
+    }
+    to_split_.clear();
+    collect_encroached_by(located, site, to_split_);
+    if (!to_split_.empty()) {
+      return located;
+    }
+    for (const CavityEdge& edge : cavity_boundary_) {
+      if (edge.u >= input_count_) {
+        continue;
+      }
+      tri_.budget.charge();
+      const double* p = tri_.point(edge.u);
+      const double dx = p[0] - site[0];
+      const double dy = p[1] - site[1];
+      if (dx * dx + dy * dy < clearance) {
+        return located;
+      }
+    }
+    if (insert_cavity(site, false)) {
+      return created_.front();
+    }
+    const int32_t v = new_vertex(site);
+    if (zero_count == 1) {
+      split_edge(located, zero_edge, v, kFree);
+    } else {
+      split_triangle(located, v);
+    }
+    legalize(v);
+    ++steiner_count_;
+    return tri_.vertex_triangle[static_cast<std::size_t>(v)];
+  }
+
+  struct CavityEdge {
+    int32_t u;
+    int32_t w;
+    int32_t outside;
+    int32_t constraint;
+  };
+  // Reusable scratch of the latest constrained cavity (bounded by the cavity
+  // limit) and of the circumcenter insertion that consumes it.
+  NativeVector<int32_t> cavity_;
+  NativeVector<int32_t> cavity_stack_;
+  NativeVector<CavityEdge> cavity_boundary_;
+  NativeVector<int32_t> created_;
+  NativeVector<std::pair<int32_t, int32_t>> to_split_;
+  std::uint64_t cavity_inside_ = 0;
+  NativeVector<std::uint64_t> fan_marks_;
+  NativeVector<int32_t> fan_slots_;
+  std::uint64_t fan_epoch_ = 0;
+  struct RecoveryBoundary {
+    std::uint64_t key;
+    int32_t outside;
+    int32_t constraint;
+  };
+  struct RecoveryHalf {
+    std::uint64_t key;
+    int32_t t;
+  };
+  struct AngladaJob {
+    int32_t u, w;
+    std::size_t lo, hi;
+  };
+  // Reusable scratch of segment recovery (bounded by the cavity limit).
+  NativeVector<int32_t> recover_crossed_;
+  NativeVector<int32_t> recover_left_;
+  NativeVector<int32_t> recover_right_;
+  NativeVector<RecoveryBoundary> recover_boundary_;
+  NativeVector<Triangle2D> recover_planned_;
+  NativeVector<int32_t> recover_created_;
+  NativeVector<RecoveryHalf> recover_halves_;
+  NativeVector<int32_t> recover_ids_;
+  NativeVector<uint8_t> recover_inner_;
+  NativeVector<AngladaJob> anglada_jobs_;
 };
 
 int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t segment_count,
                              const int32_t* segments, int64_t hole_count, const double* holes,
                              int32_t keep_convex_hull, double min_angle_degrees, double max_area,
+                             double max_edge_length, double lattice_spacing,
                              int64_t max_steiner, int64_t max_triangles, PlanarBudget& budget,
                              int64_t witness_capacity, int32_t* witness_parents,
                              int32_t* witness_segments, double* witness_ratios,
@@ -1227,7 +1584,9 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       !addressable(segment_count, 2, sizeof(int32_t)) ||
       (segment_count > 0 && segments == nullptr) || !addressable(hole_count, 2, sizeof(double)) ||
       (hole_count > 0 && holes == nullptr) || max_steiner < 0 || max_triangles < 0 ||
-      !(min_angle_degrees >= 0.0 && min_angle_degrees < 60.0) || !(max_area > 0.0)) {
+      !(min_angle_degrees >= 0.0 && min_angle_degrees < 60.0) || !(max_area > 0.0) ||
+      !(max_edge_length > 0.0) ||
+      !(lattice_spacing == 0.0 || (lattice_spacing > 0.0 && std::isfinite(lattice_spacing)))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   const bool retain_witnesses = witness_capacity != 0 || witness_parents != nullptr ||
@@ -1278,9 +1637,11 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       return PHX_MC_INVALID_INPUT;
     }
   }
-  const bool refine = min_angle_degrees > 0.0 || std::isfinite(max_area);
+  const bool refine =
+      min_angle_degrees > 0.0 || std::isfinite(max_area) || std::isfinite(max_edge_length);
   ConstrainedMesher mesher(triangulation, static_cast<int32_t>(point_count), min_angle_degrees,
-                           max_area, max_steiner, max_triangles, retain_witnesses);
+                           max_area, max_edge_length, max_steiner, max_triangles,
+                           retain_witnesses);
   try {
     for (int64_t s = 0; s < segment_count; ++s) {
       budget.charge();
@@ -1292,6 +1653,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       mesher.constrain_hull();
     }
     mesher.carve(keep_convex_hull != 0, hole_count, holes);
+    mesher.seed_lattice(lattice_spacing);
     status = refine ? mesher.refine() : PHX_MC_OK;
   } catch (const StatusError& error) {
     return error.status;
@@ -1333,6 +1695,8 @@ int32_t phx_mc_constrained_delaunay_2d(
   auto keep_convex_hull = request->keep_convex_hull;
   auto min_angle_degrees = request->min_angle_degrees;
   auto max_area = request->max_area;
+  auto max_edge_length = request->max_edge_length;
+  auto lattice_spacing = request->lattice_spacing;
   auto max_steiner = request->max_steiner;
   auto max_triangles = request->max_triangles;
   auto max_cavity_cells = request->max_cavity_cells;
@@ -1361,8 +1725,9 @@ int32_t phx_mc_constrained_delaunay_2d(
       phx::mc::MemoryScope scope(owner);
       return phx::mc::constrained_delaunay(
           point_count, points, segment_count, segments, hole_count, holes, keep_convex_hull,
-          min_angle_degrees, max_area, max_steiner, max_triangles, budget, witness_capacity,
-          witness_parents, witness_segments, witness_ratios, mesh);
+          min_angle_degrees, max_area, max_edge_length, lattice_spacing, max_steiner,
+          max_triangles, budget,
+          witness_capacity, witness_parents, witness_segments, witness_ratios, mesh);
     });
     if (work_evidence != nullptr) {
       const auto slots = budget.evidence();

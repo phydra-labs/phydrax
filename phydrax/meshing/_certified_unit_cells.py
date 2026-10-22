@@ -28,8 +28,8 @@ from ..discretization._cell_geometry import (
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._exact_rational_geometry import (
-    ExactRationalCellGeometrySource,
-    rational_source_layouts,
+    _affine_image_geometry_from_frame,
+    affine_image_geometry_from_routes,
 )
 from ..typing import checked
 from ._plc_source import PiecewiseLinearComplex
@@ -383,45 +383,43 @@ def unit_cell_geometry(
         if vertex_rows is None
         else vertex_rows.tolist()
     )
-    actions = []
-    for index in rows:
-        local = arrays.local_coordinates[index]
-        weights = (Fraction(1), *local, -sum(local, Fraction(0)))
-        actions.append(
-            tuple(
-                (position, value.numerator, value.denominator)
-                for position, value in enumerate(weights)
-                if value
-            )
-        )
-    parent = CellGeometrySpec.affine(
-        CellMesh.from_tetrahedra(
-            arrays.affine_frame, np.asarray(((0, 1, 2, 3),), dtype=np.int32)
-        ),
+    geometry = _affine_image_geometry_from_frame(
+        arrays.affine_frame,
+        tuple(arrays.local_coordinates[index] for index in rows),
+        {
+            block.name: coordinate_lagrange_element(block.cell_kind, 1)
+            for block in mesh.blocks
+        },
+        {block.name: block.vertices for block in mesh.blocks},
         budget=budget,
-    )
-    elements = {
-        block.name: coordinate_lagrange_element("tetrahedron", 1) for block in mesh.blocks
-    }
-    routes = {block.name: block.vertices for block in mesh.blocks}
-    bits = 4 * (
-        1078
-        + max(
-            max(abs(numerator).bit_length(), denominator.bit_length())
-            for row in actions
-            for _, numerator, denominator in row
-        )
-    )
-    source = ExactRationalCellGeometrySource(
-        parent,
-        tuple(actions),
-        rational_source_layouts(elements, routes),
-        maximum_work=budget.maximum_work_units,
-        maximum_bits=bits,
-        budget=budget,
-    )
-    geometry = CellGeometrySpec(
-        elements, routes, mesh.coordinates, exact_source=source, budget=budget
     )
     geometry.resolve(mesh, budget=budget)
     return geometry
+
+
+@checked
+def affine_image_geometry(
+    mesh: CellMesh,
+    affine: np.ndarray,
+    local_coordinates: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CellGeometrySpec:
+    """Apply an authored affine exactly, retaining correctly rounded coordinates."""
+    if len(local_coordinates) != mesh.coordinates.shape[0]:
+        raise ValueError(
+            "affine_image_geometry.local_coordinates must name every mesh vertex; got a different coefficient count"
+        )
+    return affine_image_geometry_from_routes(
+        affine,
+        local_coordinates,
+        {
+            block.name: coordinate_lagrange_element(block.cell_kind, 1)
+            for block in mesh.blocks
+        },
+        {block.name: block.vertices for block in mesh.blocks},
+        budget=budget,
+    )
+
+

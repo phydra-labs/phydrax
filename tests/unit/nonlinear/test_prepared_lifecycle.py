@@ -33,6 +33,7 @@ def _termination(*, maximum_steps: Any = 12) -> Any:
 _GLOBAL_COEFFICIENT = 2.0
 _GLOBAL_PARAMETERS = {"coefficient": 2.0}
 _HELPER_PARAMETERS = {"coefficient": 2.0}
+_TRIAL_ALLOWED = True
 
 
 def _global_float_residual(state: jax.Array, args: None) -> jax.Array:
@@ -66,6 +67,11 @@ class _KeyedArithmeticResidual(phx.StrictModule):
 
     def __call__(self, state: jax.Array, args: None) -> jax.Array:
         return self.coefficient * state - self.target
+
+
+class _GlobalTrialValidity(phx.StrictModule):
+    def __call__(self, state: jax.Array, args: None) -> bool:
+        return _TRIAL_ALLOWED
 
 
 def _changed_arithmetic_call(
@@ -242,6 +248,40 @@ def test_autodiff_preparation_rereads_rebound_module_call_code(
     np.testing.assert_array_equal(second.residual, [-3.0])
     np.testing.assert_array_equal(second.operator.mv(tangent), [3.0])
     np.testing.assert_array_equal(second.operator.transpose_mv(tangent), [3.0])
+
+
+@pytest.mark.parametrize("initial_allowed", (True, False), ids=("reject", "admit"))
+def test_autodiff_preparation_rereads_trial_validity(
+    initial_allowed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "_TRIAL_ALLOWED", initial_allowed)
+    callback = _KeyedArithmeticResidual(
+        jnp.asarray(2.0, dtype=jnp.float64), jnp.asarray(6.0, dtype=jnp.float64)
+    )
+    problem = nl.NonlinearSystemProblem(
+        callback,
+        trial_validity=_GlobalTrialValidity(),
+        trial_validity_id="current-domain",
+        problem_id=f"trial-freshness-{initial_allowed}",
+    )
+    state = jnp.ones((1,), dtype=jnp.float64)
+    policy = nl.JacobianPolicy()
+    first = nl.prepare_jacobian(problem, state, policy)
+    monkeypatch.setattr(sys.modules[__name__], "_TRIAL_ALLOWED", not initial_allowed)
+    second = nl.prepare_jacobian(problem, state, policy)
+    expected_first = -4.0 if initial_allowed else 0.0
+    expected_second = 0.0 if initial_allowed else -4.0
+    derivative_first = 2.0 if initial_allowed else 0.0
+    derivative_second = 0.0 if initial_allowed else 2.0
+    # Integer-valued affine residuals and actions have exact float64 references.
+    np.testing.assert_array_equal(first.residual, [expected_first])
+    np.testing.assert_array_equal(second.residual, [expected_second])
+    np.testing.assert_array_equal(second.residual, problem.residual(state))
+    np.testing.assert_array_equal(first.operator.mv(state), [derivative_first])
+    np.testing.assert_array_equal(second.operator.mv(state), [derivative_second])
+    np.testing.assert_array_equal(
+        second.operator.transpose_mv(state), [derivative_second]
+    )
 
 
 def test_prepared_contracts() -> None:

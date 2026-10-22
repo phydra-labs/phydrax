@@ -33,11 +33,12 @@ from .._atlas import AbstractTrimCurve
 from .._interval_enclosure import (
     interval_add,
     interval_divide,
+    interval_dot,
     interval_multiply,
     interval_subtract,
 )
 from ._coordinate_request import coordinate_source_request
-from ._intersection_curve import IntersectionCurve, IntersectionCurveSide
+from ._intersection_curve import IntersectionCurve, IntersectionCurveSide, RootEndpoint
 from ._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
@@ -111,7 +112,14 @@ class BranchApproximationTopologyEvidence(StrictModule):
 
 @final
 class BranchTrimSeparationEvidence(StrictModule):
-    """Record interval separation from every potentially intersecting trim lift."""
+    """Record interval separation from every potentially intersecting trim lift.
+
+    ``interval_evidence`` rows hold (cell, first, last, ku, kv, distance).
+    ``junction_evidence`` rows hold (cell, first, last, ku, kv, junction,
+    branch-parameter radius, trim-parameter radius, chart diameter): a trim
+    piece that may meet the branch portion only within that max-norm chart
+    distance of their exact shared vertex.
+    """
 
     topology_identity: str = eqx.field(static=True)
     trim_identity: str = eqx.field(static=True)
@@ -121,6 +129,8 @@ class BranchTrimSeparationEvidence(StrictModule):
     bytes_used: int = eqx.field(static=True)
     separation_lower_bound: float
     interval_evidence: np.ndarray
+    junction_diameter_upper_bound: float
+    junction_evidence: np.ndarray
 
 
 def _readonly(value: ArrayLike, dtype: DTypeLike = np.float64) -> np.ndarray:
@@ -455,26 +465,18 @@ class _RootGauge(StrictModule):
     periods: tuple[float | None, ...] = eqx.field(static=True)
 
 
-def _prepare_root_gauge(source: IntersectionCurve) -> _RootGauge:
+def prepare_root_gauge(source: IntersectionCurve) -> _RootGauge:
+    """Integer native-period gauge lifting every chart onto chart 0's sheet.
+
+    ``gauge[k]`` turns added to chart ``k``'s source coordinates give one
+    continuous lift of the branch; ``winding`` is the lift's closing turn count.
+    Each step is the source's certified transition deck shift.
+    """
     gauge = np.zeros((source.num_charts, 4), dtype=np.int64)
     periods = (*source.first.patch.periods, *source.second.patch.periods)
+    turns = source.transition_turns()
     for chart in range(1, source.num_charts):
-        gauge[chart] = gauge[chart - 1]
-        for axis, shift in enumerate(source.transition_shifts[chart - 1]):
-            if shift:
-                period = periods[axis]
-                if period is None:
-                    raise ValueError(
-                        "BranchApproximationTopology.source.transition must have a declared period; "
-                        f"got chart={chart}, axis={axis}, shift={shift}."
-                    )
-                integer = int(round(float(shift) / period))
-                if float(shift) != integer * period:
-                    raise ValueError(
-                        "BranchApproximationTopology.source.transition must be an integer period shift; "
-                        f"got shift={shift}, period={period}."
-                    )
-                gauge[chart, axis] -= integer
+        gauge[chart] = gauge[chart - 1] - turns[chart - 1]
     return _RootGauge(
         gauge=gauge,
         winding=np.asarray(source.node_period_shifts[-1], dtype=np.int64) + gauge[-1],
@@ -535,7 +537,7 @@ def _prepare_fitted_atlas(
                 expansion = 1
         source_workspace += 64 * expansion * _coefficient_bytes(patch)
     budget.reserve(32768 + source.num_charts * 4096 + source_workspace)
-    roots = _prepare_root_gauge(source)
+    roots = prepare_root_gauge(source)
     closures = _trim_closures(source, fits, roots.winding)
     pieces = tuple(_spline_pieces(fit, budget) for fit in fits)
     # This reusable workspace precedes every restriction/quotient interval query.
@@ -949,14 +951,264 @@ def _period_translates(
 
 
 @final
+class BranchTrimJunction(StrictModule):
+    """One vertex shared by a face's branch uses and one other trim.
+
+    ``branch_box`` (2, 7) encloses the source/fit straight homotopy in the
+    topology lift (columns XYZ, first UV, second UV) over the vertex root's
+    branch-parameter enclosure. The face uses the branch on ``branch_direction``
+    (+1 above, -1 below) of ``branch_parameter``. ``trim_box`` (2, 2) encloses
+    the other trim at the same vertex root in its own chart coordinates; the
+    trim leaves the vertex with increasing (+1) or decreasing (-1) parameter
+    from ``trim_parameter``.
+    """
+
+    branch_parameter: float = eqx.field(static=True)
+    branch_direction: int = eqx.field(static=True)
+    branch_box: np.ndarray
+    trim_parameter: float = eqx.field(static=True)
+    trim_direction: int = eqx.field(static=True)
+    trim_box: np.ndarray
+
+    def __init__(
+        self,
+        branch_parameter: float,
+        branch_direction: int,
+        branch_box: ArrayLike,
+        trim_parameter: float,
+        trim_direction: int,
+        trim_box: ArrayLike,
+    ) -> None:
+        if branch_direction not in (-1, 1) or trim_direction not in (-1, 1):
+            raise ValueError(
+                "BranchTrimJunction.direction must be +1 or -1; "
+                f"got branch={branch_direction}, trim={trim_direction}."
+            )
+        if not math.isfinite(branch_parameter) or not math.isfinite(trim_parameter):
+            raise ValueError(
+                "BranchTrimJunction.parameter must be finite; "
+                f"got branch={branch_parameter}, trim={trim_parameter}."
+            )
+        self.branch_parameter = float(branch_parameter)
+        self.branch_direction = int(branch_direction)
+        self.branch_box = _readonly(_finite_box(branch_box, 7))
+        self.trim_parameter = float(trim_parameter)
+        self.trim_direction = int(trim_direction)
+        self.trim_box = _readonly(_finite_box(trim_box, 2))
+
+
+def branch_homotopy_box(
+    source: IntersectionCurve,
+    fits: tuple[BSplineCurve, BSplineCurve, BSplineCurve],
+    first: float,
+    last: float,
+    *,
+    root: RootEndpoint | None = None,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Enclose the source/fit straight homotopy over one branch-parameter range.
+
+    Columns and the native-period lift match ``homotopy_boxes`` of the
+    branch's topology evidence. ``root`` authorizes a vertex root's numeric
+    uncertainty beyond the branch domain as a source-graph extension; the fit
+    is enclosed over the in-domain part.
+    """
+    if not (math.isfinite(first) and math.isfinite(last) and first <= last):
+        raise ValueError(
+            f"BranchHomotopyBox.range must be finite and ordered; got ({first}, {last})."
+        )
+    _validate_fits(source, fits)
+    first, last, extended = source._rooted_query_range(
+        first,
+        last,
+        (root, root),
+        preparations=preparations,
+        budget=coordinate_budget,
+    )
+    domain = source.parameter_domain
+    gauge = prepare_root_gauge(source).gauge
+    last_chart = source.num_charts - 1
+    lower_chart = min(max(int(math.floor(first)), 0), last_chart)
+    upper_chart = min(max(int(math.ceil(last)) - 1, lower_chart), last_chart)
+    pieces = tuple(fit.bezier_pieces() for fit in fits)
+    lower = np.full(7, np.inf)
+    upper = np.full(7, -np.inf)
+    for chart in range(lower_chart, upper_chart + 1):
+        a = max(first, float(chart)) if chart > lower_chart else first
+        b = min(last, float(chart + 1)) if chart < upper_chart else last
+        physical = _finite_box(
+            source.bounding_box(
+                a,
+                b,
+                endpoint_roots=(root, root),
+                preparations=preparations,
+                budget=coordinate_budget,
+            ),
+            3,
+        )
+        coupled = source.parameter_enclosures(
+            a,
+            b,
+            minimum_chart=chart,
+            maximum_chart=chart,
+            source_extension=extended,
+            preparations=preparations,
+            budget=coordinate_budget,
+        )[0]
+        lifted = np.stack(
+            interval_add(
+                (coupled[0], coupled[1]), source.shift_parameter_bounds(gauge[chart])
+            )
+        )
+        fit_first = min(max(a, domain[0]), domain[1])
+        fit_last = min(max(b, domain[0]), domain[1])
+        fitted = np.concatenate(
+            [_fitted_interval(items, fit_first, fit_last)[0] for items in pieces], axis=1
+        )
+        exact = np.concatenate((physical, lifted[:, :2], lifted[:, 2:]), axis=1)
+        lower = np.minimum(lower, np.minimum(exact[0], fitted[0]))
+        upper = np.maximum(upper, np.maximum(exact[1], fitted[1]))
+    return _finite_box(np.stack((lower, upper)), 7)
+
+
+@final
 class _TrimCellSeparation(StrictModule):
     rows: tuple[tuple[float, ...], ...]
+    contacts: tuple[tuple[float, ...], ...]
     minimum: float
+
+
+def _oriented(bounds: np.ndarray, direction: int) -> np.ndarray:
+    return bounds if direction > 0 else np.stack((-bounds[1], -bounds[0]))
+
+
+def _lead(bounds: np.ndarray) -> np.ndarray | None:
+    """Unit max-norm midpoint direction of an interval vector, if nonzero."""
+    middle = 0.5 * bounds[0] + 0.5 * bounds[1]
+    norm = float(np.sum(np.abs(middle)))
+    return None if not math.isfinite(norm) or norm == 0.0 else middle / norm
+
+
+def _projection(weights: np.ndarray, box: np.ndarray) -> tuple[float, float]:
+    lower, upper = interval_dot((weights, weights), (box[0], box[1]))
+    return float(lower), float(upper)
+
+
+def _trim_jet(
+    trim: TrimCarrier,
+    first: float,
+    last: float,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    match trim:
+        case AbstractCurve() | AbstractTrimCurve():
+            jet = np.stack(
+                trim.derivative_bounds(
+                    first, last, preparations=preparations, budget=coordinate_budget
+                )
+            )
+        case BranchTrimHomotopyTube():
+            cells = trim.evidence.parameter_cells
+            active = (cells[:, 0] <= last) & (cells[:, 1] >= first)
+            columns = slice(3, 5) if trim.side == "first" else slice(5, 7)
+            jets = trim.evidence.derivative_intervals[active, :, columns]
+            jet = np.stack((np.min(jets[:, 0], axis=0), np.max(jets[:, 1], axis=0)))
+        case _ as invalid:
+            assert_never(invalid)
+    return np.asarray(jet, dtype=np.float64).reshape((2, 2))
+
+
+def _junction_bound(
+    junction: BranchTrimJunction,
+    tube_jet: np.ndarray,
+    columns: slice,
+    trim_range: _TrimRange,
+    piece: tuple[float, float],
+    moved: np.ndarray,
+    shift: tuple[np.ndarray, np.ndarray],
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> tuple[float, tuple[float, float, float] | None] | None:
+    """Separate a trim piece from one branch portion by a shared-vertex half-space.
+
+    With ``P`` the vertex homotopy box, every portion point lies in ``P`` or
+    is ``P + s J`` for ``s >= 0`` and ``J`` in the oriented cell jet, so a
+    weight ``w`` with ``w.J >= alpha > 0`` keeps the portion in
+    ``w.x >= min w.P``. A piece away from the vertex is separated when its box
+    lies strictly below. On the vertex piece the trim satisfies
+    ``w.q <= max w.Q - t beta`` (oriented trim jet, ``beta > 0``), so contacts
+    satisfy ``s alpha + t beta <= max w.Q - min w.P``. The returned contact
+    diameter bounds their max-norm distance from the exact shared vertex.
+    Returns ``(distance, None)`` for a separation, ``(0, contact)`` for a
+    certified vertex neighborhood, or ``None`` when unresolved.
+    """
+    a, b = piece
+    oriented_tube = _oriented(tube_jet[:, columns], junction.branch_direction)
+    base = junction.branch_box[:, columns]
+    tube_lead = _lead(oriented_tube)
+    touches = (
+        a == junction.trim_parameter
+        if junction.trim_direction > 0
+        else b == junction.trim_parameter
+    )
+    if touches:
+        trim_jet = _oriented(
+            _trim_jet(trim_range.trim, a, b, preparations, coordinate_budget),
+            junction.trim_direction,
+        )
+        trim_lead = _lead(trim_jet)
+    else:
+        trim_jet = None
+        offset = 0.5 * (moved[0] + moved[1]) - 0.5 * (base[0] + base[1])
+        trim_lead = _lead(np.stack((offset, offset)))
+    if tube_lead is None or trim_lead is None:
+        return None
+    weights = tube_lead - trim_lead
+    if not np.all(np.isfinite(weights)) or not np.any(weights):
+        return None
+    alpha = _projection(weights, oriented_tube)[0]
+    if not alpha > 0.0:
+        return None
+    floor = np.asarray(_projection(weights, base)[0])
+    norm = np.asarray(np.nextafter(np.sum(np.abs(weights)), np.inf))
+    if trim_jet is None:
+        ceiling = np.asarray(_projection(weights, moved)[1])
+    else:
+        if not -_projection(weights, trim_jet)[1] > 0.0:
+            return None
+        vertex = np.stack(
+            interval_add((junction.trim_box[0], junction.trim_box[1]), shift)
+        )
+        ceiling = np.asarray(_projection(weights, vertex)[1])
+    gap = interval_subtract((floor, floor), (ceiling, ceiling))[0]
+    if gap > 0.0:
+        distance = float(interval_divide((gap, gap), (norm, norm))[0])
+        return (distance, None) if distance > 0.0 else None
+    if trim_jet is None:
+        return None
+    alpha_ = np.asarray(alpha)
+    beta = np.asarray(-_projection(weights, trim_jet)[1])
+    epsilon = interval_subtract((ceiling, ceiling), (floor, floor))[1]
+    branch_radius = interval_divide((epsilon, epsilon), (alpha_, alpha_))[1]
+    trim_radius = interval_divide((epsilon, epsilon), (beta, beta))[1]
+    width = np.max(interval_subtract((base[1], base[1]), (base[0], base[0]))[1])
+    speed = np.asarray(np.max(np.abs(tube_jet[:, columns])))
+    reach = interval_multiply((branch_radius, branch_radius), (speed, speed))[1]
+    diameter = float(interval_add((width, width), (reach, reach))[1])
+    if not math.isfinite(diameter):
+        return None
+    return 0.0, (float(branch_radius), float(trim_radius), diameter)
 
 
 def _separate_trim_translate(
     cell: int,
     tube: np.ndarray,
+    tube_jet: np.ndarray,
+    columns: slice,
+    portions: tuple[tuple[int, ...], ...],
+    junctions: tuple[BranchTrimJunction, ...],
     trim_range: _TrimRange,
     translation: tuple[int, int],
     shift: tuple[np.ndarray, np.ndarray],
@@ -964,9 +1216,15 @@ def _separate_trim_translate(
     preparations: TrimRequestPreparations,
     coordinate_budget: CoordinateEnclosureBudget,
 ) -> _TrimCellSeparation:
+    """Subdivide the trim until every face portion of one cell is resolved.
+
+    A piece is resolved by disjoint boxes against the whole cell, or, for each
+    portion, by a half-space at one of the portion's shared-vertex junctions.
+    """
     ku, kv = translation
     stack = [(trim_range.first, trim_range.last, 0)]
     rows: list[tuple[float, ...]] = []
+    contacts: list[tuple[float, ...]] = []
     minimum = math.inf
     budget.reserve(256)
     while stack:
@@ -981,6 +1239,35 @@ def _separate_trim_translate(
             rows.append((cell, a, b, ku, kv, distance))
             minimum = min(minimum, distance)
             continue
+        outcomes: list[tuple[int, tuple[float, tuple[float, float, float] | None]]] = []
+        for portion in portions:
+            outcome = None
+            for index in portion:
+                outcome = _junction_bound(
+                    junctions[index],
+                    tube_jet,
+                    columns,
+                    trim_range,
+                    (a, b),
+                    moved,
+                    shift,
+                    preparations,
+                    coordinate_budget,
+                )
+                if outcome is not None:
+                    outcomes.append((index, outcome))
+                    break
+            if outcome is None:
+                break
+        else:
+            for index, (separation, contact) in outcomes:
+                budget.reserve(_PAIR_BYTES)
+                if contact is None:
+                    rows.append((cell, a, b, ku, kv, separation))
+                    minimum = min(minimum, separation)
+                else:
+                    contacts.append((cell, a, b, ku, kv, index, *contact))
+            continue
         if depth >= budget.depth_limit:
             budget.fail("unaffected trim separation unresolved at maximum_depth")
         midpoint = a + (b - a) / 2
@@ -988,7 +1275,38 @@ def _separate_trim_translate(
             budget.fail("unaffected trim subdivision cannot advance")
         budget.reserve(512)
         stack.extend(((a, midpoint, depth + 1), (midpoint, b, depth + 1)))
-    return _TrimCellSeparation(rows=tuple(rows), minimum=minimum)
+    return _TrimCellSeparation(rows=tuple(rows), contacts=tuple(contacts), minimum=minimum)
+
+
+def _cell_portions(
+    cell: tuple[float, float],
+    ranges: tuple[tuple[float, float], ...],
+    junctions: tuple[BranchTrimJunction, ...],
+) -> tuple[tuple[int, ...], ...]:
+    """Split one cell's face parameter ranges at junctions; list each part's junctions."""
+    portions: list[tuple[int, ...]] = []
+    for first, last in ranges:
+        lower, upper = max(cell[0], first), min(cell[1], last)
+        if not lower < upper:
+            continue
+        cuts = sorted(
+            {
+                item.branch_parameter
+                for item in junctions
+                if lower < item.branch_parameter < upper
+            }
+        )
+        bounds = (lower, *cuts, upper)
+        for x, y in zip(bounds[:-1], bounds[1:], strict=True):
+            portions.append(
+                tuple(
+                    index
+                    for index, item in enumerate(junctions)
+                    if (item.branch_direction > 0 and item.branch_parameter == x)
+                    or (item.branch_direction < 0 and item.branch_parameter == y)
+                )
+            )
+    return tuple(portions)
 
 
 @checked
@@ -1002,13 +1320,18 @@ def certify_branch_trim_separation(
     maximum_bytes: int,
     first: float | None = None,
     last: float | None = None,
+    branch_ranges: tuple[tuple[float, float], ...] | None = None,
+    junctions: tuple[BranchTrimJunction, ...] = (),
     preparations: TrimRequestPreparations | None = None,
     coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> BranchTrimSeparationEvidence:
     """Certify branch-homotopy separation from every overlapping trim translate.
 
-    Shared intentional endpoints require the model's root-incidence algorithm;
-    this proof retains endpoint neighborhoods.
+    ``branch_ranges`` restricts the homotopy to the face's branch uses (default:
+    the whole branch). Shared vertices are never separated by boxes; each
+    supplied junction instead bounds contacts to a certified neighborhood of
+    its exact root (``junction_evidence``). Without a junction a shared
+    endpoint remains unresolved.
     """
     preparations = preparations if preparations is not None else TrimRequestPreparations()
     request = (
@@ -1020,12 +1343,33 @@ def certify_branch_trim_separation(
         side = parse(side, IntersectionCurveSide, "BranchTrimSeparation.side")
         with _topology_budget(maximum_cells, maximum_depth, maximum_bytes) as budget:
             trim_range = _prepare_trim_range(trim, side, first, last, budget)
+            for junction in junctions:
+                endpoint = (
+                    trim_range.first if junction.trim_direction > 0 else trim_range.last
+                )
+                if junction.trim_parameter != endpoint:
+                    raise ValueError(
+                        "BranchTrimJunction.trim_parameter must be the trim endpoint it leaves; "
+                        f"got {junction.trim_parameter}, expected {endpoint}."
+                    )
+            cells = evidence.parameter_cells
+            ranges = (
+                ((float(cells[0, 0]), float(cells[-1, 1])),)
+                if branch_ranges is None
+                else branch_ranges
+            )
             offset = trim_range.offset
             columns = slice(3 + offset, 5 + offset)
             periods = evidence.period_intervals[:, offset : offset + 2]
             rows: list[tuple[float, ...]] = []
+            contacts: list[tuple[float, ...]] = []
             minimum = math.inf
             for cell, tube in enumerate(evidence.homotopy_boxes[:, :, columns]):
+                portions = _cell_portions(
+                    (float(cells[cell, 0]), float(cells[cell, 1])), ranges, junctions
+                )
+                if not portions:
+                    continue
                 budget.charge(0, pair=True)
                 whole = _trim_box(
                     trim,
@@ -1034,12 +1378,12 @@ def certify_branch_trim_separation(
                     preparations,
                     coordinate_budget,
                 )
-                ranges = _period_translates(tube, whole, periods)
-                copies = len(ranges[0]) * len(ranges[1])
+                translates = _period_translates(tube, whole, periods)
+                copies = len(translates[0]) * len(translates[1])
                 if copies > budget.ticket.remaining_work_units:
                     budget.fail("native-period translate count exceeds maximum_cells")
-                for ku in ranges[0]:
-                    for kv in ranges[1]:
+                for ku in translates[0]:
+                    for kv in translates[1]:
                         shift_lower, shift_upper = interval_multiply(
                             (periods[0], periods[1]),
                             (np.asarray((ku, kv)), np.asarray((ku, kv))),
@@ -1051,6 +1395,10 @@ def certify_branch_trim_separation(
                         separated = _separate_trim_translate(
                             cell,
                             tube,
+                            evidence.derivative_intervals[cell],
+                            columns,
+                            portions,
+                            junctions,
                             trim_range,
                             (ku, kv),
                             shift,
@@ -1059,8 +1407,9 @@ def certify_branch_trim_separation(
                             coordinate_budget,
                         )
                         rows.extend(separated.rows)
+                        contacts.extend(separated.contacts)
                         minimum = min(minimum, separated.minimum)
-            budget.reserve(len(rows) * 96)
+            budget.reserve(len(rows) * 96 + len(contacts) * 128)
             return BranchTrimSeparationEvidence(
                 topology_identity=evidence.approximation_identity,
                 trim_identity=_identity(trim),
@@ -1070,4 +1419,8 @@ def certify_branch_trim_separation(
                 bytes_used=budget.peak,
                 separation_lower_bound=minimum,
                 interval_evidence=_readonly(np.asarray(rows)).reshape((-1, 6)),
+                junction_diameter_upper_bound=max(
+                    (row[-1] for row in contacts), default=0.0
+                ),
+                junction_evidence=_readonly(np.asarray(contacts)).reshape((-1, 9)),
             )

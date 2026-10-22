@@ -20,8 +20,9 @@ Library lookup order: the native ``ProviderConfig.library_paths`` override,
 then ``PHYDRAX_MESHCORE_LIBRARY``, then ``phydrax_meshcore.library_path()``. A
 library is usable only when its exported ``phx_mc_abi_contract`` equals this
 binding's C ABI contract (verified before any other entry point is bound), it
-exports every C ABI symbol bound here, and its version equals the installed
-``phydrax`` release; anything else is reported as
+exports every C ABI symbol bound here, its build configuration declares the
+required independent request/workflow clock capability, and its version equals
+the installed ``phydrax`` release; anything else is reported as
 :class:`MeshcoreUnavailableError` with the reason.
 """
 
@@ -37,8 +38,10 @@ import math
 import threading
 import time
 import weakref
-from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager, ExitStack
+from _ctypes import CFuncPtr
+from collections import ChainMap
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from contextlib import AbstractContextManager, contextmanager, ExitStack
 from contextvars import ContextVar, Token
 from enum import IntEnum
 from fractions import Fraction
@@ -47,8 +50,10 @@ from types import TracebackType
 from typing import (
     Any,
     assert_never,
+    cast,
     final,
     Literal,
+    NamedTuple,
     NoReturn,
     overload,
     Protocol,
@@ -57,22 +62,24 @@ from typing import (
 
 import equinox as eqx
 import numpy as np
+from jax.tree_util import PyTreeDef
 from jax.typing import ArrayLike, DTypeLike
 from numpy.typing import NDArray
 
 from ._config_environment import LIBRARY_ENVIRONMENT
 from ._config_state import library_input
 from ._host_storage import retained_host_storage_profile
-from ._resource_ticket import ManagedBytesContributor
+from ._resource_ticket import BatchTicket, ManagedBytesContributor
 from ._strict import StrictModule
-from ._validation import bounded_integer
+from ._validation import bounded_integer, nonnegative_integer
 from .typing import checked, ConvertibleToArray
 
 
 # SHA-256 of ``native/meshcore/include/phydrax_meshcore.h`` with CRLF normalized
 # to LF: the public C declarations that ``_SIGNATURES`` binds. The native build
 # exports the same digest of the header it compiled.
-_ABI_CONTRACT = "e20f785f1858340ede1320040722e4fbbb0f26edfcabeec2bf26729f82f417c6"
+_ABI_CONTRACT = "0d11fb783adcc56eac4c7fd7b66e5b4598fd2cb994de177fca82211b067d8035"
+_EXECUTION_CLOCK_CAPABILITY = "execution_clocks=request-preparation+absolute-workflow"
 _MAX_POINTS = 2147483646
 _MAX_COUNTER_VALUE = (1 << 64) - 1
 
@@ -761,9 +768,20 @@ class LevelSetCounters(StrictModule):
         )
 
 
+class LevelSetOutputMode(IntEnum):
+    """Native level-set publication: validated carriers or topology only."""
+
+    FULL_CARRIERS = 0
+    TOPOLOGY_ONLY = 1
+
+
 @final
 class LevelSetSplitRequest(StrictModule):
-    """Prepared zero-insertion inputs and caller-owned host output buffers."""
+    """Prepared zero-insertion inputs and caller-owned host output buffers.
+
+    ``TOPOLOGY_ONLY`` publishes no carrier points or deviations, so both
+    buffers are ``None``; ``FULL_CARRIERS`` requires both.
+    """
 
     points: NDArray[np.float64]
     values: NDArray[np.float64]
@@ -775,25 +793,45 @@ class LevelSetSplitRequest(StrictModule):
     max_cells: int = eqx.field(static=True)
     work_limit: int = eqx.field(static=True)
     cavity_limit: int = eqx.field(static=True)
-    output_points: NDArray[np.float64]
+    output_mode: LevelSetOutputMode = eqx.field(static=True)
+    output_points: NDArray[np.float64] | None
     output_cells: NDArray[np.int32]
     output_parents: NDArray[np.int32]
     output_sources: NDArray[np.int32]
     output_weights: NDArray[np.float64]
+    output_deviations: NDArray[np.float64] | None
     counter_slots: NDArray[np.int64]
 
 
 @final
 class LevelSetRun(StrictModule):
-    """Native zero-insertion status and measured work."""
+    """Native zero-insertion status, publication mode and measured work."""
 
     status: MeshcoreStatus = eqx.field(static=True)
+    output_mode: LevelSetOutputMode = eqx.field(static=True)
     counters: LevelSetCounters
 
 
 @checked
 def level_set_split_3d(request: LevelSetSplitRequest, /) -> LevelSetRun:
     """Execute prepared zero insertion into caller-owned host buffers."""
+    points, deviations = request.output_points, request.output_deviations
+    match request.output_mode:
+        case LevelSetOutputMode.FULL_CARRIERS:
+            if points is None or deviations is None:
+                raise ValueError(
+                    "LevelSetSplitRequest.output_points must be a buffer together with output_deviations for FULL_CARRIERS; got a missing carrier buffer."
+                )
+            points_out = points.ctypes.data
+            deviations_out = deviations.ctypes.data
+        case LevelSetOutputMode.TOPOLOGY_ONLY:
+            if points is not None or deviations is not None:
+                raise ValueError(
+                    "LevelSetSplitRequest.output_points must be None together with output_deviations for TOPOLOGY_ONLY; got a carrier buffer."
+                )
+            points_out = deviations_out = None
+        case invalid:
+            assert_never(invalid)
     status = load_meshcore()["phx_mc_level_set_split_3d"](
         ctypes.byref(
             _LevelSetSplit3DRequest(
@@ -811,17 +849,21 @@ def level_set_split_3d(request: LevelSetSplitRequest, /) -> LevelSetRun:
                 max_cells=request.max_cells,
                 work_limit=request.work_limit,
                 cavity_limit=request.cavity_limit,
-                out_points=request.output_points.ctypes.data,
+                output_mode=int(request.output_mode),
+                out_points=points_out,
                 out_cells=request.output_cells.ctypes.data,
                 out_parents=request.output_parents.ctypes.data,
                 out_sources=request.output_sources.ctypes.data,
                 out_weights=request.output_weights.ctypes.data,
+                out_deviations=deviations_out,
                 counters=request.counter_slots.ctypes.data,
             )
         )
     )
     return LevelSetRun(
-        MeshcoreStatus(status), LevelSetCounters.from_slots(request.counter_slots)
+        MeshcoreStatus(status),
+        request.output_mode,
+        LevelSetCounters.from_slots(request.counter_slots),
     )
 
 
@@ -1159,9 +1201,11 @@ class NativeExecutionEvidence(StrictModule):
     native_primitive_queries: int = eqx.field(static=True)
     host_storage_live_bytes_upper: int = eqx.field(static=True)
     host_storage_peak_bytes_upper: int = eqx.field(static=True)
+    managed_admission_peak_bytes_upper: int | None = eqx.field(static=True)
     prior_elapsed_seconds: float = eqx.field(static=True, default=0.0)
 
     def __post_init__(self) -> None:
+        self.validate_restored()
         if type(self.work_counters) is not NativeExecutionWorkCounters:
             raise TypeError(
                 "NativeExecutionEvidence.work_counters must be NativeExecutionWorkCounters; "
@@ -1185,6 +1229,17 @@ class NativeExecutionEvidence(StrictModule):
         ):
             raise ValueError(
                 f"NativeExecutionEvidence.prior_elapsed_seconds must be finite and nonnegative; got {self.prior_elapsed_seconds}."
+            )
+
+    def validate_restored(self) -> None:
+        """Reject fabricated or out-of-range managed admission observations."""
+        value = self.managed_admission_peak_bytes_upper
+        if value is not None and (
+            type(value) is not int or not 0 <= value <= _MAX_COUNTER_VALUE
+        ):
+            raise ValueError(
+                "NativeExecutionEvidence.managed_admission_peak_bytes_upper must be "
+                f"None or a Python uint64-range integer; got {_input_summary(value)}."
             )
 
 
@@ -1252,8 +1307,37 @@ class RemainingAllowance(StrictModule):
     status: MeshcoreStatus = eqx.field(static=True)
 
 
-def _free_host_array(library: MeshcoreLibrary, handle: int, /) -> None:
-    library["phx_mc_execution_free_host_array"](handle)
+class _RemainingValues(NamedTuple):
+    """One fresh private native observation, not a validated public PyTree."""
+
+    remaining_work_units: int
+    remaining_geometry_queries: int
+    remaining_cavity_cells: int
+    remaining_managed_bytes: int
+    remaining_seconds: float
+    status: MeshcoreStatus
+
+
+def _free_host_array(
+    library: MeshcoreLibrary,
+    handle: int,
+    observer: weakref.ReferenceType[NativeExecutionScope] | None = None,
+    ticket: weakref.ReferenceType[NativeBatchTicket] | None = None,
+    origin: weakref.ReferenceType[NativeExecutionScope] | None = None,
+    /,
+) -> None:
+    # This callable's identity authenticates native-backed NumPy buffers.
+    # Optional weak observation must neither replace that capability nor keep
+    # the request or its scientific owners alive.
+    scope = None if observer is None else observer()
+    release = None
+    try:
+        if scope is not None:
+            release = scope._managed_observation_begin_release(ticket, origin=origin)
+    finally:
+        library["phx_mc_execution_free_host_array"](handle)
+        if scope is not None and release is not None:
+            scope._managed_observation_end_release(release)
 
 
 def is_native_host_buffer(buffer: ctypes.Array, /) -> bool:
@@ -1500,11 +1584,434 @@ class NativeExecutionScope:
         self._borrowed_ticket: NativeBatchTicket | None = None
         self._target_stacks: dict[int, list[NativeBatchTicket]] = {}
         self._tickets: dict[NativeBatchTicket, None] = {}
+        self._ticket_views: dict[NativeScopeTicket, None] = {}
         self._closed_by_owner = False
         self._operation_started: float | None = None
         self._surfaced_child_statuses: set[MeshcoreStatus] = set()
         self._preparation_attachment: NativeScopeAttachment | None = None
         self._attachment_lock = threading.RLock()
+        self._managed_observer_owner: NativeExecutionScope | None = None
+        self._managed_observation_parent: NativeExecutionScope | None = None
+        self._managed_observation_capacity = limits.maximum_managed_bytes
+        self._managed_observation_enabled = False
+        self._managed_observation_complete = True
+        self._managed_observation_peak = 0
+        self._managed_admission_started = False
+        self._managed_observation_roots: dict[NativeBatchTicket, int] = {}
+        self._managed_observation_covered = False
+        self._managed_observation_window: NativeExecutionScope | None = None
+        self._managed_observation_previous_window: NativeExecutionScope | None = None
+        self._managed_observation_window_active = False
+        self._managed_observation_releasing = False
+        self._managed_native_events_complete = False
+        self._managed_native_event_busy = False
+        self._managed_retained_native_depth = 0
+        self._source_metadata: list[
+            weakref.ReferenceType[NativeHostStorageWorkspace]
+        ] = []
+        self._source_metadata_completed = False
+
+    def observe_managed_admission(self) -> None:
+        """Opt in at lexical route entry, before admitting request-owned storage.
+
+        Evidence is a fixed-quota admission envelope, not physical RSS or a sum
+        of independent allocator/host peaks. Unknown native entries or outside
+        growth retain ``None``. Repeated opt-in never resets incompleteness.
+
+        An explicitly observed child owns a lexical tracker, not another
+        allowance. Its entry baseline includes live outside storage, excludes
+        unused ancestor escrow, and never imports an ancestor's historical peak.
+        Completed child coverage composes into its parent by maximum; native
+        counters, deadlines, targets, and refusal status retain their owners.
+        The published admission-demand upper also covers native host settlement's
+        conservative historical-phase upper; it is not a physical-memory peak.
+        """
+        library = self._active_native_library(
+            "NativeExecutionScope.observe_managed_admission"
+        )
+        if self._managed_observation_enabled:
+            return
+        if self._parent is not None:
+            previous = self._managed_observer_owner
+            if self._managed_observation_window_active:
+                assert previous is not None
+                previous._managed_observation_window = (
+                    self._managed_observation_previous_window
+                )
+                self._managed_observation_window_active = False
+            self._managed_observation_parent = previous
+            if previous is not None and (
+                previous._managed_native_event_busy
+                or (
+                    self._borrowed_ticket is not None
+                    and not previous._managed_observation_enabled
+                )
+            ):
+                self._managed_observation_complete = False
+            self._managed_observer_owner = None
+        self._managed_native_events_complete = all(
+            isinstance(function, CFuncPtr)
+            and getattr(function, "errcheck", None) is _observe_managed_native_call
+            for function in library._functions.values()
+        )
+        self._managed_observation_enabled = True
+        if self._mesh is not None or self._managed_admission_started:
+            self._managed_observation_complete = False
+        self._managed_observation_peak = self._managed_observation_used()
+
+    def _managed_observation_active_scope(self) -> NativeExecutionScope | None:
+        owner = self._managed_observer_owner or self
+        active = current_native_execution_scope()
+        if (
+            active is None
+            or (active._managed_observer_owner or active) is not owner
+            or (active is not owner and not active._managed_observation_covered)
+        ):
+            owner._managed_observation_complete = False
+            return None
+        return active
+
+    def _managed_observation_used(self) -> int:
+        owner = self._managed_observer_owner or self
+        active = owner._managed_observation_active_scope()
+        if active is None:
+            return 0  # Incomplete observation is never published as this value.
+        used = (
+            owner._managed_observation_capacity
+            - active.remaining().remaining_managed_bytes
+        )
+        borrowed = owner._borrowed_ticket
+        if borrowed is not None:
+            while borrowed.parent is not None:
+                borrowed = borrowed.parent
+            # An ancestor escrow is not a child allocation. Its live usage and
+            # child reservations, unlike its historical peak, belong to this
+            # lexical interval.
+            used -= borrowed.remaining_managed_bytes
+        return used
+
+    def _managed_observation_target(
+        self,
+    ) -> weakref.ReferenceType[NativeBatchTicket] | None:
+        ticket = self._target_for_thread()
+        if ticket is None:
+            ticket = self._borrowed_ticket
+        owner = self._managed_observer_owner or self
+        while (
+            ticket is not None
+            and ticket.parent is not None
+            and (ticket.parent.scope._managed_observer_owner or ticket.parent.scope)
+            is owner
+        ):
+            ticket = ticket.parent
+        return None if ticket is None else weakref.ref(ticket)
+
+    def _managed_observation_mutation(
+        self,
+        ticket: NativeBatchTicket | weakref.ReferenceType[NativeBatchTicket] | None,
+        /,
+        *,
+        origin: weakref.ReferenceType[NativeExecutionScope] | None = None,
+    ) -> None:
+        owner = self._managed_observer_owner or self
+        owner._managed_admission_started = True
+        self._managed_admission_started = True
+        if not owner._managed_observation_enabled or owner._thread is None:
+            return
+        if isinstance(ticket, weakref.ReferenceType):
+            ticket = ticket()
+        source = (
+            origin() if origin is not None else (self if ticket is None else ticket.scope)
+        )
+        window = owner._managed_observation_window
+        if window is not None:
+            while source is not None and source is not window:
+                source = source._parent
+            if source is None:
+                # A nonbinding child window is only a root bottleneck while
+                # all reservations outside its entry baseline stay held.
+                owner._managed_observation_complete = False
+        for root in tuple(owner._managed_observation_roots):
+            if root is not ticket:
+                # Its saved outside baseline is no longer held throughout the
+                # local peak's interval. Do not invent synchronized history.
+                owner._managed_observation_complete = False
+
+    @contextmanager
+    def _managed_retained_native_call(self) -> Iterator[None]:
+        """Authorize only an elementary retained allocator's live-owner hook."""
+        owner = self._managed_observer_owner or self
+        owner._managed_retained_native_depth += 1
+        try:
+            yield
+        finally:
+            owner._managed_retained_native_depth -= 1
+
+    def _managed_native_entry(self, name: str, function: object, /) -> None:
+        owner = self._managed_observer_owner or self
+        if name not in _MANAGED_NATIVE_CONTROL and name not in _MANAGED_NATIVE_FREE:
+            self._managed_admission_started = True
+        if not owner._managed_observation_enabled:
+            if name not in _MANAGED_NATIVE_CONTROL and name not in _MANAGED_NATIVE_FREE:
+                owner._managed_admission_started = True
+            return
+        if (
+            self._library is None
+            or self._library._functions.get(name) is not function
+            or owner._managed_native_event_busy
+            or owner._thread != threading.get_ident()
+        ):
+            owner._managed_native_events_complete = False
+            return
+        if name in _MANAGED_NATIVE_CONTROL or name in _MANAGED_NATIVE_FREE:
+            return
+        if name in _MANAGED_NATIVE_RETAINED:
+            if owner._managed_retained_native_depth == 0:
+                owner._managed_native_events_complete = False
+            return
+        owner._managed_native_event_busy = True
+        try:
+            target = self._target_for_thread()
+            if target is None:
+                target = self._borrowed_target_for_thread()
+            if target is None or not target._mapped:
+                owner._managed_native_events_complete = False
+        finally:
+            owner._managed_native_event_busy = False
+
+    def _managed_observation_begin_release(
+        self,
+        ticket: NativeBatchTicket | weakref.ReferenceType[NativeBatchTicket] | None,
+        /,
+        *,
+        origin: weakref.ReferenceType[NativeExecutionScope] | None = None,
+    ) -> tuple[int, tuple[tuple[NativeBatchTicket, int], ...]] | None:
+        """Checkpoint a phase before a real outside reservation decreases."""
+        owner = self._managed_observer_owner or self
+        if (
+            not owner._managed_observation_enabled
+            or not owner._managed_observation_complete
+            or owner._thread is None
+        ):
+            return None
+        if owner._thread != threading.get_ident():
+            owner._managed_observation_complete = False
+            return None
+        if owner._managed_observation_releasing:
+            owner._managed_observation_complete = False
+            return None
+        if isinstance(ticket, weakref.ReferenceType):
+            ticket = ticket()
+        source = (
+            origin() if origin is not None else (self if ticket is None else ticket.scope)
+        )
+        window = owner._managed_observation_window
+        if window is not None:
+            while source is not None and source is not window:
+                source = source._parent
+            if source is None:
+                owner._managed_observation_complete = False
+                return None
+        owner._managed_observation_releasing = True
+        outside = []
+        for root, baseline in tuple(owner._managed_observation_roots.items()):
+            ancestor = ticket
+            while ancestor is not None and ancestor is not root:
+                ancestor = ancestor.parent
+            if ancestor is root:
+                # This token belongs inside the phase, not its outside bank.
+                continue
+            root._observe_capacity()
+            owner._managed_observation_peak = max(
+                owner._managed_observation_peak,
+                baseline + max(root._peak_bytes, root._managed_admission_peak),
+            )
+            outside.append((root, baseline))
+        return owner._managed_observation_used(), tuple(outside)
+
+    def _managed_observation_end_release(
+        self, release: tuple[int, tuple[tuple[NativeBatchTicket, int], ...]], /
+    ) -> None:
+        owner = self._managed_observer_owner or self
+        try:
+            if not owner._managed_observation_complete or owner._thread is None:
+                return
+            before, outside = release
+            released = before - owner._managed_observation_used()
+            if released < 0:
+                owner._managed_observation_complete = False
+                return
+            for root, baseline in outside:
+                if (
+                    root not in owner._managed_observation_roots
+                    or owner._managed_observation_roots[root] != baseline
+                    or released > baseline
+                ):
+                    owner._managed_observation_complete = False
+                    return
+                # The phase's own quota was fixed at entry. Releasing outside
+                # storage cannot enlarge it: the original entry baseline plus
+                # a later phase peak remains the genuine admission requirement,
+                # even when the corresponding physical peaks are disjoint.
+            owner._managed_observation_candidate()
+        finally:
+            owner._managed_observation_releasing = False
+
+    def _managed_observation_candidate(self) -> None:
+        owner = self._managed_observer_owner or self
+        if (
+            owner._managed_observation_enabled
+            and owner._managed_observation_complete
+            and not owner._managed_observation_roots
+            and owner._thread is not None
+        ):
+            if owner._thread != threading.get_ident():
+                # Worker activity without a covering root phase has no affine
+                # simultaneous outside snapshot.
+                owner._managed_observation_complete = False
+                return
+            # Cache tickets remain genuine outside reservations during a work
+            # phase. At a direct checkpoint, however, their unused escrow is
+            # not simultaneous usage and must not echo the request's cap.
+            active = owner._managed_observation_active_scope()
+            if active is None:
+                return
+            unused = 0
+            while active is not None:
+                unused += sum(
+                    ticket.remaining_managed_bytes
+                    for ticket in tuple(active._tickets)
+                    if ticket.parent is None
+                )
+                if active is owner:
+                    break
+                active = active._parent
+            candidate = owner._managed_observation_used() - unused
+            if candidate < 0:
+                owner._managed_observation_complete = False
+                return
+            owner._managed_observation_peak = max(
+                owner._managed_observation_peak, candidate
+            )
+
+    def _managed_observation_admit(self, ticket: NativeBatchTicket, /) -> None:
+        owner = self._managed_observer_owner or self
+        if not (ticket._managed_observation_phase or ticket.bytes_upper):
+            # A zero-resource deadline checkpoint neither reserves storage nor
+            # begins a phase whose history an opt-in observer could miss.
+            return
+        owner._managed_admission_started = True
+        self._managed_admission_started = True
+        if (
+            owner._managed_observation_enabled
+            and not owner._managed_observation_roots
+            and owner._thread != threading.get_ident()
+        ):
+            owner._managed_observation_complete = False
+        if not owner._managed_observation_enabled or (
+            ticket.parent is not None
+            and (ticket.parent.scope._managed_observer_owner or ticket.parent.scope)
+            is owner
+        ):
+            return
+        owner._managed_observation_mutation(ticket)
+        if ticket.scope is not owner and not ticket.scope._managed_observation_covered:
+            owner._managed_observation_complete = False
+            return
+        if not ticket._managed_observation_phase:
+            owner._managed_observation_candidate()
+            return
+        outside = owner._managed_observation_used() - ticket.bytes_upper
+        if outside < 0:
+            owner._managed_observation_complete = False
+            return
+        owner._managed_observation_roots[ticket] = outside
+
+    def _managed_observation_activate(self, ticket: NativeBatchTicket, /) -> None:
+        owner = self._managed_observer_owner or self
+        if (
+            (
+                ticket.parent is not None
+                and (ticket.parent.scope._managed_observer_owner or ticket.parent.scope)
+                is owner
+            )
+            or ticket._managed_observation_phase
+            or ticket.bytes_upper == 0
+        ):
+            return
+        ticket._managed_observation_phase = True
+        if ticket._settled:
+            return
+        if ticket._peak_bytes:
+            # A cache converted after prior usage has no synchronized outside
+            # history for that earlier local peak.
+            owner._managed_observation_complete = False
+        self._managed_observation_admit(ticket)
+
+    def _managed_observation_settle(self, ticket: NativeBatchTicket, /) -> None:
+        owner = self._managed_observer_owner or self
+        if not (ticket._managed_observation_phase or ticket.bytes_upper):
+            return
+        if not owner._managed_observation_enabled or (
+            ticket.parent is not None
+            and (ticket.parent.scope._managed_observer_owner or ticket.parent.scope)
+            is owner
+        ):
+            return
+        if not ticket._managed_observation_phase:
+            owner._managed_observation_mutation(ticket)
+            owner._managed_observation_candidate()
+            return
+        outside = owner._managed_observation_roots.pop(ticket, None)
+        if outside is None:
+            owner._managed_observation_complete = False
+            return
+        owner._managed_observation_peak = max(
+            owner._managed_observation_peak,
+            outside + max(ticket._peak_bytes, ticket._managed_admission_peak),
+        )
+        owner._managed_observation_mutation(ticket)
+
+    @staticmethod
+    def _managed_observation_release_host_storage(
+        observer: weakref.ReferenceType[NativeExecutionScope],
+        library: MeshcoreLibrary,
+        handle: int,
+        ticket: weakref.ReferenceType[NativeBatchTicket] | None,
+        origin: weakref.ReferenceType[NativeExecutionScope] | None,
+        /,
+    ) -> None:
+        scope = observer()
+        release = None
+        try:
+            if scope is not None:
+                release = scope._managed_observation_begin_release(ticket, origin=origin)
+        finally:
+            library["phx_mc_execution_release_host_storage"](handle)
+            if scope is not None and release is not None:
+                scope._managed_observation_end_release(release)
+
+    def _managed_observation_result(
+        self, native_peak: int, host_peak: int, /
+    ) -> int | None:
+        if (
+            not self._managed_observation_enabled
+            or not self._managed_observation_complete
+            or self._managed_observation_releasing
+            or self._managed_observation_roots
+            # Every allocation-bearing typed entry must be associated with a
+            # real mapped phase, or an elementary retained-allocation hook.
+            # Independent native and host maxima are not a simultaneity proof.
+            or not self._managed_native_events_complete
+            or self._managed_observation_peak < native_peak
+        ):
+            return None
+        # Native host settlement combines the then-live outside reservations
+        # with a phase's historical host upper. That conservative admission
+        # demand can exceed the synchronized event peak after storage releases.
+        # It is neither physical RSS nor a reason to discard complete coverage.
+        # Keep actual allocator counters separate and compose uppers by maximum.
+        return max(self._managed_observation_peak, host_peak)
 
     def completed_evidence(self) -> NativeExecutionEvidence:
         """Return the completed scope's measured work and storage evidence."""
@@ -1533,6 +2040,26 @@ class NativeExecutionScope:
     def _target_for_thread(self) -> NativeBatchTicket | None:
         stack = self._target_stacks.get(threading.get_ident())
         return None if not stack else stack[-1]
+
+    def _borrowed_target_for_thread(self) -> NativeBatchTicket | None:
+        """Resolve only the still-mapped, same-thread target of a live ancestor."""
+        ticket = self._borrowed_ticket
+        if ticket is None:
+            return None
+        ancestor = self._parent
+        while ancestor is not None and ancestor is not ticket.scope:
+            ancestor = ancestor._parent
+        if (
+            ancestor is None
+            or ticket.settled
+            or not ticket._mapped
+            or ticket._usage_thread != threading.get_ident()
+            or ticket.scope._target_for_thread() is not ticket
+            or ticket._target is None
+            or ticket._target._closed
+        ):
+            return None
+        return ticket
 
     def _native_thread_active(self) -> bool:
         return (
@@ -1580,6 +2107,39 @@ class NativeExecutionScope:
             self, parent, work_upper, queries_upper, cavity_upper, bytes_upper
         )
 
+    def ticket_view(self) -> NativeScopeTicket:
+        """View this actual allowance without reserving native-owner headroom."""
+        self._active_native_library("NativeExecutionScope.ticket_view")
+        return NativeScopeTicket(self)
+
+    def admit_source_metadata(
+        self, bytes_upper: int, work_units: int, /
+    ) -> NativeHostStorageWorkspace:
+        """Prepay a metadata-only publication lifetime on this live request root.
+
+        The returned existing storage owner may be cancelled with ``close``.
+        After successful root completion it may hand its unchanged token to a
+        weak final source; no payload graph or request workspace is retained.
+        """
+        if current_native_execution_scope() is not self or self._parent is not None:
+            raise RuntimeError(
+                "Source metadata admission requires its live request root."
+            )
+        self._active_native_library("NativeExecutionScope.admit_source_metadata")
+        size = _unsigned_budget(bytes_upper, "bytes_upper")
+        work = _unsigned_budget(work_units, "work_units")
+        storage = NativeHostStorageWorkspace(self).open()
+        try:
+            storage.set_bound(size)
+            storage.reserve_empty()
+            self.charge(work=work)
+            self._source_metadata.append(weakref.ref(storage))
+            storage._source_metadata = True
+        except BaseException:
+            storage.close()
+            raise
+        return storage
+
     @property
     def limits(self) -> NativeExecutionLimits:
         """Return the mechanical limits record supplied at construction."""
@@ -1609,24 +2169,59 @@ class NativeExecutionScope:
                 f"_meshcore.NativeExecutionScope.__enter__.self must satisfy the input contract (A native execution budget is single-use.); got {_input_summary(self)}."
             )
         self._parent = current_native_execution_scope()
+        parent_remaining = None
+        if self._parent is not None:
+            parent_remaining = self._parent.remaining().remaining_managed_bytes
+            self._managed_observation_capacity = (
+                self._parent._managed_observation_capacity
+            )
         if self._parent is not None:
             self._borrowed_ticket = self._parent._target_for_thread()
             if self._borrowed_ticket is None:
                 self._borrowed_ticket = self._parent._borrowed_ticket
+            self._managed_observer_owner = (
+                self._parent._managed_observer_owner or self._parent
+            )
+            owner = self._managed_observer_owner
+            if owner._managed_observation_enabled:
+                if self._mesh is not None:
+                    owner._managed_observation_complete = False
+                elif self._borrowed_ticket is not None:
+                    root = self._borrowed_ticket
+                    while root.parent is not None:
+                        root = root.parent
+                    self._managed_observation_covered = (
+                        root in owner._managed_observation_roots
+                    )
+                elif (
+                    (self._parent is owner or self._parent._managed_observation_covered)
+                    and self._limits_record.maximum_managed_bytes
+                    >= self._parent.remaining().remaining_managed_bytes
+                ):
+                    # The child cannot become the tighter managed window while
+                    # its outside entry baseline remains held.
+                    self._managed_observation_covered = True
+                    self._managed_observation_window_active = True
         operation_started = (
             time.monotonic() if self._parent is None else self._parent.operation_started
         )
         library = load_meshcore()
         seconds = self._seconds
+        effective_seconds = seconds
         parallel = _active_parallel_execution.get()
         if parallel is not None:
             if parallel._library is not library:
                 raise RuntimeError(
                     "NativeExecutionScope.library must match its lowered parallel policy; got another library."
                 )
-            seconds = min(seconds, parallel.remaining_seconds())
+            effective_seconds = min(effective_seconds, parallel.remaining_seconds())
         if self._parent is not None:
-            seconds = min(seconds, self._parent.remaining().remaining_seconds)
+            effective_seconds = min(
+                effective_seconds, self._parent.remaining().remaining_seconds
+            )
+        # Native keeps the original request clock separate from the absolute
+        # parallel-policy expiry and ancestor clocks. Pre-clamping this input
+        # would debit already elapsed preparation from the workflow remainder.
         _raise_for_call(
             library["phx_mc_execution_begin"](
                 *self._limits,
@@ -1637,11 +2232,20 @@ class NativeExecutionScope:
             "execution_begin",
         )
         self._library = library
-        self._effective_seconds = seconds
+        self._effective_seconds = effective_seconds
         self._operation_started = operation_started
         self._thread = threading.get_ident()
         self._token = _active_execution_scope.set(self)
         _native_context_stack.set((*_native_context_stack.get(), self))
+        if parent_remaining is not None:
+            self._managed_observation_capacity -= (
+                parent_remaining - self.remaining().remaining_managed_bytes
+            )
+        if self._managed_observation_window_active:
+            owner = self._managed_observer_owner
+            assert owner is not None
+            self._managed_observation_previous_window = owner._managed_observation_window
+            owner._managed_observation_window = self
         return self
 
     def charge(self, *, work: int = 0, geometry_queries: int = 0) -> None:
@@ -1717,6 +2321,10 @@ class NativeExecutionScope:
 
     def remaining(self) -> RemainingAllowance:
         """Observe parent allowance minima and available managed bytes."""
+        return RemainingAllowance(*self._remaining_values())
+
+    def _remaining_values(self) -> _RemainingValues:
+        """Read every native counter and clock afresh without a public-module copy."""
         library = self._active_native_library("NativeExecutionScope.remaining")
         values = np.zeros((4,), dtype=np.uint64)
         wall = np.zeros((1,), dtype=np.float64)
@@ -1729,7 +2337,7 @@ class NativeExecutionScope:
         )
         if status == MeshcoreStatus.INVALID_ARGUMENT:
             _raise_for_call(status, "execution_remaining")
-        return RemainingAllowance(
+        return _RemainingValues(
             int(values[0]),
             int(values[1]),
             int(values[2]),
@@ -1854,16 +2462,20 @@ class NativeExecutionScope:
         byte_count = math.prod(shape) * element_dtype.itemsize
         owner = ctypes.c_void_p()
         data = ctypes.c_void_p()
-        _raise_for_call(
-            library["phx_mc_execution_allocate_host_array"](
-                self._handle,
-                byte_count,
-                max(1, element_dtype.alignment),
-                ctypes.addressof(owner),
-                ctypes.addressof(data),
-            ),
-            "execution_allocate_host_array",
-        )
+        observation_ticket = self._managed_observation_target()
+        with self._managed_retained_native_call():
+            _raise_for_call(
+                library["phx_mc_execution_allocate_host_array"](
+                    self._handle,
+                    byte_count,
+                    max(1, element_dtype.alignment),
+                    ctypes.addressof(owner),
+                    ctypes.addressof(data),
+                ),
+                "execution_allocate_host_array",
+            )
+        self._managed_observation_mutation(observation_ticket)
+        self._managed_observation_candidate()
         if owner.value is None or data.value is None:
             library["phx_mc_execution_free_host_array"](owner)
             raise MeshcoreError(
@@ -1872,9 +2484,23 @@ class NativeExecutionScope:
             )
         try:
             buffer = (ctypes.c_ubyte * byte_count).from_address(data.value)
-            finalizer = weakref.finalize(buffer, _free_host_array, library, owner.value)
+            finalizer = weakref.finalize(
+                buffer,
+                _free_host_array,
+                library,
+                owner.value,
+                weakref.ref(self._managed_observer_owner or self),
+                observation_ticket,
+                weakref.ref(self),
+            )
         except BaseException:
-            _free_host_array(library, owner.value)
+            _free_host_array(
+                library,
+                owner.value,
+                weakref.ref(self._managed_observer_owner or self),
+                observation_ticket,
+                weakref.ref(self),
+            )
             raise
         try:
             # Interpreter atexit callbacks may still hold and use array views;
@@ -1913,6 +2539,14 @@ class NativeExecutionScope:
                     )
             finally:
                 self._preparation_attachment = None
+        for view in reversed(tuple(self._ticket_views)):
+            try:
+                view.__exit__(error_type, primary, traceback)
+            except BaseException as failure:
+                if primary is None:
+                    cleanup_error = primary = failure
+                else:
+                    primary.add_note(f"Native scope-view cleanup also failed: {failure}")
         for ticket in reversed(tuple(self._tickets)):
             try:
                 ticket.__exit__(error_type, primary, traceback)
@@ -1922,6 +2556,16 @@ class NativeExecutionScope:
                 else:
                     primary.add_note(f"Native reservation cleanup also failed: {failure}")
         primary = error if error is not None else cleanup_error
+        if primary is not None:
+            self._close_source_metadata()
+        if isinstance(primary, MeshcoreError):
+            # Direct scope refusals carry the same immutable first-refusal
+            # snapshot as ticket refusals; the handle must still be live.
+            try:
+                _attach_scope_refusal(self._library, self._handle, primary)
+            except BaseException as failure:
+                primary.add_note(f"Native refusal evidence query also failed: {failure}")
+        self._managed_observation_candidate()
         counters = np.zeros((9,), dtype=np.uint64)
         memory = np.zeros((8,), dtype=np.uint64)
         seconds = np.zeros((1,), dtype=np.float64)
@@ -1957,6 +2601,13 @@ class NativeExecutionScope:
         if self._token is not None:
             _active_execution_scope.reset(self._token)
             self._token = None
+        if self._managed_observation_window_active:
+            owner = self._managed_observer_owner
+            assert owner is not None
+            if owner._managed_observation_window is not self:
+                owner._managed_observation_complete = False
+            owner._managed_observation_window = self._managed_observation_previous_window
+            self._managed_observation_window_active = False
         if status == MeshcoreStatus.OK and isinstance(primary, MeshcoreError):
             status = primary.status
         work = NativeExecutionWorkCounters.from_slots(counters[:6])
@@ -1971,8 +2622,24 @@ class NativeExecutionScope:
             int(counters[8]),
             int(memory[6]),
             int(memory[7]),
+            self._managed_observation_result(int(memory[2]), int(memory[7])),
             float(prior_seconds[0]),
         )
+        observation_parent = self._managed_observation_parent
+        if (
+            observation_parent is not None
+            and observation_parent._managed_observation_enabled
+        ):
+            measured = self.evidence.managed_admission_peak_bytes_upper
+            if measured is None:
+                observation_parent._managed_observation_complete = False
+            else:
+                observation_parent._managed_observation_peak = max(
+                    observation_parent._managed_observation_peak, measured
+                )
+        self._source_metadata_completed = primary is None and status is MeshcoreStatus.OK
+        if not self._source_metadata_completed:
+            self._close_source_metadata()
         if isinstance(primary, MeshcoreError):
             if (
                 isinstance(primary, NativeResourceFailure)
@@ -2012,6 +2679,330 @@ class NativeExecutionScope:
                 ),
             )
 
+    def _close_source_metadata(self) -> None:
+        """Release incomplete publication tokens without owning their wrappers."""
+        leases, self._source_metadata = self._source_metadata, []
+        for reference in leases:
+            storage = reference()
+            if storage is not None:
+                storage.close()
+
+
+@final
+class NativeScopeTicket:
+    """Lazy host-accounting view of one actual native request.
+
+    No work, query, cavity or byte allowance is reserved at construction. Host
+    work is charged directly to the active descendant of ``scope``; native
+    owners keep using that same request, without an ambient reservation target.
+    Each managed contributor owns only its actual live bound. The view's local
+    counters exclude native owners and imported preparation, already accounted
+    by the actual scope.
+    """
+
+    def __init__(self, scope: NativeExecutionScope, /) -> None:
+        self.scope = scope
+        self.work_upper = scope.limits.maximum_work_units
+        self.queries_upper = scope.limits.maximum_geometry_queries
+        self.cavity_upper = scope.limits.maximum_cavity_cells
+        self.work_units = 0
+        self.geometry_queries = 0
+        self.cavity_cells = 0
+        self.managed_bytes = 0
+        self.settled = False
+        self.native_accounting = True
+        self._entered = False
+        self._default_bytes = 0
+        self._components: dict[ManagedBytesContributor, int] = {}
+        self._workspaces: dict[NativeBatchTicket | None, NativeHostStorageWorkspace] = {}
+        self._active_scope()
+        scope._ticket_views[self] = None
+
+    def _active_scope(self) -> NativeExecutionScope:
+        if self.settled:
+            raise RuntimeError("NativeScopeTicket must remain live; got settled view.")
+        active = current_native_execution_scope()
+        owner = active
+        while owner is not None and owner is not self.scope:
+            owner = owner.parent
+        if owner is None or active is None:
+            raise RuntimeError(
+                "NativeScopeTicket must use its actual scope or a live descendant; got foreign scope."
+            )
+        return active
+
+    def _remaining(self) -> _RemainingValues:
+        active = self._active_scope()
+        remaining = active._remaining_values()
+        target = active._target_for_thread()
+        if target is None:
+            # Native remaining already intersects a target borrowed when this
+            # nested scope entered with its own local limits.
+            return remaining
+        # A target installed after scope entry owns genuine reserved capacity.
+        # The scope's unreserved observation intentionally excludes that escrow,
+        # whereas charge/admit/allocation dispatch to this live target.
+        return _RemainingValues(
+            target.remaining_work_units,
+            target.remaining_geometry_queries,
+            target.remaining_cavity_cells,
+            target.remaining_managed_bytes,
+            remaining.remaining_seconds,
+            remaining.status,
+        )
+
+    def _storage_workspace(self) -> NativeHostStorageWorkspace:
+        active = self._active_scope()
+        target = active._target_for_thread()
+        if target is None:
+            target = active._borrowed_ticket
+        workspace = self._workspaces.get(target)
+        if workspace is None:
+            workspace = active.host_workspace().open()
+            self._workspaces[target] = workspace
+        return workspace
+
+    @property
+    def _live_bytes(self) -> int:
+        return self._default_bytes + sum(self._components.values())
+
+    @property
+    def bytes_upper(self) -> int:
+        return self._live_bytes + self._remaining().remaining_managed_bytes
+
+    @property
+    def remaining_work_units(self) -> int:
+        return self._remaining().remaining_work_units
+
+    @property
+    def remaining_geometry_queries(self) -> int:
+        return self._remaining().remaining_geometry_queries
+
+    def _set_bytes(self, bound: int, /) -> None:
+        self._active_scope()
+        live = sum(workspace.bound for workspace in self._workspaces.values())
+        if bound > live:
+            # Retained bytes from earlier phases remain charged where earned.
+            # Only new live capacity borrows the current target; native storage
+            # tokens cannot grow under a foreign target.
+            workspace = self._storage_workspace()
+            workspace.set_bound(workspace.bound + bound - live)
+        elif bound < live:
+            release = live - bound
+            for workspace in reversed(tuple(self._workspaces.values())):
+                amount = min(release, workspace.bound)
+                if amount:
+                    workspace.set_bound(workspace.bound - amount)
+                    release -= amount
+                if not release:
+                    break
+        self.managed_bytes = max(self.managed_bytes, bound)
+
+    def managed_storage(self) -> ManagedBytesContributor:
+        self._active_scope()
+        return ManagedBytesContributor(self)
+
+    def set_managed_storage(
+        self, owner: ManagedBytesContributor, bound: int | None, /
+    ) -> None:
+        if owner.ticket is not self:
+            raise RuntimeError(
+                "NativeScopeTicket contributor must belong to this view; got foreign owner."
+            )
+        if self.settled and bound is None:
+            return
+        proposed = 0 if bound is None else _unsigned_budget(bound, "managed_bytes")
+        self._set_bytes(self._live_bytes - self._components.get(owner, 0) + proposed)
+        if bound is None:
+            self._components.pop(owner, None)
+        else:
+            self._components[owner] = proposed
+
+    def managed_storage_headroom(self, owner: ManagedBytesContributor, /) -> int:
+        if owner.ticket is not self:
+            raise RuntimeError(
+                "NativeScopeTicket contributor must belong to this view; got foreign owner."
+            )
+        # Admit the real current-target token before reporting exact payload
+        # headroom. Its actual metadata coexists with all earlier live bounds.
+        self._storage_workspace().reserve_empty()
+        return self._components.get(owner, 0) + self._remaining().remaining_managed_bytes
+
+    def consume(
+        self,
+        work: int = 0,
+        /,
+        *,
+        geometry_queries: int = 0,
+        cavity_cells: int | None = None,
+        managed_bytes: int | None = None,
+    ) -> None:
+        work = _unsigned_budget(work, "work")
+        queries = _unsigned_budget(geometry_queries, "geometry_queries")
+        cavity = (
+            None
+            if cavity_cells is None
+            else _unsigned_budget(cavity_cells, "cavity_cells")
+        )
+        managed = (
+            None
+            if managed_bytes is None
+            else _unsigned_budget(managed_bytes, "managed_bytes")
+        )
+        active = self._active_scope()
+        target = active._target_for_thread()
+        if target is None:
+            target = active._borrowed_ticket
+        if target is not None and (
+            work > target.remaining_work_units
+            or queries > target.remaining_geometry_queries
+        ):
+            target.refuse(work, queries_upper=queries)
+        if cavity is not None or managed is not None:
+            remaining = self._remaining()
+            if (
+                work > remaining.remaining_work_units
+                or queries > remaining.remaining_geometry_queries
+            ):
+                self.refuse(
+                    work,
+                    queries_upper=queries,
+                    cavity_upper=0 if cavity is None else cavity,
+                )
+        if cavity is not None:
+            active.admit_cavity(cavity)
+            self.cavity_cells = max(self.cavity_cells, cavity)
+        if managed is not None:
+            self._set_bytes(self._live_bytes - self._default_bytes + managed)
+            self._default_bytes = managed
+        active.charge(work=work, geometry_queries=queries)
+        self.work_units += work
+        self.geometry_queries += queries
+
+    def batch(
+        self,
+        work_upper: int,
+        /,
+        *,
+        queries_upper: int = 0,
+        bytes_upper: int = 0,
+        cavity_upper: int = 0,
+    ) -> NativeBatchTicket:
+        return self._active_scope().batch(
+            work_upper,
+            queries_upper=queries_upper,
+            bytes_upper=bytes_upper,
+            cavity_upper=cavity_upper,
+        )
+
+    def checkpoint(self) -> None:
+        self._active_scope().charge()
+
+    def refuse(
+        self,
+        work_upper: int,
+        /,
+        *,
+        queries_upper: int = 0,
+        bytes_upper: int = 0,
+        cavity_upper: int = 0,
+    ) -> NoReturn:
+        work = _unsigned_budget(work_upper, "work_upper")
+        queries = _unsigned_budget(queries_upper, "queries_upper")
+        cavity = _unsigned_budget(cavity_upper, "cavity_upper")
+        managed = _unsigned_budget(bytes_upper, "bytes_upper")
+        active = self._active_scope()
+        remaining = self._remaining()
+        # Only invoke a consuming admission when it is already proven to
+        # refuse. Fitting estimates must never debit the actual request.
+        if (
+            work > remaining.remaining_work_units
+            or queries > remaining.remaining_geometry_queries
+        ):
+            target = active._target_for_thread()
+            if target is None:
+                target = active._borrowed_ticket
+            if target is not None:
+                target.refuse(work, queries_upper=queries)
+            active.charge(work=work, geometry_queries=queries)
+        elif cavity > remaining.remaining_cavity_cells:
+            active.admit_cavity(cavity)
+        elif managed > self._live_bytes + remaining.remaining_managed_bytes:
+            self._set_bytes(managed)
+        else:
+            self.checkpoint()
+        raise RuntimeError(
+            "NativeScopeTicket.refuse must prove an actual resource shortage; got a fitting estimate."
+        )
+
+    @contextmanager
+    def native_target(self) -> Iterator[None]:
+        # Check at entry, not when the context object is created: moving this
+        # same-thread view to a worker must not permit unscoped native work.
+        active = self._active_scope()
+        owner = active._managed_observer_owner or active
+        if (
+            not owner._managed_observation_enabled
+            or active._target_for_thread() is not None
+        ):
+            yield
+            return
+        if active._borrowed_ticket is not None:
+            if active._borrowed_target_for_thread() is None:
+                owner._managed_native_events_complete = False
+                raise RuntimeError(
+                    "NativeScopeTicket.native_target must borrow a live ancestor target "
+                    "on its owning thread; got an inactive or foreign target."
+                )
+            if not active._managed_observation_enabled:
+                yield
+                return
+        remaining = self._remaining()
+        with active.batch(
+            remaining.remaining_work_units,
+            queries_upper=remaining.remaining_geometry_queries,
+            cavity_upper=remaining.remaining_cavity_cells,
+            bytes_upper=remaining.remaining_managed_bytes,
+        ) as phase:
+            if not phase._managed_observation_phase:
+                # A real zero-work FFI phase is not a retained cache ticket.
+                phase._managed_observation_phase = True
+                active._managed_observation_admit(phase)
+            with phase.native_target():
+                yield
+
+    def settle(self) -> None:
+        self._active_scope()
+        for workspace in reversed(tuple(self._workspaces.values())):
+            workspace.close()
+        self._workspaces.clear()
+        self._components.clear()
+        self._default_bytes = 0
+        self.settled = True
+        del self.scope._ticket_views[self]
+
+    def __enter__(self) -> NativeScopeTicket:
+        self._active_scope()
+        if self._entered:
+            raise RuntimeError("NativeScopeTicket must be single-use; got entered view.")
+        self._entered = True
+        return self
+
+    def __exit__(
+        self,
+        error_type: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if self.settled:
+            return
+        try:
+            self.settle()
+        except BaseException as release:
+            if error is None:
+                raise
+            error.add_note(f"Native scope-view release also failed: {release}")
+
 
 @final
 class NativeBatchTicket:
@@ -2021,7 +3012,9 @@ class NativeBatchTicket:
     includes settled descendants; native-only counters exclude host/imports.
     Capacity properties retain simultaneous peaks after settlement.
     Context exit retires children and targets before settlement; explicit
-    ``settle`` requires their cleanup first.
+    ``settle`` requires their cleanup first. A refusal with live children
+    records native refusal evidence immediately, admits only releases, and
+    settles when the last child settles.
     """
 
     def __init__(
@@ -2047,11 +3040,15 @@ class NativeBatchTicket:
         self.queries_upper = _unsigned_budget(queries, "queries_upper")
         self.cavity_upper = _unsigned_budget(cavity, "cavity_upper")
         self.bytes_upper = _unsigned_budget(managed, "bytes_upper")
+        self._managed_observation_phase = bool(
+            self.work_upper or self.queries_upper or self.cavity_upper
+        )
         self._usage = _NativeExecutionUsage()
         self._mapped = False
         self._usage_thread: int | None = None
         self._peak_cavity = 0
         self._peak_bytes = 0
+        self._managed_admission_peak = 0
         self._default_managed_bytes = 0
         self._managed_components: dict[ManagedBytesContributor, int] = {}
         self._children: set[NativeBatchTicket] = set()
@@ -2060,13 +3057,14 @@ class NativeBatchTicket:
         self._library = scope._library
         self._entered = False
         self._settled = False
+        self._refused = False
         self._thread: int | None = None
         self._target: _NativeBatchTarget | None = None
         if parent is None:
             self._admit()
         else:
             with parent._lock:
-                parent._require_live()
+                parent._require_unrefused()
                 parent._map_usage()
                 if (
                     self.work_upper > parent.remaining_work_units
@@ -2074,12 +3072,20 @@ class NativeBatchTicket:
                     or self.cavity_upper > parent.remaining_cavity_cells
                     or self.bytes_upper > parent.remaining_managed_bytes
                 ):
-                    raise RuntimeError(
-                        "NativeBatchTicket.child must fit the parent estimate; got excessive reservation."
+                    # The canonical refusal operation distinguishes an actual
+                    # root/ancestor shortage from a fitting estimate defect.
+                    parent.refuse(
+                        self.work_upper,
+                        queries_upper=self.queries_upper,
+                        cavity_upper=self.cavity_upper,
+                        bytes_upper=self.bytes_upper,
                     )
                 self._admit()
                 parent._children.add(self)
+                parent._observe_managed_admission_capacity()
         scope._tickets[self] = None
+        scope._managed_observation_admit(self)
+        scope._managed_observation_candidate()
 
     def _admit(self) -> None:
         status = MeshcoreStatus(
@@ -2109,6 +3115,13 @@ class NativeBatchTicket:
         if self._settled:
             raise RuntimeError(
                 f"_meshcore.NativeBatchTicket._require_live.self must remain unsettled; got settled ticket; got {_input_summary(self)}."
+            )
+
+    def _require_unrefused(self) -> None:
+        self._require_live()
+        if self._refused:
+            raise RuntimeError(
+                f"_meshcore.NativeBatchTicket._require_unrefused.self must remain unrefused; got a refused ticket awaiting child settlement; got {_input_summary(self)}."
             )
 
     def _require_host_writer(self) -> None:
@@ -2205,34 +3218,7 @@ class NativeBatchTicket:
                 self.cavity_upper,
                 self.bytes_upper,
             )
-        if error.batch_refusal_evidence is None:
-            values = np.zeros((8,), dtype=np.uint64)
-            observed = MeshcoreStatus(
-                self._library["phx_mc_execution_batch_refusal"](
-                    self.scope._handle, values.ctypes.data
-                )
-            )
-            if observed is MeshcoreStatus.OK:
-                values.setflags(write=False)
-                error.batch_refusal_evidence = values
-            elif observed is not MeshcoreStatus.INVALID_ARGUMENT:
-                _raise_for_call(observed, "execution_batch_refusal")
-        if error.batch_requested_upper is None:
-            requested = np.zeros((4,), dtype=np.uint64)
-            observed = MeshcoreStatus(
-                self._library["phx_mc_execution_refusal_request"](
-                    self.scope._handle, requested.ctypes.data
-                )
-            )
-            if observed is MeshcoreStatus.OK:
-                error.batch_requested_upper = (
-                    int(requested[0]),
-                    int(requested[1]),
-                    int(requested[2]),
-                    int(requested[3]),
-                )
-            elif observed is not MeshcoreStatus.INVALID_ARGUMENT:
-                _raise_for_call(observed, "execution_refusal_request")
+        _attach_scope_refusal(self._library, self.scope._handle, error)
 
     def _failure(
         self,
@@ -2378,6 +3364,29 @@ class NativeBatchTicket:
             usage.children_peak_bytes,
             usage.combined_peak_bytes,
         )
+        self._observe_managed_admission_capacity()
+        self.scope._managed_observation_candidate()
+
+    def _observe_managed_admission_capacity(self) -> None:
+        owner = self.scope._managed_observer_owner or self.scope
+        if not owner._managed_observation_enabled:
+            return
+        usage = self._usage
+        # Each live child's entire admitted upper is already in reserved_bytes.
+        # Adding that child's current actual usage would count it twice.
+        simultaneous = (
+            usage.host_bytes
+            + usage.native_bytes
+            + usage.retained_host_bytes
+            + usage.children_live_bytes
+            + usage.reserved_bytes
+        )
+        self._managed_admission_peak = max(
+            self._managed_admission_peak,
+            self._peak_bytes,
+            usage.combined_peak_bytes,
+            simultaneous,
+        )
 
     @property
     def cavity_cells(self) -> int:
@@ -2399,7 +3408,7 @@ class NativeBatchTicket:
 
     def __enter__(self) -> NativeBatchTicket:
         with self._lock:
-            self._require_live()
+            self._require_unrefused()
             self._require_host_writer()
             if self._entered:
                 raise RuntimeError(
@@ -2426,7 +3435,7 @@ class NativeBatchTicket:
         work = _unsigned_budget(work, "work")
         queries = _unsigned_budget(geometry_queries, "geometry_queries")
         with self._lock:
-            self._require_live()
+            self._require_unrefused()
             self._require_host_writer()
             usage = self._usage
             cavity = (
@@ -2480,10 +3489,11 @@ class NativeBatchTicket:
 
     def native_target(self) -> AbstractContextManager[None]:
         """Install this reservation as the native execution and allocation owner."""
+        self.scope._managed_observation_activate(self)
         return _NativeBatchTarget(self)
 
     def managed_storage(self) -> ManagedBytesContributor:
-        self._require_live()
+        self._require_unrefused()
         return ManagedBytesContributor(self)
 
     def set_managed_storage(
@@ -2497,13 +3507,19 @@ class NativeBatchTicket:
         value = 0 if bound is None else _unsigned_budget(bound, "managed_bytes")
         with self._lock:
             previous = self._managed_components.get(owner, 0)
-            if self._settled:
-                if value > previous:
-                    raise RuntimeError(
-                        "NativeBatchTicket.managed_storage must not grow after settlement; got a larger bound."
-                    )
-            else:
+            if (self._settled or self._refused) and value > previous:
+                raise RuntimeError(
+                    "NativeBatchTicket.managed_storage must not grow after refusal or settlement; got a larger bound."
+                )
+            if not self._settled:
                 self._require_host_writer()
+            if (
+                bound is not None
+                and owner in self._managed_components
+                and value == previous
+            ):
+                return
+            if not self._settled:
                 usage = self._usage
                 # Contributor replacement changes only its delta in the
                 # affine host aggregate, not any native/retained capacity.
@@ -2528,6 +3544,28 @@ class NativeBatchTicket:
         if not self._settled and self.parent is not None:
             self.parent._observe_descendant_capacity()
 
+    def managed_storage_headroom(self, owner: ManagedBytesContributor, /) -> int:
+        """Return the largest bound ``owner`` can take now without a refusal."""
+        if owner.ticket is not self:
+            raise ValueError(
+                "NativeBatchTicket.managed_storage must belong to this ticket; got another owner."
+            )
+        with self._lock:
+            previous = self._managed_components.get(owner, 0)
+            if self._settled or self._refused:
+                return previous
+            usage = self._usage
+            # set_managed_storage refuses host - previous + bound above
+            # max(host, capacity); this is the same comparison solved for bound.
+            capacity = (
+                self.bytes_upper
+                - usage.native_bytes
+                - usage.retained_host_bytes
+                - usage.children_live_bytes
+                - usage.reserved_bytes
+            )
+            return previous + max(0, capacity - usage.host_bytes)
+
     def batch(
         self,
         work_upper: int,
@@ -2545,7 +3583,7 @@ class NativeBatchTicket:
     def checkpoint(self) -> None:
         """Check the native deadline without a per-item accounting FFI call."""
         with self._lock:
-            self._require_live()
+            self._require_unrefused()
             status = MeshcoreStatus(
                 self._library["phx_mc_execution_batch_checkpoint"](self._handle)
             )
@@ -2576,10 +3614,14 @@ class NativeBatchTicket:
         self._settled = True
         self._handle = ctypes.c_void_p()
         del self.scope._tickets[self]
+        self.scope._managed_observation_settle(self)
         if self.parent is not None:
             with self.parent._lock:
                 self.parent._children.remove(self)
                 self.parent._observe_capacity()
+                if self.parent._refused and not self.parent._children:
+                    self.parent.settle()
+                    return
             if self.parent.parent is not None:
                 self.parent.parent._observe_descendant_capacity()
 
@@ -2610,6 +3652,8 @@ class NativeBatchTicket:
 
         A fitting request is an estimate defect and leaves the ticket live.
         A proven resource refusal destroys the ticket without a probe reservation.
+        Live children keep their reservations: native records the refusal now,
+        and the last child's settlement commits this ticket once.
         """
         requested = (
             _unsigned_budget(work_upper, "work_upper"),
@@ -2618,10 +3662,12 @@ class NativeBatchTicket:
             _unsigned_budget(bytes_upper, "bytes_upper"),
         )
         with self._lock:
-            self._require_live()
+            self._require_unrefused()
             if self._target is not None:
                 self._target.close(None)
-            self._require_settleable()
+            pending = bool(self._children)
+            if not pending:
+                self._require_settleable()
             self._observe_capacity()
             snapshot = self._snapshot()
             actual = np.asarray(self._host_actual(), dtype=np.uint64)
@@ -2644,11 +3690,14 @@ class NativeBatchTicket:
                 raise RuntimeError(
                     "NativeBatchTicket.refuse must return a refusal; got successful status."
                 )
-            self._finish_settlement(snapshot)
+            if pending:
+                self._refused = True
+            else:
+                self._finish_settlement(snapshot)
             values.setflags(write=False)
             error = MeshcoreError(
                 status,
-                f"_meshcore.NativeBatchTicket.refuse.work_upper must satisfy the input contract (execution_batch_refuse upper={requested}, remaining={tuple(values[:4])}, consumed={tuple(values[4:6])}); got {_input_summary(work_upper)}.",
+                f"NativeBatchTicket.refuse: {'request deadline expired' if status is MeshcoreStatus.TIMEOUT else 'request resource allowance exhausted'}; requested next work/query increments and cavity/storage capacities={requested}, remaining={tuple(values[:4])}, consumed work/queries={tuple(values[4:6])}.",
             )
             error.batch_admitted_upper = (
                 self.work_upper,
@@ -2673,7 +3722,9 @@ class NativeBatchTicket:
                 self._target.close(error)
             for child in tuple(self._children):
                 child.__exit__(error_type, error, traceback)
-            self.settle()
+            with self._lock:
+                if not self._settled:
+                    self.settle()
         except BaseException as failure:
             if error is None:
                 raise
@@ -2697,7 +3748,7 @@ class _NativeBatchTarget(AbstractContextManager[None]):
         ticket = self.ticket
         identity = threading.get_ident()
         with ticket._lock:
-            ticket._require_live()
+            ticket._require_unrefused()
             ticket._require_host_writer()
             if self._entered:
                 raise RuntimeError(
@@ -2840,6 +3891,41 @@ _native_context_stack: ContextVar[
 ] = ContextVar("native_context_stack", default=())
 
 
+def _attach_scope_refusal(
+    library: MeshcoreLibrary, scope: ctypes.c_void_p, error: MeshcoreError, /
+) -> None:
+    """Attach a live scope's immutable first-refusal snapshot and request.
+
+    Missing snapshots or requests leave their fields unset.
+    """
+    if error.status not in (MeshcoreStatus.CAPACITY_EXCEEDED, MeshcoreStatus.TIMEOUT):
+        return
+    if error.batch_refusal_evidence is None:
+        values = np.zeros((8,), dtype=np.uint64)
+        observed = MeshcoreStatus(
+            library["phx_mc_execution_batch_refusal"](scope, values.ctypes.data)
+        )
+        if observed is MeshcoreStatus.OK:
+            values.setflags(write=False)
+            error.batch_refusal_evidence = values
+        elif observed is not MeshcoreStatus.INVALID_ARGUMENT:
+            _raise_for_call(observed, "execution_batch_refusal")
+    if error.batch_requested_upper is None:
+        requested = np.zeros((4,), dtype=np.uint64)
+        observed = MeshcoreStatus(
+            library["phx_mc_execution_refusal_request"](scope, requested.ctypes.data)
+        )
+        if observed is MeshcoreStatus.OK:
+            error.batch_requested_upper = (
+                int(requested[0]),
+                int(requested[1]),
+                int(requested[2]),
+                int(requested[3]),
+            )
+        elif observed is not MeshcoreStatus.INVALID_ARGUMENT:
+            _raise_for_call(observed, "execution_refusal_request")
+
+
 def _close_native_context_children(
     owner: NativeExecutionScope | _NativeBatchTarget,
     error: BaseException | None,
@@ -2902,8 +3988,22 @@ class NativeHostStorageWorkspace:
         self._active = False
         self._token: Token[NativeHostStorageWorkspace | None] | None = None
         self.bound = 0
+        self._managed_observation_ticket: (
+            weakref.ReferenceType[NativeBatchTicket] | None
+        ) = None
+        self._managed_observation_origin: (
+            weakref.ReferenceType[NativeExecutionScope] | None
+        ) = None
         self._retained_owners: dict[int, object] = {}
         self._logical_unmanaged_bytes_upper = 0
+        self._covered_owners: list[Mapping[int, object]] = []
+        self._shared_owners: list[Mapping[int, object]] = []
+        self._adopted_reservations: list[
+            tuple[NativeBatchTicket, ManagedBytesContributor]
+        ] = []
+        self._adopted_workspaces: list[NativeHostStorageWorkspace] = []
+        self._adopted_by: NativeHostStorageWorkspace | None = None
+        self._source_metadata = False
 
     def open(self) -> NativeHostStorageWorkspace:
         """Open one explicit storage lifetime on the active creating scope."""
@@ -2935,29 +4035,76 @@ class NativeHostStorageWorkspace:
         return self
 
     def set_bound(self, total_bytes_upper: int, /) -> None:
-        total = _unsigned_budget(total_bytes_upper, "total_bytes_upper")
+        self._resize_bound(
+            _unsigned_budget(total_bytes_upper, "total_bytes_upper"), reserve_empty=False
+        )
+
+    def reserve_empty(self) -> None:
+        """Admit this real native token before querying exact payload headroom."""
+        self._resize_bound(self.bound, reserve_empty=True)
+
+    def _resize_bound(self, total: int, /, *, reserve_empty: bool) -> None:
         budget = current_native_execution_scope()
+        root = budget
+        while root is not None and root.parent is not None:
+            root = root.parent
+        owner_root = self._budget
+        while owner_root.parent is not None:
+            owner_root = owner_root.parent
+        if self._adopted_by is not None:
+            raise RuntimeError(
+                "NativeHostStorageWorkspace.set_bound must use its current owner; "
+                "got a transferred workspace."
+            )
         if (
             not self._active
             or self._library is None
             or budget is None
             or budget._library is not self._library
+            or root is not owner_root
+            or owner_root._thread is None
         ):
             raise RuntimeError(
                 "NativeHostStorageWorkspace.set_bound must use its active pool; got inactive or foreign scope."
             )
-        if total == 0 and self._reservation.value is None:
+        if total == 0 and self._reservation.value is None and not reserve_empty:
             return
         if total == self.bound and self._reservation.value is not None:
             return
-        _raise_for_call(
-            self._library["phx_mc_execution_reserve_host_storage"](
-                budget._handle,
-                total,
-                ctypes.addressof(self._reservation),
-            ),
-            "execution_reserve_host_storage",
+        observation_ticket = (
+            budget._managed_observation_target()
+            if self._reservation.value is None
+            else self._managed_observation_ticket
         )
+        observation_origin = (
+            weakref.ref(budget)
+            if self._reservation.value is None
+            else self._managed_observation_origin
+        )
+        release = (
+            budget._managed_observation_begin_release(
+                observation_ticket, origin=observation_origin
+            )
+            if total < self.bound
+            else None
+        )
+        if total >= self.bound:
+            budget._managed_observation_mutation(
+                observation_ticket, origin=observation_origin
+            )
+        try:
+            with budget._managed_retained_native_call():
+                _raise_for_call(
+                    self._library["phx_mc_execution_reserve_host_storage"](
+                        budget._handle,
+                        total,
+                        ctypes.addressof(self._reservation),
+                    ),
+                    "execution_reserve_host_storage",
+                )
+        finally:
+            if release is not None:
+                budget._managed_observation_end_release(release)
         if self._reservation.value is None:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR,
@@ -2966,11 +4113,18 @@ class NativeHostStorageWorkspace:
         if self._finalizer is None:
             self._finalizer = weakref.finalize(
                 self,
-                self._library["phx_mc_execution_release_host_storage"],
+                budget._managed_observation_release_host_storage,
+                weakref.ref(budget._managed_observer_owner or budget),
+                self._library,
                 self._reservation.value,
+                observation_ticket,
+                observation_origin,
             )
             self._finalizer.atexit = False
         self.bound = total
+        self._managed_observation_ticket = observation_ticket
+        self._managed_observation_origin = observation_origin
+        budget._managed_observation_candidate()
 
     @property
     def logical_unmanaged_bytes_upper(self) -> int:
@@ -2981,8 +4135,178 @@ class NativeHostStorageWorkspace:
         """
         return self._logical_unmanaged_bytes_upper
 
-    def retain_owner(self, value: object, /) -> None:
-        """Admit one retained tree's declared storage with one workspace resize."""
+    @property
+    def retained_owner_objects(self) -> Mapping[int, object]:
+        """Read the actual union of owned and live covered graph identities."""
+        # ChainMap mutates only its first, owned dictionary. Borrowed layers
+        # are read-only despite the constructor's MutableMapping annotation.
+        return ChainMap(
+            self._retained_owners,
+            *(
+                cast(MutableMapping[int, object], owners)
+                for owners in self._shared_owners
+            ),
+            *(
+                cast(MutableMapping[int, object], owners)
+                for owners in self._covered_owners
+            ),
+        )
+
+    @property
+    def has_covered_retained_storage(self) -> bool:
+        """Whether the caller currently holds explicit external graph coverage."""
+        return bool(self._covered_owners)
+
+    @contextmanager
+    def cover_retained_storage(self, owners: Mapping[int, object], /) -> Iterator[None]:
+        """Borrow graph coverage while its external live reservation is held."""
+        if not self._active or self._adopted_by is not None:
+            raise RuntimeError("Host storage coverage requires its active owner.")
+        self._covered_owners.append(owners)
+        try:
+            yield
+        finally:
+            if self._covered_owners[-1] is not owners:
+                raise RuntimeError("Host storage coverage must leave in nesting order.")
+            self._covered_owners.pop()
+
+    def adopt_retained_storage(
+        self,
+        ticket: BatchTicket,
+        contributor: ManagedBytesContributor,
+        owners: Mapping[int, object],
+        logical_bytes: int,
+        /,
+    ) -> None:
+        """Adopt the exact live ticket; never release or readmit its capacity."""
+        if isinstance(ticket, NativeScopeTicket):
+            self._adopt_scope_storage(ticket, contributor, owners, logical_bytes)
+            return
+        if (
+            not self._active
+            or self._adopted_by is not None
+            or not isinstance(ticket, NativeBatchTicket)
+            or ticket.scope is not self._budget
+            or ticket.settled
+            or contributor.ticket is not ticket
+            or any(prior is ticket for prior, _ in self._adopted_reservations)
+        ):
+            raise RuntimeError(
+                "Host storage adoption requires one live same-scope owner."
+            )
+        logical_total = self._logical_unmanaged_bytes_upper + _unsigned_budget(
+            logical_bytes, "logical_bytes"
+        )
+        # Prepare both indices before committing; failures leave both owners
+        # unchanged and the caller still holds the original live reservation.
+        adopted = [*self._adopted_reservations, (ticket, contributor)]
+        shared = [*self._shared_owners, owners]
+        self._adopted_reservations = adopted
+        self._shared_owners = shared
+        self._logical_unmanaged_bytes_upper = logical_total
+
+    def _adopt_scope_storage(
+        self,
+        ticket: NativeScopeTicket,
+        contributor: ManagedBytesContributor,
+        owners: Mapping[int, object],
+        logical_bytes: int,
+        /,
+    ) -> None:
+        """Transfer a storage-only scope view's live tokens, without readmission."""
+        if (
+            not self._active
+            or self._adopted_by is not None
+            or ticket.scope is not self._budget
+            or ticket.settled
+            or ticket._entered
+            or contributor.ticket is not ticket
+            or ticket._default_bytes
+            or len(ticket._components) != 1
+            or contributor not in ticket._components
+            or ticket not in ticket.scope._ticket_views
+        ):
+            raise RuntimeError(
+                "Host storage adoption requires one live storage-only scope view."
+            )
+        ticket._active_scope()
+        prior_bound = self.bound
+        count = len(ticket._workspaces)
+        # Child-reference tuples, replacement lists, weak-owner/index slots and
+        # rollback records are concrete new metadata, not a copy of their payload.
+        self.set_bound(prior_bound + 256 * (16 + 12 * count))
+        try:
+            children = tuple(ticket._workspaces.values())
+            for child in children:
+                ancestor = child._budget
+                while ancestor is not None and ancestor is not self._budget:
+                    ancestor = ancestor.parent
+                if (
+                    ancestor is None
+                    or child._library is not self._library
+                    or not child._active
+                    or child._adopted_by is not None
+                    or child._token is not None
+                    or child._adopted_workspaces
+                    or child._adopted_reservations
+                ):
+                    raise RuntimeError(
+                        "Scope storage adoption requires unchanged same-pool tokens."
+                    )
+            adopted = [*self._adopted_workspaces, *children]
+            shared = [*self._shared_owners, owners]
+            logical_total = self._logical_unmanaged_bytes_upper + _unsigned_budget(
+                logical_bytes, "logical_bytes"
+            )
+        except BaseException:
+            self.set_bound(prior_bound)
+            raise
+        # All potentially allocating work is complete. Commit the one closer,
+        # then detach the old view without closing any live contribution.
+        self._adopted_workspaces = adopted
+        self._shared_owners = shared
+        self._logical_unmanaged_bytes_upper = logical_total
+        for child in children:
+            child._adopted_by = self
+        ticket._workspaces.clear()
+        ticket._components.clear()
+        ticket._default_bytes = 0
+        ticket.settled = True
+        del ticket.scope._ticket_views[ticket]
+
+    def adopt_workspace(self, child: NativeHostStorageWorkspace, /) -> None:
+        """Transfer an already admitted token and its retained graph unchanged."""
+        if (
+            not self._active
+            or self._adopted_by is not None
+            or child is self
+            or not child._active
+            or child._adopted_by is not None
+            or child._budget is not self._budget
+            or child._token is not None
+            or child._adopted_workspaces
+            or child._adopted_reservations
+        ):
+            raise RuntimeError("Host workspace adoption requires a separate live token.")
+        logical_total = (
+            self._logical_unmanaged_bytes_upper + child._logical_unmanaged_bytes_upper
+        )
+        adopted = [*self._adopted_workspaces, child]
+        shared = [*self._shared_owners, child._retained_owners]
+        self._adopted_workspaces = adopted
+        self._shared_owners = shared
+        self._logical_unmanaged_bytes_upper = logical_total
+        child._adopted_by = self
+
+    def retain_owner(
+        self,
+        value: object,
+        /,
+        *,
+        existing: Mapping[int, object] | None = None,
+        replace_bound: bool = False,
+    ) -> None:
+        """Admit a retained graph union, optionally completing a scratch phase."""
         if not self._active:
             raise RuntimeError(
                 f"_meshcore.NativeHostStorageWorkspace.retain_owner.value must satisfy the input contract (Source retention requires its active host workspace.); got {_input_summary(value)}."
@@ -2993,14 +4317,131 @@ class NativeHostStorageWorkspace:
                 f"_meshcore.NativeHostStorageWorkspace.retain_owner.value must satisfy the input contract (Source retention requires its active native pool.); got {_input_summary(value)}."
             )
 
-        retained, declared, logical, _ = retained_host_storage_profile(
-            value, self._retained_owners, is_native_host_buffer
-        )
-        self.set_bound(self.bound + declared)
-        self._retained_owners.update(retained)
-        self._logical_unmanaged_bytes_upper += logical
+        if replace_bound and (
+            self._retained_owners
+            or self._adopted_workspaces
+            or self._adopted_reservations
+        ):
+            raise RuntimeError("Host phase completion requires an unassigned token.")
+        covered = self.retained_owner_objects
+        if existing is not None:
+            covered = ChainMap(
+                cast(MutableMapping[int, object], covered),
+                cast(MutableMapping[int, object], existing),
+            )
+        if not self._covered_owners and not replace_bound:
+            # Other routes retain their existing contract; they have not
+            # opted into the bounded-host publication/ownership proof.
+            retained, declared, logical, _ = retained_host_storage_profile(
+                value, covered, is_native_host_buffer
+            )
+            self.set_bound(self.bound + declared)
+            self._retained_owners.update(retained)
+            self._logical_unmanaged_bytes_upper += logical
+            return
+        with NativeHostStorageWorkspace(scope) as traversal:
+            traversal.set_bound(1024)
+            traversal_bound = 1024
+
+            def admit_owner(owner: object) -> None:
+                nonlocal traversal_bound
+                # Pending edge tuples/list slots and visited-owner indices.
+                # Special canonical records have <=8 children; collections
+                # and dataclasses declare larger fanout before materialization.
+                slots = 8
+                if isinstance(owner, Mapping):
+                    slots = max(slots, 2 * len(owner))
+                elif isinstance(owner, (tuple, list, set, frozenset)):
+                    slots = max(slots, len(owner))
+                fields = getattr(type(owner), "__dataclass_fields__", None)
+                if fields is not None:
+                    slots = max(slots, len(fields))
+                if isinstance(owner, np.ndarray) and owner.dtype.hasobject:
+                    slots = max(slots, owner.size)
+                if isinstance(owner, PyTreeDef):
+                    slots = max(slots, owner.num_nodes + 2)
+                traversal_bound += 512 + 512 * slots
+                traversal.set_bound(traversal_bound)
+
+            retained, declared, logical, _ = retained_host_storage_profile(
+                value, covered, is_native_host_buffer, admit_owner=admit_owner
+            )
+            self.set_bound(declared if replace_bound else self.bound + declared)
+            self._retained_owners.update(retained)
+            self._logical_unmanaged_bytes_upper += logical
+
+    def retain_source_metadata(self, source: object, /) -> weakref.finalize:
+        """Atomically hand prepaid metadata to a weak completed-source lifetime.
+
+        Only a metadata-only token admitted by the actual request root is
+        eligible. All graph inspection, work, and capacity admission must have
+        finished before root end. The returned finalizer captures neither this
+        workspace nor its scope and permits early release by the publication
+        owner; failed binding leaves the original reservation intact.
+        """
+        if (
+            not self._source_metadata
+            or not self._active
+            or not self._budget._source_metadata_completed
+            or self._budget._thread is not None
+            or self._budget.parent is not None
+            or current_native_execution_scope() is not None
+            or self._token is not None
+            or self._adopted_by is not None
+            or self._retained_owners
+            or self._covered_owners
+            or self._shared_owners
+            or self._adopted_reservations
+            or self._adopted_workspaces
+            or self._finalizer is None
+        ):
+            raise RuntimeError(
+                "Source metadata retention requires its completed metadata-only root lease."
+            )
+        prior = self._finalizer
+        invocation = prior.peek()
+        if invocation is None:
+            raise RuntimeError("Source metadata retention requires its live reservation.")
+        _, callback, args, kwargs = invocation
+        empty = ctypes.c_void_p()
+        retained = weakref.finalize(source, callback, *args, **kwargs)
+        retained.atexit = False
+        # Both finalizers cover the same token until the old one is detached:
+        # there is no release/readmission gap, nor an unowned native handle.
+        prior.detach()
+        self._finalizer = None
+        self._reservation = empty
+        self._active = False
+        self.bound = 0
+        self._source_metadata = False
+        return retained
 
     def close(self) -> None:
+        if self._adopted_by is not None:
+            raise RuntimeError("Transferred host storage must close through its owner.")
+        reservations, self._adopted_reservations = self._adopted_reservations, []
+        children, self._adopted_workspaces = self._adopted_workspaces, []
+        primary: BaseException | None = None
+        for child in reversed(children):
+            child._adopted_by = None
+            try:
+                child.close()
+            except BaseException as error:
+                if primary is None:
+                    primary = error
+        for ticket, contributor in reversed(reservations):
+            try:
+                if not ticket.settled:
+                    contributor.close()
+                    ticket.settle()
+            except BaseException as error:
+                if primary is None:
+                    primary = error
+        if self._finalizer is None and self._reservation.value is not None:
+            self._budget._managed_observation_mutation(
+                self._managed_observation_ticket,
+                origin=self._managed_observation_origin,
+            )
         if self._finalizer is not None:
             self._finalizer()
             self._finalizer = None
@@ -3009,11 +4450,14 @@ class NativeHostStorageWorkspace:
         self._reservation = ctypes.c_void_p()
         self._active = False
         self._retained_owners.clear()
+        self._shared_owners.clear()
         self.bound = 0
         self._logical_unmanaged_bytes_upper = 0
         if self._token is not None:
             _active_host_workspace.reset(self._token)
             self._token = None
+        if primary is not None:
+            raise primary
 
     def __exit__(
         self,
@@ -3270,6 +4714,8 @@ class _ConstrainedDelaunay2DRequest(ctypes.Structure):
     keep_convex_hull: int
     min_angle_degrees: float
     max_area: float
+    max_edge_length: float
+    lattice_spacing: float
     max_steiner: int
     max_triangles: int
     max_cavity_cells: int
@@ -3293,6 +4739,8 @@ class _ConstrainedDelaunay2DRequest(ctypes.Structure):
         ("keep_convex_hull", ctypes.c_int32),
         ("min_angle_degrees", ctypes.c_double),
         ("max_area", ctypes.c_double),
+        ("max_edge_length", ctypes.c_double),
+        ("lattice_spacing", ctypes.c_double),
         ("max_steiner", ctypes.c_int64),
         ("max_triangles", ctypes.c_int64),
         ("max_cavity_cells", ctypes.c_int64),
@@ -3400,6 +4848,11 @@ class _TetMeshCreateRequest(ctypes.Structure):
     witness_strata: int | None
     witness_entities: int | None
     witness_parameters: int | None
+    curved_source_count: int
+    curved_sources: int | None
+    curved_tolerances: int | None
+    curved_digests: int | None
+    face_claims: int | None
     boundary_policy: int
     max_vertices: int
     max_tetrahedra: int
@@ -3432,6 +4885,11 @@ class _TetMeshCreateRequest(ctypes.Structure):
         ("witness_strata", _P),
         ("witness_entities", _P),
         ("witness_parameters", _P),
+        ("curved_source_count", ctypes.c_int64),
+        ("curved_sources", _P),
+        ("curved_tolerances", _P),
+        ("curved_digests", _P),
+        ("face_claims", _P),
         ("boundary_policy", ctypes.c_int32),
         ("max_vertices", ctypes.c_int64),
         ("max_tetrahedra", ctypes.c_int64),
@@ -3512,6 +4970,15 @@ class _RestrictedPowerCellsRequest(ctypes.Structure):
     max_pieces: int
     max_vertices: int
     work_limit: int
+    max_edges: int
+    max_faces: int
+    max_face_entries: int
+    max_cells: int
+    max_site_witnesses: int
+    max_sided_loop_occurrences: int
+    max_sided_corner_occurrences: int
+    max_connectivity_entries: int
+    max_data_bytes: int
     record_phases: int
     result: int | None
 
@@ -3531,6 +4998,15 @@ class _RestrictedPowerCellsRequest(ctypes.Structure):
         ("max_pieces", ctypes.c_int64),
         ("max_vertices", ctypes.c_int64),
         ("work_limit", ctypes.c_int64),
+        ("max_edges", ctypes.c_int64),
+        ("max_faces", ctypes.c_int64),
+        ("max_face_entries", ctypes.c_int64),
+        ("max_cells", ctypes.c_int64),
+        ("max_site_witnesses", ctypes.c_int64),
+        ("max_sided_loop_occurrences", ctypes.c_int64),
+        ("max_sided_corner_occurrences", ctypes.c_int64),
+        ("max_connectivity_entries", ctypes.c_int64),
+        ("max_data_bytes", ctypes.c_int64),
         ("record_phases", ctypes.c_int8),
         ("result", _P),
     ]
@@ -3560,6 +5036,15 @@ class _RestrictedPowerCellsExactRequest(ctypes.Structure):
     max_pieces: int
     max_vertices: int
     work_limit: int
+    max_edges: int
+    max_faces: int
+    max_face_entries: int
+    max_cells: int
+    max_site_witnesses: int
+    max_sided_loop_occurrences: int
+    max_sided_corner_occurrences: int
+    max_connectivity_entries: int
+    max_data_bytes: int
     record_phases: int
     result: int | None
 
@@ -3584,6 +5069,15 @@ class _RestrictedPowerCellsExactRequest(ctypes.Structure):
         ("max_pieces", ctypes.c_int64),
         ("max_vertices", ctypes.c_int64),
         ("work_limit", ctypes.c_int64),
+        ("max_edges", ctypes.c_int64),
+        ("max_faces", ctypes.c_int64),
+        ("max_face_entries", ctypes.c_int64),
+        ("max_cells", ctypes.c_int64),
+        ("max_site_witnesses", ctypes.c_int64),
+        ("max_sided_loop_occurrences", ctypes.c_int64),
+        ("max_sided_corner_occurrences", ctypes.c_int64),
+        ("max_connectivity_entries", ctypes.c_int64),
+        ("max_data_bytes", ctypes.c_int64),
         ("record_phases", ctypes.c_int8),
         ("result", _P),
     ]
@@ -3664,11 +5158,13 @@ class _LevelSetSplit3DRequest(ctypes.Structure):
     max_cells: int
     work_limit: int
     cavity_limit: int
+    output_mode: int
     out_points: int | None
     out_cells: int | None
     out_parents: int | None
     out_sources: int | None
     out_weights: int | None
+    out_deviations: int | None
     counters: int | None
 
     _fields_ = [
@@ -3686,11 +5182,13 @@ class _LevelSetSplit3DRequest(ctypes.Structure):
         ("max_cells", ctypes.c_int64),
         ("work_limit", ctypes.c_int64),
         ("cavity_limit", ctypes.c_int64),
+        ("output_mode", ctypes.c_int32),
         ("out_points", _P),
         ("out_cells", _P),
         ("out_parents", _P),
         ("out_sources", _P),
         ("out_weights", _P),
+        ("out_deviations", _P),
         ("counters", _P),
     ]
 
@@ -3774,6 +5272,41 @@ class _TetMeshCommitEdgeInsertionRequest(ctypes.Structure):
         ("target_size", ctypes.c_double),
         ("work_limit", ctypes.c_int64),
         ("inserted_vertex", _P),
+    ]
+
+
+@final
+class _TetMeshCurvedCollapseRequest(ctypes.Structure):
+    """Naturally aligned transport for phx_mc_tet_mesh_curved_collapse_request."""
+
+    mesh: int | None
+    remove: int
+    keep: int
+    source: int
+    accepted_generation: int
+    digest: int | None
+    claim_count: int
+    claim_faces: int | None
+    claim_coordinates: int | None
+    claim_deviations: int | None
+    require_improvement: int
+    work_limit: int
+    applied: int | None
+
+    _fields_ = [
+        ("mesh", _P),
+        ("remove", ctypes.c_int32),
+        ("keep", ctypes.c_int32),
+        ("source", ctypes.c_int32),
+        ("accepted_generation", ctypes.c_int64),
+        ("digest", _P),
+        ("claim_count", ctypes.c_int64),
+        ("claim_faces", _P),
+        ("claim_coordinates", _P),
+        ("claim_deviations", _P),
+        ("require_improvement", ctypes.c_int32),
+        ("work_limit", ctypes.c_int64),
+        ("applied", _P),
     ]
 
 
@@ -3996,6 +5529,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (ctypes.POINTER(_RestrictedPowerCellsExactRequest),),
     ),
     "phx_mc_power_cells_sizes": (_I32, (_P, _P)),
+    "phx_mc_power_cells_preflight": (_I32, (_P, _P)),
+    "phx_mc_power_cells_capacity": (_I32, (_P, _P)),
     "phx_mc_power_cells_counters": (_I32, (_P, _P)),
     "phx_mc_power_cells_source_work_units": (_I64, (_P,)),
     "phx_mc_power_cells_failure": (_I32, (_P, _P)),
@@ -4052,6 +5587,16 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (ctypes.POINTER(_TetMeshCommitEdgeInsertionRequest),),
     ),
     "phx_mc_tet_mesh_collapse_edge": (_I32, (_P, _I32, _I32, _I32, _I64, _P)),
+    "phx_mc_tet_mesh_inspect_curved_collapse": (
+        _I32,
+        (_P, _I32, _I32, _I32, _I64, _I64, _P, _P, _P, _P),
+    ),
+    "phx_mc_tet_mesh_collapse_curved_edge": (
+        _I32,
+        (ctypes.POINTER(_TetMeshCurvedCollapseRequest),),
+    ),
+    "phx_mc_tet_mesh_accepted_generation": (_I32, (_P, _P)),
+    "phx_mc_tet_mesh_curved_claims": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_remove_multiface": (_I32, (_P, _I64, _P, _I32, _I32, _I64, _P)),
     "phx_mc_tet_mesh_exude": (_I32, (_P, _F64, _F64, _F64, _F64, _I32, _I64, _P, _P)),
     "phx_mc_restricted_rays_3d": (
@@ -4098,6 +5643,73 @@ def _library_location(configured: str, /) -> Path | str:
     return Path(importlib.import_module("phydrax_meshcore").library_path())
 
 
+_MANAGED_NATIVE_CONTROL = frozenset(
+    (
+        "phx_mc_version",
+        "phx_mc_abi_contract",
+        "phx_mc_build_hash",
+        "phx_mc_build_configuration",
+        "phx_mc_exact_domain",
+        "phx_mc_parallel_begin",
+        "phx_mc_parallel_end",
+        "phx_mc_execution_begin",
+        "phx_mc_execution_end",
+        "phx_mc_execution_allocator_bookkeeping",
+        "phx_mc_execution_charge",
+        "phx_mc_execution_batch_admit",
+        "phx_mc_execution_batch_settle",
+        "phx_mc_execution_batch_checkpoint",
+        "phx_mc_execution_batch_usage",
+        "phx_mc_execution_target_begin",
+        "phx_mc_execution_target_end",
+        "phx_mc_execution_batch_refuse",
+        "phx_mc_execution_batch_refusal",
+        "phx_mc_execution_refusal_request",
+        "phx_mc_execution_import_preparation",
+        "phx_mc_execution_prior_seconds",
+        "phx_mc_execution_admit_work_bound",
+        "phx_mc_execution_admit_cavity",
+        "phx_mc_execution_remaining",
+    )
+)
+_MANAGED_NATIVE_RETAINED = frozenset(
+    (
+        "phx_mc_execution_allocate_host_array",
+        "phx_mc_execution_reserve_host_storage",
+    )
+)
+_MANAGED_NATIVE_FREE = frozenset(
+    (
+        "phx_mc_execution_free_host_array",
+        "phx_mc_execution_release_host_storage",
+        "phx_mc_mesh_free",
+        "phx_mc_triangulation_3d_free",
+        "phx_mc_periodic_free",
+        "phx_mc_periodic_refinement_free",
+        "phx_mc_tet_mesh_free",
+        "phx_mc_plc3d_free",
+        "phx_mc_power_cells_free",
+        "phx_mc_arrangement_free",
+        "phx_mc_surface_envelope_free",
+    )
+)
+
+
+def _observe_managed_native_call(
+    result: Any, function: Any, arguments: tuple[Any, ...], /
+) -> Any:
+    """Observe actual typed entries without replacing their C callable identity.
+
+    This ABI has no Python callbacks: a lexical native target is still installed
+    when ctypes performs its post-call check. Never transform a return status or
+    retain its arguments; the owning Python wrapper still performs all cleanup.
+    """
+    scope = current_native_execution_scope()
+    if scope is not None:
+        scope._managed_native_entry(getattr(function, "__name__", ""), function)
+    return result
+
+
 @final
 class MeshcoreLibrary:
     """Loaded meshcore shared library with typed C entry points."""
@@ -4125,6 +5737,12 @@ class MeshcoreLibrary:
     ) -> None:
         self._library = library
         self._functions = functions
+        for function in functions.values():
+            if (
+                isinstance(function, CFuncPtr)
+                and getattr(function, "errcheck", None) is None
+            ):
+                function.errcheck = _observe_managed_native_call
         self.path = path
         self.version = version
         self.build_hash = build_hash
@@ -4211,6 +5829,15 @@ def _bind(library: ctypes.CDLL, path: Path, binary_hash: str, /) -> MeshcoreLibr
     )
     if error is not None:
         return error
+    clock_capabilities = tuple(
+        item for item in configuration.split("|") if item.startswith("execution_clocks=")
+    )
+    if clock_capabilities != (_EXECUTION_CLOCK_CAPABILITY,):
+        return (
+            f"meshcore library {str(path)!r} does not declare the required "
+            f"{_EXECUTION_CLOCK_CAPABILITY!r} capability exactly once; install the "
+            "matched phydrax-meshcore build for independent request and workflow clocks."
+        )
     try:
         required = importlib.metadata.version("phydrax")
     except importlib.metadata.PackageNotFoundError:
@@ -4417,15 +6044,18 @@ def _raise_for_call(status: int, operation: str, /) -> None:
 def _predicate(
     name: str, arrays: tuple[object, ...], width: int, /, ids: object = None
 ) -> np.ndarray:
+    """Keep predicate scratch on the live request without charging a host tariff.
+
+    Validation precedes target admission. The scope view reuses a mapped target
+    or, only while observing, prepays a phase from the actual remaining allowance.
+    """
     library = load_meshcore()
     names = tuple(f"point {index}" for index in range(len(arrays)))
     flat, leading = _batched_points(arrays, names, width)
     count = flat[0].shape[0]
     signs = np.zeros((count,), dtype=np.int8)
     pointers = [array.ctypes.data for array in flat]
-    if ids is None:
-        status = library[name](count, *pointers, signs.ctypes.data)
-    else:
+    if ids is not None:
         index = _index_array(ids, "ids")
         if index.shape[-1:] != (len(arrays),):
             raise ValueError(
@@ -4435,10 +6065,14 @@ def _predicate(
             np.broadcast_to(index, leading + (len(arrays),)).reshape((-1, len(arrays))),
             dtype=np.int64,
         )
-        status = library[name](
-            count, *pointers, index_flat.ctypes.data, signs.ctypes.data
-        )
-    _raise_for_call(status, name.removeprefix("phx_mc_"))
+        pointers.append(index_flat.ctypes.data)
+    scope = current_native_execution_scope()
+    with ExitStack() as stack:
+        if scope is not None:
+            ticket = stack.enter_context(scope.ticket_view())
+            stack.enter_context(ticket.native_target())
+        status = library[name](count, *pointers, signs.ctypes.data)
+        _raise_for_call(status, name.removeprefix("phx_mc_"))
     return signs.reshape(leading)
 
 
@@ -5581,13 +7215,29 @@ def point_triangle_locations(
 # ---------------------------------------------------------------- triangulations
 
 
-def _read_mesh(library: MeshcoreLibrary, handle: ctypes.c_void_p, /) -> NativeMeshArrays:
+def _read_mesh(
+    library: MeshcoreLibrary,
+    handle: ctypes.c_void_p,
+    /,
+    *,
+    admit_host_output: Callable[[int], None] | None = None,
+) -> NativeMeshArrays:
     # The native handle is released even when a copy fails.
     try:
         dimension = library["phx_mc_mesh_dimension"](handle)
         point_count = library["phx_mc_mesh_point_count"](handle)
         cell_count = library["phx_mc_mesh_cell_count"](handle)
         input_count = library["phx_mc_mesh_input_point_count"](handle)
+        if admit_host_output is not None:
+            # Five independent NumPy exports and their owner; native mesh
+            # payload remains separately charged until the finally below.
+            admit_host_output(
+                6 * 256
+                + point_count * dimension * 8
+                + 2 * cell_count * (dimension + 1) * 4
+                + input_count * 4
+                + cell_count * 4
+            )
         points = np.zeros((point_count, dimension), dtype=np.float64)
         cells = np.zeros((cell_count, dimension + 1), dtype=np.int32)
         vertex_map = np.zeros((input_count,), dtype=np.int32)
@@ -5644,6 +7294,7 @@ def _triangulate(
     max_work: int | None = None,
     max_scratch_bytes: int | None = None,
     record_native_resources: Callable[[PlanarExecutionEvidence], None] | None = None,
+    admit_host_output: Callable[[int], None] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     library = load_meshcore()
     point_array = _points(points, "points", width)
@@ -5707,7 +7358,7 @@ def _triangulate(
             MeshcoreStatus.INTERNAL_ERROR,
             f"_meshcore._triangulate.name must satisfy the input contract ({operation}: missing mesh); got {_input_summary(name)}.",
         )
-    mesh = _read_mesh(library, handle)
+    mesh = _read_mesh(library, handle, admit_host_output=admit_host_output)
     cells = mesh.cells
     vertex_map = mesh.vertex_map
     if evidence is not None and record_native_resources is not None:
@@ -5789,11 +7440,23 @@ def regular_2d(
 
 
 def regular_3d(
-    points: object, weights: object, /, *, max_tetrahedra: int | None = None
+    points: object,
+    weights: object,
+    /,
+    *,
+    max_tetrahedra: int | None = None,
+    admit_host_output: Callable[[int], None] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Regular (weighted Delaunay) tetrahedralization; redundant points map to -1."""
 
-    return _triangulate("phx_mc_regular_3d", points, weights, 3, max_tetrahedra)
+    return _triangulate(
+        "phx_mc_regular_3d",
+        points,
+        weights,
+        3,
+        max_tetrahedra,
+        admit_host_output=admit_host_output,
+    )
 
 
 def constrained_delaunay_2d(
@@ -5805,6 +7468,8 @@ def constrained_delaunay_2d(
     keep_convex_hull: bool = False,
     min_angle: float = 0.0,
     max_area: float = float("inf"),
+    max_edge_length: float = float("inf"),
+    lattice_spacing: float = 0.0,
     max_steiner: int = 0,
     max_triangles: int | None = None,
     max_cavity_cells: int | None = None,
@@ -5818,8 +7483,17 @@ def constrained_delaunay_2d(
 
     ``segments`` are ``(m, 2)`` point indices. Without ``keep_convex_hull`` the
     triangles outside the segment-bounded region and inside hole seeds are
-    removed. ``min_angle`` (degrees, ``[0, 60)``), ``max_area`` and
-    ``max_steiner`` bound the refinement. Returns :class:`ConstrainedDelaunay2D` with ``points (N, 2), triangles
+    removed. ``min_angle`` (degrees, ``[0, 60)``), ``max_area``,
+    ``max_edge_length`` (binary64 length of edges that are not input segment
+    pieces; ``inf`` disables it) and ``max_steiner`` bound the refinement.
+    ``lattice_spacing`` ``s > 0`` (``0`` disables it) first seeds the carved
+    region with the sites of the equilateral lattice ``o + i (s, 0) +
+    j (s/2, s sqrt(3)/2)`` (``o`` the lower input bounding-box corner), coarse
+    to fine by dyadic sublattice level, that lie in the domain off its vertices
+    and constrained edges, encroach no constrained subsegment of their
+    constrained Delaunay cavity and stay at least ``s/2`` from every input point
+    joined to them; seeds are free Steiner points within ``max_steiner``.
+    Returns :class:`ConstrainedDelaunay2D` with ``points (N, 2), triangles
     (T, 3), vertex_map (input_count,), segment_ids (T, 3), status``.
     ``vertex_map`` explicitly maps authored input identities to output vertices;
     ``segment_ids[t, k]`` is the input segment carrying the edge opposite vertex
@@ -5861,6 +7535,8 @@ def constrained_delaunay_2d(
         )
     angle = float(min_angle)
     area = float(max_area)
+    edge_length = float(max_edge_length)
+    spacing = float(lattice_spacing)
     if not (0.0 <= angle < 60.0):
         raise ValueError(
             f"_meshcore.constrained_delaunay_2d.min_angle must lie in [0, 60) degrees; got {_input_summary(min_angle)}."
@@ -5868,6 +7544,14 @@ def constrained_delaunay_2d(
     if not area > 0.0:
         raise ValueError(
             f"_meshcore.constrained_delaunay_2d.max_area must be positive (inf disables the bound); got {_input_summary(max_area)}."
+        )
+    if not edge_length > 0.0:
+        raise ValueError(
+            f"_meshcore.constrained_delaunay_2d.max_edge_length must be positive (inf disables the bound); got {_input_summary(max_edge_length)}."
+        )
+    if not (spacing == 0.0 or (spacing > 0.0 and math.isfinite(spacing))):
+        raise ValueError(
+            f"_meshcore.constrained_delaunay_2d.lattice_spacing must be zero (disabled) or positive and finite; got {_input_summary(lattice_spacing)}."
         )
     if isinstance(max_steiner, bool) or not isinstance(max_steiner, (int, np.integer)):
         raise TypeError(
@@ -5902,6 +7586,8 @@ def constrained_delaunay_2d(
                 keep_convex_hull=1 if keep_convex_hull else 0,
                 min_angle_degrees=angle,
                 max_area=area,
+                max_edge_length=edge_length,
+                lattice_spacing=spacing,
                 max_steiner=int(max_steiner),
                 max_triangles=limit,
                 max_cavity_cells=_budget(max_cavity_cells, "max_cavity_cells"),
@@ -7107,6 +8793,7 @@ def recover_plc_3d(
     work_limit: int,
     max_scratch_bytes: int | None = None,
     record_native_phase: NativePhaseRecorder | None = None,
+    admit_host_output: Callable[[int], None] | None = None,
 ) -> PlcRecovery3D:
     """Validate an oriented PLC and recover it in a constrained tetrahedralization.
 
@@ -7230,6 +8917,35 @@ def recover_plc_3d(
             library["phx_mc_plc3d_sizes"](handle, sizes.ctypes.data), "phx_mc_plc3d_sizes"
         )
         count, cells, faces, pieces, table, triangles = (int(value) for value in sizes)
+        if any(value < 0 for value in (count, cells, faces, pieces, table, triangles)):
+            raise MeshcoreError(
+                MeshcoreStatus.INTERNAL_ERROR,
+                "recover_plc_3d.output_sizes must be nonnegative; got a negative native size.",
+            )
+        if admit_host_output is not None:
+            # Exact payload of the sixteen arrays below, plus their declared
+            # 256-byte host wrappers and the returned record. The native result
+            # remains live here, so admission covers their real overlap.
+            f64 = np.dtype(np.float64).itemsize
+            i32 = np.dtype(np.int32).itemsize
+            i8 = np.dtype(np.int8).itemsize
+            payload = (
+                count * (7 * f64 + i32 + 2 * i8)
+                + cells * 5 * i32
+                + faces * 4 * i32
+                + pieces * 3 * i32
+                + table * 2 * i32
+                + triangles * 4 * i32
+            )
+            # The callback owns the output array wrappers and returned record.
+            # Counter-query temporaries belong to the caller's live input phase.
+            bound = payload + 17 * 256
+            if bound > np.iinfo(np.uint64).max:
+                raise MeshcoreError(
+                    MeshcoreStatus.CAPACITY_EXCEEDED,
+                    "recover_plc_3d.host_output must fit the managed-byte counter; got an overflowing export size.",
+                )
+            admit_host_output(bound)
         result = PlcRecovery3D(
             np.zeros((count, 3), dtype=np.float64),
             np.zeros((cells, 4), dtype=np.int32),
@@ -7397,6 +9113,96 @@ class TetMeshInsertionPlan(StrictModule):
     removed: NDArray[np.int32]
     proposed: NDArray[np.int32]
     buffer_bytes: int = eqx.field(static=True)
+
+
+@final
+class TetMeshCurvedSources(StrictModule):
+    """Host-declared smooth (curved) face sources of the own source complex.
+
+    ``source_ids`` (K,) are sorted scientific face source labels whose faces
+    belong to one smooth source surface, with finite nonnegative
+    ``tolerances`` (K,) and 32-byte ``digests`` (K, 32) binding each source to
+    the host certificate identity (source, revision, profile and limits).
+    ``face_claims`` (F,) give each input face its host-certified whole-facet
+    deviation, NaN exactly for faces of undeclared sources. Native only
+    compares digests and bounds; claims remain host evidence, never native
+    or planar PLC proof.
+    """
+
+    source_ids: NDArray[np.int64]
+    tolerances: NDArray[np.float64]
+    digests: NDArray[np.uint8]
+    face_claims: NDArray[np.float64]
+
+    def __post_init__(self) -> None:
+        banks = (
+            (self.source_ids, np.dtype(np.int64), 1),
+            (self.tolerances, np.dtype(np.float64), 1),
+            (self.digests, np.dtype(np.uint8), 2),
+            (self.face_claims, np.dtype(np.float64), 1),
+        )
+        for bank, dtype, rank in banks:
+            if (
+                not isinstance(bank, np.ndarray)
+                or bank.dtype != dtype
+                or bank.ndim != rank
+            ):
+                raise TypeError(
+                    f"_meshcore.TetMeshCurvedSources.__post_init__.self must satisfy the input contract (Curved source banks require their host dtypes and ranks.); got {_input_summary(self)}."
+                )
+        count = self.source_ids.shape[0]
+        if (
+            count == 0
+            or self.tolerances.shape != (count,)
+            or self.digests.shape != (count, 32)
+            or np.any(self.source_ids < 0)
+            or np.any(self.source_ids[1:] <= self.source_ids[:-1])
+            or not np.all(np.isfinite(self.tolerances))
+            or np.any(self.tolerances < 0.0)
+        ):
+            raise ValueError(
+                f"_meshcore.TetMeshCurvedSources.__post_init__.self must declare distinct sorted sources with finite nonnegative tolerances and 32-byte digests; got {_input_summary(self)}."
+            )
+        for bank, _, _ in banks:
+            bank.setflags(write=False)
+
+
+@final
+class TetMeshCurvedCollapsePlan(StrictModule):
+    """Validated, unpublished curved-source collapse of ``remove`` onto ``keep``.
+
+    ``faces`` (k, 3) are exactly the new constrained faces, oriented outward
+    from the source stratum's first material side (outward from the domain at
+    a boundary), on curved source ``source`` in ``accepted_generation``. The
+    host must certify every whole facet before :meth:`TetMesh3D.collapse_curved_edge`.
+    """
+
+    _owner: TetMesh3D = eqx.field(static=True)
+    remove: int = eqx.field(static=True)
+    keep: int = eqx.field(static=True)
+    source: int = eqx.field(static=True)
+    source_row: int = eqx.field(static=True)
+    accepted_generation: int = eqx.field(static=True)
+    require_improvement: bool = eqx.field(static=True)
+    faces: NDArray[np.int32]
+
+
+@final
+class TetMeshCurvedClaims(StrictModule):
+    """Retained delegated curved-source host claims of a native mesh.
+
+    Per claimed source row: ``rows`` (native face rows), scientific
+    ``source_ids``, bitwise ``coordinates`` (k, 3, 3), host-certified
+    ``deviations`` and the accepted ``generations`` they were bound in. Initial
+    and committed claims are host evidence; publication recomputes them from
+    the original source.
+    """
+
+    rows: NDArray[np.int32]
+    source_ids: NDArray[np.int64]
+    coordinates: NDArray[np.float64]
+    deviations: NDArray[np.float64]
+    generations: NDArray[np.int64]
 
 
 def _free_tet_mesh(library: MeshcoreLibrary, handle: int, /) -> None:
@@ -7670,7 +9476,9 @@ class TetMesh3D:
     own source complex; a :class:`TetMeshSourceComplex` declares the
     source rows, their deviation bounds and the initial witnesses. A
     face edge that is not a segment must be shared by exactly two faces of one
-    source, coplanar unless a vertex carries a bounded construction record. A ``"fixed"``
+    source, coplanar unless a vertex carries a bounded construction record or
+    both faces belong to one ``curved`` source (:class:`TetMeshCurvedSources`,
+    own source complex only). A ``"fixed"``
     boundary never splits constrained faces or segments; ``"conforming"``
     splits them at points exactly on them or, when none is representable, at
     ancestry-backed carriers whose certified deviation the source row's bound
@@ -7707,6 +9515,7 @@ class TetMesh3D:
         max_tetrahedra: int | None = None,
         max_scratch_bytes: int | None = None,
         source: TetMeshSourceComplex | None = None,
+        curved: TetMeshCurvedSources | None = None,
     ) -> None:
         library = load_meshcore()
         point_array = _points(points, "points", 3)
@@ -7750,6 +9559,27 @@ class TetMesh3D:
         segment_group_rows = _source_group_rows(
             segment_labels, segment_ids, "segment_sources"
         )
+        curved_rows, curved_tolerances, curved_digests, face_claims = (
+            None,
+            None,
+            None,
+            None,
+        )
+        if curved is not None:
+            if source is not None:
+                raise ValueError(
+                    f"_meshcore.TetMesh3D.__init__.curved must use the own source complex; got a declared source with {_input_summary(curved)}."
+                )
+            if curved.face_claims.shape != (face_rows.shape[0],):
+                raise ValueError(
+                    f"_meshcore.TetMesh3D.__init__.curved.face_claims must have shape ({face_rows.shape[0]},); got {_input_summary(curved.face_claims)}."
+                )
+            curved_rows = _source_group_rows(
+                curved.source_ids, face_ids, "curved sources"
+            )
+            curved_tolerances = np.ascontiguousarray(curved.tolerances)
+            curved_digests = np.ascontiguousarray(curved.digests)
+            face_claims = np.ascontiguousarray(curved.face_claims)
         handle = ctypes.c_void_p()
         status = library["phx_mc_tet_mesh_create"](
             ctypes.byref(
@@ -7801,6 +9631,11 @@ class TetMesh3D:
                     witness_parameters=None
                     if declared is None
                     else declared.witness_parameters.ctypes.data,
+                    curved_source_count=0 if curved_rows is None else curved_rows.size,
+                    curved_sources=_pointer(curved_rows),
+                    curved_tolerances=_pointer(curved_tolerances),
+                    curved_digests=_pointer(curved_digests),
+                    face_claims=_pointer(face_claims),
                     boundary_policy=policy,
                     max_vertices=vertices,
                     max_tetrahedra=tetrahedra_limit,
@@ -8693,6 +10528,179 @@ class TetMesh3D:
         )
         return self._applied(status, applied, "tet_mesh_collapse_edge")
 
+    def accepted_generation(self) -> int:
+        """Current accepted-state generation; every committed edit advances it."""
+        generation = np.zeros((1,), dtype=np.int64)
+        _raise_for_call(
+            self._library["phx_mc_tet_mesh_accepted_generation"](
+                self._live(), generation.ctypes.data
+            ),
+            "tet_mesh_accepted_generation",
+        )
+        return int(generation[0])
+
+    def inspect_curved_collapse(
+        self,
+        remove: int,
+        keep: int,
+        /,
+        *,
+        maximum_faces: int,
+        require_improvement: bool = False,
+        work_limit: int | None = None,
+    ) -> TetMeshCurvedCollapsePlan | None:
+        """Validate a curved-source surface collapse without mutation.
+
+        Native proves the volume/surface link conditions, positive cells, one
+        material stratum of one curved source and exact cancellation of the
+        oriented patch boundary chain. None is a refusal. ``maximum_faces``
+        bounds the reported new faces (more raises a capacity error).
+        """
+        capacity = _budget(maximum_faces, "maximum_faces")
+        if capacity < 1:
+            raise ValueError(
+                f"TetMesh3D.maximum_faces must be positive; got {maximum_faces}."
+            )
+        faces = np.empty((capacity, 3), dtype=np.int32)
+        count = np.zeros((1,), dtype=np.int64)
+        source = np.full((1,), -1, dtype=np.int32)
+        generation = np.full((1,), -1, dtype=np.int64)
+        _raise_for_call(
+            self._library["phx_mc_tet_mesh_inspect_curved_collapse"](
+                self._live(),
+                _node_id(remove, "remove"),
+                _node_id(keep, "keep"),
+                _boolean_flag(require_improvement, "require_improvement"),
+                _budget(work_limit, "work_limit"),
+                capacity,
+                count.ctypes.data,
+                source.ctypes.data,
+                generation.ctypes.data,
+                faces.ctypes.data,
+            ),
+            "tet_mesh_inspect_curved_collapse",
+        )
+        size = int(count[0])
+        if size == 0:
+            return None
+        if size < 0 or size > capacity or not 0 <= source[0] < self._face_source_ids.size:
+            raise RuntimeError(
+                f"_meshcore.TetMesh3D.inspect_curved_collapse.remove must satisfy the input contract (Native curved inspection exceeded its reported extent.); got {_input_summary(remove)}."
+            )
+        # Native orients from the first material side; publish outward like arrays().
+        outward = np.ascontiguousarray(faces[:size][:, (0, 2, 1)])
+        outward.setflags(write=False)
+        return TetMeshCurvedCollapsePlan(
+            self,
+            int(remove),
+            int(keep),
+            int(self._face_source_ids[int(source[0])]),
+            int(source[0]),
+            int(generation[0]),
+            bool(require_improvement),
+            outward,
+        )
+
+    @checked
+    def collapse_curved_edge(
+        self,
+        plan: TetMeshCurvedCollapsePlan,
+        coordinates: ArrayLike,
+        deviations: ArrayLike,
+        /,
+        *,
+        digest: bytes,
+        work_limit: int | None = None,
+    ) -> bool:
+        """Commit an inspected curved collapse under host whole-facet claims.
+
+        ``coordinates`` (k, 3, 3) are the bitwise current corners of
+        ``plan.faces`` and ``deviations`` (k,) their host-certified whole-facet
+        deviations; ``digest`` is the source's declared 32-byte binding. Native
+        re-runs every inspection proof and refuses stale generations, changed
+        faces/coordinates, foreign digests or out-of-tolerance claims with the
+        mesh unchanged. Committed faces become delegated-claim rows.
+        """
+        if plan._owner is not self:
+            raise ValueError(
+                f"_meshcore.TetMesh3D.collapse_curved_edge.plan must belong to this native owner; got {_input_summary(plan)}."
+            )
+        corners = np.ascontiguousarray(_real_array(coordinates, "coordinates"))
+        claims = np.ascontiguousarray(_real_array(deviations, "deviations"))
+        count = plan.faces.shape[0]
+        if corners.shape != (count, 3, 3) or claims.shape != (count,):
+            raise ValueError(
+                f"_meshcore.TetMesh3D.collapse_curved_edge.coordinates must align with the plan faces as ({count}, 3, 3) and ({count},); got {_input_summary(coordinates)}."
+            )
+        if not isinstance(digest, bytes) or len(digest) != 32:
+            raise ValueError(
+                f"_meshcore.TetMesh3D.collapse_curved_edge.digest must be 32 bytes; got {_input_summary(digest)}."
+            )
+        binding = np.frombuffer(digest, dtype=np.uint8).copy()
+        faces = np.ascontiguousarray(plan.faces)
+        applied = np.zeros((1,), dtype=np.int32)
+        status = self._library["phx_mc_tet_mesh_collapse_curved_edge"](
+            ctypes.byref(
+                _TetMeshCurvedCollapseRequest(
+                    mesh=self._live(),
+                    remove=plan.remove,
+                    keep=plan.keep,
+                    source=plan.source_row,
+                    accepted_generation=plan.accepted_generation,
+                    digest=binding.ctypes.data,
+                    claim_count=count,
+                    claim_faces=faces.ctypes.data,
+                    claim_coordinates=corners.ctypes.data,
+                    claim_deviations=claims.ctypes.data,
+                    require_improvement=int(plan.require_improvement),
+                    work_limit=_budget(work_limit, "work_limit"),
+                    applied=applied.ctypes.data,
+                )
+            )
+        )
+        return self._applied(status, applied, "tet_mesh_collapse_curved_edge")
+
+    def curved_claims(self) -> TetMeshCurvedClaims:
+        """Every retained initial and committed curved-source host claim."""
+        count = np.zeros((1,), dtype=np.int64)
+        _raise_for_call(
+            self._library["phx_mc_tet_mesh_curved_claims"](
+                self._live(), 0, count.ctypes.data, None, None, None, None, None
+            ),
+            "tet_mesh_curved_claims",
+        )
+        size = int(count[0])
+        rows = np.empty((size,), dtype=np.int32)
+        sources = np.empty((size,), dtype=np.int32)
+        coordinates = np.empty((size, 3, 3), dtype=np.float64)
+        deviations = np.empty((size,), dtype=np.float64)
+        generations = np.empty((size,), dtype=np.int64)
+        _raise_for_call(
+            self._library["phx_mc_tet_mesh_curved_claims"](
+                self._live(),
+                size,
+                count.ctypes.data,
+                rows.ctypes.data,
+                sources.ctypes.data,
+                coordinates.ctypes.data,
+                deviations.ctypes.data,
+                generations.ctypes.data,
+            ),
+            "tet_mesh_curved_claims",
+        )
+        if (
+            int(count[0]) != size
+            or np.any(sources < 0)
+            or np.any(sources >= self._face_source_ids.size)
+        ):
+            raise RuntimeError(
+                f"_meshcore.TetMesh3D.curved_claims.self must satisfy the input contract (Native curved claims changed between count and copy.); got {_input_summary(self)}."
+            )
+        source_ids = np.ascontiguousarray(self._face_source_ids[sources])
+        for array in (rows, source_ids, coordinates, deviations, generations):
+            array.setflags(write=False)
+        return TetMeshCurvedClaims(rows, source_ids, coordinates, deviations, generations)
+
     def reconnect(
         self,
         removed: object,
@@ -8957,6 +10965,82 @@ class TetMesh3D:
 
 
 @final
+class RestrictedPowerOutputLimits(StrictModule):
+    """Original output allowances, checked natively before publication.
+
+    Face/cell entries are occurrences, not distinct entities. The connectivity
+    and numeric-data bounds govern the explicit-loop topology owner; native
+    construction payloads instead consume the active managed-storage scope.
+    Query and scratch limits remain owned by that same request scope.
+    Nonnegative authored allowances above the signed ABI range saturate at
+    INT64_MAX: every representable native count is still admitted.
+    """
+
+    max_edges: int = eqx.field(static=True, default=2**63 - 1)
+    max_faces: int = eqx.field(static=True, default=2**63 - 1)
+    max_face_entries: int = eqx.field(static=True, default=2**63 - 1)
+    max_cells: int = eqx.field(static=True, default=2**63 - 1)
+    max_site_witnesses: int = eqx.field(static=True, default=2**63 - 1)
+    max_sided_loop_occurrences: int = eqx.field(static=True, default=2**63 - 1)
+    max_sided_corner_occurrences: int = eqx.field(static=True, default=2**63 - 1)
+    max_connectivity_entries: int = eqx.field(static=True, default=2**63 - 1)
+    max_data_bytes: int = eqx.field(static=True, default=2**63 - 1)
+
+    def native_fields(self) -> dict[str, int]:
+        return {
+            name: min(nonnegative_integer(value, name), 2**63 - 1)
+            for name, value in vars(self).items()
+        }
+
+
+@final
+class RestrictedPowerPreflight(StrictModule):
+    """Exact native topology counts and the existing topology-owner envelope."""
+
+    vertices: int = eqx.field(static=True)
+    edges: int = eqx.field(static=True)
+    faces: int = eqx.field(static=True)
+    face_corners: int = eqx.field(static=True)
+    cells: int = eqx.field(static=True)
+    pieces: int = eqx.field(static=True)
+    vertex_site_witnesses: int = eqx.field(static=True)
+    sided_loop_occurrences: int = eqx.field(static=True)
+    sided_corner_occurrences: int = eqx.field(static=True)
+    native_output_payload_bytes: int = eqx.field(static=True)
+    publication_connectivity_entries_upper: int = eqx.field(static=True)
+    publication_numeric_data_bytes_upper: int = eqx.field(static=True)
+
+    @classmethod
+    def from_slots(cls, slots: NDArray[np.int64], /) -> RestrictedPowerPreflight:
+        if slots.shape != (12,) or slots.dtype != np.dtype(np.int64):
+            raise ValueError("RestrictedPowerPreflight.slots must be twelve int64 counts")
+        return cls(*(int(value) for value in slots))
+
+    def items(self) -> tuple[tuple[str, int], ...]:
+        return tuple(vars(self).items())
+
+
+@final
+class RestrictedPowerCapacity(StrictModule):
+    """One exact failed output allowance, in deterministic native axis order."""
+
+    axis: str = eqx.field(static=True)
+    required: int = eqx.field(static=True)
+    remaining: int = eqx.field(static=True)
+
+
+def _power_preflight(
+    library: MeshcoreLibrary, handle: ctypes.c_void_p, /
+) -> RestrictedPowerPreflight:
+    slots = np.zeros(12, dtype=np.int64)
+    _raise_for_call(
+        library["phx_mc_power_cells_preflight"](handle, slots.ctypes.data),
+        "phx_mc_power_cells_preflight",
+    )
+    return RestrictedPowerPreflight.from_slots(slots)
+
+
+@final
 class RestrictedPowerCells(StrictModule):
     """Native restricted power cells and decomposition lineage on the host.
 
@@ -8984,6 +11068,7 @@ class RestrictedPowerCells(StrictModule):
     vertex_site_offsets: NDArray[np.int64]
     vertex_sites: NDArray[np.int32]
     source_work_units: int = eqx.field(static=True)
+    preflight: RestrictedPowerPreflight
 
 
 @final
@@ -8996,10 +11081,18 @@ class RestrictedPowerFailure(MeshcoreError):
         failure: NDArray[np.int64],
         counters: NDArray[np.int64],
         /,
+        *,
+        preflight: RestrictedPowerPreflight,
+        capacity: RestrictedPowerCapacity | None,
     ) -> None:
-        super().__init__(status, f"restricted_power_cells: {tuple(failure)}")
+        detail = "" if capacity is None else (
+            f"; {capacity.axis}: required={capacity.required}, remaining={capacity.remaining}"
+        )
+        super().__init__(status, f"restricted_power_cells: {tuple(failure)}{detail}")
         self.failure = failure
         self.counters = RestrictedPowerCounters.from_slots(counters)
+        self.preflight = preflight
+        self.capacity = capacity
 
 
 def _power_indices(value: object, name: str, /) -> NDArray[np.int32]:
@@ -9016,6 +11109,8 @@ def _copy_power_cells(
     handle: ctypes.c_void_p,
     counters: NDArray[np.int64],
     /,
+    *,
+    admit_host_output: Callable[[int], None] | None = None,
 ) -> RestrictedPowerCells:
     sizes = np.zeros((5,), dtype=np.int64)
     _raise_for_call(
@@ -9040,6 +11135,29 @@ def _copy_power_cells(
             MeshcoreStatus.INTERNAL_ERROR,
             f"_meshcore._copy_power_cells.library must satisfy the input contract (negative power-cell site construction record size); got {_input_summary(library)}.",
         )
+    preflight = _power_preflight(library, handle)
+    output_bytes = (
+        48 * vertices + 20 * faces + 4 * entries
+        + 48 * cells + 20 * pieces + 4 * witness_count + 16
+    )
+    if (
+        (vertices, faces, entries, cells, pieces, witness_count)
+        != (
+            preflight.vertices, preflight.faces, preflight.face_corners,
+            preflight.cells, preflight.pieces, preflight.vertex_site_witnesses,
+        )
+        or preflight.native_output_payload_bytes != output_bytes
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "restricted_power_cells.preflight must match the admitted export payload",
+        )
+    if admit_host_output is not None:
+        # Seventeen arrays, result/counter/preflight records, and twenty-three
+        # int64 scalar owners. Native payload stays live in the same managed cap.
+        admit_host_output(
+            20 * 256 + 23 * (128 + 4 * 8) + output_bytes
+        )
     result = RestrictedPowerCells(
         np.empty((vertices, 3), dtype=np.float64),
         np.empty((faces + 1,), dtype=np.int64),
@@ -9060,6 +11178,7 @@ def _copy_power_cells(
         np.empty((vertices + 1,), dtype=np.int64),
         np.empty((witness_count,), dtype=np.int32),
         source_work_units,
+        preflight,
     )
     _raise_for_call(
         library["phx_mc_power_cells_export"](
@@ -9117,6 +11236,8 @@ def restricted_power_cells(
     max_vertices: int,
     work_limit: int,
     record_native_phase: NativePhaseRecorder | None = None,
+    admit_host_output: Callable[[int], None] | None = None,
+    output_limits: RestrictedPowerOutputLimits | None = None,
 ) -> RestrictedPowerCells:
     """Clip weighted cells to a declared tetrahedral domain.
 
@@ -9125,6 +11246,7 @@ def restricted_power_cells(
     A native failure never returns partial cells as an accepted decomposition.
     """
 
+    native_limits = (output_limits or RestrictedPowerOutputLimits()).native_fields()
     site_array = _points(sites, "sites", 3)
     point_array = _points(points, "points", 3)
     weight_array = _real_array(weights, "weights")
@@ -9196,11 +11318,18 @@ def restricted_power_cells(
                     work_limit=_limit(work_limit, 1, "work_limit"),
                     record_phases=int(record_native_phase is not None),
                     result=ctypes.addressof(handle),
+                    **native_limits,
                 )
             )
         )
     )
-    return _finish_power_cells(library, handle, status, record_native_phase)
+    return _finish_power_cells(
+        library,
+        handle,
+        status,
+        record_native_phase,
+        admit_host_output=admit_host_output,
+    )
 
 
 def _finish_power_cells(
@@ -9209,6 +11338,8 @@ def _finish_power_cells(
     status: MeshcoreStatus,
     record_native_phase: NativePhaseRecorder | None,
     /,
+    *,
+    admit_host_output: Callable[[int], None] | None = None,
 ) -> RestrictedPowerCells:
     """Own every native export and failure record until the result is freed."""
     if not handle.value:
@@ -9250,8 +11381,33 @@ def _finish_power_cells(
                 library["phx_mc_power_cells_failure"](handle, failure.ctypes.data),
                 "phx_mc_power_cells_failure",
             )
-            raise RestrictedPowerFailure(status, failure, counters)
-        return _copy_power_cells(library, handle, counters)
+            preflight = _power_preflight(library, handle)
+            capacity_slots = np.zeros(3, dtype=np.int64)
+            _raise_for_call(
+                library["phx_mc_power_cells_capacity"](handle, capacity_slots.ctypes.data),
+                "phx_mc_power_cells_capacity",
+            )
+            axis, required, remaining = (int(value) for value in capacity_slots)
+            capacity = None
+            if axis:
+                if not 1 <= axis <= 12 or required <= remaining or remaining < 0:
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        "restricted_power_cells.capacity must identify an exceeded allowance",
+                    )
+                name, expected = preflight.items()[axis - 1]
+                if required != expected:
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        "restricted_power_cells.capacity must match the preflight requirement",
+                    )
+                capacity = RestrictedPowerCapacity(name, required, remaining)
+            raise RestrictedPowerFailure(
+                status, failure, counters, preflight=preflight, capacity=capacity
+            )
+        return _copy_power_cells(
+            library, handle, counters, admit_host_output=admit_host_output
+        )
     finally:
         library["phx_mc_power_cells_free"](handle)
 
@@ -9275,8 +11431,11 @@ def restricted_power_cells_exact(
     max_vertices: int,
     work_limit: int,
     record_native_phase: NativePhaseRecorder | None = None,
+    admit_host_output: Callable[[int], None] | None = None,
+    output_limits: RestrictedPowerOutputLimits | None = None,
 ) -> RestrictedPowerCells:
     """Clip cells from image coordinates and their input site owners."""
+    native_limits = (output_limits or RestrictedPowerOutputLimits()).native_fields()
     original = _points(sites, "sites", 3)
     weight_array = _real_array(weights, "weights")
     owners = _power_indices(image_site_owners, "image_site_owners")
@@ -9384,11 +11543,18 @@ def restricted_power_cells_exact(
                     work_limit=_limit(work_limit, 1, "work_limit"),
                     record_phases=int(record_native_phase is not None),
                     result=ctypes.addressof(handle),
+                    **native_limits,
                 )
             )
         )
     )
-    return _finish_power_cells(library, handle, status, record_native_phase)
+    return _finish_power_cells(
+        library,
+        handle,
+        status,
+        record_native_phase,
+        admit_host_output=admit_host_output,
+    )
 
 
 ARRANGEMENT_UNCLASSIFIED = int(np.iinfo(np.int32).min)
@@ -10081,6 +12247,7 @@ __all__ = [
     "ContactIntersections",
     "GraphPartition",
     "LevelSetCounters",
+    "LevelSetOutputMode",
     "LevelSetRun",
     "LevelSetSplitRequest",
     "NativeMeshArrays",
@@ -10131,6 +12298,9 @@ __all__ = [
     "TET_MESH_UNMET_REASONS",
     "TetMesh3D",
     "TetMeshArrays",
+    "TetMeshCurvedClaims",
+    "TetMeshCurvedCollapsePlan",
+    "TetMeshCurvedSources",
     "TetMeshInsertionPlan",
     "TetMeshEdgeConstruction",
     "TetMeshQuality",
@@ -10140,6 +12310,9 @@ __all__ = [
     "TetMeshUnmet",
     "RestrictedPowerCells",
     "RestrictedPowerFailure",
+    "RestrictedPowerOutputLimits",
+    "RestrictedPowerPreflight",
+    "RestrictedPowerCapacity",
     "GraphPartitionCounters",
     "PeriodicDelaunayEvidence",
     "SurfaceReconnectionCounters",

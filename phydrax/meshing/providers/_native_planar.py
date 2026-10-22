@@ -11,28 +11,37 @@ into one size field ``h(x) = min(h_region, min_e h_e + (g - 1) d_e(x))`` where
 smallest declared growth rate, so ``h`` is ``(g - 1)``-Lipschitz by
 construction. Every source edge (region loops and embedded segments) is bisected
 once until each piece is no longer than ``h`` at its ends and midpoint; the
-split chains are shared by construction rather than welded afterwards. The
-meshcore constrained Delaunay triangulation then removes holes and
-exterior, Ruppert/Chew refinement enforces the area and minimum-angle
-requests, and free edges longer than the local target are split until the
-field is met within the work and scratch budgets. Publication certifies global
-embedding and coverage of the authored region loops and region measure.
-Source-edge identities and rational split parameters compose through native
-Steiner ancestry. Each binary64 carrier has a certified deviation bound from
-its rational ancestry, published alongside the requested source-fidelity bound.
-Balanced interior sizing is a corrective construction only: execution retains
-the established CDT when its applicable hard size statistics and quality pass.
-Both constructions share one cumulative budget and deadline. The selected
-preparation identity is emitted by execution and supplies all source ancestry;
-the plan's initial preparation and a repaired execution need not share an ID.
+split chains are shared by construction rather than welded afterwards. An
+admitted uniform median (one hard region median whose interval contains
+``[h/2, h]``) is selected at preparation instead: source edges are cut into
+equal pieces at the canonical lattice spacing and the meshcore seeds the carved
+region with that equilateral lattice. When feature-forced quality refinement
+pulls that lattice mesh's median below its interval (and nothing else fails),
+one corrective construction (boundary pieces at ``h / sqrt(2)``, charged square
+interior sites at ``0.55 h``) is prepared and built under the same request
+budget and deadline; its preparation identity is emitted by execution and
+supplies all source ancestry. The meshcore constrained Delaunay
+triangulation removes holes and exterior, Ruppert/Chew refinement enforces the
+area, minimum-angle and (uniform) edge-length requests in one call, and graded
+free edges longer than the local target are split until the field is met
+within the work and scratch budgets. Independent compliance measures every
+published edge, statistic and angle under charged linear passes. Publication
+certifies global embedding and coverage of the authored region loops and region
+measure. Source-edge identities and rational split parameters compose through
+native Steiner ancestry. Each binary64 carrier has a certified deviation bound
+from its rational ancestry, published alongside the requested source-fidelity
+bound.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 
 import phydrax.discretization as cell_geometry_owner
 import phydrax.discretization as cell_mesh_owner
+import phydrax.geometry as triangulation_owner
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import MeshingProviderInfo, SurfaceMeshingSpec
 from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
@@ -40,6 +49,8 @@ from phydrax.meshing.providers._native_route_policy import publication_policy
 
 from ..._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from ..._physical import SpatialCoordinateContract
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...discretization._coordinate_operands import CoordinateOperandCollector
 from ...typing import checked
 from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from .._canonical import canonicalize_cell_mesh
@@ -52,13 +63,16 @@ from . import _native_sources as sources_owner
 from ._native_planar_domain import (
     constrained_edges,
     constraint_coordinate_source,
+    corrective_domain,
+    measure_edge_lengths,
+    median_repair_needed,
     organization_and_associations,
     planar_compliance,
     PreparedPlanarDomain,
-    select_triangulation,
     size_control_issues,
     source_arrays,
     source_carrier_evidence,
+    triangulate,
 )
 from ._native_publication import (
     coordinate_budget,
@@ -125,6 +139,85 @@ def planar_support_issues(
     return unsupported
 
 
+@dataclass(frozen=True, slots=True)
+class _PlanarCandidate:
+    """Published topology of one triangulation and its once-measured edges."""
+
+    used: np.ndarray
+    vertices: np.ndarray
+    triangles: np.ndarray
+    constrained: np.ndarray
+    constrained_sources: np.ndarray
+    mesh: cell_mesh_owner.CellMesh
+    edges: np.ndarray
+    lengths: np.ndarray
+
+
+def _planar_candidate(
+    source: sources_owner.NativePlanarSource,
+    specification: SurfaceMeshingSpec,
+    prepared: PreparedPlanarDomain,
+    triangulation: triangulation_owner.ConstrainedDelaunayTriangulation,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> _PlanarCandidate:
+    """Compact one triangulation into its canonical mesh and measure its edges.
+
+    The edges are the mesh topology's own unique edges; their lengths are
+    measured once, charged, and shared by the median repair decision and
+    compliance.
+    """
+    triangles = np.asarray(triangulation.triangles, dtype=np.int64)
+    used, compact = np.unique(triangles, return_inverse=True)
+    vertices = np.asarray(triangulation.points, dtype=np.float64)[used]
+    triangles = compact.reshape(triangles.shape).astype(np.int32)
+    segment_ids = np.asarray(triangulation.segment_ids, dtype=np.int64)
+    constrained, constrained_sources = constrained_edges(
+        triangles, segment_ids, prepared.segment_sources
+    )
+    missing = np.setdiff1d(
+        np.arange(prepared.source_directions.shape[0]), constrained_sources
+    )
+    if missing.size:
+        raise MeshingFailure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            "source.edges must lie within the meshed planar region; got uncovered edges",
+            stage=MeshingStageKind.SURFACE_MESHING.value,
+            entity_ids=tuple(int(value) for value in missing),
+        )
+    simplex_entity_limits(
+        vertices,
+        triangles,
+        specification.limits,
+        MeshingStageKind.SURFACE_MESHING,
+        cell_kind="triangle",
+    )
+    with coordinate_phase(scope, specification.limits, budget):
+        mesh = canonicalize_cell_mesh(
+            cell_mesh_owner.CellMesh.from_triangles(
+                vertices, triangles, numeric_version=source.source_revision
+            ),
+            budget=budget,
+        )
+    edges = np.sort(
+        # ty: ignore[unresolved-attribute]
+        np.asarray(mesh.connectivity.edges, dtype=np.int64),
+        axis=1,
+    )
+    return _PlanarCandidate(
+        used,
+        vertices,
+        triangles,
+        constrained,
+        constrained_sources,
+        mesh,
+        edges,
+        measure_edge_lengths(vertices, edges, scope=scope),
+    )
+
+
 @checked
 def execute_planar_route(
     source: sources_owner.NativePlanarSource,
@@ -138,50 +231,81 @@ def execute_planar_route(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> CellMeshingResult:
-    """Triangulate, refine, associate, certify, and publish one planar domain."""
+    """Triangulate, refine, associate, certify, and publish one planar domain.
+
+    The admitted lattice construction is retained whenever it is compliant;
+    an eligible undersized median (read from the candidate's once-measured
+    edges) alone selects the corrective construction, built and measured under
+    the same request budget, retaining the selected ancestry.
+    """
     budget = coordinate_budget(specification.limits)
+    budget.capture_coordinate_operands = coordinate_operands is not None
+    budget.capture_polynomial_operands = (
+        coordinate_operands is not None and coordinate_operands.capture_polynomials
+    )
+    budget.capture_signed_determinant_operands = (
+        coordinate_operands is not None and coordinate_operands.capture_signed_determinants
+    )
+    budget.capture_affine_areas = (
+        coordinate_operands is not None and coordinate_operands.capture_affine_areas
+    )
+    budget.capture_measure_operands = (
+        coordinate_operands is not None and coordinate_operands.capture_measures
+    )
     with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
         started = scope.operation_started
         limits = specification.limits
-        with measure_phase(record_phase, "refinement"):
-            prepared, triangulation, inserted = select_triangulation(
-                source, specification, prepared, started, scope, workspace
-            )
-        with measure_phase(record_phase, "construction"):
-            evidence = triangulation.evidence
-            triangles = np.asarray(triangulation.triangles, dtype=np.int64)
-            used, compact = np.unique(triangles, return_inverse=True)
-            vertices = np.asarray(triangulation.points, dtype=np.float64)[used]
-            triangles = compact.reshape(triangles.shape).astype(np.int32)
-            segment_ids = np.asarray(triangulation.segment_ids, dtype=np.int64)
-            constrained, constrained_sources = constrained_edges(
-                triangles, segment_ids, prepared.segment_sources
-            )
-            missing = np.setdiff1d(
-                np.arange(prepared.source_directions.shape[0]), constrained_sources
-            )
-            if missing.size:
-                raise MeshingFailure(
-                    MeshingFailureCategory.INVALID_SOURCE,
-                    "source.edges must lie within the meshed planar region; got uncovered edges",
-                    stage=MeshingStageKind.SURFACE_MESHING.value,
-                    entity_ids=tuple(int(value) for value in missing),
-                )
-            simplex_entity_limits(
-                vertices,
-                triangles,
-                limits,
-                MeshingStageKind.SURFACE_MESHING,
-                cell_kind="triangle",
-            )
-            with coordinate_phase(scope, specification.limits, budget):
-                mesh = canonicalize_cell_mesh(
-                    cell_mesh_owner.CellMesh.from_triangles(
-                        vertices, triangles, numeric_version=source.source_revision
-                    ),
+        with scope.host_workspace() as initial_storage:
+            with measure_phase(record_phase, "refinement"):
+                triangulation, inserted = triangulate(prepared, started, specification)
+                initial_storage.retain_owner(triangulation)
+            with measure_phase(record_phase, "construction"):
+                candidate = _planar_candidate(
+                    source,
+                    specification,
+                    prepared,
+                    triangulation,
+                    scope=scope,
                     budget=budget,
                 )
+                initial_storage.retain_owner(candidate.lengths)
+            repair = median_repair_needed(
+                prepared,
+                specification,
+                triangulation.evidence,
+                candidate.lengths,
+                scope=scope,
+            )
+        if repair:
+            # Closing its workspace and dropping the last local references
+            # releases the obsolete buffers before preparing another complex.
+            del candidate, triangulation
+            with measure_phase(record_phase, "refinement"):
+                prepared = corrective_domain(
+                    source, specification, prepared, started, scope
+                )
+                workspace.retain_owner(prepared)
+                triangulation, inserted = triangulate(prepared, started, specification)
+                workspace.retain_owner(triangulation)
+            with measure_phase(record_phase, "construction"):
+                candidate = _planar_candidate(
+                    source,
+                    specification,
+                    prepared,
+                    triangulation,
+                    scope=scope,
+                    budget=budget,
+                )
+        else:
+            workspace.retain_owner(triangulation)
+        workspace.retain_owner(candidate.lengths)
+        evidence = triangulation.evidence
+        mesh, used = candidate.mesh, candidate.used
+        constrained = candidate.constrained
+        constrained_sources = candidate.constrained_sources
+        with measure_phase(record_phase, "construction"):
             with coordinate_phase(scope, specification.limits, budget):
                 authority, source_deviations, carrier_deviations = (
                     constraint_coordinate_source(
@@ -210,8 +334,10 @@ def execute_planar_route(
             compliance = planar_compliance(
                 specification,
                 prepared,
-                vertices,
-                triangles,
+                candidate.vertices,
+                candidate.triangles,
+                candidate.edges,
+                candidate.lengths,
                 (constrained, constrained_sources),
                 (
                     evidence.minimum_angle_degrees,
@@ -219,6 +345,7 @@ def execute_planar_route(
                     evidence.status,
                 ),
                 (float(np.max(source_deviations, initial=0.0)), admissible),
+                scope=scope,
             )
             source_requested, source_achieved = source_carrier_evidence(
                 prepared,
@@ -246,10 +373,10 @@ def execute_planar_route(
                 MeshingStageStatus.PASSED,
                 input_ids=(prepared.prepared_id,),
                 output_ids=(evidence.evidence_id, mesh.mesh_id),
-                created_count=triangles.shape[0],
+                created_count=candidate.triangles.shape[0],
             ),
         )
-        return publish_native_result(
+        result = publish_native_result(
             mesh,
             coordinate_contract,
             compliance,
@@ -284,6 +411,15 @@ def execute_planar_route(
             execution=NativePublicationExecution(scope, workspace, record_phase, budget),
             geometry=geometry,
         )
+        if coordinate_operands is not None:
+            # Capture only whitelisted reconstruction/incidence operands, not
+            # any publication verdict earned by the completed scientific checks.
+            with coordinate_phase(scope, limits, budget):
+                coordinate_operands.capture(
+                    result.mesh, result.geometry, budget, scope,
+                    coordinate_contract=result.coordinate_contract,
+                )
+        return result
 
 
 __all__ = [

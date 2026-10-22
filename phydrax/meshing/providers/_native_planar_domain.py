@@ -30,7 +30,6 @@ from ..._meshcore import (
     MeshcoreError,
     MeshcoreStatus,
     NativeExecutionScope,
-    NativeHostStorageWorkspace,
     NativeResourceFailure,
 )
 from ..._strict import StrictModule
@@ -54,14 +53,19 @@ from .._sizing import (
 )
 from .._trace import MeshingStageKind
 from . import _native_sources as sources_owner
+from ._native_planar_construction import (
+    lattice_site_upper,
+    lattice_spacing,
+    uniform_construction_size,
+    uniform_median_strategy,
+)
 from ._native_route_checks import check_deadline, unique_edges
 
 
 # Point-by-segment distance entries evaluated per chunk of size-field queries.
 _FIELD_WORKING_ENTRIES = 1 << 20
-# Host bytes one CDT input point costs across one rebuild: its coordinates,
-# about two triangles of vertex, neighbor and segment-id rows, and the edge
-# table built from them.
+# Host bytes one CDT output point costs: its coordinates, about two triangles
+# of vertex and segment-id rows, and the witness rows built from them.
 _CDT_BYTES_PER_POINT = 16 + 2 * 3 * 3 * 8 + 3 * 2 * 8
 # Default source-carrier fidelity bound in units of eps * coordinate scale.
 # Entity support uses rational ancestry, never this distance allowance.
@@ -250,20 +254,22 @@ def split_constraints(
     limits: MeshingLimits,
     /,
     *,
-    balanced: bool = False,
+    lattice_spacing: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Split source edges, retaining each point's binary64 rational parameter.
 
-    Balanced initial pieces avoid power-of-two overshoot for a uniform
-    statistical size target; subsequent field-driven subdivisions remain dyadic.
+    ``region_size`` with the patch field is the bound every piece meets after
+    dyadic subdivision. A nonzero ``lattice_spacing`` (a uniform field only)
+    first cuts each edge into ``ceil(length / spacing)`` equal pieces matching
+    the native interior lattice; ``region_size`` is then the construction upper,
+    above the spacing, so only binary64 rounding could subdivide further.
     """
 
     start = vertices[edges[:, 0]]
     direction = vertices[edges[:, 1]] - start
-    if balanced:
-        # Match boundary spacing to a square lattice whose diagonals fit h.
+    if lattice_spacing:
         counts = np.minimum(
-            np.ceil(np.linalg.norm(direction, axis=1) / (region_size / math.sqrt(2.0))),
+            np.ceil(np.linalg.norm(direction, axis=1) / lattice_spacing),
             limits.maximum_vertices + 1,
         ).astype(np.int64)
         point_count = vertices.shape[0] + int(np.sum(counts)) - edges.shape[0]
@@ -354,6 +360,14 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
     ``patch_segments``/``patch_sizes`` are the size-controlled source edges and
     their resolved sizes; ``region_size`` the resolved region size and
     ``gradation_slope`` the declared growth rate minus one (``inf`` if none).
+    ``construction_size`` is the uniform construction upper (``region_size``
+    for graded fields). ``lattice=True`` admits, at preparation, the native
+    interior lattice of an admitted uniform median: ``lattice_spacing`` is then
+    nonzero and source edges are cut at that spacing; otherwise it is zero.
+    ``balanced=True`` prepares the corrective construction of an admitted
+    uniform median whose lattice mesh missed the median below its interval:
+    source edges are cut at ``h / sqrt(2)`` and ``distribution_sites`` marks
+    the interior square sites at ``0.55 h`` as charged input points.
     """
 
     points: np.ndarray
@@ -376,6 +390,9 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
     minimum_angle_degrees: float = eqx.field(static=True)
     maximum_steiner: int = eqx.field(static=True)
     maximum_triangles: int = eqx.field(static=True)
+    construction_size: float = eqx.field(static=True)
+    lattice_spacing: float = eqx.field(static=True)
+    distribution_sites: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     @checked
@@ -385,6 +402,7 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
         specification: SurfaceMeshingSpec,
         /,
         *,
+        lattice: bool = False,
         balanced: bool = False,
     ) -> None:
         limits = specification.limits
@@ -399,17 +417,29 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
             specification, vertices, edges, interior[0]
         )
         patch_segments = np.stack((vertices[edges[rows, 0]], vertices[edges[rows, 1]]), 1)
+        construction_size = (
+            uniform_construction_size(specification, region_size)
+            if sizes.size == 0
+            else region_size
+        )
+        admitted = not sizes.size and uniform_median_strategy(specification, region_size)
+        spacing = (
+            lattice_spacing(specification, region_size)
+            if lattice and not balanced and not sizes.size
+            else 0.0
+        )
+        # The corrective construction matches its boundary spacing to a square
+        # interior lattice whose diagonals fit h.
+        boundary = region_size / math.sqrt(2.0) if balanced and admitted else spacing
         points, segments, sources, point_sources, point_parameters = split_constraints(
             vertices,
             edges,
-            region_size,
+            construction_size if boundary else region_size,
             patch_segments,
             sizes,
             slope,
             limits,
-            balanced=balanced
-            and not sizes.size
-            and _uniform_median_strategy(specification, region_size),
+            lattice_spacing=boundary,
         )
         holes = np.asarray(interior[1:], dtype=np.float64).reshape((-1, 2))
         steiner = min(
@@ -442,12 +472,15 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
         self.patch_sizes = sizes
         self.region_size = region_size
         self.gradation_slope = slope
-        self.maximum_area = 0.25 * math.sqrt(3.0) * region_size * region_size
+        self.maximum_area = 0.25 * math.sqrt(3.0) * construction_size * construction_size
         self.minimum_angle_degrees = (
             0.0 if quality is None else math.degrees(quality.minimum_angle)
         )
         self.maximum_steiner = steiner
         self.maximum_triangles = min(limits.maximum_cells, limits.maximum_faces)
+        self.construction_size = construction_size
+        self.lattice_spacing = spacing
+        self.distribution_sites = balanced and admitted
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-planar-domain",
@@ -462,6 +495,10 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
                 "source_bounds": array_tree_fingerprint(self.source_bounds),
                 "holes": array_tree_fingerprint(holes),
                 "minimum_angle_degrees": self.minimum_angle_degrees,
+                "construction_size": construction_size,
+                "lattice_spacing": spacing,
+                "distribution_sites": self.distribution_sites,
+                "maximum_area": self.maximum_area,
                 "maximum_steiner": steiner,
                 "maximum_triangles": self.maximum_triangles,
             }
@@ -613,18 +650,21 @@ def organization_and_associations(
         )
     endpoint_rows = canonical[edge_rows].reshape(-1)
     endpoint_sources = np.repeat(edge_sources, 2)
-    edge_distances = (
-        _association_distances(
-            points[endpoint_rows],
-            source_points,
-            source_edges,
-            np.ones(endpoint_sources.shape, dtype=np.int8),
-            endpoint_sources,
-            budget=budget,
-        )
-        .reshape((-1, 2))
-        .max(axis=1)
+    # A vertex shared by edges of one source primitive has one residual against
+    # it: evaluate each (vertex, source edge) pair once and share the bound.
+    pairs, pair_index = np.unique(
+        np.stack((endpoint_rows, endpoint_sources), axis=1), axis=0, return_inverse=True
     )
+    pair_index = pair_index.reshape(-1)
+    pair_distances = _association_distances(
+        points[pairs[:, 0]],
+        source_points,
+        source_edges,
+        np.ones((pairs.shape[0],), dtype=np.int8),
+        pairs[:, 1],
+        budget=budget,
+    )
+    edge_distances = pair_distances[pair_index].reshape((-1, 2)).max(axis=1)
     boundary = prepared.source_loops[edge_sources] >= 0
     region_distance = float(np.max(edge_distances[boundary], initial=0.0))
     vertex_dims = np.full(points.shape[0], 2, dtype=np.int8)
@@ -639,17 +679,38 @@ def organization_and_associations(
         vertex_dims[row], vertex_sources[row] = 1, candidates[0]
         vertex_ambiguous[row] = candidates.size != 1
     vertex_distances = np.full(points.shape[0], region_distance, dtype=np.float64)
-    constrained_vertices = vertex_dims < 2
-    vertex_distances[constrained_vertices] = _association_distances(
-        points[constrained_vertices],
+    vertex_distances[original] = _association_distances(
+        points[original],
         source_points,
         source_edges,
-        vertex_dims[constrained_vertices],
-        vertex_sources[constrained_vertices],
+        vertex_dims[original],
+        vertex_sources[original],
         budget=budget,
     )
-    vertex_parameters = np.full((points.shape[0], 2), np.nan, dtype=np.float64)
+    # Each edge vertex's residual is against an incident constrained edge's
+    # source, already bounded above for that exact (vertex, source) pair.
     edge_vertices = vertex_dims == 1
+    lookup = {
+        pair: row
+        for row, pair in enumerate(
+            zip(pairs[:, 0].tolist(), pairs[:, 1].tolist(), strict=True)
+        )
+    }
+    vertex_distances[edge_vertices] = pair_distances[
+        np.fromiter(
+            (
+                lookup[pair]
+                for pair in zip(
+                    np.flatnonzero(edge_vertices).tolist(),
+                    vertex_sources[edge_vertices].tolist(),
+                    strict=True,
+                )
+            ),
+            dtype=np.int64,
+            count=int(np.count_nonzero(edge_vertices)),
+        )
+    ]
+    vertex_parameters = np.full((points.shape[0], 2), np.nan, dtype=np.float64)
     witness_rows = np.asarray(authority.vertex_rows, dtype=np.int64)
     if np.any(witness_rows[edge_vertices] != vertex_sources[edge_vertices]):
         raise ValueError(
@@ -871,51 +932,87 @@ def planar_compliance(
     prepared: PreparedPlanarDomain,
     vertices: np.ndarray,
     triangles: np.ndarray,
+    edges: np.ndarray,
+    lengths: np.ndarray,
     constrained: tuple[np.ndarray, np.ndarray],
     refinement: tuple[float, int, str],
     constraint_rounding: tuple[float, float],
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> MeshingComplianceReport:
+    """Independent acceptance of the published mesh against the unchanged request.
+
+    ``edges`` are the published topology's unique edges as sorted vertex pairs
+    and ``lengths`` their once-measured, already charged lengths
+    (``measure_edge_lengths``); the field, gradation, every control statistic
+    and bound, triangle areas and the refinement evidence are evaluated on
+    them. Each remaining geometric measurement (and sizing-field distance
+    query) is charged before it runs; statistics over measured lengths are
+    bytes-only host packing.
+    """
     minimum_angle_degrees, steiner_count, status = refinement
-    edges = unique_edges(triangles, "triangle")
-    a = vertices[edges[:, 0]]
-    b = vertices[edges[:, 1]]
-    lengths = np.linalg.norm(b - a, axis=1)
-    local = np.min(
-        prepared.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(3, -1), axis=0
-    )
-    endpoint = prepared.sizes(vertices)
-    gradation = 1.0 + float(
-        np.max(np.abs(endpoint[edges[:, 1]] - endpoint[edges[:, 0]]) / lengths)
-    )
-    requested: list[tuple[str, float]] = []
-    achieved: list[tuple[str, float]] = []
-    issues: list[str] = []
-    for control in specification.size_controls:
-        match control:
-            case UniformSizeControl():
-                rows = control_edges(control, prepared, edges, local, *constrained)
-                control_requested, control_achieved, control_issues = (
-                    graded_size_compliance(
-                        control,
-                        specification.size_compliance,
-                        lengths[rows],
-                        local[rows],
-                        gradation,
+    edge_count, vertex_count = edges.shape[0], vertices.shape[0]
+    triangle_count, patch_count = triangles.shape[0], prepared.patch_sizes.size
+    if lengths.shape != (edge_count,):
+        raise ValueError(
+            f"planar_compliance.lengths must measure every published edge; got {lengths.shape} for {edge_count} edges"
+        )
+    # Semantic measurements, not array passes: one area per triangle and one
+    # point-to-controlled-edge distance query per field sample (three per
+    # edge, one per vertex) and controlled patch.
+    work = triangle_count + (3 * edge_count + vertex_count) * patch_count
+    with scope.host_workspace() as storage:
+        # Endpoint, midpoint and sample banks (160 bytes per edge), targets,
+        # ratios and quantile copies (64), the vertex field (8), triangle
+        # corners and areas (64) and one size-field chunk per patch.
+        storage.set_bound(
+            224 * edge_count
+            + 8 * vertex_count
+            + 64 * triangle_count
+            + (128 * max(_FIELD_WORKING_ENTRIES, patch_count) if patch_count else 0)
+            + 4096
+        )
+        with scope.batch(work) as ticket:
+            ticket.consume(work)
+        a = vertices[edges[:, 0]]
+        b = vertices[edges[:, 1]]
+        local = np.min(
+            prepared.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(3, -1), axis=0
+        )
+        endpoint = prepared.sizes(vertices)
+        gradation = 1.0 + float(
+            np.max(np.abs(endpoint[edges[:, 1]] - endpoint[edges[:, 0]]) / lengths)
+        )
+        requested: list[tuple[str, float]] = []
+        achieved: list[tuple[str, float]] = []
+        issues: list[str] = []
+        for control in specification.size_controls:
+            match control:
+                case UniformSizeControl():
+                    rows = control_edges(control, prepared, edges, local, *constrained)
+                    control_requested, control_achieved, control_issues = (
+                        graded_size_compliance(
+                            control,
+                            specification.size_compliance,
+                            lengths[rows],
+                            local[rows],
+                            gradation,
+                        )
                     )
-                )
-                requested.extend(control_requested)
-                achieved.extend(control_achieved)
-                issues.extend(control_issues)
-            case _:
-                raise TypeError(
-                    "specification.size_controls must contain UniformSizeControl; got an unsupported control"
-                )
-    corners = vertices[triangles]
-    areas = 0.5 * np.abs(
-        (corners[:, 1, 0] - corners[:, 0, 0]) * (corners[:, 2, 1] - corners[:, 0, 1])
-        - (corners[:, 1, 1] - corners[:, 0, 1]) * (corners[:, 2, 0] - corners[:, 0, 0])
-    )
+                    requested.extend(control_requested)
+                    achieved.extend(control_achieved)
+                    issues.extend(control_issues)
+                case _:
+                    raise TypeError(
+                        "specification.size_controls must contain UniformSizeControl; got an unsupported control"
+                    )
+        corners = vertices[triangles]
+        areas = 0.5 * np.abs(
+            (corners[:, 1, 0] - corners[:, 0, 0]) * (corners[:, 2, 1] - corners[:, 0, 1])
+            - (corners[:, 1, 1] - corners[:, 0, 1]) * (corners[:, 2, 0] - corners[:, 0, 0])
+        )
+        maximum_area = float(np.max(areas))
     requested.extend(
         (
             ("maximum_triangle_area", prepared.maximum_area),
@@ -924,7 +1021,7 @@ def planar_compliance(
     )
     achieved.extend(
         (
-            ("maximum_triangle_area", float(np.max(areas))),
+            ("maximum_triangle_area", maximum_area),
             ("minimum_angle", math.radians(minimum_angle_degrees)),
             ("steiner_points", steiner_count),
         )
@@ -966,9 +1063,21 @@ def planar_compliance(
 def _refinement_budget(
     prepared: PreparedPlanarDomain, limits: MeshingLimits, inserted: int, /
 ) -> None:
-    """Refuse a CDT rebuild whose host scratch would exceed the declared budget."""
+    """Refuse a CDT build whose host scratch would exceed the declared budget.
 
-    count = prepared.points.shape[0] + inserted
+    Counted rows are the prepared and host-inserted points plus every lattice
+    site the native seeding may accept (bounded by the Steiner allowance).
+    """
+
+    sites = min(
+        prepared.maximum_steiner,
+        lattice_site_upper(
+            np.min(prepared.points, axis=0),
+            np.max(prepared.points, axis=0),
+            prepared.lattice_spacing,
+        ),
+    )
+    count = prepared.points.shape[0] + inserted + sites
     scratch = count * _CDT_BYTES_PER_POINT
     if scratch > limits.maximum_scratch_bytes:
         raise MeshingFailure(
@@ -980,36 +1089,10 @@ def _refinement_budget(
         )
 
 
-def _uniform_median_strategy(specification: SurfaceMeshingSpec, size: float, /) -> bool:
-    """Capability of the fixed-spacing construction, not an acceptance policy.
-
-    The lattice is designed for a single median with an interval containing
-    [h/2, h]. Tight/additional statistics or a hard lower edge bound must retain
-    the established construction; their contracts cannot be inferred from a median.
-    """
-    hard = tuple(
-        control
-        for control in specification.size_controls
-        if isinstance(control, UniformSizeControl)
-        and control.strength is SizeControlStrength.HARD
-    )
-    return (
-        bool(hard)
-        and specification.size_compliance.target_statistics == ("p50",)
-        and all(
-            control.scope.entity_dimension == 2
-            and control.target_size == size
-            and control.minimum_size is None
-            and specification.size_compliance.tolerance(size) >= 0.5 * size
-            for control in hard
-        )
-    )
-
-
 def _distribution_seeds(
     prepared: PreparedPlanarDomain, specification: SurfaceMeshingSpec, /
 ) -> np.ndarray:
-    """Interior sites for a uniform hard median, charged as refinement points.
+    """Interior sites of the corrective construction, charged as refinement points.
 
     Quality-only insertion resolves small features without populating the coarse
     interior. A square lattice at 0.55 h keeps its diagonals below h and avoids
@@ -1017,9 +1100,7 @@ def _distribution_seeds(
     avoids nearly coincident sites. Neither choice changes the declared field,
     statistics, geometry, quality target, or final certification.
     """
-    if prepared.patch_sizes.size or not _uniform_median_strategy(
-        specification, prepared.region_size
-    ):
+    if not prepared.distribution_sites:
         return np.empty((0, 2), dtype=np.float64)
     limits = specification.limits
     step = 0.55 * prepared.region_size
@@ -1169,15 +1250,11 @@ def triangulate(
     started: float,
     specification: SurfaceMeshingSpec,
     /,
-    *,
-    distribution_sites: bool = False,
 ) -> tuple[triangulation_owner.ConstrainedDelaunayTriangulation, int]:
-    """Retain one cumulative native allowance across every CDT rebuild."""
+    """Retain one cumulative native allowance across every CDT build."""
     try:
         with NativeExecutionScope(specification.limits.native_limits()):
-            return _triangulate(
-                prepared, started, specification, distribution_sites=distribution_sites
-            )
+            return _triangulate(prepared, started, specification)
     except MeshcoreError as error:
         if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
             raise
@@ -1189,24 +1266,22 @@ def _triangulate(
     started: float,
     specification: SurfaceMeshingSpec,
     /,
-    *,
-    distribution_sites: bool = False,
 ) -> tuple[triangulation_owner.ConstrainedDelaunayTriangulation, int]:
     """Refined CDT whose unconstrained edges respect the local target size.
 
-    Area refinement does not bound edge length, so every unconstrained edge
-    longer than the field at its ends or midpoint contributes its midpoint as
-    a free input point and the CDT is rebuilt; lengths halve per round.
-    Inserted points are charged to the work budget together with the
-    refinement Steiner points.
+    A uniform field is one native call: the admitted lattice (if any) seeds the
+    carved region, or the corrective construction's charged interior sites are
+    input points, and refinement bounds every unconstrained edge by the
+    construction size whenever its status is ``ok``; independent compliance
+    still measures every published edge, statistic and angle. A graded field
+    keeps the host post-check: an unconstrained edge longer than the field at
+    either end or its midpoint contributes a midpoint before the next rebuild.
+    Inserted points and native refinement sites share the caller's work bound.
     """
 
     limits = specification.limits
-    extra = (
-        _distribution_seeds(prepared, specification)
-        if distribution_sites
-        else np.empty((0, 2), dtype=np.float64)
-    )
+    uniform = prepared.patch_sizes.size == 0
+    extra = _distribution_seeds(prepared, specification)
     while True:
         _refinement_budget(prepared, limits, extra.shape[0])
         triangulation = triangulation_owner.ConstrainedDelaunayTriangulation(
@@ -1216,10 +1291,14 @@ def _triangulate(
             keep_convex_hull=False,
             min_angle=prepared.minimum_angle_degrees,
             max_area=prepared.maximum_area,
+            max_edge_length=prepared.construction_size if uniform else math.inf,
+            lattice_spacing=prepared.lattice_spacing,
             max_steiner=max(prepared.maximum_steiner - extra.shape[0], 0),
             max_triangles=prepared.maximum_triangles,
         )
         check_deadline(started, limits, MeshingStageKind.SURFACE_MESHING)
+        if uniform:
+            return triangulation, extra.shape[0]
         points = np.asarray(triangulation.points, dtype=np.float64)
         triangles = np.asarray(triangulation.triangles, dtype=np.int64)
         edges = unique_edges(triangles, "triangle")
@@ -1237,7 +1316,8 @@ def _triangulate(
         b = points[edges[:, 1]]
         lengths = np.linalg.norm(b - a, axis=1)
         local = np.min(
-            prepared.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(3, -1), axis=0
+            prepared.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(3, -1),
+            axis=0,
         )
         long = free & (lengths > local)
         if not np.any(long):
@@ -1257,46 +1337,65 @@ def _triangulate(
         extra = np.concatenate((extra, midpoints), axis=0)
 
 
-def _median_repair_needed(
+@checked
+def measure_edge_lengths(
+    vertices: np.ndarray, edges: np.ndarray, /, *, scope: NativeExecutionScope
+) -> np.ndarray:
+    """Measure each published edge once, charged before the measurement runs.
+
+    One semantic length per edge (the price compliance charges for an edge
+    length); the median repair decision and compliance read this one bank.
+    """
+    count = edges.shape[0]
+    with scope.host_workspace() as storage:
+        # Endpoint and difference banks (48 bytes per edge) and the lengths.
+        storage.set_bound(56 * count + 4096)
+        with scope.batch(count) as ticket:
+            ticket.consume(count)
+        return np.linalg.norm(vertices[edges[:, 1]] - vertices[edges[:, 0]], axis=1)
+
+
+@checked
+def median_repair_needed(
     prepared: PreparedPlanarDomain,
     specification: SurfaceMeshingSpec,
-    triangulation: triangulation_owner.ConstrainedDelaunayTriangulation,
-    scope: NativeExecutionScope,
+    evidence: triangulation_owner.TriangulationEvidence,
+    lengths: np.ndarray,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> bool:
-    """Retain compliant generation; repair only an eligible undersized median."""
+    """Retain compliant generation; repair only an eligible undersized median.
+
+    ``lengths`` are the candidate topology's once-measured edge lengths
+    (``measure_edge_lengths``); statistics over measured lengths are
+    bytes-only host packing, as in ``planar_compliance``.
+    """
     if (
         prepared.patch_sizes.size
-        or not _uniform_median_strategy(specification, prepared.region_size)
-        or triangulation.evidence.status != "ok"
+        or prepared.distribution_sites
+        or not uniform_median_strategy(specification, prepared.region_size)
+        or evidence.status != "ok"
     ):
         return False
     quality = specification.quality_target
     if (
         quality is not None
         and quality.hard
-        and math.radians(triangulation.evidence.minimum_angle_degrees)
-        < quality.minimum_angle
+        and math.radians(evidence.minimum_angle_degrees) < quality.minimum_angle
     ):
         return False
-    cells = triangulation.triangles.shape[0]
-    vertices = triangulation.points.shape[0]
-    edge_upper = 3 * cells
     controls = tuple(
         control
         for control in specification.size_controls
         if isinstance(control, UniformSizeControl)
         and control.strength is SizeControlStrength.HARD
     )
-    work = edge_upper * (edge_upper.bit_length() + 4) * len(controls)
-    # Edge extraction/sorting, vector norms and quantile copies coexist with
-    # the retained initial triangulation, whose owner has its own live bound.
-    scratch = 512 + 512 * cells + 64 * vertices + 256 * len(controls)
-    with scope.batch(work, bytes_upper=scratch) as ticket:
-        ticket.consume(work)
-        edges = unique_edges(triangulation.triangles, "triangle")
-        points = triangulation.points
-        lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+    with scope.host_workspace() as storage:
+        # Targets and ratios (16 bytes per edge) and one quantile copy per
+        # declared statistic and control, plus the median's own copy.
+        statistics = len(specification.size_compliance.target_statistics)
+        storage.set_bound(8 * lengths.size * (3 + statistics * len(controls)) + 4096)
         local = np.full(lengths.shape, prepared.region_size, dtype=np.float64)
         issues = []
         for control in controls:
@@ -1311,44 +1410,33 @@ def _median_repair_needed(
         )
 
 
-def select_triangulation(
+def corrective_domain(
     source: sources_owner.NativePlanarSource,
     specification: SurfaceMeshingSpec,
     prepared: PreparedPlanarDomain,
     started: float,
     scope: NativeExecutionScope,
-    workspace: NativeHostStorageWorkspace,
     /,
-) -> tuple[
-    PreparedPlanarDomain, triangulation_owner.ConstrainedDelaunayTriangulation, int
-]:
-    """Choose once under the same request budget, retaining the selected ancestry.
+) -> PreparedPlanarDomain:
+    """Prepare the corrective construction of an undersized lattice median.
 
-    The plan retains its established preparation identity. A necessary median
-    repair has its own preparation identity, emitted by execution's source and
-    meshing stages; identical source controls do not imply identical plan IDs.
+    Feature-forced quality refinement (a thin channel, say) can outnumber the
+    coarse lattice edges and pull an otherwise compliant median below its
+    interval; only then is this construction prepared, charged to the same
+    request. Its preparation identity is emitted by execution's source and
+    meshing stages; the plan keeps its own.
     """
+    check_deadline(started, specification.limits, MeshingStageKind.SURFACE_MESHING)
+    spacing = prepared.region_size / math.sqrt(2.0)
+    # One extra piece per edge conservatively covers final-bit norm rounding.
+    pieces = sum(
+        math.ceil(math.hypot(float(dx), float(dy)) / spacing) + 1
+        for dx, dy in prepared.source_directions
+    )
+    vertices, edges = prepared.source_points.shape[0], prepared.source_edges.shape[0]
+    preparation_work = vertices + edges + pieces * (8 + pieces.bit_length())
+    preparation_bytes = 512 + 256 * (vertices + edges + pieces)
     try:
-        with scope.host_workspace() as initial_storage:
-            triangulation, inserted = triangulate(prepared, started, specification)
-            initial_storage.retain_owner(triangulation)
-            repair = _median_repair_needed(prepared, specification, triangulation, scope)
-        if not repair:
-            workspace.retain_owner(triangulation)
-            return prepared, triangulation, inserted
-        # Closing its workspace and dropping the last local reference releases
-        # the obsolete native/NumPy buffers before preparing another complex.
-        del triangulation
-        check_deadline(started, specification.limits, MeshingStageKind.SURFACE_MESHING)
-        spacing = prepared.region_size / math.sqrt(2.0)
-        # One extra piece per edge conservatively covers final-bit norm rounding.
-        pieces = sum(
-            math.ceil(math.hypot(float(dx), float(dy)) / spacing) + 1
-            for dx, dy in prepared.source_directions
-        )
-        vertices, edges = prepared.source_points.shape[0], prepared.source_edges.shape[0]
-        preparation_work = vertices + edges + pieces * (8 + pieces.bit_length())
-        preparation_bytes = 512 + 256 * (vertices + edges + pieces)
         with scope.batch(
             scope.remaining().remaining_work_units, bytes_upper=preparation_bytes
         ) as ticket:
@@ -1356,18 +1444,13 @@ def select_triangulation(
                 ticket.refuse(preparation_work)
             ticket.consume(preparation_work)
             with ticket.native_target():
-                prepared = PreparedPlanarDomain(source, specification, balanced=True)
-        workspace.retain_owner(prepared)
-        check_deadline(started, specification.limits, MeshingStageKind.SURFACE_MESHING)
-        triangulation, inserted = triangulate(
-            prepared, started, specification, distribution_sites=True
-        )
-        workspace.retain_owner(triangulation)
-        return prepared, triangulation, inserted
+                corrective = PreparedPlanarDomain(source, specification, balanced=True)
     except MeshcoreError as error:
         if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
             raise
         raise _capacity_failure(error, specification.limits) from error
+    check_deadline(started, specification.limits, MeshingStageKind.SURFACE_MESHING)
+    return corrective
 
 
 @checked

@@ -29,6 +29,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from enum import IntEnum, StrEnum
+from heapq import heappop, heappush
+from math import isqrt
 from time import monotonic
 from typing import final
 
@@ -73,6 +75,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import (
     exact_orient3d,
     IncrementalDelaunay3D,
+    MeshcoreError,
     MeshcoreStatus,
     NativeExecutionScope,
     NativeHostStorageWorkspace,
@@ -113,12 +116,13 @@ def implicit_source_budget(
 ) -> Iterator[
     _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
 ]:
-    """Reserve a host source phase and settle its ticket before native execution."""
+    """Share one bounded source phase across host proofs and native source construction."""
     remaining = scope.remaining()
     ticket = scope.batch(
         min(limits.maximum_work_units, remaining.remaining_work_units),
         queries_upper=queries_upper,
         bytes_upper=min(limits.maximum_scratch_bytes, remaining.remaining_managed_bytes),
+        cavity_upper=min(limits.maximum_cavity_cells, remaining.remaining_cavity_cells),
     )
     with ticket:
         budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
@@ -679,6 +683,87 @@ def _merge_dual_root_runs(
     return tuple(value[order] for value in result), 3 * count, count < len(candidates)
 
 
+@dataclass(slots=True)
+class ImplicitDualRootProofs:
+    """Nontrivial per-dual root proofs reused across rounds of one construction.
+
+    A dual's terminal partition depends only on the source query, its endpoint
+    enclosures, the spatial tolerance and the depth limit. Rows are keyed by
+    the exact endpoint and enclosure bytes and bound to the other three; a
+    later round copies them instead of re-querying the unchanged dual. Only
+    complete proofs from unexhausted calls are retained, and duals excluded at
+    depth zero are recomputed for three queries rather than stored.
+    """
+
+    query_id: str
+    spatial_tolerance: float
+    maximum_depth: int
+    rows: dict[bytes, tuple[np.ndarray, bool]]
+
+
+def _reuse_dual_root_proofs(
+    proofs: ImplicitDualRootProofs,
+    keys: list[bytes],
+    reused: np.ndarray,
+    arrays: tuple[np.ndarray, ...],
+    depth_hits: np.ndarray,
+    /,
+    *,
+    retain: bool,
+) -> tuple[np.ndarray, ...]:
+    """Retain this call's complete proofs and splice in the reused ones, sorted."""
+    segments = arrays[0]
+    packed = np.concatenate(
+        (
+            arrays[1],
+            arrays[2][:, None].astype(np.float64),
+            np.stack(arrays[3:7], axis=1),
+            arrays[7],
+            arrays[8],
+        ),
+        axis=1,
+    )
+    if retain and segments.size:
+        breaks = np.flatnonzero(np.diff(segments)) + 1
+        starts = np.concatenate((np.zeros(1, dtype=np.int64), breaks))
+        stops = np.concatenate((breaks, np.asarray((segments.size,), dtype=np.int64)))
+        for start, stop in zip(starts.tolist(), stops.tolist(), strict=True):
+            if (
+                stop - start == 1
+                and arrays[2][start] == int(ImplicitDualIntervalClass.EXCLUDED)
+                and arrays[1][start, 0] == 0.0
+                and arrays[1][start, 1] == 1.0
+            ):
+                continue
+            segment = int(segments[start])
+            rows = packed[start:stop].copy()
+            rows.setflags(write=False)
+            proofs.rows[keys[segment]] = (rows, bool(depth_hits[segment]))
+    hits = np.flatnonzero(reused)
+    if not hits.size:
+        return arrays
+    stored = [proofs.rows[keys[index]] for index in hits.tolist()]
+    for index, (_, depth_hit) in zip(hits.tolist(), stored, strict=True):
+        depth_hits[index] |= depth_hit
+    identifiers = np.concatenate(
+        (segments, np.repeat(hits, [rows.shape[0] for rows, _ in stored]))
+    )
+    combined = np.concatenate((packed, *(rows for rows, _ in stored)))
+    order = np.lexsort((combined[:, 0], identifiers))
+    identifiers, combined = identifiers[order], combined[order]
+    return (
+        identifiers,
+        combined[:, 0:2].copy(),
+        combined[:, 2].astype(np.int64),
+        combined[:, 3].copy(),
+        combined[:, 4].copy(),
+        combined[:, 5].copy(),
+        combined[:, 6].copy(),
+        combined[:, 7:9].copy(),
+        combined[:, 9:11].copy(),
+    )
+
+
 @checked
 def isolate_implicit_dual_roots(
     query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
@@ -691,6 +776,7 @@ def isolate_implicit_dual_roots(
     endpoint_bounds: ArrayLike | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     | None = None,
+    proofs: ImplicitDualRootProofs | None = None,
 ) -> ImplicitDualRootWorkset:
     """Bound roots on numerical duals under an explicit or host-owned ticket."""
 
@@ -709,6 +795,7 @@ def isolate_implicit_dual_roots(
             maximum_geometry_queries=maximum_geometry_queries,
             endpoint_bounds=endpoint_bounds,
             budget=source_budget,
+            proofs=proofs,
         )
 
 
@@ -722,12 +809,14 @@ def _isolate_implicit_dual_roots(
     maximum_geometry_queries: int,
     endpoint_bounds: ArrayLike | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    proofs: ImplicitDualRootProofs | None = None,
 ) -> ImplicitDualRootWorkset:
     """Bound roots on all numerical duals, without sampled-empty exclusions.
 
     Every split replaces one interval with its two closed children; terminal
     intervals cover [0,1] for every input segment, even on exhausted budgets.
     Singular, zero-valued and multiple-root intervals remain in the partition.
+    Duals with a retained proof in ``proofs`` reuse its terminal rows.
     """
     if not query.certified:
         raise ValueError(
@@ -766,13 +855,29 @@ def _isolate_implicit_dual_roots(
         raise ValueError(
             f"isolate_implicit_dual_roots.endpoint_bounds must be finite enclosing (segments, 2, 2, 3) intervals; got shape={enclosures.shape}"
         )
-    segments = np.arange(points.shape[0], dtype=np.int64)
+    keys: list[bytes] = []
+    reused = np.zeros(points.shape[0], dtype=np.bool_)
+    if proofs is not None:
+        if (
+            proofs.query_id != query.query_id
+            or proofs.spatial_tolerance != spatial_tolerance
+            or proofs.maximum_depth != maximum_depth
+        ):
+            raise ValueError(
+                "isolate_implicit_dual_roots.proofs must bind this query, spatial tolerance and depth; got a different proof binding"
+            )
+        keys = [
+            enclosures[index].tobytes() + points[index].tobytes()
+            for index in range(points.shape[0])
+        ]
+        reused = np.asarray([key in proofs.rows for key in keys], dtype=np.bool_)
+    segments = np.flatnonzero(~reused).astype(np.int64)
     parameters = np.tile(np.asarray((0.0, 1.0), dtype=np.float64), (segments.size, 1))
     depth = np.zeros(segments.size, dtype=np.int64)
     terminals: list[tuple[np.ndarray, ...]] = []
     queries = 0
     exhausted = False
-    depth_reached = False
+    depth_hits = np.zeros(points.shape[0], dtype=np.bool_)
     while segments.size:
         count = min(segments.size, (maximum_geometry_queries - queries) // 3)
         if count < segments.size:
@@ -822,7 +927,7 @@ def _isolate_implicit_dual_roots(
                 int(ImplicitDualIntervalClass.UNRESOLVED),
             ),
         ).astype(np.int64)
-        depth_reached |= bool(np.any((depth >= maximum_depth) & ~excluded & ~isolated))
+        depth_hits[segments[(depth >= maximum_depth) & ~excluded & ~isolated]] = True
         if np.any(stop):
             terminals.append(
                 (
@@ -863,6 +968,11 @@ def _isolate_implicit_dual_roots(
     )
     queries += merge_queries
     exhausted |= merge_exhausted
+    if proofs is not None:
+        arrays = _reuse_dual_root_proofs(
+            proofs, keys, reused, arrays, depth_hits, retain=not exhausted
+        )
+    depth_reached = bool(np.any(depth_hits))
     identity = canonical_fingerprint(
         {
             "kind": "implicit-dual-roots",
@@ -943,13 +1053,15 @@ def prepare_implicit_restricted_queries(
     maximum_depth: int,
     additional_work_units: int = 0,
     scope: NativeExecutionScope,
+    root_proofs: ImplicitDualRootProofs | None = None,
 ) -> ImplicitRestrictedQueryWorkset:
     """Recompute dual incidence and dual/source root enclosures.
 
     Native transactional insertion is owned by domain preparation. This phase
     snapshots its current triangulation, certifies finite Voronoi endpoints
     with expansion-based rational bounds, encloses hull rays through the domain
-    exit and executes batched interval roots.
+    exit and executes batched interval roots. ``root_proofs`` carries complete
+    root proofs of unchanged duals from earlier rounds of the same construction.
     Root exclusion requires a source enclosure rather than clipping.
     """
     domain.require_current(domain.query, domain.specification)
@@ -1014,6 +1126,7 @@ def prepare_implicit_restricted_queries(
             maximum_geometry_queries=query_upper,
             endpoint_bounds=endpoint_bounds,
             budget=budget,
+            proofs=root_proofs,
         )
     pending = roots.classes == int(ImplicitDualIntervalClass.UNRESOLVED)
     unresolved = np.union1d(
@@ -1588,23 +1701,35 @@ def prepare_restricted_implicit_volume(
                     "implicit_volume.region_seeds must be source-enclosed strictly inside the analytic body; got noninterior material seed",
                     stage="implicit_volume_preparation",
                 )
-        # Sampling is numerical preparation, not the source-fidelity proof.
-        # Whole facets are certified against the authored tolerance below;
-        # their fixed boundary survives subsequent volume improvement.
-        cover = (
-            min(size, profile.reach_lower)
-            if profile.family == "sphere"
-            else min(
-                0.5 * size,
-                0.25 * profile.reach_lower,
-                0.5 * np.sqrt(profile.reach_lower * tolerance),
-            )
-        )
+        # Sampling is numerical preparation, not the source-fidelity or
+        # topology proof. Whole facets are certified against the authored
+        # tolerance, the restricted refinement queue splits every uncertified
+        # facet and the closed-profile check certifies the restricted manifold;
+        # their fixed boundary survives subsequent volume improvement. Seed
+        # density follows the requested size and the source reach. Atlas
+        # covers also follow the tolerance. A grid of spacing s splits into
+        # facets of diameter about sqrt(2) s, enclosed by balls of radius
+        # s / sqrt(2). Within reach r the curvature on such a facet is at most
+        # 1 / (r - tolerance - diameter / sqrt(3)), and the facet's Taylor
+        # remainder is that curvature times radius**2 / 2: it meets the
+        # tolerance for s up to the positive root of
+        # s**2 = 4 tolerance (r - tolerance - sqrt(2/3) s). A certified atlas
+        # cover of radius c realizes spacing just below c, so requesting that
+        # root seeds facets the queue need not split wholesale. The sphere's
+        # radial cones select their own size-admitted lattice.
         seed_kind = (
             ImplicitVolumeSeedKind.SPHERE_RADIAL_CONES
             if profile.family == "sphere"
             else ImplicitVolumeSeedKind.SOURCE_ATLAS_COVER
         )
+        cover = min(size, profile.reach_lower)
+        if seed_kind is ImplicitVolumeSeedKind.SOURCE_ATLAS_COVER:
+            slope = np.sqrt(2.0 / 3.0)
+            spacing = 2.0 * tolerance * (
+                np.sqrt(slope * slope + (profile.reach_lower - tolerance) / tolerance)
+                - slope
+            )
+            cover = min(cover, float(spacing))
         identity = canonical_fingerprint(
             {
                 "kind": "prepared-restricted-implicit-volume",
@@ -1634,6 +1759,114 @@ def prepare_restricted_implicit_volume(
         )
 
 
+def _sphere_geodesic_frequencies(
+    minimum: int,
+    maximum_samples: int,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> Iterator[tuple[int, int, int]]:
+    """Enumerate integer geodesic densities without a quadratic candidate bank."""
+    maximum = (maximum_samples - 2) // 10
+    if maximum < 1:
+        return
+    maximum_h = isqrt(maximum)
+    budget.reserve(0, 512 * (maximum_h + 1))
+    pending = [(1, 1, 0)]
+    while pending:
+        density, h, k = heappop(pending)
+        if density > maximum:
+            return
+        if k == 0 and h < maximum_h:
+            heappush(pending, ((h + 1) ** 2, h + 1, 0))
+        if k < h:
+            following = k + 1
+            heappush(pending, (h * h + h * following + following * following, h, following))
+        if density >= minimum * minimum:
+            yield density, h, k
+
+
+def _sphere_geodesic_lattice(
+    h: int,
+    k: int,
+    prepared: PreparedImplicitVolume,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build exact-support icosahedral sites and their native convex-hull facets."""
+    from ..discretization._cell_complex import POLYHEDRAL_FACE_ROUTES
+    from ..geometry.multiregion_surface._seeding import sphere_direction_lattice
+
+    density = h * h + h * k + k * k
+    vertices, faces = 10 * density + 2, 20 * density
+    budget.reserve(
+        10 * (h + k + 1) * (h + k + 2) + 3 * faces,
+        1024 * (vertices + faces),
+    )
+    if k == 0:
+        return sphere_direction_lattice(h)
+    unit, roots = sphere_direction_lattice(1)
+    positions = list(unit)
+    identities: dict[tuple[tuple[int, int], ...], int] = {
+        ((vertex, density),): vertex for vertex in range(unit.shape[0])
+    }
+    for face in roots:
+        for first in range(-k, h + 1):
+            for second in range(h + k + 1):
+                upper = (h + k) * first + k * second
+                lower = h * second - k * first
+                weights = (density - upper - lower, upper, lower)
+                if min(weights) < 0:
+                    continue
+                key = tuple(sorted(
+                    (int(vertex), weight)
+                    for vertex, weight in zip(face, weights, strict=True)
+                    if weight
+                ))
+                if key not in identities:
+                    direction = np.zeros((3,), dtype=np.float64)
+                    for vertex, weight in key:
+                        direction += weight * unit[vertex]
+                    direction /= np.linalg.norm(direction)
+                    identities[key] = len(positions)
+                    positions.append(direction)
+    if len(positions) != vertices:
+        raise RuntimeError(
+            "implicit_volume.geodesic_sites must match the integer support count; "
+            f"got {len(positions)} instead of {vertices}"
+        )
+    directions = np.stack(positions)
+    limits = prepared.specification.limits
+    # Native snapshot, all tetrahedron facets, sorted incidence keys and
+    # boundary selection arrays coexist; admit them before native allocation.
+    budget.reserve(0, 512 * limits.maximum_cells + 256 * vertices)
+    with budget.ticket.native_target():
+        state = IncrementalDelaunay3D(
+            directions,
+            max_vertices=vertices,
+            max_tetrahedra=limits.maximum_cells,
+            max_cavity=limits.maximum_cavity_cells,
+        )
+        try:
+            snapshot = state.finalize()
+        finally:
+            state.close()
+    cells = np.asarray(snapshot.cells, dtype=np.int64)
+    budget.reserve(12 * cells.shape[0])
+    facets = cells[:, np.asarray(POLYHEDRAL_FACE_ROUTES["tetrahedron"])].reshape((-1, 3))
+    _, first, counts = np.unique(
+        np.sort(facets, axis=1), axis=0, return_index=True, return_counts=True
+    )
+    triangles = facets[first[counts == 1]]
+    if triangles.shape[0] != faces or np.unique(triangles).size != vertices:
+        raise RuntimeError(
+            "implicit_volume.geodesic_hull must retain every source site in a closed "
+            f"triangular hull; got {triangles.shape[0]} facets for {vertices} sites"
+        )
+    return directions, triangles
+
+
 def _sphere_seed_sites(
     prepared: PreparedImplicitVolume,
     maximum_samples: int,
@@ -1641,11 +1874,12 @@ def _sphere_seed_sites(
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, float]:
-    """Choose on-source sites by cone fidelity and the requested cover scale.
+    """Choose bounded, source-certified geodesic proposals at the requested size.
 
-    Integer frequencies avoid the forced factor-of-two resolution jump of
-    midpoint subdivision. Facet-wide intervals and the final degree-one
-    projection still independently decide source acceptance.
+    Densities h²+hk+k² include intermediate icosahedral lattices missing from
+    square-frequency subdivision. Every candidate still earns its radial-cone,
+    degree-one and source-point bounds; final restricted facets are certified
+    independently. No global oversampling or size-tolerance relaxation is needed.
     """
     from ..geometry._domain_numerics import (
         interval_vector_norm,
@@ -1657,7 +1891,6 @@ def _sphere_seed_sites(
         interval_subtract,
     )
     from ..geometry._sphere_material_atlas import sphere_radial_triangle_bounds
-    from ..geometry.multiregion_surface._seeding import sphere_direction_lattice
 
     profile = prepared.profile
     ratio = profile.radius / prepared.seed_cover_radius
@@ -1669,25 +1902,15 @@ def _sphere_seed_sites(
             requested=(("seed_cover_radius", prepared.seed_cover_radius),),
             achieved=(("maximum_source_sites", float(maximum_samples)),),
         )
-    frequency = max(1, int(np.ceil(ratio)))
-    while True:
-        vertices, faces = 10 * frequency**2 + 2, 20 * frequency**2
-        if vertices > maximum_samples:
-            raise _leaf_phydrax_meshing__failures.MeshingFailure(
-                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "implicit_volume.sphere_seeds must fit the remaining source-site allowance",
-                stage="implicit_volume_seeding",
-                requested=(("source_sites", float(vertices)),),
-                achieved=(("maximum_source_sites", float(maximum_samples)),),
-            )
+    minimum_frequency = max(1, int(np.ceil(ratio)))
+    size_policy = prepared.specification.size_compliance
+    for frequency, h, k in _sphere_geodesic_frequencies(
+        minimum_frequency, maximum_samples, budget=budget
+    ):
         with budget.temporary_scope():
-            # Positions, oriented faces, incidence, stable IDs, construction
-            # copies, and outward cone preparations coexist in this phase.
-            budget.reserve(
-                10 * (frequency + 1) * (frequency + 2) + 3 * faces,
-                1024 * (vertices + faces),
+            directions, triangles = _sphere_geodesic_lattice(
+                h, k, prepared, budget=budget
             )
-            directions, triangles = sphere_direction_lattice(frequency)
             floor, ceiling = np.inf, 0.0
             for face in triangles:
                 bound = sphere_radial_triangle_bounds(directions[face], budget=budget)
@@ -1708,6 +1931,26 @@ def _sphere_seed_sites(
                     f"implicit_volume.sphere_seed_cones must cover the source with degree one; got no degree-one cover at frequency {frequency}"
                 )
             edges = native_route_checks_owner.unique_edges(triangles, "triangle")
+            lengths = profile.radius * np.linalg.norm(
+                directions[edges[:, 1]] - directions[edges[:, 0]], axis=1
+            )
+            lower_admitted = all(
+                all(
+                    float(np.quantile(
+                        lengths,
+                        _dependency_phydrax_meshing__sizing.size_statistic_quantile(statistic),
+                    )) >= control.target_size - size_policy.tolerance(control.target_size)
+                    for statistic in size_policy.target_statistics
+                )
+                and (
+                    control.minimum_size is None
+                    or float(np.min(lengths))
+                    >= control.minimum_size - size_policy.tolerance(control.minimum_size)
+                )
+                for control in prepared.specification.size_controls
+                if isinstance(control, _dependency_phydrax_meshing__sizing.UniformSizeControl)
+                and control.strength is _dependency_phydrax_meshing__sizing.SizeControlStrength.HARD
+            )
             diameter = float(
                 np.max(
                     _length_upper(
@@ -1755,19 +1998,30 @@ def _sphere_seed_sites(
                 np.inf,
             )
             if (
-                error <= prepared.fidelity_tolerance
+                lower_admitted
+                and error <= prepared.fidelity_tolerance
                 and cover <= prepared.seed_cover_radius
             ):
                 realized = profile.boundary_distance(points, budget=budget)
                 if np.max(realized.upper) <= prepared.fidelity_tolerance:
                     return points, float(cover)
-        frequency += 1
+    raise _leaf_phydrax_meshing__failures.MeshingFailure(
+        _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        "implicit_volume.sphere_seeds must fit the remaining source-site allowance",
+        stage="implicit_volume_seeding",
+        requested=(("source_fidelity", prepared.fidelity_tolerance),),
+        achieved=(("maximum_source_sites", float(maximum_samples)),),
+    )
 
 
 def _implicit_seed_sites(
     prepared: PreparedImplicitVolume, /, *, scope: NativeExecutionScope
-) -> tuple[np.ndarray, int, tuple[tuple[str, float], ...]]:
-    """Return source-controlled boundary proposals and enclosed interior sites."""
+) -> tuple[np.ndarray, np.ndarray, int, tuple[tuple[str, float], ...]]:
+    """Return all seed sites, their enclosed body sites, queries and statistics.
+
+    The body sites are the target-size interior lattice; they are also the
+    trailing rows of the full site array.
+    """
     query = prepared.query
     profile = prepared.profile
     limits = prepared.specification.limits
@@ -1913,7 +2167,12 @@ def _implicit_seed_sites(
         ("boundary_cover_radius", boundary_cover_radius),
         ("boundary_sites", float(boundary_points.shape[0])),
     )
-    return np.concatenate((hull, boundary_points, interior)), queries, statistics
+    return (
+        np.concatenate((hull, boundary_points, interior)),
+        interior,
+        queries,
+        statistics,
+    )
 
 
 def _implicit_region_metadata(
@@ -1991,8 +2250,13 @@ def _restricted_facet_quality(
     /,
     *,
     scope: NativeExecutionScope,
+    certificates: dict[bytes, tuple[float, bool]],
 ) -> tuple[np.ndarray, float, int]:
-    """Flag true restricted facets whose continuous source proof is unresolved."""
+    """Flag true restricted facets whose continuous source proof is unresolved.
+
+    ``certificates`` keeps the continuous proof of each exact facet already
+    established for this construction; a later round reuses it unchanged.
+    """
     _, _, counts = _restricted_root_sites(work)
     selected = np.flatnonzero(counts == 1)
     bad = np.flatnonzero(counts > 1)
@@ -2042,28 +2306,43 @@ def _restricted_facet_quality(
         orientable = (low > 0.0) | (high < 0.0)
         unresolved = ~orientable | (deviation > prepared.fidelity_tolerance)
         if np.any(unresolved):
-            candidates = triangles[unresolved].copy()
-            reverse = (low + high)[unresolved] < 0.0
-            candidates[reverse] = candidates[reverse, ::-1]
-            certificate = _owner_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
-                _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
-                    "volume_implicit"
-                ),
-                prepared.profile.source_id,
-                prepared.profile.source_revision,
-                prepared.specification.limits,
+            rows = np.flatnonzero(unresolved)
+            keys = [
+                np.ascontiguousarray(
+                    triangles[row][np.lexsort(triangles[row].T[::-1])]
+                ).tobytes()
+                for row in rows.tolist()
+            ]
+            fresh = np.asarray(
+                [key not in certificates for key in keys], dtype=np.bool_
             )
-            continuous, normals, _ = (
-                implicit_projection_owner.implicit_facet_projection_bounds(
-                    candidates,
-                    prepared.profile,
-                    prepared.fidelity_tolerance,
-                    certificate.certificate_limits,
-                    budget=budget,
+            if np.any(fresh):
+                candidates = triangles[rows[fresh]].copy()
+                reverse = (low + high)[rows[fresh]] < 0.0
+                candidates[reverse] = candidates[reverse, ::-1]
+                certificate = _owner_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
+                    _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
+                        "volume_implicit"
+                    ),
+                    prepared.profile.source_id,
+                    prepared.profile.source_revision,
+                    prepared.specification.limits,
                 )
-            )
-            deviation[unresolved] = continuous
-            orientable[unresolved] = normals
+                continuous, normals, _ = (
+                    implicit_projection_owner.implicit_facet_projection_bounds(
+                        candidates,
+                        prepared.profile,
+                        prepared.fidelity_tolerance,
+                        certificate.certificate_limits,
+                        budget=budget,
+                    )
+                )
+                for index, key in enumerate(
+                    key for key, new in zip(keys, fresh.tolist(), strict=True) if new
+                ):
+                    certificates[key] = (float(continuous[index]), bool(normals[index]))
+            for row, key in zip(rows.tolist(), keys, strict=True):
+                deviation[row], orientable[row] = certificates[key]
     failed = ~orientable | (deviation > prepared.fidelity_tolerance)
     bad = np.union1d(bad, selected[failed])
     return (
@@ -2166,8 +2445,12 @@ def _construct_implicit_restriction(
     int,
     float,
     tuple[tuple[str, float], ...],
+    np.ndarray,
 ]:
-    """Native Delaunay site refinement followed by protected primal-region flood."""
+    """Native Delaunay site refinement followed by protected primal-region flood.
+
+    The last entry holds the enclosed body seed sites, the interior size lattice.
+    """
 
     profile = prepared.profile
     with implicit_source_budget(
@@ -2178,7 +2461,9 @@ def _construct_implicit_restriction(
         )
     limits = prepared.specification.limits
     with measure_phase(record_phase, "source_preparation"):
-        sites, queries, seed_statistics = _implicit_seed_sites(prepared, scope=scope)
+        sites, body_sites, queries, seed_statistics = _implicit_seed_sites(
+            prepared, scope=scope
+        )
     with measure_phase(record_phase, "regular_triangulation"):
         state = IncrementalDelaunay3D(
             sites,
@@ -2187,6 +2472,11 @@ def _construct_implicit_restriction(
             max_cavity=limits.maximum_cavity_cells,
         )
     extra_work = 0
+    certificates: dict[bytes, tuple[float, bool]] = {}
+    spatial_tolerance = prepared.fidelity_tolerance * 1.0e-3
+    root_proofs = ImplicitDualRootProofs(
+        prepared.query.query_id, spatial_tolerance, 32, {}
+    )
     try:
         for round_ in range(prepared.schedule.refinement_rounds + 1):
             _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
@@ -2221,15 +2511,16 @@ def _construct_implicit_restriction(
             )
             work = prepare_implicit_restricted_queries(
                 domain,
-                spatial_tolerance=prepared.fidelity_tolerance * 1.0e-3,
+                spatial_tolerance=spatial_tolerance,
                 maximum_depth=32,
                 additional_work_units=extra_work,
                 scope=scope,
+                root_proofs=root_proofs,
             )
             queries = work.geometry_queries
             extra_work = work.work_units - statistics.work
             bad, deviation, facet_queries = _restricted_facet_quality(
-                prepared, work, scope=scope
+                prepared, work, scope=scope, certificates=certificates
             )
             queries += facet_queries
             if not bad.size:
@@ -2252,6 +2543,7 @@ def _construct_implicit_restriction(
                         queries,
                         deviation,
                         seed_statistics,
+                        body_sites,
                     )
                 # All dual proofs remain meaningful, but not a source-bound
                 # manifold yet. Refine their source roots rather than PLC faces.
@@ -2375,6 +2667,7 @@ def _improve_implicit_volume(
     topology: RestrictedImplicitTopology,
     prepared: PreparedImplicitVolume,
     work_units: int,
+    body_sites: np.ndarray,
     /,
     *,
     validity_policy: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy,
@@ -2392,7 +2685,13 @@ def _improve_implicit_volume(
     float,
     int,
 ]:
-    """Run native tetrahedral quality refinement and improvement on the restricted body."""
+    """Run native tetrahedral quality refinement and improvement on the restricted body.
+
+    The enclosed body seed sites form the target-size interior lattice. They are
+    protected like PLC size-goal originals: unprotected interior-vertex removal
+    is size-blind and would otherwise join lattice neighbors by edges beyond the
+    hard maximum size.
+    """
 
     _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
         prepared.specification.limits,
@@ -2417,6 +2716,31 @@ def _improve_implicit_volume(
             max_tetrahedra=limits.maximum_cells,
         )
     try:
+        lookup = {point.tobytes(): index for index, point in enumerate(topology.points)}
+        protected = np.asarray(
+            sorted(
+                {
+                    lookup[site.tobytes()]
+                    for site in np.ascontiguousarray(body_sites, dtype=np.float64)
+                    if site.tobytes() in lookup
+                }
+            ),
+            dtype=np.int64,
+        )
+        if protected.size:
+            state.set_work_limit(scope.remaining().remaining_work_units)
+            protection_start = state.work_units()
+            try:
+                state.protect_vertices(protected)
+            except MeshcoreError as error:
+                if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
+                    raise
+                raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "implicit_volume.protected_body_sites must fit the remaining work allowance; got resource exhaustion",
+                    stage="implicit_volume_quality",
+                ) from error
+            work_units += state.work_units() - protection_start
         start = phase_started(record_phase)
         _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
             limits,
@@ -2583,7 +2907,7 @@ def generate_restricted_implicit_volume(
 ) -> ImplicitVolumeConstruction:
     """Construct the restricted-Delaunay body under an explicit request scope."""
 
-    topology, work, spent, queries, deviation, seed_statistics = (
+    topology, work, spent, queries, deviation, seed_statistics, body_sites = (
         _construct_implicit_restriction(
             prepared,
             record_phase=record_phase,
@@ -2605,6 +2929,7 @@ def generate_restricted_implicit_volume(
         topology,
         prepared,
         spent,
+        body_sites,
         validity_policy=validity_policy,
         record_phase=record_phase,
         scope=scope,
@@ -2778,9 +3103,12 @@ def execute_restricted_implicit_volume(
     """Certify and publish analytic restricted-Delaunay generation."""
 
     with implicit_source_budget(
-        specification.limits, scope=scope, queries_upper=1
+        specification.limits, scope=scope, queries_upper=2
     ) as budget:
         prepared.profile.require_bound(geometry, coordinate_contract, budget=budget)
+        fidelity_source = source_fidelity_owner.ImplicitProjectionBoundarySource(
+            prepared.profile, budget=budget
+        )
     if specification.specification_id != prepared.specification.specification_id:
         raise ValueError(
             f"execute_restricted_implicit_volume.prepared.specification must bind the physical request; got prepared_id={prepared.specification.specification_id!r}, requested_id={specification.specification_id!r}"
@@ -2853,9 +3181,7 @@ def execute_restricted_implicit_volume(
             specification.limits,
             domain=construction.domain,
             cell_regions=construction.cell_regions,
-            fidelity_source=source_fidelity_owner.ImplicitProjectionBoundarySource(
-                prepared.profile
-            ),
+            fidelity_source=fidelity_source,
             fidelity_tolerance=prepared.fidelity_tolerance,
         ),
         policy=NativePublicationPolicy(

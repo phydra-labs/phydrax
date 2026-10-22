@@ -15,6 +15,9 @@ construction invariants and are always evaluated.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
+from hashlib import sha256
+from typing import TYPE_CHECKING
 
 import numpy as np
 from jax.typing import ArrayLike
@@ -22,12 +25,14 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 import phydrax.discretization._cell_complex as cell_complex_owner
+import phydrax.discretization._cell_geometry as cell_geometry_owner
 import phydrax.discretization._cell_mesh as cell_mesh_owner
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import (
     orient2d,
-    orient3d as predicate_orient3d,
+    orient3d_host,
     PredicateMode,
     PredicateResult,
     resolve_host_predicate_mode,
@@ -41,6 +46,15 @@ from ..discretization._reference_cell import reference_cell_topology
 from ..discretization.spatial._morton import morton_encode_integer_host
 from ..geometry._polygon_triangulation import polygon_loop_triangles
 from ..typing import checked
+from ._entity_keys import entity_keys, key_rows
+
+
+if TYPE_CHECKING:
+    from ..discretization._cell_geometry import CellGeometrySpec
+    from ..discretization._cell_geometry_validity import CellValidityCertificate
+    from ..geometry._embedding_state import MeshCertificateLimits
+    from ..geometry._global_embedding import GlobalEmbeddingCertificate
+    from ._audit import CellMeshAuditPolicy
 
 
 _MORTON_BITS = {1: 62, 2: 31, 3: 21}
@@ -263,13 +277,19 @@ def _welded_complex(mesh: cell_mesh_owner.CellMesh, welded: np.ndarray, /) -> _C
                 local_edges = np.asarray(topology.entities[1])
                 edge_rows.append(rows[:, local_edges].reshape(-1, 2))
                 edge_cells.append(np.repeat(owners, local_edges.shape[0]))
-            width = max(len(face) for face in local_facets)
-            for face, sign in zip(local_facets, local_signs, strict=True):
-                values = np.full((count, width), -1, dtype=np.int64)
-                values[:, : len(face)] = rows[:, np.asarray(face)]
-                facet_rows.append(values)
-                facet_cells.append(owners)
-                facet_signs.append(np.full(count, sign, dtype=np.int8))
+            if dimension == 2 and block.cell_kind == "triangle":
+                # Match mesh_facets' cell-major polygon_edges occurrence order.
+                facet_rows.append(rows[:, np.asarray(local_facets)].reshape(-1, 2))
+                facet_cells.append(np.repeat(owners, 3))
+                facet_signs.append(np.zeros(3 * count, dtype=np.int8))
+            else:
+                width = max(len(face) for face in local_facets)
+                for face, sign in zip(local_facets, local_signs, strict=True):
+                    values = np.full((count, width), -1, dtype=np.int64)
+                    values[:, : len(face)] = rows[:, np.asarray(face)]
+                    facet_rows.append(values)
+                    facet_cells.append(owners)
+                    facet_signs.append(np.full(count, sign, dtype=np.int8))
         cursor += count
     width = max(value.shape[1] for value in facet_rows)
     facets = np.concatenate(
@@ -381,12 +401,88 @@ def _lookup(table: np.ndarray, rows: np.ndarray, /) -> np.ndarray:
     return position
 
 
-def _facet_links(inverse: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    """Consecutive occurrence pairs of every shared facet group."""
+def _facet_links(inverse: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Consecutive occurrence pairs and their already-computed stable group order."""
 
     order = np.argsort(inverse, kind="stable")
     same = inverse[order[1:]] == inverse[order[:-1]]
-    return order[:-1][same], order[1:][same]
+    return order[:-1][same], order[1:][same], order
+
+
+def _cache_audit_facets(
+    mesh: cell_mesh_owner.CellMesh,
+    points: np.ndarray,
+    welded: np.ndarray,
+    complex_: _Complex,
+    inverse: np.ndarray,
+    counts: np.ndarray,
+    order: np.ndarray,
+    /,
+    *,
+    audit_policy_id: str | None,
+    audit_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    budget: CoordinateEnclosureBudget | None,
+) -> None:
+    """Retain current, unwelded triangle incidence data, never an audit verdict."""
+    from ..discretization._coordinate_identity import coordinate_scope_key
+    from ..geometry._embedding_state import Facets
+
+    if (
+        budget is None
+        or audit_geometry is None
+        or audit_policy_id is None
+        or mesh.topological_dimension != 2
+        or mesh.periodic_topology is not None
+        or mesh.storage is not None
+        or audit_geometry.storage_id is not None
+        or not mesh.blocks
+        or any(block.cell_kind != "triangle" for block in mesh.blocks)
+        or points.shape != mesh.coordinates.shape
+    ):
+        return
+    with budget.temporary_scope():
+        budget.reserve(0, 4096)
+        source_key = coordinate_scope_key(mesh, audit_geometry)
+        if source_key in budget.facet_cache:
+            return
+        # Admit identity comparison and packed-offset storage before allocation.
+        # All occurrence arrays and the stable group order were earned by the
+        # audit; packing them creates no additional semantic work channel.
+        budget.reserve(
+            0, 16 * welded.size + 24 * points.size + 8 * (counts.size + 1)
+        )
+        if not np.array_equal(welded, np.arange(points.shape[0])) or not np.array_equal(
+            np.asarray(points, dtype=np.float64).view(np.uint64),
+            np.asarray(mesh.coordinates, dtype=np.float64).view(np.uint64),
+        ):
+            return
+        group_offsets = np.empty(counts.size + 1, dtype=np.int64)
+        group_offsets[0] = 0
+        np.cumsum(counts, out=group_offsets[1:])
+        prepared = Facets(
+            complex_.facets,
+            complex_.facet_signs,
+            complex_.facet_cells,
+            inverse,
+            counts,
+            order,
+            group_offsets,
+        )
+        arrays = (
+            prepared.rows,
+            prepared.signs,
+            prepared.cells,
+            prepared.group,
+            prepared.counts,
+            prepared.order,
+            prepared.group_offsets,
+        )
+        for array in arrays:
+            array.flags.writeable = False
+        # The existing retained_storage owner carries these arrays into later
+        # phases, whose pairing and coverage checks still consume them normally.
+        budget.retain_basis((audit_policy_id, source_key, prepared, arrays))
+        budget.facet_cache[source_key] = prepared
 
 
 def _vertex_links(
@@ -503,29 +599,87 @@ def _edge_links(
     )
 
 
-def _open_boundary_count(
-    complex_: _Complex, counts: np.ndarray, inverse: np.ndarray, embedded: bool, /
-) -> int:
-    boundary = counts[inverse] == 1
-    if embedded:
-        return int(np.count_nonzero(counts == 1))
-    facets = complex_.facets[boundary]
+def _facet_ridges(facets: np.ndarray, /) -> np.ndarray:
+    """Sorted ridge rows of facet occurrences (none for point facets)."""
     if facets.shape[1] == 1:
-        return 0
+        return np.zeros((0, 1), dtype=np.int64)
     if facets.shape[1] == 2:
-        ridges = np.concatenate((facets[:, :1], facets[:, 1:2]))
-    else:
-        lengths = np.sum(facets >= 0, axis=1)
-        column = np.arange(facets.shape[1])
-        following = facets[
-            np.arange(facets.shape[0])[:, None], (column + 1) % lengths[:, None]
-        ]
-        slots = column[None, :] < lengths[:, None]
-        ridges = np.sort(np.stack((facets[slots], following[slots]), axis=1), axis=1)
+        return np.concatenate((facets[:, :1], facets[:, 1:2]))
+    lengths = np.sum(facets >= 0, axis=1)
+    column = np.arange(facets.shape[1])
+    following = facets[
+        np.arange(facets.shape[0])[:, None], (column + 1) % lengths[:, None]
+    ]
+    slots = column[None, :] < lengths[:, None]
+    return np.sort(np.stack((facets[slots], following[slots]), axis=1), axis=1)
+
+
+def _truncated_facet_slots(
+    mesh: cell_mesh_owner.CellMesh,
+    complex_: _Complex,
+    boundary: np.ndarray,
+    /,
+) -> np.ndarray | None:
+    """Unpaired facet occurrences that cut an owner-local closure, not the domain.
+
+    A dense mesh has none. Owner-local storage declares which resident facets
+    lie on the physical boundary; every other locally unpaired facet truncates
+    a resident star, and the collective subdivision and reciprocal-facet
+    checks own its global closure.
+    """
+    storage = mesh.storage
+    if (
+        storage is None
+        or storage.local_physical_boundary_facets is None
+        or mesh.periodic_topology is not None
+    ):
+        return None
+    physical = np.asarray(storage.local_physical_boundary_facets, dtype=np.bool_)
+    keys = entity_keys(mesh, mesh.topological_dimension - 1)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    facets = complex_.facets[boundary]
+    valid = facets >= 0
+    sentinel = np.iinfo(np.int64).max
+    slot_keys = np.sort(
+        np.where(valid, vertex_ids[np.maximum(facets, 0)], sentinel), axis=1
+    )
+    slot_keys = np.where(slot_keys == sentinel, -1, slot_keys)
+    rows = key_rows(keys, slot_keys)
+    if physical.shape != (keys.shape[0],) or np.any(rows < 0):
+        raise ValueError(
+            "mesh.storage.local_physical_boundary_facets must label every resident facet; "
+            f"got mask shape={physical.shape!r} for {keys.shape[0]} facets"
+        )
+    truncated = np.zeros(boundary.shape, dtype=np.bool_)
+    truncated[np.flatnonzero(boundary)] = ~physical[rows]
+    return truncated
+
+
+def _open_boundary_count(
+    complex_: _Complex,
+    counts: np.ndarray,
+    inverse: np.ndarray,
+    embedded: bool,
+    truncated: np.ndarray | None,
+    /,
+) -> int:
+    unpaired = counts[inverse] == 1
+    cut = np.zeros(unpaired.shape, dtype=np.bool_) if truncated is None else truncated
+    boundary = unpaired & ~cut
+    if embedded:
+        return int(np.count_nonzero(boundary))
+    ridges = _facet_ridges(complex_.facets[boundary])
     if ridges.shape[0] == 0:
         return 0
-    _, ridge_counts = np.unique(ridges, axis=0, return_counts=True)
-    return int(np.count_nonzero(ridge_counts != 2))
+    unique, ridge_counts = np.unique(ridges, axis=0, return_counts=True)
+    open_ = ridge_counts != 2
+    if np.any(cut):
+        # A ridge on a closure cut has its other physical facets beyond the
+        # resident star; only the collective closure checks can pair them.
+        open_ &= key_rows(
+            np.unique(_facet_ridges(complex_.facets[cut]), axis=0), unique
+        ) < 0
+    return int(np.count_nonzero(open_))
 
 
 # Self-intersection ---------------------------------------------------------------
@@ -550,7 +704,10 @@ def orientation3d_signs(
     budget: CoordinateEnclosureBudget | None,
 ) -> tuple[np.ndarray, np.ndarray]:
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
-    return _signs(predicate_orient3d(a, b, c, d, mode=mode, budget=budget))
+    result = orient3d_host(
+        a, b, c, d, mode=mode, budget=budget, memoize_native=False
+    )
+    return result.signs, result.certain
 
 
 def _orient2d(
@@ -565,31 +722,32 @@ def _orient2d(
     return _signs(orient2d(a, b, c, mode=mode, budget=budget))
 
 
-def _segment_crosses_triangle(
-    segment: tuple[np.ndarray, np.ndarray],
-    triangle: tuple[np.ndarray, np.ndarray, np.ndarray],
+def _segment_triangle_decision(
+    side_a: tuple[np.ndarray, np.ndarray],
+    side_b: tuple[np.ndarray, np.ndarray],
+    edges: tuple[tuple[np.ndarray, np.ndarray], ...],
     /,
-    *,
-    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Closed segment/triangle contact for segments not lying in the plane."""
+    """Closed segment/triangle contact for segments not lying in the plane.
 
-    a, b = segment
-    p, q, r = triangle
-    side_a, certain_a = orientation3d_signs(p, q, r, a, budget=budget)
-    side_b, certain_b = orientation3d_signs(p, q, r, b, budget=budget)
-    first, certain_1 = orientation3d_signs(a, b, p, q, budget=budget)
-    second, certain_2 = orientation3d_signs(a, b, q, r, budget=budget)
-    third, certain_3 = orientation3d_signs(a, b, r, p, budget=budget)
-    edges = np.stack((first, second, third), axis=1).astype(np.int16)
-    straddles = (side_a.astype(np.int16) * side_b <= 0) & ~((side_a == 0) & (side_b == 0))
-    inside = np.all(edges >= 0, axis=1) | np.all(edges <= 0, axis=1)
-    known = np.stack((certain_1, certain_2, certain_3), axis=1)
+    ``side_a``/``side_b`` are the exact ``(sign, certain)`` orientations of the
+    segment endpoints against the triangle plane ``orient(p, q, r, end)``;
+    ``edges`` are ``orient(a, b, p, q)``, ``orient(a, b, q, r)`` and
+    ``orient(a, b, r, p)`` for segment ``ab`` and triangle ``pqr``.
+    """
+
+    (sign_a, certain_a), (sign_b, certain_b) = side_a, side_b
+    edge_signs = np.stack([sign for sign, _ in edges], axis=1).astype(np.int16)
+    straddles = (sign_a.astype(np.int16) * sign_b <= 0) & ~((sign_a == 0) & (sign_b == 0))
+    inside = np.all(edge_signs >= 0, axis=1) | np.all(edge_signs <= 0, axis=1)
+    known = np.stack([certain for _, certain in edges], axis=1)
     plane_known = certain_a & certain_b
     # A certified plane miss, or two certified opposite edge signs, decides the
     # contact whatever the remaining signs are.
-    missed = plane_known & (side_a.astype(np.int16) * side_b > 0)
-    separated = np.any(known & (edges > 0), axis=1) & np.any(known & (edges < 0), axis=1)
+    missed = plane_known & (sign_a.astype(np.int16) * sign_b > 0)
+    separated = np.any(known & (edge_signs > 0), axis=1) & np.any(
+        known & (edge_signs < 0), axis=1
+    )
     certain = plane_known & (missed | separated | np.all(known, axis=1))
     return straddles & inside, certain
 
@@ -638,6 +796,144 @@ def _inside_triangle_2d(
     return inside & ~outside, certain
 
 
+def _filtered_support_side(
+    origin: np.ndarray,
+    edge: np.ndarray,
+    point: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Certified line sides, including algebraic axis-aligned zero signs."""
+    horizontal = origin[:, 1] == edge[:, 1]
+    vertical = origin[:, 0] == edge[:, 0]
+    certain = horizontal | vertical
+    signs = np.zeros(origin.shape[0], dtype=np.int16)
+    for selected, axis, orientation in ((horizontal, 0, 1), (~horizontal & vertical, 1, -1)):
+        rows = np.flatnonzero(selected)
+        direction = (edge[rows, axis] > origin[rows, axis]).astype(np.int16) - (
+            edge[rows, axis] < origin[rows, axis]
+        )
+        side = (point[rows, 1 - axis] > origin[rows, 1 - axis]).astype(np.int16) - (
+            point[rows, 1 - axis] < origin[rows, 1 - axis]
+        )
+        signs[rows] = orientation * direction * side
+    remaining = np.flatnonzero(~certain)
+    if remaining.size:
+        result = orient2d(
+            origin[remaining], edge[remaining], point[remaining],
+            mode=PredicateMode.FILTERED, budget=budget,
+        )
+        signs[remaining] = np.asarray(result.signs)
+        certain[remaining] = np.asarray(result.certain)
+    return signs, certain
+
+
+def _coplanar_filtered_separation(
+    one: np.ndarray,
+    two: np.ndarray,
+    shared: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> np.ndarray:
+    """Prove separation by a triangle edge without resolving uncertain signs.
+
+    A shared vertex is local zero in both rows. Other vertices must lie outside
+    its supporting edge, or on the opposite ray of that edge; convexity then
+    confines the intersection to the permitted shared point. With no shared
+    vertex all target vertices must be strictly outside. Unknown filter signs
+    go to the complete predicate, never to a disjoint verdict.
+    """
+    separated = np.zeros(one.shape[0], dtype=np.bool_)
+    if one.dtype == object:
+        return separated
+    for source, target in ((one, two), (two, one)):
+        for edge, opposite in ((1, 2), (2, 1)):
+            rows = np.flatnonzero(~separated)
+            if not rows.size:
+                return separated
+            signs, known = _filtered_support_side(
+                source[rows, 0],
+                source[rows, edge],
+                source[rows, opposite],
+                budget=budget,
+            )
+            proved = known & (signs != 0)
+            for vertex in range(3):
+                candidates = np.flatnonzero(
+                    proved & ((shared[rows] == 0) if vertex == 0 else True)
+                )
+                if not candidates.size:
+                    continue
+                selected = rows[candidates]
+                origin = source[selected, 0]
+                endpoint = source[selected, edge]
+                point = target[selected, vertex]
+                outside, known = _filtered_support_side(
+                    origin, endpoint, point, budget=budget
+                )
+                opposite_ray = np.any(
+                    ((point < origin) & (endpoint > origin))
+                    | ((point > origin) & (endpoint < origin)),
+                    axis=1,
+                )
+                proved[candidates] &= known & (
+                    (signs[candidates] * outside < 0)
+                    | ((shared[selected] == 1) & (outside == 0) & opposite_ray)
+                )
+            separated[rows] |= proved
+    return separated
+
+
+def _shared_vertex_cone_contact(
+    one: np.ndarray,
+    two: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Decide contact of two nondegenerate triangles at their common vertex.
+
+    Each triangle occupies a convex angular cone of opening less than pi.
+    Their intersection contains a nonzero ray exactly when a boundary ray of
+    either cone belongs to the other closed cone. Any such ray has a positive
+    initial segment inside both finite triangles. Six orientation signs thus
+    decide contact beyond the shared point, without testing segments whose
+    common endpoint is already known. Degenerate cones retain the full route.
+    """
+    origin = one[:, 0]
+
+    def side(first: np.ndarray, second: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        signs, known = _filtered_support_side(origin, first, second, budget=budget)
+        pending = np.flatnonzero(~known)
+        if pending.size:
+            signs[pending], known[pending] = _orient2d(
+                origin[pending], first[pending], second[pending], budget=budget
+            )
+        return signs, known
+
+    a, b = one[:, 1], one[:, 2]
+    c, d = two[:, 1], two[:, 2]
+    ab, known_ab = side(a, b)
+    cd, known_cd = side(c, d)
+    ac, known_ac = side(a, c)
+    ad, known_ad = side(a, d)
+    bc, known_bc = side(b, c)
+    bd, known_bd = side(b, d)
+    certain = (
+        known_ab & known_cd & known_ac & known_ad & known_bc & known_bd
+        & (ab != 0) & (cd != 0)
+    )
+    hit = (
+        ((ac * ab >= 0) & (bc * ab <= 0))
+        | ((ad * ab >= 0) & (bd * ab <= 0))
+        | ((ac * cd <= 0) & (ad * cd >= 0))
+        | ((bc * cd <= 0) & (bd * cd >= 0))
+    )
+    return hit, certain
+
+
 def _coplanar_overlap(
     first: np.ndarray,
     second: np.ndarray,
@@ -655,8 +951,35 @@ def _coplanar_overlap(
     axes = _projection_axes(first)
     one = np.stack([_project(first[:, index], axes) for index in range(3)], axis=1)
     two = np.stack([_project(second[:, index], axes) for index in range(3)], axis=1)
+    resolved = _coplanar_filtered_separation(one, two, shared, budget=budget)
     hit = np.zeros(first.shape[0], dtype=np.bool_)
     certain = np.ones(first.shape[0], dtype=np.bool_)
+    vertex_rows = np.flatnonzero(~resolved & (shared == 1))
+    if vertex_rows.size:
+        contact, decided = _shared_vertex_cone_contact(
+            one[vertex_rows], two[vertex_rows], budget=budget
+        )
+        hit[vertex_rows[decided]] = contact[decided]
+        resolved[vertex_rows[decided]] = True
+    pending = np.flatnonzero(~resolved)
+    if pending.size:
+        hit[pending], certain[pending] = _coplanar_projected_overlap(
+            one[pending], two[pending], shared[pending], budget=budget
+        )
+    return hit, certain
+
+
+def _coplanar_projected_overlap(
+    one: np.ndarray,
+    two: np.ndarray,
+    shared: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Decide the remaining contacts after certified supporting-edge separation."""
+    hit = np.zeros(one.shape[0], dtype=np.bool_)
+    certain = np.ones(one.shape[0], dtype=np.bool_)
     touching = shared == 0
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
     for index in range(3):
@@ -709,6 +1032,87 @@ def triangle_pairs_intersect(
     *,
     budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Reuse value-bound contact batches without omitting any requested pair.
+
+    The source digest binds every binary coordinate, while canonical vertex rows
+    preserve welded identities. Broad-phase enumeration and its capacity checks
+    remain with each caller; only already decided narrow-phase predicates reuse
+    evidence. Exact object-coordinate banks keep their own arithmetic route.
+    """
+
+    if budget is None or points.dtype != np.float64 or not points.flags.c_contiguous:
+        return _triangle_pairs_intersect(points, first, second, budget=budget)
+    count = first.shape[0]
+    with budget.temporary_scope():
+        # Canonical rows, sorting/gather scratch, lookup masks and verdicts.
+        # This is byte admission, not a new CPU-pass work-unit definition.
+        budget.reserve(0, 4096 + count * 512)
+        source = (
+            points.shape,
+            points.dtype.str,
+            sha256(memoryview(points)).digest(),
+            resolve_host_predicate_mode(PredicateMode.EXACT).value,
+            budget.maximum_work_units,
+            budget.maximum_memory_bytes,
+        )
+        left = np.sort(first, axis=1)
+        right = np.sort(second, axis=1)
+        row_type = np.dtype((np.void, 3 * np.dtype(np.int64).itemsize))
+        left_keys = np.ascontiguousarray(left, dtype=np.int64).view(row_type).ravel()
+        right_keys = np.ascontiguousarray(right, dtype=np.int64).view(row_type).ravel()
+        swap = np.argsort(
+            np.stack((left_keys, right_keys), axis=1), axis=1, kind="stable"
+        )[:, 0] == 1
+        rows = np.concatenate(
+            (np.where(swap[:, None], right, left), np.where(swap[:, None], left, right)),
+            axis=1,
+        ).astype(np.int64, copy=False)
+        keys = np.ascontiguousarray(rows).view(
+            np.dtype((np.void, 6 * np.dtype(np.int64).itemsize))
+        ).ravel()
+        hit = np.zeros(count, dtype=np.bool_)
+        certain = np.ones(count, dtype=np.bool_)
+        pending = np.ones(count, dtype=np.bool_)
+        for prior_keys, prior_hit, prior_certain in budget.triangle_contact_batches.get(
+            source, ()
+        ):
+            budget.reserve(0)
+            positions = np.flatnonzero(pending)
+            if not positions.size:
+                break
+            indices = np.searchsorted(prior_keys, keys[positions])
+            inside = indices < prior_keys.size
+            selected = positions[inside]
+            indices = indices[inside]
+            matches = prior_keys[indices] == keys[selected]
+            selected = selected[matches]
+            indices = indices[matches]
+            hit[selected] = prior_hit[indices]
+            certain[selected] = prior_certain[indices]
+            pending[selected] = False
+        missing = np.flatnonzero(pending)
+        if missing.size:
+            hit[missing], certain[missing] = _triangle_pairs_intersect(
+                points, first[missing], second[missing], budget=budget
+            )
+            order = missing[np.argsort(keys[missing], kind="stable")]
+            record = (keys[order], hit[order], certain[order])
+            for value in record:
+                value.flags.writeable = False
+            budget.retain_basis((source, record))
+            budget.triangle_contact_batches.setdefault(source, []).append(record)
+        budget.reserve(0)
+        return hit, certain
+
+
+def _triangle_pairs_intersect(
+    points: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Intersection of triangle pairs beyond their shared (welded) vertices."""
 
     shared_mask = first[:, :, None] == second[:, None, :]
@@ -725,21 +1129,46 @@ def triangle_pairs_intersect(
     two = np.where((shared == 0)[:, None], second, two)
     tri_one = points[one]
     tri_two = points[two]
-    plane_signs = []
+    # An axis-aligned plane containing all six source coordinates proves the
+    # three plane signs are exactly zero, without three orientation queries.
+    # Equality compares source values, not a tolerance or rounded normal.
+    coordinate_plane = np.any(
+        np.all(tri_one == tri_one[:, :1], axis=1)
+        & np.all(tri_two == tri_one[:, :1], axis=1),
+        axis=1,
+    )
+    signs = np.zeros((first.shape[0], 3), dtype=np.int8)
     plane_known = np.ones(first.shape[0], dtype=np.bool_)
+    plane_certain = np.ones((first.shape[0], 3), dtype=np.bool_)
+    shared_second = np.any(one[:, :, None] == two[:, None, :], axis=1)
+    # A shared index repeats one plane operand, so its determinant is exactly
+    # zero. Avoid sending that known identity through the exact predicate.
+    # Unknown object atoms and nonfinite operands keep their admission paths.
+    shared_zero = np.zeros_like(shared_second)
+    if np.issubdtype(points.dtype, np.floating) and points.dtype.itemsize <= 8:
+        shared_zero = shared_second & np.all(
+            np.isfinite(tri_one), axis=(1, 2)
+        )[:, None]
+    elif points.dtype == object and np.any(shared_second):
+        if budget is not None:
+            budget.reserve(points.size)
+        if all(type(value) is int for value in points.flat):
+            shared_zero = shared_second
     for index in range(3):
+        plane_rows = np.flatnonzero(~coordinate_plane & ~shared_zero[:, index])
+        if not plane_rows.size:
+            continue
         sign, known = orientation3d_signs(
-            tri_one[:, 0],
-            tri_one[:, 1],
-            tri_one[:, 2],
-            tri_two[:, index],
+            tri_one[plane_rows, 0],
+            tri_one[plane_rows, 1],
+            tri_one[plane_rows, 2],
+            tri_two[plane_rows, index],
             budget=budget,
         )
-        plane_signs.append(sign)
-        plane_known &= known
-    signs = np.stack(plane_signs, axis=1)
+        signs[plane_rows, index] = sign
+        plane_certain[plane_rows, index] = known
+        plane_known[plane_rows] &= known
     coplanar = np.all(signs == 0, axis=1)
-    shared_second = np.any(one[:, :, None] == two[:, None, :], axis=1)
     # Strict same-side nonshared vertices can meet the first plane only at
     # declared shared vertices. Convexity certifies disjointness beyond those
     # permitted features without segment or projected-overlap predicates.
@@ -795,23 +1224,64 @@ def triangle_pairs_intersect(
     if crossing_rows.size:
         a = tri_one[crossing_rows]
         b = tri_two[crossing_rows]
-        start = np.where(shared[crossing_rows] == 1, 1, 0)
-        contact = np.zeros(crossing_rows.size, dtype=np.bool_)
-        known = np.ones(crossing_rows.size, dtype=np.bool_)
-        for source, target in ((a, b), (b, a)):
+        count = crossing_rows.size
+        # A shared vertex (local zero) touches the other triangle by
+        # construction; only the opposite edge (index one) carries new contact.
+        free = shared[crossing_rows] == 0
+        relevant = (free, np.ones((count,), dtype=np.bool_), free)
+        # Each exact orientation is evaluated once. The sides of b's vertices
+        # against a's plane are the plane signs above. Orientation alternates in
+        # its four points and (a, b, c, d) -> (c, d, a, b) is even, so the
+        # edge sign orient(b_j, b_j+1, a_i, a_i+1) equals orient(a_i, a_i+1,
+        # b_j, b_j+1) for both segment/triangle directions.
+        b_sides = (signs[crossing_rows], plane_certain[crossing_rows])
+        a_sides = (
+            np.zeros((count, 3), dtype=np.int8),
+            np.ones((count, 3), dtype=np.bool_),
+        )
+        for vertex in range(3):
+            rows = np.flatnonzero(relevant[vertex] | relevant[(vertex - 1) % 3])
+            if rows.size:
+                a_sides[0][rows, vertex], a_sides[1][rows, vertex] = (
+                    orientation3d_signs(
+                        b[rows, 0], b[rows, 1], b[rows, 2], a[rows, vertex], budget=budget
+                    )
+                )
+        edge_signs = np.zeros((count, 3, 3), dtype=np.int8)
+        edge_known = np.ones((count, 3, 3), dtype=np.bool_)
+        for i in range(3):
+            for j in range(3):
+                rows = np.flatnonzero(relevant[i] | relevant[j])
+                if rows.size:
+                    edge_signs[rows, i, j], edge_known[rows, i, j] = orientation3d_signs(
+                        a[rows, i],
+                        a[rows, (i + 1) % 3],
+                        b[rows, j],
+                        b[rows, (j + 1) % 3],
+                        budget=budget,
+                    )
+        contact = np.zeros((count,), dtype=np.bool_)
+        known = np.ones((count,), dtype=np.bool_)
+        for sides, transposed in ((a_sides, False), (b_sides, True)):
             for index in range(3):
-                begin = source[:, index]
-                end = source[:, (index + 1) % 3]
-                # A shared vertex (local zero) touches the other triangle by
-                # construction; only the opposite edge carries new contact.
-                relevant = (start == 0) | (index == 1)
-                rows = np.flatnonzero(relevant)
+                rows = np.flatnonzero(relevant[index])
                 if not rows.size:
                     continue
-                result, certain_ = _segment_crosses_triangle(
-                    (begin[rows], end[rows]),
-                    (target[rows, 0], target[rows, 1], target[rows, 2]),
-                    budget=budget,
+                result, certain_ = _segment_triangle_decision(
+                    (sides[0][rows, index], sides[1][rows, index]),
+                    (sides[0][rows, (index + 1) % 3], sides[1][rows, (index + 1) % 3]),
+                    tuple(
+                        (
+                            edge_signs[rows, edge, index],
+                            edge_known[rows, edge, index],
+                        )
+                        if transposed
+                        else (
+                            edge_signs[rows, index, edge],
+                            edge_known[rows, index, edge],
+                        )
+                        for edge in range(3)
+                    ),
                 )
                 contact[rows] |= result
                 known[rows] &= certain_
@@ -995,6 +1465,208 @@ def _self_intersections(
     return intersections, undecided, exceeded
 
 
+@dataclass(frozen=True)
+class _PlanarAuditEmbeddingProof:
+    """Request-owned completed theorem, never an externally supplied exemption."""
+
+    key: tuple[object, ...]
+    geometry: CellGeometrySpec
+    policy: CellMeshAuditPolicy
+    limits: MeshCertificateLimits
+    junction_vertices: tuple[int, ...]
+    validity: CellValidityCertificate
+    embedding: GlobalEmbeddingCertificate
+
+
+def _planar_audit_embedding_key(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: CellGeometrySpec,
+    policy: CellMeshAuditPolicy,
+    limits: MeshCertificateLimits,
+    junction_vertices: tuple[int, ...],
+    /,
+) -> tuple[object, ...]:
+    from ..discretization._coordinate_identity import coordinate_scope_key
+
+    # The live tree includes triangle order/global IDs, all topology incidence
+    # arrays, source controls and routes. Do not trust a stored mesh/source ID
+    # alone, nor a storage owner's shortcut for a mutable numerical carrier.
+    return (
+        coordinate_scope_key(mesh, geometry),
+        canonical_fingerprint(array_tree_fingerprint((mesh, geometry))),
+        policy.policy_id,
+        limits.limits_id,
+        junction_vertices,
+        resolve_host_predicate_mode(PredicateMode.EXACT),
+    )
+
+
+def prepare_planar_audit_embedding(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: CellGeometrySpec,
+    *,
+    policy: CellMeshAuditPolicy,
+    limits: MeshCertificateLimits,
+    junction_vertices: ArrayLike | None,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[CellValidityCertificate | None, GlobalEmbeddingCertificate | None]:
+    """Earn the planar interior nonintersection theorem before the audit.
+
+    Degree-one triangle sources, including proven affine chart chains, are
+    eligible. EVERY routed corner's exact source image must equal the binary64
+    carrier as a rational number.
+    Rounded equality is insufficient: an embedded ideal source can round into
+    an intersecting carrier. Positive cell validity plus the existing global
+    theorem's facet pairing, closed contact-free boundary and degree-one
+    conclusion then proves that interiors are disjoint and all contacts shared.
+    No positivity, contact obligation, or certificate limit is synthesized here.
+    """
+    from ..discretization import _coordinate_enclosure as enclosure_owner
+    from ..discretization._cell_geometry_validity import certify_cell_geometry_validity
+    from ..geometry._global_embedding import (
+        _junction_vertices,
+        certify_global_embedding,
+        coordinate_scope,
+    )
+
+    if (
+        mesh.topological_dimension != 2
+        or mesh.ambient_dimension != 2
+        or mesh.periodic_topology is not None
+        or mesh.storage is not None
+        or not mesh.blocks
+        or any(block.cell_kind != "triangle" for block in mesh.blocks)
+        or policy.self_intersection == "skip"
+    ):
+        budget.planar_audit_embedding_proof = None
+        return None, None
+    junctions = tuple(_junction_vertices(mesh, junction_vertices).tolist())
+    budget.reserve(0)
+    key = _planar_audit_embedding_key(mesh, geometry, policy, limits, junctions)
+    earned = budget.planar_audit_embedding_proof
+    if earned is not None and earned.key == key:
+        return earned.validity, earned.embedding
+    # Clear obsolete authority before attempting a replacement that may fail.
+    budget.planar_audit_embedding_proof = None
+    with budget.activate(), budget.temporary_scope():
+        elements, _, _ = geometry._resolve(
+            mesh, exact_source_prepared=True, budget=budget
+        )
+        if any(
+            not enclosure_owner.affine_simplex_source(element, budget=budget)
+            or element.cell_kind != "triangle"
+            or element.degree != 1
+            for element in elements
+        ):
+            return None, None
+        images = enclosure_owner.prepared_coordinate_vertex_images(
+            mesh,
+            geometry,
+            mismatch="planar_audit_embedding.corner_images must agree at every shared vertex; got unequal exact images",
+            budget=budget,
+        )
+        if images is None:
+            return None, None
+        points = np.asarray(mesh.coordinates, dtype=np.float64)
+        # Source images are already earned. Admit the actual routed-vertex,
+        # unique-row and binary64 comparison workspaces before packing them.
+        budget.reserve(0, 1024 + 512 * sum(block.cell_count for block in mesh.blocks))
+        used = np.unique(
+            np.concatenate(
+                [
+                    np.asarray(block.vertices, dtype=np.int64).reshape(-1)
+                    for block in mesh.blocks
+                ]
+            )
+        )
+        rounded = np.empty((used.size, 2), dtype=np.float64)
+        for position, vertex in enumerate(used.tolist()):
+            image = images[vertex]
+            if image is None or len(image) != 2:
+                return None, None
+            rounded[position] = tuple(float(value) for value in image)
+            if not np.all(np.isfinite(rounded[position])) or any(
+                Fraction(float(value)) != exact
+                for value, exact in zip(rounded[position], image, strict=True)
+            ):
+                return None, None
+        if not np.array_equal(
+            rounded.view(np.uint64), points[used].view(np.uint64)
+        ):
+            return None, None
+        scope = coordinate_scope(mesh, geometry, budget=budget)
+        if scope.coordinate_scope != "affine":
+            return None, None
+        validity = certify_cell_geometry_validity(
+            geometry, mesh=mesh, policy=policy.validity_policy, budget=budget
+        )
+        if not validity.all_certified:
+            return None, None
+        embedding = certify_global_embedding(
+            mesh,
+            geometry,
+            validity,
+            limits=limits,
+            junction_vertices=junction_vertices,
+            budget=budget,
+        )
+        if embedding.status != "certified":
+            return None, None
+        proof = _PlanarAuditEmbeddingProof(
+            key, geometry, policy, limits, junctions, validity, embedding
+        )
+        budget.retain_basis((key, proof, validity, embedding))
+        budget.planar_audit_embedding_proof = proof
+        return validity, embedding
+
+
+def _completed_planar_audit_embedding(
+    mesh: cell_mesh_owner.CellMesh,
+    points: np.ndarray,
+    welded: np.ndarray,
+    /,
+    *,
+    audit_policy_id: str | None,
+    audit_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    coincident_tolerance: float | None,
+    candidate_capacity: int,
+    intersection_candidate_capacity: int,
+    check_manifold: bool,
+    check_watertight: bool,
+    budget: CoordinateEnclosureBudget | None,
+) -> bool:
+    """Import only the actual completed theorem for this unchanged carrier."""
+    proof = None if budget is None else budget.planar_audit_embedding_proof
+    if proof is None or audit_policy_id != proof.policy.policy_id:
+        return False
+    policy = proof.policy
+    if (
+        coincident_tolerance
+        != (None if policy.coincident_vertices == "skip" else policy.coincident_vertex_tolerance)
+        or candidate_capacity != policy.maximum_coincidence_candidates
+        or intersection_candidate_capacity != policy.maximum_intersection_candidates
+        or check_manifold != (policy.nonmanifold != "skip")
+        or check_watertight != (policy.watertight_boundary != "skip")
+        or proof.embedding.status != "certified"
+        or not proof.validity.all_certified
+        or proof.embedding.candidate_pair_count > intersection_candidate_capacity
+        or not np.array_equal(welded, np.arange(points.shape[0]))
+        or not np.array_equal(
+            points.view(np.uint64),
+            np.asarray(mesh.coordinates, dtype=np.float64).view(np.uint64),
+        )
+    ):
+        return False
+    budget.reserve(0)
+    return proof.key == _planar_audit_embedding_key(
+        mesh,
+        proof.geometry if audit_geometry is None else audit_geometry,
+        policy,
+        proof.limits,
+        proof.junction_vertices,
+    )
+
+
 # Entry point ---------------------------------------------------------------------
 
 
@@ -1011,6 +1683,8 @@ def audit_welded_topology(
     check_watertight: bool,
     check_self_intersection: bool,
     budget: CoordinateEnclosureBudget | None = None,
+    audit_policy_id: str | None = None,
+    audit_geometry: cell_geometry_owner.CellGeometrySpec | None = None,
 ) -> WeldedTopologyEvidence:
     """Evaluate the welded-topology checks of one mesh with host coordinates.
 
@@ -1050,7 +1724,7 @@ def audit_welded_topology(
     keys = _sorted_keys(complex_.facets)
     _, inverse, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
     inverse = inverse.reshape(-1)
-    first, second = _facet_links(inverse)
+    first, second, order = _facet_links(inverse)
     twice = counts[inverse[first]] == 2
     pair_first = first[twice]
     pair_second = second[twice]
@@ -1100,12 +1774,30 @@ def audit_welded_topology(
             )
     embedded = mesh.ambient_dimension > mesh.topological_dimension
     open_facets = (
-        _open_boundary_count(complex_, counts, inverse, embedded)
+        _open_boundary_count(
+            complex_,
+            counts,
+            inverse,
+            embedded,
+            _truncated_facet_slots(mesh, complex_, counts[inverse] == 1),
+        )
         if check_watertight
         else 0
     )
     intersections = 0
-    if check_self_intersection:
+    if check_self_intersection and not _completed_planar_audit_embedding(
+        mesh,
+        points,
+        welded,
+        audit_policy_id=audit_policy_id,
+        audit_geometry=audit_geometry,
+        coincident_tolerance=coincident_tolerance,
+        candidate_capacity=candidate_capacity,
+        intersection_candidate_capacity=intersection_candidate_capacity,
+        check_manifold=check_manifold,
+        check_watertight=check_watertight,
+        budget=budget,
+    ):
         boundary = counts[inverse] == 1
         intersections, uncertain, intersection_exceeded = _self_intersections(
             points[welded],
@@ -1119,6 +1811,18 @@ def audit_welded_topology(
             unresolved.append("self_intersection_capacity")
         if uncertain:
             unresolved.append("self_intersection_predicates")
+    _cache_audit_facets(
+        mesh,
+        points,
+        welded,
+        complex_,
+        inverse,
+        counts,
+        order,
+        audit_policy_id=audit_policy_id,
+        audit_geometry=audit_geometry,
+        budget=budget,
+    )
     return WeldedTopologyEvidence(
         coincident_vertices=coincident,
         collapsed_cells=int(np.count_nonzero(_collapsed(complex_.cells))),
@@ -1133,4 +1837,8 @@ def audit_welded_topology(
     )
 
 
-__all__ = ["WeldedTopologyEvidence", "audit_welded_topology"]
+__all__ = [
+    "WeldedTopologyEvidence",
+    "audit_welded_topology",
+    "prepare_planar_audit_embedding",
+]

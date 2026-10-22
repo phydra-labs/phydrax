@@ -13,6 +13,7 @@ from time import perf_counter
 import jax
 import numpy as np
 
+from phydrax.geometry.brep import BRepQueryResourceError
 from phydrax.meshing.qualification import (
     benchmark_box,
     corpus_route_points,
@@ -62,9 +63,18 @@ def _measure_samples[T](
 
 
 def benchmark_brep_containment(resolution: int, repeats: int) -> dict[str, object]:
-    """Fixed corpus identities, with a cubic sweep of separated query points."""
+    """Retain fixed-corpus measurements and declared-limit refusal evidence."""
     campaigns: dict[str, object] = {}
+    refusal: dict[str, object] | None = None
     for route in ("sphere", "revolution", "affine", "nurbs"):
+        if refusal is not None:
+            campaigns[route] = {
+                "status": "not-attempted",
+                "reason": "containment-case-stopped-after-resource-refusal",
+                "timing_is_headline": False,
+                "seconds": None,
+            }
+            continue
         query = corpus_route_query(route)
         band = corpus_route_points(query, route)
         count = resolution**3
@@ -72,10 +82,96 @@ def benchmark_brep_containment(resolution: int, repeats: int) -> dict[str, objec
         outside[:, 0] = np.linspace(10, 11, count, dtype=np.float64)
         outside[:, 1:] = 10
         points = jax.device_put(np.concatenate((band, outside)))
-        campaigns[route] = qualify_brep_containment(
-            query, points, sampling=partial(_measure_samples, repeats=repeats)
-        )
-    return {"resolution": resolution, "repeats": repeats, "campaigns": campaigns}
+        try:
+            result = qualify_brep_containment(
+                query, points, sampling=partial(_measure_samples, repeats=repeats)
+            )
+        except BRepQueryResourceError as error:
+            faces = query.solid_faces[0]
+            refusal = {
+                "route": route,
+                "resource": error.resource,
+                "requested": error.requested,
+                "remaining": error.remaining,
+                "point_count": points.shape[0],
+                "solid_count": 1,
+                "face_count": len(faces),
+                "coedge_count": sum(
+                    len(query.faces[face].coedge_edges) for face in faces
+                ),
+                "model_id": query.model.model_id,
+                "policy_id": query.policy.policy_id,
+                "policy_limits": {
+                    "maximum_operations": query.policy.maximum_operations,
+                    "maximum_points": query.policy.maximum_points,
+                    "maximum_scratch_bytes": query.policy.maximum_scratch_bytes,
+                    "maximum_subdivisions": query.policy.maximum_subdivisions,
+                    "maximum_depth": query.policy.maximum_depth,
+                },
+            }
+            campaigns[route] = {
+                "status": "resource-refused",
+                "refusal": refusal,
+                "seconds": None,
+                "timing_is_headline": False,
+                "headline_timing_available": False,
+                "threshold_met": False,
+                "decisions_identical": None,
+                "baseline": None,
+                "boundary_filter": None,
+            }
+        else:
+            campaigns[route] = {"status": "completed", **result}
+    return {
+        "resolution": resolution,
+        "repeats": repeats,
+        "status": "completed" if refusal is None else "resource-refused",
+        "seconds": None,
+        "headline_timing_available": (
+            refusal is None
+            and os.environ.get("PHYDRAX_MESHING_ACCOUNTING_DIAGNOSTICS") != "1"
+        ),
+        "threshold_met": False if refusal is not None else None,
+        "timing_is_headline": (
+            refusal is None
+            and os.environ.get("PHYDRAX_MESHING_ACCOUNTING_DIAGNOSTICS") != "1"
+        ),
+        "refusal": refusal,
+        "campaigns": campaigns,
+    }
+
+
+def benchmark_brep_containment_campaign(
+    resolutions: tuple[int, ...],
+    repeats: int,
+    /,
+    *,
+    run_case: Callable[[int], dict[str, object]],
+) -> list[dict[str, object]]:
+    """Preserve completed cells without retrying a refused or larger request."""
+    results: list[dict[str, object]] = []
+    refused_resolution: int | None = None
+    for resolution in resolutions:
+        if refused_resolution is not None and resolution >= refused_resolution:
+            results.append(
+                {
+                    "resolution": resolution,
+                    "repeats": repeats,
+                    "status": "not-attempted",
+                    "reason": "same-or-larger-containment-request-exceeds-declared-policy",
+                    "refused_resolution": refused_resolution,
+                    "seconds": None,
+                    "timing_is_headline": False,
+                    "headline_timing_available": False,
+                    "threshold_met": False,
+                }
+            )
+            continue
+        result = run_case(resolution)
+        results.append(result)
+        if result["status"] == "resource-refused":
+            refused_resolution = resolution
+    return results
 
 
 def benchmark_brep_moments(resolution: int, repeats: int) -> dict[str, object]:

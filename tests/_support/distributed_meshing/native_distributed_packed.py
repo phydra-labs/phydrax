@@ -261,12 +261,8 @@ def _packed_inverse(
             policy=protected_policy,
         )
     )
-    protected_raw = coarsen_adaptive_simplex_parts(
-        protected.layout,
-        protected.parts,
-        protected.states,
-        protected.states.mesh.cell_active,
-    ).state
+    protected_raw = coarsen_adaptive_simplex_parts(protected.layout, type(protected).execution_parts(protected), protected.states,
+    protected.states.mesh.cell_active,).state
     protected_before = tuple(
         (np.array(value, copy=True) for value in jax.tree_util.tree_leaves(protected_raw))
     )
@@ -308,9 +304,7 @@ def _packed_inverse(
         _record_array(checks, "distributed_180", value, original)
     if semantic_owners:
         sparse = partitioned.cell_marks(np.asarray(lineage.child_ids)[0, :1])
-        split = refine_adaptive_simplex_parts(
-            partitioned.layout, partitioned.parts, partitioned.states, sparse
-        ).state
+        split = refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states, sparse).state
         split_results = M.commit_partitioned_adaptive_simplex(
             partitioned, split
         ).local_results
@@ -377,6 +371,7 @@ def _packed_inverse(
                 ),
                 policy=accepted_policy,
             ),
+            proof=M.SimplexRestartRepackProof(repack),
         ).local_results
         placed = placed_results[0].target
         placed_distribution = M.prepare_mesh_distribution(
@@ -414,9 +409,7 @@ def _packed_inverse(
     partial = scenario in ("packed_partial", "packed_partial_tetra")
     if partial:
         coarsen_marks = coarsen_marks & (jnp.arange(2)[:, None] == 0)
-    compiled = coarsen_adaptive_simplex_parts(
-        partitioned.layout, partitioned.parts, partitioned.states, coarsen_marks
-    ).state
+    compiled = coarsen_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states, coarsen_marks).state
     before = tuple(
         (np.array(value, copy=True) for value in jax.tree_util.tree_leaves(compiled))
     )
@@ -483,12 +476,24 @@ def _packed_inverse(
     raw_active = np.asarray(partitioned.states.mesh.cell_active)
     raw_children = np.asarray(partitioned.states.children)
     published_owners = np.asarray(banks["cell_owners"])
+    published_storage = _require_instance(results[0].target.mesh.storage, CellMeshStorage)
+    closure_banks = dict(published_storage.logical_arrays)
+    predecessor_ids = np.asarray(closure_banks["closure/source_cell_ids"])
+    closure_valid = np.asarray(closure_banks["closure/cell_valid"])
+    closure_ids = np.asarray(closure_banks["closure/cell_ids"])
+    complete_counts = np.sum(predecessor_ids >= 0, axis=-1)
+    assert predecessor_ids.shape[-1] == max(1, int(complete_counts[closure_valid].max()))
+    for row in predecessor_ids[closure_valid]:
+        selected = row[row >= 0]
+        np.testing.assert_array_equal(row[: selected.size], np.sort(selected, kind="stable"))
+        np.testing.assert_array_equal(row[selected.size :], -1)
     for parent, siblings in zip(
         np.asarray(lineage.parent_ids), np.asarray(lineage.child_ids), strict=True
     ):
         published = np.flatnonzero(np.asarray(banks["cell_global_ids"]) == parent)
         if published.size:
             support = []
+            predecessor_support = []
             pending = [
                 tuple(position) for position in np.argwhere(np.isin(raw_ids, siblings))
             ]
@@ -505,6 +510,7 @@ def _packed_inverse(
                 visited.add((owner, slot))
                 if raw_active[owner, slot]:
                     support.append(raw_owners[owner, slot])
+                    predecessor_support.append(raw_ids[owner, slot])
                 else:
                     children = raw_children[owner, slot]
                     checks.setdefault("distributed_318", []).append(
@@ -517,6 +523,17 @@ def _packed_inverse(
             checks.setdefault("distributed_321", []).append(
                 bool(published_owners[published[0]] == np.min(support))
             )
+            expected_support = np.sort(np.asarray(predecessor_support), kind="stable")
+            copies = predecessor_ids[closure_valid & (closure_ids == parent)]
+            assert copies.shape[0] > 0
+            for copy in copies:
+                np.testing.assert_array_equal(copy[: expected_support.size], expected_support)
+                np.testing.assert_array_equal(copy[expected_support.size :], -1)
+    checks["compact_packed_support"] = {
+        "source_width": predecessor_ids.shape[-1],
+        "complete_parent_multisets": True,
+        "canonical_prefix": True,
+    }
     if not partial:
         _record_array(
             checks, "distributed_323", banks["cell_global_ids"][:2], original_ids

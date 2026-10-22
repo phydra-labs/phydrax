@@ -67,6 +67,27 @@ class SourceBlockIntegerGrid(StrictModule):
     grid_id: str = eqx.field(static=True)
 
 
+class _SourceBlockTensorGrid(StrictModule):
+    """Private closed-route tensor topology; exact charts are axis partitions."""
+
+    mesh: CellMesh
+    cell_regions: np.ndarray
+    source_parent_rows: np.ndarray
+    root_intervals: np.ndarray
+    source_frame: PreparedSourceHexFrame
+    source_connection: SourceBlockConnection
+    grid_id: str = eqx.field(static=True)
+
+
+class _SourceTensorGridBanks(StrictModule):
+    """Construction-only numerical topology, with no per-cell chart banks."""
+
+    points: np.ndarray
+    cells: np.ndarray
+    parent_rows: np.ndarray
+    node_count: int = eqx.field(static=True)
+
+
 class SourceFrameCornerData(StrictModule):
     """Store admitted source-chart derivatives and reciprocal corner frames."""
 

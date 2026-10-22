@@ -2,6 +2,7 @@
 
 """Two-process checkpoint publication, refusal, and source restoration scenarios."""
 
+import json
 import socket
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,7 @@ from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax._model._structure import (
     model_from_logical_array_recipe,
     model_recipe_array_inventory,
@@ -26,10 +28,11 @@ from phydrax.lifecycle._chunk_repository import RepositoryCorruptionError
 from phydrax.lifecycle._distributed_checkpoint import (
     assemble_distributed_checkpoint_from_repository,
     publish_process_meshing_checkpoint,
+    read_meshing_checkpoint_states,
     restore_meshing_checkpoint,
 )
 from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
-from phydrax.lifecycle._repository import ObjectNotFoundError
+from phydrax.lifecycle._repository import ObjectNotFoundError, POSIXArtifactRepository
 from phydrax.lifecycle._restart_topology import (
     MeshingCheckpointState,
     TopologyRestartPolicy,
@@ -45,6 +48,21 @@ from tests._support.distributed_meshing.restart_builders import (
     scientific_arrays,
 )
 from tests._support.forced_devices import gloo_rank_environment, run_on_forced_devices
+
+
+# Frozen distributed-qualification archive and repository limits.
+_ACCEPTED_EPOCH_LIMITS = ArrayArchiveLimits(
+    max_members=32768,
+    max_manifest_nesting=128,
+    max_manifest_bytes=128 * 1024 * 1024,
+    max_central_directory_bytes=8 * 1024 * 1024,
+)
+_ACCEPTED_EPOCH_CHECKPOINT = {
+    "checkpoint": "accepted-epoch",
+    "execution": "accepted-epoch-execution",
+    "analysis": "accepted-epoch-analysis",
+    "revision": "accepted-epoch-revision",
+}
 
 
 def run_restart_workers(
@@ -425,3 +443,218 @@ def native_source_checkpoint_restart(repository_root: str) -> dict[str, Any]:
         return record
     finally:
         jax.distributed.shutdown()
+
+
+def _accepted_epoch_repository(repository_root: str) -> POSIXArtifactRepository:
+    return build_repository(
+        Path(repository_root),
+        maximum_chunk_bytes=16 * 1024,
+        maximum_metadata_bytes=128 * 1024 * 1024,
+    )
+
+
+def accepted_epoch_checkpoint_publish(repository_root: str) -> dict[str, Any]:
+    """Publish real accepted-epoch fields partitioned across both producer owners."""
+    from phydrax.meshing.qualification import (
+        bind_distributed_checkpoint_source_arrays,
+        envelope_transport_field_templates,
+        prepare_envelope_accepted_epoch,
+    )
+    from tests._support.native_family_generation import native_family_generation
+
+    try:
+        process_index = jax.process_index()
+        devices = Mesh(np.asarray(jax.devices(), dtype=np.object_), ("owner",))
+        owners = NamedSharding(devices, PartitionSpec("owner"))
+        # The native surface carrier has 26 P1 rows, so every owner holds a
+        # true half of each bank; the 7-row tetrahedral carrier cannot split.
+        part, source, request, options = native_family_generation("surface")
+        carrier = part.carrier
+        if not isinstance(carrier, phx.meshing.CellMeshingResult):
+            raise TypeError(
+                "accepted_epoch.carrier must be a native CellMeshingResult; "
+                f"got {type(carrier).__name__}"
+            )
+        certification = carrier.certification
+        if certification is None:
+            raise ValueError(
+                "accepted_epoch.carrier.certification must retain the native report; got None"
+            )
+        scalar = phx.discretization.FiniteElementPlan(
+            carrier.mesh,
+            envelope_transport_field_templates(carrier.mesh.blocks[0].cell_kind)[0][1],
+            coordinate_spec=carrier.geometry,
+        ).prepare()
+        coordinates = np.asarray(scalar.dof_maps[0].dof_coordinates)
+        # Equal shapes keep alias selection independent of shape coincidence.
+        reference = {
+            "u": np.sum(coordinates**2, axis=-1),
+            "density": np.full(coordinates.shape[0], 2.0),
+            "history": coordinates[:, 0] + 0.5,
+        }
+        owner_count = jax.process_count()
+        if coordinates.shape[0] % owner_count:
+            raise ValueError(
+                "accepted_epoch.coefficients must split evenly across producer owners; "
+                f"got {coordinates.shape[0]} rows for {owner_count} owners"
+            )
+        rows = coordinates.shape[0] // owner_count
+        values = {
+            name: jax.make_array_from_process_local_data(
+                owners,
+                value[process_index * rows : (process_index + 1) * rows],
+                global_shape=value.shape,
+            )
+            for name, value in reference.items()
+        }
+        # S01 is reachable only through owner-partitioned coefficient banks.
+        if any(value.is_fully_addressable for value in values.values()):
+            raise ValueError(
+                "accepted_epoch.fields must be partitioned across producer processes; "
+                "got fully addressable coefficient or history banks"
+            )
+        epoch = prepare_envelope_accepted_epoch(
+            carrier,
+            scalar,
+            values["u"],
+            (values["density"], values["history"]),
+            0,
+            part_name="implicit",
+        )
+        closure = {
+            "certification_inputs": certification.request,
+            "report": certification,
+            "associations": carrier.associations,
+            "generation_source": source,
+            "generation_specification": request,
+            "generation_options": options,
+            "accepted_target": carrier,
+            "accepted_data": {"accepted_epochs": (epoch,)},
+        }
+        register_meshing_source_artifacts()
+        source_arrays = bind_distributed_checkpoint_source_arrays(
+            closure, _ACCEPTED_EPOCH_LIMITS
+        )
+        record: dict[str, Any] = {
+            "process_index": process_index,
+            "nonaddressable_fields": all(
+                isinstance(value, jax.Array) and not value.is_fully_addressable
+                for value in epoch.fields.values()
+            ),
+            "epoch_id": epoch.epoch_id,
+            "field_aliases": {
+                name: next(
+                    (
+                        alias
+                        for alias, array in source_arrays.bank.items()
+                        if array is value
+                    ),
+                    None,
+                )
+                for name, value in epoch.fields.items()
+            },
+            "missing": source_arrays.missing,
+            "reference": {name: value.tolist() for name, value in reference.items()},
+            "published": False,
+        }
+        if source_arrays.missing:
+            return record
+        state = native_source_state(
+            closure,
+            source_array_bindings=source_arrays.bindings,
+            source_logical_arrays=source_arrays.bank,
+            limits=_ACCEPTED_EPOCH_LIMITS,
+        )
+        identities = _ACCEPTED_EPOCH_CHECKPOINT
+        publish_process_meshing_checkpoint(
+            _accepted_epoch_repository(repository_root),
+            identities["checkpoint"],
+            identities["execution"],
+            state,
+            _distributed_arrays(scientific_arrays(), owners, process_index),
+            analysis_plan_id=identities["analysis"],
+            numeric_revision_id=identities["revision"],
+            writer_id=f"accepted-epoch-writer-{process_index}",
+            limits=_ACCEPTED_EPOCH_LIMITS,
+        )
+        multihost_utils.sync_global_devices("accepted-epoch-checkpoint-published")
+        record["published"] = True
+        record["state_id"] = state.checkpoint_state_id
+        return record
+    finally:
+        jax.distributed.shutdown()
+
+
+def accepted_epoch_checkpoint_restore(
+    repository_root: str, expected_state_ids: str
+) -> dict[str, Any]:
+    """Restore both producer owners in one process and replay their accepted epoch."""
+    from phydrax.lifecycle import validate_meshing_accepted_epochs
+    from phydrax.meshing.qualification import distributed_checkpoint_host_array_names
+
+    register_meshing_source_artifacts()
+    repository = _accepted_epoch_repository(repository_root)
+    identities = _ACCEPTED_EPOCH_CHECKPOINT
+    manifest = assemble_distributed_checkpoint_from_repository(
+        repository,
+        identities["checkpoint"],
+        identities["analysis"],
+        identities["revision"],
+        identities["execution"],
+        expected_process_count=2,
+        limits=_ACCEPTED_EPOCH_LIMITS,
+    )
+    states = read_meshing_checkpoint_states(
+        repository, manifest, limits=_ACCEPTED_EPOCH_LIMITS
+    )
+    host_names: set[str] = set()
+    for owner in states:
+        if owner.source_recipe_json is None:
+            raise ValueError(
+                "accepted_epoch.restore.source_recipe_json must be retained by every owner; got None"
+            )
+        host_names |= distributed_checkpoint_host_array_names(
+            owner, owner.source_recipe_json, _ACCEPTED_EPOCH_LIMITS
+        )
+    names = {name for owner in states for name, _ in owner.array_roles}
+    placement = NamedSharding(
+        Mesh(np.asarray(jax.devices(), dtype=np.object_), ("owner",)), PartitionSpec()
+    )
+    checkpoint = restore_meshing_checkpoint(
+        repository,
+        manifest,
+        {name: placement for name in names - host_names},
+        restart_relation(),
+        TopologyRestartPolicy(allow_topology_change=True),
+        expected_state_id={
+            int(owner): identifier
+            for owner, identifier in json.loads(expected_state_ids).items()
+        },
+        source_owner_index=0,
+        limits=_ACCEPTED_EPOCH_LIMITS,
+    )
+    restored = checkpoint.state
+    closures = (
+        restored.source_closure,
+        *(owner.source_closure for owner in restored.source_owner_states),
+    )
+    if any(closure is None for closure in closures):
+        raise ValueError(
+            "accepted_epoch.restore.source_closure must be retained by every owner; got None"
+        )
+    histories = [
+        validate_meshing_accepted_epochs(closure)
+        for closure in closures
+        if closure is not None
+    ]
+    fields = histories[0][0].fields
+    return {
+        "process_count": jax.process_count(),
+        "source_owner_indices": [
+            owner.source_owner_index for owner in restored.source_owner_states
+        ],
+        "epoch_ids": [[epoch.epoch_id for epoch in history] for history in histories],
+        "fields": {name: np.asarray(value).tolist() for name, value in fields.items()},
+        "history_shares_accepted_history": fields["history"]
+        is fields["accepted-history"],
+    }

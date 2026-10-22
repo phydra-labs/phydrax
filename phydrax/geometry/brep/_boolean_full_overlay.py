@@ -268,13 +268,7 @@ def _source_region(
     preparations: TrimRequestPreparations | None,
     budget: CoordinateEnclosureBudget,
 ) -> SurfaceRegion:
-    model = state.models[owner[0]]
-    return SurfaceRegion(
-        model.patches[owner[1]],
-        np.asarray(model.parameter_bounds)[owner[1]],
-        preparations=preparations,
-        budget=budget,
-    )
+    return state.face_region(owner, preparations=preparations, budget=budget)
 
 
 def _register_branches(
@@ -371,7 +365,7 @@ def _face_edge_pcurve(
     return _source_lift(
         geometry.curves[geometry.edge_curves[edge]],
         target.patches[face[1]],
-        np.asarray(target.parameter_bounds)[face[1]],
+        state.face_chart(face, preparations=preparations, budget=budget),
         first,
         last,
         preparations=preparations,
@@ -1025,6 +1019,7 @@ def _select_cells(
     classification: FaceMaterialClassification,
     *,
     budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
 ) -> _SelectedCells:
     labels = {item.classification_key: item for item in classification.labels}
     emitted: list[FaceArrangementCell] = []
@@ -1042,7 +1037,9 @@ def _select_cells(
                 and pair not in discovery.coincident_overlays
             ):
                 continue
-            if equivalent_cell(state, cell, candidate, work, budget=budget):
+            if equivalent_cell(
+                state, cell, candidate, work, preparations=preparations, budget=budget
+            ):
                 representative = candidate
                 break
         if representative is None:
@@ -1261,7 +1258,7 @@ def _material_overlay(
             for model in models
         ),
     )
-    source_arcs(state)
+    source_arcs(state, preparations=preparations, budget=budget)
     discovery = _discover_all_source_pairs(
         state, preparations=preparations, budget=budget
     )
@@ -1280,7 +1277,9 @@ def _material_overlay(
         preparations=preparations,
         coordinate_budget=budget,
     )
-    selected = _select_cells(state, discovery, classification, budget=budget)
+    selected = _select_cells(
+        state, discovery, classification, preparations=preparations, budget=budget
+    )
     facts = _boundary_facts(state, coverages, preparations=preparations, budget=budget)
     built = build_boundary(
         state,

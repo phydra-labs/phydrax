@@ -10,7 +10,6 @@ _IMPORT_STARTED = perf_counter()
 import argparse
 import json
 import os
-import resource
 import shutil
 import tracemalloc
 from collections.abc import Callable
@@ -61,6 +60,8 @@ from tools.meshing_qualification._campaign import (
 )
 from tools.meshing_qualification._controls import (
     _NATIVE_DRIVER_ARGUMENTS,
+    _periodic_qualification_profile_contracts,
+    add_case_arguments,
     BenchmarkControls,
     FAMILY_CASES,
     HYBRID_PROFILES,
@@ -81,6 +82,7 @@ from tools.meshing_qualification._runtime import (
 )
 from tools.meshing_qualification.brep_performance import (
     benchmark_brep_containment,
+    benchmark_brep_containment_campaign,
     benchmark_brep_moments,
     benchmark_brep_orientation_audit,
 )
@@ -2773,7 +2775,7 @@ def _partition_route(
         record["memory_bytes"] = {
             "python_retained_delta": current - before_bytes,
             "python_traced_peak_cumulative": peak,
-            "process_peak_rss_cumulative": peak_resident_bytes(resource.RUSAGE_SELF),
+            "process_peak_rss_cumulative": peak_resident_bytes(),
             "graph_retained": sum(
                 array.nbytes
                 for array in (
@@ -3084,12 +3086,9 @@ def _benchmark_parser(
     family_choices, family_default = FAMILY_CASES, "dual-hex"
     surface_choices, surface_default = SURFACE_CASES, "sphere"
     hybrid_choices, hybrid_default = HYBRID_PROFILES, "unit-box"
-    hybrid_density_default, hybrid_material_default, hybrid_core_default = (
-        (2.0, 3.0),
-        "two-material-density",
-        0.1,
-    )
+    hybrid_core_default = 0.1
     parser = argparse.ArgumentParser()
+    add_case_arguments(parser)
     parser.add_argument("--resolution", type=int, nargs="+", default=[8, 16])
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument(
@@ -3127,8 +3126,8 @@ def _benchmark_parser(
     parser.add_argument("--cad-format", choices=("step", "iges", "brep"), default="step")
     parser.add_argument(
         "--periodic-case",
-        choices=("skew-lattice", "skew-material-feature"),
-        default="skew-lattice",
+        choices=tuple(_periodic_qualification_profile_contracts()),
+        default=BenchmarkControls().periodic_case,
     )
     parser.add_argument("--maximum-memory-bytes", type=int, default=8 * 1024**3)
     parser.add_argument("--maximum-condition", type=float, default=1.0e12)
@@ -3143,9 +3142,9 @@ def _benchmark_parser(
     parser.add_argument("--hybrid-content-id")
     parser.add_argument("--hybrid-core-size", type=float, default=hybrid_core_default)
     parser.add_argument(
-        "--hybrid-region-densities", type=float, nargs="+", default=hybrid_density_default
+        "--hybrid-region-densities", type=float, nargs="+", default=None
     )
-    parser.add_argument("--hybrid-material-site", default=hybrid_material_default)
+    parser.add_argument("--hybrid-material-site", default=None)
     parser.add_argument("--layer-count", type=int, default=2)
     parser.add_argument("--first-thickness", type=float, default=0.1)
     parser.add_argument("--layer-growth", type=float, default=1.0)
@@ -3228,6 +3227,16 @@ def _run_benchmark_cases(
         if name == "native-corpus":
             output[name] = _benchmark_registered_native_corpus(args, profiles)
             continue
+        if name == "brep-containment":
+            output[name] = benchmark_brep_containment_campaign(
+                args.resolution,
+                args.repeats,
+                run_case=lambda resolution: _clean_benchmark_case(
+                    name,
+                    lambda: benchmark_brep_containment(resolution, args.repeats),
+                ),
+            )
+            continue
         if name in _NATIVE_DRIVER_ARGUMENTS:
             controls = _native_driver_controls(name, args)
             output[name] = [
@@ -3249,6 +3258,13 @@ def _run_benchmark_cases(
             ]
             continue
         if name == "native-polyhedral-lifecycle":
+            polyhedral_controls: dict[str, str | int | float | tuple[float, ...]] = {
+                key: value for key, value in (
+                    ("maximum_work_units", args.maximum_work_units),
+                    ("maximum_geometry_queries", args.maximum_geometry_queries),
+                    ("maximum_scratch_bytes", args.maximum_scratch_bytes),
+                ) if value is not None
+            }
             output[name] = [
                 benchmark_native_lifecycle(
                     source,
@@ -3260,6 +3276,7 @@ def _run_benchmark_cases(
                     0,
                     args.comparison,
                     benchmark_warm_repeats=args.benchmark_warm_repeats,
+                    controls=polyhedral_controls,
                 )
                 for source in args.polyhedral_source
                 for sites in args.resolution
@@ -3267,6 +3284,13 @@ def _run_benchmark_cases(
             ]
             continue
         if name == "native-lifecycle":
+            planar_controls: dict[str, str | int | float | tuple[float, ...]] = {
+                key: value for key, value in (
+                    ("maximum_work_units", args.maximum_work_units),
+                    ("maximum_geometry_queries", args.maximum_geometry_queries),
+                    ("maximum_scratch_bytes", args.maximum_scratch_bytes),
+                ) if value is not None
+            }
             output[name] = [
                 benchmark_native_lifecycle(
                     args.corpus_case,
@@ -3278,6 +3302,7 @@ def _run_benchmark_cases(
                     args.adaptation_rounds,
                     args.comparison,
                     benchmark_warm_repeats=args.benchmark_warm_repeats,
+                    controls=planar_controls,
                 )
                 for resolution in args.resolution
                 for capacity in args.capacity

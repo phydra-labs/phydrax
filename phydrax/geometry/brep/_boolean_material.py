@@ -77,6 +77,7 @@ from ._interval_source import evaluate_interval
 from ._model import BRepEntityId, BRepModel
 from ._patches import AbstractSurfacePatch, coefficient_enclosures
 from ._query import PreparedBRepQuery
+from ._query_membership import _containment_box_bounds
 from ._query_types import BRepQueryBudget
 from ._request_preparations import TrimRequestPreparations
 
@@ -686,7 +687,7 @@ def _surface_boxes(
     model = context.state.models[owner[0]]
     pieces = surface_pieces_for_box(
         model.patches[owner[1]],
-        np.asarray(model.parameter_bounds)[owner[1]],
+        context.state.face_chart(owner, budget=budget),
         budget=budget,
     )
     boxes = []
@@ -922,21 +923,30 @@ def _query_separation(
             ),
         )
     points = np.asarray(enclosure.center, dtype=np.float64)[None]
-    closest = query.closest_definition(
-        jnp.asarray(points),
-        faces,
-        maximum_boxes=available,
-        budget=BRepQueryBudget(owner_allowance),
-        preparations=preparations,
-        coordinate_budget=budget,
+    # Certified patch images of the prepared parameter cells cover every face
+    # of the solid; their outward-rounded gaps bound the boundary distance
+    # below without a closest-point solve.
+    boxes = np.concatenate(
+        [np.asarray(query.faces[face].interval_boxes) for face in faces]
     )
-    context.work.consume(
-        int(np.asarray(closest.query_operations)[0]),
-        cell.classification_key,
-        reference.source_id,
-        query=True,
-    )
-    distance = float(np.asarray(closest.distance_lower_bounds)[0])
+    context.work.consume(1, cell.classification_key, reference.source_id, query=True)
+    distance = float(np.min(_containment_box_bounds(points[0], boxes)[:, 0]))
+    if not distance > enclosure.radius_upper:
+        closest = query.closest_definition(
+            jnp.asarray(points),
+            faces,
+            maximum_boxes=available,
+            budget=BRepQueryBudget(owner_allowance),
+            preparations=preparations,
+            coordinate_budget=budget,
+        )
+        context.work.consume(
+            int(np.asarray(closest.query_operations)[0]),
+            cell.classification_key,
+            reference.source_id,
+            query=True,
+        )
+        distance = float(np.asarray(closest.distance_lower_bounds)[0])
     if not np.isfinite(distance) or distance <= enclosure.radius_upper:
         return None
     available = min(
@@ -951,7 +961,10 @@ def _query_separation(
             ),
         )
     # Use the ray-parity owner directly to avoid a second closest-point query
-    # while retaining bounded work and unresolved-face evidence.
+    # while retaining bounded work and unresolved-face evidence. The prepared
+    # query's face domains share the same source loops and closure tolerance;
+    # only their chord-cover planning resolution differs, and roots inside arc
+    # enclosures still refine exactly or remain unresolved.
     membership = certify_solid_containment(
         query.model,
         points[0],
@@ -959,6 +972,7 @@ def _query_separation(
         maximum_boxes=available,
         maximum_depth=query.policy.maximum_depth,
         maximum_operations=context.work.budget.remaining_boxes,
+        trim_domains=tuple(query.faces[face].trim_domain for face in faces),
         preparations=preparations,
         budget=budget,
     )
@@ -1275,6 +1289,7 @@ def _equivalent_piece(
     work: Work,
     *,
     budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
 ) -> bool:
 
     work.consume(1, first.arc.token, second.arc.token)
@@ -1317,10 +1332,16 @@ def _equivalent_piece(
     matrix = np.asarray(proof.matrix, dtype=np.object_)
     offset = np.asarray(proof.offset, dtype=np.object_)
     transported = AffinePCurve(
-        boolean_arrangement_owner.piece_trim(first), matrix, offset
+        boolean_arrangement_owner.piece_trim(
+            first, preparations=preparations, budget=budget
+        ),
+        matrix,
+        offset,
     )
     reversed_transport = AffinePCurve(
-        boolean_arrangement_owner.piece_trim(replace(first, sense=-first.sense)),
+        boolean_arrangement_owner.piece_trim(
+            replace(first, sense=-first.sense), preparations=preparations, budget=budget
+        ),
         matrix,
         offset,
     )
@@ -1332,9 +1353,11 @@ def _equivalent_piece(
         if any(shifts)
         else reversed_transport
     )
-    b = boolean_arrangement_owner.piece_trim(second)
+    b = boolean_arrangement_owner.piece_trim(
+        second, preparations=preparations, budget=budget
+    )
     reversed_b = boolean_arrangement_owner.piece_trim(
-        replace(second, sense=-second.sense)
+        replace(second, sense=-second.sense), preparations=preparations, budget=budget
     )
     return trim_source_join(a, reversed_b, budget=budget) and trim_source_join(
         reversed_a, b, budget=budget
@@ -1349,6 +1372,7 @@ def equivalent_cell(
     work: Work,
     *,
     budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
 ) -> bool:
     first_patch = state.models[first.owner[0]].patches[first.owner[1]]
     second_patch = state.models[second.owner[0]].patches[second.owner[1]]
@@ -1373,6 +1397,7 @@ def equivalent_cell(
                         proof,
                         work,
                         budget=budget,
+                        preparations=preparations,
                     )
                     for ordinal, piece in enumerate(loop)
                 )
@@ -1391,6 +1416,7 @@ def _same_trim_segment(
     second: CurveTrimSegment,
     *,
     budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
 ) -> bool:
 
     identity = (
@@ -1414,12 +1440,16 @@ def _same_trim_segment(
             return False
     if first.first_root is not None and second.first_root is not None:
         if not trim_source_join(
-            replace(first, reversed=True), replace(second, reversed=False), budget=budget
+            replace(first, reversed=True, budget=budget, preparations=preparations),
+            replace(second, reversed=False, budget=budget, preparations=preparations),
+            budget=budget,
         ):
             return False
     if first.last_root is not None and second.last_root is not None:
         if not trim_source_join(
-            replace(first, reversed=False), replace(second, reversed=True), budget=budget
+            replace(first, reversed=False, budget=budget, preparations=preparations),
+            replace(second, reversed=True, budget=budget, preparations=preparations),
+            budget=budget,
         ):
             return False
     return True
@@ -1432,6 +1462,7 @@ def _target_trim_copy(
     work: Work,
     *,
     budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
 ) -> bool:
 
     geometry = model.geometry
@@ -1457,9 +1488,15 @@ def _target_trim_copy(
                 first_root=roots[0],
                 last_root=roots[1],
                 budget=budget,
+                preparations=preparations,
             )
             if not _same_trim_segment(
-                boolean_arrangement_owner.piece_trim(piece), target, budget=budget
+                boolean_arrangement_owner.piece_trim(
+                    piece, preparations=preparations, budget=budget
+                ),
+                target,
+                budget=budget,
+                preparations=preparations,
             ):
                 return False
     return True
@@ -1474,6 +1511,7 @@ def _target_coverage(
     work: Work,
     *,
     budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
 ) -> tuple[dict[str, tuple[int, ...]], str]:
     if len(face_cells) != model.topology.num_faces:
         raise BRepBooleanFailure(
@@ -1496,7 +1534,9 @@ def _target_coverage(
             proof is None
             or proof.matrix != ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
             or proof.offset != (Fraction(0), Fraction(0))
-            or not _target_trim_copy(cell, model, face, work, budget=budget)
+            or not _target_trim_copy(
+                cell, model, face, work, preparations=preparations, budget=budget
+            )
         ):
             raise BRepBooleanFailure(
                 "BRepBoolean.material.target_face must preserve its source chart and full trim loops; got failed correspondence",
@@ -1531,7 +1571,12 @@ def _target_coverage(
         )
     for key, representative in sorted(representatives.items()):
         if representative not in bound or not equivalent_cell(
-            state, cells[key], cells[representative], work, budget=budget
+            state,
+            cells[key],
+            cells[representative],
+            work,
+            preparations=preparations,
+            budget=budget,
         ):
             raise BRepBooleanFailure(
                 "BRepBoolean.material.representative must preserve all source trim loops; got failed loop equality",
@@ -1864,6 +1909,7 @@ def prove_material_overlaps(
         target_cell_representatives,
         work,
         budget=coordinate_budget,
+        preparations=preparations,
     )
     context = _Context(
         state,

@@ -27,7 +27,9 @@ the Degree in Mesh Processing*, Section 3 (https://arxiv.org/abs/1310.0955).
 
 from __future__ import annotations
 
+import dataclasses
 import math
+import weakref
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager, nullcontext
 from fractions import Fraction
@@ -88,6 +90,7 @@ from ..discretization._cell_geometry import (
     cell_geometry_preparation_query_upper,
     CellGeometrySpec,
     coordinate_lagrange_element,
+    exact_source_field_degree,
 )
 from ..discretization._cell_geometry_transition_types import (
     CellGeometryTransition,
@@ -106,6 +109,7 @@ from ..discretization._coordinate_budget import (
     CoordinateLiveStorage,
 )
 from ..discretization._coordinate_enclosure import (
+    affine_simplex_source,
     coordinate_corner_images,
     coordinate_expressions,
     CoordinateSourceBank,
@@ -152,10 +156,18 @@ from ._lineage_records import (
     MeshTransitionKind,
     VertexInterpolationStencil,
 )
+from ._measurements import NativeExecutionImports, NativeExecutionRecord
+from ._native_preparation import native_preparation_ledger
 from ._organization_records import MeshZoneRole
 from ._periodic_constraint import PeriodicConstraint
 from ._result import CellMeshingResult
 from ._scope import resolve_mesh_scope
+from ._sizing import (
+    size_statistic_quantile,
+    SizeCompliancePolicy,
+    SizeControlStrength,
+    UniformSizeControl,
+)
 from ._topology_edit import (
     assemble_topology_edit,
     build_mesh,
@@ -168,6 +180,7 @@ from ._topology_edit import (
     PrescribedEntityIds,
     require_periodic_nonnested_geometry,
     require_periodic_nonnested_source,
+    topology_edit_exact_preparation_bounds,
     TopologyEditBlock,
 )
 from .providers._native_route_checks import edge_growth_evidence, published_entity_limits
@@ -197,9 +210,7 @@ def feature_entity_mask(
     bytes_upper = 1024 * item_work if segments.shape[0] else 0
     if active:
         if work_upper > budget.ticket.remaining_work_units:
-            budget.ticket.refuse(
-                budget.ticket.work_upper - budget.ticket.remaining_work_units + work_upper
-            )
+            budget.ticket.refuse(work_upper)
     owner = budget.ticket if active else scope
     with (
         budget.temporary_scope() if active else nullcontext(),
@@ -571,12 +582,194 @@ def periodic_edge_squared_lengths(
     topology = require_periodic_topology(mesh)
     edges = simplex_entity_corners(mesh, 1)[np.asarray(topology.orbit_representatives(1))]
     bank = periodic_exact_coordinate_bank(mesh, geometry, budget=budget)
-    values = np.asarray(bank, dtype=object)[edges]
+    return _edge_squares(np.asarray(bank, dtype=object)[edges], budget=budget)
+
+
+def _edge_squares(
+    values: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+) -> np.ndarray:
+    """Square field-valued edge vectors from an (edges, 2, dimension) endpoint bank."""
     reserve_algebraic_work(
         tuple(values.flat), 4 * values.size, 3 * values.size, 2, budget=budget
     )
     delta = values[:, 1] - values[:, 0]
     return np.sum(delta * delta, axis=1)
+
+
+def periodic_site_squared_lengths(
+    points: np.ndarray,
+    keys: np.ndarray,
+    lifts: np.ndarray,
+    vectors: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Exact squared quotient lengths of orbit-site edges as they would publish.
+
+    Each root publishes its binary64 reference-lift row; the remaining relative
+    lattice translation of ``keys`` acts exactly on the binary64 lattice rows.
+    """
+    rows = points + lifts.astype(np.float64) @ vectors
+    relative = keys[:, 2:] - lifts[keys[:, 1]] + lifts[keys[:, 0]]
+    lattice = [[Fraction(float(value)) for value in row] for row in vectors]
+    reserve_periodic_exact_terms(
+        keys.shape[0] * rows.shape[1] * (relative.shape[1] + 2),
+        512 * keys.shape[0] * rows.shape[1],
+        budget=budget,
+    )
+    values = np.asarray(
+        [
+            (
+                [Fraction(float(value)) for value in rows[first]],
+                [
+                    Fraction(float(value))
+                    + sum(
+                        (int(step) * row[axis] for step, row in zip(shift, lattice)),
+                        Fraction(0),
+                    )
+                    for axis, value in enumerate(rows[second])
+                ],
+            )
+            for (first, second), shift in zip(
+                keys[:, :2].tolist(), relative.tolist(), strict=True
+            )
+        ],
+        dtype=object,
+    ).reshape((keys.shape[0], 2, rows.shape[1]))
+    return _edge_squares(values, budget=budget)
+
+
+def periodic_longest_positions(
+    groups: Sequence[Sequence[Fraction | RadicalElement]],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> list[int]:
+    """Return each group's first exactly longest position.
+
+    Callers list candidates in their tie-key order, so exactly equal lengths
+    keep the smallest key; rounded lengths never decide.
+    """
+    if not groups:
+        return []
+    with budget.temporary_scope():
+        reserve_algebraic_work(
+            tuple(value for group in groups for value in group),
+            sum(max(len(group) - 1, 0) for group in groups),
+            1,
+            1,
+            budget=budget,
+        )
+        result = []
+        for group in groups:
+            longest = 0
+            for position in range(1, len(group)):
+                if group[position] > group[longest]:
+                    longest = position
+            result.append(longest)
+    return result
+
+
+def periodic_lengths_exceeding(
+    squared: np.ndarray,
+    bound: float,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Mask the edges whose exact length exceeds an authored binary64 bound."""
+    limit = Fraction(float(bound))
+    if limit < 0:
+        return np.ones(len(squared), dtype=np.bool_)
+    square = limit * limit
+    with budget.temporary_scope():
+        reserve_algebraic_work(tuple(squared), len(squared), 1, 1, budget=budget)
+        return np.asarray([value > square for value in squared], dtype=np.bool_)
+
+
+def _longest_first(
+    values: Sequence[Fraction | RadicalElement], /, *, budget: CoordinateEnclosureBudget
+) -> list[int]:
+    """Order positions by unrounded length, longest first, keeping key order on ties.
+
+    A stable bottom-up merge makes at most ``n * ceil(log2 n)`` comparisons.
+    """
+    count = len(values)
+    order = list(range(count))
+    if count < 2:
+        return order
+    with budget.temporary_scope():
+        reserve_algebraic_work(
+            values, count * (count - 1).bit_length(), 1, 1, budget=budget
+        )
+        width = 1
+        while width < count:
+            merged = []
+            for start in range(0, count, 2 * width):
+                left = order[start : start + width]
+                right = order[start + width : start + 2 * width]
+                first = second = 0
+                while first < len(left) and second < len(right):
+                    if values[right[second]] > values[left[first]]:
+                        merged.append(right[second])
+                        second += 1
+                    else:
+                        merged.append(left[first])
+                        first += 1
+                merged.extend(left[first:])
+                merged.extend(right[second:])
+            order = merged
+            width *= 2
+    return order
+
+
+def _edge_order_preparation_bounds(
+    mesh: cell_mesh_owner.CellMesh, geometry: CellGeometrySpec, /
+) -> tuple[int, int, int]:
+    """Bound one unrounded quotient-edge bank and its longest-first comparisons.
+
+    The corner pass replays one source preparation. Squares and comparisons
+    follow ``reserve_algebraic_work`` under the source's declared coefficient
+    bits, which include radicands, and its field degree.
+    """
+    work, storage = cell_geometry_preparation_bounds(geometry)
+    queries = cell_geometry_preparation_query_upper(geometry)
+    edges = require_periodic_topology(mesh).quotient.entities(1).count
+    dimension = mesh.coordinates.shape[1]
+    corners = mesh.topological_dimension + 1
+    pairs = corners * (corners - 1) // 2
+    cells = sum(block.cell_count for block in mesh.blocks)
+    values = 2 * edges * dimension
+    # Cell selections scan every simplex once; one merge orders the queue.
+    comparisons = cells * (pairs - 1) + edges * max(edges - 1, 0).bit_length()
+    source = geometry.exact_source
+    degree = exact_source_field_degree(source)
+    bits = 1075 if source is None else max(source.maximum_bits, 1075)
+    if geometry.periodic_source is not None:
+        bits = max(bits, geometry.periodic_source.preparation_bounds()[2])
+    # A difference doubles coefficient bits and a product adds one radicand
+    # factor; summing d * degree**2 products adds one denominator per term.
+    terms = dimension * degree * degree
+    squared_bits = terms * (5 * bits + 2) + terms.bit_length()
+
+    def field_bytes(coefficient_bits: int, arity: int) -> int:
+        # Radical denominators add at most ``degree`` more coefficient widths.
+        height = (
+            max(arity, degree) * (degree + 1) * coefficient_bits
+            + max(1, degree.bit_length())
+            + 1
+        )
+        return degree * (256 + 4 * ((height + 7) // 8))
+
+    return (
+        work + mesh.coordinates.size + (4 * values + comparisons) * degree**3,
+        storage
+        + 128 * mesh.coordinates.size
+        + 3 * values * field_bytes(bits, 2)
+        + field_bytes(squared_bits, 1),
+        queries,
+    )
 
 
 def _root_interpolation_compare(
@@ -615,7 +808,12 @@ def _rounded_root_interpolation(
     maximum = float(np.finfo(np.float64).max)
 
     def compare(target: Fraction) -> int:
-        return _root_interpolation_compare(first, second, weight, target, budget=budget)
+        # Each comparison returns only its sign; its field temporaries end here
+        # instead of accumulating across the ordered-bit search.
+        with budget.temporary_scope():
+            return _root_interpolation_compare(
+                first, second, weight, target, budget=budget
+            )
 
     def value(bits: int) -> float:
         return float(np.asarray(bits, dtype=np.uint64).view(np.float64))
@@ -664,25 +862,32 @@ def _rounded_root_interpolation(
     return value(lower if decision < 0 or decision == 0 and lower % 2 == 0 else upper)
 
 
-def _edge_quantile_roots(
-    squared: np.ndarray, quantile: float, /, *, budget: CoordinateEnclosureBudget
-) -> tuple[Fraction | RadicalElement, Fraction | RadicalElement, Fraction]:
-    if not math.isfinite(quantile) or not 0 <= quantile <= 1:
-        raise ValueError(
-            f"periodic_edge_size_quantile.quantile must lie in [0, 1]; got {quantile!r}"
-        )
-    if not squared.size:
+def _ordered_squares(
+    squared: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> list[Fraction | RadicalElement]:
+    """Sort a nonempty field-valued squared-length bank after admitting its comparisons."""
+    count = len(squared)
+    if not count:
         raise ValueError(
             "periodic_edge_size_quantile.edges must be nonempty; got an empty bank"
         )
     reserve_algebraic_work(
-        tuple(squared),
-        squared.size * max(1, squared.size.bit_length()),
-        squared.size,
-        1,
-        budget=budget,
+        tuple(squared), count * max(1, count.bit_length()), count, 1, budget=budget
     )
-    ordered = sorted(squared)
+    return sorted(squared)
+
+
+def _quantile_roots(
+    ordered: Sequence[Fraction | RadicalElement], quantile: float, /
+) -> tuple[Fraction | RadicalElement, Fraction | RadicalElement, Fraction]:
+    """Squared lengths and weight of a linear quantile of their positive roots."""
+    if not math.isfinite(quantile) or not 0 <= quantile <= 1:
+        raise ValueError(
+            f"periodic_edge_size_quantile.quantile must lie in [0, 1]; got {quantile!r}"
+        )
     rank = float(np.float64(quantile) * np.float64(len(ordered) - 1))
     lower = math.floor(rank)
     upper = min(lower + 1, len(ordered) - 1)
@@ -705,7 +910,9 @@ def periodic_edge_size_quantile_compare(
                 mesh, quantile, target, geometry=geometry, budget=owned
             )
     squared = periodic_edge_squared_lengths(mesh, geometry=geometry, budget=budget)
-    first, second, weight = _edge_quantile_roots(squared, quantile, budget=budget)
+    first, second, weight = _quantile_roots(
+        _ordered_squares(squared, budget=budget), quantile
+    )
     return _root_interpolation_compare(
         first,
         second,
@@ -736,12 +943,81 @@ def periodic_edge_size_quantile(
     squared = periodic_edge_squared_lengths(mesh, geometry=geometry, budget=budget)
     requested = np.asarray(quantiles, dtype=np.float64)
     result = np.empty(requested.shape, dtype=np.float64)
+    ordered = _ordered_squares(squared, budget=budget)
     for index in np.ndindex(requested.shape):
-        first, second, weight = _edge_quantile_roots(
-            squared, float(requested[index]), budget=budget
-        )
+        first, second, weight = _quantile_roots(ordered, float(requested[index]))
         result[index] = _rounded_root_interpolation(first, second, weight, budget=budget)
     return result
+
+
+def periodic_size_control_issues(
+    squared: np.ndarray,
+    vertex_pairs: np.ndarray,
+    control: UniformSizeControl,
+    policy: SizeCompliancePolicy,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> list[str]:
+    """Hard uniform-size issues of exact quotient edge lengths, never rounded roots.
+
+    ``squared`` holds one field-valued squared length per quotient edge and
+    ``vertex_pairs`` its quotient endpoint vertices. Statistics compare linear
+    root quantiles; bounds and growth compare squares against the authored
+    binary64 limits widened by the policy's binary64 tolerance.
+    """
+    if control.strength is not SizeControlStrength.HARD:
+        return []
+    issues = []
+    ordered = _ordered_squares(squared, budget=budget)
+    tolerance = Fraction(policy.tolerance(control.target_size))
+    lower = Fraction(control.target_size) - tolerance
+    upper = Fraction(control.target_size) + tolerance
+    for name in policy.target_statistics:
+        first, second, weight = _quantile_roots(ordered, size_statistic_quantile(name))
+        if (
+            _root_interpolation_compare(first, second, weight, lower, budget=budget) < 0
+            or _root_interpolation_compare(first, second, weight, upper, budget=budget)
+            > 0
+        ):
+            issues.append(f"target_size_{name}:{control.control_id}")
+    with budget.temporary_scope():
+        reserve_algebraic_work(
+            (ordered[0], ordered[-1]), 4 * len(ordered) + 4, 1, 2, budget=budget
+        )
+        if control.minimum_size is not None:
+            bound = Fraction(control.minimum_size) - Fraction(
+                policy.tolerance(control.minimum_size)
+            )
+            if bound > 0 and ordered[0] < bound * bound:
+                issues.append(f"minimum_size:{control.control_id}")
+        if control.maximum_size is not None:
+            bound = Fraction(control.maximum_size) + Fraction(
+                policy.tolerance(control.maximum_size)
+            )
+            if bound < 0 or ordered[-1] > bound * bound:
+                issues.append(f"maximum_size:{control.control_id}")
+    if control.maximum_growth_rate is not None:
+        bound = Fraction(control.maximum_growth_rate) + Fraction(
+            policy.tolerance(control.maximum_growth_rate)
+        )
+        incident: dict[int, list[Fraction | RadicalElement]] = {}
+        for (first, second), value in zip(vertex_pairs.tolist(), squared, strict=True):
+            incident.setdefault(int(first), []).append(value)
+            incident.setdefault(int(second), []).append(value)
+        with budget.temporary_scope():
+            reserve_algebraic_work(
+                tuple(squared),
+                sum(2 * len(values) for values in incident.values()),
+                1,
+                2,
+                budget=budget,
+            )
+            if bound < 1 or any(
+                max(values) > bound * bound * min(values) for values in incident.values()
+            ):
+                issues.append(f"maximum_growth_rate:{control.control_id}")
+    return issues
 
 
 class ExactPeriodicEdgeSizeEvidence(StrictModule, NonTrainableState):
@@ -811,13 +1087,13 @@ def periodic_exact_edge_size_evidence(
         with coordinate_certificate_request(MeshCertificateLimits()) as owned:
             return periodic_exact_edge_size_evidence(mesh, geometry, budget=owned)
     squared = periodic_edge_squared_lengths(mesh, geometry=geometry, budget=budget)
-    lengths = np.asarray(
-        [
-            _rounded_root_interpolation(value, value, Fraction(0), budget=budget)
-            for value in squared
-        ],
-        dtype=np.float64,
-    )
+
+    def rounded_root(value: Fraction | RadicalElement) -> float:
+        # Only the binary64 root survives; stream each edge's rounding scratch.
+        with budget.temporary_scope():
+            return _rounded_root_interpolation(value, value, Fraction(0), budget=budget)
+
+    lengths = np.asarray([rounded_root(value) for value in squared], dtype=np.float64)
     topology = require_periodic_topology(mesh)
     edges = simplex_entity_corners(mesh, 1)[np.asarray(topology.orbit_representatives(1))]
     orbits = np.asarray(topology.orbits(0)[0])[edges]
@@ -917,11 +1193,11 @@ def _periodic_charge(
         or geometry_queries > ticket.remaining_geometry_queries
         or (cavity_cells is not None and cavity_cells > ticket.cavity_upper)
     ):
+        # Work/queries are next increments; a cavity is a replacement capacity.
         ticket.refuse(
-            ticket.work_units + work,
-            queries_upper=ticket.geometry_queries + geometry_queries,
-            bytes_upper=ticket.managed_bytes,
-            cavity_upper=ticket.cavity_cells if cavity_cells is None else cavity_cells,
+            work,
+            queries_upper=geometry_queries,
+            cavity_upper=0 if cavity_cells is None else cavity_cells,
         )
     ticket.consume(work, geometry_queries=geometry_queries, cavity_cells=cavity_cells)
 
@@ -1066,17 +1342,27 @@ def integer_cell_bounds(
     denominator = 1 << scale_bits
     lower_float = np.empty(lower.shape, dtype=np.float64)
     upper_float = np.empty(upper.shape, dtype=np.float64)
+    # Cells share their vertices' field values by reference; each shared
+    # value's deterministic enclosure is formed once for every cell box.
+    enclosures: dict[int, tuple[Fraction, Fraction]] = {}
+
+    def enclosure(value: RadicalElement) -> tuple[Fraction, Fraction]:
+        known = enclosures.get(id(value))
+        if known is None:
+            known = enclosures[id(value)] = value.interval(budget=budget)
+        return known
+
     for row in range(lower.shape[0]):
         for axis in range(lower.shape[1]):
             if algebraic:
                 low, high = lower[row, axis], upper[row, axis]
                 low = (
-                    low.interval(budget=budget)[0]
+                    enclosure(low)[0]
                     if isinstance(low, RadicalElement)
                     else Fraction(low)
                 )
                 high = (
-                    high.interval(budget=budget)[1]
+                    enclosure(high)[1]
                     if isinstance(high, RadicalElement)
                     else Fraction(high)
                 )
@@ -1197,7 +1483,12 @@ def _embedding_image_pairs(
     budget: CoordinateEnclosureBudget,
 ) -> Generator[tuple[int, int, np.ndarray, PeriodicImage], None, None]:
     for shift in frame.images():
-        with _embedding_storage(image_storage, budget=budget) as owner:
+        # One image's field-valued points and enclosures end with that image;
+        # the consumer's nested pair scopes finish before the next resume.
+        with (
+            _embedding_storage(image_storage, budget=budget) as owner,
+            budget.temporary_scope(),
+        ):
             prepare_image()
             imaged = frame.image_points(shift, budget=budget)[connectivity]
             image_lower, image_upper = np.min(imaged, axis=1), np.max(imaged, axis=1)
@@ -1378,11 +1669,15 @@ def _affine_periodic_embedding(
                 exact_tests += 1
                 if record_work is not None:
                     record_work(setup_bound, aabb_tests, exact_tests)
-                if affine_mapped_contact_owner.interiors_overlap(
-                    corners[first],
-                    imaged_cell,
-                    budget=budget if geometry is not None else None,
-                ):
+                # Each exact pair predicate returns only its verdict; its field
+                # temporaries end with the pair instead of accumulating.
+                with budget.temporary_scope():
+                    overlap = affine_mapped_contact_owner.interiors_overlap(
+                        corners[first],
+                        imaged_cell,
+                        budget=budget if geometry is not None else None,
+                    )
+                if overlap:
                     raise ValueError(
                         "affine_periodic_embedding.mesh must retain disjoint lifted simplex interiors within its image and pair allowances; got "
                         + (
@@ -1562,6 +1857,9 @@ def _closed_affine_quotient_embedding(
         elements, routes, _ = spec.resolve(mesh, budget=budget)
         bank = prepared_coordinate_source_bank(spec, budget=budget)
         for element, route in zip(elements, routes, strict=True):
+            # A degree-one simplex root proves every chained row affine once.
+            if affine_simplex_source(element, budget=budget):
+                continue
             for row in np.asarray(route):
                 expressions = coordinate_expressions(
                     element,
@@ -2208,7 +2506,9 @@ def _publish_periodic_simplices(
     topology = periodic_topology_owner.PeriodicMeshTopology(
         carrier, cell, vertex_representatives, vertex_shifts, budget=budget
     )
-    return cell_mesh_owner.CellMesh(coordinates, (block,), periodic_topology=topology)
+    return cell_mesh_owner.CellMesh(
+        coordinates, (block,), periodic_topology=topology, budget=budget
+    )
 
 
 def publish_periodic_simplices(
@@ -2281,7 +2581,10 @@ class PeriodicQuotientEvidence(StrictModule, NonTrainableState):
 
     Counts are quotient entities by degree; the total measure integrates each
     quotient top cell once in its local lift and is compared with the lattice
-    cell measure.
+    cell measure. ``mesh_id`` names the measured periodic mesh and
+    ``measure_geometry_id`` the declared geometry whose exact orbit measures
+    were integrated, or ``None`` for the carrier's affine route; restoration
+    recomputes on exactly that mesh through exactly that route.
     """
 
     quotient_counts: tuple[int, ...] = eqx.field(static=True)
@@ -2292,6 +2595,8 @@ class PeriodicQuotientEvidence(StrictModule, NonTrainableState):
     relative_coverage_defect: float | None = eqx.field(static=True)
     all_cells_valid: bool = eqx.field(static=True)
     periodic_topology_id: str = eqx.field(static=True)
+    mesh_id: str = eqx.field(static=True)
+    measure_geometry_id: str | None = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -2324,6 +2629,8 @@ class PeriodicQuotientEvidence(StrictModule, NonTrainableState):
         self.relative_coverage_defect = defect
         self.all_cells_valid = bool(np.all(np.asarray(report.valid)))
         self.periodic_topology_id = periodic.periodic_topology_id
+        self.mesh_id = mesh.mesh_id
+        self.measure_geometry_id = None if geometry is None else cell_geometry_id(geometry)
 
     @classmethod
     @checked
@@ -2336,11 +2643,26 @@ class PeriodicQuotientEvidence(StrictModule, NonTrainableState):
         geometry: CellGeometrySpec | None = None,
         budget: CoordinateEnclosureBudget | None = None,
     ) -> PeriodicQuotientEvidence:
-        """Recompute stored quotient evidence against its retained mesh."""
+        """Recompute stored quotient evidence through its bound measure route.
+
+        Evidence measured on a declared geometry must be restored with that
+        exact geometry; carrier evidence binds no geometry and admits none.
+        The stored fields must equal the recomputation under the bound route.
+        """
         topology = require_periodic_topology(mesh)
         if value.periodic_topology_id != topology.periodic_topology_id:
             raise ValueError(
                 f"PeriodicQuotientEvidence.periodic_topology_id must bind the retained mesh; got {value.periodic_topology_id!r}."
+            )
+        if value.mesh_id != mesh.mesh_id:
+            raise ValueError(
+                f"PeriodicQuotientEvidence.mesh_id must name the retained mesh; got {value.mesh_id!r}."
+            )
+        bound = None if geometry is None else cell_geometry_id(geometry)
+        if bound != value.measure_geometry_id:
+            raise ValueError(
+                "PeriodicQuotientEvidence.measure_geometry_id must name the supplied "
+                f"measure geometry; got stored {value.measure_geometry_id!r}, supplied {bound!r}."
             )
         restored = cls(mesh, geometry=geometry, budget=budget)
         if not eqx.tree_equal(restored, value, typematch=True):
@@ -2506,21 +2828,9 @@ class _QuotientBisection:
             if not members:
                 del self.star[key]
 
-    def length(self, key: tuple[int, ...], /) -> float:
-        first, second = key[0], key[1]
-        relative = np.asarray(key[2:], dtype=np.float64)
-        return float(
-            np.linalg.norm(
-                self.points[second] + relative @ self.vectors - self.points[first]
-            )
-        )
-
-    def longest_edge(self, cell: int, /) -> tuple[int, ...]:
-        # Ties are broken by the deterministic key, so every lift decides alike.
-        return min(
-            (key for key, _, _ in self._edges(cell)),
-            key=lambda key: (-self.length(key), key),
-        )
+    def edge_keys(self, cell: int, /) -> list[tuple[int, ...]]:
+        """A cell's quotient edge keys in their deterministic tie order."""
+        return sorted(key for key, _, _ in self._edges(cell))
 
     def bisect(self, key: tuple[int, ...], /) -> None:
         """Split every cell of the quotient edge's star at its one midpoint."""
@@ -2872,6 +3182,68 @@ def _periodic_child_blocks(
     return tuple(blocks), np.concatenate(rows)
 
 
+def _isometry_bisection_queue(
+    mesh: cell_mesh_owner.CellMesh,
+    vertices: list[list[int]],
+    orbit: np.ndarray,
+    by_pair: dict[tuple[int, ...], int],
+    cells: ArrayLike | None,
+    edge_orbits: ArrayLike | None,
+    source_geometry: CellGeometrySpec,
+    squared_lengths: np.ndarray | None,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> list[int]:
+    """Admit the retired cavity, then order selected orbits by unrounded length.
+
+    Cells choose their exactly longest lifted edge, ties to the smallest edge
+    row; the queue keeps the smallest orbit index among equal lengths.
+    """
+    if squared_lengths is None:
+        squared_lengths = periodic_edge_squared_lengths(
+            mesh, geometry=source_geometry, budget=budget
+        )
+    selected = set(orbit.tolist())
+    if cells is not None:
+        candidates = [
+            sorted(
+                by_pair[tuple(sorted(pair))]
+                for pair in combinations(vertices[int(cell)], 2)
+            )
+            for cell in np.unique(np.asarray(cells))
+        ]
+        longest = periodic_longest_positions(
+            [[squared_lengths[orbit[edge]] for edge in group] for group in candidates],
+            budget=budget,
+        )
+        selected = {
+            int(orbit[group[position]])
+            for group, position in zip(candidates, longest, strict=True)
+        }
+    if edge_orbits is not None:
+        selected = set(np.asarray(edge_orbits, dtype=np.int64).tolist())
+    # The orbit refinement is one edit retiring every source cell with a
+    # selected edge; admit that cavity before any child is constructed.
+    _periodic_charge(
+        cavity_cells=sum(
+            any(
+                int(orbit[by_pair[tuple(sorted(pair))]]) in selected
+                for pair in combinations(corners, 2)
+            )
+            for corners in vertices
+        ),
+        budget=budget,
+    )
+    ordered = sorted(selected)
+    return [
+        ordered[position]
+        for position in _longest_first(
+            [squared_lengths[key] for key in ordered], budget=budget
+        )
+    ]
+
+
 def _refine_isometry_mesh(
     mesh: cell_mesh_owner.CellMesh,
     cells: ArrayLike | None,
@@ -2879,9 +3251,14 @@ def _refine_isometry_mesh(
     source_geometry: CellGeometrySpec,
     /,
     *,
+    squared_lengths: np.ndarray | None,
     budget: CoordinateEnclosureBudget,
 ) -> PeriodicRefinement:
-    """Bisect all lifted copies of each selected quotient edge together."""
+    """Bisect all lifted copies of each selected quotient edge together.
+
+    Selections and the queue compare the declared field-valued orbit lengths;
+    exactly equal lengths keep the smallest lifted edge row or quotient orbit index.
+    """
 
     topology = require_periodic_topology(mesh)
     if topology is None or not isinstance(topology.cell, PeriodicIsometryGroup):
@@ -2899,10 +3276,7 @@ def _refine_isometry_mesh(
     edges = simplex_entity_corners(mesh, 1)
     orbit, _, anchors = (np.asarray(value) for value in topology.orbits(1))
     leaders = np.asarray(topology.orbit_representatives(1))
-    lengths = np.linalg.norm(
-        np.asarray(points)[edges[:, 1]] - np.asarray(points)[edges[:, 0]], axis=1
-    )
-    selected = set(orbit.tolist())
+    by_pair = {tuple(sorted(edge)): row for row, edge in enumerate(edges.tolist())}
     if cells is not None:
         marked = np.asarray(cells)
         if marked.ndim != 1 or not np.issubdtype(marked.dtype, np.integer):
@@ -2913,20 +3287,20 @@ def _refine_isometry_mesh(
             raise ValueError(
                 "refine_isometry_mesh.mesh must retain an isometry topology and valid marked source cells; got cells must index cells of the periodic mesh."
             )
-        by_pair = {tuple(sorted(edge)): row for row, edge in enumerate(edges.tolist())}
-        selected = set()
-        for cell in np.unique(marked):
-            corners = vertices[int(cell)]
-            local_edges = [
-                by_pair[tuple(sorted((first, second)))]
-                for position, first in enumerate(corners)
-                for second in corners[position + 1 :]
-            ]
-            chosen = max(local_edges, key=lambda edge: (lengths[edge], -edge))
-            selected.add(int(orbit[chosen]))
-    if edge_orbits is not None:
-        selected = set(np.asarray(edge_orbits, dtype=np.int64).tolist())
-    queue = sorted(selected, key=lambda key: (-lengths[leaders[key]], key))
+    # The unrounded length bank and its comparison temporaries live only while
+    # the queue is ordered; retained caches keep their own ledger entries.
+    with budget.temporary_scope():
+        queue = _isometry_bisection_queue(
+            mesh,
+            vertices,
+            orbit,
+            by_pair,
+            cells,
+            edge_orbits,
+            source_geometry,
+            squared_lengths,
+            budget=budget,
+        )
     for key in queue:
         copies = np.flatnonzero(orbit == key)
         leader = int(leaders[key])
@@ -2975,7 +3349,7 @@ def _refine_isometry_mesh(
         budget=budget,
     )
     successor = cell_mesh_owner.CellMesh(
-        coordinates, successor_blocks, periodic_topology=quotient
+        coordinates, successor_blocks, periodic_topology=quotient, budget=budget
     )
     ancestry = _frozen(np.asarray(parents, dtype=np.int32)[publication_order])
     return PeriodicRefinement(
@@ -3008,6 +3382,68 @@ def _bare_periodic_affine_source(mesh: cell_mesh_owner.CellMesh, /) -> CellGeome
     )
 
 
+def _quotient_bisection_queue(
+    mesh: cell_mesh_owner.CellMesh,
+    state: _QuotientBisection,
+    cells: ArrayLike | None,
+    edge_orbits: ArrayLike | None,
+    source_geometry: CellGeometrySpec,
+    squared_lengths: np.ndarray | None,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> list[tuple[int, ...]]:
+    """Admit the retired cavity, then order queued keys by unrounded quotient length.
+
+    Each scientific edge orbit is one bisection key, read from its leader lift;
+    exactly equal lengths keep the smallest key.
+    """
+    topology = require_periodic_topology(mesh)
+    if squared_lengths is None:
+        squared_lengths = periodic_edge_squared_lengths(
+            mesh, geometry=source_geometry, budget=budget
+        )
+    roots = np.asarray(topology.vertex_representatives)
+    local = np.searchsorted(np.unique(roots), roots)
+    vertex_shifts = np.asarray(topology.vertex_shifts)
+    orbit_keys = [
+        edge_key(
+            int(local[first]),
+            vertex_shifts[first],
+            int(local[second]),
+            vertex_shifts[second],
+        )[0]
+        for first, second in simplex_entity_corners(mesh, 1)[
+            np.asarray(topology.orbit_representatives(1))
+        ]
+    ]
+    length = dict(zip(orbit_keys, squared_lengths, strict=True))
+    if edge_orbits is not None:
+        keys = sorted({orbit_keys[int(index)] for index in np.asarray(edge_orbits)})
+    elif cells is None:
+        keys = sorted(state.star)
+    else:
+        candidates = [
+            state.edge_keys(int(index)) for index in np.unique(np.asarray(cells))
+        ]
+        longest = periodic_longest_positions(
+            [[length[key] for key in group] for group in candidates], budget=budget
+        )
+        keys = sorted(
+            {group[position] for group, position in zip(candidates, longest, strict=True)}
+        )
+    # The orbit refinement is one edit retiring every source cell with a
+    # queued edge; admit that cavity before any child is constructed.
+    _periodic_charge(
+        cavity_cells=len(set().union(*(state.star[key] for key in keys))),
+        budget=budget,
+    )
+    return [
+        keys[position]
+        for position in _longest_first([length[key] for key in keys], budget=budget)
+    ]
+
+
 def _refine_periodic_mesh(
     mesh: cell_mesh_owner.CellMesh,
     /,
@@ -3015,6 +3451,7 @@ def _refine_periodic_mesh(
     cells: ArrayLike | None = None,
     edge_orbits: ArrayLike | None = None,
     source_geometry: CellGeometrySpec | None = None,
+    squared_lengths: np.ndarray | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> PeriodicRefinement:
     """Refine a periodic simplex mesh by quotient edge bisection.
@@ -3023,7 +3460,10 @@ def _refine_periodic_mesh(
     longest first (the four-triangle longest-edge partition in 2D, eight
     children per tetrahedron in 3D). Otherwise the longest quotient edge of
     each listed cell is bisected together with its whole orbit star, so
-    conformity and periodicity hold without closure refinement.
+    conformity and periodicity hold without closure refinement. Lengths are
+    the source geometry's field-valued quotient lengths, optionally already
+    prepared as ``squared_lengths``; exactly equal lengths keep the smallest
+    quotient edge key.
     """
     if source_geometry is None:
         source_geometry = require_periodic_topology(mesh).actual_geometry
@@ -3049,32 +3489,17 @@ def _refine_periodic_mesh(
         require_periodic_topology(mesh).cell, PeriodicIsometryGroup
     ):
         return _refine_isometry_mesh(
-            mesh, cells, edge_orbits, source_geometry, budget=budget
+            mesh,
+            cells,
+            edge_orbits,
+            source_geometry,
+            squared_lengths=squared_lengths,
+            budget=budget,
         )
     points, simplices, shifts, cell, block_name = quotient_simplices(mesh)
     vectors = np.asarray(cell.vectors, dtype=np.float64)
     state = _QuotientBisection(points, simplices, shifts, vectors)
-    if edge_orbits is not None:
-        topology = require_periodic_topology(mesh)
-        leaders = np.asarray(topology.orbit_representatives(1))[np.asarray(edge_orbits)]
-        endpoints = simplex_entity_corners(mesh, 1)[leaders]
-        roots = np.asarray(topology.vertex_representatives)
-        unique = np.unique(roots)
-        local = np.searchsorted(unique, roots)
-        vertex_shifts = np.asarray(topology.vertex_shifts)
-        keys = {
-            edge_key(
-                int(local[first]),
-                vertex_shifts[first],
-                int(local[second]),
-                vertex_shifts[second],
-            )[0]
-            for first, second in endpoints
-        }
-        queue = sorted(keys, key=lambda key: (-state.length(key), key))
-    elif cells is None:
-        queue = sorted(state.star, key=lambda key: (-state.length(key), key))
-    else:
+    if cells is not None:
         marked = np.asarray(cells)
         if not np.issubdtype(marked.dtype, np.integer) or marked.ndim != 1:
             raise TypeError(
@@ -3084,9 +3509,17 @@ def _refine_periodic_mesh(
             raise ValueError(
                 "refine_periodic_mesh.mesh must select valid source cells or quotient edge orbits exclusively; got cells must index cells of the periodic mesh."
             )
-        queue = sorted(
-            {state.longest_edge(int(index)) for index in np.unique(marked)},
-            key=lambda key: (-state.length(key), key),
+    # The unrounded length bank and its comparison temporaries live only while
+    # the queue is ordered; retained caches keep their own ledger entries.
+    with budget.temporary_scope():
+        queue = _quotient_bisection_queue(
+            mesh,
+            state,
+            cells,
+            edge_orbits,
+            source_geometry,
+            squared_lengths,
+            budget=budget,
         )
     bisected = 0
     for key in queue:
@@ -3117,6 +3550,7 @@ def _refine_periodic_mesh(
             topology.vertex_shifts,
             budget=budget,
         ),
+        budget=budget,
     )
     return PeriodicRefinement(
         mesh=refined,
@@ -3135,6 +3569,35 @@ def _refine_periodic_mesh(
     )
 
 
+def _refine_periodic_phase(
+    mesh: cell_mesh_owner.CellMesh,
+    /,
+    *,
+    cells: ArrayLike | None = None,
+    edge_orbits: ArrayLike | None = None,
+    source_geometry: CellGeometrySpec | None = None,
+    squared_lengths: np.ndarray | None = None,
+    scope: NativeExecutionScope | None,
+    budget: CoordinateEnclosureBudget,
+) -> PeriodicRefinement:
+    """Admit refinement in its periodic phase under an existing request budget.
+
+    ``refine_periodic_mesh`` and the bisection route share this admission. A
+    prepared ``squared_lengths`` bank of ``source_geometry`` is reused.
+    """
+    with _periodic_phase(
+        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+    ):
+        return _refine_periodic_mesh(
+            mesh,
+            cells=cells,
+            edge_orbits=edge_orbits,
+            source_geometry=source_geometry,
+            squared_lengths=squared_lengths,
+            budget=budget,
+        )
+
+
 def refine_periodic_mesh(
     mesh: cell_mesh_owner.CellMesh,
     /,
@@ -3145,7 +3608,11 @@ def refine_periodic_mesh(
     scope: NativeExecutionScope | None = None,
     budget: CoordinateEnclosureBudget | None = None,
 ) -> PeriodicRefinement:
-    """Refine quotient edge orbits under explicit or source-derived preparation bounds."""
+    """Refine quotient edge orbits under explicit or source-derived preparation bounds.
+
+    Longest-edge selections and the bisection order compare the source
+    geometry's field-valued quotient edge lengths, never rounded coordinates.
+    """
     if budget is None:
         topology = require_periodic_topology(mesh)
         if source_geometry is None:
@@ -3174,18 +3641,29 @@ def refine_periodic_mesh(
             actual_geometry=source_geometry,
             stabilizers=True,
         )
+        order_work, order_bytes, order_queries = _edge_order_preparation_bounds(
+            mesh, source_geometry
+        )
         # Publication and block-preserving reconstruction each build a topology;
         # the source evidence retains the constructor's declared cell visits.
+        # The unrounded longest-edge order admits its transient field-valued bank.
         work_upper = (
             source_work
             + input_work
             + 2 * target_work
             + _REFINEMENT_CELL_WORK * source_cells
+            + order_work
         )
-        bytes_upper = source_bytes + input_bytes + 2 * target_bytes
-        queries_upper = source_queries + input_queries + 2 * target_queries
+        bytes_upper = source_bytes + input_bytes + 2 * target_bytes + order_bytes
+        queries_upper = (
+            source_queries + input_queries + 2 * target_queries + order_queries
+        )
+        # Refinement retires at most every source cell in its one edit cavity.
         ticket = HostBatchTicket(
-            work_upper, queries_upper=queries_upper, bytes_upper=bytes_upper
+            work_upper,
+            queries_upper=queries_upper,
+            bytes_upper=bytes_upper,
+            cavity_upper=source_cells,
         )
         budget = CoordinateEnclosureBudget(
             ticket,
@@ -3202,16 +3680,14 @@ def refine_periodic_mesh(
                     budget=budget,
                 )
         ticket.settle()
-    with _periodic_phase(
-        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
-    ):
-        return _refine_periodic_mesh(
-            mesh,
-            cells=cells,
-            edge_orbits=edge_orbits,
-            source_geometry=source_geometry,
-            budget=budget,
-        )
+    return _refine_periodic_phase(
+        mesh,
+        cells=cells,
+        edge_orbits=edge_orbits,
+        source_geometry=source_geometry,
+        scope=scope,
+        budget=budget,
+    )
 
 
 def _periodic_history_nodes(
@@ -3773,6 +4249,192 @@ class PeriodicCoarseningCellDim(Dim):
     """Scientific cells admitted for one periodic sibling coarsening request."""
 
 
+# Only the owner that actually prepared a source may authorize mark-only reuse.
+# Weak references do not keep a source epoch alive, and copies/restores never
+# inherit this process-local authority from their scientific identity strings.
+_LIVE_COARSENING_PREPARATIONS: dict[
+    int, tuple[weakref.ReferenceType, int, tuple[int, ...], str]
+] = {}
+
+
+def _periodic_preparation_binding(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[int, ...], str]:
+    values = (
+        prepared.source,
+        prepared.request,
+        prepared.policy,
+        prepared.constraints,
+        prepared.periodic_source_proofs,
+    )
+    size = model_array_bytes(values)
+    with budget.temporary_scope():
+        budget.reserve(size + 1, 2 * size + 4096)
+        # Include static dataclass fields: geometry owners can retain host
+        # buffers outside ordinary JAX leaves. Shared arrays are hashed once.
+        pending: list[object] = list(values)
+        seen: dict[int, object] = {}
+        arrays = []
+        while pending:
+            value = pending.pop()
+            identity = id(value)
+            if identity in seen:
+                continue
+            seen[identity] = value
+            budget.reserve(1, 128)
+            if isinstance(value, (np.ndarray, jax.Array)):
+                arrays.append(value)
+            elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+                pending.extend(
+                    getattr(value, field.name) for field in dataclasses.fields(value)
+                )
+            elif isinstance(value, Mapping):
+                pending.extend(value.keys())
+                pending.extend(value.values())
+            elif isinstance(value, (tuple, list)):
+                pending.extend(value)
+        digest = canonical_fingerprint(array_tree_fingerprint(tuple(arrays)))
+        binding = tuple(seen), digest
+    budget.reserve(0, 512 + 8 * len(binding[0]))
+    return binding
+
+
+def _remember_periodic_preparation(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    binding: tuple[tuple[int, ...], str],
+) -> adaptation_owner.PreparedMeshAdaptation:
+    identity = id(prepared)
+    reference = weakref.ref(
+        prepared, lambda _: _LIVE_COARSENING_PREPARATIONS.pop(identity, None)
+    )
+    _LIVE_COARSENING_PREPARATIONS[identity] = (
+        reference, id(prepared.periodic_source_receipt), *binding
+    )
+    return prepared
+
+
+def _require_live_periodic_preparation(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    retained = _LIVE_COARSENING_PREPARATIONS.get(id(prepared))
+    if (
+        retained is None
+        or retained[0]() is not prepared
+        or retained[1] != id(prepared.periodic_source_receipt)
+        or retained[2:] != _periodic_preparation_binding(prepared, budget=budget)
+        or prepared.prepared_id
+        != adaptation_owner._prepared_adaptation_identity(
+            prepared.source, prepared.request, prepared.policy
+        )
+    ):
+        raise ValueError(
+            "prepare_periodic_coarsening.prepared must retain live unchanged source, geometry, association, policy and constraint bindings; got detached or changed preparation"
+        )
+
+
+@checked
+def prepare_periodic_coarsening(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    /,
+    *,
+    observe_managed_admission: bool = False,
+) -> adaptation_owner.PreparedMeshAdaptation:
+    """Close coarsening marks while retaining an authenticated source preparation.
+
+    This is a new metered preparation, not an execution or target certificate.
+    Its receipt imports the original preparation once and chains it, so raw
+    counters keep only this closure's work; the original deadline is retained.
+    Restored or copied preparations must be prepared again before using this
+    live-only optimization.
+    Optional managed observation covers only this closure's live scope; the
+    imported preparation must retain its own observation.
+    """
+    request = prepared.request
+    if (
+        prepared.policy.route is not adaptation_owner.MeshAdaptationRoute.NATIVE_BISECTION
+        or not isinstance(request, adaptation_owner.MarkedMeshAdaptation)
+        or not isinstance(request.hierarchy, PeriodicRefinement)
+        or np.asarray(request.refine_cell_ids).size
+    ):
+        raise ValueError(
+            "prepare_periodic_coarsening.prepared must retain only periodic bisection coarsening marks and sibling history"
+        )
+    receipt = prepared.periodic_source_receipt
+    if receipt is None:
+        raise ValueError(
+            "prepare_periodic_coarsening.prepared must retain its source preparation receipt"
+        )
+    remaining, prior = adaptation_owner._preparation_execution_limits(prepared)
+    assert prior is not None
+    # The ledger imports the original elapsed time; add it back to the live
+    # allowance here, not to the original deadline or scientific policy.
+    native_limits = dataclasses.replace(
+        prepared.policy.limits.native_limits(),
+        maximum_seconds=remaining.maximum_seconds
+        + float(np.asarray(prior.total_elapsed_seconds)),
+    )
+    limits = prepared.policy.limits
+    with NativeExecutionScope(native_limits) as scope:
+        if observe_managed_admission:
+            scope.observe_managed_admission()
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        with budget.retained_storage(lambda amount: scope.batch(0, bytes_upper=amount)):
+            with _periodic_phase(
+                scope, budget, limits.maximum_work_units, limits.maximum_scratch_bytes
+            ):
+                _require_live_periodic_preparation(prepared, budget=budget)
+                native_preparation_ledger(scope).import_receipt(scope, prior)
+                adaptation_owner._admit_periodic_source_proofs(prepared, scope)
+                validate_periodic_bisection(prepared, budget=budget)
+                parents = _periodic_coarsening_parents(
+                    prepared, request.hierarchy, budget=budget
+                )
+                count = sum(block.cell_count for block in request.hierarchy.mesh.blocks)
+                budget.reserve(4 * count + 1, 64 * count + 4096)
+                _, cell_ids = _periodic_simplex_rows(request.hierarchy.mesh)
+                selected = np.sort(
+                    cell_ids[np.isin(request.hierarchy.parent_cells, parents)]
+                )
+                closed = adaptation_owner.MarkedMeshAdaptation(
+                    (),
+                    selected,
+                    hierarchy=request.hierarchy,
+                    layer_columns=request.layer_columns,
+                )
+                result = adaptation_owner.PreparedMeshAdaptation(
+                    prepared.source,
+                    closed,
+                    prepared.policy,
+                    prepared.constraints,
+                    periodic_source_proofs=prepared.periodic_source_proofs,
+                )
+                binding = _periodic_preparation_binding(result, budget=budget)
+            imports = NativeExecutionImports(scope, preparation=prior)
+    evidence = NativeExecutionRecord(
+        imports.evidence(),
+        owner_id=result.prepared_id,
+        imports=imports,
+        preparation_evidence=prior,
+    )
+    parent = scope.parent
+    if parent is not None:
+        # Nested preparation work already counts in the enclosing request.
+        native_preparation_ledger(parent).remember_receipt(parent, evidence)
+    return adaptation_owner._close_periodic_preparation_receipt(
+        result, evidence, receipt.expires_at, binding
+    )
+
+
 @checked
 def periodic_coarsening_cell_ids(
     prepared: adaptation_owner.PreparedMeshAdaptation, /
@@ -3944,11 +4606,13 @@ def _periodic_coarsening_edit(
 ) -> tuple[CellTopologyEdit, np.ndarray, np.ndarray, np.ndarray]:
 
     fine, original = history.mesh, history.source
+    parents = np.asarray(history.parent_cells)
+    replaced = np.isin(parents, restored_parents)
+    # The edit's cavity is every fine cell it coarsens away.
+    _periodic_charge(cavity_cells=int(np.count_nonzero(replaced)), budget=budget)
     construction_sources, _ = periodic_vertex_stencils(history)
     fine_cells, fine_ids = _periodic_simplex_rows(fine)
     original_cells, original_ids = _periodic_simplex_rows(original)
-    parents = np.asarray(history.parent_cells)
-    replaced = np.isin(parents, restored_parents)
     kept = np.flatnonzero(~replaced)
     original_vertex_ids = np.asarray(original.vertex_global_ids)
     fine_vertex_ids = np.asarray(fine.vertex_global_ids)
@@ -4412,8 +5076,10 @@ def topology_edit_assembly_preparation_bounds(
     Target preparation builds twice. Each attached descriptor rebuild renews
     its source and runs two constructors; evidence binding then replays the
     allocation-prior chain and two constructors for the current target.
-    Nonperiodic assembly has no charged coordinate preparation."""
-    work = storage = queries = 0
+    Rational homogeneous stencil and reference banks add their shape-only
+    validation bound; without banks, nonperiodic assembly charges nothing."""
+    work, storage = topology_edit_exact_preparation_bounds(edit)
+    queries = 0
     storage += model_array_bytes(edit)
     descriptor = edit.target_periodic_topology
     geometry = None if descriptor is None else descriptor.actual_geometry
@@ -4542,6 +5208,7 @@ def prepare_periodic_edit_target(
         else None,
         periodic_topology=staged,
         numeric_version=plain.numeric_version,
+        budget=budget,
     )
 
 
@@ -4749,6 +5416,7 @@ def _bind_periodic_target(
         polyhedral_connectivity=target.connectivity
         if isinstance(target.connectivity, PolyhedralConnectivity)
         else None,
+        budget=budget,
     )
 
 
@@ -5165,6 +5833,7 @@ class _BisectionSelection(StrictModule):
     coarsening: bool = eqx.field(static=True)
     rejected_coarsening: np.ndarray
     edges: np.ndarray
+    squared_lengths: np.ndarray
     selected: frozenset[int] = eqx.field(static=True)
     rejected_refinement: tuple[int, ...] = eqx.field(static=True)
 
@@ -5205,30 +5874,40 @@ def _prepare_periodic_bisection(
         else np.empty(0, dtype=np.int64)
     )
     rejected_coarsening = coarsen_ids[~np.isin(coarsen_ids, accepted_coarse)]
-    protected = set(
-        np.asarray(require_periodic_topology(source).orbits(1)[0])[
-            prepared.constraints.protected_edge_mask
-        ].tolist()
-    )
+    topology = require_periodic_topology(source)
+    orbit = np.asarray(topology.orbits(1)[0])
+    protected = set(orbit[prepared.constraints.protected_edge_mask].tolist())
     edges = simplex_entity_corners(source, 1)
-    orbit = np.asarray(require_periodic_topology(source).orbits(1)[0])
-    lengths = np.linalg.norm(
-        np.asarray(source.coordinates)[edges[:, 1]]
-        - np.asarray(source.coordinates)[edges[:, 0]],
-        axis=1,
-    )
     by_pair = {tuple(sorted(edge)): row for row, edge in enumerate(edges.tolist())}
-    quotient_keys = require_periodic_topology(source).entity_keys(1)
-    selected, rejected_refinement = set(), []
-    for row in np.flatnonzero(np.isin(source_ids, refine_ids)):
-        corners = source_cells[row]
-        local = [
-            by_pair[tuple(sorted(pair))] for pair in combinations(corners.tolist(), 2)
-        ]
-        edge = min(
-            local, key=lambda index: (-lengths[index], quotient_keys[orbit[index]])
+    quotient_keys = topology.entity_keys(1)
+    marked = np.flatnonzero(np.isin(source_ids, refine_ids))
+    # Longest-edge decisions compare the declared field-valued quotient lengths,
+    # never norms of rounded lifted coordinates; exactly equal lengths choose
+    # the smallest quotient entity key.
+    squared = (
+        periodic_edge_squared_lengths(
+            source, geometry=prepared.source.geometry, budget=budget
         )
-        key = int(orbit[edge])
+        if marked.size
+        else np.empty(0, dtype=object)
+    )
+    candidates = [
+        sorted(
+            {
+                int(orbit[by_pair[tuple(sorted(pair))]])
+                for pair in combinations(source_cells[row].tolist(), 2)
+            },
+            key=lambda candidate: quotient_keys[candidate],
+        )
+        for row in marked
+    ]
+    longest = periodic_longest_positions(
+        [[squared[candidate] for candidate in group] for group in candidates],
+        budget=budget,
+    )
+    selected, rejected_refinement = set(), []
+    for row, group, position in zip(marked, candidates, longest, strict=True):
+        key = group[position]
         if key in protected:
             rejected_refinement.append(int(source_ids[row]))
         else:
@@ -5242,6 +5921,7 @@ def _prepare_periodic_bisection(
         coarsening,
         rejected_coarsening,
         edges,
+        squared,
         frozenset(selected),
         tuple(rejected_refinement),
     )
@@ -5331,6 +6011,9 @@ def _publish_bisection_history(
         dtype=np.int64,
         count=target_ids.size,
     )
+    # A standalone history archive retains no target geometry, so its quotient
+    # evidence uses the carrier's affine measure route.
+    quotient = PeriodicQuotientEvidence(target)
     if coarse is not None and history is not None:
         source_keys = set(require_periodic_topology(history.source).entity_keys(1))
         present_keys = set(require_periodic_topology(target).entity_keys(1))
@@ -5342,7 +6025,7 @@ def _publish_bisection_history(
             parent_reference_vertices=coarse.reference[order],
             cell_generations=coarse.generations[order],
             bisected_edges=len(source_keys - present_keys),
-            quotient=PeriodicQuotientEvidence(target),
+            quotient=quotient,
             previous=history.previous,
             retired=history,
             budget=budget,
@@ -5358,7 +6041,7 @@ def _publish_bisection_history(
             ],
             cell_generations=generations[order],
             bisected_edges=refinement.bisected_edges,
-            quotient=PeriodicQuotientEvidence(target),
+            quotient=quotient,
             previous=history,
             budget=budget,
         )
@@ -5397,21 +6080,44 @@ def execute_periodic_bisection_route(
             upper_vertices = source.coordinates.shape[0] + edges.shape[0] * (
                 source.topological_dimension + 1
             )
+            upper_scratch = upper_cells * 128 + upper_vertices * 64
             if (
                 upper_cells > limits.maximum_cells
                 or upper_vertices > limits.maximum_vertices
-                or upper_cells * 128 + upper_vertices * 64 > limits.maximum_scratch_bytes
+                or upper_scratch > limits.maximum_scratch_bytes
                 or upper_cells > limits.maximum_work_units
             ):
-                raise ValueError(
-                    "execute_periodic_bisection_route.prepared must fit construction limits and preserve one-orbit measure; got Periodic orbit closure exceeds its declared construction budget."
+                refining = source_ids[
+                    np.isin(source_ids, selection.refine_ids)
+                    & ~np.isin(source_ids, selection.rejected_refinement)
+                ]
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    f"execute_periodic_bisection_route.prepared must fit construction limits and preserve one-orbit measure; got Periodic orbit closure upper bounds {(upper_cells, upper_vertices, upper_scratch)!r} exceed limits {(limits.maximum_cells, limits.maximum_vertices, limits.maximum_scratch_bytes, limits.maximum_work_units)!r}.",
+                    stage="bisection-closure",
+                    entity_ids=tuple(int(value) for value in np.sort(refining)),
+                    requested=(
+                        ("maximum_cells", float(limits.maximum_cells)),
+                        ("maximum_vertices", float(limits.maximum_vertices)),
+                        ("maximum_scratch_bytes", float(limits.maximum_scratch_bytes)),
+                        ("maximum_work_units", float(limits.maximum_work_units)),
+                    ),
+                    achieved=(
+                        ("closure_cells_upper", float(upper_cells)),
+                        ("closure_vertices_upper", float(upper_vertices)),
+                        ("closure_scratch_bytes_upper", float(upper_scratch)),
+                        ("closure_work_units_upper", float(upper_cells)),
+                    ),
                 )
-            refinement = refine_periodic_mesh(
+            # The public wrapper's admitted-budget path, reusing the selection's
+            # unrounded length bank for the queued-orbit order.
+            refinement = _refine_periodic_phase(
                 source,
                 edge_orbits=np.asarray(sorted(selected), dtype=np.int64),
                 source_geometry=prepared.source.geometry,
-                budget=budget,
+                squared_lengths=selection.squared_lengths,
                 scope=scope,
+                budget=budget,
             )
             edit = _periodic_refinement_edit(refinement, history, budget=budget)
             kind = MeshTransitionKind.REFINE
@@ -5567,6 +6273,7 @@ __all__ = [
     "publish_periodic_simplices",
     "refine_periodic_mesh",
     "periodic_coarsening_cell_ids",
+    "prepare_periodic_coarsening",
     "periodic_coarsening_witnesses",
 ]
 

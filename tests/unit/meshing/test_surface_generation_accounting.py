@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 from fractions import Fraction
 
 import numpy as np
@@ -365,7 +367,8 @@ def _nonimproving_sphere_vertex(
         neighbors = np.unique(state.cells[rows])
         neighbors = neighbors[neighbors != vertex]
         parameters = surface_metric._sphere_radial_parameters(
-            np.mean(state.directions[neighbors], axis=0), fixture.domain, patch
+            np.mean(state.directions[neighbors], axis=0), fixture.domain, patch,
+            budget=budget,
         )
         point, direction, metric, _ = surface_metric._sphere_point(
             fixture.domain,
@@ -438,7 +441,8 @@ def test_nonimproving_sphere_relocation_preserves_carrier_with_less_proof_work()
             neighbors = np.unique(state.cells[rows])
             neighbors = neighbors[neighbors != vertex]
             parameters = surface_metric._sphere_radial_parameters(
-                np.mean(state.directions[neighbors], axis=0), fixture.domain, patch
+                np.mean(state.directions[neighbors], axis=0), fixture.domain, patch,
+                budget=budget,
             )
             before = budget.work_units
             point, direction, _, _ = surface_metric._sphere_point(
@@ -620,3 +624,23 @@ def test_all_rejected_native_refinement_round_retains_carrier_and_refuses_hard_s
     )
     np.testing.assert_array_equal(domain.corner_points, source_corners)
     assert request.specification_id == request_id
+
+
+def test_surface_cold_epoch_requests_observe_actual_managed_admission() -> None:
+    from tools.meshing_qualification.scenarios import surface
+
+    tree = ast.parse(inspect.getsource(surface._surface_qualification_cold_worker))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "execute_native_request"
+    ]
+    assert len(calls) == 1
+    observation = [
+        keyword.value for keyword in calls[0].keywords
+        if keyword.arg == "observe_managed_admission"
+    ]
+    assert len(observation) == 1
+    assert isinstance(observation[0], ast.Constant)
+    assert observation[0].value is True

@@ -510,6 +510,39 @@ def _octree_field(tree: _Octree, nodal: np.ndarray, /) -> TetrahedralField:
     return TetrahedralField(points, values[first], tetrahedra.reshape((-1, 4)))
 
 
+def _project_sample_normals(
+    tree: _Octree,
+    leaves: np.ndarray,
+    weights: np.ndarray,
+    areas: np.ndarray,
+    normals: np.ndarray,
+    widths: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Lumped-L2 project the unchanged oriented sample-area load onto Q1.
+
+    Adaptive hats have the mass of ALL incident leaves, including hanging-node
+    prolongation. Dividing a sample contribution by its containing leaf volume
+    instead changes the represented normal load at fine/coarse interfaces.
+    ``m=P^T m_full`` and ``V=P((P^T g)/m)`` preserve its physical integral.
+    """
+    nodal_mass = np.bincount(
+        tree.leaf_nodes.reshape(-1),
+        weights=np.repeat(widths**3 / 8, 8),
+        minlength=tree.node_count,
+    )
+    free_mass = tree.restrict(nodal_mass)
+    if not np.all(np.isfinite(free_mass)) or np.any(free_mass <= 0):
+        raise ValueError("PoissonOctree.normal_projection must have finite positive Q1 hat masses.")
+    load = splat_field(
+        tree.leaf_nodes[leaves], weights, areas[:, None] * normals, tree.node_count
+    )
+    field = np.empty((tree.node_count, 3), dtype=np.float64)
+    for axis in range(3):
+        field[:, axis] = tree.prolong(tree.restrict(load[:, axis]) / free_mass)
+    return field
+
+
 def solve_octree_poisson(
     points: np.ndarray,
     normals: np.ndarray,
@@ -529,12 +562,7 @@ def solve_octree_poisson(
         tree, leaves, weights, screening / spacing * areas
     )
     widths = tree.spacing * tree.sizes.astype(np.float64)
-    field = splat_field(
-        tree.leaf_nodes[leaves],
-        weights,
-        areas[:, None] * normals / widths[leaves, None] ** 3,
-        tree.node_count,
-    )
+    field = _project_sample_normals(tree, leaves, weights, areas, normals, widths)
     rhs = tree.restrict(cell_divergence(tree.leaf_nodes, widths, field, tree.node_count))
     record = solve_indicator(
         tree.free_count,

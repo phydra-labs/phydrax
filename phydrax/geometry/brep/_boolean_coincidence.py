@@ -35,6 +35,7 @@ from .._cad_revision import (
 )
 from .._rational import exact_float, rational_vector
 from ._boolean_core import (
+    boolean_face_chart_box,
     BRepBooleanFailure,
     BRepBooleanOperation,
     BRepBooleanPolicy,
@@ -573,6 +574,7 @@ class CoincidentFaceOverlay(StrictModule):
                 tolerance=policy.trim_resolution,
                 maximum_arcs=policy.maximum_cells,
                 budget=budget,
+                preparations=preparations,
             )
             self.second_domain = brep_trim_domain(
                 second_geometry,
@@ -581,6 +583,7 @@ class CoincidentFaceOverlay(StrictModule):
                 tolerance=policy.trim_resolution,
                 maximum_arcs=policy.maximum_cells,
                 budget=budget,
+                preparations=preparations,
             )
             self.parameter_bounds = jnp.asarray(
                 np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0))),
@@ -711,7 +714,7 @@ def _native_cylinder_ring_chart(model: BRepModel, face: int) -> bool:
     geometry = model.geometry
     if geometry is None:
         return False
-    bounds = np.asarray(model.parameter_bounds)[face]
+    bounds = boolean_face_chart_box(model, face)
     if bounds[0, 0] != 0.0 or bounds[1, 0] != _PERIOD:
         return False
     for loop in geometry.face_loops[face]:
@@ -822,7 +825,7 @@ def prove_source_ring_pair_coverage(
     regions = tuple(
         SurfaceRegion(
             models[operand].patches[face],
-            np.asarray(models[operand].parameter_bounds)[face],
+            boolean_face_chart_box(models[operand], face),
         )
         for operand, face in pair
     )

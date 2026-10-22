@@ -1,4 +1,4 @@
-"""Installed consumers use the canonical generation, adaptation and overset APIs."""
+"""Installed consumers use the generation, adaptation and overset APIs."""
 
 from collections.abc import Mapping
 from typing import assert_type
@@ -14,6 +14,7 @@ from phydrax.discretization import (
     PreparedFieldReconstruction,
     PreparedUnstructuredConservativeRemap,
 )
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization.fem import FiniteElementDiscretization
 from phydrax.geometry import (
     CompartmentMeshingSource,
@@ -92,6 +93,11 @@ from phydrax.meshing import (
     SweepControl,
     TransfiniteBlock,
     VolumeMeshingSpec,
+)
+from phydrax.solver import (
+    FiniteElementAcceptedState,
+    FiniteElementTopologyResult,
+    FiniteElementTopologyTransaction,
 )
 
 
@@ -422,3 +428,19 @@ def partitioned_initial_generation(
     )
     assert_type(plan, NativeMeshingPlan)
     assert_type(plan.execute(), CellMeshingResult)
+
+
+def explicit_transaction_budget(
+    transaction: FiniteElementTopologyTransaction,
+    accepted: FiniteElementAcceptedState,
+    mesh: CellMesh,
+    adaptation: MeshAdaptationResult,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    assert_type(
+        transaction.execute(accepted, mesh, adaptation, budget=budget),
+        FiniteElementTopologyResult,
+    )
+    transaction.execute(
+        accepted, mesh, adaptation, budget="another-ledger"  # ty: ignore[invalid-argument-type]
+    )

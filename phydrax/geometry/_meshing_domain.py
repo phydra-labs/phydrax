@@ -95,7 +95,7 @@ from .brep._patches import (
     SpherePatch,
     TorusPatch,
 )
-from .brep._placed import PlacedSurface
+from .brep._placed import PlacedCurve, PlacedSurface
 from .brep._request_preparations import TrimRequestPreparations
 from .brep._root_bindings import BRepPlacedVertex, BRepVertexRoot
 
@@ -548,6 +548,10 @@ class PhysicalCurveMap(AbstractBoundaryMap):
                         endpoint_roots=ordered_roots,
                     )
                     if isinstance(curve, IntersectionCurve)
+                    or (
+                        isinstance(curve, PlacedCurve)
+                        and isinstance(curve.definition, IntersectionCurve)
+                    )
                     else curve.derivative_bounds(support[0], support[1], order=1)
                 )
                 speed = float(np.linalg.norm(np.maximum(np.abs(lower), np.abs(upper))))
@@ -1513,7 +1517,13 @@ class MeshingDomain(StrictModule, NonTrainableState):
 
     @classmethod
     @checked
-    def from_brep(cls: type[MeshingDomain], model: BRepModel, /) -> MeshingDomain:
+    def from_brep(
+        cls: type[MeshingDomain],
+        model: BRepModel,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> MeshingDomain:
         """Prepare native B-Rep carriers, never its query tessellation.
 
         Degenerate source edges become pole uses; nondegenerate edges retain
@@ -1527,7 +1537,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 "MeshingDomain.model.geometry must contain native B-Rep curves and trim loops; got None"
             )
         if geometry.occurrences:
-            return domain_preparation_owner.prepare_placed_brep_domain(model)
+            return domain_preparation_owner.prepare_placed_brep_domain(
+                model, budget=budget
+            )
         return domain_preparation_owner.prepare_brep_domain(
             cls,
             geometry,
@@ -1536,7 +1548,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
             source_id=model.source_id,
             source_revision=model.source_revision,
             authority_id=model.model_id,
-            budget=None,
+            budget=budget,
             authority=model,
         )
 

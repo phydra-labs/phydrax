@@ -3418,25 +3418,46 @@ def _reconnect_batch(
     remaining = limits.maximum_work_units - ledger.work
     capacity = min(limits.maximum_faces, state.triangles.shape[0] + 2 * hints.size)
     reconnect_start = phase_started(record_phase)
-    native = surface_reconnect(
-        state.charts,
-        state.points,
-        state.normals,
-        state.triangles,
-        state.constrained,
-        charts,
-        points,
-        normals,
-        spacing,
-        hints,
-        sweep=not np.any(restriction_required),
-        max_triangles=max(capacity, state.triangles.shape[0]),
-        work_limit=max(remaining, 0),
-        vertex_metrics=metrics.vertex_metrics,
-        insert_metrics=insert_metrics,
-        vertex_pole_ids=state.pole_ids,
-        insert_edges=insert_edges,
-    )
+    try:
+        native = surface_reconnect(
+            state.charts,
+            state.points,
+            state.normals,
+            state.triangles,
+            state.constrained,
+            charts,
+            points,
+            normals,
+            spacing,
+            hints,
+            sweep=not np.any(restriction_required),
+            max_triangles=max(capacity, state.triangles.shape[0]),
+            work_limit=max(remaining, 0),
+            vertex_metrics=metrics.vertex_metrics,
+            insert_metrics=insert_metrics,
+            vertex_pole_ids=state.pole_ids,
+            insert_edges=insert_edges,
+        )
+    except MeshcoreError as error:
+        # The remaining allowance cannot pay mandatory source validation; the
+        # refused call spent no work and published nothing.
+        if error.status != MeshcoreStatus.CAPACITY_EXCEEDED:
+            raise
+        record_elapsed(record_phase, "refinement", reconnect_start, work_units=0)
+        raise _failure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            f"SurfaceConstruction.refinement must fit its work and face budgets; got exhausted source validation on patch {state.index}.",
+            entity_ids=(state.index,),
+            requested=(
+                ("maximum_work_units", limits.maximum_work_units),
+                ("maximum_faces", limits.maximum_faces),
+            ),
+            achieved=(
+                ("work_units", ledger.work),
+                ("faces", state.triangles.shape[0]),
+                ("unresolved_triangles", int(np.sum(unresolved))),
+            ),
+        ) from error
     triangles = native.triangles
     constrained = native.constrained
     ids = native.vertex_ids
@@ -4474,6 +4495,7 @@ def _assemble(
             angles,
         ) = [], [], [], [], [], [], [], []
         normal_bounds = []
+        boundary_occurrences: list[np.ndarray] = []
         restriction_vertices: list[np.ndarray] = []
         restriction_edges: list[np.ndarray] = []
         restriction_endpoint_parameters: list[np.ndarray] = []
@@ -4503,6 +4525,46 @@ def _assemble(
             local_charts = state.charts[state.triangles[keep]]
             if domain.patches[state.index].reversed:
                 local_charts = local_charts[:, [0, 2, 1]]
+            chart_vertices = np.arange(state.charts.shape[0], dtype=np.int64)
+            for loop_ in domain.patches[state.index].loops:
+                for use_ in loop_:
+                    if isinstance(use_, _dependency_phydrax_geometry__meshing_domain.PatchPoleUse):
+                        pole_vertices = np.flatnonzero(state.identities == use_.corner)
+                        if pole_vertices.size:
+                            chart_vertices[pole_vertices] = pole_vertices[0]
+            local_cells = chart_vertices[state.triangles[keep]]
+            if domain.patches[state.index].reversed:
+                local_cells = local_cells[:, [0, 2, 1]]
+            bank = np.full((cells.shape[0], 3, 3), -1, dtype=np.int32)
+            owners: dict[tuple[int, int], list[tuple[int, int]]] = {}
+            for cell, vertices_ in enumerate(local_cells):
+                for side, (first, last) in enumerate(((0, 1), (1, 2), (2, 0))):
+                    a, b = int(vertices_[first]), int(vertices_[last])
+                    key = (min(a, b), max(a, b))
+                    owners.setdefault(key, []).append((cell, side))
+            seen: set[tuple[int, int]] = set()
+            for edge, provenance in zip(
+                state.boundary_edges, state.boundary_uses, strict=True
+            ):
+                loop, ordinal = int(provenance[0]), int(provenance[1])
+                use = domain.patches[state.index].loops[loop][ordinal]
+                a, b = (int(value) for value in chart_vertices[edge])
+                if isinstance(use, _dependency_phydrax_geometry__meshing_domain.PatchPoleUse):
+                    if a != b:
+                        raise ValueError("Authored pole boundary must collapse to its declared corner")
+                    continue
+                key = (min(a, b), max(a, b))
+                matches = owners.get(key, [])
+                if len(matches) != 1 or key in seen:
+                    raise ValueError("Authored chart boundary requires one distinct active cell side")
+                seen.add(key)
+                if use.last == use.first:
+                    raise ValueError("Authored chart boundary use requires nonzero traversal")
+                cell, side = matches[0]
+                bank[cell, side] = (loop, ordinal, 1 if use.last > use.first else -1)
+            if any(len(value) == 1 and key not in seen for key, value in owners.items()):
+                raise ValueError("Active chart boundary side is missing authored occurrence identity")
+            boundary_occurrences.append(bank)
             chart_corners.append(local_charts)
             triangles.append(cells)
             patches.append(np.full((cells.shape[0],), state.index, dtype=np.int64))
@@ -4585,6 +4647,7 @@ def _assemble(
             np.concatenate(edge_deviations),
             np.concatenate(edge_bounds),
             np.concatenate(unresolved),
+            np.concatenate(boundary_occurrences, axis=0),
             tuple(
                 (
                     state.index,

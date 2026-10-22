@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from fractions import Fraction
 from math import prod
 from typing import assert_never, final
@@ -15,9 +16,11 @@ import numpy as np
 from jax import Array
 
 from phydrax.discretization import CellGeometrySpec, CellMesh
-from phydrax.discretization._reference_cell_types import CellGeometryElement
 from phydrax.discretization.fem._reference_types import FiniteElementSpec
-from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._domain_coverage import (
+    DomainCoverageCertificate,
+    PiecewiseLinearDomain,
+)
 from phydrax.geometry._source_boundary_records import SourceBoundaryQuery
 from phydrax.meshing._certification import MeshCertificationReport
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
@@ -38,6 +41,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._cell_complex import IntervalConnectivity
 from ...discretization._cell_geometry import (
+    affine_geometry_construction_bounds,
     CellGeometryRestrictionSource,
     require_scalar_coordinate_element,
 )
@@ -48,10 +52,6 @@ from ...discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
-from ...discretization._coordinate_enclosure import (
-    coordinate_polynomials,
-    expression_equal,
-)
 from ...discretization._mapped_geometry_measure import prepare_mapped_edge_arc_length
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
@@ -61,6 +61,7 @@ from .._audit import (
     CellMeshAuditPolicy,
 )
 from .._controls import BlockInterfaceControl, RegionControl
+from .._family_execution import count_geometry_queries, family_route_refusals
 from .._measurements import measure_phase, NativeMeshingPhaseRecorder
 from .._multiblock import construct_glued_structured_blocks
 from .._organization_records import (
@@ -88,6 +89,7 @@ from .._trace import (
 from ._native_publication import (
     coordinate_budget,
     coordinate_phase,
+    derived_certificate_limits,
     NativeCertificationRequest,
     NativePublicationExecution,
     NativePublicationOrganization,
@@ -275,6 +277,7 @@ class PreparedSweep(StrictModule, NonTrainableState):
         /,
         *,
         profile_geometry: CellGeometrySpec | None = None,
+        scope: NativeExecutionScope,
     ) -> None:
         if profile.topological_dimension != 2 or profile.ambient_dimension not in (2, 3):
             raise ValueError(
@@ -287,11 +290,22 @@ class PreparedSweep(StrictModule, NonTrainableState):
             raise ValueError(
                 "PreparedSweep.profile.blocks.cell_kind must be triangle or quadrilateral; got an incompatible source cell family"
             )
-        geometry = (
-            CellGeometrySpec.affine(profile)
-            if profile_geometry is None
-            else profile_geometry
-        )
+        if profile_geometry is None:
+            profile_shapes = tuple(
+                (block.cell_kind, block.cell_count, block.arity)
+                for block in profile.blocks
+            )
+            with scope.host_workspace() as workspace:
+                workspace.set_bound(
+                    affine_geometry_construction_bounds(
+                        profile.coordinates.shape[0],
+                        profile.ambient_dimension,
+                        profile_shapes,
+                    )
+                )
+                geometry = CellGeometrySpec.affine(profile)
+        else:
+            geometry = profile_geometry
         geometry.resolve(profile)
 
         if any(
@@ -347,6 +361,8 @@ def _preflight(
     ambient: int,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     /,
+    *,
+    attribute_bytes: int = 0,
 ) -> None:
     limits = specification.limits
     estimates = (
@@ -354,7 +370,7 @@ def _preflight(
         (cells, limits.maximum_cells, "cells"),
         (connectivity_entries, limits.maximum_connectivity_entries, "connectivity"),
         (
-            vertices * ambient * 8 + connectivity_entries * 4,
+            vertices * ambient * 8 + connectivity_entries * 4 + attribute_bytes,
             limits.maximum_data_bytes,
             "data",
         ),
@@ -376,97 +392,129 @@ def mapped_edge_evidence(
     /,
     *,
     scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return physical source-edge arc lengths and their certified bounds."""
 
-    edges = entities(mesh, 1)
-    lookup = {tuple(sorted(pair)): row for row, pair in enumerate(edges.tolist())}
-    lengths = family_host_array((edges.shape[0],), np.float64, scope=scope)
-    lower = family_host_array(lengths.shape, np.float64, scope=scope)
-    upper = family_host_array(lengths.shape, np.float64, scope=scope)
-    lengths.fill(np.nan)
+    limits = specification.limits
+    edge_count = int(mesh.entity_set(1).entity_ids.shape[0])
     remaining = scope.remaining()
-    work = min(specification.limits.maximum_work_units, remaining.remaining_work_units)
-    scratch = min(
-        specification.limits.maximum_scratch_bytes, remaining.remaining_managed_bytes
-    )
-    # Source preparation and intrinsic predicates share the edge-query phase.
-    queries = max(
-        edges.shape[0],
-        min(
-            specification.limits.maximum_geometry_queries,
-            remaining.remaining_geometry_queries,
-        ),
-    )
-    ticket = scope.batch(work, queries_upper=queries, bytes_upper=scratch)
-    ledger = CoordinateEnclosureBudget(
-        ticket,
-        maximum_work_units=specification.limits.maximum_work_units,
-        maximum_memory_bytes=specification.limits.maximum_scratch_bytes,
-    )
-    try:
-        with (
-            ticket,
-            ticket.native_target(),
-            ledger.activate(),
-            ledger.bound_stage(work, scratch),
-        ):
-            elements, routes, _ = geometry.resolve(mesh, budget=ledger)
-            coefficients = geometry.source_coordinates(budget=ledger)
-            for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-                topology = reference_cell_topology(block.cell_kind)
-                points = tuple(
-                    tuple(Fraction(float(value)) for value in point)
-                    for point in topology.vertices
-                )
-                for vertices, dofs in zip(
-                    np.asarray(block.vertices).tolist(),
-                    np.asarray(route).tolist(),
-                    strict=True,
-                ):
-                    local = tuple(coefficients[index] for index in dofs)
-                    for first, last in topology.entities[1]:
-                        row = lookup[tuple(sorted((vertices[first], vertices[last])))]
-                        if np.isfinite(lengths[row]):
-                            continue
-                        ticket.consume(geometry_queries=1)
-                        enclosure = prepare_mapped_edge_arc_length(
-                            element, local, points[first], points[last], budget=ledger
-                        ).integrate(
-                            absolute_tolerance=1e-12,
-                            relative_tolerance=1e-12,
-                            maximum_work=specification.limits.maximum_work_units,
-                            maximum_subcells=min(
-                                specification.limits.maximum_cells, 10000
-                            ),
-                            budget=ledger,
-                        )
-                        lengths[row], lower[row], upper[row] = (
-                            enclosure.value,
-                            enclosure.lower,
-                            enclosure.upper,
-                        )
-    except CoordinateEnclosureResourceError as error:
+    # Source preparation and intrinsic predicates share the edge-query phase;
+    # every physical edge needs one query within the request's remaining queries.
+    queries = min(limits.maximum_geometry_queries, remaining.remaining_geometry_queries)
+    if edge_count > queries:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            str(error),
+            "structured.edge_arc_queries must fit the remaining geometry queries; got more physical edges",
             stage="structured_edge_arcs",
-        ) from error
-    except CellGeometryTransitionError as error:
-        category = (
-            MeshingFailureCategory.RESOURCE_EXHAUSTED
-            if error.reason == "resource_limit"
-            else MeshingFailureCategory.AUDIT_FAILED
+            requested=(("remaining_geometry_queries", queries),),
+            achieved=(("physical_edges", edge_count),),
         )
-        raise MeshingFailure(
-            category, str(error), stage="structured_edge_arcs"
-        ) from error
-    if not np.all(np.isfinite(lengths)):
-        raise MeshingFailure(
-            MeshingFailureCategory.AUDIT_FAILED,
-            "structured.edge_arc_coverage must cover every physical edge; got missing edges",
-            stage="structured_edge_arcs",
+    with scope.host_workspace() as workspace:
+        # Host edge rows, CPython key tuples, integers and dictionary slots of at
+        # most 256 bytes per edge, and the coverage mask stay live through the
+        # edge loop.
+        workspace.set_bound(273 * edge_count + 4096)
+        lengths = family_host_array((edge_count,), np.float64, scope=scope)
+        lower = family_host_array(lengths.shape, np.float64, scope=scope)
+        upper = family_host_array(lengths.shape, np.float64, scope=scope)
+        lengths.fill(np.nan)
+        remaining = scope.remaining()
+        work = min(limits.maximum_work_units, remaining.remaining_work_units)
+        scratch = min(limits.maximum_scratch_bytes, remaining.remaining_managed_bytes)
+        ticket = (
+            scope.batch(work, queries_upper=queries, bytes_upper=scratch)
+            if budget is None
+            else None
         )
+        ledger = (
+            CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            if ticket is not None
+            else budget
+        )
+        if ledger is None:
+            raise RuntimeError("Mapped edge evidence requires its actual request ledger.")
+        try:
+            with (
+                ticket if ticket is not None else nullcontext(),
+                ticket.native_target() if ticket is not None else nullcontext(),
+                ledger.activate() if ticket is not None else nullcontext(),
+                ledger.bound_stage(work, scratch)
+                if ticket is not None
+                else nullcontext(),
+            ):
+                edges = entities(mesh, 1)
+                lookup = {
+                    tuple(sorted(pair.tolist())): row for row, pair in enumerate(edges)
+                }
+                elements, routes, _ = geometry.resolve(mesh, budget=ledger)
+                coefficients = geometry.source_coordinates(budget=ledger)
+                for block, element, route in zip(
+                    mesh.blocks, elements, routes, strict=True
+                ):
+                    topology = reference_cell_topology(block.cell_kind)
+                    points = tuple(
+                        tuple(Fraction(float(value)) for value in point)
+                        for point in topology.vertices
+                    )
+                    for vertex_row, dof_row in zip(
+                        np.asarray(block.vertices), np.asarray(route), strict=True
+                    ):
+                        vertices = vertex_row.tolist()
+                        local = tuple(coefficients[index] for index in dof_row.tolist())
+                        for first, last in topology.entities[1]:
+                            row = lookup[
+                                tuple(sorted((vertices[first], vertices[last])))
+                            ]
+                            if np.isfinite(lengths[row]):
+                                continue
+                            count_geometry_queries(1, work_units=0, budget=ledger)
+                            # Each edge's restriction snapshots and controls
+                            # are consumed by its own enclosure.
+                            with ledger.polynomial_preparation_scope():
+                                enclosure = prepare_mapped_edge_arc_length(
+                                    element,
+                                    local,
+                                    points[first],
+                                    points[last],
+                                    budget=ledger,
+                                ).integrate(
+                                    absolute_tolerance=1e-12,
+                                    relative_tolerance=1e-12,
+                                    maximum_work=limits.maximum_work_units,
+                                    maximum_subcells=min(limits.maximum_cells, 10000),
+                                    budget=ledger,
+                                )
+                            lengths[row], lower[row], upper[row] = (
+                                enclosure.value,
+                                enclosure.lower,
+                                enclosure.upper,
+                            )
+                if not np.all(np.isfinite(lengths)):
+                    raise MeshingFailure(
+                        MeshingFailureCategory.AUDIT_FAILED,
+                        "structured.edge_arc_coverage must cover every physical edge; got missing edges",
+                        stage="structured_edge_arcs",
+                    )
+        except CoordinateEnclosureResourceError as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                str(error),
+                stage="structured_edge_arcs",
+            ) from error
+        except CellGeometryTransitionError as error:
+            category = (
+                MeshingFailureCategory.RESOURCE_EXHAUSTED
+                if error.reason == "resource_limit"
+                else MeshingFailureCategory.AUDIT_FAILED
+            )
+            raise MeshingFailure(
+                category, str(error), stage="structured_edge_arcs"
+            ) from error
     return edges, lengths, lower, upper
 
 
@@ -505,61 +553,83 @@ def _compliance(
         raise TypeError(
             "structured.mesh.connectivity must represent surface or volume cells; got interval connectivity"
         )
-    edges = np.asarray(
-        connectivity.entities[1]
-        if isinstance(connectivity, SimplicialConnectivity)
-        else connectivity.edges,
-        dtype=np.int64,
-    )
-    if any(
-        require_scalar_coordinate_element(element, "Structured physical sizing").degree
-        > 1
-        for element in geometry.elements
-    ):
-        edges, lengths, lower, upper = mapped_edge_evidence(
-            mesh, geometry, specification, scope=scope
-        )
-        minimum = family_host_array((mesh.coordinates.shape[0],), np.float64, scope=scope)
-        maximum = family_host_array(minimum.shape, np.float64, scope=scope)
-        minimum.fill(np.inf)
-        maximum.fill(0.0)
-        for endpoint in range(2):
-            np.minimum.at(minimum, edges[:, endpoint], lower)
-            np.maximum.at(maximum, edges[:, endpoint], upper)
-        growth = float(np.max(maximum / minimum, initial=1.0))
-        achieved.extend(
-            (
-                ("physical_edge_arc_minimum_lower", float(np.min(lower))),
-                ("physical_edge_arc_maximum_upper", float(np.max(upper))),
+    vertex_count = mesh.coordinates.shape[0]
+    with scope.host_workspace() as workspace:
+        if any(
+            require_scalar_coordinate_element(
+                element, "Structured physical sizing"
+            ).degree
+            > 1
+            for element in geometry.elements
+        ):
+            edges, lengths, lower, upper = mapped_edge_evidence(
+                mesh, geometry, specification, scope=scope
             )
-        )
-    else:
-        # Linear tensor/simplex coordinate bases map reference edges to straight
-        # chords between source corners.
-        lengths, growth = edge_size_evidence(
-            np.asarray(mesh.coordinates, dtype=np.float64), edges
-        )
-        lower, upper = lengths, lengths
-    for control in specification.size_controls:
-        match control:
-            case UniformSizeControl():
-                pass
-            case _:
-                raise TypeError(
-                    "structured.size_controls must contain UniformSizeControl values; got a different control kind"
+            edge_count = edges.shape[0]
+            # The returned host edge rows stay live; size statistics own the
+            # vertex ratio temporary.
+            retained = 16 * edge_count
+            workspace.set_bound(retained + 8 * vertex_count + 4096)
+            minimum = family_host_array((vertex_count,), np.float64, scope=scope)
+            maximum = family_host_array(minimum.shape, np.float64, scope=scope)
+            minimum.fill(np.inf)
+            maximum.fill(0.0)
+            for endpoint in range(2):
+                np.minimum.at(minimum, edges[:, endpoint], lower)
+                np.maximum.at(maximum, edges[:, endpoint], upper)
+            growth = float(np.max(maximum / minimum, initial=1.0))
+            achieved.extend(
+                (
+                    ("physical_edge_arc_minimum_lower", float(np.min(lower))),
+                    ("physical_edge_arc_maximum_upper", float(np.max(upper))),
                 )
-        wanted, measured, failed = uniform_size_compliance(
-            control, specification.size_compliance, lengths, growth
-        )
-        requested.extend(wanted)
-        achieved.extend(measured)
-        issues.extend(failed)
-        if lower is not lengths:
-            for bound in (lower, upper):
-                _, _, bounded_failures = uniform_size_compliance(
-                    control, specification.size_compliance, bound, growth
-                )
-                issues.extend(name for name in bounded_failures if name not in issues)
+            )
+        else:
+            # Linear tensor/simplex coordinate bases map reference edges to
+            # straight chords between source corners.
+            source_edges = (
+                connectivity.entities[1]
+                if isinstance(connectivity, SimplicialConnectivity)
+                else connectivity.edges
+            )
+            edge_count = source_edges.shape[0]
+            ambient = mesh.coordinates.shape[1]
+            # Edge rows and the retained length bank, the two chord gathers and
+            # their difference, norm passes, and incident vertex extrema, masks,
+            # gathers and ratios.
+            retained = 24 * edge_count
+            workspace.set_bound(
+                retained + 32 * edge_count * ambient + 16 * edge_count
+                + 48 * vertex_count + 4096
+            )
+            edges = np.asarray(source_edges, dtype=np.int64)
+            lengths, growth = edge_size_evidence(
+                np.asarray(mesh.coordinates, dtype=np.float64), edges
+            )
+            lower, upper = lengths, lengths
+        workspace.set_bound(retained + 16 * edge_count + 4096)
+        for control in specification.size_controls:
+            match control:
+                case UniformSizeControl():
+                    pass
+                case _:
+                    raise TypeError(
+                        "structured.size_controls must contain UniformSizeControl values; got a different control kind"
+                    )
+            wanted, measured, failed = uniform_size_compliance(
+                control, specification.size_compliance, lengths, growth
+            )
+            requested.extend(wanted)
+            achieved.extend(measured)
+            issues.extend(failed)
+            if lower is not lengths:
+                for bound in (lower, upper):
+                    _, _, bounded_failures = uniform_size_compliance(
+                        control, specification.size_compliance, bound, growth
+                    )
+                    issues.extend(
+                        name for name in bounded_failures if name not in issues
+                    )
     if (
         isinstance(specification, SurfaceMeshingSpec)
         and specification.quality_target is not None
@@ -668,6 +738,8 @@ def _cell_regions(
     domain: PiecewiseLinearDomain | MappedReferenceDomain | None,
     block_regions: tuple[tuple[str, str], ...],
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> np.ndarray | None:
     if domain is None:
         if block_regions:
@@ -693,12 +765,18 @@ def _cell_regions(
             "structured.block_regions.region_name must identify a declared domain region; got an undeclared region"
         )
     regions = {name: index for index, name in enumerate(domain.region_ids)}
-    return np.concatenate(
-        tuple(
-            np.full((block.cell_count,), regions[assignments[block.name]], dtype=np.int64)
-            for block in mesh.blocks
+    cells = sum(block.cell_count for block in mesh.blocks)
+    with scope.host_workspace() as workspace:
+        # Per-block region rows coexist until their concatenation.
+        workspace.set_bound(8 * cells + 4096)
+        return np.concatenate(
+            tuple(
+                np.full(
+                    (block.cell_count,), regions[assignments[block.name]], dtype=np.int64
+                )
+                for block in mesh.blocks
+            )
         )
-    )
 
 
 def _controlled_organization(
@@ -721,13 +799,40 @@ def _controlled_organization(
             stage="structured_organization",
         )
     mesh = result.mesh
-    phase = _structured_region_zones(mesh, specification, domain, regions)
+    cells = regions.size
+    with scope.host_workspace() as workspace:
+        # Converted cell IDs, one region mask and every zone's selected rows.
+        workspace.set_bound(17 * cells + 4096)
+        phase = _structured_region_zones(mesh, specification, domain, regions)
     controls = phase.controls
     zones = phase.zones
     zone_ids = phase.zone_ids
-    phase = _structured_patch_organization(
-        result, specification, domain, controls, zone_ids
+    coverage = None if result.certification is None else result.certification.coverage
+    overlaps = (
+        coverage.facet_source_overlaps.count
+        if isinstance(coverage, DomainCoverageCertificate)
+        else 0
     )
+    sources = tuple(
+        np.asarray(control.scope.entity_ids).size
+        for control in specification.patch_controls
+    )
+    patch_rows = sum(
+        np.asarray(patch.scope.global_entity_ids).size for patch in result.patches
+    ) + overlaps * len(sources)
+    with scope.host_workspace() as workspace:
+        # CPython face groups of at most 400 bytes per overlap row, source sets
+        # of at most 72 bytes per source row, selected face rows, and one label
+        # union with its sort temporaries.
+        workspace.set_bound(
+            416 * overlaps
+            + 72 * max(sources, default=0)
+            + 64 * patch_rows
+            + 4096
+        )
+        phase = _structured_patch_organization(
+            result, specification, domain, controls, zone_ids
+        )
     patches = phase.patches
     labels = phase.labels
     boundary_evidence = phase.boundary_evidence
@@ -869,7 +974,7 @@ def _publish(
         fidelity_source=fidelity_source,
         fidelity_tolerance=tolerance,
         domain=domain,
-        cell_regions=_cell_regions(mesh, domain, block_regions),
+        cell_regions=_cell_regions(mesh, domain, block_regions, scope=scope),
     )
     stage = MeshingStageReport(
         MeshingStageKind.SURFACE_MESHING
@@ -900,6 +1005,7 @@ def _publish(
         {
             "route": route_id,
             "plan": plan_id,
+            "specification": specification.specification_id,
             "prepared": prepared_id,
             "source_geometry_ids": source_geometry_ids,
         },
@@ -963,7 +1069,10 @@ def execute_structured_route(
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with (
+        family_route_refusals(specification.limits, "structured"),
+        budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+    ):
         if (
             prepared.source_binding_id != source_binding_id
             or prepared.specification_id != specification.specification_id
@@ -983,21 +1092,34 @@ def execute_structured_route(
         started = scope.operation_started
         # Face gluing preserves cell count. Admit aggregate cell topology before
         # construction; admit vertices per block and after gluing to account for
-        # vertices shared across blocks.
+        # vertices shared across blocks. Each cell corner retains one int32
+        # logical index per block axis as a published attribute.
         total_cells = sum(prod(block.intervals) for block in prepared.blocks)
         arity = 4 if specification.target.topological_dimension == 2 else 8
+        logical_bytes = tuple(
+            prod(block.intervals) * 2 ** len(block.intervals) * len(block.intervals) * 4
+            for block in prepared.blocks
+        )
         _preflight(
             0,
             total_cells,
             total_cells * arity,
             specification.target.ambient_dimension,
             specification,
+            attribute_bytes=sum(logical_bytes),
         )
-        for block in prepared.blocks:
+        for block, attribute_bytes in zip(prepared.blocks, logical_bytes, strict=True):
             shape = tuple(n + 1 for n in block.intervals)
             ambient = specification.target.ambient_dimension
             cells = prod(block.intervals)
-            _preflight(prod(shape), cells, cells * arity, ambient, specification)
+            _preflight(
+                prod(shape),
+                cells,
+                cells * arity,
+                ambient,
+                specification,
+                attribute_bytes=attribute_bytes,
+            )
         with measure_phase(record_phase, "construction"):
             constructions = tuple(
                 (
@@ -1014,12 +1136,15 @@ def execute_structured_route(
             combined = construct_glued_structured_blocks(
                 constructions, prepared.interfaces, scope=scope, budget=budget
             )
+        rank = combined.mesh.topological_dimension
+        entries = sum(b.vertices.size for b in combined.mesh.blocks)
         _preflight(
             combined.mesh.coordinates.shape[0],
             sum(b.cell_count for b in combined.mesh.blocks),
-            sum(b.vertices.size for b in combined.mesh.blocks),
+            entries,
             combined.mesh.ambient_dimension,
             specification,
+            attribute_bytes=entries * rank * 4,
         )
         quantities = [("maximum_gluing_residual", combined.maximum_gluing_residual)]
         for block, construction in zip(prepared.blocks, constructions, strict=True):
@@ -1041,22 +1166,28 @@ def execute_structured_route(
             construction.mesh.blocks[0].name: construction
             for construction in constructions
         }
-        for block_index, cell_block in enumerate(combined.mesh.blocks):
-            construction = by_name[cell_block.name]
-            local_vertices = np.asarray(
-                construction.mesh.blocks[0].vertices, dtype=np.int64
-            )
-            logical_indices = np.stack(
-                np.unravel_index(local_vertices, construction.logical_shape), axis=-1
-            ).astype(np.int32)
-            attributes.append(
-                MeshAttribute(
-                    f"block:{cell_block.name}:logical_vertices",
-                    MeshAttributeRole.GEOMETRY_CLASSIFICATION,
-                    _cell_scope(combined.mesh, block_index),
-                    logical_indices,
+        largest = max(b.vertices.size for b in combined.mesh.blocks)
+        with scope.host_workspace() as attribute_workspace:
+            # Converted corners, unravelled axes and their stacked bank coexist
+            # per block; the narrowed attribute is admitted by the preflight.
+            attribute_workspace.set_bound(8 * largest * (1 + 2 * rank) + 4096)
+            for block_index, cell_block in enumerate(combined.mesh.blocks):
+                construction = by_name[cell_block.name]
+                local_vertices = np.asarray(
+                    construction.mesh.blocks[0].vertices, dtype=np.int64
                 )
-            )
+                logical_indices = np.stack(
+                    np.unravel_index(local_vertices, construction.logical_shape),
+                    axis=-1,
+                ).astype(np.int32)
+                attributes.append(
+                    MeshAttribute(
+                        f"block:{cell_block.name}:logical_vertices",
+                        MeshAttributeRole.GEOMETRY_CLASSIFICATION,
+                        _cell_scope(combined.mesh, block_index),
+                        logical_indices,
+                    )
+                )
         return _publish(
             combined.mesh,
             specification,
@@ -1084,89 +1215,6 @@ def execute_structured_route(
         )
 
 
-def _sweep_root_geometry(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    domain: MappedReferenceDomain,
-    correspondence: CellGeometryRestrictionSource,
-    /,
-    *,
-    budget: CoordinateEnclosureBudget,
-) -> CellGeometrySpec:
-    "Retain an authored root basis only after source-expression equality."
-    root_elements, root_routes, root_coordinates = domain.source_geometry.resolve(
-        domain.reference_mesh, budget=budget
-    )
-    root_values = np.asarray(root_coordinates, dtype=np.float64)
-    roots = {
-        int(identifier): (element, np.asarray(route, dtype=np.int32), block.cell_kind)
-        for block, element, routes in zip(
-            domain.reference_mesh.blocks, root_elements, root_routes, strict=True
-        )
-        for identifier, route in zip(
-            np.asarray(block.global_ids), np.asarray(routes), strict=True
-        )
-    }
-    elements, routes, coordinates = geometry.resolve(mesh, budget=budget)
-    values = np.asarray(coordinates, dtype=np.float64)
-    bound_elements: dict[str, CellGeometryElement] = {}
-    bound_routes: dict[str, np.ndarray] = {}
-    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-        parents = correspondence.block_parent_cell_ids[block.name]
-        selected = []
-        for cell_id, local_route, parent in zip(
-            np.asarray(block.global_ids),
-            np.asarray(route),
-            np.asarray(parents),
-            strict=True,
-        ):
-            if int(parent) not in roots:
-                raise ValueError(
-                    "sweep.root_correspondence must identify declared source roots; got an absent root"
-                )
-            root_element, root_route, root_kind = roots[int(parent)]
-            if root_kind != block.cell_kind:
-                raise ValueError(
-                    "sweep.root_correspondence.reference_family must equal the generated cell family; got mismatched families"
-                )
-            generated = coordinate_polynomials(
-                element, values[local_route], budget=budget
-            )
-            authored = coordinate_polynomials(
-                root_element, root_values[root_route], budget=budget
-            )
-            if (
-                generated is None
-                or authored is None
-                or len(generated) != len(authored)
-                or not all(
-                    expression_equal(first, second, budget=budget)
-                    for first, second in zip(generated, authored, strict=True)
-                )
-            ):
-                raise MeshingFailure(
-                    MeshingFailureCategory.AUDIT_FAILED,
-                    "sweep.root_correspondence.coordinate_map must equal the declared source-root map; got a different expression",
-                    stage="sweep_source_map",
-                    entity_ids=(int(cell_id),),
-                )
-            previous = bound_elements.get(block.name)
-            if previous is not None and previous.element_id != root_element.element_id:
-                raise ValueError(
-                    "sweep.block.root_basis must be uniform within each block; got differing source-root bases"
-                )
-            bound_elements[block.name] = root_element
-            selected.append(root_route)
-        bound_routes[block.name] = np.stack(selected)
-    return CellGeometrySpec(
-        bound_elements,
-        bound_routes,
-        root_coordinates,
-        restriction_source=correspondence,
-        budget=budget,
-    )
-
-
 @checked
 def execute_sweep_route(
     prepared: PreparedSweep,
@@ -1189,7 +1237,10 @@ def execute_sweep_route(
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with (
+        family_route_refusals(specification.limits, "sweep"),
+        budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+    ):
         if (
             prepared.source_binding_id != source_binding_id
             or prepared.specification_id != specification.specification_id
@@ -1209,6 +1260,8 @@ def execute_sweep_route(
         started = scope.operation_started
         layers = prepared.control.schedule.layer_count
         node_layers = layers if prepared.control.closed else layers + 1
+        # Each column cell retains both layers' profile corner IDs, its profile
+        # cell ID, its layer index and its two stations as published attributes.
         _preflight(
             node_layers * prepared.profile.coordinates.shape[0],
             layers * sum(b.cell_count for b in prepared.profile.blocks),
@@ -1219,28 +1272,36 @@ def execute_sweep_route(
             ),
             3,
             specification,
+            attribute_bytes=layers
+            * sum(
+                b.cell_count * (16 * b.vertices.shape[1] + 28)
+                for b in prepared.profile.blocks
+            ),
         )
-        with measure_phase(record_phase, "construction"):
-            construction = construct_sweep(
-                prepared.profile,
-                prepared.control,
-                profile_geometry=prepared.profile_geometry,
-                scope=scope,
-                budget=budget,
-            )
-        geometry = construction.geometry
+        # Every node layer copies the profile edges, and every profile cell and
+        # edge sweeps one cap or side face per layer: a lower edge bound and the
+        # exact face count, refused before construction.
+        profile_edges = prepared.profile.entity_set(1).entity_ids.shape[0]
+        profile_cells = sum(b.cell_count for b in prepared.profile.blocks)
+        for count, maximum in (
+            (node_layers * profile_edges, specification.limits.maximum_edges),
+            (
+                node_layers * profile_cells + layers * profile_edges,
+                specification.limits.maximum_faces,
+            ),
+        ):
+            if count > maximum:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "structured.mesh.entity_count must fit maximum_edges and maximum_faces; got an exceeded capacity",
+                    stage="structured_preflight",
+                )
+        root_domain: MappedReferenceDomain | None = None
         match domain:
             case MappedReferenceDomain():
                 match root_correspondence:
                     case CellGeometryRestrictionSource():
-                        with coordinate_phase(scope, specification.limits, budget):
-                            geometry = _sweep_root_geometry(
-                                construction.mesh,
-                                geometry,
-                                domain,
-                                root_correspondence,
-                                budget=budget,
-                            )
+                        root_domain = domain
                     case None:
                         raise TypeError(
                             "sweep.root_correspondence must identify the mapped source roots; got no correspondence"
@@ -1254,55 +1315,84 @@ def execute_sweep_route(
                     )
             case invalid:
                 assert_never(invalid)
+        with measure_phase(record_phase, "construction"):
+            # Construction certifies the published geometry under publication's
+            # caps, so publication reuses those request-earned certificates.
+            construction = construct_sweep(
+                prepared.profile,
+                prepared.control,
+                certificate_limits=derived_certificate_limits(specification.limits),
+                profile_geometry=prepared.profile_geometry,
+                root_domain=root_domain,
+                root_correspondence=root_correspondence,
+                scope=scope,
+                budget=budget,
+            )
+        geometry = construction.geometry
         attributes = []
-        source_ids = np.asarray(prepared.profile.vertex_global_ids, dtype=np.int64)
-        for block_index, profile_block in enumerate(prepared.profile.blocks):
-            attribute_scope = _cell_scope(construction.mesh, block_index)
-            profile_vertices = source_ids[
-                np.asarray(profile_block.vertices, dtype=np.int64)
-            ]
-            corner_ids = np.tile(profile_vertices, (layers, 2))
-            layer_indices = np.repeat(
-                np.arange(layers, dtype=np.int32), profile_block.cell_count
+        profile_vertices_count = prepared.profile.coordinates.shape[0]
+        measured = construction.measured_layer_thicknesses
+        transient = 0
+        for profile_block in prepared.profile.blocks:
+            cells = profile_block.cell_count
+            corners = profile_block.vertices.size
+            transient = max(transient, 16 * corners + 20 * layers + 8 * cells)
+        with scope.host_workspace() as attribute_workspace:
+            # Converted profile vertex IDs stay live; each block's converted and
+            # gathered corners, layer range, station pairs and converted cell IDs
+            # coexist. Layered banks are retained data admitted by the preflight.
+            attribute_workspace.set_bound(
+                8 * profile_vertices_count + transient + 4096
             )
-            profile_cell_ids = np.tile(
-                np.asarray(profile_block.global_ids, dtype=np.int64), layers
-            )
-            stations = np.repeat(
-                np.stack(
-                    (construction.stations[:-1], construction.stations[1:]), axis=-1
-                ),
-                profile_block.cell_count,
-                axis=0,
-            )
-            attributes.extend(
-                (
-                    MeshAttribute(
-                        f"{profile_block.name}:source_profile_vertex_id",
-                        MeshAttributeRole.GEOMETRY_CLASSIFICATION,
-                        attribute_scope,
-                        corner_ids,
-                    ),
-                    MeshAttribute(
-                        f"{profile_block.name}:source_profile_cell_id",
-                        MeshAttributeRole.GEOMETRY_CLASSIFICATION,
-                        attribute_scope,
-                        profile_cell_ids,
-                    ),
-                    MeshAttribute(
-                        f"{profile_block.name}:sweep_layer_index",
-                        MeshAttributeRole.GEOMETRY_CLASSIFICATION,
-                        attribute_scope,
-                        layer_indices,
-                    ),
-                    MeshAttribute(
-                        f"{profile_block.name}:sweep_stations",
-                        MeshAttributeRole.GEOMETRY_CLASSIFICATION,
-                        attribute_scope,
-                        stations,
-                    ),
+            source_ids = np.asarray(prepared.profile.vertex_global_ids, dtype=np.int64)
+            for block_index, profile_block in enumerate(prepared.profile.blocks):
+                cells = profile_block.cell_count
+                attribute_scope = _cell_scope(construction.mesh, block_index)
+                profile_vertices = source_ids[
+                    np.asarray(profile_block.vertices, dtype=np.int64)
+                ]
+                corner_ids = np.tile(profile_vertices, (layers, 2))
+                layer_indices = np.repeat(np.arange(layers, dtype=np.int32), cells)
+                profile_cell_ids = np.tile(
+                    np.asarray(profile_block.global_ids, dtype=np.int64), layers
                 )
-            )
+                stations = np.repeat(
+                    np.stack(
+                        (construction.stations[:-1], construction.stations[1:]),
+                        axis=-1,
+                    ),
+                    cells,
+                    axis=0,
+                )
+                attributes.extend(
+                    (
+                        MeshAttribute(
+                            f"{profile_block.name}:source_profile_vertex_id",
+                            MeshAttributeRole.GEOMETRY_CLASSIFICATION,
+                            attribute_scope,
+                            corner_ids,
+                        ),
+                        MeshAttribute(
+                            f"{profile_block.name}:source_profile_cell_id",
+                            MeshAttributeRole.GEOMETRY_CLASSIFICATION,
+                            attribute_scope,
+                            profile_cell_ids,
+                        ),
+                        MeshAttribute(
+                            f"{profile_block.name}:sweep_layer_index",
+                            MeshAttributeRole.GEOMETRY_CLASSIFICATION,
+                            attribute_scope,
+                            layer_indices,
+                        ),
+                        MeshAttribute(
+                            f"{profile_block.name}:sweep_stations",
+                            MeshAttributeRole.GEOMETRY_CLASSIFICATION,
+                            attribute_scope,
+                            stations,
+                        ),
+                    )
+                )
+            minimum_column_step = float(np.min(measured))
         return _publish(
             construction.mesh,
             specification,
@@ -1316,10 +1406,7 @@ def execute_sweep_route(
                 started=started,
                 quantities=(
                     ("layers", layers),
-                    (
-                        "minimum_column_step",
-                        float(np.min(construction.measured_layer_thicknesses)),
-                    ),
+                    ("minimum_column_step", minimum_column_step),
                 ),
                 fidelity_source=fidelity_source,
                 fidelity_tolerance=fidelity_tolerance,
@@ -1430,7 +1517,7 @@ def _structured_patch_organization(
     report = result.certification
     coverage = None if report is None else report.coverage
     if (
-        coverage is None
+        not isinstance(coverage, DomainCoverageCertificate)
         or coverage.status != "certified"
         or coverage.domain_id != domain.domain_id
     ):
@@ -1439,30 +1526,30 @@ def _structured_patch_organization(
             "structured.result.certification.coverage must certify the declared domain; got missing, uncertified, or mismatched coverage",
             stage="structured_organization",
         )
+    overlap_rows = coverage.facet_source_overlaps
+    positive = overlap_rows.upper > 0.0
+    if np.any(
+        positive
+        & ~(overlap_rows.semantic_mask("exact") & overlap_rows.space_mask("physical"))
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+            "structured.coverage.facet_source_overlaps must use physical source-certified overlap semantics; got candidate overlap evidence",
+            stage="structured_organization",
+        )
     face_sources: dict[int, set[int]] = {}
-    for (
-        face,
-        source,
-        axes,
-        lower,
-        upper,
-        semantics,
-        space,
-    ) in coverage.facet_source_overlaps:
-        if upper <= 0.0:
-            continue
-        if semantics != "exact" or space != "physical":
-            raise MeshingFailure(
-                MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                "structured.coverage.facet_source_overlaps must use physical source-certified overlap semantics; got candidate overlap evidence",
-                stage="structured_organization",
-            )
+    for face, source in zip(
+        overlap_rows.facets[positive].tolist(),
+        overlap_rows.sources[positive].tolist(),
+        strict=True,
+    ):
         face_sources.setdefault(face, set()).add(source)
     patches = list(result.patches)
     labels = list(result.labels)
     boundary_evidence: list[RegionBoundaryEvidence] = []
     for control in specification.patch_controls:
-        selected_sources = set(map(int, np.asarray(control.scope.entity_ids)))
+        source_rows = np.asarray(control.scope.entity_ids)
+        selected_sources = set(map(int, source_rows))
         if control.scope.entity_kind is not MeshingEntityKind.GEOMETRY or any(
             source < 0 or source >= domain.facets.shape[0] for source in selected_sources
         ):
@@ -1581,15 +1668,13 @@ def _structured_region_boundaries(
                 np.asarray((index,), dtype=np.int64),
             )
         )
-        selected = np.unique(
-            np.concatenate(
-                tuple(
-                    np.asarray(patch.scope.global_entity_ids, dtype=np.int64)
-                    for patch in patches
-                    if patch.patch_id in {identifier for identifier, _ in sides}
-                )
-            )
+        side_ids = {identifier for identifier, _ in sides}
+        rows = tuple(
+            np.asarray(patch.scope.global_entity_ids, dtype=np.int64)
+            for patch in patches
+            if patch.patch_id in side_ids
         )
+        selected = np.unique(np.concatenate(rows))
         label = MeshLabel(
             f"source-region-boundary:{name}", mesh_entity_scope(mesh, 2, selected)
         )

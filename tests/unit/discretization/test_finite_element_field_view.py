@@ -18,6 +18,7 @@ from phydrax.discretization import (
     DiscreteFieldFunctionView,
     FieldQueryStatus,
 )
+from phydrax.discretization._simplicial_locator import CellLocationResourceError
 from phydrax.discretization.fem import (
     FiniteElementFieldReconstructionKernel,
     prepare_finite_element_field_reconstruction,
@@ -72,6 +73,64 @@ def _nodal(discretization: Any, function: Any) -> Any:
 def _view(reconstruction: Any, coefficients: Any) -> Any:
     domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
     return DiscreteFieldFunctionView(reconstruction, coefficients, domain, variable="x")
+
+
+@pytest.mark.parametrize("permuted", [False, True])
+@pytest.mark.parametrize("shift", [(0.0, 0.0), (2.0, -3.0)])
+def test_prepared_query_admits_complete_twenty_cell_star(
+    permuted: bool, shift: tuple[float, float]
+) -> None:
+    angles = np.arange(20) * (2 * np.pi / 20)
+    points = np.vstack(
+        (np.zeros((1, 2)), np.column_stack((np.cos(angles), np.sin(angles))))
+    )
+    points += np.asarray(shift)
+    cells = np.column_stack(
+        (np.zeros(20, dtype=int), np.arange(1, 21), np.roll(np.arange(1, 21), -1))
+    )
+    ids = 101 + 7 * np.arange(20)
+    order = np.arange(20)[::-1] if permuted else np.arange(20)
+    mesh = phx.discretization.CellMesh(
+        points,
+        (
+            phx.discretization.CellBlock(
+                "cells", "triangle", cells[order], global_ids=ids[order]
+            ),
+        ),
+        vertex_global_ids=1001 + 11 * np.arange(21)[::-1],
+    )
+    space = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+    reconstruction = prepare_finite_element_field_reconstruction(space, "u")
+    sites = np.asarray([shift])
+    with pytest.raises(CellLocationResourceError) as failure:
+        reconstruction.prepare_query(sites, maximum_location_pairs=19)
+    assert (failure.value.requested, failure.value.maximum) == (20, 19)
+    query = reconstruction.prepare_query(sites, maximum_location_pairs=20)
+    coefficients = _nodal(space, lambda x, y: 1 + 2 * x - y)
+    np.testing.assert_allclose(
+        query.apply(coefficients), [1 + 2 * shift[0] - shift[1]], atol=1e-12
+    )
+    assert query.evidence.support_count.tolist() == [20]
+    assert bool(query.duality_evidence(coefficients, jnp.ones(1)).valid)
+    with pytest.raises(ValueError, match="SIDE_REQUIRED"):
+        reconstruction.prepare_query(sites, derivative=(1, 0), maximum_location_pairs=20)
+    with pytest.raises(ValueError, match="OUTSIDE_SUPPORT"):
+        reconstruction.prepare_query(sites + 5, maximum_location_pairs=20)
+    dg = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.discontinuous_element("triangle", 0)
+        ),
+    ).prepare()
+    with pytest.raises(ValueError, match="SIDE_REQUIRED"):
+        prepare_finite_element_field_reconstruction(dg, "u").prepare_query(
+            sites, maximum_location_pairs=20
+        )
 
 
 _INTERIOR = jnp.asarray(((0.2, 0.1), (0.7, 0.3), (0.3, 0.8), (0.1, 0.6)))

@@ -3,6 +3,7 @@
 //
 #include "bounded_memory.hpp"
 #include "counter_records.hpp"
+#include "parallel.hpp"
 #include "tet_mesh.hpp"
 
 namespace phx::mc {
@@ -308,6 +309,7 @@ NativeExecutionScope::NativeExecutionScope(
       work_limit_(work), query_limit_(queries), cavity_limit_(cavity), start_(Clock::now()),
       deadline_(seconds == std::numeric_limits<double>::infinity() ? Clock::time_point::max()
           : start_ + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(seconds))),
+      workflow_deadline_(current_parallel_deadline()),
       memory_scope_(memory_.owner()) {
   const std::lock_guard lock(*ledger_mutex_);
   if (previous_ != nullptr && previous_->ledger_mutex_ != ledger_mutex_) {
@@ -335,13 +337,20 @@ int32_t NativeExecutionScope::status_locked() const noexcept {
 bool NativeExecutionScope::checkpoint_locked(Clock::time_point now) noexcept {
   for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
     if (scope->status_ != PHX_MC_OK) return false;
-    if (now >= scope->deadline_) { scope->status_ = PHX_MC_TIMEOUT; return false; }
+    if (now >= scope->deadline_ || now >= scope->workflow_deadline_) {
+      scope->status_ = PHX_MC_TIMEOUT;
+      return false;
+    }
+  }
+  if (now >= current_parallel_deadline()) {
+    status_ = PHX_MC_TIMEOUT;
+    return false;
   }
   return true;
 }
-bool NativeExecutionScope::logical_checkpoint_locked() noexcept {
+bool NativeExecutionScope::logical_checkpoint_locked(bool read_deadline) noexcept {
   if (status_locked() != PHX_MC_OK) return false;
-  const bool sample = checkpoint_charges_ == 0;
+  const bool sample = read_deadline || checkpoint_charges_ == 0;
   checkpoint_charges_ = static_cast<uint16_t>((checkpoint_charges_ + 1) % 1024);
   const bool allowed = !sample || checkpoint_locked(Clock::now());
   if (!allowed && active_execution_target != nullptr) active_execution_target->refuse_locked(0);
@@ -399,6 +408,11 @@ bool NativeExecutionScope::charge(uint64_t work, uint64_t queries) noexcept {
   if (target != nullptr) target->commit_locked(work, queries, false);
   else commit_locked(work, queries, false);
   return true;
+}
+bool NativeExecutionScope::checkpoint_charge() noexcept {
+  // A zero commit changes no ledger, so charge(0) without it.
+  const std::lock_guard lock(*ledger_mutex_);
+  return logical_checkpoint_locked(true) && admit_locked(0, 0);
 }
 bool NativeExecutionScope::charge_external(uint64_t work, uint64_t queries) noexcept {
   const std::lock_guard lock(*ledger_mutex_);
@@ -530,8 +544,10 @@ std::array<uint64_t, 4> NativeExecutionScope::remaining_locked() const noexcept 
 }
 double NativeExecutionScope::remaining_wall_seconds() const noexcept {
   const std::lock_guard lock(*ledger_mutex_);
-  auto deadline = Clock::time_point::max();
-  for (auto* scope = this; scope != nullptr; scope = scope->previous_) deadline = std::min(deadline, scope->deadline_);
+  auto deadline = current_parallel_deadline();
+  for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
+    deadline = std::min({deadline, scope->deadline_, scope->workflow_deadline_});
+  }
   if (deadline == Clock::time_point::max()) return std::numeric_limits<double>::infinity();
   return std::max(0.0, std::chrono::duration<double>(deadline - Clock::now()).count());
 }
@@ -699,8 +715,9 @@ int32_t NativeExecutionBatch::admit(NativeExecutionScope& scope, NativeExecution
   *out = ticket.release();
   return PHX_MC_OK;
 }
-int32_t NativeExecutionBatch::validate_actual_locked(std::array<uint64_t, 4>& actual) const noexcept {
-  if (live_children_ != 0 || target_active_) return PHX_MC_INVALID_ARGUMENT;
+int32_t NativeExecutionBatch::validate_actual_locked(std::array<uint64_t, 4>& actual,
+                                                     bool live_children_allowed) const noexcept {
+  if ((live_children_ != 0 && !live_children_allowed) || target_active_) return PHX_MC_INVALID_ARGUMENT;
   const auto& u = storage_->usage;
   if (has_usage_ && (actual[0] != load_shared(u.host_work) || actual[1] != load_shared(u.host_queries) ||
       actual[2] < load_shared(u.host_peak_cavity) || actual[3] < load_shared(u.host_peak_bytes))) return PHX_MC_INTERNAL_ERROR;
@@ -781,30 +798,42 @@ int32_t NativeExecutionBatch::usage(phx_mc_execution_usage** out) noexcept {
   return PHX_MC_OK;
 }
 int32_t NativeExecutionBatch::refuse(std::array<uint64_t, 4> actual,
-                                  std::array<uint64_t, 4> requested, uint64_t* out) noexcept {
+                                  std::array<uint64_t, 4> requested, uint64_t* out,
+                                  bool& settled) noexcept {
+  settled = false;
   const std::lock_guard lock(*scope_.ledger_mutex_);
   const auto host = actual;
-  const auto valid = validate_actual_locked(actual);
+  const auto valid = validate_actual_locked(actual, true);
   if (valid != PHX_MC_OK) return valid;
   std::array<uint64_t, 4> after;
+  // The scope whose bound limits each resource owns its consumed evidence, as
+  // in admission snapshots; null keeps the parent ticket's evidence.
+  std::array<NativeExecutionScope*, 4> limiting{};
+  const auto limit = [&](std::size_t r, uint64_t value, NativeExecutionScope* owner) {
+    if (value < after[r]) {
+      after[r] = value;
+      limiting[r] = owner;
+    }
+  };
   if (parent_ != nullptr) {
     after = parent_->remaining_locked();
     after[0] += upper_[0] - actual[0]; after[1] += upper_[1] - actual[1];
     after[2] += upper_[2]; after[3] += upper_[3] - storage_->inclusive_live;
     for (auto* owner = &scope_; owner != nullptr && owner != &parent_->scope_; owner = owner->previous_) {
-      after[0] = std::min(after[0], available(owner->work_limit_, owner->work_, owner->reserved_work_) + upper_[0] - actual[0]);
-      after[1] = std::min(after[1], available(owner->query_limit_, owner->queries_, owner->reserved_queries_) + upper_[1] - actual[1]);
-      after[2] = std::min(after[2], available(owner->cavity_limit_, owner->reserved_cavity_) + upper_[2]);
+      limit(0, available(owner->work_limit_, owner->work_, owner->reserved_work_) + upper_[0] - actual[0], owner);
+      limit(1, available(owner->query_limit_, owner->queries_, owner->reserved_queries_) + upper_[1] - actual[1], owner);
+      limit(2, available(owner->cavity_limit_, owner->reserved_cavity_) + upper_[2], owner);
       const auto memory = owner->memory_.evidence();
-      after[3] = std::min(after[3], available(memory[0], memory[1], owner->reserved_bytes_ - upper_[3]));
+      limit(3, available(memory[0], memory[1], owner->reserved_bytes_ - upper_[3]), owner);
     }
   } else {
     after.fill(UINT64_MAX);
     for (auto* owner = &scope_; owner != nullptr; owner = owner->previous_) {
-      after[0] = std::min(after[0], available(owner->work_limit_, owner->work_, owner->reserved_work_) + upper_[0] - actual[0]);
-      after[1] = std::min(after[1], available(owner->query_limit_, owner->queries_, owner->reserved_queries_) + upper_[1] - actual[1]);
-      after[2] = std::min(after[2], available(owner->cavity_limit_, owner->reserved_cavity_) + upper_[2]);
+      limit(0, available(owner->work_limit_, owner->work_, owner->reserved_work_) + upper_[0] - actual[0], owner);
+      limit(1, available(owner->query_limit_, owner->queries_, owner->reserved_queries_) + upper_[1] - actual[1], owner);
+      limit(2, available(owner->cavity_limit_, owner->reserved_cavity_) + upper_[2], owner);
     }
+    limiting[3] = &scope_;
     const auto& pool = scope_.memory_.owner();
     const std::lock_guard memory(pool->mutex_);
     after[3] = pool->effective_limit_locked() - pool->live_ - pool->external_upper_ - pool->batch_upper_ + upper_[3] - storage_->inclusive_live;
@@ -814,14 +843,65 @@ int32_t NativeExecutionBatch::refuse(std::array<uint64_t, 4> actual,
       after[3] = std::min(after[3], available(observer->limit, observer->live, external));
     }
   }
+  if (live_children_ != 0) {
+    // Live child reservations stay held by this ticket until they settle.
+    const auto& u = storage_->usage;
+    after[0] = available(after[0], load_shared(u.reserved_work));
+    after[1] = available(after[1], load_shared(u.reserved_queries));
+    after[2] = available(after[2], load_shared(u.reserved_cavity));
+    after[3] = available(after[3], load_shared(u.reserved_bytes));
+  }
   std::size_t resource = 4;
   for (std::size_t r = 0; r < 4; ++r) if (requested[r] > after[r]) { resource = r; break; }
   const bool timed_out = !scope_.checkpoint_locked(NativeExecutionScope::Clock::now()) && scope_.status_locked() == PHX_MC_TIMEOUT;
   if (resource == 4 && !timed_out) return PHX_MC_INTERNAL_ERROR;
-  settle_locked(actual, host);
-  // Capture precisely the admission snapshot after settlement, under the same
-  // lock, before recording refusal. An earlier snapshot remains immutable.
-  capture_refusal_locked(scope_, parent_, requested);
+  if (live_children_ != 0) {
+    // Without settlement, record the snapshot the settled refusal would
+    // publish while the children's reservations remain held: the remaining
+    // allowance after them, the parent-level prefix plus this ticket's
+    // validated actual consumption, and the larger peaks. A later settle
+    // commits this ticket exactly once after its children settle.
+    if (!scope_.has_batch_refusal_) {
+      ExecutionBatchRefusal snapshot;
+      NativeExecutionScope* admitting = resource < 4 ? limiting[resource] : nullptr;
+      if (admitting == nullptr && parent_ == nullptr) admitting = &scope_;
+      if (admitting == nullptr) {
+        snapshot = parent_->snapshot_locked();
+      } else {
+        snapshot.consumed_work = admitting->work_;
+        snapshot.consumed_queries = admitting->queries_;
+        snapshot.peak_cavity = admitting->peak_cavity_;
+        snapshot.peak_bytes = admitting->memory_.external_evidence()[1];
+      }
+      snapshot.remaining_work = after[0];
+      snapshot.remaining_queries = after[1];
+      snapshot.remaining_cavity = after[2];
+      snapshot.remaining_bytes = after[3];
+      snapshot.consumed_work += actual[0];
+      snapshot.consumed_queries += actual[1];
+      snapshot.peak_cavity = std::max(snapshot.peak_cavity, actual[2]);
+      snapshot.peak_bytes = std::max(snapshot.peak_bytes, actual[3]);
+      scope_.batch_refusal_ = snapshot;
+      scope_.has_batch_refusal_ = true;
+      scope_.refusal_request_ = requested;
+      scope_.has_refusal_request_ = true;
+      if (scope_.borrowed_target_ != nullptr) {
+        for (auto* owner = scope_.previous_; owner != nullptr; owner = owner->previous_) {
+          if (owner->has_batch_refusal_) continue;
+          owner->batch_refusal_ = snapshot;
+          owner->has_batch_refusal_ = true;
+          owner->refusal_request_ = requested;
+          owner->has_refusal_request_ = true;
+        }
+      }
+    }
+  } else {
+    settle_locked(actual, host);
+    settled = true;
+    // Capture precisely the admission snapshot after settlement, under the same
+    // lock, before recording refusal. An earlier snapshot remains immutable.
+    capture_refusal_locked(scope_, parent_, requested);
+  }
   if (!timed_out && scope_.status_locked() == PHX_MC_OK) scope_.refuse_locked(resource);
   const auto& state = scope_.batch_refusal_;
   CounterPublisher publisher{state, out};
@@ -1066,14 +1146,25 @@ bool add_bound(uint64_t& total, uint64_t value) noexcept {
   total += value;
   return true;
 }
-bool parallel_upper(std::span<const NativeChunkAllowance> allowances,
-                    std::array<uint64_t, 4>& upper) noexcept {
+// Work/queries/cavity sum over chunks; bytes cover one arena (and its storage
+// object) per chunk, or per recycled slot sized for the largest chunk.
+bool parallel_upper(std::span<const NativeChunkAllowance> allowances, std::size_t arena_slots,
+                    std::array<uint64_t, 4>& upper, uint64_t& slot_bytes) noexcept {
+  slot_bytes = 0;
   for (const auto& allowance : allowances) {
     if (allowance.bytes > SIZE_MAX || !add_bound(upper[0], allowance.work) ||
         !add_bound(upper[1], allowance.queries) ||
-        !add_bound(upper[2], allowance.cavity) ||
-        !add_bound(upper[3], allowance.bytes) ||
-        !add_bound(upper[3], sizeof(NativeChunkStorage))) return false;
+        !add_bound(upper[2], allowance.cavity)) return false;
+    if (arena_slots == 0) {
+      if (!add_bound(upper[3], allowance.bytes) ||
+          !add_bound(upper[3], sizeof(NativeChunkStorage))) return false;
+    }
+    slot_bytes = std::max(slot_bytes, allowance.bytes);
+  }
+  for (std::size_t slot = 0; slot < arena_slots; ++slot) {
+    if (!add_bound(upper[3], slot_bytes) || !add_bound(upper[3], sizeof(NativeChunkStorage))) {
+      return false;
+    }
   }
   return upper[3] <= SIZE_MAX;
 }
@@ -1108,7 +1199,8 @@ uint64_t native_parallel_allocation_bytes(uint64_t payload, std::size_t alignmen
   return result;
 }
 
-NativeParallelBatch::NativeParallelBatch(std::span<const NativeChunkAllowance> allowances)
+NativeParallelBatch::NativeParallelBatch(std::span<const NativeChunkAllowance> allowances,
+                                         std::size_t arena_slots)
     : scope_(active_execution_scope) {
   if (scope_ == nullptr) {
     implicit_scope_ = std::make_unique<NativeExecutionScope>(
@@ -1116,7 +1208,9 @@ NativeParallelBatch::NativeParallelBatch(std::span<const NativeChunkAllowance> a
     scope_ = implicit_scope_.get();
   }
   std::array<uint64_t, 4> upper{};
-  if (!parallel_upper(allowances, upper)) {
+  uint64_t slot_bytes = 0;
+  if (arena_slots > allowances.size() ||
+      !parallel_upper(allowances, arena_slots, upper, slot_bytes)) {
     fail_internal();
     return;
   }
@@ -1129,11 +1223,13 @@ NativeParallelBatch::NativeParallelBatch(std::span<const NativeChunkAllowance> a
   ticket_.reset(static_cast<NativeExecutionBatch*>(admitted));
   try {
     allowances_.assign(allowances.begin(), allowances.end());
-    owners_.reserve(allowances.size());
+    const std::size_t arenas = arena_slots == 0 ? allowances_.size() : arena_slots;
+    owners_.reserve(arenas);
     NativeExecutionTarget allocation(*ticket_);
     const auto parent = scratch_memory_owner();
-    for (const auto& allowance : allowances_) {
-      owners_.push_back(make_chunk_owner(static_cast<std::size_t>(allowance.bytes), parent));
+    for (std::size_t index = 0; index < arenas; ++index) {
+      const uint64_t bytes = arena_slots == 0 ? allowances_[index].bytes : slot_bytes;
+      owners_.push_back(make_chunk_owner(static_cast<std::size_t>(bytes), parent));
     }
   } catch (const std::bad_alloc&) {
     scope_->refuse_external_storage(upper[3]);
@@ -1372,9 +1468,11 @@ extern "C" int32_t phx_mc_execution_batch_refuse(void* opaque, const uint64_t* a
   auto* ticket = static_cast<phx::mc::NativeExecutionBatch*>(opaque);
   if (ticket == nullptr || actual == nullptr || requested == nullptr || out == nullptr ||
       requested[3] > std::numeric_limits<std::size_t>::max()) return PHX_MC_INVALID_ARGUMENT;
+  bool settled = false;
   const auto status = ticket->refuse({actual[0], actual[1], actual[2], actual[3]},
-                                    {requested[0], requested[1], requested[2], requested[3]}, out);
-  if (status == PHX_MC_CAPACITY_EXCEEDED || status == PHX_MC_TIMEOUT) delete ticket;
+                                    {requested[0], requested[1], requested[2], requested[3]}, out,
+                                    settled);
+  if (settled) delete ticket;
   return status;
 }
 extern "C" int32_t phx_mc_execution_batch_usage(

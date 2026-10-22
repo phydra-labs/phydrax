@@ -46,6 +46,7 @@ from ..discretization import (
     TraceInverseEvidence,
 )
 from ..discretization._constraints import AbstractDiscreteDirichletConstraint
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
 )
@@ -1671,6 +1672,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
         | None = None,
         execution_policy: FiniteElementExecutionPolicy | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         policy = (
             (
@@ -1803,6 +1805,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             discretization,
             local_kernel=policy.local_kernel,
             realization=policy.realization,
+            budget=budget,
         )
         kernel_table = kernel_table_from_form(
             form,
@@ -2588,8 +2591,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     ) -> FiniteElementDiagonalData:
         from .fem import FiniteElementDiagonalData
 
+        full = None if state is not None else self._structural_full_affine_operator(args)
         raw = (
-            self.affine_operator(args)
+            self._affine_operator(full, args)
             if state is None
             else self.operator_function(self.state_space.validate(state), args)
         )
@@ -2609,6 +2613,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             method = "sparse-coordinate"
         elif raw.capabilities.diagonal_assembly:
             diagonal = assemble_diagonal(raw)
+        elif (constrained := self._constrained_structural_diagonal(full)) is not None:
+            diagonal = constrained
+            method = "constrained-workset"
         else:
             if not allow_coordinate_fallback:
                 raise ValueError(
@@ -2816,11 +2823,54 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             ),
         )
 
-    def _structural_affine_operator(
-        self, args: object = None, /
-    ) -> AbstractLinearOperator | None:
-        full = self._structural_full_affine_operator(args)
-        return None if full is None else self._constrain_structural_operator(full)
+    def _constrained_structural_diagonal(
+        self, full: AbstractLinearOperator | None, /
+    ) -> Array | None:
+        """Exact ``diag(Pᵀ A P)`` for a sparse prolongation with one entry per column.
+
+        ``P e_j = p_j e_{i_j}`` gives ``(Pᵀ A P)_{jj} = p_j A_{i_j i_j} p_j``. The
+        constrained action applies the coordinate transpose, so no conjugation
+        enters. A column with zero or several valid entries is refused, never
+        approximated.
+        """
+        constraint = self.constraint
+        if full is None or constraint is None or not full.capabilities.diagonal_assembly:
+            return None
+        prolongation = constraint.prolongation
+        if not isinstance(prolongation, SparseCoordinateOperator) or not isinstance(
+            prolongation.relation, EdgeRelation
+        ):
+            return None
+        relation = prolongation.relation
+        coefficients = jnp.asarray(prolongation.coefficients)
+        if (
+            coefficients.ndim != 1
+            or relation.source_size != self.state_space.size
+            or relation.target_size != full.source.size
+        ):
+            return None
+        valid = relation.valid
+        counts = (
+            jnp.zeros((relation.source_size,), dtype=jnp.int32)
+            .at[relation.source_indices]
+            .add(valid.astype(jnp.int32))
+        )
+        full_diagonal = jnp.reshape(assemble_diagonal(full), (-1,))
+        contributions = jnp.where(
+            valid,
+            coefficients * full_diagonal[relation.target_indices] * coefficients,
+            0,
+        )
+        diagonal = (
+            jnp.zeros((relation.source_size,), dtype=contributions.dtype)
+            .at[relation.source_indices]
+            .add(contributions)
+        )
+        return eqx.error_if(
+            diagonal,
+            jnp.any(counts != 1),
+            "Constrained exact diagonal requires exactly one prolongation entry per reduced coordinate.",
+        )
 
     def _structural_right_hand_side(
         self, full: AbstractLinearOperator, args: object = None, /
@@ -2840,9 +2890,13 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
 
     def affine_operator(self, args: object = None, /) -> AbstractLinearOperator:
         """Return exact structural storage or linearize the authoritative program."""
-        structural = self._structural_affine_operator(args)
-        if structural is not None:
-            return structural
+        return self._affine_operator(self._structural_full_affine_operator(args), args)
+
+    def _affine_operator(
+        self, full: AbstractLinearOperator | None, args: object, /
+    ) -> AbstractLinearOperator:
+        if full is not None:
+            return self._constrain_structural_operator(full)
         zero = self.state_space.zeros()
         return (
             self.block_linearization_operator(zero, args)
@@ -2998,11 +3052,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         nullspace_policy: NullspacePolicy | None = None,
     ) -> tuple[LinearSystem, object]:
         full_structural = self._structural_full_affine_operator(args)
-        raw_operator = (
-            self.affine_operator(args)
-            if full_structural is None
-            else self._constrain_structural_operator(full_structural)
-        )
+        raw_operator = self._affine_operator(full_structural, args)
         properties = self.form.declared_properties
         primal_operator = FunctionLinearOperator(
             lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
@@ -3630,7 +3680,14 @@ def compile_finite_element_problem(
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
     | None = None,
     execution_policy: FiniteElementExecutionPolicy | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CompiledFiniteElementProblem:
+    """Compile FE host preparation under the supplied coordinate ledger.
+
+    The ledger is consumed only during this call, never stored in the compiled
+    problem or passed to numerical callbacks. ``None`` preserves standalone
+    preparation. Explicit admission currently requires the ordinary FE provider.
+    """
     if isinstance(discretization, FiniteElementHPEpoch):
         epoch = discretization
         if epoch.discretization is None:
@@ -3664,6 +3721,7 @@ def compile_finite_element_problem(
         constraints=constraints,
         dirichlet_values_by_field=dirichlet_values_by_field,
         execution_policy=execution_policy,
+        budget=budget,
     )
 
 
@@ -3694,6 +3752,7 @@ def compile_finite_element_functional(
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
     | None = None,
     execution_policy: FiniteElementExecutionPolicy | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CompiledFiniteElementProblem:
     """Bind and compile one functional on a prepared local discretization."""
     form = finite_element_form_from_functional(
@@ -3710,6 +3769,7 @@ def compile_finite_element_functional(
         constraints=constraints,
         dirichlet_values_by_field=dirichlet_values_by_field,
         execution_policy=execution_policy,
+        budget=budget,
     )
 
 

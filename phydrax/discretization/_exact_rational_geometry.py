@@ -1,5 +1,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Durable rational interpolation actions on a parent coordinate bank."""
+"""Durable rational interpolation actions on a parent coordinate bank.
+
+Exact affine images use the same authenticated coefficient actions as
+restricted cell geometry. Image/material charts and paired-cell material maps
+therefore share one rational coordinate convention and correctly rounded
+execution representatives, without replacing the authored coefficients.
+"""
 
 from __future__ import annotations
 
@@ -438,6 +444,8 @@ class ExactRationalCellGeometrySource(StrictModule, NonTrainableState):
         cls: type[ExactRationalCellGeometrySource],
         value: ExactRationalCellGeometrySource,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> ExactRationalCellGeometrySource:
         renewed = cls(
             value.parent,
@@ -445,6 +453,7 @@ class ExactRationalCellGeometrySource(StrictModule, NonTrainableState):
             value.layouts,
             maximum_work=value.maximum_work,
             maximum_bits=value.maximum_bits,
+            budget=budget,
         )
         if (
             renewed.parent_binding != value.parent_binding
@@ -821,5 +830,98 @@ def rational_geometry_lift(
         maximum_work=(2 * sum(len(row) for row in complete) + count)
         * parent.coordinates.shape[1],
         maximum_bits=bits,
+        budget=budget,
+    )
+
+
+@checked
+def affine_image_geometry_from_routes(
+    affine: np.ndarray,
+    local_coordinates: tuple[tuple[Fraction, ...], ...],
+    elements: Mapping[str, CellGeometryElement],
+    routes: Mapping[str, np.ndarray],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> geometry_owner.CellGeometrySpec:
+    """Bind exact affine coefficients to actual coordinate-chart routes.
+
+    A material interface collection may have triple junctions and therefore
+    need not be a manifold surface mesh. Its charts still share one exact
+    coefficient row per source vertex. The physical volume domain is declared
+    and certified independently; no artificial mesh is used as its authority.
+    """
+    matrix = np.asarray(affine, dtype=np.float64)
+    if matrix.shape != (4, 4) or not np.all(np.isfinite(matrix)):
+        raise ValueError(
+            f"affine_image_geometry.affine must be a finite (4, 4) matrix; got {matrix.shape}"
+        )
+    if not np.array_equal(matrix[3], np.asarray((0.0, 0.0, 0.0, 1.0))):
+        raise ValueError(
+            "affine_image_geometry.affine must retain the affine homogeneous row; got another last row"
+        )
+    frame = np.concatenate(
+        (matrix[:3, 3][None], matrix[:3, :3].T, np.zeros((1, 3), dtype=np.float64))
+    )
+    return _affine_image_geometry_from_frame(
+        frame, local_coordinates, elements, routes, budget=budget
+    )
+
+
+def _affine_image_geometry_from_frame(
+    frame: np.ndarray,
+    local_coordinates: tuple[tuple[Fraction, ...], ...],
+    elements: Mapping[str, CellGeometryElement],
+    routes: Mapping[str, np.ndarray],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> geometry_owner.CellGeometrySpec:
+    from ._cell_mesh import CellMesh
+
+    if not local_coordinates or any(
+        len(row) != 3 or any(not isinstance(value, Fraction) for value in row)
+        for row in local_coordinates
+    ):
+        raise ValueError(
+            "affine_image_geometry.local_coordinates must contain three exact rational coordinates per coefficient row; got an incompatible bank"
+        )
+    actions = []
+    for local in local_coordinates:
+        weights = (Fraction(1), *local, -sum(local, Fraction(0)))
+        actions.append(
+            tuple(
+                (position, value.numerator, value.denominator)
+                for position, value in enumerate(weights)
+                if value
+            )
+        )
+    parent = geometry_owner.CellGeometrySpec.affine(
+        CellMesh.from_tetrahedra(
+            frame, np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+        ),
+        budget=budget,
+    )
+    bits = 4 * (
+        1078
+        + max(
+            max(abs(numerator).bit_length(), denominator.bit_length())
+            for row in actions
+            for _, numerator, denominator in row
+        )
+    )
+    source = ExactRationalCellGeometrySource(
+        parent,
+        tuple(actions),
+        rational_source_layouts(elements, routes),
+        maximum_work=budget.maximum_work_units,
+        maximum_bits=bits,
+        budget=budget,
+    )
+    return geometry_owner.CellGeometrySpec(
+        elements,
+        routes,
+        source.representatives(budget=budget),
+        exact_source=source,
         budget=budget,
     )

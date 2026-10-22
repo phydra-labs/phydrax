@@ -15,6 +15,7 @@ from tools.meshing_qualification._runtime import (
     _measured,
     _runtime_identity,
     qualification_failure,
+    StageMeasurement,
 )
 from tools.meshing_qualification.scenarios.triangulation import _simplex_measures
 
@@ -43,7 +44,7 @@ class _BisectionRoundTripRecord(TypedDict):
     evidence: dict[str, dict[str, object]]
     hierarchy_id: str
     shape_classes: dict[str, object]
-    resources: dict[str, int | dict[str, float] | dict[str, dict[str, float]]]
+    resources: dict[str, int | StageMeasurement | dict[str, StageMeasurement]]
 
 
 def _bisection_meshes() -> dict[str, phx.discretization.CellMesh]:
@@ -80,7 +81,7 @@ def _bisection_adapt(
     /,
     *,
     device_policy: phx.discretization.AdaptiveSimplexPolicy | None = None,
-) -> tuple[phx.meshing.MeshAdaptationResult, dict[str, dict[str, float]]]:
+) -> tuple[phx.meshing.MeshAdaptationResult, dict[str, StageMeasurement]]:
 
     request = phx.meshing.MarkedMeshAdaptation(
         np.asarray(refine, dtype=np.int64),

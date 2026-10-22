@@ -126,12 +126,8 @@ def planar_plc_transfer() -> dict[str, Any]:
     partitioned = M.partition_adaptive_simplex(
         M.prepare_adaptive_simplex(source, policy=policy)
     )
-    update = D.refine_adaptive_simplex_parts(
-        partitioned.layout,
-        partitioned.parts,
-        partitioned.states,
-        partitioned.states.mesh.cell_active,
-    )
+    update = D.refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states,
+    partitioned.states.mesh.cell_active,)
     checks.setdefault("plc_48", []).append(
         bool(np.all(np.asarray(update.report.status.addressable_shards[0].data) == 0))
     )

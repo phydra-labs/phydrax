@@ -29,6 +29,7 @@ from tests._support.mesh_distribution import (
     compiled_fv,
     fe_discretization,
     grid_part,
+    merged_cell_lineage,
     quad_mesh,
     repartition,
 )
@@ -568,18 +569,85 @@ def test_migration_transport_refuses_entries_of_other_distributions() -> None:
         )
 
 
-def test_distribution_transition_restore_replays_retained_routes() -> None:
+def _lineage_transition(route_kind: str) -> phx.meshing.MeshDistributionTransition:
+    if route_kind == "repartition":
+        return repartition()
+    coarse, _ = quad_mesh(4, 4)
+    refined, parents = quad_mesh(4, 4, refine=(0, 5))
+    source, target, lineage = (
+        (coarse, refined, cell_lineage(coarse, refined, parents))
+        if route_kind == "refine"
+        else (refined, coarse, merged_cell_lineage(refined, coarse, parents))
+    )
+    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.HILBERT, 2)
+    distribution = phx.meshing.prepare_mesh_distribution(source, policy=policy)
+    return phx.meshing.prepare_distribution_transition(
+        distribution, target, lineage, policy=policy
+    )
+
+
+@pytest.mark.parametrize("route_kind", ("repartition", "refine", "merge"))
+@pytest.mark.parametrize("collective", (False, True))
+def test_distribution_transition_restore_replays_retained_routes(
+    route_kind: str,
+    collective: bool,
+) -> None:
     register_meshing_source_artifacts()
-    transition = repartition()
+    transition = _lineage_transition(route_kind)
+    # Refined parents and merged targets are legitimate repeated route endpoints.
+    repeated = {"refine": transition.source_rows, "merge": transition.target_rows}
+    if route_kind in repeated:
+        rows = np.asarray(repeated[route_kind])
+        assert np.unique(rows).size < rows.size
     recipe = model_structure_recipe(transition)
     arrays = model_recipe_array_values(transition, recipe, prefix="transition")
     archived = model_from_logical_array_recipe(recipe, arrays, prefix="transition")
     assert isinstance(archived, phx.meshing.MeshDistributionTransition)
-    restored = reconstruct_stored_fields(archived)
+    restored = (
+        type(archived).from_stored_fields(archived, collective=True)
+        if collective
+        else reconstruct_stored_fields(archived)
+    )
     assert tree_content_equal(restored, transition)
     assert restored.transition_id == transition.transition_id
     values = np.arange(transition.source_cell_count, dtype=np.float64)
     np.testing.assert_array_equal(restored.transfer(values), transition.transfer(values))
+
+
+@pytest.mark.parametrize("route_kind", ("repartition", "refine", "merge"))
+def test_distribution_transition_refuses_routes_foreign_to_retained_lineage(
+    route_kind: str,
+) -> None:
+    register_meshing_source_artifacts()
+    transition = _lineage_transition(route_kind)
+    sources = np.asarray(transition.source_rows)
+    targets = np.asarray(transition.target_rows)
+    cells = transition.lineage.entity_lineage(2)
+    # In-range rows that still cover both meshes but pair other cells.
+    foreign_sources, foreign_targets = np.roll(sources, 1), np.roll(targets, 1)
+    assert not np.array_equal(
+        np.asarray(transition.source.cell_global_ids)[foreign_sources],
+        np.asarray(cells.source_global_ids),
+    )
+    assert not np.array_equal(
+        np.asarray(transition.target.cell_global_ids)[foreign_targets],
+        np.asarray(cells.target_global_ids),
+    )
+    refusal = r"distribution\.transition\.routes must bind the retained source and target cell lineage IDs"
+    with pytest.raises(ValueError, match=refusal):
+        phx.meshing.MeshDistributionTransition(
+            transition.source,
+            transition.target,
+            foreign_sources,
+            targets,
+            transition.lineage,
+            rebalanced=transition.rebalanced,
+        )
+    stored = eqx.tree_at(
+        lambda value: value.target_rows, transition, jnp.asarray(foreign_targets)
+    )
+    with pytest.raises(ValueError, match=refusal):
+        reconstruct_stored_fields(stored)
 
 
 def test_distribution_transition_restore_refuses_changed_route() -> None:
@@ -592,3 +660,29 @@ def test_distribution_transition_restore_refuses_changed_route() -> None:
     )
     with pytest.raises(ValueError, match=r"distribution\.transition\.routes"):
         reconstruct_stored_fields(changed)
+
+
+@pytest.mark.parametrize("collective", (False, True))
+def test_distribution_transition_restore_refuses_changed_source_ownership(
+    collective: bool,
+) -> None:
+    transition = repartition()
+    owners = transition.source.partition.cell_owner
+    changed = eqx.tree_at(
+        lambda value: value.source.partition.cell_owner,
+        transition,
+        (owners + 1) % transition.source.partition.part_count,
+    )
+    with pytest.raises(ValueError, match=r"distribution\.transition\.source\.cache"):
+        type(changed).from_stored_fields(changed, collective=collective)
+
+
+def test_distribution_transition_collective_restore_refuses_out_of_range_route() -> None:
+    transition = repartition()
+    changed = eqx.tree_at(
+        lambda value: value.source_rows,
+        transition,
+        jnp.full_like(transition.source_rows, transition.source_cell_count),
+    )
+    with pytest.raises(ValueError, match=r"distribution\.transition\.routes"):
+        type(changed).from_stored_fields(changed, collective=True)

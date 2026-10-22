@@ -36,6 +36,8 @@ struct Input {
   int32_t keep_hull = 0;
   double min_angle = 0.0;
   double max_area = kInf;
+  double max_edge_length = kInf;
+  double lattice_spacing = 0.0;
   int64_t max_steiner = 1 << 20;
   int64_t max_triangles = 1 << 30;
   int64_t max_cavity_cells = std::numeric_limits<int64_t>::max();
@@ -77,6 +79,8 @@ Result run(const Input& in, bool request_witnesses = false) {
       .keep_convex_hull = in.keep_hull,
       .min_angle_degrees = in.min_angle,
       .max_area = in.max_area,
+      .max_edge_length = in.max_edge_length,
+      .lattice_spacing = in.lattice_spacing,
       .max_steiner = in.max_steiner,
       .max_triangles = in.max_triangles,
       .max_cavity_cells = in.max_cavity_cells,
@@ -393,6 +397,43 @@ void test_ruppert_l_shape() {
   check_quality(angle_only, 30.0, kInf);
 }
 
+// Circumcenters replace their gathered constrained cavity by a fan; the
+// result must stay a valid, deterministic constrained Delaunay refinement on
+// cocircular lattices with a reflex corner, a hole and dangling interior
+// segments (cavities that must fall back to Lawson insertion).
+void test_ruppert_cavity_fan() {
+  Input in;
+  in.points = {0, 0, 4, 0, 4, 2, 2, 2, 2, 4, 0, 4,          // L-shaped outer boundary
+               0.5, 0.5, 1.5, 0.5, 1.5, 1.5, 0.5, 1.5,      // square hole
+               3, 0.5, 3, 1.5, 0.5, 3, 1.5, 3.5};           // two dangling segments
+  in.segments = {0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 0, 6, 7, 7, 8, 8, 9, 9, 6, 10, 11, 12, 13};
+  in.holes = {1, 1};
+  for (int i = 0; i <= 8; ++i) {
+    for (int j = 0; j <= 8; ++j) {
+      const double x = 0.25 + 0.25 * i, y = 2.25 + 0.25 * j;
+      if (x < 2 && y < 4) in.points.insert(in.points.end(), {x, y});
+    }
+  }
+  in.min_angle = 20.7;
+  in.max_area = 0.02;
+  in.max_edge_length = 0.3;
+  const Result r = run(in);
+  PHX_CHECK(r.status == PHX_MC_OK);
+  check_mesh(r);
+  check_segments(r, in);
+  check_constrained_delaunay(r);
+  check_quality(r, 20.7, 0.02);
+  PHX_CHECK_NEAR(total_area(r), 12.0 - 1.0, 1e-12);
+  // Most Steiner points are circumcenters inserted without flips; flips only
+  // legalize subsegment splits and fallback cavities.
+  const uint64_t steiner = r.work[4] - static_cast<uint64_t>(in.points.size() / 2);
+  PHX_CHECK(steiner > 50);
+  PHX_CHECK(r.work[5] < steiner);
+  const Result again = run(in);
+  PHX_CHECK(again.points == r.points && again.cells == r.cells && again.segments == r.segments);
+  PHX_CHECK(again.work == r.work);
+}
+
 void test_ruppert_slanted_polygon() {
   // Non-axis-aligned boundary (inexact midpoints), convex hull and a hole.
   Input in;
@@ -452,6 +493,172 @@ void test_refinement_limit() {
   PHX_CHECK(run(in).status == PHX_MC_CAPACITY_EXCEEDED);
 }
 
+// Unconstrained edges obey the binary64 length bound in one call; segment
+// pieces keep their own splitting rules and a disabled bound repeats exactly.
+void test_ruppert_max_edge_length() {
+  Input in;
+  in.points = {0, 0, 2, 0, 2, 2, 0, 2, 0.8, 0.8, 0.8, 1.2, 1.2, 1.2, 1.2, 0.8, 0.2, 0.2, 0.5, 1.7};
+  in.segments = {0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 8, 9};
+  in.holes = {1.0, 1.0};
+  in.min_angle = 25.0;
+  const double h = 0.2;
+  in.max_area = 0.25 * std::sqrt(3.0) * h * h;
+  const Result area_only = run(in);
+  PHX_CHECK(area_only.status == PHX_MC_OK);
+  in.max_edge_length = kInf;
+  const Result disabled = run(in);
+  PHX_CHECK(disabled.status == area_only.status);
+  PHX_CHECK(disabled.points == area_only.points);
+  PHX_CHECK(disabled.cells == area_only.cells);
+  PHX_CHECK(disabled.work == area_only.work);
+  in.max_edge_length = h;
+  const Result bounded = run(in, true);
+  PHX_CHECK(bounded.status == PHX_MC_OK);
+  check_mesh(bounded);
+  check_segments(bounded, in);
+  check_constrained_delaunay(bounded);
+  check_quality(bounded, 25.0, in.max_area);
+  PHX_CHECK_NEAR(total_area(bounded), 4.0 - 0.16, 1e-12);
+  for (std::size_t c = 0; c < bounded.cells.size() / 3; ++c) {
+    for (int k = 0; k < 3; ++k) {
+      if (bounded.segments[3 * c + k] >= 0) continue;
+      const double* a = at(bounded, bounded.cells[3 * c + (k + 1) % 3]);
+      const double* b = at(bounded, bounded.cells[3 * c + (k + 2) % 3]);
+      const double dx = b[0] - a[0];
+      const double dy = b[1] - a[1];
+      PHX_CHECK(std::sqrt(dx * dx + dy * dy) <= h);
+    }
+  }
+  PHX_CHECK(bounded.points.size() > area_only.points.size());
+  // The same request with an insufficient Steiner allowance is a valid mesh
+  // with unmet quality, never an unbounded refinement.
+  in.max_steiner = 3;
+  const Result limited = run(in);
+  PHX_CHECK(limited.status == PHX_MC_REFINEMENT_LIMIT);
+  check_mesh(limited);
+  check_segments(limited, in);
+}
+
+// Splits every polygon/embedded segment of `in` into ceil(length / spacing)
+// equal pieces, as the planar route prepares its constraint complex.
+Input split_constraints(const Input& in, double spacing) {
+  Input out = in;
+  out.segments.clear();
+  for (std::size_t s = 0; s < in.segments.size() / 2; ++s) {
+    const int32_t a = in.segments[2 * s];
+    const int32_t b = in.segments[2 * s + 1];
+    const double ax = in.points[2 * a], ay = in.points[2 * a + 1];
+    const double dx = in.points[2 * b] - ax, dy = in.points[2 * b + 1] - ay;
+    const int pieces = static_cast<int>(std::ceil(std::hypot(dx, dy) / spacing));
+    int32_t previous = a;
+    for (int k = 1; k <= pieces; ++k) {
+      int32_t next = b;
+      if (k < pieces) {
+        next = static_cast<int32_t>(out.points.size() / 2);
+        const double t = static_cast<double>(k) / pieces;
+        out.points.insert(out.points.end(), {ax + t * dx, ay + t * dy});
+      }
+      out.segments.insert(out.segments.end(), {previous, next});
+      previous = next;
+    }
+  }
+  return out;
+}
+
+// Interior lattice seeding of the plate with a hole and an embedded segment
+// (constraints split at the lattice spacing) meets the same exact targets as
+// unseeded refinement with fewer cells and less work, repeats exactly, and
+// keeps the disabled request bit-identical.
+void test_lattice_seeding() {
+  Input source;
+  source.points = {0, 0, 2, 0, 2, 2, 0, 2, 0.8, 0.8, 0.8, 1.2, 1.2, 1.2, 1.2, 0.8, 0.2, 0.2,
+                   0.5, 1.7};
+  source.segments = {0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 8, 9};
+  const double bound = 0.15;
+  Input in = split_constraints(source, 0.9 * bound);
+  in.holes = {1.0, 1.0};
+  in.min_angle = 25.0;
+  in.max_area = 0.25 * std::sqrt(3.0) * bound * bound;
+  in.max_edge_length = bound;
+  const Result plain = run(in, true);
+  PHX_CHECK(plain.status == PHX_MC_OK);
+  in.lattice_spacing = 0.0;
+  const Result disabled = run(in, true);
+  PHX_CHECK(disabled.points == plain.points && disabled.cells == plain.cells);
+  PHX_CHECK(disabled.work == plain.work);
+  in.lattice_spacing = 0.9 * bound;
+  const Result seeded = run(in, true);
+  PHX_CHECK(seeded.status == PHX_MC_OK);
+  check_mesh(seeded);
+  check_segments(seeded, in);
+  check_constrained_delaunay(seeded);
+  check_quality(seeded, 25.0, in.max_area);
+  PHX_CHECK_NEAR(total_area(seeded), 4.0 - 0.16, 1e-12);
+  for (std::size_t c = 0; c < seeded.cells.size() / 3; ++c) {
+    for (int k = 0; k < 3; ++k) {
+      if (seeded.segments[3 * c + k] >= 0) continue;
+      const double* a = at(seeded, seeded.cells[3 * c + (k + 1) % 3]);
+      const double* b = at(seeded, seeded.cells[3 * c + (k + 2) % 3]);
+      const double dx = b[0] - a[0];
+      const double dy = b[1] - a[1];
+      PHX_CHECK(std::sqrt(dx * dx + dy * dy) <= bound);
+    }
+  }
+  PHX_CHECK(seeded.cells.size() < plain.cells.size());
+  PHX_CHECK(seeded.work[PHX_MC_PLANAR_WORK_UNITS] < plain.work[PHX_MC_PLANAR_WORK_UNITS]);
+  // Accepted lattice sites are free Steiner points at exact lattice positions.
+  const double rise = in.lattice_spacing * (0.5 * std::sqrt(3.0));
+  std::size_t sites = 0;
+  for (std::size_t v = in.points.size() / 2; v < seeded.points.size() / 2; ++v) {
+    const double j = std::round(seeded.points[2 * v + 1] / rise);
+    const double i = std::round(seeded.points[2 * v] / in.lattice_spacing - 0.5 * j);
+    if (seeded.points[2 * v] == (i + 0.5 * j) * in.lattice_spacing &&
+        seeded.points[2 * v + 1] == j * rise) {
+      ++sites;
+      PHX_CHECK(seeded.witness_segments[v] == -1);
+      PHX_CHECK(seeded.witness_parents[2 * v] == -1 && seeded.witness_parents[2 * v + 1] == -1);
+    }
+  }
+  // At least a quarter of all vertices are accepted lattice sites.
+  PHX_CHECK(4 * sites > seeded.points.size() / 2);
+  const Result again = run(in, true);
+  PHX_CHECK(again.points == seeded.points && again.cells == seeded.cells);
+  PHX_CHECK(again.segments == seeded.segments && again.work == seeded.work);
+  // Seeds share the Steiner allowance: a valid mesh with unmet targets.
+  Input limited = in;
+  limited.max_steiner = 5;
+  const Result short_of_steiner = run(limited);
+  PHX_CHECK(short_of_steiner.status == PHX_MC_REFINEMENT_LIMIT);
+  PHX_CHECK(short_of_steiner.points.size() / 2 <= in.points.size() / 2 + 5);
+  check_mesh(short_of_steiner);
+  check_segments(short_of_steiner, in);
+  // Every work refusal of a seeded request publishes nothing.
+  Input unit;
+  unit.points = {0, 0, 1, 0, 1, 1, 0, 1};
+  unit.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+  Input square = split_constraints(unit, 0.27);
+  square.min_angle = 25.0;
+  square.max_edge_length = 0.3;
+  square.lattice_spacing = 0.27;
+  const Result baseline = run(square);
+  PHX_CHECK(baseline.status == PHX_MC_OK);
+  check_mesh(baseline);
+  check_constrained_delaunay(baseline);
+  for (uint64_t limit = 0; limit < baseline.work[PHX_MC_PLANAR_WORK_UNITS]; ++limit) {
+    Input bounded = square;
+    bounded.max_work = static_cast<int64_t>(limit);
+    const Result refused = run(bounded);
+    PHX_CHECK(refused.status == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(refused.work[PHX_MC_PLANAR_WORK_UNITS] <= limit);
+    PHX_CHECK(refused.memory[PHX_MC_MEMORY_LIVE_BYTES] == 0);
+  }
+  Input exact = square;
+  exact.max_work = static_cast<int64_t>(baseline.work[PHX_MC_PLANAR_WORK_UNITS]);
+  const Result admitted = run(exact);
+  PHX_CHECK(admitted.status == PHX_MC_OK);
+  PHX_CHECK(admitted.points == baseline.points && admitted.cells == baseline.cells);
+}
+
 void test_arguments() {
   Input in = square_with_hole();
   Input bad = in;
@@ -463,6 +670,16 @@ void test_arguments() {
   bad = in;
   bad.max_area = 0.0;
   PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
+  for (const double length : {0.0, -1.0, std::nan("")}) {
+    bad = in;
+    bad.max_edge_length = length;
+    PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
+  }
+  for (const double spacing : {-1.0, kInf, std::nan("")}) {
+    bad = in;
+    bad.lattice_spacing = spacing;
+    PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
+  }
   bad = in;
   bad.max_steiner = -1;
   PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
@@ -502,6 +719,7 @@ void test_arguments() {
       .keep_convex_hull = 0,
       .min_angle_degrees = 0.0,
       .max_area = kInf,
+      .max_edge_length = kInf,
       .max_steiner = 0,
       .max_triangles = 100,
       .max_cavity_cells = INT64_MAX,
@@ -526,6 +744,7 @@ void test_arguments() {
       .keep_convex_hull = 0,
       .min_angle_degrees = 0.0,
       .max_area = kInf,
+      .max_edge_length = kInf,
       .max_steiner = 0,
       .max_triangles = 100,
       .max_cavity_cells = INT64_MAX,
@@ -772,6 +991,7 @@ void test_witness_capacity_and_atomic_publication() {
         .keep_convex_hull = 0,
         .min_angle_degrees = 0.0,
         .max_area = in.max_area,
+        .max_edge_length = in.max_edge_length,
         .max_steiner = in.max_steiner,
         .max_triangles = in.max_triangles,
         .max_cavity_cells = INT64_MAX,
@@ -892,6 +1112,69 @@ void test_cdt_work_uses_reserved_native_target_once() {
   PHX_CHECK(result.points == baseline.points && result.cells == baseline.cells);
 }
 
+void test_quality_cache_current_geometry_controls_and_refusal_boundaries() {
+  Input defaults;
+  defaults.points = {0, 0, 1, 0, 1, 1, 0, 1};
+  defaults.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+  defaults.max_steiner = 256;
+  const Result unrefined = run(defaults, true);
+  PHX_CHECK(unrefined.status == PHX_MC_OK);
+  PHX_CHECK(unrefined.cells.size() == 6);
+
+  Input strict = defaults;
+  strict.min_angle = 25.0;
+  strict.max_area = 0.01;
+  strict.max_edge_length = 0.2;
+  const auto source_points = strict.points;
+  const auto source_segments = strict.segments;
+  const Result baseline = run(strict, true);
+  PHX_CHECK(baseline.status == PHX_MC_OK);
+  PHX_CHECK(baseline.points.size() > unrefined.points.size());
+  check_mesh(baseline);
+  check_segments(baseline, strict);
+  check_constrained_delaunay(baseline);
+  check_quality(baseline, strict.min_angle, strict.max_area);
+  for (std::size_t cell = 0; cell < baseline.cells.size() / 3; ++cell) {
+    for (int edge = 0; edge < 3; ++edge) {
+      if (baseline.segments[3 * cell + edge] >= 0) continue;
+      const int32_t a = baseline.cells[3 * cell + (edge + 1) % 3];
+      const int32_t b = baseline.cells[3 * cell + (edge + 2) % 3];
+      const double dx = baseline.points[2 * a] - baseline.points[2 * b];
+      const double dy = baseline.points[2 * a + 1] - baseline.points[2 * b + 1];
+      PHX_CHECK(std::sqrt(dx * dx + dy * dy) <= strict.max_edge_length);
+    }
+  }
+  // A later request cannot inherit another request's controls or slot values.
+  const Result default_again = run(defaults, true);
+  PHX_CHECK(default_again.points == unrefined.points);
+  PHX_CHECK(default_again.cells == unrefined.cells);
+  PHX_CHECK(default_again.segments == unrefined.segments);
+  PHX_CHECK(default_again.work == unrefined.work);
+
+  Input exact = strict;
+  exact.max_work = static_cast<int64_t>(baseline.work[PHX_MC_PLANAR_WORK_UNITS]);
+  exact.max_scratch_bytes = static_cast<int64_t>(baseline.memory[PHX_MC_MEMORY_PEAK_BYTES]);
+  const Result repeated = run(exact, true);
+  PHX_CHECK(repeated.status == PHX_MC_OK);
+  PHX_CHECK(repeated.points == baseline.points && repeated.cells == baseline.cells);
+  PHX_CHECK(repeated.segments == baseline.segments && repeated.vertex_map == baseline.vertex_map);
+  PHX_CHECK(repeated.witness_parents == baseline.witness_parents);
+  PHX_CHECK(repeated.witness_segments == baseline.witness_segments);
+  PHX_CHECK(repeated.witness_ratios == baseline.witness_ratios);
+  PHX_CHECK(repeated.work == baseline.work);
+  --exact.max_work;
+  const Result work_refused = run(exact, true);
+  PHX_CHECK(work_refused.status == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(work_refused.memory[PHX_MC_MEMORY_LIVE_BYTES] == 0);
+  exact.max_work = strict.max_work;
+  --exact.max_scratch_bytes;
+  const Result memory_refused = run(exact, true);
+  PHX_CHECK(memory_refused.status == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(memory_refused.memory[PHX_MC_MEMORY_LIVE_BYTES] == 0);
+  PHX_CHECK(strict.points == source_points && strict.segments == source_segments);
+  PHX_CHECK(exact.points == source_points && exact.segments == source_segments);
+}
+
 }  // namespace
 
 int main() {
@@ -900,9 +1183,12 @@ int main() {
   test_lattice_segments();
   test_hole_carving();
   test_ruppert_square();
+  test_ruppert_cavity_fan();
   test_ruppert_l_shape();
   test_ruppert_slanted_polygon();
   test_refinement_limit();
+  test_ruppert_max_edge_length();
+  test_lattice_seeding();
   test_arguments();
   test_native_limits_and_source_rollback();
   test_split_witness_dag();
@@ -910,5 +1196,6 @@ int main() {
   test_witness_capacity_and_atomic_publication();
   test_cumulative_execution_work_and_local_prefixes();
   test_cdt_work_uses_reserved_native_target_once();
+  test_quality_cache_current_geometry_controls_and_refusal_boundaries();
   return phx::mc::test::finish("test_cdt2d");
 }

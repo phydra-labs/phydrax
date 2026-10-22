@@ -100,13 +100,7 @@ def require_tabulated_coordinate_element(
 
 
 def _tabulation_hessians(
-    element: FiniteElementSpec
-    | BarycentricCellGeometryElement
-    | RestrictedCellGeometryElement
-    | PolynomialComposedCellGeometryElement
-    | RationalComposedCellGeometryElement
-    | SplineCellGeometryElement
-    | LayerColumnCellGeometryElement,
+    element: imported_cell_geometry.ScalarCoordinateTabulation,
     points: Array,
     /,
 ) -> Array:
@@ -318,6 +312,34 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         return self.interpolate_transpose(runtime, values)
 
 
+@jax.jit
+def _realize_coordinate_bank(
+    basis: Array,
+    gradients: Array,
+    hessians: Array,
+    rows: Array,
+    coordinates: Array,
+) -> tuple[Array, Array, Array | None]:
+    """Stream one selected bundle; all numerical inputs remain dynamic leaves.
+
+    This module-owned callable retains its compilation identity across geometry
+    owners. The loop carries no bank-by-cell or cell-by-table expansion.
+    """
+
+    def realize_cell(inputs: tuple[Array, Array]) -> tuple[Array, Array, Array | None]:
+        row, cell_coordinates = inputs
+        points = ein.contract("qi,id->qd", basis[row], cell_coordinates)
+        jacobian = ein.contract("qir,id->qdr", gradients[row], cell_coordinates)
+        mapping_hessian = (
+            ein.contract("qirs,id->qdrs", hessians[row], cell_coordinates)
+            if hessians.size
+            else None
+        )
+        return points, jacobian, mapping_hessian
+
+    return jax.lax.map(realize_cell, (rows, coordinates))
+
+
 @final
 class FiniteElementGeometryActions(LocalGeometryActions):
     """Fixed FE coordinate routes with runtime coordinates supplied at realization."""
@@ -330,6 +352,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
     coordinate_gradients: Array
     coordinate_gathers: Array
     coordinate_hessians: Array
+    coordinate_table_rows: Array
     reference_weights: Array
     coordinate_measure: CoordinateMeasurePlan | None
 
@@ -345,6 +368,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         *,
         coordinate_hessians: ArrayLike | None = None,
         coordinate_measure: CoordinateMeasurePlan | None = None,
+        coordinate_table_rows: ArrayLike | None = None,
     ) -> None:
         layout = str(runtime_layout_id)
         kind = str(domain_kind)
@@ -357,6 +381,22 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         )
         gathers = jnp.asarray(coordinate_gathers, dtype=jnp.int32)
         weights = jnp.asarray(reference_weights)
+        if coordinate_table_rows is None:
+            table_rows = jnp.empty((0,), dtype=jnp.int32)
+        else:
+            raw_rows = np.asarray(coordinate_table_rows)
+            if (
+                raw_rows.dtype.kind not in "iu"
+                or gathers.ndim != 2
+                or raw_rows.shape != (gathers.shape[0],)
+                or basis.ndim != 3 or basis.shape[0] == 0
+                or np.any(raw_rows < 0) or np.any(raw_rows >= basis.shape[0])
+                or np.any(raw_rows > np.iinfo(np.int32).max)
+            ):
+                raise ValueError(
+                    "FiniteElementGeometryActions.coordinate_table_rows must select actual bank rows for every cell."
+                )
+            table_rows = jnp.asarray(raw_rows, dtype=jnp.int32)
         if (
             not layout
             or kind != "cell"
@@ -370,7 +410,10 @@ class FiniteElementGeometryActions(LocalGeometryActions):
             or gathers.ndim != 2
             or gathers.shape[1] != basis.shape[-1]
             or weights.shape != (basis.shape[-2],)
-            or (basis.ndim == 3 and basis.shape[0] != gathers.shape[0])
+            or (
+                basis.ndim == 3 and not table_rows.size
+                and basis.shape[0] != gathers.shape[0]
+            )
         ):
             raise ValueError(
                 "FiniteElementGeometryActions.configuration must agree with the declared geometry, topology, and field layout; got FE local geometry actions are inconsistent."
@@ -382,6 +425,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         self.coordinate_gradients = gradients
         self.coordinate_gathers = gathers
         self.coordinate_hessians = hessians
+        self.coordinate_table_rows = table_rows
         self.reference_weights = weights
         self.coordinate_measure = coordinate_measure
         self.action_id = canonical_fingerprint(
@@ -396,6 +440,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
                     None if not hessians.size else array_tree_fingerprint(hessians)
                 ),
                 "reference_weights": array_tree_fingerprint(weights),
+                "coordinate_table_rows": array_tree_fingerprint(table_rows),
                 **(
                     {"coordinate_measure": coordinate_measure.plan_id}
                     if coordinate_measure is not None
@@ -412,17 +457,29 @@ class FiniteElementGeometryActions(LocalGeometryActions):
                 "FiniteElementGeometryActions.realize.runtime must be FiniteElementRuntimeData; got runtime must be FiniteElementRuntimeData."
             )
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
-        cellwise = self.coordinate_basis.ndim == 3
-        points = ein.contract(
-            "cqi,cid->cqd" if cellwise else "qi,cid->cqd",
-            self.coordinate_basis,
-            coordinates,
-        )
-        jacobian = ein.contract(
-            "cqir,cid->cqdr" if cellwise else "qir,cid->cqdr",
-            self.coordinate_gradients,
-            coordinates,
-        )
+        banked = self.coordinate_table_rows.size != 0
+        mapping_hessian = None
+        if banked:
+            points, jacobian, mapping_hessian = _realize_coordinate_bank(
+                self.coordinate_basis,
+                self.coordinate_gradients,
+                self.coordinate_hessians,
+                self.coordinate_table_rows,
+                coordinates,
+            )
+            cellwise = True
+        else:
+            cellwise = self.coordinate_basis.ndim == 3
+            points = ein.contract(
+                "cqi,cid->cqd" if cellwise else "qi,cid->cqd",
+                self.coordinate_basis,
+                coordinates,
+            )
+            jacobian = ein.contract(
+                "cqir,cid->cqdr" if cellwise else "qir,cid->cqdr",
+                self.coordinate_gradients,
+                coordinates,
+            )
         dimension = jacobian.shape[-1]
         square = jacobian.shape[-2] == dimension
         matrix = (
@@ -470,11 +527,14 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         )
         inverse_hessian = None
         if self.coordinate_hessians.size:
-            mapping_hessian = ein.contract(
-                "cqirs,cid->cqdrs" if cellwise else "qirs,cid->cqdrs",
-                self.coordinate_hessians,
-                coordinates,
-            )
+            if not banked:
+                mapping_hessian = ein.contract(
+                    "cqirs,cid->cqdrs" if cellwise else "qirs,cid->cqdrs",
+                    self.coordinate_hessians,
+                    coordinates,
+                )
+            if mapping_hessian is None:
+                raise ValueError("Coordinate Hessian realization must retain its actual numerical rows.")
             inverse_hessian = -ein.contract(
                 "cqrd,cqdst,cqsa,cqtb->cqrab",
                 inverse,
@@ -751,6 +811,41 @@ class FiniteElementLocalProvider(StrictModule):
             ),
         )
 
+    def _admit_local_host_preparation(
+        self,
+        domain: IntegrationDomain,
+        field_names: tuple[str, ...],
+        budget: CoordinateEnclosureBudget,
+    ) -> None:
+        """Admit actual host selection/gather bounds, not compiler/device memory."""
+        discretization = self.discretization
+        domain_count = domain.entity_indices.size
+        cell_count = sum(block.cell_count for block in discretization.mesh.blocks)
+        route_entries = auxiliary_entries = 0
+        for name in field_names:
+            index = discretization.field_index(name)
+            dofs = discretization.dof_maps[index]
+            route_entries += sum(route.size for route in dofs.cell_dofs)
+            if any(
+                element.conformity == "L2" or element.form_basis is not None
+                for element in discretization.elements[index]
+            ):
+                auxiliary_entries += sum(
+                    value.size for value in (*dofs.cell_transforms, *dofs.orientations)
+                )
+        coordinate_entries = sum(route.size for route in discretization.coordinate_dofs)
+        # One input-row visit plus the source/gather scans. The 1024-byte
+        # dictionary slot bound covers two bounded integer owners, its bucket
+        # and lookup scratch; route bounds include copies, selection and the
+        # scalar-DG uniqueness/identity checks, including complex transforms.
+        work = domain_count + cell_count + 2 * route_entries + coordinate_entries + auxiliary_entries
+        storage = (
+            1024 * domain_count + 64 * cell_count + 64 * route_entries
+            + 16 * coordinate_entries + 32 * auxiliary_entries
+            + 4096 * (len(discretization.mesh.blocks) + len(field_names) + 1)
+        )
+        budget.reserve(work, storage)
+
     def _prepare_local_regions(
         self,
         domain: IntegrationDomain,
@@ -760,6 +855,7 @@ class FiniteElementLocalProvider(StrictModule):
         maximum_derivative_order: int,
         kernel_mode: str,
         budget: CoordinateEnclosureBudget,
+        host_admission: bool,
     ) -> tuple[PreparedLocalRegion, ...]:
 
         discretization = self.discretization
@@ -812,7 +908,13 @@ class FiniteElementLocalProvider(StrictModule):
         mode = parse(
             mode, FiniteElementKernelMode, "FiniteElementLocalProvider.kernel_mode"
         )
-        entity_set = set(int(value) for value in np.asarray(domain.entity_indices))
+        rows_by_entity = {
+            int(entity): row for row, entity in enumerate(np.asarray(domain.entity_indices))
+        }
+        owner_cells = np.asarray(domain.owner_cells)
+        neighbor_cells = np.asarray(domain.neighbor_cells)
+        owner_local_entities = np.asarray(domain.owner_local_entities)
+        neighbor_local_entities = np.asarray(domain.neighbor_local_entities)
         regions = []
         cell_offset = 0
         for block_index, block in enumerate(discretization.mesh.blocks):
@@ -824,17 +926,13 @@ class FiniteElementLocalProvider(StrictModule):
                 [
                     index
                     for index, cell in enumerate(block_cells)
-                    if int(cell) in entity_set
+                    if int(cell) in rows_by_entity
                 ],
                 dtype=np.int32,
             )
             if selected.size == 0:
                 continue
             entities = block_cells[selected]
-            rows_by_entity = {
-                int(entity): row
-                for row, entity in enumerate(np.asarray(domain.entity_indices))
-            }
             domain_rows = np.asarray(
                 [rows_by_entity[int(entity)] for entity in entities], dtype=np.int32
             )
@@ -850,7 +948,10 @@ class FiniteElementLocalProvider(StrictModule):
                     elements, coordinate_element, budget=budget
                 )
                 if has_dg
-                else max(element.degree for element in elements)
+                else max(
+                    max(imported_generic._basis_cubature_degree(element) for element in elements),
+                    coordinate_element.degree,
+                )
             )
             if (
                 discretization.coordinate_measure is not None
@@ -871,73 +972,95 @@ class FiniteElementLocalProvider(StrictModule):
                     if maximum_derivative_order == 2
                     else None
                 )
-                references.append(
-                    FiniteElementReferenceActions(
-                        basis,
-                        gradients,
-                        basis_hessians=hessians,
-                        coefficient_transform=(
-                            jax.device_put(
-                                np.asarray(
-                                    discretization.dof_maps[field_index].cell_transforms[
-                                        block_index
-                                    ]
-                                )[selected]
-                            )
-                            if element.form_basis is not None
-                            else None
-                        ),
-                        maximum_derivative_order=maximum_derivative_order,
-                        kernel_modes=(mode,),
-                        action_id=canonical_fingerprint(
-                            {
-                                "kind": "finite-element-local-reference-actions",
-                                "element": element.element_id,
-                                "dof_map": discretization.dof_maps[
-                                    field_index
-                                ].dof_map_id,
-                                "selected_cells": selected.tolist(),
-                                "points": array_tree_fingerprint(points),
-                                "maximum_derivative_order": maximum_derivative_order,
-                                "kernel_mode": mode,
-                            }
-                        ),
+                tables = (basis, gradients) if hessians is None else (basis, gradients, hessians)
+                if host_admission:
+                    # Earlier regions stay live while later tables are prepared.
+                    budget.reserve(0, sum(table.nbytes for table in tables))
+                with budget.temporary_scope():
+                    if host_admission:
+                        budget.reserve(
+                            sum(table.size for table in tables),
+                            4 * sum(table.nbytes for table in tables) + 4096,
+                        )
+                    references.append(
+                        FiniteElementReferenceActions(
+                            basis,
+                            gradients,
+                            basis_hessians=hessians,
+                            coefficient_transform=(
+                                jax.device_put(
+                                    np.asarray(
+                                        discretization.dof_maps[field_index].cell_transforms[
+                                            block_index
+                                        ]
+                                    )[selected]
+                                )
+                                if element.form_basis is not None
+                                else None
+                            ),
+                            maximum_derivative_order=maximum_derivative_order,
+                            kernel_modes=(mode,),
+                            action_id=canonical_fingerprint(
+                                {
+                                    "kind": "finite-element-local-reference-actions",
+                                    "element": element.element_id,
+                                    "dof_map": discretization.dof_maps[
+                                        field_index
+                                    ].dof_map_id,
+                                    "selected_cells": selected.tolist(),
+                                    "points": array_tree_fingerprint(points),
+                                    "maximum_derivative_order": maximum_derivative_order,
+                                    "kernel_mode": mode,
+                                }
+                            ),
+                        )
                     )
-                )
                 gathers.append(
                     np.asarray(
                         discretization.dof_maps[field_index].cell_dofs[block_index]
                     )[selected]
                 )
-            coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
+            coordinate_tabulation = imported_cell_geometry.coordinate_tabulation(coordinate_element)
+            coordinate_basis, coordinate_gradients = coordinate_tabulation.tabulate(points)
             coordinate_hessians = (
-                _tabulation_hessians(coordinate_element, points)
+                _tabulation_hessians(coordinate_tabulation, points)
                 if maximum_derivative_order == 2
                 else None
             )
-            geometry = FiniteElementGeometryActions(
-                discretization.default_runtime.geometry_layout_id,
-                domain.kind,
-                coordinate_basis,
-                coordinate_gradients,
-                jax.device_put(
-                    np.asarray(discretization.coordinate_dofs[block_index])[selected]
-                ),
-                weights,
-                coordinate_hessians=coordinate_hessians,
-                coordinate_measure=discretization.coordinate_measure,
+            tables = (
+                (coordinate_basis, coordinate_gradients)
+                if coordinate_hessians is None
+                else (coordinate_basis, coordinate_gradients, coordinate_hessians)
             )
+            if host_admission:
+                budget.reserve(0, sum(table.nbytes for table in tables))
+            with budget.temporary_scope():
+                if host_admission:
+                    budget.reserve(
+                        sum(table.size for table in tables),
+                        4 * sum(table.nbytes for table in tables) + 4096,
+                    )
+                geometry = FiniteElementGeometryActions(
+                    discretization.default_runtime.geometry_layout_id,
+                    domain.kind,
+                    coordinate_basis,
+                    coordinate_gradients,
+                    jax.device_put(
+                        np.asarray(discretization.coordinate_dofs[block_index])[selected]
+                    ),
+                    weights,
+                    coordinate_hessians=coordinate_hessians,
+                    coordinate_measure=discretization.coordinate_measure,
+                )
             selected_domain = IntegrationDomain(
                 "cell",
                 entities,
                 domain.support_id,
                 domain.entity_set_id,
-                owner_cells=np.asarray(domain.owner_cells)[domain_rows],
-                neighbor_cells=np.asarray(domain.neighbor_cells)[domain_rows],
-                owner_local_entities=np.asarray(domain.owner_local_entities)[domain_rows],
-                neighbor_local_entities=np.asarray(domain.neighbor_local_entities)[
-                    domain_rows
-                ],
+                owner_cells=owner_cells[domain_rows],
+                neighbor_cells=neighbor_cells[domain_rows],
+                owner_local_entities=owner_local_entities[domain_rows],
+                neighbor_local_entities=neighbor_local_entities[domain_rows],
                 selection_id=domain.selection_id,
             )
             regions.append(
@@ -955,7 +1078,24 @@ class FiniteElementLocalProvider(StrictModule):
             raise ValueError(
                 "FiniteElementLocalProvider._prepare_local_regions.domain must select a supported declared route; got The local domain selects no finite-element cells."
             )
-        return _coalesce_local_regions(tuple(regions))
+        if host_admission and len(regions) > 1:
+            table_entries = table_bytes = 0
+            for region in regions:
+                _, references_ = _finite_element_region_parts(region)
+                for reference_ in references_:
+                    for table in (
+                        reference_.basis_values, reference_.basis_gradients,
+                        reference_.basis_hessians,
+                    ):
+                        table_entries += table.size
+                        table_bytes += table.nbytes
+            # Pay actual reference-table reads for numerical signatures. Only
+            # compatible runs share field tables; coordinate differences become
+            # authenticated bank rows, never a cellwise table expansion.
+            budget.reserve(table_entries, 4 * table_bytes + 4096 * len(regions))
+        return _coalesce_local_regions(
+            tuple(regions), budget=budget if host_admission else None
+        )
 
     @checked
     def prepare_local_regions(
@@ -970,13 +1110,18 @@ class FiniteElementLocalProvider(StrictModule):
     ) -> tuple[PreparedLocalRegion, ...]:
         """Prepare host regions with an explicit input-derived source reservation."""
         if budget is not None:
-            return self._prepare_local_regions(
-                domain,
-                field_names=field_names,
-                maximum_derivative_order=maximum_derivative_order,
-                kernel_mode=kernel_mode,
-                budget=budget,
-            )
+            with budget.temporary_scope():
+                self._admit_local_host_preparation(domain, field_names, budget)
+                regions = self._prepare_local_regions(
+                    domain,
+                    field_names=field_names,
+                    maximum_derivative_order=maximum_derivative_order,
+                    kernel_mode=kernel_mode,
+                    budget=budget,
+                    host_admission=True,
+                )
+                budget.retain_owner(regions)
+                return regions
         fields = tuple(
             self.discretization.elements[self.discretization.field_index(str(name))]
             for name in field_names
@@ -1012,6 +1157,7 @@ class FiniteElementLocalProvider(StrictModule):
                     maximum_derivative_order=maximum_derivative_order,
                     kernel_mode=kernel_mode,
                     budget=ledger,
+                    host_admission=False,
                 )
 
     def validate_local_runtime(self, runtime: object, /) -> None:
@@ -1067,57 +1213,168 @@ def _finite_element_region_parts(
     return geometry, tuple(references)
 
 
-def _local_region_numerical_signature(region: PreparedLocalRegion) -> str:
+def _local_region_numerical_signature(region: PreparedLocalRegion) -> dict[str, object]:
+    """Return actual static kernel contracts, never a scientific owner identity."""
     geometry, references = _finite_element_region_parts(region)
-    return canonical_fingerprint(
-        {
-            "fields": region.field_names,
-            "cell_kind": region.cell_kind,
-            "domain": (
-                region.domain.kind,
-                region.domain.support_id,
-                region.domain.entity_set_id,
-                region.domain.selection_id,
-            ),
-            "references": tuple(
-                (
-                    array_tree_fingerprint(
-                        (
-                            reference.basis_values,
-                            reference.basis_gradients,
-                            reference.basis_hessians,
-                        )
-                    ),
-                    reference.maximum_derivative_order,
-                    reference.kernel_modes,
-                    reference.coefficient_transform.shape[1:],
-                    reference.coefficient_transform.dtype.str,
-                )
-                for reference in references
-            ),
-            "geometry": (
-                geometry.runtime_layout_id,
-                geometry.coordinate_basis.shape,
-                geometry.coordinate_gradients.shape,
-                geometry.coordinate_hessians.shape,
-                geometry.coordinate_basis.dtype.str,
-                array_tree_fingerprint(geometry.reference_weights),
-                None
-                if geometry.coordinate_measure is None
-                else geometry.coordinate_measure.plan_id,
-            ),
-        }
-    )
+    return {
+        "fields": region.field_names,
+        "cell_kind": region.cell_kind,
+        "domain": (
+            region.domain.kind, region.domain.support_id,
+            region.domain.entity_set_id, region.domain.selection_id,
+        ),
+        "references": tuple(
+            (
+                tuple(
+                    (table.dtype.str, table.shape, np.asarray(table).tobytes(order="C"))
+                    for table in (
+                        reference.basis_values, reference.basis_gradients,
+                        reference.basis_hessians,
+                    )
+                ),
+                reference.maximum_derivative_order, reference.kernel_modes,
+                reference.coefficient_transform.shape[1:],
+                reference.coefficient_transform.dtype.str,
+            )
+            for reference in references
+        ),
+        "geometry": (
+            geometry.runtime_layout_id, geometry.domain_kind,
+            geometry.coordinate_basis.shape, geometry.coordinate_gradients.shape,
+            geometry.coordinate_hessians.shape,
+            geometry.coordinate_basis.dtype.str, geometry.coordinate_gradients.dtype.str,
+            geometry.coordinate_hessians.dtype.str, geometry.coordinate_gathers.dtype.str,
+            array_tree_fingerprint(geometry.reference_weights),
+            None if geometry.coordinate_measure is None else geometry.coordinate_measure.plan_id,
+        ),
+    }
+
+
+def _coordinate_table_views(
+    bundles: tuple[tuple[Array, ...], ...],
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[tuple[tuple[np.ndarray, ...], ...], bool]:
+    """Read and compare the complete current numerical reference bundle."""
+    if budget is not None:
+        budget.reserve(
+            sum(table.size for tables in bundles for table in tables),
+            4 * sum(table.nbytes for tables in bundles for table in tables)
+            + 256 * sum(len(tables) for tables in bundles),
+        )
+    host = tuple(tuple(np.asarray(table) for table in tables) for tables in bundles)
+    shared = True
+    for reference_ndim, tables in enumerate(host, start=2):
+        first = tables[0]
+        if first.ndim != reference_ndim:
+            shared = False
+            break
+        for table in tables[1:]:
+            if table.dtype != first.dtype or table.shape != first.shape:
+                shared = False
+                break
+            if budget is not None:
+                budget.reserve(table.size)
+            # Equal-size void scalars compare every stored bit without copying
+            # strided tables or identifying signed zeros / NaN payloads.
+            bits = np.dtype((np.void, first.dtype.itemsize))
+            if not np.array_equal(first.view(bits), table.view(bits)):
+                shared = False
+                break
+        if not shared:
+            break
+    return host, shared
+
+
+
+def _coordinate_table_bank(
+    bundles: tuple[tuple[Array, ...], ...],
+    counts: tuple[int, ...],
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[tuple[np.ndarray, ...], np.ndarray | None]:
+    """Canonical first-use rows of actual tables and their ordered cell selector."""
+    if any(
+        len(tables) != len(counts)
+        or any(
+            table.dtype != tables[0].dtype or table.shape != tables[0].shape
+            for table in tables
+        )
+        for tables in bundles
+    ):
+        raise ValueError(
+            "Coordinate table banks require matching shapes and dtypes; "
+            "heterogeneous contracts must remain separate ordered regions."
+        )
+    host, shared = _coordinate_table_views(bundles, budget=budget)
+    if shared:
+        return tuple(tables[0] for tables in host), None
+    if budget is not None:
+        budget.reserve(
+            sum(table.size for tables in bundles for table in tables),
+            2 * sum(table.nbytes for tables in bundles for table in tables)
+            + 2048 * len(counts),
+        )
+    keys: dict[tuple[tuple[str, tuple[int, ...], bytes], ...], int] = {}
+    first_rows: list[int] = []
+    selectors: list[int] = []
+    for row in range(len(counts)):
+        key = tuple(
+            (tables[row].dtype.str, tables[row].shape, tables[row].tobytes(order="C"))
+            for tables in host
+        )
+        if key not in keys:
+            keys[key] = len(first_rows)
+            first_rows.append(row)
+        selectors.append(keys[key])
+    if budget is not None:
+        entries = sum(tables[row].size for tables in host for row in first_rows)
+        bank_bytes = sum(tables[row].nbytes for tables in host for row in first_rows)
+        budget.reserve(
+            entries + sum(counts),
+            4 * (bank_bytes + 4 * sum(counts)) + 256 * len(first_rows),
+        )
+    bank = tuple(np.stack(tuple(tables[row] for row in first_rows)) for tables in host)
+    rows = np.repeat(np.asarray(selectors, dtype=np.int32), np.asarray(counts, dtype=np.int64))
+    return bank, rows
 
 
 def _merge_local_region_run(
     regions: tuple[PreparedLocalRegion, ...],
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> PreparedLocalRegion:
-    """Merge a consecutive homogeneous run, retaining its ordered cell routes."""
+    """Merge numerical lanes without expanding identical reference tables."""
     if len(regions) == 1:
         return regions[0]
     parts = tuple(_finite_element_region_parts(region) for region in regions)
     first, (geometry, references) = regions[0], parts[0]
+    if budget is not None:
+        copy_groups = (
+            tuple(owner.coordinate_gathers for owner, _ in parts),
+            tuple(region.entity_indices for region in regions),
+            tuple(region.owner_cells for region in regions),
+            tuple(region.neighbor_cells for region in regions),
+            tuple(region.owner_local_entities for region in regions),
+            tuple(region.neighbor_local_entities for region in regions),
+            *(
+                tuple(refs[index].coefficient_transform for _, refs in parts)
+                for index, reference in enumerate(references)
+                if reference.coefficient_transform.size
+            ),
+            *(
+                tuple(region.field_gathers[index] for region in regions)
+                for index in range(len(first.field_names))
+            ),
+        )
+        budget.reserve(
+            sum(table.size for tables in copy_groups for table in tables),
+            4 * sum(
+                sum(table.size for table in tables)
+                * np.result_type(*(table.dtype for table in tables)).itemsize
+                for tables in copy_groups
+            ),
+        )
     merged_references = tuple(
         FiniteElementReferenceActions(
             reference.basis_values,
@@ -1141,27 +1398,27 @@ def _merge_local_region_run(
         for index, reference in enumerate(references)
     )
 
-    def cell_tables(tables: tuple[Array, ...]) -> np.ndarray:
-        return np.concatenate(
-            tuple(
-                np.broadcast_to(np.asarray(table), (owner.entity_count,) + table.shape)
-                for table, (owner, _) in zip(tables, parts, strict=True)
-            )
-        )
 
+    coordinate_tables, coordinate_table_rows = _coordinate_table_bank(
+        (
+            tuple(owner.coordinate_basis for owner, _ in parts),
+            tuple(owner.coordinate_gradients for owner, _ in parts),
+            *((tuple(owner.coordinate_hessians for owner, _ in parts),)
+              if geometry.coordinate_hessians.size else ()),
+        ),
+        tuple(owner.entity_count for owner, _ in parts),
+        budget=budget,
+    )
     merged_geometry = FiniteElementGeometryActions(
         geometry.runtime_layout_id,
         geometry.domain_kind,
-        cell_tables(tuple(owner.coordinate_basis for owner, _ in parts)),
-        cell_tables(tuple(owner.coordinate_gradients for owner, _ in parts)),
+        coordinate_tables[0],
+        coordinate_tables[1],
         np.concatenate(tuple(np.asarray(owner.coordinate_gathers) for owner, _ in parts)),
         geometry.reference_weights,
-        coordinate_hessians=cell_tables(
-            tuple(owner.coordinate_hessians for owner, _ in parts)
-        )
-        if geometry.coordinate_hessians.size
-        else None,
+        coordinate_hessians=coordinate_tables[2] if geometry.coordinate_hessians.size else None,
         coordinate_measure=geometry.coordinate_measure,
+        coordinate_table_rows=coordinate_table_rows,
     )
     domain = IntegrationDomain(
         first.domain.kind,
@@ -1200,14 +1457,21 @@ def _merge_local_region_run(
 
 def _coalesce_local_regions(
     regions: tuple[PreparedLocalRegion, ...],
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[PreparedLocalRegion, ...]:
     """Bucket consecutive numerical signatures without reordering cell lanes."""
+    if len(regions) <= 1:
+        return regions
     runs: list[list[PreparedLocalRegion]] = []
-    previous: str | None = None
+    previous: dict[str, object] | None = None
     for region in regions:
         signature = _local_region_numerical_signature(region)
-        if signature != previous:
+        compatible = signature == previous
+        if not compatible:
             runs.append([])
-            previous = signature
+        previous = signature
         runs[-1].append(region)
-    return tuple(_merge_local_region_run(tuple(run)) for run in runs)
+    return tuple(
+        _merge_local_region_run(tuple(run), budget=budget) for run in runs
+    )

@@ -63,6 +63,8 @@ def test_complete_moment_assertion_rejects_corrupted_scientific_output(
                 2.0 * refinement.second_moments,
             )
         case _:
-            raise ValueError(f"moment must name a supported fault; got {moment}.")
+            raise ValueError(
+                f"refinement_fixture.moment must name a supported fault; got {moment}."
+            )
     with pytest.raises(AssertionError):
         assert_complete_moments(corrupted, 2)

@@ -115,7 +115,7 @@ class MeshPart(StrictModule, NonTrainableState):
                         raise ValueError(
                             "MeshPart.carrier must provide collective publication evidence when distributed; got None"
                         )
-                    collective.require_passed()
+                    type(collective).require_passed(collective)
                     if (
                         collective.mesh_id != carrier.mesh.mesh_id
                         or collective.topology_id != carrier.mesh.topology_id

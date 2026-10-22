@@ -1,4 +1,4 @@
-"""Declared geometry scopes and exact-sweep requests for semantic-control tests."""
+"""Declared geometry scopes and affine-sweep requests for semantic-control tests."""
 
 from collections.abc import Sequence
 from typing import TypedDict, Unpack

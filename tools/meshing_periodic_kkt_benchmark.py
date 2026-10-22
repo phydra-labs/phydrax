@@ -108,7 +108,7 @@ class _PolishExecution(StrictModule):
 
 
 def _prepare_captured_polish_input(snapshot: Path) -> _CapturedPolishInput:
-    """Load and bind the captured constraints, scientific identity, and rank witness."""
+    """Load and bind the captured constraints, scientific identity, and rank evidence."""
     started = perf_counter()
     with np.load(snapshot, allow_pickle=False) as bank:
         parameters = jnp.asarray(bank["parameters"])
@@ -133,26 +133,32 @@ def _prepare_captured_polish_input(snapshot: Path) -> _CapturedPolishInput:
         np.array_equal(np.asarray(problem.constraints[0].lower), lower)
         and np.array_equal(np.asarray(problem.constraints[0].upper), upper)
     ):
-        raise ValueError("Snapshot does not match the current original hard constraints.")
+        raise ValueError(
+            "polish_snapshot.constraints must match the captured hard bounds; got different constraints."
+        )
     suffix = ".polish-input.npz"
     if not snapshot.name.endswith(suffix):
         raise ValueError(
-            "Captured hard-solve input must retain its original artifact name."
+            "polish_snapshot.name must retain its captured artifact suffix; got a different name."
         )
     stem = snapshot.name.removesuffix(suffix)
     identity = json.loads(snapshot.with_name(f"{stem}.evidence.json").read_text())
     if not isinstance(identity, dict):
-        raise TypeError("Captured scientific identity must be a metadata mapping.")
+        raise TypeError(
+            "polish_snapshot.identity must be a metadata mapping; got another value kind."
+        )
     source_binding = identity.get("source_binding_id")
     limits = identity.get("original_limits")
     if not isinstance(source_binding, str) or not isinstance(limits, dict):
         raise TypeError(
-            "Captured hard solve must retain its real scientific source and limits."
+            "polish_snapshot.identity must retain its scientific source and limits; got missing or invalid metadata."
         )
     maximum_work = limits.get("maximum_work_units")
     maximum_bytes = limits.get("maximum_scratch_bytes")
     if not isinstance(maximum_work, int) or not isinstance(maximum_bytes, int):
-        raise TypeError("Captured original work/storage allowances must be integers.")
+        raise TypeError(
+            "polish_snapshot.limits must contain integer work and storage allowances; got another value kind."
+        )
     with np.load(
         snapshot.with_name(f"{stem}.rank-witness.npz"), allow_pickle=False
     ) as witness:
@@ -160,15 +166,15 @@ def _prepare_captured_polish_input(snapshot: Path) -> _CapturedPolishInput:
         edge_keys = np.array(witness["native_quotient_edge_keys"], copy=True)
         if not np.array_equal(roots, np.asarray(args.size.free)):
             raise ValueError(
-                "Captured free-root ownership differs from the actual hard solve."
+                "polish_snapshot.free_roots must match the hard solve; got different ownership."
             )
         if not np.array_equal(edge_keys[:, :2], np.asarray(args.size.edges)):
             raise ValueError(
-                "Captured native edge keys differ from the actual hard solve."
+                "polish_snapshot.edge_keys must match the hard solve; got different native edges."
             )
         if not np.array_equal(witness["kept"], active):
             raise ValueError(
-                "Captured equality-row ownership differs from the actual hard solve."
+                "polish_snapshot.equality_rows must match the hard solve; got different ownership."
             )
     input_preparation = perf_counter() - started
     return _CapturedPolishInput(
@@ -244,7 +250,9 @@ def _measure_polish_compilation(
     )
     entry = size._solve_polish
     if not isinstance(entry, _PolishCompilerEntry):
-        raise TypeError("The owning hard-polish entry must support lowering.")
+        raise TypeError(
+            "polish_snapshot.compiler_entry must support lowering; got another entry type."
+        )
     started = perf_counter()
     lowered = entry.lower(parameters, args, problem, method)
     lowering = perf_counter() - started
@@ -261,7 +269,7 @@ def _execute_polish_benchmark(
     compilation: _PolishCompilation,
     repeats: int,
 ) -> _PolishExecution:
-    """Measure cold and repeated executions, requiring leafwise exact reproduction."""
+    """Measure cold and repeated executions, requiring leafwise bitwise reproduction."""
     captured = preparation.captured
     parameters, args, problem, method = (
         captured.parameters,
@@ -290,7 +298,7 @@ def _execute_polish_benchmark(
 def _polish_derivative_report(
     preparation: _PreparedPolishBenchmark,
 ) -> dict[str, object]:
-    """Report prepared exact derivative support and logical operation bounds."""
+    """Report prepared derivative support and logical operation bounds."""
     setup, coefficient_dtype = preparation.setup, preparation.coefficient_dtype
     return {
         "scope": "Current true Lagrangian Hessian and original canonical bound Jacobian.",
@@ -422,7 +430,7 @@ def _polish_benchmark_report(
 def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
     """Time the unchanged captured hard problem, not a new meshing qualification."""
     if repeats < 1:
-        raise ValueError("repeats must be positive.")
+        raise ValueError(f"polish_benchmark.repeats must be positive; got {repeats}.")
     captured = _prepare_captured_polish_input(snapshot)
     preparation = _prepare_polish_benchmark(captured)
     compilation = _measure_polish_compilation(preparation)

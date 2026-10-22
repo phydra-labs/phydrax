@@ -22,6 +22,29 @@ specialization; the adaptive route never substitutes that specialization for a
 general field. Multiple material/junction sources use the shared image/interface
 complex, rather than assigning a tetrahedron from one scalar sample.
 
+Layer/core accepted-state archives retain every epoch, including coefficient
+fields, finite-volume material density, the solved harmonic field and damage
+history. A cold continuation restores the penultimate epoch and replays the
+final inverse coarsening against the archived warm final epoch; it does not
+initialize replacement fields from the restored geometry.
+The original producer binds capacity to the native resource limits and
+authors the requested material densities and material-site identity in the
+initial accepted state. Its resolution and core-size selectors admit only
+the original source values; varying them refuses rather than silently
+substituting another source or claiming a resolution-scaled benchmark.
+
+Within one request, algebraic physical cell measures may reuse the same
+immutable element/coefficient-bank binding and outward publication error.
+Every reuse rechecks the caller's current integration tolerance. Layer/core DG
+and compatible-cochain transfers share their issued rooted nested-reference
+preparation, while retaining the independent field functionals, commuting
+checks and original work/storage allowances.
+An exact mixed refinement reuses the source's total physical measure only
+after the canonical nested-reference owner proves an oriented full tiling of
+every source cell. Inverse coarsening still independently measures both maps.
+Exact form moments retain unchanged affine reference arguments locally, keyed
+by the complete execution views and their source-owned rational banks.
+
 
 ## Requests and controls
 
@@ -111,6 +134,7 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - GeometryAssociation
         - GeometryAssociationKind
         - GeometryAssociationSourceBank
+        - GeometryAssociationSourceIdentities
         - ComposedAssociationTransfer
         - ImplicitAssociationTransfer
         - MappedReferenceAssociationTransfer
@@ -477,6 +501,16 @@ establish that envelope qualification or retained-evidence replay has passed.
         - periodic_layer_source_identity_record
         - LayerCoreLifecyclePlans
         - LayerCoreLifecycleReport
+        - LayerCoreAcceptedState
+        - initial_layer_core_state
+        - continue_layer_core_state
+        - warm_layer_core_initial_state
+        - warm_layer_core_step
+        - layer_core_accepted_epoch
+        - restore_layer_core_state
+        - layer_core_continuation_defects
+        - layer_core_restoration_defects
+        - layer_core_lineage_records
         - continue_layer_core_lifecycle
         - continue_layer_core_fields
         - continue_layer_core_finite_volume

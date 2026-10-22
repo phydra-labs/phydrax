@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import resource
 import subprocess
 import sys
 from collections.abc import Callable
 from contextlib import redirect_stdout
+from dataclasses import replace
 from fractions import Fraction
 from hashlib import sha256
 from io import StringIO
@@ -17,6 +16,7 @@ from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import Any, final, TypedDict
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,22 +24,41 @@ import numpy as np
 import phydrax as phx
 from examples.boundary_layer_core_mesh import exact_solution
 from phydrax import array_tree_fingerprint, canonical_fingerprint, model_array_bytes
+from phydrax._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from phydrax.discretization import (
     CellBlock,
     CellMesh,
     PeriodicIsometryGroup,
     PeriodicMeshTopology,
 )
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_operands import (
+    CoordinateOperandCollector,
+    PreparedCoordinateOperands,
+)
 from phydrax.geometry import PiecewiseLinearDomain
 from phydrax.lifecycle import (
+    MeshingAcceptedEpoch,
     MeshingSourceExecutionControls,
     read_meshing_source_execution_controls,
     write_meshing_source_closure,
 )
+from phydrax.lifecycle._meshing_sources import meshing_source_owner_reconstruction_scope
 from phydrax.meshing import MixedAdaptationEvidence, NativeMeshingPhaseMeasurement
+from phydrax.meshing._native_preparation import native_preparation_ledger
+from phydrax.meshing.providers._native_publication import (
+    bind_native_execution_result,
+    NativePublicationExecution,
+)
 from phydrax.meshing.qualification import (
     hybrid_source_coefficients_restored,
+    layer_core_accepted_epoch,
+    layer_core_lineage_records,
     layer_core_material_declaration,
+    layer_core_restoration_defects,
+    LayerCoreAcceptedState,
+    LayerCoreLifecyclePlans,
+    LayerCoreMaterialDeclaration,
     ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST,
     ORIGINAL_CURVED_PERIODIC_SOURCE_ID,
     ORIGINAL_CURVED_PERIODIC_SOURCE_REVISION,
@@ -51,6 +70,13 @@ from phydrax.meshing.qualification import (
     qualify_hybrid_curved_publication,
     qualify_hybrid_high_order_publication,
     qualify_hybrid_reference_cells,
+    require_restored_layer_core_result_identity,
+    warm_layer_core_initial_state,
+    warm_layer_core_step,
+)
+from phydrax.meshing.qualification._layer_continuation import (
+    _layer_core_current_preparation,
+    layer_core_continuation_execution,
 )
 from tools._meshing_cases import (
     _hybrid_qualification_original_box,
@@ -64,6 +90,7 @@ from tools._meshing_cases import (
 )
 from tools.layer_core_lifecycle_continuation import main
 from tools.meshing_qualification._controls import (
+    _hybrid_material_controls,
     _hybrid_qualification_original_controls,
     _hybrid_qualification_original_profile_names,
     _hybrid_qualification_original_wall_profiles,
@@ -77,14 +104,18 @@ from tools.meshing_qualification._records import (
     _phase_recordings,
     _quality_summary,
     _result_identity,
-    FailureRecord,
+    record_failure,
 )
 from tools.meshing_qualification._runtime import (
     _runtime_identity,
+    ColdControlPacket,
+    ColdWorkerReport,
     Deadline,
+    epoch_stage_name,
     peak_resident_bytes,
+    PEAK_RESIDENT_SCOPE,
+    prepare_cold_worker,
     qualification_failure,
-    run_cold_worker,
     StageLedger,
 )
 from tools.meshing_qualification.scenarios.boundary_layer import _layer_evidence
@@ -1358,8 +1389,18 @@ def _hybrid_qualification_archived_profile(
     record: dict[str, Any],
     *,
     retained_controls: MeshingSourceExecutionControls | None = None,
+    expected_rounds: int | None = None,
 ) -> _HybridContinuationEvidence:
-    """Consume the archive once, in a remaining-budget cold process."""
+    """Cold-continue the archive's accepted state once, in a remaining-budget process.
+
+    The archive must retain ``expected_rounds`` (default: the frozen
+    adaptation rounds) refine/coarsen pairs of accepted epochs.
+    """
+
+    densities, material_site = _hybrid_material_controls(
+        args.hybrid_profile, args.hybrid_region_densities, args.hybrid_material_site
+    )
+    rounds = args.adaptation_rounds if expected_rounds is None else expected_rounds
 
     archive, content_id = args.hybrid_archive, args.hybrid_content_id
     if not archive or not content_id:
@@ -1392,7 +1433,7 @@ def _hybrid_qualification_archived_profile(
         "specification_id": controls.specification_id,
         "archive": str(args.hybrid_archive),
         "content_id": controls.content_id,
-        "stage_scope": "original-authenticated-source-full-cold-read-allfields-FV-history-PDE",
+        "stage_scope": "original-authenticated-accepted-state-cold-continuation-allfields-FV-history-PDE",
         "controls_only": True,
         "controls_origin": (
             "authenticated-archive"
@@ -1405,21 +1446,25 @@ def _hybrid_qualification_archived_profile(
         raise TimeoutError(
             f"_hybrid_qualification_archived_profile.remaining must be positive before the fresh-process consumer; got {remaining!r}."
         )
-    cold = run_cold_worker(
-        "scenarios.hybrid",
-        (
-            str(args.hybrid_archive),
-            controls.content_id,
-            "--region-densities",
-            *(str(value) for value in args.hybrid_region_densities),
-            "--material-site",
-            args.hybrid_material_site,
-        ),
+    # A single-phase consumer: the archive already exists, so prepare and execute
+    # run back to back.
+    with prepare_cold_worker(
+        "tools.meshing_qualification.scenarios.hybrid",
         deadline=Deadline(perf_counter() + remaining),
         ledger=StageLedger(
-            record, cold_phase="original_fresh_process_full_read_allfields_FV_history_PDE"
+            record,
+            cold_phase="original_fresh_process_accepted_state_allfields_FV_history_PDE",
         ),
-    )
+    ) as cold_worker:
+        cold = cold_worker.execute(
+            Path(archive),
+            controls.content_id,
+            {
+                "region_densities": list(densities),
+                "material_site": material_site,
+                "solver_repeats": args.repeats,
+            },
+        )
     evidence = cold["evidence"]
     record["cold"] = {
         "returncode": 0,
@@ -1471,11 +1516,35 @@ def _hybrid_qualification_archived_profile(
                 {"values": values},
             )
         record[output] = values[0]
+    original = [item["original_scalar"] for item in evidence if "original_scalar" in item]
+    if len(original) > 1 or (args.hybrid_profile == "unit-box" and len(original) != 1):
+        raise qualification_failure(
+            "_hybrid_qualification_archived_profile",
+            "Cold unit-box must independently continue its actual original P1 bank.",
+            {"original_scalar": original},
+        )
+    if original:
+        scalar = original[0]
+        independent = scalar.get("independent_solve")
+        if (
+            scalar.get("field") != "original-u"
+            or scalar.get("degree") != 1
+            or not isinstance(scalar.get("physical"), dict)
+            or not isinstance(scalar.get("independent_physical"), dict)
+            or not isinstance(independent, dict)
+            or not independent.get("compiler", {}).get("warm_samples_seconds")
+        ):
+            raise qualification_failure(
+                "_hybrid_qualification_archived_profile",
+                "Cold original P1 continuation omitted its physical target or independent solve.",
+                {"original_scalar": scalar},
+            )
+        record["original_scalar"] = scalar
     declarations = evidence[0].get("material_declaration")
     if (
         not isinstance(declarations, dict)
-        or declarations.get("densities") != list(args.hybrid_region_densities)
-        or declarations.get("site_id") != args.hybrid_material_site
+        or declarations.get("densities") != list(densities)
+        or declarations.get("site_id") != material_site
     ):
         raise qualification_failure(
             "_hybrid_qualification_archived_profile",
@@ -1483,6 +1552,25 @@ def _hybrid_qualification_archived_profile(
             {"args": args, "declarations": declarations},
         )
     record["material_declaration"] = declarations
+    restored = evidence[0].get("restored_epoch_ids")
+    if (
+        not isinstance(restored, list)
+        or len(restored) != 2 * rounds + 1
+        or any(type(value) is not str or not value for value in restored)
+        or not isinstance(evidence[0].get("continued_from"), dict)
+        or evidence[0]["continued_from"].get("epoch_id") != restored[-2]
+    ):
+        raise qualification_failure(
+            "_hybrid_qualification_archived_profile",
+            (
+                f"Cold hybrid must restore {2 * rounds + 1} archived accepted epochs and continue the last refined one."
+            ),
+            {"restored": restored, "continued_from": evidence[0].get("continued_from")},
+        )
+    record["restored_epochs"] = evidence[0]["restored_epochs"]
+    record["continued_from"] = evidence[0]["continued_from"]
+    record["warm_continuation_defects"] = evidence[0]["warm_continuation_defects"]
+    record["restoration_defects"] = evidence[0]["restoration_defects"]
     receipts = [item for item in evidence if "execution_evidence" in item]
     if len(receipts) != 1 or receipts[0].get("limits_id") != controls.limits.limits_id:
         raise qualification_failure(
@@ -1494,8 +1582,17 @@ def _hybrid_qualification_archived_profile(
         stage["pde_defect"] for stage in record["history"]["stages"]
     )
     record["physical_error_scope"] = (
-        "maximum-nodal-PDE-defect-across-original-history-transitions"
+        "maximum-nodal-PDE-defect-of-the-cold-continued-accepted-state"
     )
+    if original:
+        record["physical_error"] = max(
+            record["physical_error"],
+            record["original_scalar"]["physical"]["l2_error"],
+            record["original_scalar"]["independent_physical"]["l2_error"],
+        )
+        record["physical_error_scope"] = (
+            "maximum-of-original-P1-transferred-and-independent-mapped-physical-L2-and-canonical-history-PDE-defect"
+        )
     if (
         not np.isfinite(record["physical_error"])
         or record["physical_error"] > args.target_error
@@ -1505,17 +1602,69 @@ def _hybrid_qualification_archived_profile(
             ("Continued PDE missed its declared physical error target."),
             {"args": args, "record": record},
         )
+    epochs = record["history"].get("epochs")
+    source_result = evidence[0].get("source_result")
+    if (
+        not isinstance(epochs, list)
+        or [epoch.get("name") for epoch in epochs] != ["coarsen"]
+        or any(
+            not isinstance(epoch.get("compiler"), dict)
+            or not epoch["compiler"].get("warm_samples_seconds")
+            or not isinstance(epoch.get("result"), dict)
+            or not isinstance(epoch.get("retained_bytes"), int)
+            for epoch in epochs
+        )
+        or not isinstance(source_result, dict)
+    ):
+        raise qualification_failure(
+            "_hybrid_qualification_archived_profile",
+            (
+                "Cold hybrid omitted its continued accepted-state solve or source publication."
+            ),
+            {"epochs": epochs, "source_result": source_result},
+        )
     record["cold"]["evidence"] = evidence
     record["source"]["controls_only"] = False
     record["independent_scientific_certification"] = "passed"
     record["status"] = "passed"
 
-    return _HybridContinuationEvidence(record["physical_error"])
+    return _HybridContinuationEvidence(
+        record["physical_error"], tuple(epochs), source_result
+    )
 
 
 @final
 class _HybridContinuationEvidence(phx.StrictModule):
+    """Cold continuation error, accepted-state solve epochs and restored source."""
+
     physical_error: float
+    epochs: tuple[dict[str, Any], ...] = eqx.field(static=True)
+    source_result: dict[str, Any] = eqx.field(static=True)
+
+
+def _hybrid_record_cold_epochs(
+    record: dict[str, Any], continued: _HybridContinuationEvidence, cycle: int
+) -> None:
+    """Publish one cold continuation's accepted-state solves as campaign epochs."""
+
+    for epoch in continued.epochs:
+        index = len(record["epochs"])
+        record["epochs"].append(
+            {
+                **epoch,
+                "epoch": index,
+                "name": f"{epoch['name']}_{cycle}",
+                "cycle": cycle,
+                "continuation_epoch": epoch["epoch"],
+                "execution_process": "cold-archive-continuation",
+            }
+        )
+        record["stages_seconds"].update(
+            {
+                epoch_stage_name(stage, index): seconds
+                for stage, seconds in epoch["stages_seconds"].items()
+            }
+        )
 
 
 @final
@@ -1533,11 +1682,151 @@ class _HybridAdaptationCycle(phx.StrictModule):
     coarsening: phx.meshing.MeshAdaptationResult
 
 
+@final
+class _HybridWarmLineage(phx.StrictModule):
+    """The warm producer's carried accepted state and its shared preparations."""
+
+    plans: LayerCoreLifecyclePlans
+    state: LayerCoreAcceptedState
+    material: LayerCoreMaterialDeclaration = eqx.field(static=True)
+
+
+def _hybrid_warm_cycle(
+    args: QualificationControls,
+    record: dict[str, Any],
+    accepted: phx.meshing.CellMeshingResult,
+    adaptation: _HybridAdaptationCycle,
+    cycle: int,
+    /,
+    *,
+    part_name: str,
+    limits: phx.meshing.MeshingLimits,
+    carried: _HybridWarmLineage | None,
+    original_scalar_values: tuple[jax.Array, jax.Array, jax.Array] | None = None,
+    original_scalar_preparations: tuple[Any, Any, Any] | None = None,
+    prepared_operands: PreparedCoordinateOperands | None = None,
+    transition_operands: tuple[
+        PreparedCoordinateOperands | None, PreparedCoordinateOperands | None
+    ] = (None, None),
+) -> tuple[tuple[MeshingAcceptedEpoch, ...], _HybridWarmLineage]:
+    """Continue the accepted state warm through one cycle and checkpoint its epochs.
+
+    The first cycle authors the initial accepted state on ``accepted``; later
+    cycles carry the previous cycle's coarsened accepted state, never reseeding.
+    """
+
+    densities, material_site = _hybrid_material_controls(
+        args.hybrid_profile, args.hybrid_region_densities, args.hybrid_material_site
+    )
+    ledger = StageLedger(
+        record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
+    )
+    if carried is None:
+        plans = LayerCoreLifecyclePlans()
+        material = layer_core_material_declaration(
+            accepted,
+            densities=densities,
+            site_id=material_site,
+        )
+        state, epoch, _, _ = ledger.run(
+            f"warm_initial_accepted_state:{cycle}",
+            lambda: warm_layer_core_initial_state(
+                accepted,
+                material=material,
+                plans=plans,
+                limits=limits,
+                part_name=part_name,
+                solver_repeats=args.repeats,
+                current_preparation=None
+                if original_scalar_preparations is None
+                else original_scalar_preparations[0],
+                prepared_operands=prepared_operands,
+                original_scalar=(
+                    None if original_scalar_values is None else original_scalar_values[0]
+                ),
+            ),
+        )
+    else:
+        plans, material, state = carried.plans, carried.material, carried.state
+        if state.result.result_id != accepted.result_id:
+            raise qualification_failure(
+                "_hybrid_warm_cycle",
+                "The carried accepted state does not belong to this cycle's carrier.",
+                {"state": state.result.result_id, "accepted": accepted.result_id},
+            )
+        if original_scalar_values is not None and (
+            state.original_scalar is None
+            or not np.array_equal(
+                np.asarray(state.original_scalar), np.asarray(original_scalar_values[0])
+            )
+        ):
+            raise qualification_failure(
+                "_hybrid_warm_cycle",
+                "The original P1 bank must be carried from the preceding accepted epoch without reseeding.",
+                {"state_epoch": state.epoch, "cycle": cycle},
+            )
+        epoch = layer_core_accepted_epoch(state, part_name=part_name, plans=plans)
+    refined, refined_epoch, refine_step, _ = ledger.run(
+        f"warm_refinement_continuation:{cycle}",
+        lambda: warm_layer_core_step(
+            state,
+            adaptation.refinement,
+            material=material,
+            plans=plans,
+            limits=limits,
+            part_name=part_name,
+            solver_repeats=args.repeats,
+            original_scalar=(
+                None if original_scalar_values is None else original_scalar_values[1]
+            ),
+            current_preparation=None
+            if original_scalar_preparations is None
+            else original_scalar_preparations[1],
+            prepared_operands=transition_operands[0],
+        ),
+    )
+    coarsened, coarsened_epoch, coarsen_step, _ = ledger.run(
+        f"warm_coarsening_continuation:{cycle}",
+        lambda: warm_layer_core_step(
+            refined,
+            adaptation.coarsening,
+            material=material,
+            plans=plans,
+            limits=limits,
+            part_name=part_name,
+            solver_repeats=args.repeats,
+            restores=state.result,
+            original_scalar=(
+                None if original_scalar_values is None else original_scalar_values[2]
+            ),
+            current_preparation=None
+            if original_scalar_preparations is None
+            else original_scalar_preparations[2],
+            prepared_operands=transition_operands[1],
+        ),
+    )
+    record.setdefault("warm_continuations", []).append(
+        {
+            "cycle": cycle,
+            "steps": [refine_step, coarsen_step],
+            "restoration_defects": layer_core_restoration_defects(
+                coarsened, epoch, plans=plans
+            ),
+        }
+    )
+    return (epoch, refined_epoch, coarsened_epoch), _HybridWarmLineage(
+        plans, coarsened, material
+    )
+
+
 def _hybrid_concave_publication(
     args: QualificationControls, record: dict[str, Any]
 ) -> _HybridOriginalPublication:
     """Generate the fixed-cap core and retain its source and material coverage."""
 
+    densities, material_site = _hybrid_material_controls(
+        args.hybrid_profile, args.hybrid_region_densities, args.hybrid_material_site
+    )
     owners = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
@@ -1586,7 +1875,7 @@ def _hybrid_concave_publication(
     generated = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run("original_fixed_cap_core_publication", plan.execute)
-    record["core_generation"] = _result_identity(generated)
+    record["generation"] = _result_identity(generated)
     record["core_consumer_controls"] = {
         "specification_id": specification.specification_id,
         "size": args.hybrid_core_size,
@@ -1606,12 +1895,12 @@ def _hybrid_concave_publication(
         "original_source_material_declaration",
         lambda: layer_core_material_declaration(
             generated,
-            densities=tuple(args.hybrid_region_densities),
-            site_id=args.hybrid_material_site,
+            densities=densities,
+            site_id=material_site,
         ),
     )
     coverage = generated.certification.coverage
-    if coverage is None or any(
+    if not isinstance(coverage, phx.geometry.DomainCoverageCertificate) or any(
         value is None for value in coverage.achieved_region_measures
     ):
         raise qualification_failure(
@@ -1710,14 +1999,7 @@ def _hybrid_concave_adaptation_cycle(
             [np.asarray(block.global_ids) for block in refinement.target.mesh.blocks]
         ).tolist()
     )
-    children = sorted(
-        {
-            child
-            for entry in hierarchy.records
-            for child in entry.child_ids
-            if child in active
-        }
-    )
+    children = sorted(set(hierarchy.siblings.all_child_ids().tolist()) & active)
     coarsening = StageLedger(
         record,
         deadline=Deadline(record["started"] + record["targets"]["wall_seconds"]),
@@ -1751,23 +2033,26 @@ def _hybrid_concave_archive_continuation(
     accepted: phx.meshing.CellMeshingResult,
     adaptation: _HybridAdaptationCycle,
     cycle: int,
-) -> _HybridContinuationEvidence:
-    """Archive accepted lineage and consume it in the remaining-budget cold continuation."""
+    carried: _HybridWarmLineage | None,
+) -> tuple[_HybridContinuationEvidence, _HybridWarmLineage]:
+    """Checkpoint the cycle's warm accepted states and cold-continue them."""
 
     source, specification, options = (
         publication.source,
         publication.specification,
         publication.options,
     )
-    refinement, coarsening = adaptation.refinement, adaptation.coarsening
     _ledger = StageLedger(record)
-    certification = accepted.certification
-    if certification is None:
-        raise qualification_failure(
-            "hybrid.accepted_certification",
-            "retain the accepted source theorem",
-            {"certification": certification},
-        )
+    epochs, warm = _hybrid_warm_cycle(
+        args,
+        record,
+        accepted,
+        adaptation,
+        cycle,
+        part_name="original-concave-layer-core",
+        limits=specification.limits,
+        carried=carried,
+    )
     with TemporaryDirectory(prefix="native-original-concave-lineage-") as temporary:
         receipt = StageLedger(
             record,
@@ -1776,18 +2061,7 @@ def _hybrid_concave_archive_continuation(
             f"original_default_durable_lineage:{cycle}",
             lambda: write_meshing_source_closure(
                 Path(temporary) / "lifecycle",
-                {
-                    "certification_inputs": certification.request,
-                    "report": accepted.certification,
-                    "associations": accepted.associations,
-                    "generation_source": source,
-                    "generation_specification": specification,
-                    "generation_options": options,
-                    "generation_part": phx.meshing.MeshPart(
-                        "original-concave-layer-core", accepted
-                    ),
-                    "accepted_data": {"adaptation_results": (refinement, coarsening)},
-                },
+                layer_core_lineage_records(source, specification, options, epochs),
             ),
         )
         consumer = QualificationControls.from_record(
@@ -1806,14 +2080,16 @@ def _hybrid_concave_archive_continuation(
         }
         record["cycles"].append(continuation)
         try:
-            continued = _hybrid_qualification_archived_profile(consumer, continuation)
+            continued = _hybrid_qualification_archived_profile(
+                consumer, continuation, expected_rounds=1
+            )
         except Exception:
             _ledger.inherit_failure(continuation)
             raise
         finally:
             del continuation["started"]
             del continuation["active_phase"]
-    return continued
+    return continued, warm
 
 
 def _hybrid_qualification_concave_lifecycle(
@@ -1847,13 +2123,15 @@ def _hybrid_qualification_concave_lifecycle(
     accepted = _hybrid_concave_high_order_map(args, record, publication)
     record["cycles"] = []
     errors: list[float] = []
+    carried: _HybridWarmLineage | None = None
     for cycle in range(args.adaptation_rounds):
         adaptation = _hybrid_concave_adaptation_cycle(
             args, record, publication, accepted, cycle
         )
-        continued = _hybrid_concave_archive_continuation(
-            args, record, publication, accepted, adaptation, cycle
+        continued, carried = _hybrid_concave_archive_continuation(
+            args, record, publication, accepted, adaptation, cycle, carried
         )
+        _hybrid_record_cold_epochs(record, continued, cycle)
         errors.append(continued.physical_error)
         accepted = adaptation.coarsening.target
     cycles = record["cycles"]
@@ -1873,7 +2151,9 @@ def _hybrid_qualification_concave_lifecycle(
     record["independent_scientific_certification"] = "passed"
     record["status"] = "passed"
 
-    return _HybridContinuationEvidence(record["physical_error"])
+    return _HybridContinuationEvidence(
+        record["physical_error"], tuple(record["epochs"]), record["generation"]
+    )
 
 
 class _HybridOriginalCurvedRefusalOwners(TypedDict):
@@ -2056,7 +2336,10 @@ def _hybrid_corrected_publication(
 
 
 def _hybrid_corrected_adaptation(
-    publication: _HybridCorrectedPublication, record: dict[str, Any]
+    publication: _HybridCorrectedPublication,
+    accepted: phx.meshing.CellMeshingResult,
+    record: dict[str, Any],
+    cycle: int,
 ) -> _HybridAdaptationCycle:
     """Accept all required mixed refinement and inverse coarsening without changing source coefficients."""
 
@@ -2065,7 +2348,9 @@ def _hybrid_corrected_adaptation(
         publication.authored.specification,
         publication.generated,
     )
-    columns = _hybrid_qualification_columns(generated)
+    columns = _hybrid_qualification_columns(accepted)
+    # Later cycles adapt the restored carrier; the source association transfer
+    # remains bound to the source's accepted scientific generation request.
     policy = prepare_hybrid_adaptation_policy(
         source, specification, generated, limits=specification.limits
     )
@@ -2073,7 +2358,7 @@ def _hybrid_corrected_adaptation(
         np.concatenate(
             [
                 np.asarray(block.global_ids, dtype=np.int64)
-                for block in generated.mesh.blocks
+                for block in accepted.mesh.blocks
                 if block.cell_kind == "tetrahedron"
             ]
         )
@@ -2087,10 +2372,10 @@ def _hybrid_corrected_adaptation(
     refinement = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
-        "corrected_mixed_refinement",
+        f"corrected_mixed_refinement:{cycle}",
         lambda: phx.meshing.execute_mesh_adaptation(
             phx.meshing.prepare_mesh_adaptation(
-                generated,
+                accepted,
                 phx.meshing.MarkedMeshAdaptation(core_ids[:1], layer_columns=columns),
                 policy=policy,
             )
@@ -2112,20 +2397,13 @@ def _hybrid_corrected_adaptation(
         ).tolist()
     )
     children = np.asarray(
-        sorted(
-            {
-                child
-                for entry in hierarchy.records
-                for child in entry.child_ids
-                if child in active
-            }
-        ),
+        sorted(set(hierarchy.siblings.all_child_ids().tolist()) & active),
         dtype=np.int64,
     )
     coarsening = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
-        "corrected_mixed_inverse_coarsening",
+        f"corrected_mixed_inverse_coarsening:{cycle}",
         lambda: phx.meshing.execute_mesh_adaptation(
             phx.meshing.prepare_mesh_adaptation(
                 refinement.target,
@@ -2173,46 +2451,73 @@ def _hybrid_corrected_archive_continuation(
     args: QualificationControls,
     record: dict[str, Any],
     publication: _HybridCorrectedPublication,
+    accepted: phx.meshing.CellMeshingResult,
     adaptation: _HybridAdaptationCycle,
-) -> _HybridContinuationEvidence:
-    """Persist retained producer validation and cold-continue the accepted all-field history."""
+    cycle: int,
+    carried: _HybridWarmLineage | None,
+) -> tuple[_HybridContinuationEvidence, _HybridWarmLineage]:
+    """Checkpoint the cycle's warm accepted states and cold-continue them.
 
-    authored, plan, generated, report = (
+    The first cycle archives the live generation under its retained producer
+    validation; later cycles archive their carried accepted state, which the
+    archive owner validates and the consumer authenticates in full.
+    """
+
+    authored, plan, generated = (
         publication.authored,
         publication.plan,
         publication.generated,
-        publication.report,
     )
     source, specification = authored.source, authored.specification
     refinement, coarsening = adaptation.refinement, adaptation.coarsening
+    if accepted.certification is None:
+        raise qualification_failure(
+            "hybrid.accepted_certification",
+            "retain the accepted source theorem",
+            {"certification": accepted.certification},
+        )
+    retained = accepted is generated
+    _ledger = StageLedger(record)
+    epochs, warm = _hybrid_warm_cycle(
+        args,
+        record,
+        accepted,
+        adaptation,
+        cycle,
+        part_name="corrected-curved-periodic-layer-core",
+        limits=specification.limits,
+        carried=carried,
+    )
     with TemporaryDirectory(prefix="native-corrected-curved-lineage-") as temporary:
         receipt = StageLedger(
             record,
             deadline=Deadline(record["started"] + record["targets"]["wall_seconds"]),
         ).run(
-            "corrected_durable_source_archive",
+            f"corrected_durable_source_archive:{cycle}",
             lambda: write_meshing_source_closure(
                 Path(temporary) / "lifecycle",
-                {
-                    "certification_inputs": report.request,
-                    "report": report,
-                    "associations": generated.associations,
-                    "generation_source": source,
-                    "generation_specification": specification,
-                    "generation_options": authored.options,
-                    "generation_part": phx.meshing.MeshPart(
-                        "corrected-curved-periodic-layer-core", generated
-                    ),
-                    "accepted_data": {"adaptation_results": (refinement, coarsening)},
-                },
-                retained_layer_core_plan=plan,
+                layer_core_lineage_records(
+                    source, specification, authored.options, epochs
+                ),
+                retained_layer_core_plan=plan if retained else None,
             ),
         )
-        if receipt.validation_id is None or generated.execution_evidence is None:
-            raise qualification_failure(
-                "_hybrid_qualification_corrected_curved_lifecycle",
-                ("Corrected lifecycle archive lacks retained producer validation."),
-                {"generated": generated, "receipt": receipt},
+        retained_controls = None
+        if retained:
+            if receipt.validation_id is None or generated.execution_evidence is None:
+                raise qualification_failure(
+                    "_hybrid_qualification_corrected_curved_lifecycle",
+                    ("Corrected lifecycle archive lacks retained producer validation."),
+                    {"generated": generated, "receipt": receipt},
+                )
+            retained_controls = MeshingSourceExecutionControls(
+                generated.execution_evidence,
+                specification.limits,
+                source.source_id,
+                source.source_revision,
+                specification.specification_id,
+                source.binding_id,
+                receipt.content_id,
             )
         consumer = QualificationControls.from_record(
             {
@@ -2221,25 +2526,35 @@ def _hybrid_corrected_archive_continuation(
                 "hybrid_content_id": receipt.content_id,
             }
         )
-        retained_controls = MeshingSourceExecutionControls(
-            generated.execution_evidence,
-            specification.limits,
-            source.source_id,
-            source.source_revision,
-            specification.specification_id,
-            source.binding_id,
-            receipt.content_id,
-        )
-        continued = _hybrid_qualification_archived_profile(
-            consumer, record, retained_controls=retained_controls
-        )
-        record["archive"] = {
-            "content_id": receipt.content_id,
-            "source_revision": source.source_revision,
-            "source_binding_id": source.binding_id,
-            "restored_cold_continuation": True,
+        continuation: dict[str, Any] = {
+            "cycle": cycle,
+            "started": record["started"],
+            "targets": record["targets"],
+            "stages_seconds": {},
+            "active_phase": f"corrected_cold_continuation:{cycle}",
         }
-    record["source"].update(
+        record["cycles"].append(continuation)
+        try:
+            continued = _hybrid_qualification_archived_profile(
+                consumer,
+                continuation,
+                retained_controls=retained_controls,
+                expected_rounds=1,
+            )
+        except Exception:
+            _ledger.inherit_failure(continuation)
+            raise
+        finally:
+            del continuation["started"]
+            del continuation["active_phase"]
+    continuation["archive"] = {
+        "content_id": receipt.content_id,
+        "source_revision": source.source_revision,
+        "source_binding_id": source.binding_id,
+        "retained_producer_validation": retained,
+        "restored_cold_continuation": True,
+    }
+    continuation["source"].update(
         {
             "source_digest": authored.source_digest,
             "mapped_domain_id": publication.mapped_domain.domain_id,
@@ -2247,24 +2562,21 @@ def _hybrid_corrected_archive_continuation(
             "coefficient_orbit_ids": list(authored.coefficient_orbit_ids),
         }
     )
-    record["adaptation"] = {
+    continuation["adaptation"] = {
+        "accepted_id": accepted.result_id,
         "refinement_id": refinement.result_id,
         "coarsening_id": coarsening.result_id,
         "restored_topology": True,
         "restored_source_coefficients": True,
     }
-    record["implemented_admitted_workflow"] = (
-        "corrected-curved-periodic-ADVANCING-layer-core-highorder-"
-        "mixed-allfield-history-PDE-cold-continuation"
-    )
-    return continued
+    return continued, warm
 
 
 def _hybrid_qualification_corrected_curved_lifecycle(
     args: QualificationControls,
     record: dict[str, Any],
 ) -> _HybridContinuationEvidence:
-    """Generate, adapt, archive, and cold-continue the periodic-orbit curved source."""
+    """Generate, then adapt, archive, and cold-continue every declared cycle."""
     if args.geometry_order != 2:
         raise ValueError(
             f"_hybrid_qualification_corrected_curved_lifecycle.geometry_order must be two for the authored quadratic source; got {args.geometry_order!r}."
@@ -2275,8 +2587,31 @@ def _hybrid_qualification_corrected_curved_lifecycle(
         )
     authored = _hybrid_corrected_source(args, record)
     publication = _hybrid_corrected_publication(authored, record)
-    adaptation = _hybrid_corrected_adaptation(publication, record)
-    return _hybrid_corrected_archive_continuation(args, record, publication, adaptation)
+    record["cycles"] = []
+    errors: list[float] = []
+    accepted = publication.generated
+    carried: _HybridWarmLineage | None = None
+    for cycle in range(args.adaptation_rounds):
+        adaptation = _hybrid_corrected_adaptation(publication, accepted, record, cycle)
+        continued, carried = _hybrid_corrected_archive_continuation(
+            args, record, publication, accepted, adaptation, cycle, carried
+        )
+        _hybrid_record_cold_epochs(record, continued, cycle)
+        errors.append(continued.physical_error)
+        accepted = adaptation.coarsening.target
+    record["physical_error"] = max(errors)
+    record["physical_error_scope"] = (
+        "maximum-nodal-PDE-defect-across-every-cycle-history-transition"
+    )
+    record["independent_scientific_certification"] = "passed"
+    record["status"] = "passed"
+    record["implemented_admitted_workflow"] = (
+        "corrected-curved-periodic-ADVANCING-layer-core-highorder-"
+        "mixed-allfield-history-PDE-cold-continuation"
+    )
+    return _HybridContinuationEvidence(
+        record["physical_error"], tuple(record["epochs"]), record["generation"]
+    )
 
 
 def _hybrid_qualification_original_profile(
@@ -2294,6 +2629,7 @@ def _hybrid_qualification_original_profile(
         "started": started,
         "active_phase": "original_source_preparation",
         "stages_seconds": {},
+        "epochs": [],
         "mandatory_workflow_completion": "incomplete",
         "release_evidence": "unassessed",
         "leadership_evidence": "unassessed",
@@ -2328,6 +2664,8 @@ def _hybrid_qualification_original_profile(
             return record
         if args.hybrid_profile == "archived-layer-core":
             continued = _hybrid_qualification_archived_profile(args, record)
+            record["generation"] = continued.source_result
+            _hybrid_record_cold_epochs(record, continued, 0)
         elif args.hybrid_profile == "concave-box-core-lifecycle":
             continued = _hybrid_qualification_concave_lifecycle(args, record)
         elif args.hybrid_profile == "curved-periodic-layer-core":
@@ -2380,14 +2718,11 @@ def _hybrid_qualification_original_profile(
         TimeoutError,
         subprocess.TimeoutExpired,
     ) as failure:
-        record.update(
-            FailureRecord.from_exception(failure, record["active_phase"]).to_record()
-        )
-        if isinstance(failure, (TimeoutError, subprocess.TimeoutExpired)):
-            record["status"] = "timeout"
+        record_failure(record, failure, record["active_phase"])
     finally:
         record["end_to_end_seconds"] = perf_counter() - started
-        record["peak_process_resident_bytes"] = peak_resident_bytes(resource.RUSAGE_SELF)
+        record["peak_process_resident_bytes"] = peak_resident_bytes()
+        record["process_peak_scope"] = PEAK_RESIDENT_SCOPE
         expected_admission = contract["expected_admission"]
         if expected_admission not in ("positive", "refusal"):
             raise ValueError(
@@ -2436,16 +2771,23 @@ def _hybrid_qualification_original_profile(
                 or physical_error is None
                 or not np.isfinite(physical_error)
                 or physical_error > args.target_error
+                or not record["epochs"]
+                or not isinstance(record.get("generation"), dict)
             ):
                 raise qualification_failure(
                     "_hybrid_qualification_original_profile",
-                    ("Full hybrid workflow lacks passing independent physical evidence."),
+                    (
+                        "Full hybrid workflow lacks passing independent physical, "
+                        "accepted-epoch or generation publication evidence."
+                    ),
                     {"args": args, "physical_error": physical_error, "record": record},
                 )
             record["mandatory_workflow_completion"] = "complete"
         if record["end_to_end_seconds"] > args.timeout:
             record["status"] = "timeout"
             record["mandatory_workflow_completion"] = "incomplete"
+            if "case_contract_completion" in record:
+                record["case_contract_completion"] = "incomplete"
         del record["started"]
         del record["active_phase"]
     return record
@@ -2882,10 +3224,17 @@ def _hybrid_qualification_curving(
     query: Any,
     projection: Any,
     args: QualificationControls,
+    limits: Any,
     certificates: Any,
     record: dict[str, Any],
+    *,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> Any:
-    """Bind high-order curving and every successor to the independent full box."""
+    """Bind high-order curving and every successor to the independent full box.
+
+    Curved publication certifies with the explicit ``certificates`` caps
+    unchanged, on tickets of the unit-box request ``limits``.
+    """
 
     vertices = np.asarray(
         phx.discretization.reference_cell_topology("hexahedron").vertices,
@@ -2912,85 +3261,167 @@ def _hybrid_qualification_curving(
     regions = np.zeros(
         sum(block.cell_count for block in result.mesh.blocks), dtype=np.int64
     )
-    association = StageLedger(
-        record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
-    ).run(
-        "combined_cad_association",
-        lambda: phx.meshing.associate_mesh_vertices(
-            result.mesh,
-            projection,
-            policy=phx.meshing.AssociationPropagationPolicy(
-                classification_tolerance=1.0e-8
-            ),
-        ),
-    )
+    # Curving certifies under the canonical publication audit's validity
+    # policy (default 4096 Bernstein nodes, stricter than the curving default
+    # 32768, unchanged tolerances) so publication may admit its earned proof.
+    validity = phx.discretization.CellValidityPolicy()
     policy = phx.meshing.HighOrderCurvingPolicy(
         degree=args.geometry_order,
         relaxation_rounds=0,
         fidelity_tolerance=1.0e-7,
         maximum_geometry_nodes=32 * args.capacity,
         maximum_tabulation_entries=1024 * args.capacity,
+        validity=validity,
     )
-    curved = StageLedger(
-        record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
-    ).run(
-        "high_order_curving_and_independent_certification",
-        lambda: phx.meshing.curve_cell_mesh(
-            result.mesh,
-            association,
-            projection,
-            policy=policy,
-            source=query,
-            domain=domain,
-            cell_regions=regions,
-            certificate_limits=certificates,
-        ),
-    )
-    record["curving"] = {
-        "status": curved.status.value,
-        "policy_id": policy.policy_id,
-        "accepted": curved.evidence.accepted,
-        "certification_failures": list(curved.evidence.certification_failures),
-        "coordinate_map_certificate": _cad_curving_certificate(
-            curved.evidence.certificate
-        ),
-        "certificate_limits_id": certificates.limits_id,
-        "maximum_geometry_nodes": policy.maximum_geometry_nodes,
-        "maximum_tabulation_entries": policy.maximum_tabulation_entries,
-        "maximum_source_residual": curved.evidence.maximum_residual,
-        "geometry_order": args.geometry_order,
-        "domain_id": domain.domain_id,
-        "source_query_id": query.source_id,
-        "source_query_revision": query.source_revision,
-        "nonlinear_curved_wall_qualification": "not-claimed",
-    }
-    if (
-        curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED
-        or not curved.evidence.accepted
-    ):
-        raise qualification_failure(
-            "_hybrid_qualification_curving",
-            ("Native hybrid high-order curving failed a source certificate check."),
-            {"curved": curved},
+    def curve_and_publish() -> Any:
+        with (
+            NativeExecutionScope(limits.native_limits()) as execution,
+            NativeHostStorageWorkspace(execution) as workspace,
+        ):
+            with execution.batch(0) as ticket:
+                budget = CoordinateEnclosureBudget(
+                    ticket,
+                    maximum_work_units=limits.maximum_work_units,
+                    maximum_memory_bytes=limits.maximum_scratch_bytes,
+                )
+                budget.capture_coordinate_operands = coordinate_operands is not None
+                budget.capture_polynomial_operands = (
+                    coordinate_operands is not None and coordinate_operands.capture_polynomials
+                )
+                budget.capture_signed_determinant_operands = (
+                    coordinate_operands is not None
+                    and coordinate_operands.capture_signed_determinants
+                )
+            if coordinate_operands is not None:
+                coordinate_operands.begin(
+                    execution, None,
+                    native_preparation_ledger(execution).overlap(execution, None),
+                )
+            with (
+                budget.retained_storage(
+                    lambda size: execution.batch(0, bytes_upper=size)
+                ),
+                meshing_source_owner_reconstruction_scope(budget=budget),
+            ):
+                with budget.bind_ticket(execution.ticket_view()):
+                    association = StageLedger(
+                        record,
+                        deadline=Deadline(record["started"] + record["targets"]["wall_seconds"]),
+                    ).run(
+                        "combined_cad_association",
+                        lambda: phx.meshing.associate_mesh_vertices(
+                            result.mesh,
+                            projection,
+                            policy=phx.meshing.AssociationPropagationPolicy(
+                                classification_tolerance=1.0e-8
+                            ),
+                            budget=budget,
+                        ),
+                    )
+                    curved = StageLedger(
+                        record,
+                        deadline=Deadline(record["started"] + record["targets"]["wall_seconds"]),
+                    ).run(
+                        "high_order_curving_and_independent_certification",
+                        lambda: phx.meshing.curve_cell_mesh(
+                            result.mesh,
+                            association,
+                            projection,
+                            policy=policy,
+                            source=query,
+                            domain=domain,
+                            cell_regions=regions,
+                            certificate_limits=certificates,
+                            budget=budget,
+                        ),
+                    )
+                    record["curving"] = {
+                        "status": curved.status.value,
+                        "policy_id": policy.policy_id,
+                        "accepted": curved.evidence.accepted,
+                        "certification_failures": list(curved.evidence.certification_failures),
+                        "coordinate_map_certificate": _cad_curving_certificate(
+                            curved.evidence.certificate
+                        ),
+                        "certificate_limits_id": certificates.limits_id,
+                        "publication_limits_id": limits.limits_id,
+                        "maximum_geometry_nodes": policy.maximum_geometry_nodes,
+                        "maximum_tabulation_entries": policy.maximum_tabulation_entries,
+                        "validity_policy": {
+                            "policy_id": validity.policy_id,
+                            "maximum_bernstein_nodes": validity.maximum_bernstein_nodes,
+                            "origin": "canonical-publication-default",
+                            "certificate_policy_id": curved.evidence.certificate.policy_id,
+                        },
+                        "maximum_source_residual": curved.evidence.maximum_residual,
+                        "geometry_order": args.geometry_order,
+                        "domain_id": domain.domain_id,
+                        "source_query_id": query.source_id,
+                        "source_query_revision": query.source_revision,
+                        "nonlinear_curved_wall_qualification": "not-claimed",
+                    }
+                    if (
+                        curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED
+                        or not curved.evidence.accepted
+                    ):
+                        raise qualification_failure(
+                            "_hybrid_qualification_curving",
+                            "Native hybrid high-order curving failed a source certificate check.",
+                            {"curved": curved},
+                        )
+                    inputs = phx.meshing.MeshCertificationInputs(
+                        result.mesh,
+                        result.geometry,
+                        phx.meshing.MeshCertificationSchedule("volume_layer"),
+                        domain=domain,
+                        cell_regions=regions,
+                        source=query,
+                        fidelity_tolerance=policy.fidelity_tolerance,
+                        limits=certificates,
+                        budget=budget,
+                    )
+                published = StageLedger(
+                    record,
+                    deadline=Deadline(record["started"] + record["targets"]["wall_seconds"]),
+                ).run(
+                    "curved_canonical_publication",
+                    lambda: qualify_hybrid_curved_publication(
+                        result,
+                        curved.geometry,
+                        association,
+                        inputs,
+                        limits=limits,
+                        curving=curved.evidence,
+                        execution=NativePublicationExecution(
+                            execution, workspace, None, budget
+                        ),
+                    ),
+                )
+                if coordinate_operands is not None:
+                    with budget.bind_ticket(execution.ticket_view()):
+                        coordinate_operands.capture(
+                            published.mesh, published.geometry, budget, execution,
+                            coordinate_contract=published.coordinate_contract,
+                        )
+        if execution.evidence is None:
+            raise RuntimeError("hybrid.curving must retain its complete request evidence")
+        bound = bind_native_execution_result(
+            published,
+            execution.evidence,
+            limits,
+            execution.operation_started,
+            history_evidence=()
+            if result.execution_evidence is None else (result.execution_evidence,),
         )
-    inputs = phx.meshing.MeshCertificationInputs(
-        result.mesh,
-        result.geometry,
-        phx.meshing.MeshCertificationSchedule("volume_layer"),
-        domain=domain,
-        cell_regions=regions,
-        source=query,
-        fidelity_tolerance=policy.fidelity_tolerance,
-        limits=certificates,
-    )
+        if coordinate_operands is not None:
+            if bound.execution_evidence is None:
+                raise RuntimeError("Hybrid operands require their ended publication receipt.")
+            coordinate_operands.complete(bound.execution_evidence)
+        return bound
+
     return StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
-    ).run(
-        "curved_canonical_publication",
-        lambda: qualify_hybrid_curved_publication(
-            result, curved.geometry, association, inputs
-        ),
-    )
+    ).run("curving_and_publication_complete_request", curve_and_publish)
 
 
 def hybrid_solver_field_templates(
@@ -3007,7 +3438,9 @@ def hybrid_solver_field_templates(
     )
 
 
-def _hybrid_qualification_solver(result: Any) -> tuple[Any, Any, Any]:
+def _hybrid_qualification_solver(
+    result: Any, *, budget: CoordinateEnclosureBudget | None = None
+) -> tuple[Any, Any, Any]:
 
     templates = {
         cell_kind: hybrid_solver_field_templates(cell_kind)[0][1]
@@ -3024,13 +3457,13 @@ def _hybrid_qualification_solver(result: Any) -> tuple[Any, Any, Any]:
     )
     space = phx.discretization.FiniteElementPlan(
         result.mesh, field, coordinate_spec=result.geometry
-    ).prepare()
+    ).prepare(budget=budget)
     constraint = phx.discretization.dirichlet_constraint(space, "u")
     form = phx.equations.FiniteElementForm(
         "qualified-hybrid-diffusion", "u", (phx.equations.DiffusionAction("u", 1.0),)
     )
     problem = phx.equations.compile_finite_element_problem(
-        form, space, constraint=constraint, dirichlet_values=exact_solution
+        form, space, constraint=constraint, dirichlet_values=exact_solution, budget=budget
     )
     return space, problem, constraint.free_dofs
 
@@ -3085,7 +3518,11 @@ def _hybrid_qualification_acceptance(result: Any, source: Any) -> dict[str, obje
         certificate.fidelity,
         certificate.embedding,
     )
-    if coverage is None or fidelity is None or embedding is None:
+    if (
+        not isinstance(coverage, phx.geometry.DomainCoverageCertificate)
+        or fidelity is None
+        or embedding is None
+    ):
         raise qualification_failure(
             "_hybrid_qualification_acceptance",
             ("Hybrid result lacks independent coverage, fidelity, or global embedding."),
@@ -3302,13 +3739,13 @@ def _hybrid_qualification_rejection(
 ) -> None:
     """Retain every accepted state role when a sibling request omits children."""
 
-    if adapted.hierarchy is None or not adapted.hierarchy.records:
+    if adapted.hierarchy is None or len(adapted.hierarchy.siblings) == 0:
         raise qualification_failure(
             "_hybrid_qualification_rejection",
             ("Hybrid refinement omitted sibling ancestry records."),
             {"adapted": adapted},
         )
-    child = adapted.hierarchy.records[0].child_ids[0]
+    child = adapted.hierarchy.siblings[0].child_ids[0]
     source = adapted.target
     before = _hybrid_qualification_state_id(source, values)
     request = phx.meshing.MarkedMeshAdaptation(
@@ -3363,6 +3800,28 @@ def _hybrid_qualification_rejection(
     )
 
 
+def _hybrid_scalar_request[T](
+    result: Any,
+    limits: Any,
+    current_preparation: Any,
+    call: Callable[[CoordinateEnclosureBudget], T],
+    /,
+) -> tuple[T, Any]:
+    previous = _layer_core_current_preparation(result, current_preparation)
+
+    def execute(execution: NativeExecutionScope) -> T:
+        with execution.ticket_view() as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with budget.activate(), meshing_source_owner_reconstruction_scope(budget=budget):
+                return call(budget)
+
+    return layer_core_continuation_execution(limits, previous, execute)
+
+
 def _hybrid_qualification_transition(
     result: Any,
     space: Any,
@@ -3373,8 +3832,9 @@ def _hybrid_qualification_transition(
     record: dict[str, Any],
     label: str,
     coarsening: bool,
-) -> tuple[Any, Any, Any, Any, Any]:
-
+    *,
+    coordinate_operands: CoordinateOperandCollector | None = None,
+) -> tuple[Any, Any, Any, Any, Any, Any]:
     prepared = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
@@ -3383,19 +3843,60 @@ def _hybrid_qualification_transition(
     )
     adaptation = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
-    ).run(f"{label}_execute", lambda: phx.meshing.execute_mesh_adaptation(prepared))
-    if adaptation.transition is None or adaptation.geometry_transition is None:
+    ).run(
+        f"{label}_execute",
+        lambda: phx.meshing.execute_mesh_adaptation(
+            prepared, coordinate_operands=coordinate_operands
+        ),
+    )
+    if (
+        adaptation.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
+        or adaptation.transition is None
+        or adaptation.geometry_transition is None
+    ):
         raise qualification_failure(
             "_hybrid_qualification_transition",
-            ("Hybrid mixed adaptation did not publish a geometry-preserving transition."),
+            "Hybrid mixed adaptation did not complete every requested cell with a geometry-preserving transition.",
             {"adaptation": adaptation},
         )
     if not adaptation.geometry_transition.evidence.exact:
         raise qualification_failure(
             "_hybrid_qualification_transition",
-            ("Hybrid mixed refinement/coarsening changed the coordinate map."),
+            "Hybrid mixed refinement/coarsening changed the coordinate map.",
             {"adaptation": adaptation},
         )
+    payload, current = StageLedger(
+        record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
+    ).run(
+        f"{label}_original_scalar_request",
+        lambda: _hybrid_scalar_request(
+            adaptation.target,
+            policy.limits,
+            None,
+            lambda budget: _hybrid_scalar_transition(
+                result, space, values, request, source, record, label, coarsening,
+                prepared=prepared, adaptation=adaptation, budget=budget,
+            ),
+        ),
+    )
+    return *payload, current
+
+
+def _hybrid_scalar_transition(
+    result: Any,
+    space: Any,
+    values: Any,
+    request: Any,
+    source: Any,
+    record: dict[str, Any],
+    label: str,
+    coarsening: bool,
+    *,
+    prepared: Any,
+    adaptation: Any,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Any, Any, Any, Any, Any]:
+
     acceptance = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
@@ -3406,7 +3907,7 @@ def _hybrid_qualification_transition(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
         f"{label}_target_solver_preparation",
-        lambda: _hybrid_qualification_solver(adaptation.target),
+        lambda: _hybrid_qualification_solver(adaptation.target, budget=budget),
     )
     target_space, problem, free = target_solver
     transfer = StageLedger(
@@ -3421,9 +3922,13 @@ def _hybrid_qualification_transition(
             parent_reference_vertices=None
             if coarsening
             else adaptation.parent_reference_vertices,
+            parent_reference_homogeneous=None
+            if coarsening
+            else adaptation.parent_reference_homogeneous,
             source_geometry=result.geometry,
             target_geometry=adaptation.target.geometry,
             geometry_transition=adaptation.geometry_transition,
+            budget=budget,
         ),
     )
     if not transfer.evidence.passed:
@@ -3494,9 +3999,47 @@ def _hybrid_qualification_epoch(
     carried: Any,
     args: QualificationControls,
     record: dict[str, Any],
+    epoch: int,
     name: str,
+    *,
+    limits: Any,
+    current_preparation: Any,
+) -> tuple[jax.Array, float, Any]:
+    (values, error), current = StageLedger(
+        record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
+    ).run(
+        f"{name}_original_scalar_epoch_request",
+        lambda: _hybrid_scalar_request(
+            result,
+            limits,
+            current_preparation,
+            lambda budget: _hybrid_scalar_epoch_values(
+                result, space, problem, free, carried, args, record, epoch, name,
+                budget=budget,
+            ),
+        ),
+    )
+    record["epochs"][-1]["original_scalar_execution_evidence"] = current.to_record()
+    return values, error, current
+
+
+def _hybrid_scalar_epoch_values(
+    result: Any,
+    space: Any,
+    problem: Any,
+    free: Any,
+    carried: Any,
+    args: QualificationControls,
+    record: dict[str, Any],
+    epoch: int,
+    name: str,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[jax.Array, float]:
 
+    space.require_exact_plan(
+        space.construction_plan, numeric_version=space.numeric_version, budget=budget
+    )
     seed = (
         jnp.zeros((free.size,), dtype=result.mesh.coordinates.dtype)
         if carried is None
@@ -3506,11 +4049,16 @@ def _hybrid_qualification_epoch(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
     ).run(
         f"{name}_solver_execution",
-        lambda: _compiled_solver_stages(problem, seed, args.repeats),
+        lambda: _compiled_solver_stages(
+            problem,
+            seed,
+            args.repeats,
+            policy=phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU()),
+        ),
     )
     values, compiler, timings = solved
     record["stages_seconds"].update(
-        {f"{name}_{key}": value for key, value in timings.items()}
+        {epoch_stage_name(key, epoch): value for key, value in timings.items()}
     )
     physical = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
@@ -3526,6 +4074,7 @@ def _hybrid_qualification_epoch(
         )
     record["epochs"].append(
         {
+            "epoch": epoch,
             "name": name,
             "result": _result_identity(result),
             "physical": physical,
@@ -3549,6 +4098,73 @@ def _hybrid_qualification_epoch(
     return values, physical["l2_error"]
 
 
+def _hybrid_unit_box_archive_continuation(
+    args: QualificationControls,
+    record: dict[str, Any],
+    source: phx.meshing.NativeLayerCoreSource,
+    specification: phx.meshing.VolumeMeshingSpec,
+    epochs: tuple[MeshingAcceptedEpoch, ...],
+) -> _HybridContinuationEvidence:
+    """Restore the entire carried history and replay its final coarsening cold."""
+
+    continuation: dict[str, Any] = {
+        "started": record["started"],
+        "targets": record["targets"],
+        "stages_seconds": {},
+        "active_phase": "unit_box_default_archive_renewal",
+    }
+    record["cold_continuation"] = continuation
+    ledger = StageLedger(
+        record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
+    )
+    try:
+        with TemporaryDirectory(prefix="native-unit-box-lineage-") as temporary:
+            receipt = ledger.run(
+                "unit_box_default_durable_lineage",
+                lambda: write_meshing_source_closure(
+                    Path(temporary) / "lifecycle",
+                    layer_core_lineage_records(
+                        source,
+                        specification,
+                        phx.meshing.NativeMeshingOptions("layer_core"),
+                        epochs,
+                    ),
+                ),
+            )
+            consumer = QualificationControls.from_record(
+                {
+                    **args.to_record(),
+                    "hybrid_archive": str(receipt.path),
+                    "hybrid_content_id": receipt.content_id,
+                }
+            )
+            continued = _hybrid_qualification_archived_profile(
+                consumer, continuation, expected_rounds=args.adaptation_rounds
+            )
+        restored = continuation["restored_epochs"]
+        if [epoch["epoch_id"] for epoch in restored] != [
+            epoch.epoch_id for epoch in epochs
+        ]:
+            raise qualification_failure(
+                "_hybrid_unit_box_archive_continuation",
+                "Cold unit-box restoration must retain every warm accepted epoch.",
+                {"restored": restored, "warm": [epoch.epoch_id for epoch in epochs]},
+            )
+        record["accepted_epochs"] = restored
+        for section in (
+            "allfields", "finite_volume", "history", "material_declaration",
+            "original_scalar",
+        ):
+            record[section] = continuation[section]
+        return continued
+    except Exception:
+        ledger.inherit_failure(continuation)
+        raise
+    finally:
+        del continuation["started"]
+        del continuation["active_phase"]
+
+
 def _hybrid_qualification_epochs(
     result: Any,
     source: Any,
@@ -3556,13 +4172,24 @@ def _hybrid_qualification_epochs(
     specification: Any,
     args: QualificationControls,
     record: dict[str, Any],
+    *,
+    prepared_operands: PreparedCoordinateOperands | None = None,
 ) -> float:
 
-    space, problem, free = StageLedger(
+    (space, problem, free), current = StageLedger(
         record, deadline=Deadline(record["started"] + record["targets"]["wall_seconds"])
-    ).run("initial_solver_preparation", lambda: _hybrid_qualification_solver(result))
-    values, physical_error = _hybrid_qualification_epoch(
-        result, space, problem, free, None, args, record, "initial"
+    ).run(
+        "initial_solver_preparation",
+        lambda: _hybrid_scalar_request(
+            result,
+            specification.limits,
+            None,
+            lambda budget: _hybrid_qualification_solver(result, budget=budget),
+        ),
+    )
+    values, physical_error, current = _hybrid_qualification_epoch(
+        result, space, problem, free, None, args, record, 0, "initial",
+        limits=specification.limits, current_preparation=current,
     )
     policy = phx.meshing.MeshAdaptationPolicy(
         phx.meshing.MeshAdaptationRoute.NATIVE_MIXED,
@@ -3574,8 +4201,13 @@ def _hybrid_qualification_epochs(
             ),
         ),
     )
+    accepted_epochs: tuple[MeshingAcceptedEpoch, ...] = ()
+    warm: _HybridWarmLineage | None = None
     for cycle in range(args.adaptation_rounds):
-        root = result
+        root, root_values = result, values
+        root_preparation = current
+        refinement_operands = CoordinateOperandCollector()
+        coarsening_operands = CoordinateOperandCollector()
         core_ids = np.concatenate(
             [
                 np.asarray(block.global_ids, dtype=np.int64)
@@ -3586,7 +4218,7 @@ def _hybrid_qualification_epochs(
         request = phx.meshing.MarkedMeshAdaptation(
             core_ids, layer_columns=_hybrid_qualification_columns(result)
         )
-        adaptation, space, problem, free, carried = _hybrid_qualification_transition(
+        adaptation, space, problem, free, carried, current = _hybrid_qualification_transition(
             result,
             space,
             values,
@@ -3596,29 +4228,32 @@ def _hybrid_qualification_epochs(
             record,
             f"refine_{cycle}",
             False,
+            coordinate_operands=refinement_operands,
         )
         result = adaptation.target
-        values, physical_error = _hybrid_qualification_epoch(
-            result, space, problem, free, carried, args, record, f"refine_{cycle}"
+        values, physical_error, current = _hybrid_qualification_epoch(
+            result,
+            space,
+            problem,
+            free,
+            carried,
+            args,
+            record,
+            2 * cycle + 1,
+            f"refine_{cycle}",
+            limits=specification.limits,
+            current_preparation=current,
         )
-        _hybrid_qualification_rejection(adaptation, values, policy, record, cycle)
-        children = np.asarray(
-            sorted(
-                {
-                    child
-                    for sibling in adaptation.hierarchy.records
-                    for child in sibling.child_ids
-                }
-            ),
-            dtype=np.int64,
-        )
+        refinement, refined_values = adaptation, values
+        refined_preparation = current
+        children = np.unique(adaptation.hierarchy.siblings.all_child_ids())
         request = phx.meshing.MarkedMeshAdaptation(
             (),
             children,
             hierarchy=adaptation.hierarchy,
             layer_columns=_hybrid_qualification_columns(result),
         )
-        adaptation, space, problem, free, carried = _hybrid_qualification_transition(
+        adaptation, space, problem, free, carried, current = _hybrid_qualification_transition(
             result,
             space,
             values,
@@ -3628,10 +4263,46 @@ def _hybrid_qualification_epochs(
             record,
             f"coarsen_{cycle}",
             True,
+            coordinate_operands=coarsening_operands,
         )
         result = adaptation.target
-        values, physical_error = _hybrid_qualification_epoch(
-            result, space, problem, free, carried, args, record, f"coarsen_{cycle}"
+        values, physical_error, current = _hybrid_qualification_epoch(
+            result,
+            space,
+            problem,
+            free,
+            carried,
+            args,
+            record,
+            2 * cycle + 2,
+            f"coarsen_{cycle}",
+            limits=specification.limits,
+            current_preparation=current,
+        )
+        cycle_epochs, warm = _hybrid_warm_cycle(
+            args,
+            record,
+            root,
+            _HybridAdaptationCycle(refinement, adaptation),
+            cycle,
+            part_name="unit-box-layer-core",
+            limits=specification.limits,
+            carried=warm,
+            original_scalar_values=(root_values, refined_values, values),
+            original_scalar_preparations=(root_preparation, refined_preparation, current),
+            prepared_operands=prepared_operands if cycle == 0 else None,
+            transition_operands=(
+                refinement_operands.for_result(refinement.target.mesh, refinement.target.geometry),
+                coarsening_operands.for_result(adaptation.target.mesh, adaptation.target.geometry),
+            ),
+        )
+        accepted_epochs += cycle_epochs if cycle == 0 else cycle_epochs[1:]
+        _hybrid_qualification_rejection(
+            refinement,
+            (refined_values, cycle_epochs[1].fields),
+            policy,
+            record,
+            cycle,
         )
         if result.mesh.topology_id != root.mesh.topology_id:
             raise qualification_failure(
@@ -3639,22 +4310,43 @@ def _hybrid_qualification_epochs(
                 ("Coarsening every hybrid sibling did not restore the source topology."),
                 {"result": result, "root": root},
             )
+        require_restored_layer_core_result_identity(root, result)
+        columns = _hybrid_qualification_columns(result)
+        original_columns = _hybrid_qualification_columns(root)
+        if columns.columns_id != original_columns.columns_id:
+            raise qualification_failure(
+                "_hybrid_qualification_epochs",
+                "Inverse coarsening must restore the authored physical layer columns.",
+                {"columns": columns, "original_columns": original_columns},
+            )
         record["invariants"].append(
             {
                 "cycle": cycle,
                 "complete_refine_coarsen": True,
                 "restored_topology_id": result.mesh.topology_id,
+                "restored_coordinate_map_bitwise": True,
+                "restored_columns_id": columns.columns_id,
                 "final_source_acceptance": _hybrid_qualification_acceptance(
                     result, source
                 ),
             }
         )
-    return physical_error
+    continued = _hybrid_unit_box_archive_continuation(
+        args, record, source, specification, accepted_epochs
+    )
+    return max(physical_error, continued.physical_error)
 
 
 def _hybrid_qualification_lifecycle(args: QualificationControls) -> dict[str, object]:
     """Callable native generated wall → curved mixed epochs → transferred-state PDE."""
 
+    densities, material_site = _hybrid_material_controls(
+        args.hybrid_profile, args.hybrid_region_densities, args.hybrid_material_site
+    )
+    if args.hybrid_region_densities is None or args.hybrid_material_site is None:
+        args = replace(
+            args, hybrid_region_densities=densities, hybrid_material_site=material_site
+        )
     if args.hybrid_profile != "unit-box":
         return _hybrid_qualification_original_profile(args)
     counts = (
@@ -3698,7 +4390,10 @@ def _hybrid_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
         "runtime": _runtime_identity(),
         "started": started,
         "active_phase": "source_preparation",
-        "expected_admission": "positive",
+        "expected_admission": (
+            contract := _hybrid_qualification_profile_contracts()["unit-box"]
+        )["expected_admission"],
+        "contract": contract,
         "targets": {"l2_error": args.target_error, "wall_seconds": args.timeout},
         "control_capacities": {
             "resolution": args.resolution,
@@ -3715,7 +4410,10 @@ def _hybrid_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
             "forcing": 0.0,
             "diffusion": 1.0,
             "norm": "mixed-mapped-physical-quadrature-L2-versus-analytic-patch",
-            "declared_fields": ["scalar-H1-u"],
+            "declared_fields": [
+                "H1", "DG", "Hcurl", "Hdiv", "u", "damage-history", "state",
+                "original-u",
+            ],
         },
         "stages_seconds": {},
         "epochs": [],
@@ -3726,6 +4424,7 @@ def _hybrid_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
         "physical_error": None,
         "target_error_reached": False,
         "independent_scientific_certification": "unassessed",
+        "case_contract_completion": "incomplete",
         "mandatory_workflow_completion": "incomplete",
         "release_evidence": "unassessed",
         "leadership_evidence": "unassessed",
@@ -3738,18 +4437,24 @@ def _hybrid_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
             _hybrid_qualification_generation(args, record, phases, limits)
         )
         record["generation_acceptance"] = _hybrid_qualification_acceptance(result, source)
+        coordinate_operands = CoordinateOperandCollector(
+            capture_signed_determinants=True
+        )
         result = _hybrid_qualification_curving(
-            result, query, projection, args, certificates, record
+            result, query, projection, args, limits, certificates, record,
+            coordinate_operands=coordinate_operands,
         )
         record["curved_acceptance"] = _hybrid_qualification_acceptance(result, source)
         physical_error = _hybrid_qualification_epochs(
-            result, source, projection, specification, args, record
+            result, source, projection, specification, args, record,
+            prepared_operands=coordinate_operands.for_result(result.mesh, result.geometry),
         )
         record["target_error_reached"] = physical_error <= args.target_error
         record["status"] = "passed" if record["target_error_reached"] else "failed"
-        record["independent_scientific_certification"] = "passed"
+        if record["target_error_reached"]:
+            record["independent_scientific_certification"] = "passed"
         record["implemented_admitted_workflow"] = (
-            "native-wall-layer-core-curving-mixed-H1-state-diffusion"
+            "native-wall-layer-core-curving-allfields-FV-history-accepted-state-cold-continuation-diffusion"
         )
     except (
         phx.meshing.MeshingFailure,
@@ -3758,16 +4463,12 @@ def _hybrid_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
         TypeError,
         TimeoutError,
     ) as failure:
-        record.update(
-            FailureRecord.from_exception(failure, record["active_phase"]).to_record()
-        )
-        if isinstance(failure, TimeoutError):
-            record["status"] = "timeout"
+        record_failure(record, failure, record["active_phase"])
     finally:
         record["native_phases"] = _phase_recordings(phases)
         record["end_to_end_seconds"] = perf_counter() - started
-        record["peak_process_resident_bytes"] = peak_resident_bytes(resource.RUSAGE_SELF)
-        record["process_peak_scope"] = "process-lifetime"
+        record["peak_process_resident_bytes"] = peak_resident_bytes()
+        record["process_peak_scope"] = PEAK_RESIDENT_SCOPE
         record["device_memory"] = [
             {
                 "device_id": device.id,
@@ -3784,32 +4485,45 @@ def _hybrid_qualification_lifecycle(args: QualificationControls) -> dict[str, ob
         ]
         if record["end_to_end_seconds"] > args.timeout:
             record["status"] = "timeout"
+        # The routine contract certifies this case only; a full-workflow
+        # contract additionally completes the mandatory workflow.
+        if record["status"] == "passed":
+            record["case_contract_completion"] = "complete"
+            if contract["full_workflow"] is True:
+                record["mandatory_workflow_completion"] = "complete"
         del record["active_phase"]
         del record["started"]
     return record
 
 
-def worker(argv: tuple[str, ...]) -> dict[str, Any]:
-    """Convert the layer continuation's line records to one worker result."""
+def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
+    """Convert the layer continuation's line records to one cold worker report."""
 
-    sys.argv = ["tools.layer_core_lifecycle_continuation", *argv]
+    controls = packet.controls
+    sys.argv = [
+        "tools.layer_core_lifecycle_continuation",
+        str(packet.archive_path),
+        packet.content_id,
+        "--region-densities",
+        *(str(float(value)) for value in controls["region_densities"]),
+        "--material-site",
+        str(controls["material_site"]),
+        "--solver-repeats",
+        str(int(controls["solver_repeats"])),
+    ]
     stream = StringIO()
     with redirect_stdout(stream):
         main()
-    return {
-        "process_id": os.getpid(),
-        "evidence": [
-            json.loads(line) for line in stream.getvalue().splitlines() if line.strip()
-        ],
-    }
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] != "worker":
-        raise ValueError(
-            "qualification.subcommand must equal worker; got " + repr(sys.argv[1:])
-        )
-    print(json.dumps(worker(tuple(sys.argv[2:]))))
+    evidence = [
+        json.loads(line) for line in stream.getvalue().splitlines() if line.strip()
+    ]
+    stages = evidence[0]["stages_seconds"]
+    return ColdWorkerReport(
+        record={"evidence": evidence},
+        read_seconds=stages["archive_member_authentication"]
+        + stages["execution_control_restoration"]
+        + stages["scientific_owner_restoration"],
+    )
 
 
 def run(args: QualificationControls) -> dict[str, object]:

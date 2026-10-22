@@ -16,6 +16,7 @@ import pytest
 from jax import Array
 
 import phydrax as phx
+import phydrax.meshing._tetra_metric as tetra_metric_owner
 from phydrax._meshcore import (
     meshcore_available,
     MeshcoreError,
@@ -48,17 +49,28 @@ from phydrax.lifecycle._meshing_sources import (
     write_meshing_source_closure,
 )
 from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
-from phydrax.meshing._metric import metric_simplex_quality
+from phydrax.meshing._measurements import NativeMeshingPhaseMeasurement
+from phydrax.meshing._metric import metric_edge_lengths, metric_simplex_quality
 from phydrax.meshing._tetra_metric import (
+    _global_size_solve,
+    _GlobalSizePlan,
+    _lengths,
     _metric_relocation_merit,
+    _NativeMetricBudget,
+    _oriented_positive,
+    _quality,
+    _ReconnectionWorkset,
     constraints,
     execute_native_tetra_metric,
     execute_tetra_metric_adaptation,
+    GlobalSizeArgs,
     MetricMemoryEvidence,
     MetricOptimizerEvidence,
     MetricRemeshingEvidence,
     MetricRemeshingStatus,
     TetraMetricSource,
+    TetraShapeAims,
+    UniformSizeRemeshingGoal,
 )
 from phydrax.meshing._topology_edit import assemble_topology_edit
 from tests._support.cell_meshes import kuhn_cube_arrays
@@ -1032,3 +1044,803 @@ def test_partial_quality_repair_remains_an_uncommitted_metric_epoch() -> None:
     assert initial_quality < outcome.evidence.minimum_metric_quality < 0.95
     assert outcome.evidence.status is MetricRemeshingStatus.PASS_LIMIT
     np.testing.assert_array_equal(source.coordinates, points)
+
+
+def test_local_metric_kernels_preserve_full_tensor_algebra() -> None:
+    mesh = _box()
+    points = np.asarray(mesh.coordinates)
+    cells = np.asarray(mesh.blocks[0].vertices)
+    factors = np.arange(points.shape[0], dtype=np.float64)[:, None, None] / 10.0
+    tensor = np.asarray(((2.0, 0.3, -0.2), (0.3, 1.0, 0.1), (-0.2, 0.1, 0.8)))
+    metric = tensor[None] + factors * np.eye(3)[None]
+    for count in (1, cells.shape[0]):
+        selected = cells[:count]
+        np.testing.assert_allclose(
+            _quality(points, metric, selected),
+            metric_simplex_quality(metric, points, selected),
+            rtol=TETRA_GEOMETRY_TOLERANCE,
+            atol=TETRA_GEOMETRY_TOLERANCE,
+        )
+    edges = np.asarray(tuple(combinations(range(points.shape[0]), 2)), dtype=np.int32)
+    for count in (1, edges.shape[0]):
+        np.testing.assert_allclose(
+            _lengths(points, metric, edges[:count]),
+            metric_edge_lengths(metric, points, edges[:count]),
+            rtol=TETRA_GEOMETRY_TOLERANCE,
+            atol=TETRA_GEOMETRY_TOLERANCE,
+        )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        tetra_metric_owner.EntityLineageKind.REFINED_FROM,
+        tetra_metric_owner.EntityLineageKind.COLLAPSED_INTO,
+        tetra_metric_owner.EntityLineageKind.SWAPPED_FROM,
+    ],
+)
+def test_cavity_lineage_matches_global_rebuild(
+    kind: tetra_metric_owner.EntityLineageKind,
+) -> None:
+    retained = np.asarray([[10, 11, 12, 13], [20, 21, 22, 23]], dtype=np.int32)
+    removed = np.asarray([[0, 1, 2, 3], [0, 2, 3, 4]], dtype=np.int32)
+    proposed = np.asarray([[0, 1, 2, 3], [1, 2, 3, 4]], dtype=np.int32)
+    before = np.concatenate((retained[:1], removed, retained[1:]))
+    after = np.concatenate((proposed[::-1], retained[::-1]))
+
+    def ancestry() -> tetra_metric_owner._Ancestry:
+        return tetra_metric_owner._Ancestry(
+            {
+                tuple(sorted(cell)): (row + 100, {row + 10, row + 20})
+                for row, cell in enumerate(before.tolist())
+            },
+            104,
+            [],
+            cell_kinds={101: int(tetra_metric_owner.EntityLineageKind.REFINED_FROM)},
+        )
+
+    global_lineage, local_lineage = ancestry(), ancestry()
+    tetra_metric_owner._record(global_lineage, before, after, kind)
+    tetra_metric_owner._record(local_lineage, removed, proposed, kind)
+    assert global_lineage == local_lineage
+
+
+def test_constrained_face_ancestry_tracks_accepted_edge_images_not_stencils() -> None:
+    kind = tetra_metric_owner.EntityLineageKind
+    parents: dict[tuple[int, ...], dict[tuple[int, ...], int]] = {
+        (0, 1, 2): {(11, 53, 97): int(kind.PRESERVED)},
+        (0, 1, 3): {(11, 29, 97): int(kind.PRESERVED)},
+        (0, 2, 3): {(29, 53, 97): int(kind.PRESERVED)},
+        (1, 2, 3): {(11, 29, 53): int(kind.PRESERVED)},
+    }
+    frozen = {face: dict(sources) for face, sources in parents.items()}
+    split = tetra_metric_owner._insert_constrained_faces(
+        parents, np.asarray(tuple(parents)), np.full(4, 600),
+        np.asarray(((0, 2, 4), (1, 2, 4), (0, 3, 4), (1, 3, 4), (0, 2, 3), (1, 2, 3))),
+        np.full(6, 600), np.asarray(((0, 1, 2, 3),)),
+        np.asarray(((0, 4, 2, 3), (4, 1, 2, 3))), 4,
+    )
+    assert parents == frozen  # An uncommitted candidate cannot change its owner.
+    assert set(split) == {
+        (0, 2, 4), (1, 2, 4), (0, 3, 4), (1, 3, 4), (0, 2, 3), (1, 2, 3)
+    }
+    for face in ((0, 2, 4), (1, 2, 4)):
+        assert split[face] == {(11, 53, 97): int(kind.REFINED_FROM)}
+    collapsed = tetra_metric_owner._collapse_constrained_faces(split, 4, 0)
+    assert set(collapsed) == set(parents)
+    assert collapsed[(0, 1, 2)] == {(11, 53, 97): int(kind.COLLAPSED_INTO)}
+    assert collapsed[(0, 1, 3)] == {(11, 29, 97): int(kind.COLLAPSED_INTO)}
+    assert collapsed[(0, 2, 3)] == parents[(0, 2, 3)]
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_constrained_face_publication_preserves_source_ids_and_current_orientation(
+    reverse: bool,
+) -> None:
+    from phydrax._meshcore import TetMeshArrays
+    from phydrax.meshing._topology_edit import EntityRelations
+
+    kind = tetra_metric_owner.EntityLineageKind
+    identifiers = np.asarray((97, 11, 53, 29, 101), dtype=np.int64)
+    original: dict[tuple[int, ...], dict[tuple[int, ...], int]] = {
+        (0, 1, 2): {(11, 53, 97): int(kind.PRESERVED)},
+        (0, 1, 3): {(11, 29, 97): int(kind.PRESERVED)},
+    }
+    faces = np.asarray(((0, 2, 4), (1, 4, 2), (0, 4, 3), (1, 3, 4)), dtype=np.int32)
+    if reverse:
+        faces = faces[::-1, ::-1].copy()
+    parents = tetra_metric_owner._insert_constrained_faces(
+        original, np.asarray(tuple(original)), np.full(2, 600), faces,
+        np.full(4, 600), np.asarray(((0, 1, 2, 3),)),
+        np.asarray(((0, 4, 2, 3), (4, 1, 2, 3))), 4,
+    )
+    snapshot = TetMeshArrays(
+        points=np.zeros((5, 3)),
+        tetrahedra=np.empty((0, 4), dtype=np.int32),
+        tetrahedron_regions=np.empty(0, dtype=np.int32),
+        faces=faces,
+        face_sources=np.full(4, 600, dtype=np.int64),
+        segments=np.empty((0, 2), dtype=np.int32),
+        segment_sources=np.empty(0, dtype=np.int64),
+        vertex_dimension=np.full(5, 2, dtype=np.int32),
+        vertex_sizes=np.zeros(5),
+    )
+    empty = EntityRelations(
+        2, np.empty((0, 3), dtype=np.int64),
+        np.empty((0, 3), dtype=np.int64), np.empty(0, dtype=np.int32),
+    )
+    record = tetra_metric_owner._constrained_face_relations(
+        empty, snapshot, identifiers, parents
+    )
+    np.testing.assert_array_equal(record.target_keys, np.sort(identifiers[faces], axis=1))
+    assert set(map(tuple, record.source_keys)) == {(11, 53, 97), (11, 29, 97)}
+    assert np.all(record.kinds == int(kind.REFINED_FROM))
+    np.testing.assert_array_equal(snapshot.faces, faces)
+    # Relocation and volume reconnection do not change constrained face keys.
+    moved = eqx.tree_at(lambda value: value.points, snapshot, np.ones((5, 3)))
+    relocated = tetra_metric_owner._constrained_face_relations(
+        empty, moved, identifiers, parents
+    )
+    np.testing.assert_array_equal(relocated.source_keys, record.source_keys)
+    np.testing.assert_array_equal(relocated.target_keys, record.target_keys)
+    foreign = dict(parents)
+    foreign[(0, 1, 4)] = {(11, 53, 97): int(kind.REFINED_FROM)}
+    for faulty in (dict(list(parents.items())[1:]), foreign):
+        with pytest.raises(ValueError, match="exactly the current constrained faces"):
+            tetra_metric_owner._constrained_face_relations(
+                empty, snapshot, identifiers, faulty
+            )
+    duplicate = eqx.tree_at(
+        lambda value: value.faces, snapshot, np.concatenate((faces, faces[:1]))
+    )
+    with pytest.raises(ValueError, match="exactly the current constrained faces"):
+        tetra_metric_owner._constrained_face_relations(
+            empty, duplicate, identifiers, parents
+        )
+
+
+@pytest.mark.parametrize("fault", ("none", "foreign", "outside", "missing", "duplicate"))
+def test_expanded_constrained_insertion_uses_committed_cavity_rim(fault: str) -> None:
+    """Three crossed faces exceed the seed edge star; only the patch rim survives."""
+    kind = tetra_metric_owner.EntityLineageKind
+    before = np.asarray(((0, 1, 2), (0, 2, 3), (0, 3, 4)), dtype=np.int32)
+    after = np.asarray(((0, 1, 6), (1, 2, 6), (2, 3, 6), (3, 4, 6), (0, 4, 6)), dtype=np.int32)
+    ids = np.asarray((101, 7, 83, 29, 61), dtype=np.int64)
+    parents: dict[tuple[int, ...], dict[tuple[int, ...], int]] = {
+        tuple(face): {tuple(sorted(ids[face].tolist())): int(kind.PRESERVED)}
+        for face in before
+    }
+    frozen = {face: dict(sources) for face, sources in parents.items()}
+    removed = np.column_stack((before, np.full(3, 5)))
+    proposed = np.column_stack((after, np.full(5, 5)))
+    sources = np.full(5, 600)
+    if fault == "foreign":
+        sources[0] = 601
+    elif fault == "outside":
+        proposed = proposed[1:]
+    elif fault == "missing":
+        parents.pop((0, 1, 2))
+    elif fault == "duplicate":
+        after = np.concatenate((after, after[:1]))
+        sources = np.full(6, 600)
+    if fault != "none":
+        with pytest.raises(ValueError, match="insert_face_lineage"):
+            tetra_metric_owner._insert_constrained_faces(
+                parents, before, np.full(3, 600), after, sources, removed, proposed, 6,
+            )
+        if fault != "missing":
+            assert parents == frozen
+        return
+    result = tetra_metric_owner._insert_constrained_faces(
+        parents, before, np.full(3, 600), after, sources, removed, proposed, 6,
+    )
+    assert parents == frozen
+    assert set(result) == set(map(tuple, np.sort(after, axis=1)))
+    for row, parent in zip(after.tolist(), (before[0], before[0], before[1], before[2], before[2]), strict=True):
+        assert result[tuple(sorted(row))] == {
+            tuple(sorted(ids[parent].tolist())): int(kind.REFINED_FROM)
+        }
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_oriented_proposals_certify_degenerate_and_reversed_cells() -> None:
+    mesh = _box()
+    points = np.asarray(mesh.coordinates)
+    cell = np.asarray(mesh.blocks[0].vertices)[0]
+    cells = np.stack((cell, cell[[1, 0, 2, 3]], cell[[0, 0, 2, 3]]))
+    oriented, positive = _oriented_positive(points, cells)
+    np.testing.assert_array_equal(positive, (True, True, False))
+    determinants = np.linalg.det(points[oriented[:, 1:]] - points[oriented[:, :1]])
+    assert np.all(determinants[:2] > 0)
+    assert determinants[2] == 0
+    assert tetra_metric_owner._collapse_coplanar(points, cells[:1, :3], int(cell[0]))
+    assert not tetra_metric_owner._collapse_coplanar(points, cells[:1, :3], int(cell[3]))
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_reconnection_workset_tracks_native_rows_and_source_constraints() -> None:
+    mesh = _box()
+    points = np.asarray(mesh.coordinates)
+    cells = np.asarray(mesh.blocks[0].vertices)
+    regions = np.zeros((cells.shape[0],), dtype=np.int32)
+    faces, face_ids, segments, segment_ids = constraints(
+        mesh, cells, regions, None, None,
+        np.zeros((mesh.entity_set(1).count,), dtype=np.bool_),
+    )
+    native = TetMesh3D(
+        points, cells, regions, faces, face_ids, segments, segment_ids,
+        boundary_policy="fixed",
+    )
+    try:
+        with _metric_request(_METRIC_LIMITS, mesh=native) as (scope, budget):
+            source = TetraMetricSource(
+                points, cells, np.arange(points.shape[0]), np.arange(cells.shape[0]),
+                budget=budget,
+            )
+            epoch = _NativeMetricBudget(
+                native, _METRIC_LIMITS.maximum_work_units, 1000000, source,
+                1000000, scope, budget,
+            )
+            with epoch.phase():
+                snapshot = native.arrays()
+                reordered = eqx.tree_at(
+                    lambda value: value.tetrahedra, snapshot,
+                    snapshot.tetrahedra[::-1].copy(),
+                )
+                shortened = eqx.tree_at(
+                    lambda value: value.tetrahedra, reordered,
+                    reordered.tetrahedra[1:].copy(),
+                )
+                changed_faces = eqx.tree_at(
+                    lambda value: value.faces, snapshot, snapshot.faces[::-1].copy(),
+                )
+                previous = None
+                previous_incidence = None
+                for current in (snapshot, reordered, shortened, changed_faces, snapshot):
+                    workset = _ReconnectionWorkset.prepare(current, epoch, previous)
+                    assert workset is not None
+                    if previous is not None:
+                        assert previous.vertex_cells == previous_incidence
+                    rebuilt = _ReconnectionWorkset.prepare(current, epoch)
+                    assert rebuilt is not None
+                    assert workset.vertex_cells == rebuilt.vertex_cells
+                    assert workset.cell_rows == rebuilt.cell_rows
+                    assert workset.vertex_faces == rebuilt.vertex_faces
+                    assert workset.constrained_edges == rebuilt.constrained_edges
+                    previous = workset
+                    previous_incidence = tuple(bank.copy() for bank in workset.vertex_cells)
+                    assert workset.constrained_segments == {
+                        tuple(sorted(edge)) for edge in current.segments.tolist()
+                    }
+                    for vertex in range(points.shape[0]):
+                        np.testing.assert_array_equal(
+                            workset.face_rows(vertex),
+                            np.flatnonzero(np.any(current.faces == vertex, axis=1)),
+                        )
+                    for edge in combinations(range(points.shape[0]), 2):
+                        expected = np.flatnonzero(
+                            np.any(current.tetrahedra == edge[0], axis=1)
+                            & np.any(current.tetrahedra == edge[1], axis=1)
+                        )
+                        np.testing.assert_array_equal(workset.rows(edge), expected)
+                    for face in current.faces.tolist():
+                        key = tuple(sorted(face))
+                        assert key in workset.constrained_faces
+                        assert set(combinations(key, 2)) <= workset.constrained_edges
+                mutable = eqx.tree_at(
+                    lambda value: value.faces, snapshot, snapshot.faces.copy(),
+                )
+                old = _ReconnectionWorkset.prepare(mutable, epoch)
+                assert old is not None
+                mutable.faces[:] = mutable.faces[::-1]
+                refreshed = _ReconnectionWorkset.prepare(mutable, epoch, old)
+                rebuilt = _ReconnectionWorkset.prepare(mutable, epoch)
+                assert refreshed is not None and rebuilt is not None
+                assert refreshed.vertex_faces == rebuilt.vertex_faces
+                np.testing.assert_array_equal(old.faces, snapshot.faces)
+                scratch_required = epoch.optimizer_scratch_required_bytes
+                assert epoch.phase_ticket is not None
+                assert not epoch.optimizer_scratch(epoch.phase_ticket.bytes_upper + 1)
+                assert epoch.exhausted
+                assert epoch.resource_message == (
+                    "The statistical optimizer's scratch plan exceeds the live phase allowance."
+                )
+            for allowance in (scratch_required, scratch_required - 1):
+                bounded = _NativeMetricBudget(
+                    native, _METRIC_LIMITS.maximum_work_units, 1000000,
+                    source, 1000000, scope, budget,
+                    maximum_optimizer_scratch_bytes=allowance,
+                )
+                with bounded.phase():
+                    admitted = _ReconnectionWorkset.prepare(snapshot, bounded, previous)
+                    assert (admitted is not None) == (allowance == scratch_required)
+                    assert bounded.exhausted == (allowance < scratch_required)
+                    assert bounded.optimizer_scratch_required_bytes == scratch_required
+                    assert bounded.optimizer_host_work == 0
+            for consume in (False, True):
+                shared = _NativeMetricBudget(
+                    native, _METRIC_LIMITS.maximum_work_units + 1, 1000000,
+                    source, 1000000, scope, budget,
+                )
+                with shared.phase():
+                    assert shared.phase_ticket is not None
+                    required = shared.phase_ticket.remaining_work_units + 1
+                    assert required <= shared.maximum_work_units
+                    admitted = (
+                        shared.optimizer_work(required, 0)
+                        if consume else shared.admit_optimizer_bound(required)
+                    )
+                    assert not admitted and shared.exhausted
+                    assert shared.optimizer_host_work == 0
+                    assert shared.resource_message == (
+                        "The shared metric phase work allowance is exhausted."
+                    )
+    finally:
+        native.close()
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+@pytest.mark.parametrize("maximum_work", (1, 100000))
+def test_global_size_admits_next_phase_not_all_future_iterations(maximum_work: int) -> None:
+    mesh = _box()
+    points = np.asarray(mesh.coordinates)
+    cells = np.asarray(mesh.blocks[0].vertices)
+    regions = np.zeros((cells.shape[0],), dtype=np.int32)
+    faces, face_ids, segments, segment_ids = constraints(
+        mesh, cells, regions, None, None,
+        np.zeros((mesh.entity_set(1).count,), dtype=np.bool_),
+    )
+    native = TetMesh3D(
+        points, cells, regions, faces, face_ids, segments, segment_ids,
+        boundary_policy="fixed",
+    )
+    try:
+        with _metric_request(_METRIC_LIMITS, mesh=native) as (scope, budget):
+            source = TetraMetricSource(
+                points, cells, np.arange(points.shape[0]), np.arange(cells.shape[0]),
+                budget=budget,
+            )
+            epoch = _NativeMetricBudget(
+                native, maximum_work, maximum_work, source, 1000000, scope, budget,
+            )
+            edge = cells[:1, :2]
+            target = np.linalg.norm(points[edge[0, 1]] - points[edge[0, 0]])
+            corners = points[cells]
+            args = GlobalSizeArgs(
+                jnp.asarray(points), jnp.zeros((points.shape[0], 3, 3)),
+                jnp.asarray(edge), jnp.asarray(cells), jnp.asarray((0.5,)),
+                jnp.ones((1,)), jnp.ones((cells.shape[0],)),
+                jnp.asarray(np.linalg.det(corners[:, 1:] - corners[:, :1]) / target**3),
+                jnp.asarray(target), jnp.asarray(1.0e-12),
+                jnp.asarray(1.0), jnp.asarray(np.inf),
+            )
+            action_work = points.shape[0] + 8 + 20 * cells.shape[0]
+            plan = _GlobalSizePlan(
+                args, np.zeros((points.shape[0], 3, 3)), np.empty((0,), dtype=np.int64),
+                edge, 1000000, 0, action_work, 0, 4, 0,
+                np.empty((0,), dtype=np.int32), np.empty((0, 2), dtype=np.int32),
+            )
+            with epoch.phase():
+                assert epoch.optimizer_scratch(plan.scratch_bytes)
+                result = _global_size_solve(plan, epoch)
+            if maximum_work == 1:
+                assert result is None and epoch.exhausted
+                assert epoch.work_units == 0
+                assert epoch.resource_message is not None
+            else:
+                assert result is not None and not epoch.exhausted
+                assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
+                assert epoch.optimizer_iterations == int(result.diagnostics.iterations)
+                assert epoch.optimizer_objective_evaluations == int(
+                    result.diagnostics.residual_evaluations
+                )
+                assert 0 < epoch.work_units < maximum_work
+                # Even canonical actions alone exceed this allowance if all
+                # 32 future steps are pessimistically reserved together.
+                assert 32 * 4 * 76 * action_work > maximum_work
+                np.testing.assert_array_equal(result.parameters, np.zeros_like(points))
+                previous_iterations = epoch.optimizer_iterations
+                previous_evaluations = epoch.optimizer_objective_evaluations
+                # Tighten the remaining allowance below the all-32-step bound;
+                # the same tangent state must continue across admitted chunks.
+                epoch.maximum_work_units = epoch.work_units + 4000
+                with epoch.phase():
+                    tangent = tetra_metric_owner._equal_length_solve(
+                        (
+                            jnp.zeros((3,)), jnp.asarray(((1.0,), (0.0,), (0.0,))),
+                            jnp.asarray(1.0), jnp.tile(jnp.asarray((2.0, 0.0, 0.0)), (8, 1)),
+                            jnp.asarray(1.0), jnp.ones((8,)),
+                            jnp.zeros((8,)), jnp.zeros((8,)),
+                        ),
+                        epoch, plan.scratch_bytes,
+                    )
+                assert tangent is not None
+                assert int(tangent.status) == int(phx.optim.OptimizationStatus.SUCCESS)
+                assert int(tangent.diagnostics.iterations) > 1
+                np.testing.assert_allclose(tangent.parameters, (1.0,), atol=1.0e-12, rtol=0)
+                assert epoch.optimizer_iterations == (
+                    previous_iterations + int(tangent.diagnostics.iterations)
+                )
+                assert epoch.optimizer_objective_evaluations == (
+                    previous_evaluations + int(tangent.diagnostics.residual_evaluations)
+                )
+                assert epoch.work_units <= epoch.maximum_work_units
+            np.testing.assert_array_equal(native.arrays().points, points)
+    finally:
+        native.close()
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_split_source_sampling_uses_bounded_ordered_banks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    points, cells = kuhn_cube_arrays(2, orientation_swap=(0, 1))
+    mesh = CellMesh.from_tetrahedra(points, cells)
+    original = tetra_metric_owner._sample_metric_splits
+    counts: list[int] = []
+
+    def sample(
+        positions: np.ndarray,
+        constructions: tuple[tetra_metric_owner.TetMeshEdgeConstruction, ...],
+        source: TetraMetricSource,
+        metric: np.ndarray,
+        budget: _NativeMetricBudget,
+    ) -> tetra_metric_owner._SplitSamples | None:
+        counts.append(positions.shape[0])
+        return original(positions, constructions, source, metric, budget)
+
+    monkeypatch.setattr(tetra_metric_owner, "_sample_metric_splits", sample)
+    with _metric_request(_METRIC_LIMITS) as (scope, budget):
+        outcome = execute_tetra_metric_adaptation(
+            mesh,
+            np.broadcast_to(100.0 * np.eye(3), (points.shape[0], 3, 3)),
+            maximum_passes=1,
+            maximum_operations=256,
+            maximum_work_units=100000000,
+            minimum_metric_quality=0.0,
+            relocation=False,
+            scope=scope,
+            budget=budget,
+        )
+    assert len(counts) >= 2
+    assert max(counts) <= 64
+    assert outcome.evidence.splits > 0
+    np.testing.assert_array_equal(mesh.coordinates, points)
+
+
+@pytest.mark.parametrize("count", (1, 4, 5, 7, 8, 9, 64, 65))
+def test_global_bank_capacity_matches_local_padding(count: int) -> None:
+    rows = np.arange(count, dtype=np.float64)[:, None]
+    padded = tetra_metric_owner._bucket(rows)
+    assert padded.shape[0] == tetra_metric_owner._bucket_size(count)
+    np.testing.assert_array_equal(padded[:count], rows)
+    np.testing.assert_array_equal(padded[count:], np.repeat(rows[:1], padded.shape[0] - count, axis=0))
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_ring_candidates_reuse_cones_without_reordering_trials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    angles = 2.0 * np.pi * np.arange(7) / 7.0
+    points = np.concatenate((
+        np.asarray(((0.0, 0.0, -1.0), (0.0, 0.0, 1.0))),
+        np.column_stack((np.cos(angles), np.sin(angles), np.zeros((7,)))),
+    ))
+    cells = tetra_metric_owner._orient(points, np.asarray(
+        [(0, 1, 2 + row, 2 + (row + 1) % 7) for row in range(7)], dtype=np.int32
+    ))
+    mesh = CellMesh.from_tetrahedra(points, cells)
+    regions = np.zeros((cells.shape[0],), dtype=np.int32)
+    faces, face_ids, segments, segment_ids = constraints(
+        mesh, cells, regions, None, None,
+        np.zeros((mesh.entity_set(1).count,), dtype=np.bool_),
+    )
+    native = TetMesh3D(
+        points, cells, regions, faces, face_ids, segments, segment_ids,
+        boundary_policy="fixed",
+    )
+    try:
+        snapshot = native.arrays()
+        values = np.broadcast_to(np.diag((1.0, 0.7, 1.3)), (9, 3, 3))
+        triangles = tetra_metric_owner._polygon_triangulations(tuple(range(2, 9)))
+        raw = np.asarray([
+            [(apex, *triangle) for triangle in triangulation for apex in (0, 1)]
+            for triangulation in triangles
+        ], dtype=np.int32)
+        expected = tetra_metric_owner._orient(points, raw.reshape((-1, 4))).reshape(raw.shape)
+        expected_quality = np.asarray(metric_simplex_quality(
+            values, points, expected.reshape((-1, 4))
+        )).reshape((-1, 10)).min(axis=1)
+        original = tetra_metric_owner._quality
+        counts: list[int] = []
+
+        def quality(points: np.ndarray, metric: np.ndarray, cells: np.ndarray) -> np.ndarray:
+            counts.append(cells.shape[0])
+            return original(points, metric, cells)
+
+        monkeypatch.setattr(tetra_metric_owner, "_quality", quality)
+        result = tetra_metric_owner._prepare_ring_candidates(
+            snapshot, values, triangles, 0, 1, 10
+        )
+        assert raw.reshape((-1, 4)).shape[0] == 420
+        assert counts == [70]
+        np.testing.assert_array_equal(result.proposed, expected)
+        assert np.all(result.positive)
+        np.testing.assert_allclose(
+            result.quality, expected_quality,
+            rtol=TETRA_GEOMETRY_TOLERANCE, atol=TETRA_GEOMETRY_TOLERANCE,
+        )
+        # Admission reuses these exact per-cell rows; the candidate minimum
+        # is their reduction, not a second evaluation.
+        assert result.cell_quality.shape == (42, 10)
+        np.testing.assert_array_equal(result.cell_quality.min(axis=1), result.quality)
+    finally:
+        native.close()
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_aim_tiles_share_validation_without_fabricating_per_cell_measurements() -> None:
+    mesh = _box()
+    points = np.asarray(mesh.coordinates)
+    cells = np.asarray(mesh.blocks[0].vertices)
+    regions = np.zeros((cells.shape[0],), dtype=np.int32)
+    faces, face_ids, segments, segment_ids = constraints(
+        mesh, cells, regions, None, None,
+        np.zeros((mesh.entity_set(1).count,), dtype=np.bool_),
+    )
+    native = TetMesh3D(
+        points, cells, regions, faces, face_ids, segments, segment_ids,
+        boundary_policy="fixed",
+    )
+    try:
+        with _metric_request(_METRIC_LIMITS, mesh=native) as (scope, budget):
+            source = TetraMetricSource(
+                points, cells, np.arange(points.shape[0]), np.arange(cells.shape[0]),
+                budget=budget,
+            )
+            epoch = _NativeMetricBudget(
+                native, _METRIC_LIMITS.maximum_work_units, 1000000, source,
+                1000000, scope, budget,
+            )
+            aims = TetraShapeAims(100.0, 0.0, 0, 0, lambda remaining, count: 0)
+            with epoch.phase():
+                before = epoch.work_units
+                tiled = tetra_metric_owner._measure_aim_cells(
+                    points, cells, epoch, 1.0e-12, aims
+                )
+                tiled_work = epoch.work_units - before
+                assert tiled is not None
+                assert all(value is None for value in tiled.shapes.values())
+                expected = {}
+                local = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+                before = epoch.work_units
+                for cell in cells:
+                    shape = epoch.call(
+                        lambda allowance: native.proposal_shape(
+                            points[cell], local, vertex_ids=cell,
+                            minimum_relative_determinant=1.0e-12,
+                            work_limit=allowance,
+                        )
+                    )
+                    assert shape is not None and shape[2] == 0
+                    expected[tuple(sorted(cell.tolist()))] = (shape[0], shape[1])
+                scalar_work = epoch.work_units - before
+                assert tiled_work < scalar_work
+                assert tiled.extrema == (
+                    max(value[0] for value in expected.values()),
+                    min(value[1] for value in expected.values()),
+                )
+                unmet_aims = TetraShapeAims(0.1, 180.0, 0, 0, lambda remaining, count: 0)
+                measured = tetra_metric_owner._measure_aim_cells(
+                    points, cells, epoch, 1.0e-12, unmet_aims
+                )
+                assert measured is not None
+                assert measured.shapes == expected
+                assert measured.extrema == tiled.extrema
+    finally:
+        native.close()
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+@pytest.mark.parametrize(
+    "interior,maximum_work,aim_work,advisory",
+    (
+        (False, 1, 1, True),
+        (False, 1, 1, False),
+        (False, 1000000, 1000000, True),
+        (True, 1000000, 1000000, True),
+        (True, 1000000, 0, True),
+    ),
+)
+def test_guarded_shape_aims_preserve_earned_hard_goal_and_report_actual_unmet(
+    interior: bool, maximum_work: int, aim_work: int, advisory: bool,
+) -> None:
+    if interior:
+        corners = np.asarray((
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+            (0.5, np.sqrt(3.0) / 2.0, 0.0),
+            (0.5, np.sqrt(3.0) / 6.0, np.sqrt(2.0 / 3.0)),
+        ))
+        center = np.mean(corners, axis=0)
+        points = np.concatenate((corners, (center + 0.3 * (corners[0] - center))[None]))
+        cells = np.column_stack((
+            np.full((4,), 4, dtype=np.int32),
+            np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))),
+        ))
+        aim_radius = 1.6
+    else:
+        points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                             (0.0, 1.0, 0.0), (0.0, 0.0, 0.2)))
+        cells = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+        aim_radius = 2.0
+    cells = tetra_metric_owner._orient(points, cells)
+    mesh = CellMesh.from_tetrahedra(points, cells)
+    regions = np.zeros((cells.shape[0],), dtype=np.int32)
+    faces, face_ids, segments, segment_ids = constraints(
+        mesh, cells, regions, None, None,
+        np.zeros((mesh.entity_set(1).count,), dtype=np.bool_),
+    )
+    entities = mesh.entity_set(3)
+    size_scope = phx.meshing.MeshingScope(
+        mesh.mesh_id, mesh.numeric_version, phx.meshing.MeshingEntityKind.MESH,
+        3, entities.entity_set_id, entities.entity_ids,
+    )
+    goal = UniformSizeRemeshingGoal(
+        phx.meshing.UniformSizeControl(
+            size_scope, 1.0, maximum_size=1.5,
+            strength=phx.meshing.SizeControlStrength.HARD,
+        ),
+        phx.meshing.SizeCompliancePolicy(relative_tolerance=0.5, target_statistics=("p50",)),
+        1.0e-12,
+    )
+    native = TetMesh3D(
+        points, cells, regions, faces, face_ids, segments, segment_ids,
+        boundary_policy="fixed",
+    )
+    phases: list[NativeMeshingPhaseMeasurement] = []
+    allowance_calls: list[tuple[int, int]] = []
+
+    def search_allowance(remaining: int, cell_count: int) -> int:
+        allowance_calls.append((remaining, cell_count))
+        return aim_work
+
+    try:
+        with _metric_request(_METRIC_LIMITS, mesh=native) as (scope, budget):
+            source = TetraMetricSource(
+                points, cells, np.arange(points.shape[0]), np.arange(cells.shape[0]),
+                budget=budget,
+            )
+            outcome = execute_native_tetra_metric(
+                native, source, np.broadcast_to(np.eye(3), (points.shape[0], 3, 3)),
+                fixed_vertices=np.zeros((points.shape[0],), dtype=np.bool_),
+                protected_edges=set(), maximum_passes=1, topology_operations=True,
+                relocation=True, minimum_metric_quality=0.05,
+                lower_metric_length=1.0, upper_metric_length=1.0,
+                maximum_vertices=4096, maximum_cells=4096, maximum_operations=10000,
+                maximum_work_units=maximum_work, maximum_location_pairs=1000000,
+                maximum_cavity_cells=512, maximum_cavity_work=maximum_work,
+                size_goal=goal if advisory else None,
+                shape_aims=TetraShapeAims(
+                    aim_radius, 10.0, 0 if interior else 1, 2, search_allowance
+                ) if advisory else None,
+                record_phase=phases.append, scope=scope, budget=budget,
+            )
+        if not advisory:
+            assert outcome.evidence.status is MetricRemeshingStatus.RESOURCE_LIMIT
+            assert outcome.evidence.work_units <= maximum_work
+            assert outcome.aim_evidence is None
+            assert not allowance_calls
+            return
+        assert outcome.evidence.converged
+        assert not outcome.evidence.size_issues
+        assert outcome.evidence.minimum_metric_quality >= 0.05
+        assert any(phase.phase == "metric_global_preparation" for phase in phases)
+        aim = outcome.aim_evidence
+        assert aim is not None and aim.state_binding
+        assert 0 <= aim.work_units <= maximum_work
+        if maximum_work == 1:
+            # The mandatory entry measurement runs under the epoch cap.
+            assert aim.terminal_reason == "resource_limit"
+            assert not aim.measurement_complete and aim.unmet is None
+            assert aim.radius_unmet_cells is None
+            assert not allowance_calls
+            assert outcome.evidence.resource_message is not None
+            assert outcome.evidence.resource_requested
+            assert outcome.evidence.resource_achieved
+            assert outcome.evidence.work_units <= maximum_work
+            np.testing.assert_array_equal(outcome.snapshot.points, points)
+        elif aim_work == 0:
+            # The soft allowance ends the search, never the earned hard goal
+            # or its complete measured bank.
+            assert len(allowance_calls) == 1
+            assert allowance_calls[0][0] > 0
+            assert allowance_calls[0][1] == cells.shape[0]
+            assert aim.terminal_reason == "resource_limit"
+            assert aim.measurement_complete and aim.unmet is not None
+            assert aim.accepted_operations == 0
+            assert outcome.evidence.resource_message is None
+            np.testing.assert_array_equal(outcome.snapshot.points[:4], points[:4])
+        else:
+            assert aim.measurement_complete and aim.unmet is not None
+            assert aim.refinement_rounds == (0 if interior else 1)
+            assert aim.improvement_passes > 0
+            assert any(phase.phase == "improvement" for phase in phases)
+            np.testing.assert_array_equal(outcome.snapshot.points[:4], points[:4])
+            if interior:
+                assert aim.accepted_operations > 0
+                assert aim.radius_unmet_cells == 0 and aim.dihedral_unmet_cells == 0
+                assert aim.terminal_reason == "satisfied"
+            else:
+                assert aim.accepted_operations == 0
+                assert aim.radius_unmet_cells == 1 and aim.dihedral_unmet_cells == 0
+                assert aim.terminal_reason == "constraint_limited"
+                np.testing.assert_array_equal(outcome.snapshot.tetrahedra, native.arrays().tetrahedra)
+    finally:
+        native.close()
+
+
+@pytest.mark.parametrize(
+    ("coarsening", "statistical", "expected"),
+    (
+        (False, False, ("split", "collapse", "flip", "ring")),
+        (False, True, ("split", "collapse", "flip", "ring")),
+        (True, False, ("collapse", "flip", "ring", "split")),
+        (True, True, ("collapse", "split", "flip", "ring")),
+    ),
+)
+def test_metric_topology_order_preserves_each_original_operation_once(
+    coarsening: bool, statistical: bool, expected: tuple[str, ...],
+) -> None:
+    order = tetra_metric_owner._metric_topology_operation_order(
+        coarsening_first=coarsening, statistical=statistical
+    )
+    assert tuple(operation.value for operation in order) == expected
+    assert len(order) == len(set(order)) == 4
+
+
+def test_metric_trajectory_identity_binds_stored_strategy_not_current_default() -> None:
+    from copy import copy
+
+    from phydrax._fingerprint import canonical_fingerprint
+
+    evidence = MetricRemeshingEvidence(
+        MetricRemeshingStatus.COMPLETE,
+        passes=1,
+        counts=(0, 0, 0, 0),
+        rejected_operations=0,
+        work_units=0,
+        lengths=np.asarray((1.0,)),
+        quality=np.asarray((1.0,)),
+    )
+    assert evidence.trajectory_strategy_id == tetra_metric_owner._METRIC_TRAJECTORY_STRATEGY_ID
+    evidence.validate_restored()
+    stored = copy(evidence)
+    previous = canonical_fingerprint(
+        {"kind": "native-metric-operation-order", "ordinary_coarsening": ("collapse", "split", "flip", "ring", "relocate")}
+    )
+    object.__setattr__(stored, "trajectory_strategy_id", previous)
+    with pytest.raises(ValueError, match="evidence_id"):
+        stored.validate_restored()
+    # This is aggregate identity authentication, not a native execution claim.
+    # A stored, self-bound strategy remains that strategy; restoration must not
+    # silently relabel it with the constructor's current ordering.
+    object.__setattr__(
+        stored, "evidence_id", stored._source_identity(stored.metric_arc_bounds, stored.metric_arc_edge_ids)
+    )
+    stored.validate_restored()
+    assert stored.trajectory_strategy_id == previous
+    assert evidence.trajectory_strategy_id != previous

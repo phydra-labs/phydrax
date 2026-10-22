@@ -84,11 +84,26 @@ class _HostMatrixFactor:
     spectrum: NDArray[np.float64]
     lu: NDArray[np.float64] | None
     pivots: NDArray[np.int32] | None
+    permutation: NDArray[np.int64] | None = None
+    signs: NDArray[np.float64] | None = None
 
     def solve(self, values: NDArray[np.float64], /) -> NDArray[np.float64]:
+        if self.permutation is not None and self.signs is not None:
+            result = np.empty_like(values)
+            result[self.permutation] = self.signs.reshape(
+                (-1,) + (1,) * (values.ndim - 1)
+            ) * values
+            return result
         if self.lu is None or self.pivots is None:
             return np.linalg.solve(self.matrix, values)
         return np.asarray(lu_solve((self.lu, self.pivots), values), dtype=np.float64)
+
+    def apply(self, values: NDArray[np.float64], /) -> NDArray[np.float64]:
+        if self.permutation is not None and self.signs is not None:
+            return self.signs.reshape(
+                (-1,) + (1,) * (values.ndim - 1)
+            ) * values[self.permutation]
+        return self.matrix @ values
 
     def singular_values(self, /) -> NDArray[np.float64]:
         return self.spectrum
@@ -156,37 +171,64 @@ class PreparationWork:
             self.basis_solve_defect, float(np.max(np.asarray(factors.dual_solve_error)))
         )
 
+    def _signed_permutation_factor(
+        self, matrix: NDArray[np.float64]
+    ) -> _HostMatrixFactor | None:
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+            return None
+        width = matrix.shape[0]
+        # Inspect every entry before claiming an exact orthogonal orientation.
+        self.charge(4 * matrix.size, matrix.size + 4 * width)
+        nonzero = matrix != 0.0
+        if not (
+            np.all(np.count_nonzero(nonzero, axis=0) == 1)
+            and np.all(np.count_nonzero(nonzero, axis=1) == 1)
+        ):
+            return None
+        columns = np.asarray(np.argmax(nonzero, axis=1), dtype=np.int64)
+        signs = matrix[np.arange(width), columns]
+        if not np.all(np.abs(signs) == 1.0):
+            return None
+        return _HostMatrixFactor(
+            matrix, np.ones(width, dtype=np.float64), None, None, columns, signs
+        )
+
     def factor_matrix(self, matrix: NDArray[np.float64]) -> _HostMatrixFactor:
+        self.charge(matrix.size, matrix.size)
         key = (matrix.shape, matrix.tobytes())
         prepared = self.matrix_factors.get(key)
         if prepared is None:
             width = matrix.shape[-1]
-            self.charge(width * matrix.size, 3 * matrix.size)
-            spectrum = np.linalg.svd(matrix, compute_uv=False)
-            threshold = (
-                spectrum[..., :1] * np.finfo(np.float64).eps * max(matrix.shape[-2:])
-            )
-            ranks = np.count_nonzero(spectrum > threshold, axis=-1)
-            if np.any(ranks != width) or np.any(spectrum[..., -1] <= 0):
-                raise ValueError(
-                    "form_patch.transformation must have full rank; got a singular transformation"
+            factor = self._signed_permutation_factor(matrix)
+            if factor is None:
+                self.charge(width * matrix.size, 3 * matrix.size)
+                spectrum = np.linalg.svd(matrix, compute_uv=False)
+                threshold = (
+                    spectrum[..., :1] * np.finfo(np.float64).eps * max(matrix.shape[-2:])
                 )
-            condition = float(np.max(spectrum[..., 0] / spectrum[..., -1]))
-            if not np.isfinite(condition) or condition > 1e12:
-                raise ValueError(
-                    "form_patch.transformation_condition must be finite and at most 1e12; got an excessive or non-finite condition"
-                )
-            rank = float(np.min(ranks))
-            if matrix.ndim == 2:
-                lu, pivots = lu_factor(matrix)
-                factor = _HostMatrixFactor(
-                    matrix,
-                    spectrum,
-                    np.asarray(lu, dtype=np.float64),
-                    np.asarray(pivots, dtype=np.int32),
-                )
+                ranks = np.count_nonzero(spectrum > threshold, axis=-1)
+                if np.any(ranks != width) or np.any(spectrum[..., -1] <= 0):
+                    raise ValueError(
+                        "form_patch.transformation must have full rank; got a singular transformation"
+                    )
+                condition = float(np.max(spectrum[..., 0] / spectrum[..., -1]))
+                if not np.isfinite(condition) or condition > 1e12:
+                    raise ValueError(
+                        "form_patch.transformation_condition must be finite and at most 1e12; got an excessive or non-finite condition"
+                    )
+                rank = float(np.min(ranks))
+                if matrix.ndim == 2:
+                    lu, pivots = lu_factor(matrix)
+                    factor = _HostMatrixFactor(
+                        matrix,
+                        spectrum,
+                        np.asarray(lu, dtype=np.float64),
+                        np.asarray(pivots, dtype=np.int32),
+                    )
+                else:
+                    factor = _HostMatrixFactor(matrix, spectrum, None, None)
             else:
-                factor = _HostMatrixFactor(matrix, spectrum, None, None)
+                rank, condition = float(width), 1.0
             prepared = factor, rank, condition
             self.matrix_factors[key] = prepared
         factor, rank, condition = prepared
@@ -199,8 +241,13 @@ class PreparationWork:
         transform: NDArray[np.float64],
         moments: NDArray[np.float64],
     ) -> NDArray[np.float64]:
-        self.charge(transform.size * moments.shape[1], moments.size)
         factor = self.factor_matrix(transform)
+        self.charge(
+            2 * moments.size
+            if factor.permutation is not None
+            else transform.size * moments.shape[1],
+            moments.size,
+        )
         values = np.asarray(factor.solve(moments), dtype=np.float64)
         if not np.all(np.isfinite(values)):
             raise ValueError(
@@ -209,7 +256,7 @@ class PreparationWork:
         scale = max(float(np.max(np.abs(moments), initial=0)), 1.0)
         self.solve_defect = max(
             self.solve_defect,
-            float(np.max(np.abs(transform @ values - moments), initial=0)) / scale,
+            float(np.max(np.abs(factor.apply(values) - moments), initial=0)) / scale,
         )
         return values
 
@@ -753,9 +800,11 @@ def _patch_rows(
         spectrum = np.asarray(work.factor_matrix(cell.transform).singular_values())
         work.integration_error = max(
             work.integration_error,
-            float(np.max(raw.error, initial=0))
-            * np.sqrt(cell.basis.local_dof_count)
-            / float(spectrum[-1]),
+            float(
+                float(np.max(raw.error, initial=0))
+                * np.sqrt(cell.basis.local_dof_count)
+                / float(spectrum[-1])
+            ),
         )
         rows.extend(cell.routes.tolist())
         routes.extend(np.broadcast_to(columns, local.shape))

@@ -23,6 +23,7 @@ import numpy as np
 from numpy.lib._format_impl import _write_array_header  # ty: ignore[unresolved-import]
 
 from ._host_io import open_regular_file
+from ._host_storage import immutable_host_array
 from ._publication import PublicationMode, publish_file
 from .typing import parse
 
@@ -1049,6 +1050,8 @@ def _read_array_archive(
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} metadata changed while loading."
                     )
+                if not map_arrays:
+                    value = immutable_host_array(value)
                 value.setflags(write=False)
                 values[logical_name] = value
             return manifest, values

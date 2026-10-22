@@ -17,6 +17,9 @@ from phydrax.discretization._adaptive_simplex import (
 from phydrax.meshing._device_adaptation import (
     _addressable_part_array,
     _addressable_part_state,
+    _host_epoch,
+    _host_part_array,
+    _host_part_epoch,
     _resized_epoch,
 )
 from tests._support.forced_devices import run_on_forced_devices
@@ -190,6 +193,38 @@ def test_addressable_epoch_projection_fuses_leaves_and_keeps_owner_index_dynamic
     for missing in (-1, 2):
         with pytest.raises(ValueError, match="process-addressable"):
             _addressable_part_state(states, missing)
+
+
+def test_host_epoch_projection_compiles_nothing_and_owns_lossless_snapshots() -> None:
+    states = jax.tree.map(
+        lambda left, right: jax.device_put(
+            np.concatenate((np.asarray(left), np.asarray(right)), axis=0)
+        ),
+        _epoch(10),
+        _epoch(20),
+    )
+    references = tuple(
+        _host_epoch(jax.tree.map(lambda value: np.asarray(value)[part], states))
+        for part in range(2)
+    )
+    jax.clear_caches()
+    with CompileCounter() as compiler:
+        snapshots = tuple(_host_part_epoch(states, part) for part in range(2))
+        cursors = _host_part_array(states.cursors, 1)
+    assert compiler.count == 0
+    np.testing.assert_array_equal(cursors, references[1].cursors)
+    for reference, snapshot in zip(references, snapshots, strict=True):
+        for expected, actual in zip(reference, snapshot, strict=True):
+            assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
+    snapshots[0].coordinates[0, 0] = 42.0
+    assert snapshots[1].coordinates.tobytes() == references[1].coordinates.tobytes()
+    assert (
+        np.asarray(states.mesh.coordinates)[0].tobytes()
+        == references[0].coordinates.tobytes()
+    )
+    for missing in (-1, 2):
+        with pytest.raises(ValueError, match="process-addressable"):
+            _host_part_epoch(states, missing)
 
 
 def two_device_resize_placement() -> dict[str, int]:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import fields
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
@@ -606,6 +607,17 @@ class GraphPartitionWork(StrictModule, NonTrainableState):
         self.adjacency_visits = counters.adjacency_visits
         self.candidate_evaluations = counters.candidate_evaluations
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[GraphPartitionWork], value: GraphPartitionWork, /
+    ) -> GraphPartitionWork:
+        """Reconstruct every retained native counter through its owning contract."""
+        return cls(GraphPartitionCounters(**{
+            member.name: getattr(value, member.name)
+            for member in fields(GraphPartitionCounters)
+        }))
+
 
 class _CollectiveHostMeasurements(StrictModule):
     weights: np.ndarray
@@ -714,6 +726,35 @@ class GraphPartitionEvidence(StrictModule, NonTrainableState):
     resource_status: int = eqx.field(static=True)
     migration_vertex_count: int = eqx.field(static=True)
     ghost_entry_count: int = eqx.field(static=True)
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[GraphPartitionEvidence], value: GraphPartitionEvidence, /
+    ) -> GraphPartitionEvidence:
+        """Restore the descriptor; its source graph is re-earned by its owner."""
+        return cls(
+            part_weights=value.part_weights,
+            part_targets=value.part_targets,
+            part_capacities=value.part_capacities,
+            part_vertex_counts=value.part_vertex_counts,
+            indivisible_vertices=value.indivisible_vertices,
+            status=value.status,
+            imbalance=value.imbalance,
+            imbalance_lower_bound=value.imbalance_lower_bound,
+            edge_cut=value.edge_cut,
+            cut_edge_count=value.cut_edge_count,
+            boundary_vertex_count=value.boundary_vertex_count,
+            empty_part_count=value.empty_part_count,
+            work=GraphPartitionWork.from_stored_fields(value.work),
+            determinism=value.determinism,
+            backend=value.backend,
+            evidence_id=value.evidence_id,
+            accepted=value.accepted,
+            resource_status=value.resource_status,
+            migration_vertex_count=value.migration_vertex_count,
+            ghost_entry_count=value.ghost_entry_count,
+        )
 
     @classmethod
     @checked
@@ -848,12 +889,31 @@ class GraphPartitionEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "GraphPartitionEvidence.graph must be owner-local; got serial graph"
             )
+        return cls.logical(
+            graph.graph_id, graph.vertex_ids, parts, measurements,
+            indivisible_ids, work, backend,
+        )
+
+    @classmethod
+    @checked
+    def logical(
+        cls,
+        graph_id: Identifier,
+        vertex_ids: Array,
+        parts: Array,
+        measurements: PartitionMeasurements,
+        indivisible_ids: Array,
+        work: GraphPartitionWork,
+        backend: str,
+        /,
+    ) -> GraphPartitionEvidence:
+        """Measure logical outputs whose actual graph is authenticated by the caller."""
         targets, capacities = measurements.targets, measurements.capacities
         weights, counts = measurements.part_weights, measurements.part_vertex_counts
         count = targets.size
         if (
             parts.dtype != jnp.int32
-            or parts.shape != graph.vertex_ids.shape
+            or parts.shape != vertex_ids.shape
             or indivisible_ids.dtype != jnp.int64
             or indivisible_ids.shape != parts.shape
         ):
@@ -919,7 +979,7 @@ class GraphPartitionEvidence(StrictModule, NonTrainableState):
         evidence_id = canonical_fingerprint(
             dict(
                 kind="owner-local-graph-partition-evidence",
-                graph=graph.graph_id,
+                graph=graph_id,
                 parts=_logical_parts_id(parts),
                 resource_status=resource,
                 weights=host_weights.tolist(),

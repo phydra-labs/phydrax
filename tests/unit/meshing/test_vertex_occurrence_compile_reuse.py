@@ -9,8 +9,10 @@ from jax import Array
 from phydrax.meshing._collective_organization import (
     _bind_vertex_source_rows,
     _entity_membership_values,
+    _initial_membership_values,
     _select_vertex_occurrence_values,
     _vertex_membership_values,
+    _vertex_occurrence_values,
 )
 from tools.compile_counter import CompileCounter
 
@@ -132,3 +134,60 @@ def test_entity_definition_membership_keeps_rows_and_count_dynamic() -> None:
     assert compiler.count == 0
     np.testing.assert_array_equal(repeated, first)
     np.testing.assert_array_equal(changed, [True, False, False, True])
+
+
+def test_initial_memberships_fuse_dynamic_declarations_and_active_prefixes() -> None:
+    sources = (
+        jax.device_put(np.asarray((7, 9, 7, -1), dtype=np.int64)),
+        jax.device_put(np.asarray((2, 3, 5, -1), dtype=np.int64)),
+    )
+    selections = (np.asarray((7,), dtype=np.int64), np.asarray((3, 5), dtype=np.int64))
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(
+            _initial_membership_values(sources, selections, (3, 3))
+        )
+    with CompileCounter() as warm:
+        changed = jax.block_until_ready(
+            _initial_membership_values(
+                sources,
+                (np.asarray((9,), dtype=np.int64), np.asarray((2, 5), dtype=np.int64)),
+                (2, 2),
+            )
+        )
+    assert cold.count == 1
+    assert warm.count == 0
+    np.testing.assert_array_equal(first[0], (True, False, True, False))
+    np.testing.assert_array_equal(first[1], (False, True, True, False))
+    np.testing.assert_array_equal(changed[0], (False, True, False, False))
+    np.testing.assert_array_equal(changed[1], (True, False, False, False))
+
+
+def test_vertex_ancestry_selection_is_one_kernel_with_exact_dynamic_supports() -> None:
+    ids = jax.device_put(np.asarray(((11, 23, 47, 59),), dtype=np.int64))
+    parents = jax.device_put(
+        np.asarray((((-1, -1), (-1, -1), (-1, -1), (0, 1)),), dtype=np.int32)
+    )
+    cursors = jax.device_put(np.asarray(((4, 0, 0, 0),), dtype=np.int64))
+    active = jax.device_put(np.asarray(((True, True, True, True),), dtype=np.bool_))
+    targets = jax.device_put(np.asarray((11, 23, 47, 59), dtype=np.int64))
+    changed_ids = jax.device_put(np.asarray(((101, 103, 107, 109),), dtype=np.int64))
+    changed_targets = jax.device_put(np.asarray((101, 103, 107, 109), dtype=np.int64))
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(
+            _vertex_occurrence_values(ids, parents, cursors, active, targets, 3, None)
+        )
+    with CompileCounter() as warm:
+        changed = jax.block_until_ready(
+            _vertex_occurrence_values(
+                changed_ids, parents, cursors, active, changed_targets, 3, None
+            )
+        )
+    assert cold.count == 1
+    assert warm.count == 0
+    assert bool(first[2]) and bool(changed[2])
+    np.testing.assert_array_equal(first[0][3], (11, 23, -1))
+    np.testing.assert_array_equal(changed[0][3], (101, 103, -1))
+    np.testing.assert_array_equal(first[1][3], (0.5, 0.5, 0.0))
+    assert np.asarray(first[1]).tobytes() == np.asarray(changed[1]).tobytes()

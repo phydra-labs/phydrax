@@ -34,9 +34,11 @@ from ..typing import checked
 from . import (
     _collective_organization as collective_organization_owner,
     _distribution as distribution_owner,
+    _entity_keys as entity_keys_owner,
     _initial_certification as initial_certification_owner,
     _result as result_owner,
 )
+from ._collective_failure import agreed_local_step
 from ._organization_records import MeshAttribute, organization_definition_id
 
 
@@ -86,6 +88,61 @@ def _compact(keys: Array, valid: Array, capacity: int, /) -> tuple[Array, Array,
     return jnp.where(active[:, None], ordered[selected], -1), active, count <= capacity
 
 
+@jax.jit
+def logical_boundary_masks(
+    cell_rows: jax.Array,
+    cells: int,
+    entity_tables: tuple[jax.Array, ...],
+    counts: tuple[int, ...],
+    /,
+) -> tuple[jax.Array, ...]:
+    dimension = cell_rows.shape[1] - 1
+    columns = jnp.asarray(
+        tuple(
+            tuple(column for column in range(dimension + 1) if column != opposite)
+            for opposite in range(dimension + 1)
+        ),
+        dtype=jnp.int32,
+    )
+    cell_valid = jnp.arange(cell_rows.shape[0]) < cells
+    facet_keys = jnp.sort(cell_rows[:, columns], axis=2).reshape((-1, dimension))
+    facet_valid = jnp.repeat(cell_valid, dimension + 1)
+    facet_table = jnp.where(
+        entity_tables[-2] >= 0,
+        entity_tables[-2],
+        jnp.iinfo(jnp.int64).max,
+    )
+    facet_rows = entity_keys_owner.key_positions(facet_table, facet_keys)
+    incidence = (
+        jnp.zeros((facet_table.shape[0],), dtype=jnp.int32)
+        .at[jnp.maximum(facet_rows, 0)]
+        .add(facet_valid.astype(jnp.int32))
+    )
+    facet_boundary = (jnp.arange(facet_table.shape[0]) < counts[-2]) & (incidence == 1)
+    masks = []
+    for degree in range(dimension - 1):
+        local = np.asarray(
+            tuple(combinations(range(dimension), degree + 1)), dtype=np.int32
+        )
+        keys = entity_tables[-2][:, local].reshape((-1, degree + 1))
+        valid = jnp.repeat(facet_boundary, local.shape[0])
+        table = jnp.where(
+            entity_tables[degree] >= 0,
+            entity_tables[degree],
+            jnp.iinfo(jnp.int64).max,
+        )
+        rows = entity_keys_owner.key_positions(table, keys)
+        membership = (
+            jnp.zeros((table.shape[0],), dtype=jnp.int32)
+            .at[jnp.maximum(rows, 0)]
+            .add(valid.astype(jnp.int32))
+        )
+        masks.append((jnp.arange(table.shape[0]) < counts[degree]) & (membership > 0))
+    masks.append(facet_boundary)
+    masks.append(jnp.zeros((cell_rows.shape[0],), dtype=jnp.bool_))
+    return tuple(masks)
+
+
 @partial(jax.jit, static_argnames=("vertex_capacity", "organization_degrees"))
 def _project(
     arrays: dict[str, Array],
@@ -102,6 +159,9 @@ def _project(
     cell_valid = arrays["closure/cell_valid"]
     parts, cells, width = corners.shape
     dimension = width - 1
+    boundary_masks = logical_boundary_masks(
+        arrays["cell_vertices"], counts[-1], tables, counts
+    )
     output: dict[str, Array] = {}
     for name, value in arrays.items():
         if name.startswith("closure/"):
@@ -164,6 +224,7 @@ def _project(
         output[f"entity/{degree}/valid"] = mask
         output[f"entity/{degree}/ids"] = jnp.where(mask, identifiers[degree][row], -1)
         output[f"entity/{degree}/owners"] = jnp.where(mask, owner, -1)
+        output[f"entity/{degree}/physical_boundary"] = mask & boundary_masks[degree][row]
         if degree == dimension:
             passed &= jnp.all(jnp.sum(mask, axis=1) == jnp.sum(cell_valid, axis=1))
             original_rows, original_found = _lookup(
@@ -220,8 +281,7 @@ def _addressable_payload(
 
 
 def addressable(value: Array, partition_index: int, /) -> Array:
-    data, local_index, _ = _addressable_payload(value, partition_index)
-    return data[local_index]
+    return _addressable_arrays((value,), partition_index)[0]
 
 
 def _addressable_arrays(
@@ -258,7 +318,9 @@ class PublicationProjection(StrictModule, NonTrainableState):
             raise ValueError(
                 "PublicationProjection.source_arrays must retain the accepted numerical banks; got different bank objects"
             )
-        self.geometry.require_source(logical_arrays, self.coordinate_geometry_id)
+        type(self.geometry).require_source(
+            self.geometry, logical_arrays, self.coordinate_geometry_id
+        )
 
     def addressable_arrays(
         self, partition_index: int, /
@@ -339,16 +401,19 @@ class PreparedPublicationLowering(StrictModule, NonTrainableState):
         self.definitions_id = preparation.definitions_id
 
     def execute(self) -> PublicationProjection:
-        projected_names = {
-            "coordinates",
-            *(name for name, _ in self.organization_degrees),
-        }
-        arrays, accepted = _project(
-            {
+        with agreed_local_step():
+            projected_names = {
+                "coordinates",
+                "cell_vertices",
+                *(name for name, _ in self.organization_degrees),
+            }
+            projected_inputs = {
                 name: value
                 for name, value in self.source_arrays
                 if name.startswith("closure/") or name in projected_names
-            },
+            }
+        arrays, accepted = _project(
+            projected_inputs,
             self.entity_tables,
             self.entity_ids,
             self.entity_owners,
@@ -356,17 +421,20 @@ class PreparedPublicationLowering(StrictModule, NonTrainableState):
             vertex_capacity=self.vertex_capacity,
             organization_degrees=self.organization_degrees,
         )
-        if not bool(jax.device_get(accepted)):
-            raise ValueError(
-                "PublicationProjection.projected_arrays must have unique ownership and fit closure capacity; got missing ownership, corrupt banks, or exceeded capacity"
-            )
-        query = dict(self.source_arrays)["closure/cell_ids"]
-        placement = query.sharding
-        if isinstance(placement, NamedSharding):
-            placement = NamedSharding(
-                placement.mesh,
-                PartitionSpec(placement.spec[0] if placement.spec else None),
-            )
+        passed = bool(jax.device_get(accepted))
+        with agreed_local_step():
+            if not passed:
+                raise ValueError(
+                    "PublicationProjection.projected_arrays must have unique ownership and fit closure capacity; got missing ownership, corrupt banks, or exceeded capacity"
+                )
+        with agreed_local_step():
+            query = dict(self.source_arrays)["closure/cell_ids"]
+            placement = query.sharding
+            if isinstance(placement, NamedSharding):
+                placement = NamedSharding(
+                    placement.mesh,
+                    PartitionSpec(placement.spec[0] if placement.spec else None),
+                )
         projected = tuple(
             (name, jax.device_put(value, placement))
             for name, value in sorted(arrays.items())
@@ -377,20 +445,21 @@ class PreparedPublicationLowering(StrictModule, NonTrainableState):
             self.coordinate_count,
             source_elements=dict(self.source_elements),
         )
-        return PublicationProjection(
-            self.source_arrays,
-            self.entity_tables,
-            self.entity_ids,
-            self.entity_owners,
-            projected,
-            geometry,
-            self.source_id,
-            self.topology_id,
-            self.coordinate_geometry_id,
-            self.organization_id,
-            self.definitions_id,
-            query.shape[0],
-        )
+        with agreed_local_step():
+            return PublicationProjection(
+                self.source_arrays,
+                self.entity_tables,
+                self.entity_ids,
+                self.entity_owners,
+                projected,
+                geometry,
+                self.source_id,
+                self.topology_id,
+                self.coordinate_geometry_id,
+                self.organization_id,
+                self.definitions_id,
+                query.shape[0],
+            )
 
 
 class _PublicationPreparation(StrictModule):
@@ -427,85 +496,89 @@ def _prepare_publication_organization(
         ("geometry/source_geometry_id", source_geometry_id),
         ("geometry/source_topology_id", source_topology_id),
     ):
-        expected = np.frombuffer(
-            bytes.fromhex(canonical_fingerprint(identity)), dtype=np.uint8
-        )
-        if (
-            name not in arrays
-            or arrays[name].shape != (32,)
-            or arrays[name].dtype != jnp.uint8
-        ):
-            raise ValueError(
-                "PreparedPublicationLowering.source_arrays must retain source identity banks; got absent or incompatible identity axes"
+        with agreed_local_step():
+            expected = np.frombuffer(
+                bytes.fromhex(canonical_fingerprint(identity)), dtype=np.uint8
             )
-        if not bool(jax.device_get(jnp.all(arrays[name] == jnp.asarray(expected)))):
-            raise ValueError(
-                "PreparedPublicationLowering.source_arrays must match authored source identities; got a different identity"
-            )
-    definitions = []
-    degrees = []
-    for family, records in families:
-        for index, record in enumerate(records):
-            degree = record.scope.entity_dimension
-            definitions.append(
-                (family, index, degree, organization_definition_id(record))
-            )
-            membership = f"organization/{family}/{index}/membership"
             if (
-                arrays[membership].shape != evidence.entity_ids[degree].shape
-                or arrays[membership].dtype != jnp.bool_
+                name not in arrays
+                or arrays[name].shape != (32,)
+                or arrays[name].dtype != jnp.uint8
             ):
                 raise ValueError(
-                    "PreparedPublicationLowering.membership must match its entity bank; got incompatible membership axes"
+                    "PreparedPublicationLowering.source_arrays must retain source identity banks; got absent or incompatible identity axes"
                 )
-            degrees.append((membership, degree))
-            if family == "attribute":
-                match record:
-                    case MeshAttribute():
-                        name = f"organization/attribute/{index}/values"
-                        if arrays[name].shape != (
-                            *arrays[membership].shape,
-                            *record.component_shape,
-                        ):
-                            raise ValueError(
-                                "PreparedPublicationLowering.attribute_values must match entity and component axes; got incompatible component axes"
+        accepted = bool(jax.device_get(jnp.all(arrays[name] == jnp.asarray(expected))))
+        with agreed_local_step():
+            if not accepted:
+                raise ValueError(
+                    "PreparedPublicationLowering.source_arrays must match authored source identities; got a different identity"
+                )
+    with agreed_local_step():
+        definitions = []
+        degrees = []
+        for family, records in families:
+            for index, record in enumerate(records):
+                degree = record.scope.entity_dimension
+                definitions.append(
+                    (family, index, degree, organization_definition_id(record))
+                )
+                membership = f"organization/{family}/{index}/membership"
+                if (
+                    arrays[membership].shape != evidence.entity_ids[degree].shape
+                    or arrays[membership].dtype != jnp.bool_
+                ):
+                    raise ValueError(
+                        "PreparedPublicationLowering.membership must match its entity bank; got incompatible membership axes"
+                    )
+                degrees.append((membership, degree))
+                if family == "attribute":
+                    match record:
+                        case MeshAttribute():
+                            name = f"organization/attribute/{index}/values"
+                            if arrays[name].shape != (
+                                *arrays[membership].shape,
+                                *record.component_shape,
+                            ):
+                                raise ValueError(
+                                    "PreparedPublicationLowering.attribute_values must match entity and component axes; got incompatible component axes"
+                                )
+                            degrees.append((name, degree))
+                        case _:
+                            raise TypeError(
+                                "PreparedPublicationLowering.attribute must be MeshAttribute; got a different definition kind"
                             )
-                        degrees.append((name, degree))
-                    case _:
-                        raise TypeError(
-                            "PreparedPublicationLowering.attribute must be MeshAttribute; got a different definition kind"
-                        )
-    for degree, (keys, ids, owners, count) in enumerate(
-        zip(
-            evidence.entity_keys,
-            evidence.entity_ids,
-            evidence.entity_owners,
-            counts,
-            strict=True,
-        )
-    ):
-        width = 1 if degree == len(counts) - 1 else degree + 1
-        if (
-            keys.ndim != 2
-            or keys.shape[-1] != width
-            or keys.shape[0] < count
-            or count < 0
-            or keys.shape[0] == 0
-        ):
-            raise ValueError(
-                "PreparedPublicationLowering.entity_keys must have compatible capacity; got incompatible key axes"
+        for degree, (keys, ids, owners, count) in enumerate(
+            zip(
+                evidence.entity_keys,
+                evidence.entity_ids,
+                evidence.entity_owners,
+                counts,
+                strict=True,
             )
-        if (
-            keys.dtype != jnp.int64
-            or ids.shape != keys.shape[:1]
-            or ids.dtype != jnp.int64
-            or owners.shape != ids.shape
-            or owners.dtype != jnp.int32
         ):
-            raise ValueError(
-                "PreparedPublicationLowering.entity_ids must match key axes and integer dtypes together with entity_owners; got incompatible axes"
-            )
-    return _PublicationOrganization(tuple(definitions), tuple(degrees))
+            width = 1 if degree == len(counts) - 1 else degree + 1
+            if (
+                keys.ndim != 2
+                or keys.shape[-1] != width
+                or keys.shape[0] < count
+                or count < 0
+                or keys.shape[0] == 0
+            ):
+                raise ValueError(
+                    "PreparedPublicationLowering.entity_keys must have compatible capacity; got incompatible key axes"
+                )
+            if (
+                keys.dtype != jnp.int64
+                or ids.shape != keys.shape[:1]
+                or ids.dtype != jnp.int64
+                or owners.shape != ids.shape
+                or owners.dtype != jnp.int32
+            ):
+                raise ValueError(
+                    "PreparedPublicationLowering.entity_ids must match key axes and integer dtypes together with entity_owners; got incompatible axes"
+                )
+        return _PublicationOrganization(tuple(definitions), tuple(degrees))
 
 
 def _prepare_initial_publication(
@@ -525,7 +598,7 @@ def _prepare_initial_publication(
     queries = arrays["closure/cell_vertices"]
     if queries.ndim != 3 or queries.shape[-1] != 3:
         raise ValueError(
-            "PreparedPublicationLowering.closure must contain fixed-capacity surface packets; got incompatible packet axes"
+            "PreparedPublicationLowering.closure must contain fixed-capacity triangle packets; got incompatible packet axes"
         )
     degrees = []
     for name in arrays:
@@ -558,22 +631,21 @@ def _prepare_initial_publication(
     entity_owners = evidence.entity_owners
     counts = evidence.global_entity_counts
     coordinate_count = evidence.global_entity_counts[0]
+    premise = evidence.premise
     source_elements = (
         (
-            "surface",
+            premise.block_name,
             coordinate_lagrange_element(
-                evidence.cell_kind, evidence.specification.target.geometry_order
+                evidence.cell_kind, premise.specification.target.geometry_order
             ),
         ),
     )
     organization_degrees = tuple(degrees)
-    source_id = evidence.compiled.domain.domain_id
+    source_id = premise.source_domain_id
     topology_id = evidence.topology_id
     coordinate_geometry_id = evidence.coordinate_geometry_id
     organization_id = evidence.global_organization_id
-    definitions_id = canonical_fingerprint(
-        (evidence.compiled.compiled_id, evidence.specification.specification_id)
-    )
+    definitions_id = premise.definitions_id
     return _PublicationPreparation(
         source_arrays=source_arrays,
         entity_tables=entity_tables,
@@ -600,97 +672,102 @@ def _prepare_subdivision_publication(
     neighborhood: distribution_owner.SimplexNeighborhoodWorkset | None,
     vertex_capacity: int,
 ) -> _PublicationPreparation:
-    if original is None or neighborhood is None:
-        raise ValueError(
-            "PreparedPublicationLowering.neighborhood must bind subdivision inputs together with the predecessor; got a missing predecessor or neighborhood"
+    with agreed_local_step():
+        if original is None or neighborhood is None:
+            raise ValueError(
+                "PreparedPublicationLowering.neighborhood must bind subdivision inputs together with the predecessor; got a missing predecessor or neighborhood"
+            )
+        if isinstance(vertex_capacity, bool) or vertex_capacity <= 0:
+            raise ValueError(
+                "PreparedPublicationLowering.vertex_capacity must be positive; got nonpositive capacity"
+            )
+        arrays = dict(evidence.logical_arrays)
+        arrays.update(
+            {
+                "closure/cell_ids": neighborhood.cell_ids,
+                "closure/cell_vertices": neighborhood.cell_vertices,
+                "closure/cell_valid": neighborhood.cell_valid,
+                "closure/cell_owner": neighborhood.cell_owner,
+                "closure/cell_coordinates": neighborhood.cell_coordinates,
+                "closure/root_cell_ids": neighborhood.root_cell_ids,
+            }
         )
-    if isinstance(vertex_capacity, bool) or vertex_capacity <= 0:
-        raise ValueError(
-            "PreparedPublicationLowering.vertex_capacity must be positive; got nonpositive capacity"
-        )
-    arrays = dict(evidence.logical_arrays)
-    arrays.update(
-        {
-            "closure/cell_ids": neighborhood.cell_ids,
-            "closure/cell_vertices": neighborhood.cell_vertices,
-            "closure/cell_valid": neighborhood.cell_valid,
-            "closure/cell_owner": neighborhood.cell_owner,
-            "closure/cell_coordinates": neighborhood.cell_coordinates,
-            "closure/root_cell_ids": neighborhood.root_cell_ids,
-        }
-    )
-    queries = neighborhood.cell_vertices
-    if (
-        queries.ndim != 3
-        or queries.dtype != jnp.int64
-        or queries.shape[:2] != neighborhood.cell_ids.shape
-    ):
-        raise ValueError(
-            "PreparedPublicationLowering.neighborhood must have part-leading simplex packet axes; got incompatible packets"
-        )
-    counts = evidence.global_entity_counts
-    if len(counts) != queries.shape[-1]:
-        raise ValueError(
-            "PreparedPublicationLowering.neighborhood must match the entity bank dimension; got a different simplex dimension"
-        )
-    evidence.require_passed()
-    if isinstance(original, initial_certification_owner.InitialCollectiveMeshEvidence):
-        source_geometry_id = original.coordinate_geometry_id
-        source_topology_id = original.topology_id
-        coordinate_count = original.global_entity_counts[0]
-        source_id = original.evidence_id
-        families = collective_organization_owner.initial_organization_definitions(
-            original
-        )
-        source_elements = (
-            (
-                "surface",
-                coordinate_lagrange_element(
-                    original.cell_kind, original.specification.target.geometry_order
+        queries = neighborhood.cell_vertices
+        if (
+            queries.ndim != 3
+            or queries.dtype != jnp.int64
+            or queries.shape[:2] != neighborhood.cell_ids.shape
+        ):
+            raise ValueError(
+                "PreparedPublicationLowering.neighborhood must have part-leading simplex packet axes; got incompatible packets"
+            )
+        counts = evidence.global_entity_counts
+        if len(counts) != queries.shape[-1]:
+            raise ValueError(
+                "PreparedPublicationLowering.neighborhood must match the entity bank dimension; got a different simplex dimension"
+            )
+    with agreed_local_step():
+        type(evidence).require_passed(evidence)
+    with agreed_local_step():
+        if isinstance(original, initial_certification_owner.InitialCollectiveMeshEvidence):
+            source_geometry_id = original.coordinate_geometry_id
+            source_topology_id = original.topology_id
+            coordinate_count = original.global_entity_counts[0]
+            source_id = original.evidence_id
+            families = collective_organization_owner.initial_organization_definitions(
+                original
+            )
+            source_elements = (
+                (
+                    original.premise.block_name,
+                    coordinate_lagrange_element(
+                        original.cell_kind,
+                        original.premise.specification.target.geometry_order,
+                    ),
                 ),
-            ),
-        )
-    else:
-        source_geometry_id = cell_geometry_id(original.geometry)
-        source_topology_id = original.mesh.topology_id
-        coordinate_count = original.geometry.coordinates.shape[0]
-        source_id = original.result_id
-        families = (
-            ("patch", original.patches),
-            ("zone", original.zones),
-            ("label", original.labels),
-            ("attribute", original.attributes),
-        )
-        source_elements = tuple(
-            zip(original.geometry.block_names, original.geometry.elements, strict=True)
-        )
+            )
+        else:
+            source_geometry_id = cell_geometry_id(original.geometry)
+            source_topology_id = original.mesh.topology_id
+            coordinate_count = original.geometry.coordinates.shape[0]
+            source_id = original.result_id
+            families = (
+                ("patch", original.patches),
+                ("zone", original.zones),
+                ("label", original.labels),
+                ("attribute", original.attributes),
+            )
+            source_elements = tuple(
+                zip(original.geometry.block_names, original.geometry.elements, strict=True)
+            )
     organization = _prepare_publication_organization(
         arrays, source_geometry_id, source_topology_id, families, evidence, counts
     )
-    definitions, degrees = organization.definitions, organization.degrees
-    source_arrays = tuple(sorted(arrays.items()))
-    entity_tables = evidence.entity_keys
-    entity_ids = evidence.entity_ids
-    entity_owners = evidence.entity_owners
-    organization_degrees = tuple(degrees)
-    topology_id = evidence.topology_id
-    coordinate_geometry_id = evidence.coordinate_geometry_id
-    organization_id = evidence.global_organization_id
-    # Identity encoding retains the list-of-tuples definition payload.
-    definitions_id = canonical_fingerprint(list(definitions))
-    return _PublicationPreparation(
-        source_arrays=source_arrays,
-        entity_tables=entity_tables,
-        entity_ids=entity_ids,
-        entity_owners=entity_owners,
-        source_elements=source_elements,
-        counts=counts,
-        vertex_capacity=vertex_capacity,
-        coordinate_count=coordinate_count,
-        organization_degrees=organization_degrees,
-        source_id=source_id,
-        topology_id=topology_id,
-        coordinate_geometry_id=coordinate_geometry_id,
-        organization_id=organization_id,
-        definitions_id=definitions_id,
-    )
+    with agreed_local_step():
+        definitions, degrees = organization.definitions, organization.degrees
+        source_arrays = tuple(sorted(arrays.items()))
+        entity_tables = evidence.entity_keys
+        entity_ids = evidence.entity_ids
+        entity_owners = evidence.entity_owners
+        organization_degrees = tuple(degrees)
+        topology_id = evidence.topology_id
+        coordinate_geometry_id = evidence.coordinate_geometry_id
+        organization_id = evidence.global_organization_id
+        # Identity encoding retains the list-of-tuples definition payload.
+        definitions_id = canonical_fingerprint(list(definitions))
+        return _PublicationPreparation(
+            source_arrays=source_arrays,
+            entity_tables=entity_tables,
+            entity_ids=entity_ids,
+            entity_owners=entity_owners,
+            source_elements=source_elements,
+            counts=counts,
+            vertex_capacity=vertex_capacity,
+            coordinate_count=coordinate_count,
+            organization_degrees=organization_degrees,
+            source_id=source_id,
+            topology_id=topology_id,
+            coordinate_geometry_id=coordinate_geometry_id,
+            organization_id=organization_id,
+            definitions_id=definitions_id,
+        )

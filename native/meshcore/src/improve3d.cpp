@@ -10,8 +10,12 @@
 // the owning relative determinant floor use the exact construction objective
 // and, when no reconnection exists, one certified interior edge-star vertex.
 // Tensor metric owners rank proposals independently and use the same
-// geometry/topology transaction. Exact source strata, region labels and
-// protected points survive every stage.
+// geometry/topology transaction. Exudation tries each vertex's increasing
+// trial weights in the original order but evaluates weight-independent
+// flip/ring work once per visit, locates the sign change of each exact
+// (weight-affine) power test by bisection, and reuses a complete refused
+// visit until an accepted flip changes data it reads. Exact source strata,
+// region labels and protected points survive every stage.
 #include "improve3d.hpp"
 
 #include <algorithm>
@@ -39,6 +43,9 @@ using Cell = std::array<int32_t, 4>;
 // Smallest strict gain (degrees) that counts as an improvement.
 constexpr double kImprovement = 1e-9;
 constexpr int kMaxRing = 7;
+constexpr std::size_t kCoupledVertices = kMaxRing + 2;
+constexpr std::size_t kCoupledVariables = 3 * kCoupledVertices;
+using AffectedVertices = std::array<int32_t, kCoupledVertices>;
 
 
 double quality(const TetMesh& mesh, const int32_t* v) {
@@ -47,11 +54,16 @@ double quality(const TetMesh& mesh, const int32_t* v) {
   return geometry::minimum_dihedral(p);
 }
 
-double finite_quality(const TetMesh& mesh, std::span<const int32_t> tets) {
+double finite_quality(const TetMesh& mesh, std::span<const int32_t> tets,
+                      int32_t* worst_cell = nullptr) {
   double worst = 180.0;
   for (int32_t t : tets) {
     if (mesh.finite(t)) {
-      worst = std::min(worst, quality(mesh, mesh.tet(t).v));
+      const double value = quality(mesh, mesh.tet(t).v);
+      if (value < worst) {
+        worst = value;
+        if (worst_cell != nullptr) *worst_cell = t;
+      }
     }
   }
   return worst;
@@ -120,7 +132,9 @@ bool on_facet_plane(TetMesh& mesh, int32_t v, std::span<const int32_t> star,
 // Smallest dihedral angle of the star with v at `position`, or -1 when a
 // finite cell would not be positively oriented.  Coordinates are restored.
 double star_quality_at(TetMesh& mesh, int32_t v, std::span<const int32_t> star,
-                       const double* position) {
+                       const double* position,
+                       double rejection_floor = -std::numeric_limits<double>::infinity(),
+                       int32_t* critical_cell = nullptr) {
   double* p = mesh.mutable_point(v);
   struct RestoreCoordinates {
     double* point;
@@ -129,8 +143,18 @@ double star_quality_at(TetMesh& mesh, int32_t v, std::span<const int32_t> star,
   } restore{p, {p[0], p[1], p[2]}};
   std::copy_n(position, 3, p);
   double worst = 180.0;
+  // Testing the last active/rejecting cone first changes evaluation order
+  // only. Every nonrejected score still visits the complete incident star.
+  const int32_t first = critical_cell == nullptr ? -1 : *critical_cell;
+  if (std::isfinite(rejection_floor) && first >= 0) {
+    if (!mesh.spend(TetWorkCost::kVisit) || !mesh.positive(mesh.tet(first).v)) return -1.0;
+    worst = quality(mesh, mesh.tet(first).v);
+    if (worst <= rejection_floor) return rejection_floor;
+  }
   for (int32_t t : star) {
+    if (std::isfinite(rejection_floor) && t == first) continue;
     native_execution_charge(0);
+    if (std::isfinite(rejection_floor) && !mesh.spend(TetWorkCost::kVisit)) return -1.0;
     if (!mesh.finite(t)) {
       continue;
     }
@@ -138,16 +162,24 @@ double star_quality_at(TetMesh& mesh, int32_t v, std::span<const int32_t> star,
       worst = -1.0;
       break;
     }
-    worst = std::min(worst, quality(mesh, mesh.tet(t).v));
+    const double value = quality(mesh, mesh.tet(t).v);
+    if (value < worst) {
+      worst = value;
+      if (critical_cell != nullptr) *critical_cell = t;
+    }
+    // This value is only a rejection bound, never an accepted trial's score.
+    // A single cone at/below the branch's strict acceptance floor proves
+    // that evaluating its remaining cones cannot change that branch.
+    if (worst <= rejection_floor) return rejection_floor;
   }
   return worst;
 }
 
-// Completed proposal arithmetic is reusable only within one accepted mesh
-// generation and improvement invocation. Transaction and resource refusals
+// Completed proposal arithmetic is reusable while its local stars are
+// unchanged in this improvement invocation. Transaction and resource refusals
 // never enter the proof bank; uncertain source coordinates are excluded.
 using EdgeRemovalFailureKey =
-    std::tuple<int64_t, int32_t, int32_t, bool, bool, uint64_t, uint64_t, uint64_t>;
+    std::tuple<int32_t, int32_t, bool, bool, uint64_t, uint64_t, uint64_t>;
 
 struct SmoothingSelection {
   double baseline;
@@ -179,6 +211,30 @@ struct ImprovementProofs {
     }
   }
 
+  bool advance(TetMesh& mesh, std::span<const int32_t> affected_cells) {
+    // The frontier's covering-anchor stars contain every changed surviving
+    // or new cell, including every live vertex of the edited cavity. A changed
+    // edge ring, vertex link, coordinate or constrained plane has its endpoint
+    // in this conservative dirty set. Unrelated complete geometric negatives
+    // remain exact proofs, not fresh work charged again after a remote edit.
+    if (!mesh.spend(static_cast<int64_t>(affected_cells.size()))) return false;
+    NativeSet<int32_t> dirty;
+    for (int32_t cell : affected_cells) {
+      for (int32_t vertex : mesh.tet(cell).v) {
+        if (vertex >= 0) dirty.insert(vertex);
+      }
+    }
+    std::erase_if(proved, [&](const EdgeRemovalFailureKey& entry) {
+      return dirty.contains(std::get<0>(entry)) || dirty.contains(std::get<1>(entry));
+    });
+    std::erase_if(vertex_proved, [&](const auto& entry) {
+      return dirty.contains(std::get<0>(entry));
+    });
+    std::erase_if(smoothing, [&](const auto& entry) { return dirty.contains(entry.first); });
+    generation = mesh.accepted_generation();
+    return true;
+  }
+
   EdgeRemovalFailureKey key(const TetMesh& mesh, int32_t a, int32_t b,
                            bool require_improvement, bool construction_objective,
                            double radius_edge_bound, double max_weight_fraction,
@@ -186,7 +242,7 @@ struct ImprovementProofs {
     synchronize(mesh);
     // Endpoint direction and scalar bit patterns preserve the exact
     // proposal arithmetic; a mathematically equivalent order is not a hit.
-    return {generation, a, b, require_improvement, construction_objective,
+    return {a, b, require_improvement, construction_objective,
             std::bit_cast<uint64_t>(radius_edge_bound),
             std::bit_cast<uint64_t>(max_weight_fraction),
             std::bit_cast<uint64_t>(minimum_relative_determinant)};
@@ -286,12 +342,10 @@ struct SmoothingTargets {
   NativeVector<std::array<double, 3>> targets;
 };
 
-bool prepare_smoothing_targets(TetMesh& mesh, int32_t v, int8_t dimension,
-                               std::span<const int32_t> star,
-                               NativeVector<int32_t>& neighbors, SmoothingTargets& prepared) {
-  const double* origin = prepared.origin;
-  bool* shared = prepared.shared;
-  auto& targets = prepared.targets;
+bool prepare_smoothing_chart(TetMesh& mesh, int32_t v, int8_t dimension,
+                             std::span<const int32_t> star,
+                             NativeVector<int32_t>& neighbors, const double* origin,
+                             bool* shared) {
   if (dimension == 2) {
     facet_neighbors(mesh, v, star, neighbors);
   } else {
@@ -308,12 +362,23 @@ bool prepare_smoothing_targets(TetMesh& mesh, int32_t v, int8_t dimension,
   if (neighbors.empty()) {
     return false;
   }
-  double centroid[3] = {0.0, 0.0, 0.0};
   for (int32_t w : neighbors) {
     for (int i = 0; i < 3; ++i) {
-      centroid[i] += mesh.point(w)[i];
       shared[i] = shared[i] && mesh.point(w)[i] == origin[i];
     }
+  }
+  return true;
+}
+
+bool prepare_smoothing_targets(TetMesh& mesh, int32_t v, int8_t dimension,
+                               std::span<const int32_t> star,
+                               NativeVector<int32_t>& neighbors, SmoothingTargets& prepared) {
+  if (!prepare_smoothing_chart(mesh, v, dimension, star, neighbors,
+                                prepared.origin, prepared.shared)) return false;
+  auto& targets = prepared.targets;
+  double centroid[3] = {0.0, 0.0, 0.0};
+  for (int32_t w : neighbors) {
+    for (int axis = 0; axis < 3; ++axis) centroid[axis] += mesh.point(w)[axis];
   }
   for (int i = 0; i < 3; ++i) {
     centroid[i] /= static_cast<double>(neighbors.size());
@@ -357,9 +422,119 @@ bool prepare_smoothing_targets(TetMesh& mesh, int32_t v, int8_t dimension,
   return true;
 }
 
+// Maximin star optimization is a coordinate proposal, never a transaction.
+// Nelder-Mead handles the nonsmooth minimum of incident dihedrals without
+// differentiating the active-cell selector. It stops at the requested angle
+// or binary64 spatial convergence; every evaluation uses the owning ledger.
+bool optimize_star_target(TetMesh& mesh, int32_t vertex, int8_t dimension,
+                          std::span<const int32_t> star, const bool* shared,
+                          NativeVector<int32_t>& neighbors, double target, int32_t critical_cell,
+                          double& best_quality, double* best) {
+  if (best_quality >= target) return true;
+  struct Trial {
+    std::array<double, 3> position;
+    double quality;
+  };
+  std::array<int, 3> axes{};
+  std::size_t count = 0;
+  for (int axis = 0; axis < 3; ++axis) {
+    if (dimension == 3 || !shared[axis]) axes[count++] = axis;
+  }
+  if (count == 0) return true;
+  const bool axis_plane = dimension == 2 && count < 3;
+  double shortest = std::numeric_limits<double>::infinity();
+  for (int32_t neighbor : neighbors) {
+    shortest = std::min(shortest,
+        std::sqrt(geometry::squared_distance(mesh.point(vertex), mesh.point(neighbor))));
+  }
+  if (!(shortest > 0.0) || !std::isfinite(shortest)) return true;
+  const auto evaluate = [&](const std::array<double, 3>& position,
+                            double rejection_floor = -std::numeric_limits<double>::infinity()) {
+    if (!std::isfinite(rejection_floor) &&
+        !mesh.spend(static_cast<int64_t>(star.size()))) return -1.0;
+    if (!geometry::point_in_domain(position.data()) ||
+        (dimension == 2 && !axis_plane &&
+         !on_facet_plane(mesh, vertex, star, position.data(), neighbors))) return -1.0;
+    return star_quality_at(mesh, vertex, star, position.data(), rejection_floor, &critical_cell);
+  };
+  std::array<Trial, 4> simplex{};
+  simplex[0] = {{best[0], best[1], best[2]}, best_quality};
+  for (std::size_t index = 0; index < count; ++index) {
+    simplex[index + 1].position = simplex[0].position;
+    simplex[index + 1].position[axes[index]] += 0.25 * shortest;
+    simplex[index + 1].quality = evaluate(simplex[index + 1].position);
+  }
+  const double resolution = std::sqrt(std::numeric_limits<double>::epsilon()) * shortest;
+  while (!mesh.work_exhausted() && native_execution_refusal() == PHX_MC_OK) {
+    // At most four entries; insertion sorting avoids a general introsort's
+    // larger-range machinery and gives tied trials a canonical order.
+    for (std::size_t index = 1; index <= count; ++index) {
+      std::size_t cursor = index;
+      while (cursor > 0 &&
+             (simplex[cursor].quality > simplex[cursor - 1].quality ||
+              (simplex[cursor].quality == simplex[cursor - 1].quality &&
+               simplex[cursor].position < simplex[cursor - 1].position))) {
+        std::swap(simplex[cursor], simplex[cursor - 1]);
+        --cursor;
+      }
+    }
+    if (simplex[0].quality > best_quality + kImprovement) {
+      best_quality = simplex[0].quality;
+      std::copy(simplex[0].position.begin(), simplex[0].position.end(), best);
+    }
+    if (best_quality >= target) break;
+    double diameter = 0.0;
+    std::array<double, 3> centroid{};
+    for (std::size_t index = 0; index < count; ++index) {
+      for (int axis = 0; axis < 3; ++axis) {
+        centroid[axis] += simplex[index].position[axis] / static_cast<double>(count);
+      }
+    }
+    for (std::size_t index = 1; index <= count; ++index) {
+      diameter = std::max(diameter, std::sqrt(geometry::squared_distance(
+          simplex[0].position.data(), simplex[index].position.data())));
+    }
+    if (diameter <= resolution) break;
+    const auto along = [&](double factor, double rejection_floor) {
+      Trial trial{};
+      for (int axis = 0; axis < 3; ++axis) {
+        trial.position[axis] = centroid[axis] +
+            factor * (centroid[axis] - simplex[count].position[axis]);
+        if (dimension == 2 && shared[axis]) trial.position[axis] = best[axis];
+      }
+      trial.quality = evaluate(trial.position, rejection_floor);
+      return trial;
+    };
+    const Trial reflection = along(1.0, simplex[count].quality);
+    if (reflection.quality > simplex[0].quality) {
+      const Trial expansion = along(2.0, reflection.quality);
+      simplex[count] = expansion.quality > reflection.quality ? expansion : reflection;
+    } else if (reflection.quality > simplex[count - 1].quality) {
+      simplex[count] = reflection;
+    } else {
+      const bool outside = reflection.quality > simplex[count].quality;
+      const Trial contraction = along(outside ? 0.5 : -0.5,
+          outside ? reflection.quality : simplex[count].quality);
+      if (contraction.quality > (outside ? reflection.quality : simplex[count].quality)) {
+        simplex[count] = contraction;
+      } else {
+        for (std::size_t index = 1; index <= count; ++index) {
+          for (int axis = 0; axis < 3; ++axis) {
+            simplex[index].position[axis] = simplex[0].position[axis] +
+                0.5 * (simplex[index].position[axis] - simplex[0].position[axis]);
+          }
+          simplex[index].quality = evaluate(simplex[index].position);
+        }
+      }
+    }
+  }
+  return !mesh.work_exhausted() && native_execution_refusal() == PHX_MC_OK;
+}
+
 bool select_smoothing_target(TetMesh& mesh, int32_t v, int8_t dimension,
                              std::span<const int32_t> star,
-                             NativeVector<int32_t>& neighbors, SmoothingSelection& selected) {
+                             NativeVector<int32_t>& neighbors, double requested_quality,
+                             SmoothingSelection& selected) {
   const double* p = mesh.point(v);
   SmoothingTargets prepared{.origin = {p[0], p[1], p[2]}, .targets = {}};
   if (!prepare_smoothing_targets(mesh, v, dimension, star, neighbors, prepared)) return false;
@@ -367,7 +542,8 @@ bool select_smoothing_target(TetMesh& mesh, int32_t v, int8_t dimension,
   const bool* shared = prepared.shared;
   const auto& targets = prepared.targets;
   if (!mesh.spend(static_cast<int64_t>(8 * star.size()))) return false;
-  const double baseline = finite_quality(mesh, star);
+  int32_t critical_cell = -1;
+  const double baseline = finite_quality(mesh, star, &critical_cell);
   double best_quality = baseline;
   double best[3] = {origin[0], origin[1], origin[2]};
   static constexpr double kSteps[4] = {1.0, 0.5, 0.25, 0.125};
@@ -393,13 +569,366 @@ bool select_smoothing_target(TetMesh& mesh, int32_t v, int8_t dimension,
       }
     }
   }
+  if (!optimize_star_target(mesh, v, dimension, star, shared, neighbors, requested_quality,
+                            critical_cell, best_quality, best)) return false;
   if (mesh.work_exhausted() || native_execution_refusal() != PHX_MC_OK) return false;
   selected = {baseline, best_quality, {best[0], best[1], best[2]}};
   return true;
 }
 
+// A cell owns at most four moving vertices. Optimize their complete incident
+// union jointly: an improving simultaneous step need not admit any individual
+// coordinate step. This small native inner kernel cannot cross the host
+// boundary per trial (the owning work ledger and exact transaction remain
+// native). It is not an additional sweep or an optimizer service.
+struct CoupledCavity {
+  TetMesh& mesh;
+  NativeVector<int32_t> vertices;
+  NativeVector<int32_t> cells;
+  std::array<double, kCoupledVariables> origin{};
+  std::array<int, kCoupledVariables> variables{};
+  std::size_t count = 0;
+  double scale = std::numeric_limits<double>::infinity();
+
+  bool prepare(std::span<const int32_t> candidates) {
+    if (std::count_if(candidates.begin(), candidates.end(), [&](int32_t vertex) {
+          return mesh.dimension(vertex) >= 2 && mesh.protection(vertex) == 0.0 &&
+                 (mesh.dimension(vertex) == 3 || mesh.policy() != BoundaryPolicy::kFixed);
+        }) < 2) return false;
+    NativeVector<int32_t> star, neighbors;
+    NativeVector<int32_t> sorted(candidates.begin(), candidates.end());
+    std::sort(sorted.begin(), sorted.end());
+    for (int32_t vertex : sorted) {
+      const int8_t dimension = mesh.dimension(vertex);
+      if (dimension < 2 || mesh.protection(vertex) > 0.0 ||
+          (dimension < 3 && mesh.policy() == BoundaryPolicy::kFixed)) continue;
+      if (!mesh.vertex_star(vertex, star)) return false;
+      bool shared[3] = {true, true, true};
+      neighbors.clear();
+      if (!prepare_smoothing_chart(mesh, vertex, dimension, star, neighbors,
+                                    mesh.point(vertex), shared)) continue;
+      // Axis-aligned facet coordinates are exactly preserved by retaining
+      // their fixed components. Other facets use the existing source-aware
+      // single-vertex constructor, not a rounded tangent-plane surrogate.
+      if (dimension == 2 && !shared[0] && !shared[1] && !shared[2]) continue;
+      const std::size_t row = vertices.size();
+      vertices.push_back(vertex);
+      for (int axis = 0; axis < 3; ++axis) {
+        origin[3 * row + axis] = mesh.point(vertex)[axis];
+        if (dimension == 3 || !shared[axis]) {
+          variables[count++] = static_cast<int>(3 * row + axis);
+        }
+      }
+      for (int32_t neighbor : neighbors) {
+        scale = std::min(scale,
+            std::sqrt(geometry::squared_distance(mesh.point(vertex), mesh.point(neighbor))));
+      }
+      cells.insert(cells.end(), star.begin(), star.end());
+    }
+    std::sort(cells.begin(), cells.end());
+    cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+    return vertices.size() > 1 && count > 0 && scale > 0.0 && std::isfinite(scale) &&
+           native_execution_cavity(cells.size());
+  }
+
+  struct Trial {
+    std::array<double, kCoupledVariables> x{};
+    std::array<double, kCoupledVariables> gradient{};
+    double energy = 0.0;
+    double quality = 180.0;
+  };
+
+  std::array<double, kCoupledVariables> positions(const Trial& trial) const {
+    auto result = origin;
+    for (std::size_t i = 0; i < count; ++i) {
+      result[variables[i]] += scale * trial.x[i];
+    }
+    return result;
+  }
+
+  bool evaluate(Trial& trial, double threshold) {
+    const auto proposed = positions(trial);
+    for (std::size_t row = 0; row < vertices.size(); ++row) {
+      if (!geometry::finite3(proposed.data() + 3 * row) ||
+          !geometry::point_in_domain(proposed.data() + 3 * row)) return false;
+    }
+    trial.energy = 0.0;
+    double maximum_cosine = -1.0;
+    trial.gradient.fill(0.0);
+    std::array<double, kCoupledVariables> coordinate_gradient{};
+    // Consistent outward face order; every pair defines an internal dihedral.
+    static constexpr int faces[4][3] = {{1, 2, 3}, {0, 3, 2}, {0, 1, 3}, {0, 2, 1}};
+    for (std::size_t index = 0; index < cells.size(); ++index) {
+      const int32_t cell = cells[index];
+      if (!mesh.finite(cell)) continue;
+      if (!mesh.spend(TetWorkCost::kVisit)) return false;
+      const double* p[4];
+      int rows[4];
+      for (int corner = 0; corner < 4; ++corner) {
+        const int32_t vertex = mesh.tet(cell).v[corner];
+        const auto found = std::lower_bound(vertices.begin(), vertices.end(), vertex);
+        rows[corner] = found != vertices.end() && *found == vertex
+            ? static_cast<int>(found - vertices.begin()) : -1;
+        p[corner] = rows[corner] < 0 ? mesh.point(vertex) : proposed.data() + 3 * rows[corner];
+      }
+      if (orient3d(p[0], p[1], p[2], p[3]) <= 0) return false;
+      double normals[4][3], unit[4][3], lengths[4], adjoint[4][3]{};
+      for (int face = 0; face < 4; ++face) {
+        double u[3], v[3];
+        geometry::difference(p[faces[face][1]], p[faces[face][0]], u);
+        geometry::difference(p[faces[face][2]], p[faces[face][0]], v);
+        geometry::cross(u, v, normals[face]);
+        lengths[face] = std::sqrt(geometry::dot(normals[face], normals[face]));
+        if (!(lengths[face] > 0.0) || !std::isfinite(lengths[face])) return false;
+        for (int axis = 0; axis < 3; ++axis) {
+          unit[face][axis] = normals[face][axis] / lengths[face];
+        }
+      }
+      for (int first = 0; first < 4; ++first) {
+        for (int second = first + 1; second < 4; ++second) {
+          const double cosine = -geometry::dot(unit[first], unit[second]);
+          maximum_cosine = std::max(maximum_cosine, cosine);
+          const double violation = cosine - threshold;
+          if (!(violation > 0.0)) continue;
+          trial.energy += violation * violation;
+          for (int axis = 0; axis < 3; ++axis) {
+            adjoint[first][axis] -= 2.0 * violation *
+                (unit[second][axis] + cosine * unit[first][axis]) / lengths[first];
+            adjoint[second][axis] -= 2.0 * violation *
+                (unit[first][axis] + cosine * unit[second][axis]) / lengths[second];
+          }
+        }
+      }
+      for (int face = 0; face < 4; ++face) {
+        const int a = faces[face][0], b = faces[face][1], c = faces[face][2];
+        double u[3], v[3], gb[3], gc[3];
+        geometry::difference(p[b], p[a], u);
+        geometry::difference(p[c], p[a], v);
+        geometry::cross(v, adjoint[face], gb);
+        geometry::cross(adjoint[face], u, gc);
+        for (int axis = 0; axis < 3; ++axis) {
+          if (rows[a] >= 0) coordinate_gradient[3 * rows[a] + axis] -= gb[axis] + gc[axis];
+          if (rows[b] >= 0) coordinate_gradient[3 * rows[b] + axis] += gb[axis];
+          if (rows[c] >= 0) coordinate_gradient[3 * rows[c] + axis] += gc[axis];
+        }
+      }
+    }
+    trial.quality = std::acos(std::clamp(maximum_cosine, -1.0, 1.0)) *
+                    (180.0 / std::acos(-1.0));
+    for (std::size_t i = 0; i < count; ++i) {
+      trial.gradient[i] = scale * coordinate_gradient[variables[i]];
+    }
+    return std::isfinite(trial.energy) && std::isfinite(trial.quality) &&
+        std::all_of(trial.gradient.begin(), trial.gradient.end(),
+                    [](double value) { return std::isfinite(value); });
+  }
+};
+
+bool optimize_cavity_target(CoupledCavity& cavity, double target,
+                            CoupledCavity::Trial& best, double& initial_quality) {
+  TetMesh& mesh = cavity.mesh;
+  // A one-ulp stricter computational aim avoids accepting a rounded cosine as
+  // evidence at the physical threshold. The transaction checks real angles.
+  const double threshold = std::nextafter(std::cos(target * (std::acos(-1.0) / 180.0)),
+                                         -std::numeric_limits<double>::infinity());
+  auto current = best;
+  if (!cavity.evaluate(current, threshold)) return false;
+  initial_quality = current.quality;
+  best = current;
+  NativeVector<double> inverse(cavity.count * cavity.count, 0.0);
+  const auto reset = [&]() {
+    std::fill(inverse.begin(), inverse.end(), 0.0);
+    for (std::size_t i = 0; i < cavity.count; ++i) {
+      inverse[i * cavity.count + i] = 1.0;
+    }
+  };
+  reset();
+  // The same binary64 shortest-edge spatial resolution as the existing
+  // maximin simplex proposal; this only ends an unresolved private solve.
+  // It never weakens the requested angle or the exact commit admission.
+  const double resolution = std::sqrt(std::numeric_limits<double>::epsilon());
+  // This is one coupled proposal. All iterations decrease its private merit;
+  // no intermediate relocation, topology publication or frontier visit occurs.
+  while (current.quality < target && !mesh.work_exhausted() &&
+         native_execution_refusal() == PHX_MC_OK) {
+    if (!mesh.spend(static_cast<int64_t>(cavity.count))) return false;
+    std::array<double, kCoupledVariables> direction{};
+    double slope = 0.0, largest = 0.0;
+    for (std::size_t i = 0; i < cavity.count; ++i) {
+      for (std::size_t j = 0; j < cavity.count; ++j) {
+        direction[i] -= inverse[i * cavity.count + j] * current.gradient[j];
+      }
+      slope += direction[i] * current.gradient[i];
+      largest = std::max(largest, std::abs(direction[i]));
+    }
+    if (!(slope < 0.0) || !std::isfinite(largest)) break;
+    // Keep the first line-search trial within one local shortest edge. This
+    // is a step bound, not a quota or a new pass allowance.
+    double step = largest > 1.0 ? 1.0 / largest : 1.0;
+    CoupledCavity::Trial next;
+    bool accepted = false;
+    // Near zero squared merit, spatial convergence alone cannot decide the
+    // hard angle: retain full binary64 steps until feasibility or arithmetic
+    // stagnation. Away from zero, the established spatial resolution ends a
+    // stationary unsuccessful solve without refining numerical noise.
+    const double step_resolution = current.energy <= std::numeric_limits<double>::epsilon()
+        ? std::numeric_limits<double>::epsilon() : resolution;
+    while (step * largest > step_resolution) {
+      next = current;
+      bool changed = false;
+      for (std::size_t i = 0; i < cavity.count; ++i) {
+        next.x[i] += step * direction[i];
+        changed = changed || next.x[i] != current.x[i];
+      }
+      if (!changed) break;
+      if (cavity.evaluate(next, threshold) &&
+          next.energy <= current.energy + 1e-4 * step * slope) {
+        accepted = true;
+        break;
+      }
+      if (mesh.work_exhausted() || native_execution_refusal() != PHX_MC_OK) return false;
+      step *= 0.5;
+    }
+    if (!accepted) break;
+    if (next.quality > best.quality) best = next;
+    if (!mesh.spend(static_cast<int64_t>(cavity.count))) return false;
+    std::array<double, kCoupledVariables> s{}, y{}, hy{};
+    double sy = 0.0, yhy = 0.0;
+    for (std::size_t i = 0; i < cavity.count; ++i) {
+      s[i] = next.x[i] - current.x[i];
+      y[i] = next.gradient[i] - current.gradient[i];
+      sy += s[i] * y[i];
+    }
+    for (std::size_t i = 0; i < cavity.count; ++i) {
+      for (std::size_t j = 0; j < cavity.count; ++j) {
+        hy[i] += inverse[i * cavity.count + j] * y[j];
+      }
+      yhy += y[i] * hy[i];
+    }
+    if (sy > 0.0 && std::isfinite(1.0 / sy) && std::isfinite(yhy / sy)) {
+      for (std::size_t i = 0; i < cavity.count; ++i) {
+        for (std::size_t j = 0; j < cavity.count; ++j) {
+          inverse[i * cavity.count + j] += ((sy + yhy) / sy) * (s[i] * s[j] / sy) -
+                           (hy[i] * s[j] + s[i] * hy[j]) / sy;
+        }
+      }
+    } else {
+      reset();
+    }
+    current = next;
+  }
+  return !mesh.work_exhausted() && native_execution_refusal() == PHX_MC_OK;
+}
+
+bool coupled_ring_candidates(TetMesh& mesh, const Cell& cell, const CoupledCavity& cavity,
+                              const CoupledCavity::Trial& best,
+                              NativeVector<int32_t>& candidates) {
+  if (!mesh.spend(TetWorkCost::kVisit)) return false;
+  const auto proposed = cavity.positions(best);
+  const double* p[4];
+  for (int corner = 0; corner < 4; ++corner) {
+    const auto found = std::lower_bound(cavity.vertices.begin(), cavity.vertices.end(), cell[corner]);
+    p[corner] = found != cavity.vertices.end() && *found == cell[corner]
+        ? proposed.data() + 3 * (found - cavity.vertices.begin()) : mesh.point(cell[corner]);
+  }
+  static constexpr int faces[4][3] = {{1, 2, 3}, {0, 3, 2}, {0, 1, 3}, {0, 2, 1}};
+  double unit[4][3];
+  for (int face = 0; face < 4; ++face) {
+    double u[3], v[3];
+    geometry::difference(p[faces[face][1]], p[faces[face][0]], u);
+    geometry::difference(p[faces[face][2]], p[faces[face][0]], v);
+    geometry::cross(u, v, unit[face]);
+    const double length = std::sqrt(geometry::dot(unit[face], unit[face]));
+    if (!(length > 0.0) || !std::isfinite(length)) return false;
+    for (double& value : unit[face]) value /= length;
+  }
+  int first_face = 0, second_face = 1;
+  double maximum = -2.0;
+  for (int first = 0; first < 4; ++first) {
+    for (int second = first + 1; second < 4; ++second) {
+      const double cosine = -geometry::dot(unit[first], unit[second]);
+      if (cosine > maximum) {
+        maximum = cosine;
+        first_face = first;
+        second_face = second;
+      }
+    }
+  }
+  int32_t edge[2];
+  std::size_t endpoint = 0;
+  for (int corner = 0; corner < 4; ++corner) {
+    if (corner != first_face && corner != second_face) edge[endpoint++] = cell[corner];
+  }
+  NativeVector<int32_t> ring_cells, ring;
+  if (!mesh.edge_ring(edge[0], edge[1], ring_cells, ring) ||
+      ring.size() < 3 || ring.size() > kMaxRing) return false;
+  candidates.assign(ring.begin(), ring.end());
+  candidates.push_back(edge[0]);
+  candidates.push_back(edge[1]);
+  std::sort(candidates.begin(), candidates.end());
+  // Expanding a variable set must actually add an eligible degree of freedom.
+  return std::any_of(candidates.begin(), candidates.end(), [&](int32_t vertex) {
+    return !std::binary_search(cavity.vertices.begin(), cavity.vertices.end(), vertex) &&
+        mesh.dimension(vertex) >= 2 && mesh.protection(vertex) == 0.0 &&
+        (mesh.dimension(vertex) == 3 || mesh.policy() != BoundaryPolicy::kFixed);
+  });
+}
+
+bool optimize_coupled_cell(TetMesh& mesh, const Cell& cell, double target,
+                           AffectedVertices& affected_vertices,
+                           TetMeshImproveCounters& counters) {
+  CoupledCavity cavity{.mesh = mesh, .vertices = {}, .cells = {}};
+  if (!cavity.prepare(cell)) return false;
+  CoupledCavity::Trial best;
+  double baseline = 0.0;
+  if (!optimize_cavity_target(cavity, target, best, baseline)) return false;
+  CoupledCavity expanded{.mesh = mesh, .vertices = {}, .cells = {}};
+  NativeVector<int32_t> ring;
+  CoupledCavity::Trial expanded_best;
+  const CoupledCavity* selected = &cavity;
+  const CoupledCavity::Trial* selection = &best;
+  if (best.quality < target && coupled_ring_candidates(mesh, cell, cavity, best, ring) &&
+      expanded.prepare(ring)) {
+    // Expand the same private proposal, not the published mesh or its frontier.
+    // Existing coordinates retain their candidate displacement in the new
+    // shortest-edge chart; newly admitted ring vertices start at their origin.
+    const auto proposed = cavity.positions(best);
+    for (std::size_t i = 0; i < expanded.count; ++i) {
+      const int coordinate = expanded.variables[i];
+      const int32_t vertex = expanded.vertices[static_cast<std::size_t>(coordinate / 3)];
+      const auto found = std::lower_bound(cavity.vertices.begin(), cavity.vertices.end(), vertex);
+      if (found == cavity.vertices.end() || *found != vertex) continue;
+      const std::size_t old = 3 * (found - cavity.vertices.begin()) + coordinate % 3;
+      expanded_best.x[i] = (proposed[old] - expanded.origin[coordinate]) / expanded.scale;
+    }
+    double initial_quality = 0.0;
+    if (!optimize_cavity_target(expanded, target, expanded_best, initial_quality)) return false;
+    // Only a complete feasibility solution supersedes the original candidate.
+    // An unsuccessful larger cavity cannot substitute its unrelated local
+    // minimum for the owning cell's already-earned strict gain.
+    if (expanded_best.quality >= target) {
+      if (!mesh.spend(static_cast<int64_t>(expanded.cells.size()))) return false;
+      baseline = finite_quality(mesh, expanded.cells);
+      selected = &expanded;
+      selection = &expanded_best;
+    }
+  }
+  if (mesh.work_exhausted() || native_execution_refusal() != PHX_MC_OK ||
+      !(selection->quality > baseline + kImprovement)) return false;
+  const auto positions = selected->positions(*selection);
+  const double admission_floor = selected == &expanded
+      ? std::max(target, baseline + kImprovement) : baseline + kImprovement;
+  if (!try_relocate_vertices(mesh, selected->vertices, positions.data(), 0.0,
+                              admission_floor)) return false;
+  for (std::size_t row = 0; row < selected->vertices.size(); ++row) {
+    affected_vertices[row] = selected->vertices[row];
+  }
+  counters.relocations += static_cast<int64_t>(selected->vertices.size());
+  return true;
+}
+
 bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_neighbor,
-                   ImprovementProofs& failures) {
+                   ImprovementProofs& failures, double requested_quality) {
   removed = false;
   const int8_t dimension = mesh.dimension(v);
   NativeVector<int32_t> star;
@@ -410,6 +939,14 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
   }
   if (!native_execution_cavity(star.size())) return false;
   if (dimension == 1) return smooth_segment_vertex(mesh, v, star, neighbors);
+  // A fresh improving retirement needs no coordinate optimization. Failed
+  // retirement geometry is reusable by the same generation's proof bank.
+  if (dimension == 3 &&
+      remove_vertex_above(mesh, v, true, -std::numeric_limits<double>::infinity(),
+                          &accepted_neighbor, &failures)) {
+    removed = true;
+    return true;
+  }
   failures.synchronize(mesh);
   SmoothingSelection selected{};
   const SmoothingSelection* selection = &selected;
@@ -417,22 +954,18 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
   if (found != failures.smoothing.end()) {
     selection = &found->second;
   } else {
-    if (!select_smoothing_target(mesh, v, dimension, star, neighbors, selected)) return false;
+    if (!select_smoothing_target(mesh, v, dimension, star, neighbors, requested_quality,
+                                 selected)) return false;
     // Selection retains the exact candidate traversal and float bit patterns.
     // Each removal/relocation admission is still retried below.
     if (exact_star_witnesses(mesh, star)) failures.smoothing.emplace(v, selected);
-  }
-  if (dimension == 3 &&
-      remove_vertex_above(mesh, v, true, selection->quality, &accepted_neighbor, &failures)) {
-    removed = true;
-    return true;
   }
   if (mesh.work_exhausted()) return false;
   return selection->quality > selection->baseline + kImprovement &&
          try_relocate(mesh, v, selection->position.data(), true);
 }
 
-bool remove_cell_face_cluster(TetMesh& mesh, int32_t cell) {
+bool remove_cell_face_cluster(TetMesh& mesh, int32_t cell, int32_t& accepted_apex) {
   if (!native_execution_cavity(1)) return false;
   NativeVector<int32_t> cavity{cell};
   const int32_t region = mesh.complex().region(cell);
@@ -461,8 +994,45 @@ bool remove_cell_face_cluster(TetMesh& mesh, int32_t cell) {
   }
   std::sort(apices.begin(), apices.end());
   apices.erase(std::unique(apices.begin(), apices.end()), apices.end());
+  // Extract the unchanged cavity boundary once. Rebuilding and sorting it
+  // independently for every apex obscures identical geometry work; one
+  // below-baseline cone already rules out that entire candidate.
+  if (!mesh.spend(static_cast<int64_t>(8 * cavity.size()))) return false;
+  std::sort(cavity.begin(), cavity.end());
+  NativeVector<std::pair<Cell, int>> boundary;
+  for (int32_t entry : cavity) {
+    const Tetrahedron& tet = mesh.tet(entry);
+    for (int slot = 0; slot < 4; ++slot) {
+      if (!std::binary_search(cavity.begin(), cavity.end(), tet.n[slot])) {
+        boundary.push_back({{tet.v[0], tet.v[1], tet.v[2], tet.v[3]}, slot});
+      }
+    }
+  }
+  const double baseline = finite_quality(mesh, cavity);
+  NativeVector<Cell> proposal;
+  proposal.reserve(boundary.size());
   for (int32_t apex : apices) {
-    if (try_multiface_removal(mesh, cavity, apex, true)) return true;
+    proposal.clear();
+    bool improving = true;
+    for (const auto& [cell, slot] : boundary) {
+      if (!mesh.spend(TetWorkCost::kVisit)) return false;
+      if (std::find(cell.begin(), cell.end(), apex) != cell.end() && cell[slot] != apex) {
+        continue;
+      }
+      Cell cone = cell;
+      cone[slot] = apex;
+      if (!mesh.positive(cone.data()) ||
+          !(quality(mesh, cone.data()) > baseline + kImprovement)) {
+        improving = false;
+        break;
+      }
+      proposal.push_back(cone);
+    }
+    if (improving && !proposal.empty() &&
+        reconnect(mesh, cavity, proposal) == EditStatus::kOk) {
+      accepted_apex = apex;
+      return true;
+    }
     if (mesh.broken() || mesh.work_exhausted()) return false;
   }
   return false;
@@ -534,9 +1104,39 @@ bool above_floor(const TetMesh& mesh, std::span<const Cell> cells, double floor)
 // owning floor, and the best smallest dihedral angle is chosen.
 enum class FloorInsertion { kApplied, kRefused, kCapacity };
 
+// Along this ray every cone determinant is affine. Intersect their positive
+// intervals rather than imposing a minimum sampling step on a narrow kernel.
+// Expansion estimates locate a candidate only; the caller still certifies
+// every rounded child against exact positivity and the unchanged chart floor.
+double star_visibility_step(TetMesh& mesh, std::span<const int32_t> star,
+                            int32_t a, int32_t b, const double* midpoint,
+                            const double* centroid) {
+  double lower = 0.0, upper = 1.0;
+  for (int32_t t : star) {
+    if (!mesh.spend(TetWorkCost::kVisit)) return 0.0;
+    for (int32_t endpoint : {a, b}) {
+      const double* corners[4];
+      mesh.corners(mesh.tet(t).v, corners);
+      const int slot = vertex_slot(mesh.tet(t), endpoint);
+      corners[slot] = midpoint;
+      const Expansion first = orient3d_exact(corners[0], corners[1], corners[2], corners[3]);
+      corners[slot] = centroid;
+      const Expansion last = orient3d_exact(corners[0], corners[1], corners[2], corners[3]);
+      if (first.sign() > 0 && last.sign() > 0) continue;
+      if (first.sign() <= 0 && last.sign() <= 0) return 0.0;
+      const double root = first.estimate() / (first - last).estimate();
+      if (!std::isfinite(root)) return 0.0;
+      if (first.sign() <= 0) lower = std::max(lower, root);
+      else upper = std::min(upper, root);
+      if (!(lower < upper)) return 0.0;
+    }
+  }
+  return lower + 0.5 * (upper - lower);
+}
+
 FloorInsertion insert_floor_vertex(TetMesh& mesh, const Cell& cell,
                                    double minimum_relative_determinant,
-                                   std::array<int32_t, 5>& affected_vertices) {
+                                   AffectedVertices& affected_vertices) {
   if (!(minimum_relative_determinant > 0.0)) return FloorInsertion::kRefused;
   NativeVector<int32_t> star;
   NativeVector<int32_t> ring;
@@ -563,7 +1163,15 @@ FloorInsertion insert_floor_vertex(TetMesh& mesh, const Cell& cell,
       for (int axis = 0; axis < 3; ++axis) centroid[axis] /= static_cast<double>(ring.size());
       double best_quality = -1.0;
       double best[3];
-      for (double step : kSteps) {
+      for (std::size_t trial = 0; trial <= std::size(kSteps); ++trial) {
+        double step;
+        if (trial < std::size(kSteps)) {
+          step = kSteps[trial];
+        } else {
+          if (best_quality >= 0.0) break;
+          step = star_visibility_step(mesh, star, a, b, midpoint, centroid);
+          if (!(step > 0.0 && step < 1.0)) break;
+        }
         double position[3];
         for (int axis = 0; axis < 3; ++axis) {
           position[axis] = midpoint[axis] + step * (centroid[axis] - midpoint[axis]);
@@ -635,14 +1243,37 @@ bool try_edge_removal_proposal(
 
 
 bool improve_cell(TetMesh& mesh, int32_t t, TetMeshImproveCounters& counters, bool construction_uncertain,
-                  bool below_floor, double minimum_relative_determinant,
-                  std::array<int32_t, 5>& affected_vertices, bool& capacity,
+                  bool below_floor, double minimum_relative_determinant, double requested_quality,
+                  AffectedVertices& affected_vertices, bool& capacity,
                   ImprovementProofs& failures) {
   const Cell v = {mesh.tet(t).v[0], mesh.tet(t).v[1], mesh.tet(t).v[2], mesh.tet(t).v[3]};
-  std::copy(v.begin(), v.end(), affected_vertices.begin());
-  affected_vertices[4] = -1;
+  // These are covering anchors, not the old cell's corners: every changed
+  // surviving/new cell meets an anchor. Unchanged neighboring stars need not
+  // be gathered, reassessed or requeued as if their geometry had changed.
+  affected_vertices.fill(-1);
+  const auto optimize_vertices = [&]() {
+    if (optimize_coupled_cell(mesh, v, requested_quality, affected_vertices, counters)) return true;
+    if (mesh.work_exhausted()) return false;
+    bool progress = false;
+    std::size_t anchors = 0;
+    // Complete this cell's coordinate proposal over its four actual vertices,
+    // rather than spending another requested pass for each partial relocation.
+    for (int32_t vertex : v) {
+      bool removed = false;
+      int32_t surviving = -1;
+      if (smooth_vertex(mesh, vertex, removed, surviving, failures, requested_quality)) {
+        affected_vertices[anchors++] = removed ? surviving : vertex;
+        ++(removed ? counters.vertex_removals : counters.relocations);
+        progress = true;
+        if (removed || quality(mesh, mesh.tet(t).v) >= requested_quality) return true;
+      }
+      if (mesh.work_exhausted()) return progress;
+    }
+    return progress;
+  };
   for (int k = 0; k < 4; ++k) {
     if (try_face_removal(mesh, t, k, true)) {
+      affected_vertices[0] = v[k];
       ++counters.face_removals;
       return true;
     }
@@ -653,30 +1284,18 @@ bool improve_cell(TetMesh& mesh, int32_t t, TetMeshImproveCounters& counters, bo
                                     std::numeric_limits<double>::infinity(), 0.25,
                                     construction_uncertain, minimum_relative_determinant,
                                     &failures)) {
+        affected_vertices[0] = v[i];
+        affected_vertices[1] = v[j];
         ++counters.edge_removals;
         return true;
       }
     }
   }
-  if (remove_cell_face_cluster(mesh, t)) {
+  if (remove_cell_face_cluster(mesh, t, affected_vertices[4])) {
     ++counters.multiface_removals;
     return true;
   }
-  for (int32_t vertex : v) {
-    bool removed = false;
-    if (smooth_vertex(mesh, vertex, removed, affected_vertices[4], failures)) {
-      ++(removed ? counters.vertex_removals : counters.relocations);
-      return true;
-    }
-  }
-  for (int32_t vertex : v) {
-    if (remove_vertex_above(mesh, vertex, true,
-                            -std::numeric_limits<double>::infinity(),
-                            &affected_vertices[4], &failures)) {
-      ++counters.vertex_removals;
-      return true;
-    }
-  }
+  if (optimize_vertices()) return true;
   if (below_floor) {
     switch (insert_floor_vertex(mesh, v, minimum_relative_determinant, affected_vertices)) {
       case FloorInsertion::kApplied:
@@ -756,20 +1375,25 @@ bool collect_slivers(TetMesh& mesh, double target, double minimum_relative_deter
 struct ConstructionFrontier {
   static constexpr std::size_t kAbsent = std::numeric_limits<std::size_t>::max();
   NativeVector<std::size_t> pending;
+  // One ordinary angle visit per topological cell per requested pass.
+  // New connectivity is a new child; relocation is not another hidden sweep.
+  NativeSet<Cell> processed;
   NativeVector<int32_t> star;
   NativeVector<int32_t> cells;
   NativeVector<Candidate> affected;
 
   void begin(const TetMesh& mesh, const NativeVector<Candidate>& queue) {
     pending.assign(mesh.complex().tets.size(), kAbsent);
+    processed.clear();
     for (std::size_t index = 0; index < queue.size(); ++index) {
       native_execution_charge(0);
       pending[static_cast<std::size_t>(queue[index].slot)] = index;
     }
   }
 
-  bool append(TetMesh& mesh, const std::array<int32_t, 5>& vertices,
-              double minimum_relative_determinant, NativeVector<Candidate>& queue) {
+  bool append(TetMesh& mesh, const AffectedVertices& vertices,
+              double minimum_relative_determinant, double requested_quality,
+              NativeVector<Candidate>& queue, ImprovementProofs& proofs) {
     cells.clear();
     for (int32_t vertex : vertices) {
       native_execution_charge(0);
@@ -785,19 +1409,25 @@ struct ConstructionFrontier {
       return a < b;
     });
     cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+    if (!proofs.advance(mesh, cells)) return false;
     affected.clear();
     for (int32_t slot : cells) {
       native_execution_charge(0);
       if (!mesh.complex().live(slot) || !mesh.finite(slot)) continue;
       const ConstructionAssessment assessment = assess_construction(
           mesh, mesh.tet(slot).v, minimum_relative_determinant);
-      if (assessment.orientation.certified_sign() == 1 && !assessment.below_floor) continue;
-      Candidate entry{quality(mesh, mesh.tet(slot).v), slot, {0, 0, 0, 0}, true,
+      const double q = quality(mesh, mesh.tet(slot).v);
+      const bool uncertain = assessment.orientation.certified_sign() != 1 || assessment.below_floor;
+      if (!uncertain && std::isfinite(q) && q >= requested_quality) continue;
+      Candidate entry{q, slot, {0, 0, 0, 0}, uncertain,
                       assessment.below_floor ? assessment.floor_margin
                           : assessment.orientation.value - assessment.orientation.bound,
                       assessment.below_floor};
       std::copy_n(mesh.tet(slot).v, 4, entry.v);
       std::sort(entry.v, entry.v + 4);
+      if (!uncertain && processed.contains(Cell{entry.v[0], entry.v[1], entry.v[2], entry.v[3]})) {
+        continue;
+      }
       affected.push_back(entry);
     }
     // Scheduling follows original vertex identity, never reusable slot order.
@@ -841,15 +1471,22 @@ bool within_size_targets(const TetMesh& mesh, const Cell& vertices, double ratio
          (target == 0.0 || radius2 <= target * target);
 }
 
-bool regular_proposal(TetMesh& mesh, std::span<const Cell> cells,
-                      std::span<const double> weights, double ratio_bound,
-                      double max_weight_fraction) {
+// Regularity of a weighted proposal at the current weights. `varying` is the
+// vertex whose trial weight a caller raises between calls (-1: none). Size,
+// shape and weight-bound refusals, and power refusals that never read the
+// varying weight, hold at every larger trial weight: a weight bound
+// max_weight_fraction * |xy|^2 only tightens as the weight grows.
+enum class Regularity : uint8_t { kRegular, kRefusedAtWeight, kRefused };
+
+Regularity regular_proposal(TetMesh& mesh, std::span<const Cell> cells,
+                            std::span<const double> weights, double ratio_bound,
+                            double max_weight_fraction, int32_t varying) {
   if (!mesh.spend(static_cast<int64_t>(8 * cells.size() * cells.size()))) {
-    return false;
+    return Regularity::kRefused;
   }
   for (std::size_t i = 0; i < cells.size(); ++i) {
     if (!within_size_targets(mesh, cells[i], ratio_bound)) {
-      return false;
+      return Regularity::kRefused;
     }
     for (int a = 0; a < 4; ++a) {
       for (int b = a + 1; b < 4; ++b) {
@@ -859,7 +1496,7 @@ bool regular_proposal(TetMesh& mesh, std::span<const Cell> cells,
                              geometry::squared_distance(mesh.point(x), mesh.point(y));
         if (weights[static_cast<std::size_t>(x)] > bound ||
             weights[static_cast<std::size_t>(y)] > bound) {
-          return false;
+          return Regularity::kRefused;
         }
       }
     }
@@ -884,19 +1521,458 @@ bool regular_proposal(TetMesh& mesh, std::span<const Cell> cells,
                    weights[static_cast<std::size_t>(cells[i][2])],
                    weights[static_cast<std::size_t>(cells[i][3])],
                    weights[static_cast<std::size_t>(opposite)]) > 0) {
-        return false;
+        const bool reads_varying =
+            opposite == varying ||
+            std::find(cells[i].begin(), cells[i].end(), varying) != cells[i].end();
+        return reads_varying ? Regularity::kRefusedAtWeight : Regularity::kRefused;
       }
+    }
+  }
+  return Regularity::kRegular;
+}
+
+// The 2-3 flip of t's unconstrained finite face opposite `slot`: three
+// positive children of t and its neighbor, admitted when the smallest
+// dihedral strictly improves (if required). Never reads weights.
+bool face_removal_proposal(TetMesh& mesh, int32_t t, int slot, bool require_improvement,
+                           std::array<int32_t, 2>& removed, std::array<Cell, 3>& proposed) {
+  if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
+      !mesh.complex().live(t) || slot < 0 || slot > 3 || !mesh.finite(t) ||
+      mesh.complex().constraint(t, slot) != kNoConstraint) {
+    return false;
+  }
+  const Tetrahedron first = mesh.tet(t);
+  const int32_t u = first.n[slot];
+  if (!mesh.finite(u)) {
+    return false;
+  }
+  const Tetrahedron second = mesh.tet(u);
+  const int back = neighbor_slot(second, t);
+  if (back < 0) {
+    return false;
+  }
+  std::size_t count = 0;
+  for (int j = 0; j < 4; ++j) {
+    if (j == back) {
+      continue;
+    }
+    Cell cell = {second.v[0], second.v[1], second.v[2], second.v[3]};
+    cell[static_cast<std::size_t>(j)] = first.v[slot];
+    if (!mesh.positive(cell.data())) {
+      return false;
+    }
+    proposed[count++] = cell;
+  }
+  if (!mesh.spend(6)) {
+    return false;
+  }
+  if (require_improvement) {
+    const double before = std::min(quality(mesh, first.v), quality(mesh, second.v));
+    if (!(proposal_quality(mesh, proposed) > before + kImprovement)) {
+      return false;
+    }
+  }
+  removed = {t, u};
+  return true;
+}
+
+// Weight-independent edge removal on the gathered ring of (a, b): ring
+// admission, the optimal ring triangulation and its objective test. On
+// success appends the 2n - 4 proposed cells; a completed geometric negative
+// enters `failures` (when given) exactly as an unplanned proposal would.
+bool plan_edge_removal(TetMesh& mesh, int32_t a, int32_t b, std::span<const int32_t> tets,
+                       std::span<const int32_t> ring, bool require_improvement,
+                       bool construction_objective, double minimum_relative_determinant,
+                       ImprovementProofs* failures, const EdgeRemovalFailureKey& failure_key,
+                       NativeVector<Cell>& proposed) {
+  const int n = static_cast<int>(ring.size());
+  if (n < 3 || n > kMaxRing) {
+    return false;
+  }
+  // Preserve the existing full n^3 work charge, factorized into n^2
+  // bookkeeping and the geometric triangle tests. Only a mathematically
+  // dominated subpolygon can omit its triangle test and that test's work.
+  const int64_t full_work = static_cast<int64_t>(n * n * n);
+  const int64_t bookkeeping = static_cast<int64_t>(n * n);
+  const int64_t triangle_count = static_cast<int64_t>(n * (n - 1) * (n - 2) / 6);
+  const int64_t geometric_work = full_work - bookkeeping;
+  if (!mesh.spend(bookkeeping)) return false;
+  for (int i = 0; i < n; ++i) {
+    // tets[i] = (a, b, ring[i], ring[i + 1]); its facet opposite ring[i] is
+    // the ring face (a, b, ring[i + 1]).
+    if (ring[static_cast<std::size_t>(i)] < 0 ||
+        mesh.complex().constraint(tets[static_cast<std::size_t>(i)],
+                                  vertex_slot(mesh.tet(tets[static_cast<std::size_t>(i)]),
+                                              ring[static_cast<std::size_t>(i)])) !=
+            kNoConstraint) {
+      // Constraint admission is unchanged, including its original work.
+      mesh.spend(geometric_work);
+      return false;
+    }
+  }
+  // Bounded source witnesses may leave source orientation unresolved.
+  // Only exact represented-coordinate legality can certify a negative DP.
+  if (failures != nullptr) {
+    if (mesh.witness(a).deviation > 0.0 || mesh.witness(b).deviation > 0.0) {
+      failures = nullptr;
+    } else {
+      for (int32_t vertex : ring) {
+        if (mesh.witness(vertex).deviation > 0.0) {
+          failures = nullptr;
+          break;
+        }
+      }
+    }
+  }
+  // Triangle (i, k, j) of the ring polygon, i < k < j, yields the cells
+  // (r_k, r_i, r_j, a) and (r_i, r_k, r_j, b); -1 when either is invalid.
+  const auto r = [&](int index) { return ring[static_cast<std::size_t>(index)]; };
+  const auto cells_of = [&](int i, int k, int j, Cell& above, Cell& below) {
+    above = {r(k), r(i), r(j), a};
+    below = {r(i), r(k), r(j), b};
+  };
+  const auto construction_quality = [&](const int32_t* vertices) {
+    return assess_construction(mesh, vertices, minimum_relative_determinant).score;
+  };
+  const auto triangle = [&](int i, int k, int j) {
+    Cell above;
+    Cell below;
+    cells_of(i, k, j, above, below);
+    if (!mesh.positive(above.data()) || !mesh.positive(below.data())) {
+      return -1.0;
+    }
+    if (construction_objective) {
+      return std::min(construction_quality(above.data()), construction_quality(below.data()));
+    }
+    return std::min(quality(mesh, above.data()), quality(mesh, below.data()));
+  };
+  double best[kMaxRing][kMaxRing];
+  int choice[kMaxRing][kMaxRing];
+  const double threshold = require_improvement && !construction_objective
+      ? finite_quality(mesh, tets) + kImprovement : -std::numeric_limits<double>::infinity();
+  int64_t triangle_index = 0;
+  for (int length = 2; length < n; ++length) {
+    for (int i = 0; i + length < n; ++i) {
+      const int j = i + length;
+      best[i][j] = -1.0;
+      choice[i][j] = -1;
+      for (int k = i + 1; k < j; ++k) {
+        native_execution_charge(0);
+        const double identity = construction_objective ? std::numeric_limits<double>::infinity() : 180.0;
+        const double left = k - i >= 2 ? best[i][k] : identity;
+        const double right = j - k >= 2 ? best[k][j] : identity;
+        const int64_t evaluation_work = geometric_work / triangle_count +
+            (triangle_index++ < geometric_work % triangle_count ? 1 : 0);
+        // An accepted triangulation's minimum must exceed the threshold on
+        // BOTH subpolygons. Its root triangle cannot rescue a dominated child.
+        if (left < 0.0 || right < 0.0 || left <= threshold || right <= threshold) continue;
+        if (!mesh.spend(evaluation_work)) return false;
+        const double value = std::min({left, right, triangle(i, k, j)});
+        if (value > threshold && value > best[i][j]) {
+          best[i][j] = value;
+          choice[i][j] = k;
+        }
+      }
+    }
+  }
+  const double result = best[0][n - 1];
+  if (result < 0.0 || !(result > threshold)) {
+    if (failures != nullptr) failures->proved.insert(failure_key);
+    return false;
+  }
+  if (construction_objective) {
+    double previous = std::numeric_limits<double>::infinity();
+    for (int32_t cell : tets) previous = std::min(previous, construction_quality(mesh.tet(cell).v));
+    if (!(result > previous)) {
+      return false;
+    }
+  }
+  // Bounded LIFO of pending ring sub-polygons; at most n - 2 are ever open.
+  std::array<std::array<int, 2>, kMaxRing> pending{};
+  std::size_t open = 0;
+  pending[open++] = {0, n - 1};
+  while (open > 0) {
+    const auto [i, j] = pending[--open];
+    const int k = choice[i][j];
+    Cell above;
+    Cell below;
+    cells_of(i, k, j, above, below);
+    proposed.push_back(above);
+    proposed.push_back(below);
+    if (k - i >= 2) {
+      pending[open++] = {i, k};
+    }
+    if (j - k >= 2) {
+      pending[open++] = {k, j};
     }
   }
   return true;
 }
 
+// Exudation trial weights bound * 2^e, e = -12..0, in increasing order.
+constexpr std::size_t kTrialWeights = 13;
+
+// One star cell's 2-3 exudation trial across a vertex's increasing trial
+// weights. Its geometry, size/floor admission and improving proposal never
+// read the trial weight. The new-edge bound holds on a prefix of the
+// weights. The exact power test is the sign of an affine function of the
+// trial weight (every lift entry shifts by it, exactly), so it is
+// nonpositive between two nonpositive weights and otherwise positive on a
+// suffix of the weights that bisection finds.
+struct FaceTrial {
+  enum class State : uint8_t { kUnvisited, kRefused, kTracking };
+  State state = State::kUnvisited;
+  int8_t slot = -1;
+  int8_t back = -1;
+  int8_t shape = -1;  // size targets and owning floor: -1 unknown, 0 refused, 1 admitted
+  bool proposed = false;
+  int32_t other = -1;
+  int32_t first_positive = 0;  // first weight index with a positive power test
+  int32_t last = -1;           // last weight index within the new-edge bound
+  std::array<int32_t, 2> removed{};
+  std::array<Cell, 3> cells{};
+};
+
+// One neighbor's edge removal. Ring, triangulation and improvement never
+// read weights; the plan is made once per vertex visit and only its
+// regularity and transaction are tried per weight.
+struct EdgeTrial {
+  enum class State : uint8_t { kUnplanned, kRefused, kPlanned };
+  State state = State::kUnplanned;
+  int8_t floor = -1;  // proposal above the owning floor: -1 unknown, 0 no, 1 yes
+  std::size_t tets_begin = 0;
+  std::size_t tets_count = 0;
+  std::size_t cells_begin = 0;
+  std::size_t cells_count = 0;
+};
+
+// A complete refused visit is reused while no accepted flip has changed the
+// data it read (see mark_exuded): the same trials are counted, nothing is
+// recomputed.
+struct VertexRefusal {
+  int64_t dirty = 0;    // epoch of the last flip that changed data the visit reads
+  int64_t refused = 0;  // epoch of the recorded complete refusal (0: none)
+  int64_t trials = 0;   // trials that refusal counted
+};
+
+// Reusable scratch of one exude_mesh invocation; capacity grows to the
+// largest visited star and is never reallocated per trial.
+struct ExudeScratch {
+  NativeVector<int32_t> star;
+  NativeVector<int32_t> neighbors;
+  NativeVector<FaceTrial> faces;
+  NativeVector<EdgeTrial> edges;
+  NativeVector<int32_t> tets;
+  NativeVector<int32_t> ring;
+  NativeVector<Cell> cells;
+  NativeVector<VertexRefusal> refusals;
+  int64_t epoch = 1;
+  bool reusable = false;
+};
+
+// Whether `order` lists the vertices of `cell` as an even permutation.
+bool even_order(const int32_t* cell, const int32_t* order) {
+  int position[4];
+  for (int k = 0; k < 4; ++k) {
+    position[k] = static_cast<int>(std::find(cell, cell + 4, order[k]) - cell);
+  }
+  int inversions = 0;
+  for (int i = 0; i < 4; ++i) {
+    for (int j = i + 1; j < 4; ++j) {
+      inversions += position[i] > position[j] ? 1 : 0;
+    }
+  }
+  return inversions % 2 == 0;
+}
+
+// TetMesh::edge_ring of (a, b) started at the first cell of a's gathered
+// star that contains b (the cell edge_tet selects from the same star walk),
+// so the star is not walked again. Appends the ring cells and fills `ring`;
+// charges the same one unit per ring cell.
+bool star_edge_ring(TetMesh& mesh, std::span<const int32_t> star, int32_t a, int32_t b,
+                    NativeVector<int32_t>& tets, NativeVector<int32_t>& ring) {
+  ring.clear();
+  const auto found = std::find_if(star.begin(), star.end(), [&](int32_t t) {
+    return vertex_slot(mesh.tet(t), b) >= 0;
+  });
+  if (found == star.end()) {
+    return false;
+  }
+  const std::size_t begin = tets.size();
+  const int32_t start = *found;
+  int32_t t = start;
+  int32_t entry = -1;
+  for (;;) {
+    const Tetrahedron& current = mesh.tet(t);
+    int others[2];
+    int count = 0;
+    for (int k = 0; k < 4; ++k) {
+      if (current.v[k] != a && current.v[k] != b) {
+        others[count++] = k;
+      }
+    }
+    int32_t first = current.v[others[0]];
+    int32_t second = current.v[others[1]];
+    const int32_t order[4] = {a, b, first, second};
+    if (!even_order(current.v, order)) {
+      std::swap(first, second);
+    }
+    if (entry >= 0 && first != entry) {
+      tets.resize(begin);
+      return false;
+    }
+    tets.push_back(t);
+    ring.push_back(first);
+    // Next around the edge: across the facet (a, b, second).
+    const int32_t next = current.n[vertex_slot(current, first)];
+    if (next == start) {
+      break;
+    }
+    if (tets.size() - begin > mesh.complex().tets.size()) {
+      tets.resize(begin);
+      return false;
+    }
+    entry = second;
+    t = next;
+  }
+  return mesh.spend(static_cast<int64_t>(tets.size() - begin));
+}
+
+// First visit of the 2-3 trial across star cell t's face opposite `vertex`,
+// at weight `index`; the caller charged it. Records the weight interval of
+// the bound tests and the first weight with a positive power test. Each
+// additional power evaluation is charged as one more trial.
+bool track_face(TetMesh& mesh, int32_t vertex, int32_t t, std::span<const double> weights,
+                std::span<const double> trials, int32_t index, double max_weight_fraction,
+                FaceTrial& face) {
+  face.state = FaceTrial::State::kRefused;
+  const Tetrahedron& old = mesh.tet(t);
+  const int slot = vertex_slot(old, vertex);
+  const int32_t other = old.n[slot];
+  if (!mesh.finite(other) || mesh.complex().constraint(t, slot) != kNoConstraint) {
+    return false;
+  }
+  const Tetrahedron& neighbor = mesh.tet(other);
+  const int back = neighbor_slot(neighbor, t);
+  const int32_t apex = neighbor.v[back];
+  const double new_edge_bound =
+      max_weight_fraction * geometry::squared_distance(mesh.point(vertex), mesh.point(apex));
+  if (!(weights[static_cast<std::size_t>(apex)] <= new_edge_bound)) {
+    return false;
+  }
+  auto last = static_cast<int32_t>(trials.size()) - 1;
+  while (last >= index && !(trials[static_cast<std::size_t>(last)] <= new_edge_bound)) {
+    --last;
+  }
+  if (last < index) {
+    return false;
+  }
+  const double* p[4];
+  mesh.corners(other, p);
+  const auto encroached = [&](int32_t at) {
+    return power3d(p[0], p[1], p[2], p[3], mesh.point(vertex),
+                   weights[static_cast<std::size_t>(neighbor.v[0])],
+                   weights[static_cast<std::size_t>(neighbor.v[1])],
+                   weights[static_cast<std::size_t>(neighbor.v[2])],
+                   weights[static_cast<std::size_t>(neighbor.v[3])],
+                   trials[static_cast<std::size_t>(at)]) > 0;
+  };
+  int32_t first_positive = index;
+  if (!encroached(index)) {
+    if (last == index || !mesh.spend(16) || !encroached(last)) {
+      return false;
+    }
+    int32_t below = index;
+    first_positive = last;
+    while (first_positive - below > 1) {
+      const int32_t middle = below + (first_positive - below) / 2;
+      if (!mesh.spend(16)) {
+        return false;
+      }
+      (encroached(middle) ? first_positive : below) = middle;
+    }
+  }
+  face.state = FaceTrial::State::kTracking;
+  face.slot = static_cast<int8_t>(slot);
+  face.back = static_cast<int8_t>(back);
+  face.other = other;
+  face.first_positive = first_positive;
+  face.last = last;
+  return true;
+}
+
+// Weight-independent admission of a tracked 2-3 trial, evaluated once:
+// the children's size targets and owning floor, then the improving flip.
+bool admit_face(TetMesh& mesh, int32_t vertex, int32_t t, const ExudeOptions& options,
+                FaceTrial& face) {
+  if (face.shape < 0) {
+    const Tetrahedron& neighbor = mesh.tet(face.other);
+    bool admitted = true;
+    for (int k = 0; k < 4 && admitted; ++k) {
+      if (k == face.back) {
+        continue;
+      }
+      Cell proposed = {neighbor.v[0], neighbor.v[1], neighbor.v[2], neighbor.v[3]};
+      proposed[static_cast<std::size_t>(k)] = vertex;
+      admitted = within_size_targets(mesh, proposed, options.radius_edge_bound) &&
+                 above_floor(mesh, std::span<const Cell>(&proposed, 1),
+                             options.minimum_relative_determinant);
+    }
+    face.shape = admitted ? 1 : 0;
+  }
+  if (face.shape == 0) {
+    return false;
+  }
+  if (!face.proposed) {
+    if (!face_removal_proposal(mesh, t, face.slot, true, face.removed, face.cells)) {
+      return false;
+    }
+    face.proposed = true;
+  }
+  return true;
+}
+
+// Plans the removal of edge (vertex, other) from vertex's gathered star.
+void plan_exude_edge(TetMesh& mesh, int32_t vertex, int32_t other,
+                     double minimum_relative_determinant, ExudeScratch& scratch,
+                     EdgeTrial& edge) {
+  edge.state = EdgeTrial::State::kRefused;
+  if (!mesh.live_vertex(other) || other == vertex || mesh.segment_source(vertex, other) >= 0) {
+    return;
+  }
+  const std::size_t tets_begin = scratch.tets.size();
+  if (!star_edge_ring(mesh, scratch.star, vertex, other, scratch.tets, scratch.ring)) {
+    return;
+  }
+  const std::size_t cells_begin = scratch.cells.size();
+  const std::span<const int32_t> tets(scratch.tets.data() + tets_begin,
+                                      scratch.tets.size() - tets_begin);
+  if (!plan_edge_removal(mesh, vertex, other, tets, scratch.ring, true, false,
+                         minimum_relative_determinant, nullptr, EdgeRemovalFailureKey{},
+                         scratch.cells)) {
+    scratch.tets.resize(tets_begin);
+    return;
+  }
+  edge.state = EdgeTrial::State::kPlanned;
+  edge.tets_begin = tets_begin;
+  edge.tets_count = tets.size();
+  edge.cells_begin = cells_begin;
+  edge.cells_count = scratch.cells.size() - cells_begin;
+}
+
+// One vertex visit. Trials keep their order (per increasing weight: each
+// star cell's 2-3 flip, then each neighbor's weighted edge removal) and the
+// same first admitted trial is applied. Weight-independent work runs once
+// per visit; trials it decides are counted without recomputation.
+// `scratch.reusable` reports a complete refusal no transaction refusal entered.
 bool exude_vertex(TetMesh& mesh, int32_t vertex, const ExudeOptions& options,
-                  std::span<double> weights, TetMeshExudeCounters& counters) {
+                  std::span<double> weights, TetMeshExudeCounters& counters,
+                  ExudeScratch& scratch) {
+  scratch.reusable = false;
   if (mesh.dimension(vertex) != 3 || mesh.protection(vertex) > 0.0) {
     return false;
   }
-  NativeVector<int32_t> star;
+  NativeVector<int32_t>& star = scratch.star;
   if (!mesh.vertex_star(vertex, star)) {
     return false;
   }
@@ -910,80 +1986,155 @@ bool exude_vertex(TetMesh& mesh, int32_t vertex, const ExudeOptions& options,
     }
   }
   const double bound = options.max_weight_fraction * shortest2;
+  std::array<double, kTrialWeights> trials{};
+  std::size_t count = 0;
   for (int exponent = -12; exponent <= 0; ++exponent) {
     const double trial = std::ldexp(bound, exponent);
-    if (!(trial > weights[static_cast<std::size_t>(vertex)]) || !weight_in_domain(trial)) {
-      continue;
+    if (trial > weights[static_cast<std::size_t>(vertex)] && weight_in_domain(trial)) {
+      trials[count++] = trial;
     }
-    for (int32_t t : star) {
-      if (!mesh.spend(16)) {
+  }
+  const std::span<const double> ordered(trials.data(), count);
+  scratch.faces.assign(star.size(), FaceTrial{});
+  scratch.neighbors.clear();
+  scratch.edges.clear();
+  scratch.tets.clear();
+  scratch.cells.clear();
+  bool planned = false;
+  bool transaction_refused = false;
+  for (std::size_t position = 0; position < count; ++position) {
+    const auto index = static_cast<int32_t>(position);
+    const double trial = trials[position];
+    for (std::size_t i = 0; i < star.size(); ++i) {
+      if (mesh.work_exhausted()) {
         return false;
       }
-      ++counters.trials;
-      const Tetrahedron old = mesh.tet(t);
-      const int slot = vertex_slot(old, vertex);
-      const int32_t other = old.n[slot];
-      if (!mesh.finite(other) || mesh.complex().constraint(t, slot) != kNoConstraint) {
-        continue;
-      }
-      const Tetrahedron neighbor = mesh.tet(other);
-      const int back = neighbor_slot(neighbor, t);
-      const double* p[4];
-      mesh.corners(other, p);
-      if (power3d(p[0], p[1], p[2], p[3], mesh.point(vertex),
-                   weights[static_cast<std::size_t>(neighbor.v[0])],
-                   weights[static_cast<std::size_t>(neighbor.v[1])],
-                   weights[static_cast<std::size_t>(neighbor.v[2])],
-                   weights[static_cast<std::size_t>(neighbor.v[3])], trial) <= 0) {
-        continue;
-      }
-      const double new_edge_bound =
-          options.max_weight_fraction *
-          geometry::squared_distance(mesh.point(vertex), mesh.point(neighbor.v[back]));
-      bool size_valid = trial <= new_edge_bound &&
-                        weights[static_cast<std::size_t>(neighbor.v[back])] <= new_edge_bound;
-      for (int k = 0; k < 4; ++k) {
-        if (k == back) {
+      FaceTrial& face = scratch.faces[i];
+      if (face.state == FaceTrial::State::kUnvisited) {
+        if (!mesh.spend(16)) {
+          return false;
+        }
+        ++counters.trials;
+        if (!track_face(mesh, vertex, star[i], weights, ordered, index,
+                        options.max_weight_fraction, face)) {
           continue;
         }
-        Cell proposed = {neighbor.v[0], neighbor.v[1], neighbor.v[2], neighbor.v[3]};
-        proposed[static_cast<std::size_t>(k)] = vertex;
-        size_valid = size_valid && within_size_targets(mesh, proposed, options.radius_edge_bound) &&
-                     above_floor(mesh, std::span<const Cell>(&proposed, 1),
-                                 options.minimum_relative_determinant);
+      } else {
+        ++counters.trials;
+        if (face.state == FaceTrial::State::kRefused) {
+          continue;
+        }
+        if (index > face.last) {
+          face.state = FaceTrial::State::kRefused;
+          continue;
+        }
       }
-      if (size_valid && try_face_removal(mesh, t, slot, true)) {
+      if (index < face.first_positive) {
+        continue;
+      }
+      if (!admit_face(mesh, vertex, star[i], options, face)) {
+        face.state = FaceTrial::State::kRefused;
+        continue;
+      }
+      if (mesh.replace(face.removed, face.cells) == EditStatus::kOk) {
         weights[static_cast<std::size_t>(vertex)] = trial;
         ++counters.flips;
         return true;
       }
+      transaction_refused = true;
     }
     // Regular exudation needs both directions of bistellar reconnection:
     // a sliver commonly disappears in a 3-2 edge removal, not a 2-3 flip.
-    NativeVector<int32_t> neighbors;
-    for (int32_t t : star) {
-      for (int32_t v : mesh.tet(t).v) {
-        if (v != vertex && v >= 0) {
-          neighbors.push_back(v);
+    if (!planned) {
+      for (int32_t t : star) {
+        for (int32_t v : mesh.tet(t).v) {
+          if (v != vertex && v >= 0) {
+            scratch.neighbors.push_back(v);
+          }
         }
       }
+      std::sort(scratch.neighbors.begin(), scratch.neighbors.end());
+      scratch.neighbors.erase(std::unique(scratch.neighbors.begin(), scratch.neighbors.end()),
+                              scratch.neighbors.end());
+      scratch.edges.assign(scratch.neighbors.size(), EdgeTrial{});
+      planned = true;
     }
-    std::sort(neighbors.begin(), neighbors.end());
-    neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
-    const double saved_weight = weights[static_cast<std::size_t>(vertex)];
-    weights[static_cast<std::size_t>(vertex)] = trial;
-    for (int32_t other : neighbors) {
+    double& weight = weights[static_cast<std::size_t>(vertex)];
+    const double saved_weight = weight;
+    weight = trial;
+    for (std::size_t i = 0; i < scratch.neighbors.size() && !mesh.work_exhausted(); ++i) {
       ++counters.trials;
-      if (try_edge_removal(mesh, vertex, other, true, weights, options.radius_edge_bound,
-                            options.max_weight_fraction, false,
-                            options.minimum_relative_determinant)) {
+      EdgeTrial& edge = scratch.edges[i];
+      if (edge.state == EdgeTrial::State::kUnplanned) {
+        plan_exude_edge(mesh, vertex, scratch.neighbors[i], options.minimum_relative_determinant,
+                        scratch, edge);
+      }
+      if (edge.state != EdgeTrial::State::kPlanned) {
+        continue;
+      }
+      const std::span<const Cell> cells(scratch.cells.data() + edge.cells_begin,
+                                        edge.cells_count);
+      const Regularity regularity = regular_proposal(
+          mesh, cells, weights, options.radius_edge_bound, options.max_weight_fraction, vertex);
+      if (regularity != Regularity::kRegular) {
+        if (regularity == Regularity::kRefused) {
+          edge.state = EdgeTrial::State::kRefused;
+        }
+        continue;
+      }
+      if (edge.floor < 0) {
+        edge.floor = above_floor(mesh, cells, options.minimum_relative_determinant) ? 1 : 0;
+      }
+      if (edge.floor == 0) {
+        edge.state = EdgeTrial::State::kRefused;
+        continue;
+      }
+      const std::span<const int32_t> tets(scratch.tets.data() + edge.tets_begin,
+                                          edge.tets_count);
+      if (mesh.replace(tets, cells) == EditStatus::kOk) {
         ++counters.flips;
         return true;
       }
+      transaction_refused = true;
     }
-    weights[static_cast<std::size_t>(vertex)] = saved_weight;
+    weight = saved_weight;
   }
+  scratch.reusable = !transaction_refused;
   return false;
+}
+
+// After the accepted flip of `vertex`, marks every vertex whose visit reads
+// changed data: vertices of the created cells and of their neighbors (new
+// stars, start cells and cells across replaced faces; created and removed
+// cells span the same vertices), and vertices of the post-flip star of
+// `vertex` and of the cells across its link faces (they read its new
+// weight). One visit is charged per created cell; the star walk charges
+// its own. An incomplete marking forgets every recorded refusal.
+void mark_exuded(TetMesh& mesh, int32_t vertex, ExudeScratch& scratch) {
+  ++scratch.epoch;
+  const auto mark = [&](int32_t cell) {
+    if (cell < 0) return;
+    for (int32_t v : mesh.tet(cell).v) {
+      if (v >= 0) scratch.refusals[static_cast<std::size_t>(v)].dirty = scratch.epoch;
+    }
+  };
+  bool complete = true;
+  for (int32_t cell : mesh.created()) {
+    if (!mesh.spend(TetWorkCost::kVisit)) {
+      complete = false;
+      break;
+    }
+    mark(cell);
+    for (int32_t next : mesh.tet(cell).n) mark(next);
+  }
+  if (complete && mesh.vertex_star(vertex, scratch.star)) {
+    for (int32_t cell : scratch.star) {
+      mark(cell);
+      mark(mesh.tet(cell).n[vertex_slot(mesh.tet(cell), vertex)]);
+    }
+  } else {
+    for (VertexRefusal& refusal : scratch.refusals) refusal.refused = 0;
+  }
 }
 
 bool relocation_outside_protection(TetMesh& mesh, int32_t vertex, const double* position,
@@ -1075,6 +2226,7 @@ bool prepare_relocation_cavity(TetMesh& mesh, const RelocationPositions& propose
         !mesh.vertex_star(vertex, star)) {
       return false;
     }
+    if (!relocation_outside_protection(mesh, vertex, position, star)) return false;
     if (mesh.dimension(vertex) < 3 &&
         !on_facet_plane(mesh, vertex, star, position, neighbors)) {
       return false;
@@ -1416,12 +2568,24 @@ int32_t reconnect_sliver_frontier(TetMesh& mesh, const ImproveOptions& options,
         status = PHX_MC_CAPACITY_EXCEEDED;
         break;
       }
+      // A neighboring relocation can satisfy a queued cell without changing
+      // its vertex tuple. Connectivity identity alone is not an unmet proof.
+      const ConstructionAssessment assessment = assess_construction(
+          mesh, mesh.tet(entry.slot).v, options.minimum_relative_determinant);
+      const bool uncertain = assessment.orientation.certified_sign() != 1 || assessment.below_floor;
+      if (!uncertain &&
+          quality(mesh, mesh.tet(entry.slot).v) >= options.min_dihedral_degrees) continue;
+      if (!uncertain &&
+          !frontier.processed.insert(Cell{entry.v[0], entry.v[1], entry.v[2], entry.v[3]}).second) {
+        continue;
+      }
       ++counters.attempts;
-      std::array<int32_t, 5> affected_vertices;
+      AffectedVertices affected_vertices;
       bool capacity = false;
-      const bool changed = improve_cell(mesh, entry.slot, counters, entry.construction_uncertain,
-                                        entry.below_floor, options.minimum_relative_determinant,
-                                        affected_vertices, capacity, failures);
+      const bool changed = improve_cell(mesh, entry.slot, counters, uncertain,
+                                        assessment.below_floor, options.minimum_relative_determinant,
+                                        options.min_dihedral_degrees, affected_vertices, capacity,
+                                        failures);
       progress = changed || progress;
       if (mesh.broken()) {
         return PHX_MC_INTERNAL_ERROR;
@@ -1432,9 +2596,12 @@ int32_t reconnect_sliver_frontier(TetMesh& mesh, const ImproveOptions& options,
         break;
       }
       // A neighboring accepted cavity can make an earlier refusal feasible.
-      // Revisit only actual affected construction charts in this same pass.
+      // Revisit only actual affected unmet charts in this same cavity worklist;
+      // a replaced angle candidate must not disappear before its children
+      // meet the requested objective. This is not another mesh-wide pass.
       if (changed && !frontier.append(
-              mesh, affected_vertices, options.minimum_relative_determinant, slivers)) {
+              mesh, affected_vertices, options.minimum_relative_determinant,
+              options.min_dihedral_degrees, slivers, failures)) {
         status = PHX_MC_CAPACITY_EXCEEDED;
         break;
       }
@@ -1481,41 +2648,10 @@ int32_t record_improvement_unmet(TetMesh& mesh, const ImproveOptions& options,
 
 bool try_face_removal(TetMesh& mesh, int32_t t, int slot, bool require_improvement) {
   const MemoryScope memory_scope(mesh.memory_owner());
-  if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
-      !mesh.complex().live(t) || slot < 0 || slot > 3 || !mesh.finite(t) ||
-      mesh.complex().constraint(t, slot) != kNoConstraint) {
-    return false;
-  }
-  const Tetrahedron first = mesh.tet(t);
-  const int32_t u = first.n[slot];
-  if (!mesh.finite(u)) {
-    return false;
-  }
-  const Tetrahedron second = mesh.tet(u);
-  const int back = neighbor_slot(second, t);
-  NativeVector<Cell> proposed;
-  for (int j = 0; j < 4; ++j) {
-    if (j == back) {
-      continue;
-    }
-    Cell cell = {second.v[0], second.v[1], second.v[2], second.v[3]};
-    cell[static_cast<std::size_t>(j)] = first.v[slot];
-    if (!mesh.positive(cell.data())) {
-      return false;
-    }
-    proposed.push_back(cell);
-  }
-  if (!mesh.spend(6)) {
-    return false;
-  }
-  if (require_improvement) {
-    const double before = std::min(quality(mesh, first.v), quality(mesh, second.v));
-    if (!(proposal_quality(mesh, proposed) > before + kImprovement)) {
-      return false;
-    }
-  }
-  const int32_t removed[] = {t, u};
-  return mesh.replace(removed, proposed) == EditStatus::kOk;
+  std::array<int32_t, 2> removed{};
+  std::array<Cell, 3> proposed{};
+  return face_removal_proposal(mesh, t, slot, require_improvement, removed, proposed) &&
+         mesh.replace(removed, proposed) == EditStatus::kOk;
 }
 
 namespace {
@@ -1548,112 +2684,14 @@ bool try_edge_removal_proposal(
   if (!mesh.edge_ring(a, b, tets, ring)) {
     return false;
   }
-  const int n = static_cast<int>(ring.size());
-  if (n < 3 || n > kMaxRing) {
-    return false;
-  }
-  if (!mesh.spend(static_cast<int64_t>(n * n * n))) return false;
-  for (int i = 0; i < n; ++i) {
-    // tets[i] = (a, b, ring[i], ring[i + 1]); its facet opposite ring[i] is
-    // the ring face (a, b, ring[i + 1]).
-    if (ring[static_cast<std::size_t>(i)] < 0 ||
-        mesh.complex().constraint(tets[static_cast<std::size_t>(i)],
-                                  vertex_slot(mesh.tet(tets[static_cast<std::size_t>(i)]),
-                                              ring[static_cast<std::size_t>(i)])) !=
-            kNoConstraint) {
-      return false;
-    }
-  }
-  // Bounded source witnesses may leave source orientation unresolved.
-  // Only exact represented-coordinate legality can certify a negative DP.
-  if (failures != nullptr) {
-    if (mesh.witness(a).deviation > 0.0 || mesh.witness(b).deviation > 0.0) {
-      failures = nullptr;
-    } else {
-      for (int32_t vertex : ring) {
-        if (mesh.witness(vertex).deviation > 0.0) {
-          failures = nullptr;
-          break;
-        }
-      }
-    }
-  }
-  // Triangle (i, k, j) of the ring polygon, i < k < j, yields the cells
-  // (r_k, r_i, r_j, a) and (r_i, r_k, r_j, b); -1 when either is invalid.
-  const auto r = [&](int index) { return ring[static_cast<std::size_t>(index)]; };
-  const auto cells_of = [&](int i, int k, int j, Cell& above, Cell& below) {
-    above = {r(k), r(i), r(j), a};
-    below = {r(i), r(k), r(j), b};
-  };
-  const auto construction_quality = [&](const int32_t* vertices) {
-    return assess_construction(mesh, vertices, minimum_relative_determinant).score;
-  };
-  const auto triangle = [&](int i, int k, int j) {
-    Cell above;
-    Cell below;
-    cells_of(i, k, j, above, below);
-    if (!mesh.positive(above.data()) || !mesh.positive(below.data())) {
-      return -1.0;
-    }
-    if (construction_objective) {
-      return std::min(construction_quality(above.data()), construction_quality(below.data()));
-    }
-    return std::min(quality(mesh, above.data()), quality(mesh, below.data()));
-  };
-  double best[kMaxRing][kMaxRing];
-  int choice[kMaxRing][kMaxRing];
-  for (int length = 2; length < n; ++length) {
-    for (int i = 0; i + length < n; ++i) {
-      const int j = i + length;
-      best[i][j] = -1.0;
-      choice[i][j] = -1;
-      for (int k = i + 1; k < j; ++k) {
-        native_execution_charge(0);
-        const double identity = construction_objective ? std::numeric_limits<double>::infinity() : 180.0;
-        const double left = k - i >= 2 ? best[i][k] : identity;
-        const double right = j - k >= 2 ? best[k][j] : identity;
-        const double value = std::min({left, right, triangle(i, k, j)});
-        if (value > best[i][j]) {
-          best[i][j] = value;
-          choice[i][j] = k;
-        }
-      }
-    }
-  }
-  const double result = best[0][n - 1];
-  if (result < 0.0 ||
-      (require_improvement && !construction_objective &&
-       !(result > finite_quality(mesh, tets) + kImprovement))) {
-    if (failures != nullptr) failures->proved.insert(failure_key);
-    return false;
-  }
-  if (construction_objective) {
-    double previous = std::numeric_limits<double>::infinity();
-    for (int32_t cell : tets) previous = std::min(previous, construction_quality(mesh.tet(cell).v));
-    if (!(result > previous)) {
-      return false;
-    }
-  }
   NativeVector<Cell> proposed;
-  NativeVector<std::array<int, 2>> pending = {{0, n - 1}};
-  while (!pending.empty()) {
-    const auto [i, j] = pending.back();
-    pending.pop_back();
-    const int k = choice[i][j];
-    Cell above;
-    Cell below;
-    cells_of(i, k, j, above, below);
-    proposed.push_back(above);
-    proposed.push_back(below);
-    if (k - i >= 2) {
-      pending.push_back({i, k});
-    }
-    if (j - k >= 2) {
-      pending.push_back({k, j});
-    }
+  if (!plan_edge_removal(mesh, a, b, tets, ring, require_improvement, construction_objective,
+                         minimum_relative_determinant, failures, failure_key, proposed)) {
+    return false;
   }
   if (regular_weights &&
-      (!regular_proposal(mesh, proposed, *regular_weights, radius_edge_bound, max_weight_fraction) ||
+      (regular_proposal(mesh, proposed, *regular_weights, radius_edge_bound, max_weight_fraction,
+                        -1) != Regularity::kRegular ||
        !above_floor(mesh, proposed, minimum_relative_determinant))) {
     return false;
   }
@@ -1838,6 +2876,7 @@ bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
 bool try_collapse_edge(TetMesh& mesh, int32_t remove, int32_t keep,
                        bool require_improvement) {
   const MemoryScope memory_scope(mesh.memory_owner());
+  mesh.cancel_prepared_edit();
   NativeVector<int32_t> star, other_star;
   NativeVector<Cell> cells;
   if (!prepare_collapse(mesh, remove, keep, require_improvement, nullptr,
@@ -1854,6 +2893,34 @@ bool try_collapse_edge(TetMesh& mesh, int32_t remove, int32_t keep,
     return false;
   }
   mesh.retire_vertex(remove);
+  return true;
+}
+
+bool try_collapse_curved_edge(TetMesh& mesh, int32_t remove, int32_t keep,
+                              bool require_improvement, const CurvedCollapseClaims* claims,
+                              CurvedCollapseInspection* inspection) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  if (claims != nullptr) {
+    bool applied = false;
+    if (mesh.reuse_curved_collapse(remove, keep, require_improvement, *claims, applied)) {
+      if (applied) mesh.retire_vertex(remove);
+      return applied;
+    }
+  }
+  mesh.cancel_prepared_edit();
+  NativeVector<int32_t> star, other_star;
+  NativeVector<Cell> cells;
+  if (!mesh.live_vertex(remove) || mesh.dimension(remove) != 2 ||
+      !prepare_collapse(mesh, remove, keep, require_improvement, nullptr, star, other_star,
+                        cells)) {
+    return false;
+  }
+  if (mesh.collapse_curved_boundary_edge(remove, keep, star, other_star, claims, inspection) !=
+      EditStatus::kOk) {
+    return false;
+  }
+  if (inspection != nullptr) mesh.bind_curved_collapse(require_improvement);
+  if (inspection == nullptr) mesh.retire_vertex(remove);
   return true;
 }
 
@@ -1933,6 +3000,8 @@ int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
   weights.assign(static_cast<std::size_t>(mesh.vertex_count()), 0.0);
   const int64_t initial_work = mesh.work();
   NativeVector<Candidate> slivers;
+  ExudeScratch scratch;
+  scratch.refusals.assign(static_cast<std::size_t>(mesh.vertex_count()), VertexRefusal{});
   bool stalled = false;
   bool capacity = false;
   for (int32_t pass = 0; pass < options.max_passes; ++pass) {
@@ -1953,9 +3022,22 @@ int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
       const Cell vertices = {mesh.tet(entry.slot).v[0], mesh.tet(entry.slot).v[1],
                              mesh.tet(entry.slot).v[2], mesh.tet(entry.slot).v[3]};
       for (int32_t vertex : vertices) {
-        if (exude_vertex(mesh, vertex, options, weights, counters)) {
+        VertexRefusal& known = scratch.refusals[static_cast<std::size_t>(vertex)];
+        if (known.refused > 0 && known.dirty <= known.refused && !mesh.work_exhausted()) {
+          // Every datum the recorded visit read is unchanged: the same
+          // trials refuse again, so they are counted, not recomputed.
+          counters.trials += known.trials;
+          continue;
+        }
+        const int64_t trials = counters.trials;
+        if (exude_vertex(mesh, vertex, options, weights, counters, scratch)) {
           progress = true;
+          mark_exuded(mesh, vertex, scratch);
           break;
+        }
+        if (scratch.reusable && !mesh.work_exhausted() && !mesh.broken()) {
+          known.refused = scratch.epoch;
+          known.trials = counters.trials - trials;
         }
       }
       if (mesh.broken() || mesh.work_exhausted()) {
@@ -2270,6 +3352,13 @@ int32_t phx_mc_tet_mesh_construct_edge_split(phx_mc_tet_mesh* handle, int32_t a,
       if (admitted == phx::mc::Insertion::kOk) {
         *constructed = 1;
         *parameter = fraction;
+      } else if (!mesh.work_exhausted() &&
+                 mesh.construct_interior_edge_point(a, b, fraction, position)) {
+        // No exact or source-row carrier: an unconstrained edge offers the
+        // rounded interior carrier, which carries no source witness.
+        witness = phx::mc::SourceWitness{};
+        *constructed = 1;
+        *parameter = fraction;
       }
     }
     if (*constructed != 0) {
@@ -2465,7 +3554,14 @@ int32_t phx_mc_tet_mesh_inspect_edge_insertion(
     state.proposed = finite[1];
     state.kind = static_cast<int32_t>(kind);
     state.generation = mesh.accepted_generation();
-    mesh.abandon();
+    const auto retained = mesh.retain_edge_insertion(
+        first, second, split_position, final_position, source_fraction,
+        static_cast<std::size_t>(maximum_cavity_cells), kind);
+    if (retained != phx::mc::Insertion::kOk) {
+      mesh.abandon();
+      state = {};
+      return insertion_status(mesh, retained);
+    }
     return PHX_MC_OK;
   });
 }
@@ -2514,9 +3610,13 @@ int32_t phx_mc_tet_mesh_commit_edge_insertion(
     }
     phx::mc::TetWorkBudgetWindow budget(mesh, work_limit);
     phx::mc::InsertKind kind = phx::mc::InsertKind::kInterior;
-    const phx::mc::Insertion prepared = mesh.prepare_edge_insertion(
+    const bool reused = mesh.reuse_edge_insertion(
         first, second, split_position, final_position, source_fraction,
         static_cast<std::size_t>(maximum_cavity_cells), kind);
+    const phx::mc::Insertion prepared = reused ? phx::mc::Insertion::kOk
+        : mesh.prepare_edge_insertion(
+              first, second, split_position, final_position, source_fraction,
+              static_cast<std::size_t>(maximum_cavity_cells), kind);
     if (prepared != phx::mc::Insertion::kOk) {
       mesh.abandon();
       return insertion_status(mesh, prepared);
@@ -2561,6 +3661,85 @@ int32_t phx_mc_tet_mesh_collapse_edge(phx_mc_tet_mesh* handle, int32_t remove, i
     *applied = done ? 1 : 0;
     return mesh.broken() ? PHX_MC_INTERNAL_ERROR
                         : capacity ? PHX_MC_CAPACITY_EXCEEDED : PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_collapse_curved_edge(
+    const phx_mc_tet_mesh_curved_collapse_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  return phx::mc::guarded([&]() -> int32_t {
+    const auto& in = *request;
+    const int32_t status = ready(in.mesh, in.applied);
+    if (status != PHX_MC_OK || in.work_limit < 0 || in.digest == nullptr ||
+        in.claim_count <= 0 || in.claim_faces == nullptr || in.claim_coordinates == nullptr ||
+        in.claim_deviations == nullptr || in.accepted_generation < 0 || in.source < 0 ||
+        (in.require_improvement != 0 && in.require_improvement != 1) ||
+        !phx::mc::addressable(in.claim_count, 9, sizeof(double))) {
+      return status != PHX_MC_OK ? status : PHX_MC_INVALID_ARGUMENT;
+    }
+    phx::mc::TetMesh& mesh = *in.mesh->mesh;
+    const phx::mc::MemoryScope memory_scope(mesh.memory_owner());
+    for (int64_t i = 0; i < 3 * in.claim_count; ++i) {
+      if (in.claim_faces[i] < 0 || in.claim_faces[i] >= mesh.vertex_count()) {
+        return PHX_MC_INVALID_ARGUMENT;
+      }
+    }
+    phx::mc::TetWorkBudgetWindow budget(mesh, in.work_limit);
+    phx::mc::CurvedCollapseClaims claims;
+    claims.source = in.source;
+    claims.generation = in.accepted_generation;
+    claims.digest = in.digest;
+    claims.count = in.claim_count;
+    claims.faces = in.claim_faces;
+    claims.coordinates = in.claim_coordinates;
+    claims.deviations = in.claim_deviations;
+    const bool done = phx::mc::try_collapse_curved_edge(
+        mesh, in.remove, in.keep, in.require_improvement != 0, &claims, nullptr);
+    const bool capacity = mesh.work_exhausted();
+    *in.applied = done ? 1 : 0;
+    return mesh.broken() ? PHX_MC_INTERNAL_ERROR
+                        : capacity ? PHX_MC_CAPACITY_EXCEEDED : PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_inspect_curved_collapse(phx_mc_tet_mesh* handle, int32_t remove,
+                                                int32_t keep, int32_t require_improvement,
+                                                int64_t work_limit, int64_t capacity,
+                                                int64_t* face_count, int32_t* source,
+                                                int64_t* accepted_generation, int32_t* faces) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (face_count == nullptr || source == nullptr || accepted_generation == nullptr ||
+        faces == nullptr || capacity < 1 || work_limit < 0 ||
+        (require_improvement != 0 && require_improvement != 1) ||
+        !phx::mc::addressable(capacity, 3, sizeof(int32_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    *face_count = 0;
+    *source = -1;
+    *accepted_generation = -1;
+    if (handle == nullptr || handle->mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::TetMesh& mesh = *handle->mesh;
+    if (mesh.broken()) return PHX_MC_INTERNAL_ERROR;
+    const phx::mc::MemoryScope memory_scope(mesh.memory_owner());
+    phx::mc::TetWorkBudgetWindow budget(mesh, work_limit);
+    phx::mc::CurvedCollapseInspection inspection;
+    const bool admitted = phx::mc::try_collapse_curved_edge(
+        mesh, remove, keep, require_improvement != 0, nullptr, &inspection);
+    if (mesh.broken()) return PHX_MC_INTERNAL_ERROR;
+    if (mesh.work_exhausted()) return PHX_MC_CAPACITY_EXCEEDED;
+    if (!admitted) return PHX_MC_OK;
+    const auto count = static_cast<int64_t>(inspection.faces.size());
+    if (count > capacity) {
+      mesh.cancel_prepared_edit();
+      return PHX_MC_CAPACITY_EXCEEDED;
+    }
+    for (std::size_t i = 0; i < inspection.faces.size(); ++i) {
+      std::copy_n(inspection.faces[i].data(), 3, faces + 3 * i);
+    }
+    *face_count = count;
+    *source = inspection.source;
+    *accepted_generation = inspection.generation;
+    return PHX_MC_OK;
   });
 }
 

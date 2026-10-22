@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from enum import IntEnum
 from typing import final, Literal, Protocol, runtime_checkable, TypeAlias
@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import Tracer
 from jax.typing import ArrayLike
 
 from phydrax.discretization._reference_cell_types import CellGeometryElement
@@ -41,7 +42,11 @@ from ._coordinate_enclosure import (
     polynomial_bounds,
 )
 from ._reference_cell import reference_cell_topology
-from .fem._cell_map import FiniteElementCellMapEvaluation, PreparedFiniteElementCellMap
+from .fem._cell_map import (
+    FiniteElementCellMapEvaluation,
+    NumericalFiniteElementCellMap,
+    PreparedFiniteElementCellMap,
+)
 
 
 # (reference points, converged, first converged iteration, ever-valid geometry)
@@ -55,6 +60,56 @@ class CellLocationStatus(IntEnum):
     NONFINITE = 3
     RESOURCE_EXCEEDED = 4
     INVERSE_MAP_EXHAUSTED = 5
+
+
+class CellLocationResourceError(ValueError):
+    """Fixed-site candidate storage exceeds its explicitly admitted pair count."""
+
+    def __init__(self, requested: int, maximum: int, /) -> None:
+        self.requested = requested
+        self.maximum = maximum
+        super().__init__(
+            f"Cell location requires {requested} candidate pairs; admitted {maximum}."
+        )
+
+
+def _point_candidate_counts(
+    bvh: PackedBVH, points: np.ndarray, tolerance: float, /
+) -> np.ndarray:
+    """Count exact own-box hits with a depth-bounded stack, without pair storage."""
+    lower, upper, left, right, leaves, items, item_lower, item_upper = (
+        np.asarray(value)
+        for value in (
+            bvh.bbox_min,
+            bvh.bbox_max,
+            bvh.left,
+            bvh.right,
+            bvh.leaf_id,
+            bvh.leaf_items,
+            bvh.item_bbox_min,
+            bvh.item_bbox_max,
+        )
+    )
+    counts = np.zeros(points.shape[0], dtype=np.int64)
+    for row, point in enumerate(points):
+        stack = [0]
+        while stack:
+            node = stack.pop()
+            if not np.all(
+                (point >= lower[node] - tolerance) & (point <= upper[node] + tolerance)
+            ):
+                continue
+            leaf = int(leaves[node])
+            if leaf < 0:
+                stack.extend((int(right[node]), int(left[node])))
+                continue
+            for item in items[leaf]:
+                if item >= 0 and np.all(
+                    (point >= item_lower[item] - tolerance)
+                    & (point <= item_upper[item] + tolerance)
+                ):
+                    counts[row] += 1
+    return counts
 
 
 @final
@@ -379,20 +434,68 @@ class _ResolvedLocationCandidates(StrictModule):
     ever_valid_geometry: Array
 
 
-class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
-    """Shared bounded damped-Newton inverse for prepared coordinate maps."""
+@final
+class CellLocationArrays(StrictModule):
+    """Identity-free numerical location; `identified` binds its locator identity."""
 
-    __strict_contract__ = True
+    cell_ids: Array
+    reference_coordinates: Array
+    barycentric: Array
+    geometry_residual: Array
+    iterations: Array
+    jacobian_condition: Array
+    inside: Array
+    used_fallback: Array
+    candidate_count: Array
+    status: Array
+    successful: Array
+    candidate_cells: Array
+    candidate_reference: Array
+    candidates_complete: Array
 
-    cell_map: PreparedFiniteElementCellMap
+    def identified(self, locator_id: str, /) -> CellLocationResult:
+        """Attach the owning locator's identity outside compiled location."""
+        return CellLocationResult(
+            cell_ids=self.cell_ids,
+            reference_coordinates=self.reference_coordinates,
+            barycentric=self.barycentric,
+            geometry_residual=self.geometry_residual,
+            iterations=self.iterations,
+            jacobian_condition=self.jacobian_condition,
+            inside=self.inside,
+            used_fallback=self.used_fallback,
+            candidate_count=self.candidate_count,
+            status=self.status,
+            successful=self.successful,
+            candidate_cells=self.candidate_cells,
+            candidate_reference=self.candidate_reference,
+            candidates_complete=self.candidates_complete,
+            locator_id=locator_id,
+        )
+
+
+def simplex_reference_seeds(cell_kind: str, dimension: int, dtype: jnp.dtype, /) -> Array:
+    """Return the simplex reference center followed by its vertices in cell order."""
+    center = jnp.full((dimension,), 1.0 / (dimension + 1), dtype=dtype)
+    vertices = jnp.asarray(reference_cell_topology(cell_kind).vertices, dtype=dtype)
+    return jnp.concatenate((center[None], vertices), axis=0)
+
+
+class AbstractNewtonInverse(StrictModule, NonTrainableState):
+    """Identity-free bounded damped-Newton inverse of one prepared coordinate map.
+
+    Fields are exactly the numerics read by location: the coordinate map without
+    topology, layout or source identities, its coordinates, query hierarchy and
+    policy. Compiled location is shared by maps of equal numerical structure;
+    each locator attaches its own identity outside compilation.
+    """
+
+    cell_map: NumericalFiniteElementCellMap
     coordinates: Array
-    cells: Array
-    vertex_star_cells: Int32[LocatorCellDim, LocatorStarDim]
-    vertex_star_valid: Bool[LocatorCellDim, LocatorStarDim]
-    centroids: Array
     bvh: PackedBVH
     policy: SimplicialLocationPolicy
-    locator_id: str = eqx.field(static=True)
+    cell_kind: str = eqx.field(static=True)
+    affine_simplex: bool = eqx.field(static=True)
 
     @property
     def dimension(self) -> int:
@@ -402,18 +505,9 @@ class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
     def cell_count(self) -> int:
         return self.cell_map.cell_count
 
-    @property
-    def coordinate_count(self) -> int:
-        return self.cell_map.coordinate_count
-
     def reference_seeds(self, dtype: jnp.dtype, /) -> Array:
         """Return the reference center followed by reference vertices in cell order."""
-        center = jnp.full((self.dimension,), 1.0 / (self.dimension + 1), dtype=dtype)
-        vertices = jnp.asarray(
-            reference_cell_topology(self.cell_map.coordinate_element.cell_kind).vertices,
-            dtype=dtype,
-        )
-        return jnp.concatenate((center[None], vertices), axis=0)
+        return simplex_reference_seeds(self.cell_kind, self.dimension, dtype)
 
     def contains_reference(self, reference: Array, /) -> Array:
         """Test simplex containment with the policy's reference-coordinate tolerance."""
@@ -535,6 +629,17 @@ class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
                 ever_valid | geometry_valid,
             )
 
+        def active_step(iteration: Array, carry: _NewtonCarry) -> _NewtonCarry:
+            # Retain the fixed-trip reverse-mode program, but stop evaluating
+            # charts after every admissible candidate has converged.
+            active = jnp.any(flat_candidate_valid & ~carry[1])
+            return jax.lax.cond(
+                active,
+                lambda current: newton_step(iteration, current),
+                lambda current: current,
+                carry,
+            )
+
         (
             reference_flat,
             converged,
@@ -543,7 +648,7 @@ class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
         ) = jax.lax.fori_loop(
             0,
             self.policy.maximum_iterations,
-            newton_step,
+            active_step,
             (
                 reference_flat,
                 converged,
@@ -616,7 +721,7 @@ class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
         candidate_resolved = jnp.any(converged_valid, axis=2) | ~candidate_valid
         if (
             self.cell_map.ambient_dimension > self.cell_map.reference_dimension
-            and is_affine_simplex_element(self.cell_map.coordinate_element)
+            and self.affine_simplex
         ):
             # An affine source has a constant tangent space. Its orthogonal
             # residual excludes a point from the entire source image, including
@@ -647,7 +752,7 @@ class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
         self,
         prepared: _LocationCandidates,
         resolved: _ResolvedLocationCandidates,
-    ) -> CellLocationResult:
+    ) -> CellLocationArrays:
         values, candidates = prepared.values, prepared.candidates
         candidate_valid, search_complete = (
             prepared.candidate_valid,
@@ -727,7 +832,7 @@ class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
                 ),
             ),
         ).astype(jnp.int32)
-        return CellLocationResult(
+        return CellLocationArrays(
             cell_ids=cell_ids,
             reference_coordinates=jnp.where(inside[:, None], reference_result, 0.0),
             barycentric=jnp.where(inside[:, None], barycentric, 0.0),
@@ -746,18 +851,198 @@ class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
                 candidate_accepted[:, :, None], candidate_reference, 0.0
             ),
             candidates_complete=finite & search_complete & inverses_complete,
-            locator_id=self.locator_id,
         )
 
-    @eqx.filter_jit
-    @checked
-    def locate(
-        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
-    ) -> CellLocationResult:
+    def locate_arrays(
+        self, points: ArrayLike, cell_mask: ArrayLike | None, /
+    ) -> CellLocationArrays:
+        """Bounded candidates, fixed-trip Newton inverses and their resolution."""
         prepared = self._prepare_location_candidates(points, cell_mask)
         inverse = self._invert_location_candidates(prepared)
         resolved = self._resolve_location_candidates(prepared, inverse)
         return self._location_result(prepared, resolved)
+
+
+@eqx.filter_jit
+def locate_cells(
+    inverse: AbstractNewtonInverse, points: ArrayLike, cell_mask: ArrayLike | None, /
+) -> CellLocationArrays:
+    """Compile location once per numerical structure, never per source identity."""
+    return inverse.locate_arrays(points, cell_mask)
+
+
+# Rows are located independently: every query count shares one compiled
+# program per numerical structure. Trailing rows of the final block repeat its
+# last query, so they neither add candidates nor extend shared Newton trips.
+_LOCATION_ROWS = 64
+
+
+def locate_rows(
+    inverse: AbstractNewtonInverse, points: ArrayLike, cell_mask: ArrayLike | None, /
+) -> CellLocationArrays:
+    """Locate fixed-size row blocks and return exactly the requested rows."""
+    traced = any(
+        isinstance(leaf, Tracer)
+        for leaf in jax.tree_util.tree_leaves((inverse, points, cell_mask))
+    )
+    values = (
+        jnp.asarray(points, dtype=inverse.coordinates.dtype)
+        if traced
+        else np.asarray(points, dtype=np.dtype(inverse.coordinates.dtype))
+    )
+    count = values.shape[0] if values.ndim == 2 else 0
+    if count == 0:
+        # Rank and dimension refusals stay with the canonical location program.
+        return locate_cells(inverse, values, cell_mask)
+    padded = -(-count // _LOCATION_ROWS) * _LOCATION_ROWS
+    if traced:
+        rows = jnp.concatenate(
+            (values, jnp.broadcast_to(values[-1:], (padded - count, values.shape[1])))
+        )
+    else:
+        rows = np.concatenate(
+            (values, np.broadcast_to(values[-1:], (padded - count, values.shape[1])))
+        )
+    blocks = [
+        locate_cells(inverse, rows[start : start + _LOCATION_ROWS], cell_mask)
+        for start in range(0, padded, _LOCATION_ROWS)
+    ]
+    if traced:
+        return jax.tree_util.tree_map(
+            lambda *parts: jnp.concatenate(parts)[:count], *blocks
+        )
+    host = jax.device_get(blocks)
+    return jax.tree_util.tree_map(
+        lambda *parts: jax.device_put(np.concatenate(parts)[:count]), *host
+    )
+
+
+def row_blocked[Result](
+    function: Callable[..., Result],
+    arguments: tuple[object, ...],
+    rows: tuple[int, ...],
+    /,
+) -> Result:
+    """Evaluate a row-independent program on location-block padded rows.
+
+    ``arguments[i]`` for ``i`` in ``rows`` share one leading query axis, and every
+    output leaf is row-leading. Padding repeats the final query row and is
+    discarded, so each requested row is computed exactly as unpadded while query
+    counts within one block share one compiled program. Traced callers keep their
+    exact shapes: their enclosing program already owns the compilation.
+    """
+    if any(isinstance(leaf, Tracer) for leaf in jax.tree_util.tree_leaves(arguments)):
+        return function(*arguments)
+    count = int(np.asarray(arguments[rows[0]]).shape[0])
+    padded = -(-count // _LOCATION_ROWS) * _LOCATION_ROWS
+    if count == 0 or padded == count:
+        return function(*arguments)
+    values = list(arguments)
+    for index in rows:
+        row = np.asarray(values[index])
+        if row.shape[0] != count:
+            raise ValueError("row_blocked.rows must share one leading query axis.")
+        values[index] = np.concatenate(
+            (row, np.broadcast_to(row[-1:], (padded - count, *row.shape[1:])))
+        )
+    result = jax.device_get(function(*values))
+    # Host transfer, not ``jnp.asarray``: no conversion program per row count.
+    return jax.tree_util.tree_map(lambda leaf: jax.device_put(leaf[:count]), result)
+
+
+class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
+    """Shared bounded damped-Newton inverse for prepared coordinate maps."""
+
+    __strict_contract__ = True
+
+    cell_map: PreparedFiniteElementCellMap
+    coordinates: Array
+    cells: Array
+    vertex_star_cells: Int32[LocatorCellDim, LocatorStarDim]
+    vertex_star_valid: Bool[LocatorCellDim, LocatorStarDim]
+    centroids: Array
+    bvh: PackedBVH
+    policy: SimplicialLocationPolicy
+    locator_id: str = eqx.field(static=True)
+
+    @property
+    def dimension(self) -> int:
+        return self.cell_map.reference_dimension
+
+    @property
+    def cell_count(self) -> int:
+        return self.cell_map.cell_count
+
+    @property
+    def coordinate_count(self) -> int:
+        return self.cell_map.coordinate_count
+
+    @abc.abstractmethod
+    def numerical_inverse(self) -> AbstractNewtonInverse:
+        """Return the identity-free inverse evaluated by `locate`."""
+        raise NotImplementedError
+
+    def reference_seeds(self, dtype: jnp.dtype, /) -> Array:
+        """Return the reference center followed by reference vertices in cell order."""
+        return self.numerical_inverse().reference_seeds(dtype)
+
+    def contains_reference(self, reference: Array, /) -> Array:
+        """Test reference-domain containment with the policy tolerance."""
+        return self.numerical_inverse().contains_reference(reference)
+
+    def reference_weights(self, reference: Array, /) -> Array:
+        """Return reference-vertex weights of the reference domain."""
+        return self.numerical_inverse().reference_weights(reference)
+
+    @checked
+    def locate(
+        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
+    ) -> CellLocationResult:
+        # An absent mask admits every cell; one compiled program serves both.
+        mask = (
+            np.ones(self.cell_count, dtype=np.bool_) if cell_mask is None else cell_mask
+        )
+        return locate_rows(self.numerical_inverse(), points, mask).identified(
+            self.locator_id
+        )
+
+    def prepare_location(
+        self,
+        points: ArrayLike,
+        maximum_location_pairs: int,
+        /,
+        *,
+        cell_mask: ArrayLike | None = None,
+    ) -> CellLocationResult:
+        """Count, admit, then invert the complete fixed-site broad phase."""
+        if (
+            isinstance(maximum_location_pairs, bool)
+            or not isinstance(maximum_location_pairs, int)
+            or maximum_location_pairs < 1
+        ):
+            raise ValueError("maximum_location_pairs must be a positive integer.")
+        values = np.asarray(points, dtype=np.dtype(self.coordinates.dtype))
+        if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
+            raise ValueError("Prepared location sites must be (points, dimension).")
+        counts = _point_candidate_counts(
+            self.bvh, values, self.policy.reference_tolerance
+        )
+        capacity = max(1, int(np.max(counts, initial=0)))
+        requested = values.shape[0] * capacity
+        if requested > maximum_location_pairs:
+            raise CellLocationResourceError(requested, maximum_location_pairs)
+        policy = SimplicialLocationPolicy(
+            capacity,
+            self.policy.maximum_iterations,
+            self.policy.maximum_seeds,
+            residual_tolerance=self.policy.residual_tolerance,
+            reference_tolerance=self.policy.reference_tolerance,
+            trust_radius=self.policy.trust_radius,
+        )
+        inverse = eqx.tree_at(
+            lambda inverse: inverse.policy, self.numerical_inverse(), policy
+        )
+        return locate_cells(inverse, values, cell_mask).identified(self.locator_id)
 
     def _affine_geometry(self) -> tuple[Array, Array, Array, Array]:
         if not is_affine_simplex_element(self.cell_map.coordinate_element):
@@ -1018,6 +1303,22 @@ def _walk_facet_intervals(
     )
 
 
+@eqx.filter_jit
+def mapped_physical_points(
+    cell_map: NumericalFiniteElementCellMap,
+    coordinates: Array,
+    cell_indices: Array,
+    reference_points: Array,
+) -> Array:
+    """Project the canonical map evaluation so unused metric work can be eliminated."""
+    return cell_map.evaluate(coordinates, cell_indices, reference_points).physical_points
+
+
+@final
+class SimplicialNewtonInverse(AbstractNewtonInverse):
+    """Identity-free inverse with simplex reference-domain operations."""
+
+
 @final
 class PreparedSimplicialCellLocator(AbstractPreparedNewtonCellLocator):
     """Invert arbitrary-dimensional simplex maps with whole-source BVH enclosures."""
@@ -1069,9 +1370,9 @@ class PreparedSimplicialCellLocator(AbstractPreparedNewtonCellLocator):
             1.0 / (cell_map.reference_dimension + 1),
             dtype=values.dtype,
         )
-        centroids = cell_map.evaluate(
-            values, jnp.arange(cell_map.cell_count), center
-        ).physical_points
+        centroids = mapped_physical_points(
+            cell_map.numerical, values, jnp.arange(cell_map.cell_count), center
+        )
         if is_affine_simplex_element(cell_map.coordinate_element):
             star_cells, star_valid = vertex_star_routes(cell_map_vertices(cell_map))
         else:
@@ -1094,10 +1395,21 @@ class PreparedSimplicialCellLocator(AbstractPreparedNewtonCellLocator):
             }
         )
 
+    def numerical_inverse(self) -> SimplicialNewtonInverse:
+        return SimplicialNewtonInverse(
+            self.cell_map.numerical,
+            self.coordinates,
+            self.bvh,
+            self.policy,
+            self.cell_map.coordinate_element.cell_kind,
+            is_affine_simplex_element(self.cell_map.coordinate_element),
+        )
+
 
 __all__ = [
     "AbstractCellLocator",
     "CellLocationResult",
+    "CellLocationResourceError",
     "CellLocationStatus",
     "LocatedCellMap",
     "PreparedSimplicialCellLocator",

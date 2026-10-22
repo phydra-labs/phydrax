@@ -497,14 +497,22 @@ def prepare_rational_trim_metric_source() -> UVMetricSource:
         domain.entity_set_id(2),
         np.asarray(domain.scope_indices(2), dtype=np.int64),
     )
+    from tools.meshing_qualification._controls import authored_resource_envelope
+
+    envelope = authored_resource_envelope(
+        "native-surface-pde", "planar-hole-feature", {}, larger=False
+    )
+    assert envelope is not None
+    controls = envelope["effective"]
     limits = MeshingLimits(
         maximum_vertices=20_000,
         maximum_edges=160_000,
         maximum_faces=160_000,
         maximum_cells=160_000,
-        maximum_work_units=640_000,
-        maximum_geometry_queries=1_280_000,
-        maximum_scratch_bytes=81_920_000,
+        maximum_work_units=controls["maximum_work_units"],
+        maximum_geometry_queries=controls["maximum_geometry_queries"],
+        maximum_scratch_bytes=controls["maximum_scratch_bytes"],
+        maximum_wall_seconds=controls["timeout"],
     )
     specification = meshing.SurfaceMeshingSpec(
         meshing.CellMeshingTarget(2, 3, meshing.CellFamilyPolicy(required=("triangle",))),

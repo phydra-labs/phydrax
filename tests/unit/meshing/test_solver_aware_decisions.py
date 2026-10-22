@@ -861,6 +861,7 @@ def _native_case(dimension: int) -> _NativeCase:
         adaptation.parent_cells,
         field_name="u",
         parent_reference_vertices=adaptation.parent_reference_vertices,
+        parent_reference_homogeneous=adaptation.parent_reference_homogeneous,
     )
     return _NativeCase(source, adaptation, source_space, target_space, field, transfer)
 

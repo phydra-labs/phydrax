@@ -386,3 +386,41 @@ def test_validity_certificate_reuse_binds_every_policy_field() -> None:
         assert budget.work_units > earned_work
     assert int(first.status[0]) == CellValidityStatus.CERTIFIED_VALID
     assert int(changed.status[0]) == CellValidityStatus.INVALID
+
+
+def test_vertex_images_bind_one_exact_image_per_shared_vertex() -> None:
+    from phydrax.discretization._coordinate_enclosure import coordinate_vertex_images
+
+    controls = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+        (Fraction(1), Fraction(1, 3)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(1), Fraction(1, 7)),
+    )
+    vertices = np.asarray(((0, 1, 2), (1, 3, 2)), dtype=np.int64)
+    with coordinate_reference_budget() as budget:
+        element = budget.degree_one_coordinate_element("triangle")
+        images = coordinate_vertex_images(
+            ((element, vertices, vertices),),
+            controls,
+            5,
+            mismatch="shared",
+            budget=budget,
+        )
+        assert images == (*controls[:4], None)
+        # A distinct control row with an equal value still names one image.
+        agreeing = np.asarray(((0, 1, 2), (4, 3, 2)), dtype=np.int64)
+        assert coordinate_vertex_images(
+            ((element, agreeing, vertices),), controls, 4, mismatch="shared", budget=budget
+        ) == controls[:4]
+        conflicting = np.asarray(((0, 1, 2), (5, 3, 2)), dtype=np.int64)
+        with pytest.raises(ValueError, match="shared"):
+            coordinate_vertex_images(
+                ((element, conflicting, vertices),),
+                controls,
+                4,
+                mismatch="shared",
+                budget=budget,
+            )

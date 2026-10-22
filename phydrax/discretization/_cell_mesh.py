@@ -7,6 +7,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Mapping, Sequence
 from itertools import combinations
+from math import comb
 from typing import assert_never, final, NamedTuple
 
 import equinox as eqx
@@ -32,6 +33,7 @@ from . import (
     _periodic_topology as periodic_topology_owner,
 )
 from ._cell_complex import (
+    _OPEN_SHELL_CHUNK_CELLS,
     canonical_entity_ids,
     interval_complex,
     interval_connectivity,
@@ -1395,6 +1397,9 @@ class CellMeshStorage(StrictModule, NonTrainableState):
     Non-addressable banks require a ``CellGeometryStorageProjection`` computed
     collectively from fixed-capacity closure queries before owner-local lowering;
     geometry validation subsequently reads only its addressable banks.
+    ``local_physical_boundary_entities`` projects the scientific global boundary
+    by stable entity ID at every degree. A resident vertex can belong to that
+    boundary even when none of its incident physical facets is resident.
     """
 
     entity_global_ids: tuple[Array, ...]
@@ -1411,6 +1416,7 @@ class CellMeshStorage(StrictModule, NonTrainableState):
     local_geometry_source_id: str = eqx.field(static=True)
     geometry_source_blocks: tuple[tuple[str, str], ...] = eqx.field(static=True)
     local_physical_boundary_facets: Array | None
+    local_physical_boundary_entities: tuple[Array, ...] | None
     local_neighborhood_complete: Array | None
     neighborhood_depth: int = eqx.field(static=True)
     local_coordinate_id: str = eqx.field(static=True)
@@ -1442,6 +1448,7 @@ class CellMeshStorage(StrictModule, NonTrainableState):
         local_blocks: Sequence[CellBlock | PolyhedralBlock],
         maximum_materialization_bytes: int = 0,
         local_physical_boundary_facets: ArrayLike | None = None,
+        local_physical_boundary_entities: Sequence[ArrayLike] | None = None,
         local_neighborhood_complete: ArrayLike | None = None,
         neighborhood_depth: int = 0,
         global_coordinate_count: int | None = None,
@@ -1521,6 +1528,38 @@ class CellMeshStorage(StrictModule, NonTrainableState):
             ids[-2].shape[0],
             "local_physical_boundary_facets",
         )
+        boundary_entities = None
+        if local_physical_boundary_entities is not None:
+            if len(local_physical_boundary_entities) != len(ids):
+                raise ValueError(
+                    "CellMeshStorage.local_physical_boundary_entities must provide every entity degree; got an incomplete receipt."
+                )
+            boundary = []
+            for degree, (value, identifiers) in enumerate(
+                zip(local_physical_boundary_entities, ids, strict=True)
+            ):
+                mask = _storage_local_mask(
+                    value,
+                    identifiers.shape[0],
+                    f"local_physical_boundary_entities[{degree}]",
+                )
+                if mask is None:
+                    raise ValueError(
+                        "CellMeshStorage.local_physical_boundary_entities must retain boolean receipts; got a missing degree."
+                    )
+                boundary.append(mask)
+            boundary_entities = tuple(boundary)
+            if np.any(np.asarray(boundary_entities[-1])):
+                raise ValueError(
+                    "CellMeshStorage.local_physical_boundary_entities must exclude top-dimensional cells; got boundary cells."
+                )
+            if physical is not None and not np.array_equal(
+                np.asarray(physical), np.asarray(boundary_entities[-2])
+            ):
+                raise ValueError(
+                    "CellMeshStorage.local_physical_boundary_entities must agree with physical facet receipts; got different facets."
+                )
+            physical = boundary_entities[-2]
         complete = _storage_local_mask(
             local_neighborhood_complete, ids[-1].shape[0], "local_neighborhood_complete"
         )
@@ -1538,6 +1577,7 @@ class CellMeshStorage(StrictModule, NonTrainableState):
         self.local_geometry_source_id = geometry_source_id
         self.geometry_source_blocks = tuple(sorted(source_blocks.items()))
         self.local_physical_boundary_facets = physical
+        self.local_physical_boundary_entities = boundary_entities
         self.local_neighborhood_complete = complete
         self.neighborhood_depth = depth
         self.local_coordinate_id = local_coordinate_id
@@ -1565,6 +1605,11 @@ class CellMeshStorage(StrictModule, NonTrainableState):
                 "local_blocks": [block.block_id for block in blocks],
                 "local_physical_boundary_facets": (
                     None if physical is None else array_tree_fingerprint(physical)
+                ),
+                "local_physical_boundary_entities": (
+                    None
+                    if boundary_entities is None
+                    else array_tree_fingerprint(boundary_entities)
                 ),
                 "local_neighborhood_complete": (
                     None if complete is None else array_tree_fingerprint(complete)
@@ -1603,6 +1648,7 @@ class CellMeshStorage(StrictModule, NonTrainableState):
             local_blocks=value.local_blocks,
             maximum_materialization_bytes=value.maximum_materialization_bytes,
             local_physical_boundary_facets=value.local_physical_boundary_facets,
+            local_physical_boundary_entities=value.local_physical_boundary_entities,
             local_neighborhood_complete=value.local_neighborhood_complete,
             neighborhood_depth=value.neighborhood_depth,
             global_coordinate_count=value.global_coordinate_count if scientific else None,
@@ -2032,6 +2078,7 @@ class CellMesh(StrictModule, NonTrainableState):
         numeric_version: str = "0",
         storage: CellMeshStorage | None = None,
         _prepared_topology: _PreparedCellMeshTopology | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         if isinstance(coordinates, Array) and not coordinates.is_fully_addressable:
             raise ValueError(
@@ -2094,7 +2141,9 @@ class CellMesh(StrictModule, NonTrainableState):
                 ),
             )
         if prepared.periodic_topology is not None:
-            prepared.periodic_topology.require_lift(points)
+            # A transient request ledger owns the exact lift proof; it is not
+            # part of the mesh identity.
+            prepared.periodic_topology.require_lift(points, budget=budget)
         if storage is not None:
             storage.require_local_topology(prepared.topology)
             if tuple(block.block_id for block in prepared.blocks) != tuple(
@@ -2134,7 +2183,9 @@ class CellMesh(StrictModule, NonTrainableState):
 
     @classmethod
     @checked
-    def from_stored_fields(cls, value: CellMesh, /) -> CellMesh:
+    def from_stored_fields(
+        cls, value: CellMesh, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> CellMesh:
         """Revalidate stored incidence and rebuild any quotient on its lifted carrier."""
         if value.storage is not None:
             return cls(
@@ -2143,19 +2194,28 @@ class CellMesh(StrictModule, NonTrainableState):
                 storage=value.storage,
                 periodic_topology=value.periodic_topology,
                 numeric_version=value.numeric_version,
+                budget=budget,
             )
-        lifted = cls.lifted_from_stored_fields(value)
+        lifted = cls.lifted_from_stored_fields(value, budget=budget)
         periodic = value.periodic_topology
         if periodic is None:
             return lifted
-        return cls._from_stored_carrier(value, periodic.rebuilt(lifted))
+        return cls._from_stored_carrier(
+            value, periodic.rebuilt(lifted, budget=budget), budget=budget
+        )
 
     @classmethod
     @checked
-    def lifted_from_stored_fields(cls: type[CellMesh], value: CellMesh, /) -> CellMesh:
+    def lifted_from_stored_fields(
+        cls: type[CellMesh],
+        value: CellMesh,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> CellMesh:
         """Revalidate stored lifted incidence without binding a quotient descriptor."""
         value.require_dense("CellMesh.lifted_from_stored_fields")
-        return cls._from_stored_carrier(value, None)
+        return cls._from_stored_carrier(value, None, budget=budget)
 
     @classmethod
     def _from_stored_carrier(
@@ -2163,6 +2223,8 @@ class CellMesh(StrictModule, NonTrainableState):
         value: CellMesh,
         periodic: periodic_topology_owner.PeriodicMeshTopology | None,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> CellMesh:
         """Rebuild a carrier from stored topological IDs and authored face incidence."""
         entity_ids = {
@@ -2191,6 +2253,7 @@ class CellMesh(StrictModule, NonTrainableState):
             polyhedral_connectivity=polyhedral,
             periodic_topology=periodic,
             numeric_version=value.numeric_version,
+            budget=budget,
         )
 
     def require_dense(self, operation: str, /) -> None:
@@ -2578,6 +2641,658 @@ class CellMesh(StrictModule, NonTrainableState):
                 self.periodic_topology,
             ),
         )
+
+
+def cell_block_construction_bounds(cell_count: int, arity: int, /) -> int:
+    """Return the temporary bytes admitting one ``CellBlock``.
+
+    ``K = cell_count * arity`` corners and ``C = cell_count``. Bytes bound the
+    live host temporaries: the rows (4K) and mask (K) stay live while the row
+    sums (8C), active gather and sign mask (5K), padded ``where`` and its sorted
+    copy (8K, then 4K of sorted rows), adjacent-equality masks (3K) and
+    duplicate test (row-order key, column, order and sort buffer 32C; gathered
+    rows 4K; run masks K + C) run, followed by the identity banks (26C): peak
+    ``14K + 33C``. Device copies of retained arrays are not counted.
+    """
+    cells, width = operator.index(cell_count), operator.index(arity)
+    if cells < 1 or width < 1:
+        raise ValueError(
+            f"cell_block_construction_bounds.shape must have positive cell count and arity; got {(cells, width)}."
+        )
+    corners = cells * width
+    return 16 * corners + 40 * cells + 65536
+
+
+def cell_mesh_construction_bounds(
+    vertex_count: int,
+    ambient_dimension: int,
+    blocks: Sequence[tuple[str, int, int]],
+    /,
+    *,
+    realized: CellMesh | None = None,
+) -> int:
+    """Return the temporary bytes admitting one ``CellMesh``.
+
+    ``blocks`` holds each block's ``(cell_kind, cell_count, arity)``. The bound
+    covers ``CellMesh(coordinates, blocks)`` with optional ``vertex_global_ids``
+    and ``numeric_version``; supplied entity IDs, polyhedral connectivity,
+    periodic topology, storage and prepared topologies are outside it.
+    ``polyhedron`` blocks raise ``ValueError``: their authored face loops have
+    sizes the cell counts do not bound. Given the mesh built from these inputs
+    as ``realized``, entity counts are its actual ones instead of their
+    occurrence bounds.
+
+    Bytes bound live host temporaries: a routine's peak is every named array it
+    may hold at once plus its largest expression temporary or callee peak.
+    Python containers cost 256 bytes per entry. Hashing streams 64 KiB chunks;
+    one MiB covers chunk buffers, JSON metadata and small objects. Device
+    copies of retained arrays are not counted.
+
+    With ``V`` vertices, ``d`` axes, ``N`` cells and ``K`` corners, distinct
+    entities are bounded by their occurrences: polygon edges by sides
+    (``E <= K``); tetrahedral faces ``4N`` and edges ``6N``; hexahedral faces
+    ``6N`` and edges ``12N``; standard-cell face loops ``Fl`` (4/6/5/5 per
+    tetrahedron/hexahedron/prism/pyramid) bound faces, and loop entries ``L``
+    (12/24/18/16) bound face entries and edges; simplex ``k``-faces
+    ``N * C(D + 1, k + 1)``. Each count enters the bound monotonically, so a
+    bound from upper values admits any smaller construction.
+    """
+    vertices = operator.index(vertex_count)
+    ambient = operator.index(ambient_dimension)
+    shapes = tuple(
+        (str(kind), operator.index(count), operator.index(arity))
+        for kind, count, arity in blocks
+    )
+    if (
+        vertices < 1
+        or ambient < 1
+        or not shapes
+        or any(count < 1 or arity < 1 for _, count, arity in shapes)
+    ):
+        raise ValueError(
+            f"cell_mesh_construction_bounds.counts must be positive with at least one block; got {(vertices, ambient, shapes)}."
+        )
+    dimensions: set[int] = set()
+    for kind, _, arity in shapes:
+        if kind == "polyhedron":
+            raise ValueError(
+                "cell_mesh_construction_bounds.blocks must not contain polyhedron blocks; got authored face loops whose sizes the cell counts do not bound."
+            )
+        if kind == "polygon":
+            dimensions.add(2)
+            continue
+        reference = reference_cell_topology(kind)
+        if len(reference.vertices) != arity:
+            raise ValueError(
+                f"cell_mesh_construction_bounds.blocks must use the reference arity of {kind!r}; got {arity}."
+            )
+        dimensions.add(reference.dimension)
+    if len(dimensions) != 1:
+        raise ValueError(
+            f"cell_mesh_construction_bounds.blocks must share one topological dimension; got {sorted(dimensions)}."
+        )
+    dimension = dimensions.pop()
+    kinds = tuple(kind for kind, _, _ in shapes)
+    cells = sum(count for _, count, _ in shapes)
+    corners = sum(count * arity for _, count, arity in shapes)
+    points = vertices * ambient
+    entry = 256
+
+    def entity_count(degree: int, upper: int, /) -> int:
+        # Occurrence bound a priori; the built count for a realization.
+        return upper if realized is None else realized.topology.entities(degree).count
+
+    # Shared peak bytes beyond their caller-held inputs.
+    def rows(n: int, /) -> int:
+        # row_order: one int64 key and its stable argsort, or per-column sorts.
+        return 32 * n
+
+    def duplicates(n: int, w: int, itemsize: int, /) -> int:
+        # has_duplicate_rows: row order, gathered rows and run masks.
+        return rows(n) + (1 + (itemsize + 1) * w) * n
+
+    def groups(n: int, w: int, itemsize: int, /) -> int:
+        # first_appearance_groups: row order, gathered rows and run masks, then
+        # firsts, their argsort, run groups, outputs and cumulative temporaries.
+        return rows(n) + (40 + (itemsize + 1) * w) * n
+
+    def identifiers(n: int, /) -> int:
+        # _resolved_entity_ids: int64 copy, sign mask and np.unique banks.
+        return 26 * n
+
+    def canonical(n: int, /) -> int:
+        # canonical_entity_ids: lexsort with its key buffer, IDs and range.
+        return 40 * n
+
+    def entity_set(n: int, /) -> int:
+        # EntitySubset and EntitySet: host ID and mask copies, active IDs,
+        # their sorted copy and comparison masks.
+        return 40 * n
+
+    def relation(routes: int, targets: int, /) -> int:
+        # EdgeRelation with its arange/repeat arguments: host route copies,
+        # int32 casts, validity mask and two host bound checks.
+        return 40 * routes + 8 * targets
+
+    def incidence(routes: int, lower: int, upper: int, /) -> int:
+        # OrientedIncidence with its sign argument: masks, active signs,
+        # endpoint and ID gathers, the stacked (lower ID, upper ID, sign) rows,
+        # their order and ordered copy.
+        return 112 * routes + 8 * (lower + upper)
+
+    def chain(
+        lower: int, upper: int, sources: int, middle: int, targets: int, width: int, /
+    ) -> int:
+        # Boundary-of-boundary check: COO/CSR boundaries of both incidences and
+        # their product, which has at most `width` (the boundary size of a
+        # middle entity) nonzeros per upper route.
+        return (
+            56 * (lower + upper) + 16 * width * upper + 32 * (sources + middle + targets)
+        )
+
+    def validated(n: int, w: int, /) -> int:
+        # _validated_cells on vertex-index rows: int32 rows, range masks,
+        # row-sorted copy, distinct-vertex mask and the duplicate-row test.
+        return 8 * n * w + duplicates(n, w, 4)
+
+    # Held throughout: the float64 coordinate copy and the vertex and cell
+    # global-ID banks. Before topology: the finiteness mask, per-block index
+    # checks (host rows, mask, active gather, comparison) and the vertex- and
+    # concatenated cell-ID uniqueness tests.
+    held = 8 * points + 8 * vertices + 8 * cells
+    phases = [points, 10 * corners, 18 * vertices, 25 * cells]
+    # Dimension-qualified cubes are rebuilt as native blocks.
+    phases.extend(
+        cell_block_construction_bounds(count, arity)
+        for kind, count, arity in shapes
+        if kind.startswith("tensor:")
+    )
+    entity_counts: tuple[int, ...] = ()
+    if any(kind.startswith("simplex:") for kind in kinds):
+        if any(
+            kind not in ("interval", "triangle", "tetrahedron")
+            and not kind.startswith("simplex:")
+            for kind in kinds
+        ):
+            raise ValueError(
+                f"cell_mesh_construction_bounds.blocks must use simplex kinds for simplicial construction; got {kinds}."
+            )
+        width = dimension + 1
+        local = tuple(comb(width, degree + 1) for degree in range(width))
+        level = (
+            vertices,
+            *(
+                entity_count(degree, cells * local[degree])
+                for degree in range(1, dimension)
+            ),
+            cells,
+        )
+        incident = tuple(
+            (degree + 1) * level[degree] if degree else 0 for degree in range(width)
+        )
+        # Held: concatenated and sorted cells, every vertex level, boundary
+        # masks, cell orientations, and per-degree cell routes and signs.
+        held_route = (
+            8 * corners
+            + 4 * vertices
+            + sum(4 * (degree + 1) * level[degree] for degree in range(1, dimension))
+            + sum(level[:dimension])
+            + 9 * cells
+            + 12 * cells * sum(local)
+        )
+        steps = [4 * corners, duplicates(cells, width, 4)]
+        # _simplex_mesh_levels: one Python set and sorted list per degree.
+        for degree in range(1, dimension):
+            steps.append(2 * entry * level[degree])
+        # simplicial_cell_complex: level checks, entity sets, then one
+        # np.unique(axis=0) facet lookup per degree, whose iterations may
+        # overlap and are summed.
+        lookups = 0
+        for degree in range(width):
+            span = degree + 1
+            steps.append(2 * span * level[degree] + duplicates(level[degree], span, 4))
+            steps.append(
+                8 * level[degree]
+                + max(
+                    entity_set(level[degree]),
+                    canonical(level[degree]) if degree else 0,
+                )
+            )
+        for degree in range(1, width):
+            stacked = level[degree - 1] + incident[degree]
+            lookups += (
+                4 * degree * (incident[degree] + stacked)
+                + (12 * degree + 45) * stacked
+                + 16 * incident[degree]
+                + max(
+                    relation(incident[degree], level[degree]),
+                    incidence(incident[degree], level[degree - 1], level[degree]),
+                )
+            )
+        steps.append(lookups)
+        # Both the canonical and the published complex check every chain pair.
+        steps.extend(
+            chain(
+                incident[degree],
+                incident[degree + 1],
+                level[degree - 1],
+                level[degree],
+                level[degree + 1],
+                degree + 1,
+            )
+            for degree in range(1, dimension)
+        )
+        # _simplex_mesh_boundary: facet counts, then per degree one Python set of
+        # boundary faces and one membership list over the level.
+        facets = level[dimension - 1]
+        steps.append(
+            9 * incident[dimension]
+            + (9 + 4 * dimension) * facets
+            + entry
+            * max(
+                facets * comb(dimension, degree + 1) + level[degree]
+                for degree in range(dimension)
+            )
+        )
+        # Published entity sets, with canonical IDs for intermediate degrees.
+        for degree in range(width):
+            span = degree + 1
+            interior = 0 < degree < dimension
+            steps.append(
+                (
+                    (8 * span + 8) * level[degree] + canonical(level[degree])
+                    if interior
+                    else 0
+                )
+                + entity_set(level[degree])
+            )
+        # Cell orientation and the oriented incidences.
+        steps.append(25 * cells)
+        for degree in range(1, width):
+            steps.append(
+                (28 if degree == dimension else 8) * incident[degree]
+                + incidence(incident[degree], level[degree - 1], level[degree])
+            )
+        # _simplex_cell_routes: per degree a Python lookup over the level, the
+        # selected and sorted local rows, a Python route list and orientations.
+        for degree in range(width):
+            span = degree + 1
+            occurrences = cells * local[degree]
+            steps.append(entry * level[degree] + (8 * span + entry + 25) * occurrences)
+        # SimplicialConnectivity: sign and range masks per degree.
+        steps.append(10 * cells * max(local))
+        route = held_route + max(steps)
+        entity_counts = level[1:dimension]
+    elif dimension == 1:
+        if any(kind not in ("interval", "tensor:1") for kind in kinds):
+            raise ValueError(
+                f"cell_mesh_construction_bounds.blocks must use interval blocks in one dimension; got {kinds}."
+            )
+        # Host block rows and their concatenation (held through the complex);
+        # connectivity validates them and counts vertex valences.
+        connectivity = 4 * corners + max(4 * corners, validated(cells, 2), 9 * vertices)
+        complex_ = (
+            8 * corners
+            + 8 * vertices
+            + 8 * cells
+            + max(
+                identifiers(vertices),
+                identifiers(cells),
+                entity_set(vertices),
+                entity_set(cells) + cells,
+                relation(corners, cells),
+                incidence(corners, vertices, cells),
+            )
+        )
+        route = max(connectivity, complex_)
+    elif dimension == 2:
+        if any(
+            kind not in ("triangle", "quadrilateral", "polygon", "tensor:2")
+            for kind in kinds
+        ):
+            raise ValueError(
+                f"cell_mesh_construction_bounds.blocks must use polygonal blocks in two dimensions; got {kinds}."
+            )
+        triangles = sum(count for kind, count, _ in shapes if kind == "triangle")
+        quadrilaterals = sum(
+            count for kind, count, _ in shapes if kind in ("quadrilateral", "tensor:2")
+        )
+        polygons = tuple(
+            (count, arity) for kind, count, arity in shapes if kind == "polygon"
+        )
+        checked_rows = [
+            *(
+                (count, arity)
+                for count, arity in ((triangles, 3), (quadrilaterals, 4))
+                if count
+            ),
+            *polygons,
+        ]
+        validated_peak = max(validated(count, arity) for count, arity in checked_rows)
+        # Same-arity polygon blocks: concatenation, sorted copy, duplicate test.
+        duplicate_peak = 0
+        for arity in {arity for _, arity in polygons}:
+            same = [count for count, other in polygons if other == arity]
+            if len(same) > 1:
+                count = sum(same)
+                duplicate_peak = max(
+                    duplicate_peak,
+                    8 * count * arity + duplicates(count, arity, 4),
+                )
+        padded = cells * max(4, *(arity for _, _, arity in shapes))
+        edges = entity_count(1, corners)
+        # Host rows and concatenations, padded cell banks, side rows and keys,
+        # signs, edge counts and orientation sums, cell-edge banks and boundary
+        # masks; the complex then copies its host edge and cell-edge banks,
+        # row-sorts edge keys and gathers the active cell-edge routes and signs.
+        connectivity = 8 * corners + max(
+            validated_peak,
+            duplicate_peak,
+            21 * padded
+            + 4 * cells
+            + 32 * corners
+            + 29 * edges
+            + vertices
+            + max(
+                4 * padded,
+                8 * corners,
+                groups(corners, 2, 4),
+                20 * edges,
+            ),
+        )
+        complex_ = (
+            4 * corners
+            + 32 * edges
+            + 13 * padded
+            + 8 * vertices
+            + 12 * cells
+            + max(
+                identifiers(vertices),
+                identifiers(cells),
+                16 * edges + canonical(edges),
+                entity_set(vertices),
+                entity_set(edges),
+                entity_set(cells) + cells,
+                relation(2 * edges, edges),
+                8 * corners + relation(corners, cells),
+                incidence(2 * edges, vertices, edges),
+                8 * corners + incidence(corners, edges, cells),
+                chain(2 * edges, corners, vertices, edges, cells, 2),
+            )
+        )
+        route = max(connectivity, complex_)
+        entity_counts = (edges,)
+    elif dimension == 3:
+        if any(
+            kind not in ("tetrahedron", "hexahedron", "prism", "pyramid", "tensor:3")
+            for kind in kinds
+        ):
+            raise ValueError(
+                f"cell_mesh_construction_bounds.blocks must use standard volume blocks in three dimensions; got {kinds}."
+            )
+        if len(shapes) == 1 and kinds[0] == "tetrahedron":
+            faces, edges = entity_count(2, 4 * cells), entity_count(1, 6 * cells)
+            # Host rows, local faces, inversions and signs, row-sorted face
+            # keys, face counts and orientation, face and edge rows, face-edge
+            # routes and boundary masks; the complex copies its host banks and
+            # gathers and row-sorts the global edge and face keys.
+            connectivity = 16 * cells + max(
+                validated(cells, 4),
+                180 * cells
+                + 117 * faces
+                + 17 * edges
+                + vertices
+                + max(
+                    16 * cells,
+                    groups(4 * cells, 3, 4),
+                    20 * faces,
+                    groups(3 * faces, 2, 4),
+                ),
+            )
+            complex_ = (
+                16 * edges
+                + 32 * faces
+                + 24 * cells
+                + 8 * vertices
+                + max(
+                    identifiers(vertices),
+                    identifiers(cells),
+                    32 * edges + canonical(edges),
+                    48 * faces + canonical(faces),
+                    entity_set(vertices),
+                    entity_set(edges),
+                    entity_set(faces),
+                    entity_set(cells) + cells,
+                    relation(2 * edges, edges),
+                    relation(3 * faces, faces),
+                    relation(4 * cells, cells),
+                    incidence(2 * edges, vertices, edges),
+                    incidence(3 * faces, edges, faces),
+                    incidence(4 * cells, faces, cells),
+                    chain(2 * edges, 3 * faces, vertices, edges, faces, 2),
+                    chain(3 * faces, 4 * cells, edges, faces, cells, 3),
+                )
+            )
+            entity_counts = (edges, faces)
+        elif len(shapes) == 1 and kinds[0] in ("hexahedron", "tensor:3"):
+            faces, edges = entity_count(2, 6 * cells), entity_count(1, 12 * cells)
+            # hexahedral_connectivity holds host rows, range masks, row-sorted
+            # cells, local edges and their row-sorted keys, edge runs and
+            # routes, face cycles, rotations, permutations, row-sorted face
+            # keys, face runs and occurrences and final casts per cell, and
+            # face rows, counts, sides and their sorted keys, edge queries,
+            # signs and masks per face.
+            connectivity = 32 * cells + max(
+                55 * cells,
+                32 * cells + duplicates(cells, 8, 4),
+                1310 * cells
+                + 181 * faces
+                + 17 * edges
+                + vertices
+                + max(
+                    480 * cells,
+                    96 * faces,
+                    16 * edges + 32 * faces,
+                    rows(12 * cells),
+                    rows(6 * cells),
+                ),
+            )
+            # The cell entity set identity lists the sorted cell IDs in Python.
+            complex_ = (
+                16 * edges
+                + 24 * faces
+                + 8 * vertices
+                + 8 * cells
+                + max(
+                    entity_set(vertices),
+                    entity_set(edges),
+                    entity_set(faces),
+                    entity_set(cells) + (9 + entry) * cells,
+                    relation(2 * edges, edges),
+                    relation(4 * faces, faces),
+                    relation(6 * cells, cells),
+                    incidence(2 * edges, vertices, edges),
+                    incidence(4 * faces, edges, faces),
+                    incidence(6 * cells, faces, cells),
+                    chain(2 * edges, 4 * faces, vertices, edges, faces, 2),
+                    chain(4 * faces, 6 * cells, edges, faces, cells, 4),
+                )
+            )
+        else:
+            loop_shapes = {
+                "tetrahedron": (4, 12),
+                "hexahedron": (6, 24),
+                "tensor:3": (6, 24),
+                "prism": (5, 18),
+                "pyramid": (5, 16),
+            }
+            loops = sum(count * loop_shapes[kind][0] for kind, count, _ in shapes)
+            entries = sum(count * loop_shapes[kind][1] for kind, count, _ in shapes)
+            faces, edges = entity_count(2, loops), entity_count(1, entries)
+            # Every face side is one edge-to-face route.
+            face_entries = (
+                entries
+                if realized is None
+                else realized.topology.incidences[1].relation.capacity
+            )
+            face_width = 3 if all(kind == "tetrahedron" for kind in kinds) else 4
+            # variable_row_ranks: each face row stays active for at most its
+            # length plus one refinement pass.
+            ranked = face_entries + faces
+            # Cell-local shell sorts hold only one bounded interval; include
+            # rebased loop/entry arguments and the owned full-cell output.
+            chunk_cells = min(cells, _OPEN_SHELL_CHUNK_CELLS)
+            chunk_loops = min(
+                loops, chunk_cells * max(loop_shapes[kind][0] for kind in kinds)
+            )
+            chunk_entries = min(
+                entries, chunk_cells * max(loop_shapes[kind][1] for kind in kinds)
+            )
+            # Conservative union of named banks, split at actual last uses.
+            # Early validation has no face-side/owner/edge output banks.
+            # After defects, raw loops and entry maps (9Fl + 20L) are dead.
+            # After face extraction and side grouping, canonical loops and
+            # side keys/maps (16Fl + 4L + 8F + 28S + 8E) are dead as well.
+            banks = (
+                4 * corners
+                + 28 * cells
+                + 81 * loops
+                + 28 * entries
+                + 85 * faces
+                + 69 * face_entries
+                + 25 * edges
+                + 9 * vertices
+            )
+            early = banks - 77 * faces - 69 * face_entries - 25 * edges
+            middle = banks - 9 * loops - 20 * entries
+            late = (
+                middle
+                - 16 * loops
+                - 4 * entries
+                - 8 * faces
+                - 28 * face_entries
+                - 8 * edges
+            )
+            connectivity = max(
+                early
+                + max(
+                    max(validated(count, arity) for _, count, arity in shapes),
+                    16 * cells + 18 * loops + 8 * entries,
+                    identifiers(vertices),
+                    identifiers(cells),
+                    16 * entries,
+                    64 * loops + 48 * entries,
+                    32 * loops
+                    + 12 * entries
+                    + max(groups(loops, face_width, 4), groups(loops, 1, 8)),
+                    64 * entries + 8 * cells + rows(entries),
+                    max(
+                        56 * entries + 48 * loops + rows(loops),
+                        8 * loops
+                        + cells
+                        + 32 * chunk_loops
+                        + 72 * chunk_entries
+                        + 16 * chunk_cells
+                        + rows(chunk_entries),
+                    ),
+                    24 * loops + 24 * cells,
+                ),
+                middle
+                + max(
+                    28 * faces,
+                    8 * faces + 32 * face_entries,
+                    groups(face_entries, 2, 4),
+                ),
+                late
+                + max(
+                    16 * loops + 8 * faces + 8 * face_entries,
+                    32 * edges + canonical(edges),
+                    16 * face_entries + rows(face_entries),
+                    180 * faces + rows(ranked),
+                    canonical(faces),
+                ),
+            )
+            complex_ = (
+                8 * edges
+                + 4 * face_entries
+                + 8 * faces
+                + 4 * loops
+                + 8 * cells
+                + max(
+                    entity_set(vertices),
+                    entity_set(edges),
+                    entity_set(faces),
+                    entity_set(cells) + cells,
+                    relation(2 * edges, edges),
+                    relation(face_entries, faces),
+                    relation(loops, cells),
+                    incidence(2 * edges, vertices, edges),
+                    incidence(face_entries, edges, faces),
+                    incidence(loops, faces, cells),
+                    chain(2 * edges, face_entries, vertices, edges, faces, 2),
+                    chain(face_entries, loops, edges, faces, cells, face_width),
+                )
+            )
+        route = max(connectivity, complex_)
+    else:
+        raise ValueError(
+            f"cell_mesh_construction_bounds.blocks must have a native topology route; got {kinds} in dimension {dimension}."
+        )
+    if len(shapes) == 1 and (
+        kinds[0] in ("interval", "triangle", "tetrahedron")
+        or kinds[0].startswith("simplex:")
+    ):
+        # Logical simplex arrays: cell-ID order, sorted vertex IDs, global cell
+        # rows, and per degree the host entity rows, their row-sorted global
+        # keys, lexsort and ordered copies and the ordered entity IDs.
+        terms = sum(
+            (degree + 1) * count for degree, count in enumerate(entity_counts, start=1)
+        )
+        identity = (
+            28 * cells
+            + 8 * vertices
+            + 20 * corners
+            + 12 * terms
+            + 8 * sum(entity_counts)
+            + max(
+                (
+                    (16 * (degree + 1) + 32) * count
+                    for degree, count in enumerate(entity_counts, start=1)
+                ),
+                default=0,
+            )
+        )
+    else:
+        # Per block: stable cell-ID order, global vertex rows and their ordered
+        # copies with the reordered activity mask.
+        identity = 28 * cells + 22 * corners
+    if len(shapes) == 1 and kinds[0] in ("interval", "triangle", "tetrahedron"):
+        # The geometry identity hashes coordinates in stable vertex-ID order.
+        identity = max(identity, 12 * vertices + 8 * points)
+    return held + max(*phases, route, identity) + (1 << 20) + 4096 * len(shapes)
+
+
+def cell_mesh_reuse_bounds(
+    vertex_count: int,
+    ambient_dimension: int,
+    blocks: Sequence[tuple[str, int, int]],
+    /,
+) -> int:
+    """Return the temporary bytes of ``mesh.with_coordinates``.
+
+    The coordinate-only rebuild reuses the prepared blocks, identities,
+    connectivity and topology of a plain mesh without storage or periodic
+    topology. It holds the host float64 coordinate copy with its finiteness
+    mask, or, for one interval, triangle or tetrahedron block whose geometry
+    identity hashes coordinates in vertex-ID order, the ID copy, order, sort
+    buffer and reordered coordinates.
+    """
+    vertices = operator.index(vertex_count)
+    points = vertices * operator.index(ambient_dimension)
+    kinds = tuple(str(kind) for kind, _, _ in blocks)
+    if len(kinds) == 1 and kinds[0] in ("interval", "triangle", "tetrahedron"):
+        return 8 * points + max(points, 20 * vertices + 8 * points) + (1 << 20)
+    return 9 * points + (1 << 20)
 
 
 __all__ = [

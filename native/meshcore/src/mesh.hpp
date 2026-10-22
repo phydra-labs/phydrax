@@ -200,32 +200,64 @@ inline void canonicalize_cell(int32_t* v, int32_t* opposite, int width) {
 
 // Rotates every cell to start at its smallest vertex while preserving
 // orientation, then sorts cells lexicographically; cell_constraints and
-// cell_regions follow their cells when present.
+// cell_regions follow their cells when present. Cells are distinct vertex
+// tuples, so a counting sort on the leading (smallest) vertex followed by an
+// insertion sort inside each bucket yields exactly the lexicographic order
+// with one visit per cell and per bucket plus the few in-bucket comparisons.
 template <class Charge = NativePreparationCharge>
 inline void canonicalize_cells(phx_mc_mesh& mesh, const Charge& charge = {}) {
   const int width = mesh.dimension + 1;
   const int64_t count = mesh.cell_count();
   const bool has_constraints = !mesh.cell_constraints.empty();
   const bool has_regions = !mesh.cell_regions.empty();
+  int32_t largest = -1;
   for (int64_t cell = 0; cell < count; ++cell) {
     charge();
-    canonicalize_cell(mesh.cells.data() + cell * width,
-                      has_constraints ? mesh.cell_constraints.data() + cell * width : nullptr,
+    int32_t* v = mesh.cells.data() + cell * width;
+    canonicalize_cell(v, has_constraints ? mesh.cell_constraints.data() + cell * width : nullptr,
                       width);
+    largest = std::max(largest, v[0]);
+  }
+  const auto leading = [&](int64_t cell) {
+    return static_cast<std::size_t>(mesh.cells[static_cast<std::size_t>(cell * width)]);
+  };
+  NativeVector<int64_t> bucket(static_cast<std::size_t>(largest + 2), 0);
+  for (int64_t cell = 0; cell < count; ++cell) {
+    charge();
+    ++bucket[leading(cell) + 1];
+  }
+  for (std::size_t v = 1; v < bucket.size(); ++v) {
+    charge();
+    bucket[v] += bucket[v - 1];
   }
   NativeVector<int64_t> order(static_cast<std::size_t>(count));
-  int64_t initial = 0;
-  for (int64_t& cell : order) {
-    charge();
-    cell = initial++;
+  {
+    NativeVector<int64_t> cursor(bucket.begin(), bucket.end() - 1);
+    for (int64_t cell = 0; cell < count; ++cell) {
+      charge();
+      order[static_cast<std::size_t>(cursor[leading(cell)]++)] = cell;
+    }
   }
-  std::sort(order.begin(), order.end(), [&](int64_t left, int64_t right) {
+  const auto less = [&](int64_t left, int64_t right) {
     charge();
     return std::lexicographical_compare(mesh.cells.begin() + left * width,
                                         mesh.cells.begin() + (left + 1) * width,
                                         mesh.cells.begin() + right * width,
                                         mesh.cells.begin() + (right + 1) * width);
-  });
+  };
+  for (std::size_t v = 0; v + 1 < bucket.size(); ++v) {
+    const auto first = order.begin() + bucket[v];
+    const auto last = order.begin() + bucket[v + 1];
+    for (auto item = first + (first == last ? 0 : 1); item < last; ++item) {
+      const int64_t value = *item;
+      auto hole = item;
+      while (hole != first && less(value, *(hole - 1))) {
+        *hole = *(hole - 1);
+        --hole;
+      }
+      *hole = value;
+    }
+  }
   NativeVector<int32_t> sorted_cells(mesh.cells.size());
   NativeVector<int32_t> sorted_constraints(mesh.cell_constraints.size());
   NativeVector<int32_t> sorted_regions(mesh.cell_regions.size());

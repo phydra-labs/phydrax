@@ -17,6 +17,7 @@ from tools.meshing_qualification._runtime import (
     _missing_dependency,
     _runtime_identity,
     qualification_failure,
+    StageMeasurement,
 )
 from tools.meshing_qualification.scenarios.metric_adaptation import (
     _layer_metric,
@@ -36,7 +37,7 @@ class _GmshMetricRunRecord(TypedDict):
     analytic_metric_edge_lengths: dict[str, float]
     mean_edge_extent_y_over_x: float
     area: float
-    resources: dict[str, dict[str, float]]
+    resources: dict[str, StageMeasurement]
 
 
 def _gmsh_metric_run(

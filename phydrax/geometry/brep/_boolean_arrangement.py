@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 import equinox as eqx
@@ -26,7 +26,12 @@ from .._interval_enclosure import (
     prepare_interval_function,
 )
 from ._boolean_coincidence import CoincidentFaceArc, SourceEdgeFacePairCoverage
-from ._boolean_core import BRepBooleanFailure, BRepBooleanPolicy, MaterialSelection
+from ._boolean_core import (
+    boolean_face_chart_box,
+    BRepBooleanFailure,
+    BRepBooleanPolicy,
+    MaterialSelection,
+)
 from ._carrier_pieces import carrier_payload
 from ._constructors import assemble_brep_model
 from ._intersection import (
@@ -55,6 +60,7 @@ from ._intersection_curve import (
     IntersectionCurve,
     IntersectionCurveSide,
     IntersectionPCurve,
+    prepare_trim_first_jets,
     surface_pieces,
     SurfaceRegion,
 )
@@ -171,6 +177,8 @@ class Arrangement:
         default_factory=dict
     )
     spatial_pairs: set[tuple[str, str]] = field(default_factory=set)
+    # Request-lifetime source face charts; see ``boolean_face_chart_box``.
+    face_charts: dict[FaceOwner, np.ndarray] = field(default_factory=dict)
     boxes_used: int = 0
 
     def consume(self, boxes: int) -> None:
@@ -183,6 +191,41 @@ class Arrangement:
     @property
     def remaining_boxes(self) -> int:
         return max(0, self.policy.intersection.maximum_boxes - self.boxes_used)
+
+    def face_chart(
+        self,
+        owner: FaceOwner,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
+    ) -> np.ndarray:
+        """Source face box in the chart shared by every Boolean region of the face."""
+        box = self.face_charts.get(owner)
+        if box is None:
+            box = boolean_face_chart_box(
+                self.models[owner[0]],
+                owner[1],
+                preparations=preparations,
+                budget=budget,
+            )
+            self.face_charts[owner] = box
+        return box.copy()
+
+    def face_region(
+        self,
+        owner: FaceOwner,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
+    ) -> SurfaceRegion:
+        return SurfaceRegion(
+            self.models[owner[0]].patches[owner[1]],
+            self.face_chart(owner, preparations=preparations, budget=budget),
+            preparations=preparations,
+            budget=budget,
+        )
 
 
 @checked
@@ -265,7 +308,12 @@ def intersect_arc_pair(
 
 
 @checked
-def source_arcs(state: Arrangement) -> None:
+def source_arcs(
+    state: Arrangement,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
     for model_index, model in enumerate(state.models):
         geometry = model.geometry
         if geometry is None:
@@ -292,6 +340,8 @@ def source_arcs(state: Arrangement) -> None:
                         reversed=sense < 0,
                         first_root=first_root,
                         last_root=last_root,
+                        preparations=preparations,
+                        budget=budget,
                     )
                     start, end = geometry.edge_vertices[edge]
                     if sense < 0:
@@ -499,6 +549,25 @@ def arc_area_bounds(
     return float(result[0]), float(result[1])
 
 
+def arc_area_bounds_batch(
+    cells: Sequence[tuple[AbstractTrimCurve, float, float]],
+    *,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> list[tuple[float, float]]:
+    """Evaluate the same Green-integral bounds with batched chart preparation."""
+    intervals = []
+    for start in range(0, len(cells), 64):
+        budget.ticket.checkpoint()
+        batch = cells[start : start + 64]
+        prepare_trim_first_jets(batch, preparations=preparations, budget=budget)
+        intervals.extend(
+            arc_area_bounds(curve, first, last, preparations=preparations, budget=budget)
+            for curve, first, last in batch
+        )
+    return intervals
+
+
 def _loop_sign(
     loop: CurveTrimLoop,
     maximum_cells: int,
@@ -506,6 +575,8 @@ def _loop_sign(
     preparations: TrimRequestPreparations | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> int:
+    if preparations is None:
+        preparations = TrimRequestPreparations()
     cells = [
         (loop.curves[int(index)], float(first), float(last))
         for index, first, last in zip(
@@ -517,10 +588,9 @@ def _loop_sign(
             "BRepBoolean.trim.cover must fit its area-sign work limit; got an oversized cover"
         )
     while True:
-        intervals = [
-            arc_area_bounds(curve, first, last, preparations=preparations, budget=budget)
-            for curve, first, last in cells
-        ]
+        intervals = arc_area_bounds_batch(
+            cells, preparations=preparations, budget=budget
+        )
         lower, upper = np.asarray(0.0, np.float64), np.asarray(0.0, np.float64)
         for a, b in intervals:
             lower, upper = interval_add((lower, upper), (np.asarray(a), np.asarray(b)))
@@ -754,13 +824,7 @@ def _edge_spatial_roots(
             (f"{model.source_revision}:edge:{edge}",),
         )
     first, last = np.asarray(geometry.edge_ranges)[edge]
-    other = state.models[opposite[0]]
-    region = SurfaceRegion(
-        other.patches[opposite[1]],
-        np.asarray(other.parameter_bounds)[opposite[1]],
-        budget=budget,
-        preparations=preparations,
-    )
+    region = state.face_region(opposite, preparations=preparations, budget=budget)
     result = intersect_curve_region(
         CurveRange(curve, float(first), float(last)),
         region,
@@ -772,7 +836,10 @@ def _edge_spatial_roots(
     if not result.complete or result.coincident:
         raise BRepBooleanFailure(
             "BRepBoolean.source_edge.roots must be isolated and resolved; got unresolved or coincident roots",
-            (f"{model.source_revision}:edge:{edge}", _face_id(other, opposite[1])),
+            (
+                f"{model.source_revision}:edge:{edge}",
+                _face_id(state.models[opposite[0]], opposite[1]),
+            ),
         )
     points = sorted(
         (point for point in result.points if point.kind == "crossing"),
@@ -1061,7 +1128,12 @@ def add_root_cut(
     )
 
 
-def piece_trim(piece: Piece) -> CurveTrimSegment:
+def piece_trim(
+    piece: Piece,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> CurveTrimSegment:
     arc = piece.arc
     a = arc.offset + arc.scale * piece.first.parameter
     b = arc.offset + arc.scale * piece.last.parameter
@@ -1078,6 +1150,8 @@ def piece_trim(piece: Piece) -> CurveTrimSegment:
         reversed=piece.sense * arc.scale < 0.0,
         first_root=first_root,
         last_root=last_root,
+        preparations=preparations,
+        budget=budget,
     )
 
 
@@ -1838,13 +1912,7 @@ def _triple_vertex_certificate(
 ) -> tuple[TripleSurfaceIntersectionRoot, tuple[BRepCurveSurfaceLift, ...]]:
 
     def source_region(face_owner: FaceOwner) -> SurfaceRegion:
-        index, face = face_owner
-        return SurfaceRegion(
-            state.models[index].patches[face],
-            np.asarray(state.models[index].parameter_bounds)[face],
-            preparations=preparations,
-            budget=budget,
-        )
+        return state.face_region(face_owner, preparations=preparations, budget=budget)
 
     regions = source_region(owner), source_region(other_a), source_region(other_b)
     image = joint_root_parameter_image(
@@ -1879,12 +1947,8 @@ def _triple_vertex_certificate(
                 "BRepBoolean.triple_lift.edge must have one coedge per incident face; got another coedge count"
             )
         pcurve = geometry.pcurves[coedges[0]]
-        patch = source.patches[face]
-        region = SurfaceRegion(
-            patch,
-            np.asarray(source.parameter_bounds)[face],
-            budget=budget,
-            preparations=preparations,
+        region = state.face_region(
+            (other_a[0], face), preparations=preparations, budget=budget
         )
         lift = BRepCurveSurfaceLift(
             geometry.curves[geometry.edge_curves[edge]],
@@ -2035,11 +2099,8 @@ def _append_spatial_root_cuts(
         spatial,
         "first",
         source_pcurve=source_pcurve,
-        source_surface=SurfaceRegion(
-            state.models[owner[0]].patches[owner[1]],
-            np.asarray(state.models[owner[0]].parameter_bounds)[owner[1]],
-            budget=budget,
-            preparations=preparations,
+        source_surface=state.face_region(
+            owner, preparations=preparations, budget=budget
         ),
     )
     source_local = source_endpoint.affine(

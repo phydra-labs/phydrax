@@ -9,7 +9,11 @@ from itertools import permutations, product
 import numpy as np
 import pytest
 
-from phydrax._meshcore import MeshcoreStatus
+from phydrax._meshcore import (
+    MeshcoreStatus,
+    NativeExecutionScope,
+    restricted_power_cells_exact,
+)
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import PeriodicCell
 from phydrax.discretization._coordinate_budget import (
@@ -274,10 +278,8 @@ def test_periodic_power_mixed_group_uses_complete_bounded_exact_actions() -> Non
     assert preparation.orders == (2, 0)
 
 
-def test_exact_periodic_image_clipping_preserves_volume_reciprocity_and_original_sites() -> (
-    None
-):
-
+def _unit_cube_carrier() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return the six-tetrahedron unit cube with its six boundary facet ids."""
     carrier = np.asarray(tuple(product((0.0, 1.0), repeat=3)))
     vertex = {tuple(point): index for index, point in enumerate(carrier)}
     tetrahedra = []
@@ -299,6 +301,83 @@ def test_exact_periodic_image_clipping_preserves_volume_reciprocity_and_original
             for axis, side in product(range(3), range(2)):
                 if np.all(face[:, axis] == side):
                     facets[cell, opposite] = 2 * axis + side
+    return carrier, tetrahedra, facets
+
+
+def test_sparse_periodic_image_adjacency_matches_dense_image_clipping() -> None:
+    carrier, tetrahedra, facets = _unit_cube_carrier()
+    regions = np.zeros(6, dtype=np.int32)
+    rng = np.random.default_rng(11)
+    sites = rng.uniform(0.05, 0.95, (6, 3))
+    weights = rng.uniform(0.0, 0.01, 6)
+    group = PeriodicCell(np.eye(3, dtype=np.float64))
+    preparation = PeriodicPowerPreparation(
+        sites, weights, carrier, group, maximum_images=100_000
+    )
+    diagram = RestrictedPowerDiagram(
+        sites,
+        weights,
+        carrier,
+        tetrahedra,
+        regions,
+        facets,
+        periodic_group=group,
+        periodic_preparation=preparation,
+        maximum_images=100_000,
+        work_limit=1 << 30,
+    )
+    count = len(preparation.image_sites)
+    offsets, neighbors = diagram.neighbor_offsets, diagram.neighbors
+    rows = np.repeat(np.arange(count), np.diff(offsets))
+    keys = rows * count + neighbors
+    assert np.all(neighbors != rows)
+    assert np.all(np.diff(keys) > 0)
+    np.testing.assert_array_equal(
+        np.sort(neighbors.astype(np.int64) * count + rows), keys
+    )
+    assert neighbors.size < count * (count - 1) // 8
+    assert diagram.adjacency_work_units < count * (count - 1)
+    # Independent oracle: the same exact image clipping against every other
+    # image, with no adjacency filter.
+    with NativeExecutionScope(RestrictedPowerDiagram.native_limits(1 << 40)):
+        dense = restricted_power_cells_exact(
+            preparation.points,
+            preparation.weights,
+            preparation.image_sites,
+            preparation.image_coordinate_offsets,
+            preparation.image_coordinate_components,
+            np.arange(count + 1, dtype=np.int64) * (count - 1),
+            np.nonzero(~np.eye(count, dtype=np.bool_))[1].astype(np.int32),
+            np.zeros(count, dtype=np.int8),
+            carrier,
+            tetrahedra,
+            regions,
+            facets,
+            max_pieces=1 << 20,
+            max_vertices=1 << 22,
+            work_limit=1 << 40,
+        )
+    sparse = diagram.construction
+    np.testing.assert_allclose(
+        np.bincount(sparse.cell_sites, weights=sparse.cell_volumes, minlength=count),
+        np.bincount(dense.cell_sites, weights=dense.cell_volumes, minlength=count),
+        rtol=0.0,
+        atol=PERIODIC_VOLUME_ATOL,
+    )
+    np.testing.assert_array_equal(
+        np.unique(sparse.piece_sites), np.unique(dense.piece_sites)
+    )
+    assert len(sparse.cell_sites) == len(dense.cell_sites)
+    np.testing.assert_allclose(
+        np.sum(sparse.cell_volumes), 1.0, rtol=0.0, atol=PERIODIC_VOLUME_ATOL
+    )
+
+
+def test_exact_periodic_image_clipping_preserves_volume_reciprocity_and_original_sites() -> (
+    None
+):
+
+    carrier, tetrahedra, facets = _unit_cube_carrier()
     sites = np.asarray(((0.25, 0.5, 0.5), (0.75, 0.5, 0.5)))
     weights = np.zeros(2, dtype=np.float64)
     group = PeriodicCell(np.eye(3, dtype=np.float64))

@@ -21,7 +21,10 @@ from phydrax.geometry._embedding_state import (
     MeshCertificateLimits,
 )
 from phydrax.geometry._global_embedding import certify_global_embedding
-from phydrax.geometry._source_boundary_records import SourceBoundaryChartCover
+from phydrax.geometry._source_boundary_records import (
+    CadBoundaryClosureEvidence,
+    SourceBoundaryChartCover,
+)
 from phydrax.geometry._source_fidelity import (
     _fidelity_boundary_scope,
     _fidelity_maps,
@@ -65,6 +68,7 @@ def test_grouped_fidelity_bounds_preserve_certificate_identity_payload() -> None
             "projection_coverage": None,
             "domain_coverage": None,
             "chart_coverage": None,
+            "cad_closure": None,
             "boundary_degree": "triangle-boundary-degree",
         }
     )
@@ -273,6 +277,50 @@ def test_chart_resource_counts_preserve_numpy_scalar_fingerprint_identity() -> N
     assert numpy_cover.cover_id != scalar_cover.cover_id
 
 
+def test_chart_cover_snapshots_once_without_changing_scientific_identity() -> None:
+    import jax
+
+    from phydrax._host_storage import immutable_host_array_layout
+
+    simplices = np.asarray((((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),), dtype=np.float64)
+    bounds = np.asarray((0.125,), dtype=np.float64)
+    expected = canonical_fingerprint(
+        {
+            "kind": "source-boundary-chart-cover",
+            "source": "immutable-source",
+            "revision": "immutable-revision",
+            "arrays": array_tree_fingerprint((simplices, bounds)),
+            "semantics": "sampled",
+            "complete": False,
+            "findings": (),
+            "resources": (),
+            "affine_chain_resources": (),
+            "restrictions": (),
+        }
+    )
+    cover = SourceBoundaryChartCover(
+        simplices, bounds, "sampled", False, "immutable-source", "immutable-revision"
+    )
+    assert cover.cover_id == expected
+    original = cover.simplices.copy()
+    simplices[:] = -1
+    bounds[:] = 2
+    np.testing.assert_array_equal(cover.simplices, original)
+    np.testing.assert_array_equal(cover.deviation_bounds, (0.125,))
+    for bank in (cover.simplices, cover.deviation_bounds):
+        assert immutable_host_array_layout(bank) is not None
+        assert any(leaf is bank for leaf in jax.tree_util.tree_leaves(cover))
+        with pytest.raises(ValueError):
+            bank.setflags(write=True)
+    rebuilt = SourceBoundaryChartCover(
+        cover.simplices, cover.deviation_bounds, cover.semantics, cover.complete,
+        cover.source_id, cover.source_revision,
+    )
+    assert rebuilt.cover_id == cover.cover_id
+    assert rebuilt.simplices is cover.simplices
+    assert rebuilt.deviation_bounds is cover.deviation_bounds
+
+
 def test_parametric_source_reconstruction_replays_enclosures_and_samples() -> None:
     _, _, source = fidelity_triangle()
     restored = ParametricCurveBoundarySource.from_stored_fields(source)
@@ -415,3 +463,189 @@ def test_fidelity_does_not_reuse_embedding_maps_after_live_geometry_changes() ->
     with coordinate_reference_budget() as budget:
         independent = _fidelity_maps(EmbeddingState([], []), mesh, changed, budget=budget)
         assert actual == independent
+
+
+def test_request_reuses_certified_embedding_only_for_identical_inputs() -> None:
+    mesh, geometry, validity = curved_tetrahedral_components(1.0, 2.0, 2)
+    with coordinate_reference_budget() as budget:
+        embedding = certify_global_embedding(mesh, geometry, validity, budget=budget)
+        assert embedding.status == "certified"
+        assert len(budget.global_embedding_certificate_cache) == 1
+        before = budget.work_units
+        assert certify_global_embedding(mesh, geometry, validity, budget=budget) is embedding
+        assert budget.work_units == before
+        changed = eqx.tree_at(
+            lambda value: value.coordinates, geometry, geometry.coordinates + 0.125
+        )
+        # A cached proof never stands in for changed coordinates or stale validity.
+        with pytest.raises(ValueError):
+            certify_global_embedding(mesh, changed, validity, budget=budget)
+        assert len(budget.global_embedding_certificate_cache) == 1
+    with coordinate_reference_budget() as budget:
+        assert not budget.global_embedding_certificate_cache
+        fresh = certify_global_embedding(mesh, geometry, validity, budget=budget)
+        assert fresh is not embedding
+        assert fresh.certificate_id == embedding.certificate_id
+
+
+def test_cad_closure_retains_restricted_chart_rows_and_dynamic_gap_bounds() -> None:
+    certificate = grouped_fidelity_certificate()
+    closure = CadBoundaryClosureEvidence(
+        certificate.binding,
+        authority_id="authored-cad-authority",
+        source_scope_id="whole-authored-cad-boundary",
+        representative_id="derived-bounded-cad-representative",
+        homotopy_id="continuous-boundary-homotopy",
+        homotopy_distance_upper=0.25,
+        homotopy_piece_count=8,
+        chart_indices=np.asarray(((0, 4), (0, 4)), dtype=np.int64),
+        target_facet_ids=np.asarray((11, 12), dtype=np.int64),
+        gap_bounds=np.asarray((1.0e-6, 2.0e-6)),
+        original_gap_allowance=np.asarray(1.0e-5),
+    )
+    retained = SourceFidelityCertificate(
+        certificate.binding,
+        certificate.findings,
+        tolerance=certificate.tolerance,
+        bounds=SourceFidelityBounds(
+            semantics=("certified", "certified"),
+            mesh_to_source=(certificate.mesh_to_source_upper, certificate.mesh_to_source_lower),
+            source_to_mesh=(certificate.source_to_mesh_upper, certificate.source_to_mesh_lower),
+            sample_counts=(certificate.mesh_sample_count, certificate.source_sample_count),
+        ),
+        sample_order=certificate.sample_order,
+        boundary_degree_id=certificate.boundary_degree_id,
+        coverage=SourceFidelityCoverage(cad_closure=closure),
+    )
+    restored = SourceFidelityCertificate.from_stored_fields(retained)
+    assert restored.certificate_id == retained.certificate_id
+    assert restored.certificate_id != certificate.certificate_id
+    assert restored.cad_closure is not None
+    np.testing.assert_array_equal(restored.cad_closure.gap_bounds, closure.gap_bounds)
+    np.testing.assert_array_equal(
+        restored.cad_closure.original_gap_allowance, closure.original_gap_allowance
+    )
+    changed = eqx.tree_at(
+        lambda value: value.cad_closure.gap_bounds,
+        retained,
+        np.nextafter(closure.gap_bounds, np.inf),
+    )
+    with pytest.raises(ValueError, match="CadBoundaryClosureEvidence.evidence_id"):
+        SourceFidelityCertificate.from_stored_fields(changed)
+    record = restored.cad_closure.to_record()
+    # Both rows restrict the same authored chart cell to distinct target facets;
+    # the record must keep each row rather than only a maximum and a count.
+    assert record["chart_indices"] == [[0, 4], [0, 4]]
+    assert record["target_facet_ids"] == [11, 12]
+    assert record["gap_bounds"] == [1.0e-6, 2.0e-6]
+    assert record["chart_rows"] == 2
+    assert record["gap_upper"] == 2.0e-6
+    assert record["original_gap_allowance"] == 1.0e-5
+    assert record["evidence_id"] == closure.evidence_id
+    assert record["representative_id"] == "derived-bounded-cad-representative"
+    assert record["homotopy_distance_upper"] == 0.25
+    assert record["homotopy_piece_count"] == 8
+
+
+def test_cad_closure_refuses_ambiguous_target_rows_and_original_identity_alias() -> None:
+    binding = grouped_fidelity_certificate().binding
+    with pytest.raises(ValueError, match="distinct target facets"):
+        CadBoundaryClosureEvidence(
+            binding,
+            authority_id="authored-cad-authority",
+            source_scope_id="whole-authored-cad-boundary",
+            representative_id="derived-bounded-cad-representative",
+            homotopy_id="continuous-boundary-homotopy",
+            homotopy_distance_upper=0.25,
+            homotopy_piece_count=8,
+            chart_indices=np.asarray(((0, 4), (1, 2)), dtype=np.int64),
+            target_facet_ids=np.asarray((11, 11), dtype=np.int64),
+            gap_bounds=np.zeros(2),
+            original_gap_allowance=np.asarray(1.0e-5),
+        )
+    with pytest.raises(ValueError, match="separately from the authored source"):
+        CadBoundaryClosureEvidence(
+            binding,
+            authority_id="authored-cad-authority",
+            source_scope_id="whole-authored-cad-boundary",
+            representative_id="authored-cad-authority",
+            homotopy_id="continuous-boundary-homotopy",
+            homotopy_distance_upper=0.25,
+            homotopy_piece_count=8,
+            chart_indices=np.asarray(((0, 4),), dtype=np.int64),
+            target_facet_ids=np.asarray((11,), dtype=np.int64),
+            gap_bounds=np.zeros(1),
+            original_gap_allowance=np.asarray(1.0e-5),
+        )
+    allowance = 1.0e-5
+    with pytest.raises(ValueError, match="original physical gap allowance"):
+        CadBoundaryClosureEvidence(
+            binding,
+            authority_id="authored-cad-authority",
+            source_scope_id="whole-authored-cad-boundary",
+            representative_id="derived-bounded-cad-representative",
+            homotopy_id="continuous-boundary-homotopy",
+            homotopy_distance_upper=0.25,
+            homotopy_piece_count=8,
+            chart_indices=np.asarray(((0, 4), (0, 5)), dtype=np.int64),
+            target_facet_ids=np.asarray((11, 12), dtype=np.int64),
+            gap_bounds=np.asarray((allowance, np.nextafter(allowance, np.inf))),
+            original_gap_allowance=np.asarray(allowance),
+        )
+    at_allowance = CadBoundaryClosureEvidence(
+        binding,
+        authority_id="authored-cad-authority",
+        source_scope_id="whole-authored-cad-boundary",
+        representative_id="derived-bounded-cad-representative",
+        homotopy_id="continuous-boundary-homotopy",
+        homotopy_distance_upper=0.25,
+        homotopy_piece_count=8,
+        chart_indices=np.asarray(((0, 4),), dtype=np.int64),
+        target_facet_ids=np.asarray((11,), dtype=np.int64),
+        gap_bounds=np.asarray((allowance,)),
+        original_gap_allowance=np.asarray(allowance),
+    )
+    assert at_allowance.gap_upper == allowance
+
+
+@pytest.mark.parametrize("partial", (False, True), ids=("whole-report", "partial-report"))
+def test_cad_boundary_report_constructor_cannot_issue_an_embedding_premise(
+    partial: bool,
+) -> None:
+    from phydrax.geometry._embedding_state import facet_entity_ids, mesh_facets
+    from phydrax.geometry._mesh_certificates import MeshCertificateBinding
+    from phydrax.geometry._source_fidelity import require_issued_cad_boundary_closure
+
+    mesh, geometry, validity = curved_tetrahedral_components(1.0, 2.0, 2)
+    limits = MeshCertificateLimits()
+    with coordinate_reference_budget() as budget:
+        facets = mesh_facets(mesh, geometry=geometry, budget=budget)
+        identifiers = facet_entity_ids(mesh, facets.rows[facets.boundary])
+    if partial:
+        identifiers = identifiers[:-1]
+    closure = CadBoundaryClosureEvidence(
+        MeshCertificateBinding(
+            mesh, geometry, "mapped", limits,
+            source_id="unproved-cad-source", source_revision="unproved-cad-revision",
+        ),
+        authority_id="unproved-authority",
+        source_scope_id="unproved-whole-boundary",
+        representative_id="unproved-derived-representative",
+        homotopy_id="unproved-homotopy",
+        homotopy_distance_upper=0.0,
+        homotopy_piece_count=len(identifiers),
+        chart_indices=np.zeros((len(identifiers), 2), dtype=np.int64),
+        target_facet_ids=identifiers,
+        gap_bounds=np.zeros(len(identifiers)),
+        original_gap_allowance=np.asarray(0.0),
+    )
+    # Internal consistency and matching geometry are necessary, not authority.
+    restored = CadBoundaryClosureEvidence.from_stored_fields(closure)
+    assert restored.evidence_id == closure.evidence_id
+    for report in (closure, restored):
+        with pytest.raises(ValueError, match="independently issued"):
+            require_issued_cad_boundary_closure(mesh, geometry, report, limits)
+        with pytest.raises(ValueError, match="independently issued"):
+            certify_global_embedding(
+                mesh, geometry, validity, limits=limits, cad_boundary=report,
+            )

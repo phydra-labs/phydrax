@@ -27,6 +27,7 @@ from .._geometry_predicates import orient2d, orient3d, PredicateMode, PredicateS
 from .._meshcore import (
     exact_orient2d,
     exact_orient3d,
+    MeshcoreError,
     MeshcoreStatus,
     NativeExecutionLimits,
     NativeExecutionScope,
@@ -60,12 +61,13 @@ def _addressable_capacity(value: int, name: str, /) -> int:
 
 @final
 class DeviceGenerationLayout(StrictModule, NonTrainableState):
-    """Static capacities; candidate overflow rejects rather than truncates a batch."""
+    """Static capacities and earned closure depth; overflow never truncates a batch."""
 
     vertex_capacity: int = eqx.field(static=True)
     cell_capacity: int = eqx.field(static=True)
     candidate_capacity: int = eqx.field(static=True)
     maximum_work_units: int = eqx.field(static=True)
+    neighborhood_depth: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -74,11 +76,15 @@ class DeviceGenerationLayout(StrictModule, NonTrainableState):
         cell_capacity: int,
         candidate_capacity: int,
         maximum_work_units: int,
+        neighborhood_depth: int = 1,
     ) -> None:
         vertices = _addressable_capacity(vertex_capacity, "vertex_capacity")
         cells = _addressable_capacity(cell_capacity, "cell_capacity")
         candidates = _addressable_capacity(candidate_capacity, "candidate_capacity")
         work = _addressable_capacity(maximum_work_units, "maximum_work_units")
+        depth = positive_integer(
+            neighborhood_depth, "DeviceGenerationLayout.neighborhood_depth"
+        )
         if candidates > cells:
             raise ValueError(
                 f"DeviceGenerationLayout.candidate_capacity must not exceed cell_capacity; got {candidates} > {cells}."
@@ -87,6 +93,7 @@ class DeviceGenerationLayout(StrictModule, NonTrainableState):
         self.cell_capacity = cells
         self.candidate_capacity = candidates
         self.maximum_work_units = work
+        self.neighborhood_depth = depth
 
     def native_limits(self) -> NativeExecutionLimits:
         """Lower the existing work and topology capacities without adding controls.
@@ -844,22 +851,28 @@ def _host_round(
         new_points = surface_points[live]
         new_charts = np.asarray(candidate.charts)[live]
         new_normals = surface_normals[live]
-        native = surface_reconnect(
-            np.asarray(host.charts)[:nv],
-            points,
-            np.asarray(host.normals)[:nv],
-            rows,
-            np.asarray(host.constrained)[cell_live],
-            new_charts,
-            new_points,
-            new_normals,
-            np.asarray(candidate.spacing)[live],
-            hints,
-            sweep=False,
-            max_triangles=layout.cell_capacity,
-            work_limit=layout.maximum_work_units - reserved_exact_work,
-            insert_edges=None,
-        )
+        try:
+            native = surface_reconnect(
+                np.asarray(host.charts)[:nv],
+                points,
+                np.asarray(host.normals)[:nv],
+                rows,
+                np.asarray(host.constrained)[cell_live],
+                new_charts,
+                new_points,
+                new_normals,
+                np.asarray(candidate.spacing)[live],
+                hints,
+                sweep=False,
+                max_triangles=layout.cell_capacity,
+                work_limit=layout.maximum_work_units - reserved_exact_work,
+                insert_edges=None,
+            )
+        except MeshcoreError as error:
+            # Mandatory source validation did not fit; nothing was spent or published.
+            if error.status != MeshcoreStatus.CAPACITY_EXCEEDED:
+                raise
+            return source, DeviceGenerationStatus.WORK_LIMIT, exact, 0, 0, 0
         result = native.triangles
         flags_out = native.constrained
         issued = native.vertex_ids

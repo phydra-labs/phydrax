@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from enum import StrEnum
 from math import prod
 from typing import final, TYPE_CHECKING
@@ -25,6 +26,7 @@ from .._fingerprint import canonical_fingerprint, logical_array_value_collection
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked, parse
+from ._collective_failure import agreed_local_step
 from ._entity_keys import key_positions
 
 
@@ -130,65 +132,73 @@ class MeshScopeProjection(StrictModule, NonTrainableState):
             _result as result_owner,
         )
 
-        if not isinstance(
-            evidence,
-            (
-                result_owner.CollectiveMeshEvidence,
-                initial_certification_owner.InitialCollectiveMeshEvidence,
-            ),
-        ):
-            raise TypeError(
-                f"MeshScopeProjection.evidence must be collective mesh evidence; got {type(evidence).__name__}"
-            )
-        if not isinstance(publication, publication_lowering_owner.PublicationProjection):
-            raise TypeError(
-                f"MeshScopeProjection.publication must be PublicationProjection; got {type(publication).__name__}"
-            )
-        evidence.require_passed()
-        publication.require_source(evidence.logical_arrays)
-        if (
-            publication.topology_id != evidence.topology_id
-            or publication.organization_id != evidence.global_organization_id
-            or publication.partition_count != evidence.partition_count
-            or dimension < 0
-            or dimension >= len(evidence.global_entity_counts)
-            or not source_revision.strip()
-        ):
-            raise ValueError(
-                f"MeshScopeProjection.publication must match evidence topology, organization, partition count and dimension; got {(publication.topology_id, publication.organization_id, publication.partition_count, dimension, source_revision)!r}"
-            )
-        arrays = dict(evidence.logical_arrays)
-        member = arrays[membership_name]
-        count = evidence.global_entity_counts[dimension]
-        ids = publication.entity_ids[dimension]
-        if member.dtype != jnp.bool_ or member.shape != ids.shape:
-            raise ValueError(
-                f"MeshScopeProjection.members must be bool values on the publication entity axis; got {member.dtype} {member.shape} for {ids.shape}"
-            )
-        if bool(jax.device_get(jnp.any(member[count:]))):
-            raise ValueError(
-                f"MeshScopeProjection.members must exclude padded rows; got selected rows beyond count {count}"
-            )
-        packets = dict(publication.projected_arrays)
-        packet_ids = packets[f"entity/{dimension}/ids"]
-        packet_owners = packets[f"entity/{dimension}/owners"]
-        packet_valid = packets[f"entity/{dimension}/valid"]
-        packet_membership = packets[membership_name]
-        if (
-            packet_ids.ndim != 2
-            or packet_ids.shape[0] != publication.partition_count
-            or packet_ids.dtype != jnp.int64
-            or packet_owners.dtype != jnp.int32
-            or packet_valid.dtype != jnp.bool_
-            or packet_membership.dtype != jnp.bool_
-            or any(
-                value.shape != packet_ids.shape
-                for value in (packet_owners, packet_valid, packet_membership)
-            )
-        ):
-            raise ValueError(
-                f"MeshScopeProjection.packets must have aligned partition-leading ID, owner, validity and membership arrays; got {packet_ids.dtype} {packet_ids.shape}"
-            )
+        with agreed_local_step():
+            if not isinstance(
+                evidence,
+                (
+                    result_owner.CollectiveMeshEvidence,
+                    initial_certification_owner.InitialCollectiveMeshEvidence,
+                ),
+            ):
+                raise TypeError(
+                    f"MeshScopeProjection.evidence must be collective mesh evidence; got {type(evidence).__name__}"
+                )
+            if not isinstance(publication, publication_lowering_owner.PublicationProjection):
+                raise TypeError(
+                    f"MeshScopeProjection.publication must be PublicationProjection; got {type(publication).__name__}"
+                )
+        if isinstance(evidence, result_owner.CollectiveMeshEvidence):
+            result_owner.CollectiveMeshEvidence.require_passed(evidence)
+        else:
+            initial_certification_owner.InitialCollectiveMeshEvidence.require_passed(evidence)
+        with agreed_local_step():
+            type(publication).require_source(publication, evidence.logical_arrays)
+            if (
+                publication.topology_id != evidence.topology_id
+                or publication.organization_id != evidence.global_organization_id
+                or publication.partition_count != evidence.partition_count
+                or dimension < 0
+                or dimension >= len(evidence.global_entity_counts)
+                or not source_revision.strip()
+            ):
+                raise ValueError(
+                    f"MeshScopeProjection.publication must match evidence topology, organization, partition count and dimension; got {(publication.topology_id, publication.organization_id, publication.partition_count, dimension, source_revision)!r}"
+                )
+            arrays = dict(evidence.logical_arrays)
+            member = arrays[membership_name]
+            count = evidence.global_entity_counts[dimension]
+            ids = publication.entity_ids[dimension]
+            if member.dtype != jnp.bool_ or member.shape != ids.shape:
+                raise ValueError(
+                    f"MeshScopeProjection.members must be bool values on the publication entity axis; got {member.dtype} {member.shape} for {ids.shape}"
+                )
+        padded_members = bool(jax.device_get(jnp.any(member[count:])))
+        with agreed_local_step():
+            if padded_members:
+                raise ValueError(
+                    f"MeshScopeProjection.members must exclude padded rows; got selected rows beyond count {count}"
+                )
+        with agreed_local_step():
+            packets = dict(publication.projected_arrays)
+            packet_ids = packets[f"entity/{dimension}/ids"]
+            packet_owners = packets[f"entity/{dimension}/owners"]
+            packet_valid = packets[f"entity/{dimension}/valid"]
+            packet_membership = packets[membership_name]
+            if (
+                packet_ids.ndim != 2
+                or packet_ids.shape[0] != publication.partition_count
+                or packet_ids.dtype != jnp.int64
+                or packet_owners.dtype != jnp.int32
+                or packet_valid.dtype != jnp.bool_
+                or packet_membership.dtype != jnp.bool_
+                or any(
+                    value.shape != packet_ids.shape
+                    for value in (packet_owners, packet_valid, packet_membership)
+                )
+            ):
+                raise ValueError(
+                    f"MeshScopeProjection.packets must have aligned partition-leading ID, owner, validity and membership arrays; got {packet_ids.dtype} {packet_ids.shape}"
+                )
         global_ids, accepted = _scope_packet_values(
             ids[:count],
             publication.entity_owners[dimension],
@@ -198,10 +208,12 @@ class MeshScopeProjection(StrictModule, NonTrainableState):
             packet_valid,
             packet_membership,
         )
-        if not bool(jax.device_get(accepted)):
-            raise ValueError(
-                "MeshScopeProjection.packets must agree with publication membership and ownership; got a differing packet entry"
-            )
+        passed = bool(jax.device_get(accepted))
+        with agreed_local_step():
+            if not passed:
+                raise ValueError(
+                    "MeshScopeProjection.packets must agree with publication membership and ownership; got a differing packet entry"
+                )
         members = jnp.sort(selected_ids(ids[:count], member[:count]), stable=True)
         inventory, identity = _mesh_scope_inventory_ids(
             evidence.mesh_id,
@@ -212,36 +224,40 @@ class MeshScopeProjection(StrictModule, NonTrainableState):
             members,
         )
         for other in exclusive_scopes:
-            if (
-                not isinstance(other, MeshScopeProjection)
-                or other.publication is not publication
-                or other.source_id != evidence.mesh_id
-                or other.source_revision != source_revision
-                or other.dimension != dimension
-                or other.evidence_id != evidence.evidence_id
-            ):
-                raise ValueError(
-                    f"MeshScopeProjection.exclusive_scopes must share publication, source, dimension and evidence; got {type(other).__name__}"
-                )
-            if bool(jax.device_get(jnp.any(contains_ids(other.members, members)))):
-                raise ValueError(
-                    f"MeshScopeProjection.exclusive_scopes must be disjoint; got overlap with scope {other.scope_id!r}"
-                )
-        self.publication = publication
-        self.global_ids = global_ids
-        self.members = members
-        self.exclusive_scopes = exclusive_scopes
-        self.packet_ids = packet_ids
-        self.packet_owners = packet_owners
-        self.packet_valid = packet_valid
-        self.packet_membership = packet_membership
-        self.source_id = evidence.mesh_id
-        self.source_revision = source_revision
-        self.dimension = dimension
-        self.membership_name = membership_name
-        self.evidence_id = evidence.evidence_id
-        self.logical_entity_set_id = inventory
-        self.scope_id = identity
+            with agreed_local_step():
+                if (
+                    not isinstance(other, MeshScopeProjection)
+                    or other.publication is not publication
+                    or other.source_id != evidence.mesh_id
+                    or other.source_revision != source_revision
+                    or other.dimension != dimension
+                    or other.evidence_id != evidence.evidence_id
+                ):
+                    raise ValueError(
+                        f"MeshScopeProjection.exclusive_scopes must share publication, source, dimension and evidence; got {type(other).__name__}"
+                    )
+            overlap = bool(jax.device_get(jnp.any(contains_ids(other.members, members))))
+            with agreed_local_step():
+                if overlap:
+                    raise ValueError(
+                        f"MeshScopeProjection.exclusive_scopes must be disjoint; got overlap with scope {other.scope_id!r}"
+                    )
+        with agreed_local_step():
+            self.publication = publication
+            self.global_ids = global_ids
+            self.members = members
+            self.exclusive_scopes = exclusive_scopes
+            self.packet_ids = packet_ids
+            self.packet_owners = packet_owners
+            self.packet_valid = packet_valid
+            self.packet_membership = packet_membership
+            self.source_id = evidence.mesh_id
+            self.source_revision = source_revision
+            self.dimension = dimension
+            self.membership_name = membership_name
+            self.evidence_id = evidence.evidence_id
+            self.logical_entity_set_id = inventory
+            self.scope_id = identity
 
     @checked
     def local_mask(self, mesh: cell_mesh_owner.CellMesh, /) -> NDArray[np.bool_]:
@@ -323,7 +339,11 @@ def _host_member_ids(entity_ids: ArrayLike, /) -> NDArray[np.int64]:
         raise TypeError(
             f"MeshingScope.entity_ids must be an integer vector; got {identifiers.dtype} {identifiers.shape}"
         )
-    identifiers = np.sort(identifiers.astype(np.int64), stable=True)
+    # Restored bank rows are already canonical. Keep the independent host copy,
+    # but do not sort them again merely to validate their order and uniqueness.
+    identifiers = identifiers.astype(np.int64)
+    if np.any(identifiers[1:] < identifiers[:-1]):
+        identifiers.sort(kind="stable")
     if identifiers.size == 0:
         raise ValueError(
             "MeshingScope.entity_ids must contain at least one entity; got an empty vector"
@@ -633,9 +653,31 @@ class MeshingScope(StrictModule, NonTrainableState):
             self.entity_set_id != entities.entity_set_id
             or self._local_entity_universe.shape != entities.entity_ids.shape
             or self._local_entity_universe.dtype != entities.entity_ids.dtype
-            or not bool(
-                jax.device_get(
-                    jnp.all(self._local_entity_universe == entities.entity_ids)
+            or not (
+                self._local_entity_universe is entities.entity_ids
+                or (
+                    np.array_equal(
+                        np.asarray(self._local_entity_universe),
+                        np.asarray(entities.entity_ids),
+                    )
+                    if self._local_entity_universe.is_fully_addressable
+                    and entities.entity_ids.is_fully_addressable
+                    and all(
+                        device.platform == "cpu"
+                        for identifiers in (
+                            self._local_entity_universe,
+                            entities.entity_ids,
+                        )
+                        for device in identifiers.sharding.device_set
+                    )
+                    and _host_scope_selection_layout(
+                        self._local_entity_universe.sharding, entities.entity_ids.sharding
+                    )
+                    else bool(
+                        jax.device_get(
+                            jnp.all(self._local_entity_universe == entities.entity_ids)
+                        )
+                    )
                 )
             )
         ):
@@ -1076,6 +1118,129 @@ _compiled_logical_query_values = jax.jit(_logical_query_values)
 _compiled_logical_membership = jax.jit(_logical_query_membership)
 
 
+@jax.jit
+def _logical_row_values(values: Array, rows: Array, /) -> tuple[Array, Array]:
+    valid = (rows >= 0) & (rows < values.shape[0])
+    return values[jnp.clip(rows, 0, values.shape[0] - 1)], valid
+
+
+def _route_local_packets(
+    host_queries: np.ndarray,
+    replicated: NamedSharding,
+    row_bytes: int,
+    trailing: tuple[int, ...],
+    dtype: np.dtype,
+    answer: Callable[[Array], tuple[Array, Array]],
+    /,
+    *,
+    collective: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Answer every process's host-local queries in fixed-capacity packets.
+
+    Processes enter the same count broadcasts and packet programs in rank
+    order, so a process-local query count never changes a collective shape.
+    Collective cold replay agrees local allocation, packet preparation, and
+    result extraction failures before advancing to the next broadcast.
+    """
+    from contextlib import nullcontext
+
+    from ..lifecycle._meshing_sources import meshing_source_local_restore_phase
+
+    local_phase = meshing_source_local_restore_phase if collective else nullcontext
+    with local_phase():
+        capacity = (1 << 20) // row_bytes
+        if capacity == 0:
+            raise ValueError(
+                f"MeshingScope.inventory must fit one semantic row in the packet allowance; got {row_bytes} bytes per row"
+            )
+        selected_host = np.empty((host_queries.shape[0], *trailing), dtype=dtype)
+        valid_host = np.empty((host_queries.shape[0],), dtype=np.bool_)
+    for process in range(jax.process_count()):
+        source = process == jax.process_index()
+        count = int(
+            np.asarray(
+                broadcast_one_to_all(
+                    np.asarray(host_queries.shape[0] if source else 0, dtype=np.int64),
+                    is_source=source,
+                )
+            )
+        )
+        for first in range(0, count, capacity):
+            stop = min(first + capacity, count)
+            with local_phase():
+                packet = np.zeros((capacity, *host_queries.shape[1:]), dtype=np.int64)
+                if source:
+                    packet[: stop - first] = host_queries[first:stop]
+            packet = broadcast_one_to_all(packet, is_source=source)
+            selected, valid = answer(jax.device_put(packet, replicated))
+            selected, valid = (
+                jax.device_put(selected, replicated),
+                jax.device_put(valid, replicated),
+            )
+            with local_phase():
+                if source:
+                    selected_host[first:stop] = np.asarray(
+                        selected.addressable_shards[0].data
+                    )[: stop - first]
+                    valid_host[first:stop] = np.asarray(
+                        valid.addressable_shards[0].data, dtype=np.bool_
+                    )[: stop - first]
+    return selected_host, valid_host
+
+
+def local_logical_rows(
+    values: Array, rows: np.ndarray, /, *, collective: bool = False
+) -> np.ndarray:
+    """Rows of a logical bank at this process's host-local row indices.
+
+    Sharded banks answer the fixed-capacity packets of every process in rank
+    order; no global bank is materialized on a host.
+    ``collective=True`` agrees local admission and packet extraction during
+    cold reconstruction; callers must select it on every participating process.
+    """
+    from contextlib import nullcontext
+
+    from ..lifecycle._meshing_sources import meshing_source_local_restore_phase
+
+    local_phase = meshing_source_local_restore_phase if collective else nullcontext
+    with local_phase():
+        host_rows = np.asarray(rows, dtype=np.int64)
+        if values.ndim == 0 or values.shape[0] == 0 or host_rows.ndim != 1:
+            raise ValueError(
+                f"MeshingScope.rows must be an int64 vector into a nonempty bank; got {host_rows.shape} for {values.shape}"
+            )
+        replicated = None
+        if not values.is_fully_addressable:
+            placement = values.sharding
+            if not isinstance(placement, NamedSharding):
+                raise ValueError(
+                    f"MeshingScope.inventory must use NamedSharding for distributed queries; got {type(placement).__name__}"
+                )
+            replicated = NamedSharding(placement.mesh, PartitionSpec())
+    if replicated is None:
+        with local_phase():
+            valid = (host_rows >= 0) & (host_rows < values.shape[0])
+            selected = np.asarray(jax.device_get(values))[np.where(valid, host_rows, 0)]
+    else:
+        selected, valid = _route_local_packets(
+            host_rows,
+            replicated,
+            np.dtype(np.int64).itemsize
+            + prod(values.shape[1:]) * values.dtype.itemsize
+            + np.dtype(np.bool_).itemsize,
+            values.shape[1:],
+            values.dtype,
+            lambda packet: _logical_row_values(values, packet),
+            collective=collective,
+        )
+    with local_phase():
+        if not np.all(valid):
+            raise ValueError(
+                f"MeshingScope.rows must index the logical bank; got rows outside [0, {values.shape[0]})"
+            )
+    return selected
+
+
 def local_logical_lookup(
     identifiers: Array,
     values: Array | None,
@@ -1140,8 +1305,6 @@ def local_logical_lookup(
         raise ValueError(
             f"MeshingScope.inventory must use NamedSharding for distributed queries; got {type(identifiers.sharding).__name__}"
         )
-    replicated = NamedSharding(identifiers.sharding.mesh, PartitionSpec())
-    host_queries = np.asarray(jax.device_get(queries), dtype=np.int64)
     trailing = () if values is None else values.shape[1:]
     dtype = np.dtype(np.bool_) if values is None else values.dtype
     row_bytes = (
@@ -1149,50 +1312,21 @@ def local_logical_lookup(
         + prod(trailing) * dtype.itemsize
         + np.dtype(np.bool_).itemsize
     )
-    capacity = (1 << 20) // row_bytes
-    if capacity == 0:
-        raise ValueError(
-            f"MeshingScope.inventory must fit one semantic row in the packet allowance; got {row_bytes} bytes per row"
-        )
-    selected_host = np.empty((host_queries.shape[0], *trailing), dtype=dtype)
-    valid_host = np.empty((host_queries.shape[0],), dtype=np.bool_)
-    for process in range(jax.process_count()):
-        source = process == jax.process_index()
-        count = int(
-            np.asarray(
-                broadcast_one_to_all(
-                    np.asarray(host_queries.shape[0] if source else 0, dtype=np.int64),
-                    is_source=source,
-                )
-            )
-        )
-        for first in range(0, count, capacity):
-            stop = min(first + capacity, count)
-            packet = np.zeros((capacity, *identifiers.shape[1:]), dtype=np.int64)
-            if source:
-                packet[: stop - first] = host_queries[first:stop]
-            packet = broadcast_one_to_all(packet, is_source=source)
-            logical_queries = jax.device_put(packet, replicated)
-            if values is None:
-                valid = _compiled_logical_membership(identifiers, logical_queries)
-                valid = jax.device_put(valid, replicated)
-                answer = valid
-            else:
-                answer, valid = _compiled_logical_query_values(
-                    identifiers, values, logical_queries
-                )
-                answer, valid = (
-                    jax.device_put(answer, replicated),
-                    jax.device_put(valid, replicated),
-                )
-            if source:
-                selected_host[first:stop] = np.asarray(answer.addressable_shards[0].data)[
-                    : stop - first
-                ]
-                valid_host[first:stop] = np.asarray(
-                    valid.addressable_shards[0].data, dtype=np.bool_
-                )[: stop - first]
-    return selected_host, valid_host
+
+    def answer(packet: Array, /) -> tuple[Array, Array]:
+        if values is None:
+            valid = _compiled_logical_membership(identifiers, packet)
+            return valid, valid
+        return _compiled_logical_query_values(identifiers, values, packet)
+
+    return _route_local_packets(
+        np.asarray(jax.device_get(queries), dtype=np.int64),
+        NamedSharding(identifiers.sharding.mesh, PartitionSpec()),
+        row_bytes,
+        trailing,
+        dtype,
+        answer,
+    )
 
 
 def mesh_global_ids(mesh: cell_mesh_owner.CellMesh, dimension: int, /) -> Array:
@@ -1331,9 +1465,522 @@ class ScopeResolutionReport(StrictModule, NonTrainableState):
         )
 
 
+type _ScopeBinding = tuple[
+    str, str, MeshingEntityKind, int, str, str, str | None, int | None, int | None
+]
+
+
+def _scope_binding(scope: MeshingScope, /) -> _ScopeBinding:
+    return (
+        scope.source_id,
+        scope.source_revision,
+        scope.entity_kind,
+        scope.entity_dimension,
+        scope.entity_set_id,
+        scope.logical_entity_set_id,
+        scope.local_coverage_id,
+        scope.local_partition_index,
+        scope.local_partition_count,
+    )
+
+
+def _binding_sort_key(binding: _ScopeBinding, /) -> tuple[object, ...]:
+    return tuple(
+        (value is None, "" if value is None else str(value)) for value in binding
+    )
+
+
+def _host_scope_bank(value: Array, name: str, dtype: type, /) -> NDArray:
+    if not value.is_fully_addressable:
+        raise ValueError(
+            f"MeshingScopeBank.{name} must be host addressable outside projection rows; got a distributed bank"
+        )
+    host = np.asarray(jax.device_get(value))
+    if host.ndim != 1 or host.dtype != np.dtype(dtype):
+        raise TypeError(
+            f"MeshingScopeBank.{name} must be a {np.dtype(dtype)} vector; got {host.dtype} {host.shape}"
+        )
+    return host
+
+
+def _read_only(value: NDArray, /) -> NDArray:
+    value = np.ascontiguousarray(value)
+    value.flags.writeable = False
+    return value
+
+
+@final
+class MeshingScopeBank(StrictModule, NonTrainableState):
+    """Ordered scopes stored once as columns; each row is one scope.
+
+    Inventory rows share binding records (source, revision, kind, dimension,
+    entity sets, local coverage and placement universes, in first-use order)
+    and concatenate member, unshared local-ID and owner banks in row order.
+    A row's identity is the inventory formula over its logical entity set and
+    members; only a row whose identity differs (one inherited from a placement
+    basis) retains it explicitly. Projection-bound or distributed rows retain
+    their scope record (code ``-1``): their members are the projection's bank.
+    """
+
+    bindings: tuple[_ScopeBinding, ...] = eqx.field(static=True)
+    universes: tuple[tuple[Array | None, Array | None, Array | None], ...]
+    binding_codes: NDArray[np.int32]
+    member_offsets: NDArray[np.int64]
+    members: NDArray[np.int64]
+    shares_members: NDArray[np.bool_]
+    local_offsets: NDArray[np.int64]
+    local_members: NDArray[np.int64]
+    owner_offsets: NDArray[np.int64]
+    owners: NDArray[np.int32]
+    projected: tuple[tuple[int, MeshingScope], ...]
+    explicit_scope_ids: tuple[tuple[int, str], ...] = eqx.field(static=True)
+
+    @checked
+    def __init__(self, scopes: tuple[MeshingScope, ...], /) -> None:
+        if any(type(scope) is not MeshingScope for scope in scopes):
+            raise TypeError(
+                "MeshingScopeBank.scopes must contain MeshingScope rows; got another record kind"
+            )
+        codes: dict[tuple[object, ...], int] = {}
+        content_codes: dict[tuple[object, ...], list[int]] = {}
+        bindings: list[_ScopeBinding] = []
+        universes: list[tuple[Array | None, Array | None, Array | None]] = []
+        projected: list[tuple[int, MeshingScope]] = []
+        member_parts, local_parts, owner_parts = [], [], []
+        member_offsets, local_offsets, owner_offsets = [0], [0], [0]
+        binding_codes, shares, explicit = [], [], []
+        for index, scope in enumerate(scopes):
+            if scope.projection is not None or not all(
+                array.is_fully_addressable
+                for array in (
+                    scope.global_entity_ids,
+                    scope.entity_ids,
+                    scope.entity_owner,
+                )
+            ):
+                projected.append((index, scope))
+                binding_codes.append(-1)
+                shares.append(False)
+                member_offsets.append(member_offsets[-1])
+                local_offsets.append(local_offsets[-1])
+                owner_offsets.append(owner_offsets[-1])
+                continue
+            placement = (
+                scope.local_entity_universe,
+                scope.local_owner_universe,
+                scope.global_entity_universe,
+            )
+            binding = _scope_binding(scope)
+            key = (binding, *(id(value) for value in placement))
+            if key not in codes:
+                candidates: list[int] = []
+                if all(
+                    value is None or value.is_fully_addressable
+                    for value in placement
+                ):
+                    content_key = (
+                        binding,
+                        tuple(value is None for value in placement),
+                        logical_array_value_collection_digest(
+                            {
+                                str(position): value
+                                for position, value in enumerate(placement)
+                                if value is not None
+                            }
+                        ),
+                    )
+                    candidates = content_codes.setdefault(content_key, [])
+                # A digest selects candidates, never proves equality. Preserve
+                # the first exact placement and leave nonlocal arrays untouched.
+                code = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if all(
+                            first is second
+                            or (
+                                first is not None
+                                and second is not None
+                                and first.dtype == second.dtype
+                                and first.shape == second.shape
+                                and np.array_equal(
+                                    np.asarray(first), np.asarray(second)
+                                )
+                            )
+                            for first, second in zip(
+                                placement, universes[candidate], strict=True
+                            )
+                        )
+                    ),
+                    None,
+                )
+                if code is None:
+                    code = len(bindings)
+                    bindings.append(binding)
+                    universes.append(placement)
+                    candidates.append(code)
+                codes[key] = code
+            members = _host_scope_bank(scope.global_entity_ids, "members", np.int64)
+            share = scope.entity_ids is scope.global_entity_ids
+            local = (
+                members
+                if share
+                else _host_scope_bank(scope.entity_ids, "local_members", np.int64)
+            )
+            owners = _host_scope_bank(scope.entity_owner, "owners", np.int32)
+            if owners.shape != local.shape:
+                raise ValueError(
+                    f"MeshingScopeBank.owners must align with local members; got {owners.shape} and {local.shape}"
+                )
+            binding_codes.append(codes[key])
+            shares.append(share)
+            member_parts.append(members)
+            member_offsets.append(member_offsets[-1] + members.size)
+            if not share:
+                local_parts.append(local)
+            local_offsets.append(local_offsets[-1] + (0 if share else local.size))
+            owner_parts.append(owners)
+            owner_offsets.append(owner_offsets[-1] + owners.size)
+            if scope.scope_id != _scope_inventory_id(
+                scope.source_id,
+                scope.source_revision,
+                scope.entity_kind,
+                scope.entity_dimension,
+                scope.logical_entity_set_id,
+                members,
+            ):
+                explicit.append((index, scope.scope_id))
+        self.bindings = tuple(bindings)
+        self.universes = tuple(universes)
+        self.binding_codes = _read_only(np.asarray(binding_codes, dtype=np.int32))
+        self.member_offsets = _read_only(np.asarray(member_offsets, dtype=np.int64))
+        self.members = _read_only(
+            np.concatenate(member_parts) if member_parts else np.empty(0, np.int64)
+        )
+        self.shares_members = _read_only(np.asarray(shares, dtype=np.bool_))
+        self.local_offsets = _read_only(np.asarray(local_offsets, dtype=np.int64))
+        self.local_members = _read_only(
+            np.concatenate(local_parts) if local_parts else np.empty(0, np.int64)
+        )
+        self.owner_offsets = _read_only(np.asarray(owner_offsets, dtype=np.int64))
+        self.owners = _read_only(
+            np.concatenate(owner_parts) if owner_parts else np.empty(0, np.int32)
+        )
+        self.projected = tuple(projected)
+        self.explicit_scope_ids = tuple(explicit)
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls,
+        value: MeshingScopeBank,
+        /,
+        *,
+        reconstruct_scope: Callable[[MeshingScope], MeshingScope] | None = None,
+    ) -> MeshingScopeBank:
+        """Admit canonical columns, authenticating local placement once per binding.
+
+        A union-membership probe replays each local constructor against its
+        actual mesh context. Its freshly derived inventories determine every
+        row's local members and owners. Projections and nonlocal inventories
+        retain ordinary row reconstruction; no proof outlives this call.
+        """
+        if any(
+            type(getattr(value, name)) is not tuple
+            for name in ("bindings", "universes", "projected", "explicit_scope_ids")
+        ):
+            raise ValueError(
+                "MeshingScopeBank.metadata must retain canonical tuples; got noncanonical containers"
+            )
+        value.require_columns()
+        if any(
+            type(placement) is not tuple or len(placement) != 3
+            for placement in value.universes
+        ):
+            raise ValueError(
+                "MeshingScopeBank.universes must retain three placement columns per binding; got noncanonical placement"
+            )
+        placed = any(
+            array is not None for placement in value.universes for array in placement
+        )
+        if value.projected or (placed and reconstruct_scope is None) or any(
+            array is not None and not array.is_fully_addressable
+            for placement in value.universes for array in placement
+        ):
+            return cls(
+                tuple(
+                    row if reconstruct_scope is None else reconstruct_scope(row)
+                    for row in value
+                )
+            )
+        columns = (
+            ("binding_codes", np.int32),
+            ("member_offsets", np.int64),
+            ("members", np.int64),
+            ("shares_members", np.bool_),
+            ("local_offsets", np.int64),
+            ("local_members", np.int64),
+            ("owner_offsets", np.int64),
+            ("owners", np.int32),
+        )
+        for name, dtype in columns:
+            array = getattr(value, name)
+            if array.ndim != 1 or array.dtype != np.dtype(dtype):
+                raise ValueError(
+                    f"MeshingScopeBank.{name} must retain its canonical vector dtype; got {array.dtype} {array.shape}"
+                )
+        sizes = np.diff(value.member_offsets)
+        if (
+            np.any(sizes <= 0)
+            or np.any(value.members < 0)
+            or value.explicit_scope_ids
+        ):
+            raise ValueError(
+                "MeshingScopeBank.inventory must retain nonempty nonnegative members and derived scope identities; got noncanonical columns"
+            )
+        # Comparisons across adjacent rows do not constrain either membership.
+        ordered = value.members[1:] > value.members[:-1]
+        ordered[value.member_offsets[1:-1] - 1] = True
+        if not np.all(ordered):
+            raise ValueError(
+                "MeshingScopeBank.members must be sorted and unique within each row; got noncanonical membership"
+            )
+        for binding in value.bindings:
+            if (
+                type(binding) is not tuple
+                or len(binding) != 9
+                or any(type(binding[index]) is not str for index in (0, 1, 4, 5))
+                or type(binding[2]) is not MeshingEntityKind
+                or type(binding[3]) is not int
+            ):
+                raise ValueError(
+                    "MeshingScopeBank.bindings must retain canonical metadata types; got a noncanonical binding"
+                )
+        first_use: dict[_ScopeBinding, int] = {}
+        rows_by_binding: list[list[int]] = [[] for _ in value.bindings]
+        for row, stored_code in enumerate(value.binding_codes):
+            code = int(stored_code)
+            rows_by_binding[code].append(row)
+            binding = value.bindings[code]
+            expected = first_use.setdefault(binding, len(first_use))
+            if code != expected:
+                raise ValueError(
+                    "MeshingScopeBank.bindings must be unique in first-use order; got noncanonical codes"
+                )
+        if len(first_use) != len(value.bindings):
+            raise ValueError(
+                "MeshingScopeBank.bindings must all be used; got an unreferenced binding"
+            )
+        for code, (binding, placement) in enumerate(
+            zip(value.bindings, value.universes, strict=True)
+        ):
+            rows = rows_by_binding[code]
+            local_inventory: NDArray[np.int64] | None = None
+            owner_inventory: NDArray[np.int32] | None = None
+            if all(array is None for array in placement):
+                source, revision, entity_set, dimension, _ = _prepare_scope_binding(
+                    binding[0], binding[1], binding[2], binding[3], binding[4],
+                    value.members[:1], None, None, None,
+                )
+                expected_binding: _ScopeBinding = (
+                    source, revision, binding[2], dimension, entity_set, entity_set,
+                    None, None, None,
+                )
+            else:
+                if any(array is None for array in placement) or reconstruct_scope is None:
+                    raise ValueError(
+                        "MeshingScopeBank.universes must retain the complete local constructor context; got partial placement"
+                    )
+                union = np.unique(
+                    np.concatenate(
+                        [
+                            value.members[
+                                value.member_offsets[row] : value.member_offsets[row + 1]
+                            ]
+                            for row in rows
+                        ]
+                    )
+                )
+                basis = value.scope(rows[0])
+                probe = MeshingScope(
+                    binding[0], binding[1], binding[2], binding[3], binding[4],
+                    union, _local_basis=basis,
+                )
+                fresh = reconstruct_scope(probe)
+                expected_binding = _scope_binding(fresh)
+                for stored, expected_array in zip(
+                    placement,
+                    (
+                        fresh.local_entity_universe,
+                        fresh.local_owner_universe,
+                        fresh.global_entity_universe,
+                    ),
+                    strict=True,
+                ):
+                    if (
+                        stored is None or expected_array is None
+                        or stored.dtype != expected_array.dtype
+                        or stored.shape != expected_array.shape
+                        or not np.array_equal(np.asarray(stored), np.asarray(expected_array))
+                    ):
+                        raise ValueError(
+                            "MeshingScopeBank.universes must match the authenticated local constructor; got differing placement"
+                        )
+                local_inventory = np.asarray(fresh.entity_ids)
+                owner_inventory = np.asarray(fresh.entity_owner)
+            if binding != expected_binding:
+                raise ValueError(
+                    "MeshingScopeBank.bindings must match their inventory constructor; got noncanonical metadata"
+                )
+            for row in rows:
+                start, stop = value.member_offsets[row : row + 2]
+                members = value.members[start:stop]
+                low, high = value.local_offsets[row : row + 2]
+                first, last = value.owner_offsets[row : row + 2]
+                if local_inventory is None:
+                    valid = (
+                        value.shares_members[row]
+                        and low == high
+                        and not np.any(value.owners[first:last])
+                    )
+                else:
+                    positions = np.searchsorted(local_inventory, members)
+                    present = positions < local_inventory.size
+                    present[present] &= (
+                        local_inventory[positions[present]] == members[present]
+                    )
+                    valid = (
+                        not value.shares_members[row]
+                        and np.array_equal(value.local_members[low:high], members[present])
+                        and owner_inventory is not None
+                        and np.array_equal(
+                            value.owners[first:last], owner_inventory[positions[present]]
+                        )
+                    )
+                if not valid:
+                    raise ValueError(
+                        "MeshingScopeBank.placement must derive every row from its authenticated inventory; got differing local members or owners"
+                    )
+        return eqx.tree_at(
+            lambda bank: tuple(getattr(bank, name) for name, _ in columns),
+            value,
+            tuple(_read_only(getattr(value, name)) for name, _ in columns),
+        )
+
+    def __len__(self) -> int:
+        return int(self.binding_codes.shape[0])
+
+    def __iter__(self) -> Iterator[MeshingScope]:
+        self.require_columns()
+        # These indices belong to this traversal, not to the immutable bank or
+        # a process cache. Building them per row is quadratic for explicit IDs.
+        projected = dict(self.projected)
+        explicit = dict(self.explicit_scope_ids)
+        return (self._scope(index, projected, explicit) for index in range(len(self)))
+
+    def scope(self, index: int, /) -> MeshingScope:
+        """Return row ``index`` as a scope record; rows are built on demand."""
+        if type(index) is not int or not 0 <= index < len(self):
+            raise IndexError(
+                f"MeshingScopeBank.index must be in [0, {len(self)}); got {index!r}"
+            )
+        return self._scope(index, dict(self.projected), dict(self.explicit_scope_ids))
+
+    def _scope(
+        self,
+        index: int,
+        projected: dict[int, MeshingScope],
+        explicit: dict[int, str],
+        /,
+    ) -> MeshingScope:
+        code = int(self.binding_codes[index])
+        if code < 0:
+            return projected[index]
+        binding, placement = self.bindings[code], self.universes[code]
+        start, stop = self.member_offsets[index : index + 2].tolist()
+        members = self.members[start:stop]
+        first, last = self.owner_offsets[index : index + 2].tolist()
+        owners = self.owners[first:last]
+        if self.shares_members[index]:
+            global_ids, owner_ids = jax.device_put((members, owners))
+            local_ids = global_ids
+        else:
+            low, high = self.local_offsets[index : index + 2].tolist()
+            global_ids, local_ids, owner_ids = jax.device_put(
+                (members, self.local_members[low:high], owners)
+            )
+        identity = explicit.get(index) or _scope_inventory_id(
+            binding[0], binding[1], binding[2], binding[3], binding[5], members
+        )
+        scope = object.__new__(MeshingScope)
+        for name, field_value in (
+            ("source_id", binding[0]),
+            ("source_revision", binding[1]),
+            ("entity_kind", binding[2]),
+            ("entity_dimension", binding[3]),
+            ("entity_set_id", binding[4]),
+            ("logical_entity_set_id", binding[5]),
+            ("global_entity_ids", global_ids),
+            ("entity_ids", local_ids),
+            ("local_coverage_id", binding[6]),
+            ("local_partition_index", binding[7]),
+            ("local_partition_count", binding[8]),
+            ("entity_owner", owner_ids),
+            ("_local_entity_universe", placement[0]),
+            ("_local_owner_universe", placement[1]),
+            ("_global_entity_universe", placement[2]),
+            ("_scope_projection", None),
+            ("scope_id", identity),
+        ):
+            object.__setattr__(scope, name, field_value)
+        return scope
+
+    def require_columns(self) -> None:
+        """Refuse misaligned stored columns before any row is built."""
+        count = len(self)
+        projected = tuple(index for index, _ in self.projected)
+        sizes = (
+            (self.member_offsets, self.members),
+            (self.local_offsets, self.local_members),
+            (self.owner_offsets, self.owners),
+        )
+        if (
+            self.shares_members.shape != (count,)
+            or any(offsets.shape != (count + 1,) for offsets, _ in sizes)
+            or any(
+                offsets[0] != 0
+                or np.any(np.diff(offsets) < 0)
+                or offsets[-1] != values.size
+                for offsets, values in sizes
+            )
+            or np.any(self.binding_codes < -1)
+            or np.any(self.binding_codes >= len(self.bindings))
+            or len(self.universes) != len(self.bindings)
+            or projected != tuple(np.flatnonzero(self.binding_codes < 0).tolist())
+            or any(type(scope) is not MeshingScope for _, scope in self.projected)
+            or tuple(sorted(dict(self.explicit_scope_ids))) != tuple(
+                index for index, _ in self.explicit_scope_ids
+            )
+        ):
+            raise ValueError(
+                "MeshingScopeBank.columns must have aligned offsets, codes and bindings; got inconsistent columns"
+            )
+        owner_sizes = np.diff(self.owner_offsets)
+        expected = np.where(
+            self.shares_members, np.diff(self.member_offsets), np.diff(self.local_offsets)
+        )
+        if np.any(owner_sizes != np.where(self.binding_codes < 0, 0, expected)) or np.any(
+            np.diff(self.local_offsets)[self.shares_members] != 0
+        ):
+            raise ValueError(
+                "MeshingScopeBank.owners must align with each row's local members; got inconsistent owner extents"
+            )
+
+
 __all__ = [
     "MeshingEntityKind",
     "MeshingScope",
+    "MeshingScopeBank",
     "ScopeResolutionReport",
     "resolve_mesh_scope",
 ]

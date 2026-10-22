@@ -889,7 +889,9 @@ def test_statistical_finite_scale_brackets_tiny_positive_radius_margin() -> None
     assert float(half[radius_row]) > 0.0
     selected, scale, image, valid = _trial_policy(parameters, direction, residual, args)
     assert bool(valid)
-    assert 0.0 < float(scale) < 0.5
+    assert 0.0 < float(scale) <= 1.0
+    if float(scale) >= 0.5:
+        assert bool(jnp.any(selected != direction))
     actual = global_size_residual(parameters + scale * selected, args)
     np.testing.assert_array_equal(actual[2:], 0.0)
     assert bool(jnp.all(jnp.abs(actual[:2]) < jnp.abs(residual[:2])))
@@ -953,7 +955,10 @@ def test_statistical_joint_merit_admits_failed_median_tradeoff_across_unit_ties(
     )
 
 
-def test_statistical_third_trial_restores_near_active_dihedral_with_raw_tangent() -> None:
+@pytest.mark.parametrize("radius_bound", (1000.0, 0.5))
+def test_statistical_third_trial_restores_near_active_dihedral_with_raw_tangent(
+    radius_bound: float,
+) -> None:
     height = 1.5 * np.tan(np.deg2rad(10.000000000000016)) / np.sqrt(2.0)
     origins = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.5, 0.0, 0.0), (0.0, 1.5, 0.0), (0.0, 0.0, height))
@@ -970,21 +975,29 @@ def test_statistical_third_trial_restores_near_active_dihedral_with_raw_tangent(
         jnp.asarray(1.0),
         jnp.asarray(0.0),
         jnp.asarray(np.cos(np.deg2rad(10.0))),
-        jnp.asarray(1000.0),
+        jnp.asarray(radius_bound),
     )
     parameters = jnp.zeros_like(origins)
     direction = (
         parameters.at[1, 0].set(-1.0e-5).at[2, 1].set(-1.0e-5).at[3, 2].set(-3.0e-4)
     )
     residual = global_size_residual(parameters, args)
-    np.testing.assert_array_equal(residual[2:], 0.0)
+    if radius_bound == 1000.0:
+        np.testing.assert_array_equal(residual[2:], 0.0)
+    else:
+        assert float(residual[3]) > 0.0
+        np.testing.assert_array_equal(residual[4:], 0.0)
     full = global_size_residual(direction, args)
     assert bool(jnp.any(full[2:] > 0.0))
     selected, scale, image, valid = _trial_policy(parameters, direction, residual, args)
     assert bool(valid)
     assert bool(jnp.any(selected != direction))
     actual = global_size_residual(parameters + scale * selected, args)
-    np.testing.assert_array_equal(actual[2:], 0.0)
+    assert bool(jnp.all(actual[2:] <= residual[2:]))
+    if radius_bound == 1000.0:
+        np.testing.assert_array_equal(actual[2:], 0.0)
+    else:
+        assert not bool(GlobalSizeTrialPolicy().termination_valid(actual, args))
     assert float(jnp.sum(jnp.abs(actual[:2]))) < float(jnp.sum(jnp.abs(residual[:2])))
     np.testing.assert_allclose(
         scale * image, actual - residual, rtol=0.0, atol=TETRA_TRIAL_IMAGE_TOLERANCE

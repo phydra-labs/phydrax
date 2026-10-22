@@ -28,6 +28,7 @@ one simplex per orbit with the lattice shift of every corner.
 from __future__ import annotations
 
 import math
+import weakref
 from collections.abc import Callable
 from contextlib import nullcontext
 from fractions import Fraction
@@ -48,6 +49,11 @@ import phydrax.geometry._periodic_power_preparation as power_preparation_owner
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import orient2d_host, orient3d_host, PredicateMode
+from .._host_storage import (
+    declared_object_storage_bytes,
+    retained_host_storage_fanout_upper,
+    retained_host_storage_profile,
+)
 from .._meshcore import (
     clip_box_halfplanes,
     clip_box_halfspaces,
@@ -60,6 +66,7 @@ from .._meshcore import (
     NativeExecutionLimits,
     NativeExecutionMemoryCounters,
     NativeExecutionScope,
+    NativeHostStorageWorkspace,
     periodic_delaunay,
     PeriodicDelaunayEvidence,
     PlanarExecutionEvidence,
@@ -390,6 +397,10 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
     segment carrying the edge opposite vertex ``k`` of triangle ``t`` (or -1).
     ``evidence.status`` is ``ok`` or ``refinement_limit`` (valid conforming mesh
     whose quality targets were not met within ``max_steiner`` insertions).
+    ``max_edge_length`` bounds the binary64 length of every edge that is not an
+    input segment piece (``inf`` disables it). ``lattice_spacing`` ``s > 0``
+    (``0`` disables it) seeds the carved region with equilateral-lattice sites
+    of spacing ``s`` before refinement; they are free Steiner points.
 
     ``max_cavity_cells``, ``maximum_work`` and ``max_scratch_bytes`` are hard
     nonnegative bounds (None selects signed-int64 maximum). Readonly uint64
@@ -419,6 +430,8 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
         keep_convex_hull: bool = False,
         min_angle: float = 0.0,
         max_area: float = math.inf,
+        max_edge_length: float = math.inf,
+        lattice_spacing: float = 0.0,
         max_steiner: int = 0,
         max_triangles: int | None = None,
         max_cavity_cells: int | None = None,
@@ -441,6 +454,8 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
             keep_convex_hull=keep_convex_hull,
             min_angle=min_angle,
             max_area=max_area,
+            max_edge_length=max_edge_length,
+            lattice_spacing=lattice_spacing,
             max_steiner=max_steiner,
             max_triangles=max_triangles,
             max_cavity_cells=max_cavity_cells,
@@ -1537,6 +1552,329 @@ class PeriodicPowerSourceRefusal(MeshcoreError):
         self.completed_work = completed_work
 
 
+
+
+def _image_box_bounds(
+    lower: np.ndarray, upper: np.ndarray, counts: np.ndarray, indices: np.ndarray
+) -> np.ndarray:
+    """Return grid edges ``indices / counts`` of ``[lower, upper]``.
+
+    Counts are powers of two, so a parent and child edge share the same exact
+    dyadic fraction and therefore the same rounded coordinate: children tile
+    their parent exactly, and the outer edges are the carrier box itself.
+    """
+    raw = lower + (upper - lower) * (indices / counts)
+    return np.where(indices == counts, upper, np.clip(raw, lower, upper))
+
+
+def _image_box_powers(
+    points: np.ndarray, weights: np.ndarray, lower: np.ndarray, upper: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return rounded maximum, minimum and center power distances over boxes."""
+    below = lower - points
+    above = points - upper
+    nearest = np.maximum(np.maximum(below, above), 0.0)
+    farthest = np.maximum(np.abs(below), np.abs(above))
+    center = 0.5 * (lower + upper) - points
+    return (
+        np.einsum("ij,ij->i", farthest, farthest) - weights,
+        np.einsum("ij,ij->i", nearest, nearest) - weights,
+        np.einsum("ij,ij->i", center, center) - weights,
+    )
+
+
+def _refine_image_candidates(
+    points: np.ndarray,
+    weights: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    counts: np.ndarray,
+    box_index: np.ndarray,
+    candidate_sites: np.ndarray,
+    candidate_offsets: np.ndarray,
+    sizes: np.ndarray,
+    refined: np.ndarray,
+    children: int,
+    margin: float,
+    parent_cost: int,
+) -> tuple[np.ndarray, ...] | None:
+    """Keep one refinement's temporaries within its admitted live stage."""
+    pattern = np.asarray(
+        tuple(product(*(((0, 1) if axis else (0,)) for axis in refined))),
+        dtype=np.int64,
+    )
+    factor = np.where(refined, 2, 1)
+    child_counts = counts * factor
+    child_index = (box_index[:, None, :] * factor + pattern[None]).reshape(-1, 3)
+    child_parent = np.repeat(np.arange(len(box_index)), children)
+    child_lower = _image_box_bounds(lower, upper, child_counts, child_index)
+    child_upper = _image_box_bounds(lower, upper, child_counts, child_index + 1)
+    row_sizes = sizes[child_parent]
+    group_start = np.cumsum(row_sizes) - row_sizes
+    rows = len(candidate_sites) * children
+    row_child = np.repeat(np.arange(len(child_index)), row_sizes)
+    row_site = candidate_sites[
+        np.arange(rows)
+        + np.repeat(candidate_offsets[child_parent] - group_start, row_sizes)
+    ]
+    farthest, nearest, central = _image_box_powers(
+        points[row_site], weights[row_site],
+        child_lower[row_child], child_upper[row_child],
+    )
+    least = np.minimum.reduceat(central, group_start)
+    winners = np.flatnonzero(central == least[row_child])
+    _, first = np.unique(row_child[winners], return_index=True)
+    child_hub = row_site[winners[first]]
+    child_ceiling = farthest[winners[first]] + margin
+    keep = nearest - margin <= child_ceiling[row_child]
+    child_sizes = np.bincount(row_child[keep], minlength=len(child_index))
+    if int(np.dot(child_sizes, child_sizes)) >= parent_cost:
+        return None
+    excluded = ~keep
+    edges = np.stack((row_site[excluded], child_hub[row_child[excluded]]), axis=1)
+    return (
+        child_counts, child_index, child_hub, child_ceiling,
+        row_site[keep], np.concatenate(((0,), np.cumsum(child_sizes))), edges,
+    )
+
+
+def _image_candidate_pair_edges(
+    points: np.ndarray,
+    weights: np.ndarray,
+    box_ceiling: np.ndarray,
+    box_hub: np.ndarray,
+    candidate_sites: np.ndarray,
+    candidate_offsets: np.ndarray,
+    sizes: np.ndarray,
+    pair_count: int,
+    margin: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Release pair gathers before concatenating the retained edge banks."""
+    entries = len(candidate_sites)
+    entry_box = np.repeat(np.arange(len(sizes)), sizes)
+    radius = np.sqrt(
+        np.maximum(box_ceiling[entry_box] + weights[candidate_sites] + margin, 0.0)
+    )
+    partners = candidate_offsets[1:][entry_box] - np.arange(entries) - 1
+    first = np.repeat(np.arange(entries), partners)
+    second = (
+        first + 1 + np.arange(pair_count)
+        - np.repeat(np.cumsum(partners) - partners, partners)
+    )
+    left, right = candidate_sites[first], candidate_sites[second]
+    delta = points[left] - points[right]
+    reach = radius[first] + radius[second]
+    close = np.einsum("ij,ij->i", delta, delta) - margin <= (
+        reach * reach * (1.0 + 2.0**-40) + margin
+    )
+    return (
+        np.stack((left[close], right[close]), axis=1),
+        np.stack((candidate_sites, box_hub[entry_box]), axis=1),
+    )
+
+
+def _periodic_image_adjacency(
+    preparation: power_preparation_owner.PeriodicPowerPreparation,
+    domain: np.ndarray,
+    work_limit: int,
+    scope: NativeExecutionScope,
+    storage: NativeHostStorageWorkspace,
+    source_bytes: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Return a symmetric image adjacency on which every clip and walk is exact.
+
+    Write ``pow_i(y) = |y - p_i|^2 - w_i`` and let ``K`` be the carrier box. A
+    hierarchy of nested boxes ``Q`` carries a hub ``k_Q``, the owner of its
+    center, and an upper bound ``C_Q >= max_Q pow_{k_Q}``; the candidates
+    ``cand(Q)`` are all images with ``min_Q pow_i <= C_Q``. Children test only
+    parent candidates: an image reaching ``C_Q`` at a point of ``Q`` reaches
+    the parent hub's power there, hence ``C_P``. An image in no leaf candidate
+    set exceeds a leaf hub everywhere, never owns a carrier point, and stays
+    out of every list. Every hub owns its center and so is listed. Edges are
+    the leaf pairs whose balls ``|y - p_i|^2 <= C_Q + w_i`` meet, each leaf
+    candidate's edge to its leaf hub, and each listed image of
+    ``cand(P) - cand(Q)``'s edge to ``k_Q``.
+
+    Then any listed image ``c`` that loses at ``y`` loses to a neighbor: if
+    ``c`` reaches the leaf bound at ``y`` the owner's ball meets ``c``'s ball,
+    otherwise the leaf hub, or the hub of the finest box around ``y`` that
+    excludes ``c``, beats it. Hence each clip by the listed bisectors equals
+    the full clip, the greedy owner walk ends at an owner, and the adjacency
+    is a superset of every power adjacency inside the carrier, without the
+    dense image table. Rounded bounds only enlarge candidates and balls: the
+    margin exceeds the binary64 error of the expansion sums, the three squared
+    differences and the weight offset by more than ``2**10``; a rounded center
+    winner is within that error of the owner and so is a leaf candidate too.
+    """
+    count = len(preparation.image_sites)
+    coordinate_offsets = preparation.image_coordinate_offsets
+    components = preparation.image_coordinate_components
+    spent = 0
+
+    def admit(work: int) -> meshcore_owner.NativeBatchTicket:
+        if spent + work >= work_limit:
+            raise PeriodicPowerSourceRefusal(
+                preparation,
+                MeshcoreError(
+                    MeshcoreStatus.CAPACITY_EXCEEDED,
+                    f"RestrictedPowerDiagram.adjacency_work must stay below work_limit; got {spent + work} against {work_limit}.",
+                ),
+                work_limit,
+                requested_work=spent + work + 1,
+                completed_work=spent,
+            )
+        # Storage belongs to the live workspace, not a ticket that expires
+        # before its arrays do. Preserve the original host work charges.
+        return scope.batch(work)
+
+    work = components.size + count
+    # Expanded-coordinate reconstruction: diff/arange banks (3n int64 each),
+    # repeated component indices, points/weights, five power vector banks,
+    # two vector scratch banks, three powers and candidate masks/indices.
+    storage.set_bound(
+        source_bytes + 32 * 256 + components.size * 8
+        + count * (2 * 3 * 8 + 4 * 8 + 7 * 3 * 8 + 4 * 8 + 2)
+    )
+    with admit(work) as ticket:
+        lengths = np.diff(coordinate_offsets)
+        points = np.bincount(
+            np.repeat(np.arange(3 * count, dtype=np.int64), lengths),
+            weights=components,
+            minlength=3 * count,
+        ).reshape(count, 3)
+        weights = np.asarray(preparation.weights, dtype=np.float64)[
+            preparation.image_sites
+        ]
+        lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
+        scale = max(
+            float(np.max(np.abs(points))),
+            float(np.max(np.abs(lower))),
+            float(np.max(np.abs(upper))),
+        )
+        margin = (
+            2.0**-30
+            * (1 + int(np.max(lengths, initial=0)))
+            * (16.0 * scale * scale + float(np.max(np.abs(weights))))
+        )
+        if not math.isfinite(margin):
+            raise ValueError(
+                "RestrictedPowerDiagram.periodic_preparation.image_coordinates must keep power bounds finite; got an overflowing scale."
+            )
+        farthest, nearest, central = _image_box_powers(points, weights, lower, upper)
+        hub = int(np.argmin(central))
+        box_hub = np.asarray((hub,), dtype=np.int64)
+        box_ceiling = farthest[box_hub] + margin
+        candidate_sites = np.flatnonzero(nearest - margin <= box_ceiling[0])
+        ticket.consume(work)
+    spent += work
+    del lengths, farthest, nearest, central
+    counts = np.ones(3, dtype=np.int64)
+    box_index = np.zeros((1, 3), dtype=np.int64)
+    candidate_offsets = np.asarray((0, len(candidate_sites)), dtype=np.int64)
+    edge_banks: list[np.ndarray] = []
+    box_limit = 8 * len(candidate_sites) + 8
+    while True:
+        persistent = source_bytes + _restricted_array_storage(
+            points, weights, lower, upper, counts, box_index, box_hub,
+            box_ceiling, candidate_sites, candidate_offsets, *edge_banks,
+        ) + 256 + len(edge_banks) * 16
+        # Loop bookkeeping: extent/refinement (three axes), sizes and the
+        # pair-cost multiplication. Admit before np.diff or arithmetic.
+        storage.set_bound(persistent + 8 * 256 + len(box_index) * 4 * 8 + 3 * 32)
+        extent = (upper - lower) / counts
+        sizes = np.diff(candidate_offsets)
+        parent_cost = int(np.dot(sizes, sizes))
+        if not np.any(extent > 0.0) or int(np.max(sizes)) <= 2:
+            break
+        refined = extent >= 0.5 * float(np.max(extent))
+        children = 1 << int(np.count_nonzero(refined))
+        if len(box_index) * children > box_limit:
+            break
+        rows = int(np.sum(sizes)) * children
+        child_boxes = len(box_index) * children
+        # Row peak: child/site indices(16), four coordinate/weight gathers(80),
+        # five vector banks(120), two vector scratch banks(48), three power
+        # outputs and scalar scratch(32), all bytes per evaluated row.
+        # Box peak: six (b,3) coordinate/index banks, ten (b,) scalar/index
+        # banks and six masks. Existing parents and every edge bank stay live.
+        storage.set_bound(
+            persistent + 64 * 256
+            + rows * (16 + 80 + 120 + 48 + 32)
+            + child_boxes * (6 * 3 * 8 + 10 * 8 + 6)
+            + 8 * (256 + 3 * 160)
+        )
+        with admit(rows) as ticket:
+            child = _refine_image_candidates(
+                points, weights, lower, upper, counts, box_index,
+                candidate_sites, candidate_offsets, sizes, refined,
+                children, margin, parent_cost,
+            )
+            ticket.consume(rows)
+        spent += rows
+        if child is None:
+            break
+        counts, box_index, box_hub, box_ceiling, candidate_sites, candidate_offsets, edges = child
+        edge_banks.append(edges)
+        del child, edges
+    persistent = source_bytes + _restricted_array_storage(
+        points, weights, lower, upper, counts, box_index, box_hub,
+        box_ceiling, candidate_sites, candidate_offsets, *edge_banks,
+    ) + 256 + len(edge_banks) * 16
+    storage.set_bound(persistent + 8 * 256 + len(box_index) * 4 * 8 + 3 * 32)
+    sizes = np.diff(candidate_offsets)
+    entries = len(candidate_sites)
+    pair_count = int(np.sum(sizes * (sizes - 1) // 2))
+    work = entries + pair_count
+    # Per entry: box/radius/partner arrays and their scalar gathers (8*8).
+    # Per pair: four index banks (4*8), two gathered (p,3) points and
+    # their difference (3*3*8). This peak also bounds reach/mask/edge stacks.
+    storage.set_bound(
+        persistent + 32 * 256 + entries * (8 * 8) + pair_count * (4 * 8 + 3 * 3 * 8)
+    )
+    with admit(work) as ticket:
+        edge_banks.extend(_image_candidate_pair_edges(
+            points, weights, box_ceiling, box_hub, candidate_sites,
+            candidate_offsets, sizes, pair_count, margin,
+        ))
+        ticket.consume(work)
+    spent += work
+    bank_rows = sum(len(bank) for bank in edge_banks)
+    persistent = source_bytes + _restricted_array_storage(
+        points, weights, lower, upper, counts, box_index, box_hub,
+        box_ceiling, candidate_sites, candidate_offsets, *edge_banks,
+    ) + 256 + len(edge_banks) * 16
+    # Concatenated and filtered int64 edge pairs, three masks, listed bitmap.
+    storage.set_bound(persistent + 12 * 256 + bank_rows * (2 * 2 * 8 + 3) + count)
+    listed = np.zeros(count, dtype=np.bool_)
+    listed[candidate_sites] = True
+    edges = np.concatenate(edge_banks).astype(np.int64, copy=False)
+    edges = edges[(edges[:, 0] != edges[:, 1]) & listed[edges[:, 0]]]
+    if not len(edges) and count > 1:
+        # The only listed image owns the whole carrier and exceeds no other
+        # image; one unlisted partner seeds the native walk.
+        edges = np.asarray(((hub, 1 if hub == 0 else 0),), dtype=np.int64)
+    directed = 2 * len(edges)
+    # Two key expressions, concatenate, unique copy/sort/output, quotient
+    # and remainder banks, unique mask, int32 neighbors, counts and offsets.
+    storage.set_bound(
+        persistent + _restricted_array_storage(edges) + 24 * 256
+        + directed * (8 * 8 + 1 + 4) + (count + 1) * 3 * 8
+    )
+    with admit(directed) as ticket:
+        keys = np.unique(
+            np.concatenate(
+                (edges[:, 0] * count + edges[:, 1], edges[:, 1] * count + edges[:, 0])
+            )
+        )
+        offsets = np.zeros(count + 1, dtype=np.int64)
+        np.cumsum(np.bincount(keys // count, minlength=count), out=offsets[1:])
+        neighbors = (keys % count).astype(np.int32)
+        ticket.consume(directed)
+    spent += directed
+    return offsets, neighbors, spent
+
+
 def _restricted_periodic_power_construction(
     preparation: power_preparation_owner.PeriodicPowerPreparation,
     split: np.ndarray,
@@ -1551,41 +1889,27 @@ def _restricted_periodic_power_construction(
     work_limit: int,
     record_native_phase: Callable[[str, float, int | None, int], None] | None,
     scope: NativeExecutionScope,
+    storage: NativeHostStorageWorkspace,
+    source_bytes: int,
+    output_limits: meshcore_owner.RestrictedPowerOutputLimits | None,
 ) -> tuple[np.ndarray, np.ndarray, RestrictedPowerCells, int]:
 
-    count = len(preparation.image_sites)
-    adjacency_count = count * (count - 1)
-    if adjacency_count >= work_limit:
-        raise PeriodicPowerSourceRefusal(
-            preparation,
-            MeshcoreError(
-                MeshcoreStatus.CAPACITY_EXCEEDED,
-                f"RestrictedPowerDiagram.adjacency_work must stay below work_limit; got {adjacency_count} against {work_limit}.",
-            ),
-            work_limit,
-            requested_work=adjacency_count + 1,
-            completed_work=0,
-        )
-    # Full adjacency retains all source candidates before clipping; no rounded
-    # regular triangulation determines the image bank. Materialization is bounded before
-    # allocation and charged as host work, never as native geometric predicates.
-    array_bytes = (count + 1) * np.dtype(np.int64).itemsize + (
-        adjacency_count + count
-    ) * np.dtype(np.int32).itemsize
-    with scope.batch(adjacency_count, bytes_upper=array_bytes) as ticket:
-        ticket.consume(managed_bytes=array_bytes)
-        offsets = np.arange(count + 1, dtype=np.int64) * (count - 1)
-        neighbors = np.empty(adjacency_count, dtype=np.int32)
-        row = np.arange(count, dtype=np.int32)
-        materialized_work = 0
-        for image in range(count):
-            left, right = row[:image], row[image + 1 :]
-            row_work = len(left) + len(right)
-            ticket.consume(row_work)
-            start = int(offsets[image])
-            neighbors[start : start + len(left)] = left
-            neighbors[start + len(left) : int(offsets[image + 1])] = right
-            materialized_work += row_work
+    # The certified sparse adjacency retains every image able to own a carrier
+    # point; no rounded regular triangulation determines it. Its host work and
+    # storage are admitted before allocation, never charged as native predicates.
+    offsets, neighbors, materialized_work = _periodic_image_adjacency(
+        preparation, domain, work_limit, scope, storage, source_bytes
+    )
+    # Exact image input normalization and split gather coexist with CSR and
+    # the still-live native clipping result. Index banks may own both widths.
+    request_bytes = (
+        source_bytes + _restricted_array_storage(offsets, neighbors)
+        + 48 * 256 + len(preparation.image_sites) * 10
+        + preparation.image_coordinate_offsets.size * 9
+        + preparation.image_coordinate_components.size * 9
+        + (tetrahedra.size + regions.size + facets.size + neighbors.size) * 14
+    )
+    storage.set_bound(request_bytes)
     construction = meshcore_owner.restricted_power_cells_exact(
         preparation.points,
         preparation.weights,
@@ -1603,8 +1927,216 @@ def _restricted_periodic_power_construction(
         max_vertices=max_vertices,
         work_limit=work_limit - materialized_work,
         record_native_phase=record_native_phase,
+        admit_host_output=lambda size: storage.set_bound(request_bytes + size),
+        output_limits=output_limits,
     )
     return offsets, neighbors, construction, materialized_work
+
+
+def _restricted_input_elements(value: object, /) -> int:
+    """Count input scalars without materializing a NumPy conversion."""
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        return math.prod(shape)
+    if isinstance(value, (tuple, list)):
+        return sum(_restricted_input_elements(item) for item in value)
+    return 1
+
+
+def _restricted_array_storage(*arrays: np.ndarray) -> int:
+    # The declared host convention is 256 bytes per ndarray owner/header.
+    # Views are conservatively included; no native payload enters this helper.
+    return sum(256 + array.nbytes for array in arrays)
+
+
+def _restricted_source_bound(*values: object) -> int:
+    # np.asarray may first own the source dtype before float64 conversion.
+    # Two full banks plus a finite/binary mask per scalar cover that overlap;
+    # already-host input payload is borrowed, not another allocation here.
+    total = 256
+    for value in values:
+        if value is None:
+            continue
+        size = _restricted_input_elements(value)
+        dtype = getattr(value, "dtype", None)
+        width = max(8, 0 if dtype is None else dtype.itemsize)
+        total += 3 * 256 + size * (2 * width + 1)
+    # Default split flags are allocated even when split_sites is omitted.
+    return total + 256 + _restricted_input_elements(values[0])
+
+
+class _RestrictedStorageLifetime:
+    """Retire payload shares independently while their request is active."""
+
+    def __init__(
+        self, scope: NativeExecutionScope, storage: NativeHostStorageWorkspace,
+        remaining: int, bound: int,
+    ) -> None:
+        self.scope = scope
+        self.storage = storage
+        self.remaining = remaining
+        self.bound = bound
+        self.target = scope._target_for_thread()
+        if self.target is None:
+            self.target = scope._borrowed_ticket
+
+    def release(self, size: int) -> None:
+        self.bound -= size
+        self.remaining -= 1
+        if self.remaining == 0:
+            self.storage.close()
+            return
+        current = meshcore_owner.current_native_execution_scope()
+        active = current
+        while active is not None and active is not self.scope:
+            active = active.parent
+        if active is self.scope and current is not None:
+            target = current._target_for_thread()
+            if target is None:
+                target = current._borrowed_ticket
+            if target is self.target and current.remaining().status is MeshcoreStatus.OK:
+                self.storage.set_bound(self.bound)
+        # An ended, refused or foreign request/target cannot resize this token.
+        # Conservatively defer retirement until another matching-target
+        # callback, or until the last callback directly closes it.
+
+
+class _RestrictedPayloadLease:
+    def __init__(
+        self, root: np.ndarray, lifetime: _RestrictedStorageLifetime, size: int,
+    ) -> None:
+        self.root = weakref.ref(root)
+        self.identifier = id(root)
+        self.lifetime = lifetime
+        self.size = size
+        self.finalizer = weakref.finalize(root, self.release)
+
+    def release(self) -> None:
+        entries = _restricted_payload_leases.get(self.lifetime.scope)
+        if entries is not None and entries.get(self.identifier) is self:
+            del entries[self.identifier]
+            if not entries:
+                del _restricted_payload_leases[self.lifetime.scope]
+        self.lifetime.release(self.size)
+
+
+class _RestrictedRecordLifetime:
+    def __init__(
+        self, lifetime: _RestrictedStorageLifetime, remaining: int, size: int,
+    ) -> None:
+        self.lifetime = lifetime
+        self.remaining = remaining
+        self.size = size
+
+    def release(self) -> None:
+        self.remaining -= 1
+        if self.remaining == 0:
+            self.lifetime.release(self.size)
+
+
+# Allocation ownership only: no scientific proof/cache state, and never a
+# strong array reference. Root callbacks remove their exact identity entries,
+# breaking the value -> workspace -> scope path when the last root retires.
+_restricted_payload_leases: weakref.WeakKeyDictionary[
+    NativeExecutionScope, dict[int, _RestrictedPayloadLease]
+] = weakref.WeakKeyDictionary()
+
+
+def _restricted_unowned_array_storage(
+    arrays: tuple[np.ndarray, ...], scope: NativeExecutionScope,
+) -> int:
+    entries = _restricted_payload_leases.get(scope, {})
+    total = 0
+    for array in arrays:
+        root = array
+        while isinstance(root.base, np.ndarray):
+            root = root.base
+        lease = entries.get(id(root))
+        if lease is None or lease.root() is not root:
+            total += 256 + array.nbytes
+    return total
+
+
+def _anchor_restricted_storage(
+    owner: RestrictedPowerDiagram,
+    scope: NativeExecutionScope,
+    storage: NativeHostStorageWorkspace,
+    owners: dict[int, object],
+    declared: int,
+) -> None:
+    # Profiled ndarray bases let us assign every header to its payload root.
+    # A cached points/weights alias must not pin dead clipping/CSR payloads.
+    # The root index, selected-root/record lists and rollback finalizer lists
+    # coexist with the profiled payload and the eventual persistent leases.
+    # Admit that concrete owner-sized frontier before allocating any of it.
+    anchor_scratch = 8 * 256 + len(owners) * (4 * 256 + 4 * 64 + 8 * 16)
+    storage.set_bound(storage.bound + anchor_scratch)
+    roots: dict[int, tuple[np.ndarray, int]] = {}
+    for value in owners.values():
+        scope.charge(work=1)
+        if not isinstance(value, np.ndarray):
+            continue
+        root = value
+        while isinstance(root.base, np.ndarray):
+            scope.charge(work=1)
+            root = root.base
+        prior = roots.get(id(root))
+        size = (root.nbytes if root.base is None else 0) if prior is None else prior[1]
+        roots[id(root)] = (root, size + 256)
+    records = [
+        owner, owner.construction, owner.construction.counters,
+        owner.construction.preflight,
+    ]
+    if owner.periodic_preparation is not None:
+        records.append(owner.periodic_preparation)
+    entries = _restricted_payload_leases.get(scope)
+    new_roots = []
+    array_bytes = 0
+    for identifier, (root, size) in roots.items():
+        scope.charge(work=1)
+        array_bytes += size
+        lease = None if entries is None else entries.get(identifier)
+        if lease is None or lease.root() is not root:
+            new_roots.append((root, size))
+    # Per root: lease, two weakrefs, finalizer/registry/callable/argument
+    # records and integer metadata; per scientific record: finalizer records.
+    # The shared controllers and scope index own four fixed metadata records.
+    root_metadata = 8 * 256 + 64 + 16
+    record_bytes = declared - array_bytes + 4 * 256 + len(records) * (5 * 256 + 16)
+    final_bytes = record_bytes + sum(size + root_metadata for _, size in new_roots)
+    storage.set_bound(final_bytes + anchor_scratch)
+    lifetime = _RestrictedStorageLifetime(scope, storage, len(new_roots) + 1, final_bytes)
+    record_lifetime = _RestrictedRecordLifetime(lifetime, len(records), record_bytes)
+    registered: list[weakref.finalize] = []
+    inserted: list[_RestrictedPayloadLease] = []
+    try:
+        if entries is None:
+            entries = {}
+            _restricted_payload_leases[scope] = entries
+        for root, size in new_roots:
+            scope.charge(work=1)
+            lease = _RestrictedPayloadLease(root, lifetime, size + root_metadata)
+            inserted.append(lease)
+            entries[id(root)] = lease
+        for record in records:
+            scope.charge(work=1)
+            registered.append(weakref.finalize(record, record_lifetime.release))
+        del roots, new_roots, records
+        # Lease/record metadata includes the rollback-list reference slots.
+        # Keep those lists until the final resize succeeds, so even a deadline
+        # refusal detaches every callback before releasing its token.
+        storage.set_bound(final_bytes)
+    except BaseException:
+        for finalizer in registered:
+            finalizer.detach()
+        for lease in inserted:
+            lease.finalizer.detach()
+            if entries.get(lease.identifier) is lease:
+                del entries[lease.identifier]
+        if not entries and _restricted_payload_leases.get(scope) is entries:
+            del _restricted_payload_leases[scope]
+        storage.close()
+        raise
 
 
 class _RestrictedSource(StrictModule):
@@ -1622,6 +2154,7 @@ class _RestrictedControls(StrictModule):
     max_vertices: int = eqx.field(static=True)
     work_limit: int = eqx.field(static=True)
     record_native_phase: Callable[[str, float, int | None, int], None] | None
+    output_limits: meshcore_owner.RestrictedPowerOutputLimits | None
 
 
 class _RestrictedConstruction(StrictModule):
@@ -1681,66 +2214,43 @@ def _prepare_restricted_periodic_source(
     controls: _RestrictedControls,
     scope: NativeExecutionScope,
     budget: CoordinateEnclosureBudget | None,
+    storage: NativeHostStorageWorkspace,
+    source_bytes: int,
 ) -> power_preparation_owner.PeriodicPowerPreparation:
     sites, values, domain = source.sites, source.values, source.domain
     work_limit = controls.work_limit
-    if budget is not None and not budget.ticket.settled:
-        preparation = power_preparation_owner.PeriodicPowerPreparation(
-            sites,
-            values,
-            domain,
-            periodic_group,
+    preparation_base = (
+        source_bytes + _restricted_array_storage(sites, domain)
+        + sites.size + domain.size + 4 * 256
+    )
+    storage.set_bound(preparation_base)
+
+    def prepare(
+        ledger: CoordinateEnclosureBudget,
+    ) -> power_preparation_owner.PeriodicPowerPreparation:
+        return power_preparation_owner.PeriodicPowerPreparation(
+            sites, values, domain, periodic_group,
             maximum_images=(
-                27 * len(sites) + 4096
-                if maximum_images is None
+                27 * len(sites) + 4096 if maximum_images is None
                 else positive_integer(maximum_images, "maximum_images")
             ),
             maximum_work_units=work_limit,
-            budget=budget,
+            budget=ledger,
+            admit_host_output=lambda size: storage.set_bound(preparation_base + size),
         )
-    else:
-        remaining = scope.remaining()
-        work_ticket = scope.batch(
-            min(work_limit, remaining.remaining_work_units),
-            queries_upper=remaining.remaining_geometry_queries,
-            bytes_upper=remaining.remaining_managed_bytes,
+
+    if budget is not None and not budget.ticket.settled:
+        return prepare(budget)
+    ticket = scope.ticket_view()
+    if budget is None:
+        ledger = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=work_limit,
+            maximum_memory_bytes=int(np.iinfo(np.intp).max),
         )
-        if budget is None:
-            view = CoordinateEnclosureBudget(
-                work_ticket,
-                maximum_work_units=work_limit,
-                maximum_memory_bytes=int(np.iinfo(np.intp).max),
-            )
-            with work_ticket, view.activate():
-                preparation = power_preparation_owner.PeriodicPowerPreparation(
-                    sites,
-                    values,
-                    domain,
-                    periodic_group,
-                    maximum_images=(
-                        27 * len(sites) + 4096
-                        if maximum_images is None
-                        else positive_integer(maximum_images, "maximum_images")
-                    ),
-                    maximum_work_units=work_limit,
-                    budget=view,
-                )
-        else:
-            with budget.bind_ticket(work_ticket):
-                preparation = power_preparation_owner.PeriodicPowerPreparation(
-                    sites,
-                    values,
-                    domain,
-                    periodic_group,
-                    maximum_images=(
-                        27 * len(sites) + 4096
-                        if maximum_images is None
-                        else positive_integer(maximum_images, "maximum_images")
-                    ),
-                    maximum_work_units=work_limit,
-                    budget=budget,
-                )
-    return preparation
+        with ticket, ledger.activate():
+            return prepare(ledger)
+    with budget.bind_ticket(ticket):
+        return prepare(budget)
 
 
 def _authenticate_restricted_periodic_source(
@@ -1793,6 +2303,8 @@ def _execute_restricted_periodic_source(
     controls: _RestrictedControls,
     scope: NativeExecutionScope,
     budget: CoordinateEnclosureBudget | None,
+    storage: NativeHostStorageWorkspace,
+    source_bytes: int,
 ) -> _RestrictedConstruction:
     split, domain, tetrahedra_, tetrahedron_regions_, tet_face_facets_ = (
         source.split,
@@ -1834,6 +2346,9 @@ def _execute_restricted_periodic_source(
                     work_limit=construction_work_limit,
                     record_native_phase=record_native_phase,
                     scope=scope,
+                    storage=storage,
+                    source_bytes=source_bytes,
+                    output_limits=controls.output_limits,
                 )
             )
     except PeriodicPowerSourceRefusal:
@@ -1855,7 +2370,11 @@ def _execute_restricted_periodic_source(
 
 
 def _execute_restricted_source(
-    source: _RestrictedSource, controls: _RestrictedControls
+    source: _RestrictedSource,
+    controls: _RestrictedControls,
+    scope: NativeExecutionScope,
+    storage: NativeHostStorageWorkspace,
+    source_bytes: int,
 ) -> _RestrictedConstruction:
     sites, values, domain, split, tetrahedra_, tetrahedron_regions_, tet_face_facets_ = (
         source.sites,
@@ -1873,17 +2392,37 @@ def _execute_restricted_source(
         controls.record_native_phase,
     )
     guard_count = 0
+    # Exact orientation preparation broadcasts at most four (n, 3) float64
+    # banks, two projected (n, 2) banks, three index banks and eight masks.
+    # Header allowance also includes the short argument/view tuples.
+    storage.set_bound(
+        source_bytes + 32 * 256
+        + len(sites) * (4 * 3 * 8 + 2 * 2 * 8 + 3 * 8 + 8)
+    )
     if sites.shape[0] == 1:
         prepared_sites, prepared_weights = sites, values
         edges = np.zeros((0, 2), dtype=np.int32)
     else:
         prepared_sites, prepared_weights = sites, values
+        scope.charge(work=len(sites))
         if not _spans_space(sites):
+            # Binary64 fractions have at most 1075 exponent bits.
+            # Differences, squares and a three-term sum need at most
+            # 4*1075+16 bits. The 32 simultaneously reachable fractions are
+            # reference(4), guard(3), corner(3), squared differences(12)
+            # and sum/minimum/margin intermediates(10).
+            fraction_bytes = 256 + 2 * (128 + 4 * ((4 * 1075 + 16 + 7) // 8))
+            storage.set_bound(
+                source_bytes + 32 * fraction_bytes
+                + 16 * 256 + 8 * (256 + 3 * (256 + 16))
+                + (len(sites) + 4) * 32
+            )
             # Four remote weighted guards make a full-dimensional regular
             # triangulation without a dense all-pairs degeneracy fallback.
             # Their power distance exceeds site zero everywhere in the
             # domain bounding box: the difference is affine, and its
             # minimum is evaluated exactly at all eight box corners.
+            scope.charge(work=2 * domain.size)
             lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
             scale = max(1.0, float(np.max(upper - lower)))
             base = lower - 4.0 * scale
@@ -1900,6 +2439,10 @@ def _execute_restricted_source(
             corners = tuple(product(*zip(lower, upper, strict=True)))
             guard_weights = []
             for guard in guards:
+                # Eight exact corner evaluations of this guard's affine
+                # power difference. Construction predicates are not source
+                # geometry queries.
+                scope.charge(work=len(corners))
                 g = [Fraction(float(x)) for x in guard]
                 minimum = min(
                     sum(
@@ -1920,23 +2463,71 @@ def _execute_restricted_source(
                     )
                 guard_weights.append(weight)
             guard_count = 4
+            scope.charge(work=4 * (len(sites) + guard_count))
             prepared_sites = np.concatenate((sites, guards))
             prepared_weights = np.concatenate((values, guard_weights))
+            del reference, reference_weight, corners, guard_weights, g, minimum
+            del guards, lower, upper, base
+        prepared_bytes = (
+            0 if guard_count == 0
+            else _restricted_array_storage(prepared_sites, prepared_weights)
+        )
+        regular_base = source_bytes + prepared_bytes + 16 * 256
         started = 0.0 if record_native_phase is None else perf_counter()
         simplices, _ = regular_3d(
-            prepared_sites, prepared_weights, max_tetrahedra=max_pieces
+            prepared_sites, prepared_weights, max_tetrahedra=max_pieces,
+            admit_host_output=lambda size: storage.set_bound(regular_base + size),
         )
+        # Six pair incidences per tet: pair gathers/concatenation (int32),
+        # cast/sort/unique banks (int64), unique mask and sort indices.
+        # The native mesh is already freed; only these regular exports live.
+        storage.set_bound(
+            regular_base + _restricted_array_storage(simplices, _)
+            + 16 * 256 + 6 * len(simplices) * (2 * 4 * 2 + 2 * 8 * 5 + 1 + 8)
+        )
+        scope.charge(work=6 * len(simplices))
         edges = _simplex_edges(simplices)
+        del simplices, _
         if record_native_phase is not None:
             record_native_phase(
                 "regular_triangulation", perf_counter() - started, None, 1
             )
+    # Actual edge incidences bound the directed pair bank, its permutation
+    # and sorted copy, CSR counts/offset banks, neighbors and split flags.
+    prepared_bytes = (
+        0 if guard_count == 0
+        else _restricted_array_storage(prepared_sites, prepared_weights)
+    )
+    csr_base = source_bytes + prepared_bytes + _restricted_array_storage(edges)
+    storage.set_bound(
+        csr_base + 12 * 256
+        + len(edges) * (2 * 2 * 8 * 2 + 2 * 8 + 2 * 4)
+        + (len(prepared_sites) + 1) * (4 * 8 + 2)
+    )
+    scope.charge(work=2 * len(edges) + len(prepared_sites))
     directed = np.concatenate((edges, edges[:, ::-1]), axis=0)
     if directed.size:
         directed = directed[np.lexsort((directed[:, 1], directed[:, 0]))]
     counts = np.bincount(directed[:, 0], minlength=prepared_sites.shape[0])
     offsets = _offsets(counts)
     neighbors = directed[:, 1].astype(np.int32)
+    del directed, counts, edges
+    # Request normalization can own int64 and int32 index copies together,
+    # binary validation masks and the fixed-size export counter probes.
+    request_bytes = (
+        source_bytes + prepared_bytes
+        + _restricted_array_storage(offsets, neighbors)
+        + 48 * 256 + (len(prepared_sites) + 4) * 10
+        + (tetrahedra_.size + tetrahedron_regions_.size + tet_face_facets_.size) * 14
+        + len(neighbors) * 14
+    )
+    storage.set_bound(request_bytes)
+    scope.charge(
+        work=(
+            tetrahedra_.size + tetrahedron_regions_.size + tet_face_facets_.size
+            + len(neighbors) + len(prepared_sites)
+        )
+    )
     construction = meshcore_owner.restricted_power_cells(
         prepared_sites,
         prepared_weights,
@@ -1951,7 +2542,11 @@ def _execute_restricted_source(
         max_vertices=max_vertices,
         work_limit=work_limit,
         record_native_phase=record_native_phase,
+        admit_host_output=lambda size: storage.set_bound(request_bytes + size),
+        output_limits=controls.output_limits,
     )
+    storage.set_bound(storage.bound + 256 + len(construction.cell_sites))
+    scope.charge(work=len(construction.cell_sites) + values.size)
     if np.any(construction.cell_sites >= sites.shape[0]):
         raise RuntimeError(
             "RestrictedPowerDiagram.construction.cell_sites must exclude certified empty guards; got a guard cell."
@@ -1977,6 +2572,17 @@ class RestrictedPowerDiagram(StrictModule, NonTrainableState):
     components and constrained material/sheet faces. ``construction`` carries
     reciprocal faces and the site/tet/cell piece incidence. This is construction
     evidence, not an independent coverage certificate.
+    ``output_limits`` retain the original entity/incidence/numeric-data
+    allowances through native preparation. Native preflight counts finalized
+    topology before allocating output banks; its typed record is retained on
+    success and capacity refusal. Query and managed scratch remain governed
+    by the supplied request scope, including native preflight scratch.
+    Host topology scratch and exported arrays share the supplied native scope's
+    managed cap. A dedicated ``host_storage`` workspace may be supplied; on
+    success its ownership passes to the diagram and array-root leases. Dead
+    topology is released independently of escaped source-array aliases while
+    the request is active. Native payload is not counted again. Compiler,
+    device and process allocations remain unmanaged.
     """
 
     points: np.ndarray
@@ -2028,49 +2634,118 @@ class RestrictedPowerDiagram(StrictModule, NonTrainableState):
         record_native_phase: Callable[[str, float, int | None, int], None] | None = None,
         scope: NativeExecutionScope | None = None,
         budget: CoordinateEnclosureBudget | None = None,
+        host_storage: NativeHostStorageWorkspace | None = None,
+        output_limits: meshcore_owner.RestrictedPowerOutputLimits | None = None,
     ) -> None:
 
-        source = _restricted_source(
-            points,
-            weights,
-            domain_points,
-            tetrahedra,
-            tetrahedron_regions,
-            tet_face_facets,
-            split_sites,
-        )
-        controls = _RestrictedControls(
-            max_pieces, max_vertices, work_limit, record_native_phase
-        )
         with (
-            NativeExecutionScope(self.native_limits(work_limit))
-            if scope is None
-            else nullcontext(scope)
-        ) as execution:
-            preparation = periodic_preparation
-            preparation_work = preparation_native_work = 0
-            if preparation is None and periodic_group is not None:
-                preparation = _prepare_restricted_periodic_source(
-                    source, periodic_group, maximum_images, controls, execution, budget
+            (
+                NativeExecutionScope(self.native_limits(work_limit))
+                if scope is None
+                else nullcontext(scope)
+            ) as execution,
+            execution.ticket_view() as native_view,
+            native_view.native_target() if host_storage is None else nullcontext(),
+        ):
+            storage = (
+                execution.host_workspace().open()
+                if host_storage is None else host_storage
+            )
+            try:
+                source_bytes = _restricted_source_bound(
+                    points, weights, domain_points, tetrahedra,
+                    tetrahedron_regions, tet_face_facets, split_sites,
                 )
-                preparation_work = preparation.spent_work
-                preparation_native_work = preparation.native_charged_work
-            if preparation is not None:
-                _authenticate_restricted_periodic_source(
-                    source, preparation, periodic_group, maximum_images, work_limit
+                storage.set_bound(source_bytes)
+                controls = _RestrictedControls(
+                    max_pieces, max_vertices, work_limit, record_native_phase,
+                    output_limits,
                 )
-                result = _execute_restricted_periodic_source(
-                    source,
-                    preparation,
-                    preparation_work,
-                    preparation_native_work,
-                    controls,
-                    execution,
-                    budget,
+                source = _restricted_source(
+                    points, weights, domain_points, tetrahedra,
+                    tetrahedron_regions, tet_face_facets, split_sites,
                 )
-            else:
-                result = _execute_restricted_source(source, controls)
-            self._commit(result)
+                preparation = periodic_preparation
+                preparation_work = preparation_native_work = 0
+                if preparation is None and periodic_group is not None:
+                    preparation = _prepare_restricted_periodic_source(
+                        source, periodic_group, maximum_images, controls,
+                        execution, budget, storage, source_bytes,
+                    )
+                    preparation_work = preparation.spent_work
+                    preparation_native_work = preparation.native_charged_work
+                if preparation is not None:
+                    prepared_arrays = tuple(
+                        value for value in vars(preparation).values()
+                        if isinstance(value, np.ndarray)
+                    )
+                    # Retain the actual preparation banks through adjacency
+                    # and clipping. Authentication serializes one bank at a time.
+                    source_bytes += (
+                        _restricted_unowned_array_storage(prepared_arrays, execution)
+                        + 20 * 256 + sum(
+                            256 + 4 * len(value)
+                            for value in vars(preparation).values()
+                            if isinstance(value, str)
+                        )
+                    )
+                    storage.set_bound(
+                        source_bytes + 8 * 256
+                        + max((array.nbytes for array in prepared_arrays), default=0)
+                    )
+                    _authenticate_restricted_periodic_source(
+                        source, preparation, periodic_group, maximum_images, work_limit
+                    )
+                    result = _execute_restricted_periodic_source(
+                        source, preparation, preparation_work,
+                        preparation_native_work, controls, execution, budget,
+                        storage, source_bytes,
+                    )
+                else:
+                    result = _execute_restricted_source(
+                        source, controls, execution, storage, source_bytes
+                    )
+                construction = result.construction
+                cells, pieces = len(construction.cell_sites), len(construction.piece_sites)
+                rank = 0 if preparation is None else preparation.image_exponents.shape[1]
+                # Four provenance gathers: original site int32 and rank-wide
+                # int64 exponents per cell/piece (zero-width arrays otherwise).
+                storage.set_bound(
+                    storage.bound + 4 * 256 + (cells + pieces) * (4 + rank * 8)
+                )
+                self._commit(result)
+                # Profiling traverses owner records, not array entries. Exclude
+                # the borrowed group; no group allocation is made by this owner.
+                existing = {} if preparation is None else {
+                    id(preparation.periodic_group): preparation.periodic_group
+                }
+                initial = storage.bound
+                owner_indices = pending_slots = largest_fanout = 0
+                pending_row = declared_object_storage_bytes((None, False, False, False)) + 16
+                storage.set_bound(initial + 1024)
+
+                def admit_owner(value: object) -> None:
+                    nonlocal owner_indices, pending_slots, largest_fanout
+                    execution.charge(work=1)
+                    children = retained_host_storage_fanout_upper(value)
+                    owner_indices += 128 + declared_object_storage_bytes(id(value))
+                    pending_slots += children + int(children != 0)
+                    largest_fanout = max(largest_fanout, children)
+                    storage.set_bound(
+                        initial + 1024 + owner_indices
+                        + pending_row * pending_slots + 512 * largest_fanout
+                    )
+
+                owners, declared, _, _ = retained_host_storage_profile(
+                    self, existing, meshcore_owner.is_native_host_buffer,
+                    admit_owner=admit_owner,
+                )
+                del source, result
+                _anchor_restricted_storage(self, execution, storage, owners, declared)
+            except BaseException:
+                if host_storage is None:
+                    storage.close()
+                raise
 
     def _commit(self, result: _RestrictedConstruction) -> None:
         self.points = result.points

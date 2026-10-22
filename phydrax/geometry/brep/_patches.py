@@ -19,7 +19,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil, comb, floor, isfinite, isqrt, pi
-from typing import Iterator, Literal, Protocol, TypeAlias
+from typing import Any, Iterator, Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
@@ -39,6 +39,7 @@ from ..._interpolation._bspline import (
     exact_bezier_refinement,
     restrict_bernstein_bounds,
 )
+from ..._model import StructuredDerivativeProvider
 from ..._strict import StrictModule
 from ...discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
@@ -55,6 +56,7 @@ from .._interval_enclosure import (
     interval_multiply,
     interval_sin,
     interval_subtract,
+    interval_tan,
     prepare_interval_function,
     PreparedIntervalFunction,
 )
@@ -353,6 +355,26 @@ def rational_piece_jet_bounds(
             f"rational.order must be zero, one, or two and not boolean; got {order!r}."
         )
     return _rational_piece_jets(piece, first, last, order)[order]
+
+
+@checked
+def rational_piece_jets(
+    piece: RationalBezierPiece,
+    first: float,
+    last: float,
+    order: int,
+    /,
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    """``rational_piece_jet_bounds`` of every order ``0..order`` in one pass.
+
+    Entry ``k`` equals ``rational_piece_jet_bounds(piece, first, last, order=k)``:
+    each quotient jet depends only on the lower-order homogeneous restrictions.
+    """
+    if order not in (0, 1, 2) or isinstance(order, bool):
+        raise ValueError(
+            f"rational.order must be zero, one, or two and not boolean; got {order!r}."
+        )
+    return _rational_piece_jets(piece, first, last, order)
 
 
 def _rational_piece_jets(
@@ -2064,12 +2086,43 @@ class BSplineSpanCurve(AbstractCurve):
 # ---------------------------------------------------------------- surfaces
 
 
-class AbstractSurfacePatch(StrictModule, CoefficientEnclosureSource):
+class AbstractSurfacePatch(
+    StrictModule, CoefficientEnclosureSource, StructuredDerivativeProvider
+):
     """Pure-JAX parametric surface patch in native CAD coordinates."""
 
     @abstractmethod
     def evaluate(self, parameters: Array, /) -> Array:
         raise NotImplementedError
+
+    def try_structured_partial(
+        self,
+        *,
+        deps: tuple[str, ...],
+        var: str,
+        axis: int,
+        order: int,
+        args: tuple[Any, ...],
+        key: Any,
+        kwargs: dict[str, Any],
+    ) -> tuple[Any | None, str | None]:
+        """Provide first partials of one two-dimensional parameter dependency."""
+        del key
+        if deps != (var,) or len(args) != 1 or order != 1 or axis not in (0, 1) or kwargs:
+            return (
+                None,
+                "Surface structured partials require one parameter pair and first order.",
+            )
+        differential = _structured_surface_differential(
+            self, jnp.asarray(args[0], dtype=jnp.float64)
+        )
+        if differential is None:
+            return None, "This surface retains ordinary automatic differentiation."
+        return differential[..., axis], None
+
+    def handle_structured_derivative_fallback(self, reason: str, /) -> None:
+        """Unsupported surface partials retain the ordinary AD fallback policy."""
+        del reason
 
     @abstractmethod
     def bounding_box(
@@ -2319,6 +2372,20 @@ class AbstractSurfacePatch(StrictModule, CoefficientEnclosureSource):
                     restriction_bank=restriction_bank,
                     meridian_jets=meridian_jets,
                 )
+            case (
+                PlanePatch()
+                | CylinderPatch()
+                | ConePatch()
+                | SpherePatch()
+                | TorusPatch()
+            ) if order == 1 and type(self) in (
+                PlanePatch,
+                CylinderPatch,
+                ConePatch,
+                SpherePatch,
+                TorusPatch,
+            ):
+                return _analytic_derivative_batch(self, boxes, budget=budget)
             case AbstractSurfacePatch():
                 return _interval_surface_derivative_batch(
                     self,
@@ -2802,6 +2869,100 @@ def _revolution_derivative_batch(
         np.asarray(self.axis_direction, dtype=np.float64), boxes, hull, order
     )
     lower[rough], upper[rough] = -np.inf, np.inf
+    return lower, upper
+
+
+def _analytic_derivative_batch(
+    self: PlanePatch | CylinderPatch | ConePatch | SpherePatch | TorusPatch,
+    boxes: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Closed-form outward first jets of native analytic carriers, row-wise.
+
+    The chart derivatives are the exact derivatives of each ``evaluate``
+    formula, enclosed with directed interval trigonometry and arithmetic.
+    """
+    for box in boxes:
+        self.validate_parameter_box(box, budget=budget)
+    count = boxes.shape[0]
+    budget.reserve(count)
+    angle = (boxes[:, 0, 0], boxes[:, 1, 0])
+    second_parameter = (boxes[:, 0, 1], boxes[:, 1, 1])
+
+    def constant(value: float) -> tuple[np.ndarray, np.ndarray]:
+        array = np.full((count,), float(value), dtype=np.float64)
+        return array, array
+
+    def times(first: Interval, second: Interval) -> Interval:
+        return interval_multiply(first, second)
+
+    def plus(first: Interval, second: Interval) -> Interval:
+        return interval_add(first, second)
+
+    first_axis = np.asarray(self.first_axis, dtype=np.float64)
+    second_axis = np.asarray(self.second_axis, dtype=np.float64)
+    lower = np.empty((count, 3, 2), dtype=np.float64)
+    upper = np.empty((count, 3, 2), dtype=np.float64)
+    if isinstance(self, PlanePatch):
+        for k in range(3):
+            lower[:, k, 0] = upper[:, k, 0] = first_axis[k]
+            lower[:, k, 1] = upper[:, k, 1] = second_axis[k]
+        return lower, upper
+    axis = np.asarray(self.axis, dtype=np.float64)
+    cosine, sine = interval_cos(angle), interval_sin(angle)
+    negative_sine = (np.negative(sine[1]), np.negative(sine[0]))
+    match self:
+        case CylinderPatch():
+            scale = constant(float(self.radius))
+        case ConePatch():
+            slope = interval_tan(constant(float(self.semi_angle)))
+            scale = plus(
+                constant(float(self.reference_radius)), times(second_parameter, slope)
+            )
+        case SpherePatch():
+            scale = times(constant(float(self.radius)), interval_cos(second_parameter))
+        case TorusPatch():
+            scale = plus(
+                constant(float(self.major_radius)),
+                times(constant(float(self.minor_radius)), interval_cos(second_parameter)),
+            )
+    for k in range(3):
+        radial = plus(
+            times(cosine, constant(first_axis[k])), times(sine, constant(second_axis[k]))
+        )
+        tangent = plus(
+            times(negative_sine, constant(first_axis[k])),
+            times(cosine, constant(second_axis[k])),
+        )
+        du = times(scale, tangent)
+        match self:
+            case CylinderPatch():
+                dv = constant(axis[k])
+            case ConePatch():
+                dv = plus(constant(axis[k]), times(slope, radial))
+            case SpherePatch() | TorusPatch():
+                factor = constant(
+                    float(self.radius)
+                    if isinstance(self, SpherePatch)
+                    else float(self.minor_radius)
+                )
+                dv = times(
+                    factor,
+                    plus(
+                        times(
+                            (
+                                np.negative(interval_sin(second_parameter)[1]),
+                                np.negative(interval_sin(second_parameter)[0]),
+                            ),
+                            radial,
+                        ),
+                        times(interval_cos(second_parameter), constant(axis[k])),
+                    ),
+                )
+        lower[:, k, 0], upper[:, k, 0] = du
+        lower[:, k, 1], upper[:, k, 1] = dv
     return lower, upper
 
 
@@ -5128,6 +5289,63 @@ def meridian_second_jets(
 _VALUE_PIECES = 16
 
 
+def surface_value_bounds(
+    patch: AbstractSurfacePatch,
+    boxes: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Batched source-piece interval enclosures of values over ``(B, 2, 2)`` boxes.
+
+    Uses the source-piece split and interval programs grouped by
+    piece structure as ``derivative_bounds_batch`` does; chart-global
+    ``bounding_box`` conveniences (a revolution encloses its whole annulus)
+    cannot separate cells.
+    """
+
+    # A revolution or its offset rotates batched meridian (or parallel
+    # meridian) hulls; generic interval AD of the normalized offset normal
+    # cannot separate cells.
+    swept = meridian_value_bounds(patch, boxes, budget=budget)
+    if swept is not None:
+        return swept
+    lower = np.full((boxes.shape[0], 3), np.inf)
+    upper = np.full((boxes.shape[0], 3), -np.inf)
+    groups: dict[
+        tuple[object, ...],
+        tuple[AbstractSurfacePatch, list[tuple[int, np.ndarray, np.ndarray]]],
+    ] = {}
+    for row, box in enumerate(boxes):
+        for piece in patch.source_pieces(box, budget=budget):
+            leaves, structure = jax.tree_util.tree_flatten(piece.evaluator)
+            key = (
+                structure,
+                *(
+                    (value.dtype.str, value.shape, value.tobytes())
+                    for value in (np.asarray(leaf) for leaf in leaves)
+                ),
+            )
+            groups.setdefault(key, (piece.evaluator, []))[1].append(
+                (row, piece.lower, piece.upper)
+            )
+    for evaluator, members in groups.values():
+        prepared = prepare_interval_function(
+            evaluator.evaluate,
+            2,
+            batch_capacity=min(len(members), 1024),
+            constant_bounds=coefficient_enclosures(evaluator),
+        )
+        rows = np.asarray([row for row, _, _ in members], dtype=np.int64)
+        piece_lower, piece_upper = prepared.evaluate(
+            np.stack([value for _, value, _ in members]),
+            np.stack([value for _, _, value in members]),
+        )
+        np.minimum.at(lower, rows, piece_lower)
+        np.maximum.at(upper, rows, piece_upper)
+    return lower, upper
+
+
 @checked
 def meridian_value_bounds(
     surface: AbstractSurfacePatch,
@@ -6813,6 +7031,11 @@ def _surface_value_and_first_jets(
     patch: AbstractSurfacePatch, parameter: Array, /
 ) -> tuple[Array, Array]:
     """Compute the surface value and full differential from one primal evaluation."""
+    structured = _structured_surface_first_jets(patch, parameter, with_value=True)
+    if structured is not None:
+        value, differential = structured
+        assert value is not None
+        return value, differential
 
     def value_with_aux(point: Array) -> tuple[Array, Array]:
         value = patch.evaluate(point)
@@ -6842,6 +7065,9 @@ def _evaluate_root_curve_coordinates(
     return jax.lax.map(evaluate, parameters[:, 0], batch_size=min(batch_capacity, 64))
 
 
+_ROOT_CURVE_CHUNK = 64
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedRootCurveHost:
     """Retain native-root execution without transferring inside its iterations.
@@ -6861,13 +7087,33 @@ class PreparedRootCurveHost:
             raise ValueError(
                 f"curve.points must have shape (num_points, 1); got {parameters.shape}."
             )
-        values = _evaluate_root_curve_coordinates(
-            self.curve,
-            jnp.asarray(parameters, dtype=jnp.float64),
-            with_derivative=self.with_derivative,
-            batch_capacity=self.batch_capacity,
+        count = parameters.shape[0]
+        if count == 0:
+            values = _evaluate_root_curve_coordinates(
+                self.curve,
+                jnp.asarray(parameters, dtype=jnp.float64),
+                with_derivative=self.with_derivative,
+                batch_capacity=self.batch_capacity,
+            )
+            return np.asarray(jax.device_get(values))
+        # Rows are independent root evaluations. Power-of-two chunks up to one
+        # lax.map batch let requests of different sizes on this curve reuse
+        # compiled programs; padding repeats the final parameter and is discarded.
+        chunk = min(_ROOT_CURVE_CHUNK, 1 << (count - 1).bit_length())
+        padded = np.concatenate(
+            (parameters, np.repeat(parameters[-1:], -count % chunk, axis=0))
         )
-        return np.asarray(jax.device_get(values))
+        chunks = [
+            _evaluate_root_curve_coordinates(
+                self.curve,
+                jnp.asarray(padded[start : start + chunk]),
+                with_derivative=self.with_derivative,
+                batch_capacity=chunk,
+            )
+            for start in range(0, padded.shape[0], chunk)
+        ]
+        values = np.concatenate([np.asarray(item) for item in jax.device_get(chunks)])
+        return values[:count]
 
 
 def prepare_curve_host(
@@ -7104,9 +7350,78 @@ def patch_evaluation_error(patch: AbstractSurfacePatch, parameters: Array, /) ->
     return errors.reshape((*parameters.shape[:-1], 3))
 
 
+def _structured_surface_first_jets(
+    patch: AbstractSurfacePatch, parameter: Array, /, *, with_value: bool
+) -> tuple[Array | None, Array] | None:
+    """Retain eager forward-AD primitive order for exactly the supported sources.
+
+    Both identity-seed lanes are materialized, including their zero products.
+    Dropping those products, reassociating additions, or fusing execution changes
+    signed-zero, overflow, and NaN bits. Coefficients and authored pose operations
+    remain dynamic; every other source retains its ordinary AD program.
+    """
+    from ._placed import PlacedSurface
+
+    match patch:
+        case PlacedSurface() if type(patch) is PlacedSurface:
+            result = _structured_surface_first_jets(
+                patch.definition, parameter, with_value=with_value
+            )
+            if result is None:
+                return None
+            value, differential = result
+            if value is not None:
+                value = value @ patch.rotation.T + patch.translation
+            return value, jnp.swapaxes(
+                jnp.swapaxes(differential, -1, -2) @ patch.rotation.T, -1, -2
+            )
+        case PlanePatch() if type(patch) is PlanePatch:
+            seeds = jnp.eye(2, dtype=patch.origin.dtype)
+            value = patch.evaluate(parameter) if with_value else None
+            tangent = seeds[:, :1] * patch.first_axis + seeds[:, 1:2] * patch.second_axis
+            return value, tangent.T
+        case CylinderPatch() if type(patch) is CylinderPatch:
+            parameter = jnp.asarray(parameter, dtype=patch.origin.dtype)
+            seeds = jnp.eye(2, dtype=parameter.dtype)
+            du, dv = seeds[:, 0], seeds[:, 1]
+            angle = parameter[..., 0]
+            value = patch.evaluate(parameter) if with_value else None
+            dcos = -(du * jnp.sin(angle)[..., None])
+            dsin = du * jnp.cos(angle)[..., None]
+            radial = (
+                dcos[..., None] * patch.first_axis + dsin[..., None] * patch.second_axis
+            )
+            tangent = patch.radius * radial + dv[:, None] * patch.axis
+            return value, jnp.swapaxes(tangent, -1, -2)
+        case _:
+            return None
+
+
+def _structured_surface_differential(
+    patch: AbstractSurfacePatch, parameters: Array, /
+) -> Array | None:
+    """Batch the source program without broadcasting parameter-independent jets.
+
+    A plane's tangent remains unbatched through every authored placement, just
+    as in ordinary forward AD. Broadcasting before a matrix product changes its
+    reduction kernel and can change last bits even for finite coefficients.
+    """
+    points = parameters.reshape((-1, 2))
+    result = _structured_surface_first_jets(patch, points, with_value=False)
+    if result is None:
+        return None
+    return jnp.broadcast_to(result[1], (points.shape[0], 3, 2)).reshape(
+        (*parameters.shape[:-1], 3, 2)
+    )
+
+
 @checked
 def surface_differential(patch: AbstractSurfacePatch, parameters: Array, /) -> Array:
+    """Evaluate the canonical eager differential, with exact-type structured dispatch."""
     parameters_ = jnp.asarray(parameters, dtype=jnp.float64)
+    structured = _structured_surface_differential(patch, parameters_)
+    if structured is not None:
+        return structured
     leading = parameters_.shape[:-1]
     values = jax.vmap(jax.jacfwd(lambda uv: patch.evaluate(uv)))(
         parameters_.reshape((-1, 2))
@@ -7193,6 +7508,7 @@ __all__ = [
     "prepare_surface_host",
     "prepare_meridian_spans",
     "rational_piece_jet_bounds",
+    "rational_piece_jets",
     "revolution_meridian",
     "shared_meridian_jets",
     "source_bernstein_restriction_scope",
@@ -7202,6 +7518,7 @@ __all__ = [
     "surface_evaluate_host",
     "surface_value_and_differential",
     "surface_value_and_differential_host",
+    "surface_value_bounds",
     "surface_differential",
     "surface_jacobian",
     "surface_normal",

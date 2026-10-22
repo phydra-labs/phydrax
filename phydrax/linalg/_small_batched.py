@@ -238,6 +238,46 @@ class SmallLinearSolvePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    def from_stored_fields(
+        cls,
+        value: SmallLinearSolvePlan,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> SmallLinearSolvePlan:
+        """Authenticate static inverse controls, never a retained factorization."""
+        if not isinstance(value, cls):
+            raise TypeError(
+                "SmallLinearSolvePlan.value must be a small linear solve plan; "
+                f"got {type(value).__name__}"
+            )
+        if budget is not None:
+            budget.reserve(5)
+        if (
+            type(value.dimension) is not int
+            or type(value.refinement_iterations) is not int
+            or type(value.singular_tolerance) is not float
+            or type(value.maximum_condition) is not float
+            or type(value.plan_id) is not str
+        ):
+            raise ValueError(
+                "SmallLinearSolvePlan.controls must retain their canonical scalar "
+                "types; got changed stored controls"
+            )
+        rebuilt = cls(
+            value.dimension,
+            singular_tolerance=value.singular_tolerance,
+            maximum_condition=value.maximum_condition,
+            refinement_iterations=value.refinement_iterations,
+        )
+        if rebuilt.plan_id != value.plan_id:
+            raise ValueError(
+                "SmallLinearSolvePlan.plan_id must bind all retained inverse "
+                "controls; got a stale stored identity"
+            )
+        return value
+
 
 class SmallLinearSolveResult(StrictModule):
     value: Array
@@ -751,6 +791,27 @@ def _confirm_exact_actions(
     return work
 
 
+def exact_small_linear_actions_id(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    right: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> str:
+    """Identify one rational coefficient-action request by its exact inputs."""
+    return canonical_fingerprint(
+        {
+            "kind": "exact-small-linear-actions",
+            "matrix": tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in matrix
+            ),
+            "right": tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in right
+            ),
+        }
+    )
+
+
 def prepare_exact_small_linear_actions(
     matrix: tuple[tuple[Fraction, ...], ...],
     right: tuple[tuple[Fraction, ...], ...],
@@ -767,19 +828,7 @@ def prepare_exact_small_linear_actions(
     """
     dimension, count = _exact_small_shape(matrix, right)
     _admit_exact_action_work(matrix, right, dimension, count, budget)
-    identity = canonical_fingerprint(
-        {
-            "kind": "exact-small-linear-actions",
-            "matrix": tuple(
-                tuple((value.numerator, value.denominator) for value in row)
-                for row in matrix
-            ),
-            "right": tuple(
-                tuple((value.numerator, value.denominator) for value in row)
-                for row in right
-            ),
-        }
-    )
+    identity = exact_small_linear_actions_id(matrix, right)
     factors = [list(row) for row in matrix]
     rhs = [list(row) for row in right]
     determinant, parity, rank, work = _exact_action_elimination(
@@ -798,6 +847,141 @@ def prepare_exact_small_linear_actions(
     )
 
 
+type _Rational3 = tuple[Fraction, Fraction, Fraction]
+
+
+def _exact_dot_3(
+    first: tuple[Fraction, ...], second: tuple[Fraction, ...], /
+) -> Fraction:
+    return first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+
+
+def _exact_cross_3(
+    first: tuple[Fraction, ...], second: tuple[Fraction, ...], /
+) -> _Rational3:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ExactAdjugate3:
+    """Exact adjugate of one rational 3x3 matrix given by its three columns.
+
+    Row ``i`` is the cross product of the two other columns in cyclic order,
+    so ``rows @ columns == determinant * I``; preparation proves that identity.
+    ``height`` bounds the bits of the denominator-cleared integer columns.
+    """
+
+    rows: tuple[_Rational3, _Rational3, _Rational3]
+    determinant: Fraction
+    height: int
+
+
+def exact_column_height_3(
+    columns: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> int:
+    """Bound the cleared integer bits of three rational columns, one visit each entry."""
+    if len(columns) != 3 or any(len(column) != 3 for column in columns):
+        raise ValueError(
+            "exact_column_height_3.columns.shape must be three columns of three entries; "
+            f"got column lengths {tuple(map(len, columns))}"
+        )
+    numerator_bits, _ = fraction_matrix_profile(
+        (tuple(zip(*columns, strict=True)),), budget
+    )
+    common = 1
+    for column in columns:
+        for entry in column:
+            common = math.lcm(common, entry.denominator)
+    return numerator_bits + common.bit_length() + 1
+
+
+def prepare_exact_adjugate_3(
+    columns: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> ExactAdjugate3 | None:
+    """Prepare one proved exact 3x3 adjugate; ``None`` for a singular matrix.
+
+    Each later solve ``M^{-1} r = adj(M) r / det(M)`` is then the unique exact
+    solution without another elimination (``exact_adjugate_action``).
+    """
+    height = exact_column_height_3(columns, budget=budget)
+    first, second, third = columns
+    # Three cross products (27 visits) and the nine dot products of the
+    # adjugate identity (45 visits). Cleared integer inputs have height
+    # bits; cofactors, determinants and checks fit four heights.
+    reserve_fraction_work(budget, 72, 64, 4 * height + 64)
+    rows = (
+        _exact_cross_3(second, third),
+        _exact_cross_3(third, first),
+        _exact_cross_3(first, second),
+    )
+    determinant = _exact_dot_3(rows[0], first)
+    if determinant == 0:
+        return None
+    for slot, row in enumerate(rows):
+        for other, column in enumerate(columns):
+            if _exact_dot_3(row, column) != (determinant if slot == other else 0):
+                raise RuntimeError(
+                    "prepare_exact_adjugate_3.rows must satisfy adj(M) @ M == det(M) I; "
+                    f"got row {slot}, column {other}"
+                )
+    return ExactAdjugate3(rows, determinant, height)
+
+
+def exact_adjugate_action(
+    adjugate: ExactAdjugate3,
+    vector: tuple[Fraction, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _Rational3:
+    """Return the exact solution ``adj(M) vector / det(M)`` of a proved adjugate."""
+    # Three three-term dot products and three exact quotients.
+    reserve_fraction_work(budget, 18, 16, 8 * adjugate.height + 64)
+    first, second, third = (
+        _exact_dot_3(row, vector) / adjugate.determinant for row in adjugate.rows
+    )
+    return first, second, third
+
+
+def confirm_exact_action_3(
+    columns: tuple[tuple[Fraction, ...], ...],
+    height: int,
+    action: tuple[Fraction, ...],
+    right: tuple[Fraction, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Decide ``columns @ action == right`` exactly for one 3x3 system.
+
+    For a nonsingular matrix this proves ``action`` is the unique solution
+    without an elimination or adjugate. ``height`` is the column bound from
+    ``exact_column_height_3``.
+    """
+    numerator_bits, denominator_bits = fraction_matrix_profile(((action,),), budget)
+    # Three three-term dot products and three exact comparisons.
+    reserve_fraction_work(
+        budget, 18, 16, numerator_bits + denominator_bits + 2 * height + 64
+    )
+    return all(
+        columns[0][axis] * action[0]
+        + columns[1][axis] * action[1]
+        + columns[2][axis] * action[2]
+        == right[axis]
+        for axis in range(3)
+    )
+
+
 __all__ = [
     "SmallLinearSolvePlan",
     "SmallLinearSolveResult",
@@ -806,6 +990,11 @@ __all__ = [
     "solve_small_linear",
     "ExactSmallLinearActions",
     "prepare_exact_small_linear_actions",
+    "ExactAdjugate3",
+    "exact_column_height_3",
+    "prepare_exact_adjugate_3",
+    "exact_adjugate_action",
+    "confirm_exact_action_3",
     "cofactor_determinant_2",
     "cofactor_determinant_3",
     "cofactor_determinant",

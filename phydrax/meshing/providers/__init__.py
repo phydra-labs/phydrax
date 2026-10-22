@@ -33,6 +33,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "MmgReference": "._mmg",
     "MmgReferenceRetention": "._mmg",
     "MmgSessionEvidence": "._mmg",
+    "NativeCadVolumeSource": "._native_cad_volume",
     "NativeCurveSchedule": "._native_schedules",
     "NativeCurveSource": "._native_sources",
     "NativeHexGridRoute": ".._hex_generation",
@@ -45,7 +46,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "NativeMeshingProvider": "._native",
     "NativeMeshingRoute": "._native_options",
     "NativeMeshingSession": "._native_session",
-    "NativeMeshingSource": "._native_sources",
+    "NativeMeshingSource": "._native_source_type",
     "NativePeriodicSource": "._native_periodic",
     "NativePlanarSource": "._native_sources",
     "NativePlcSource": "._native_sources",
@@ -84,6 +85,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "VoroCrustOptions": "._vorocrust",
     "VoroCrustProvider": "._vorocrust",
     "native_provider_source_path": "._sources",
+    "native_provider_source_root": "._sources",
 }
 
 __getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
@@ -133,6 +135,7 @@ if TYPE_CHECKING:
         NativeMeshingPlan as NativeMeshingPlan,
         NativeMeshingProvider as NativeMeshingProvider,
     )
+    from ._native_cad_volume import NativeCadVolumeSource as NativeCadVolumeSource
     from ._native_options import (
         NativeMeshingOptions as NativeMeshingOptions,
         NativeMeshingRoute as NativeMeshingRoute,
@@ -145,12 +148,12 @@ if TYPE_CHECKING:
         NativeSurfaceSchedule as NativeSurfaceSchedule,
     )
     from ._native_session import NativeMeshingSession as NativeMeshingSession
+    from ._native_source_type import NativeMeshingSource as NativeMeshingSource
     from ._native_sources import (
         NativeCurveSource as NativeCurveSource,
         NativeImplicitSource as NativeImplicitSource,
         NativeLayerCoreSource as NativeLayerCoreSource,
         NativeMappedHexSource as NativeMappedHexSource,
-        NativeMeshingSource as NativeMeshingSource,
         NativePlanarSource as NativePlanarSource,
         NativePlcSource as NativePlcSource,
         NativePolyhedralSource as NativePolyhedralSource,
@@ -182,7 +185,10 @@ if TYPE_CHECKING:
         PoissonProvider as PoissonProvider,
         PoissonReconstructionSpec as PoissonReconstructionSpec,
     )
-    from ._sources import native_provider_source_path as native_provider_source_path
+    from ._sources import (
+        native_provider_source_path as native_provider_source_path,
+        native_provider_source_root as native_provider_source_root,
+    )
     from ._tioga import (
         TiogaAssemblyResult as TiogaAssemblyResult,
         TiogaDonorEvidence as TiogaDonorEvidence,
@@ -220,6 +226,7 @@ __all__ = [
     "MmgReference",
     "MmgReferenceRetention",
     "MmgSessionEvidence",
+    "NativeCadVolumeSource",
     "NativeCurveSchedule",
     "NativeCurveSource",
     "NativeHexGridRoute",
@@ -271,5 +278,6 @@ __all__ = [
     "VoroCrustOptions",
     "VoroCrustProvider",
     "native_provider_source_path",
+    "native_provider_source_root",
 ]
 # END GENERATED FACADE EXPORTS

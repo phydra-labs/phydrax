@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 from tests._support.audit_fixtures import (
     cell_label,
@@ -14,6 +15,10 @@ from tests._support.audit_fixtures import (
     quadratic_triangle_with_edge_nodes,
     surface_cell_association,
     unordered_reference_cells,
+)
+from tests._support.mesh_certificate_fixtures import (
+    coordinate_budget as coordinate_budget,
+    reference_budget as reference_budget,
 )
 from tests._support.quality_fixtures import (
     curved_quality_tetrahedron,
@@ -60,6 +65,71 @@ def test_reference_cell_quality_certification_preserves_sampled_evidence(
     assert result.quality.minimum_measure > 0.0
     assert result.quality.minimum_mean_ratio > 0.0
     assert result.quality.maximum_aspect_ratio >= 1.0
+
+
+@pytest.mark.parametrize("case", ("reference", "skewed", "random"))
+@pytest.mark.parametrize("kind", ("interval", "triangle", "tetrahedron"))
+def test_affine_quality_preserves_metrics_with_admitted_differential_reuse(
+    kind: str,
+    case: str,
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    import phydrax.meshing._quality as owner
+
+    mesh = reference_quality_mesh(kind)
+    if case == "random":
+        corners = mesh.blocks[0].vertices.shape[1]
+        points = np.random.default_rng(193).uniform(
+            -2, 2, size=(17 * corners, mesh.ambient_dimension)
+        )
+        mesh = phx.discretization.CellMesh(
+            points,
+            (
+                phx.discretization.CellBlock(
+                    "cells", kind, np.arange(17 * corners).reshape(17, corners)
+                ),
+            ),
+        )
+    elif case == "skewed":
+        dimension = mesh.ambient_dimension
+        matrix = np.diag(1 + 0.17 * np.arange(1, dimension + 1))
+        if dimension > 1:
+            matrix[0, -1] += 0.23
+        mesh = mesh.with_coordinates(
+            np.asarray(mesh.coordinates) @ matrix.T + np.linspace(0.11, 0.31, dimension),
+            numeric_version="skew-affine-test",
+        )
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    elements, routes, coordinates = geometry.resolve(mesh, budget=reference_budget)
+    source = elements[0]
+    values = coordinates[routes[0]]
+    rule = owner._MappedQualityPlan(
+        owner._mapped_quality_rule(kind, source),
+        owner._boundary_rule(kind),
+        owner._face_rules(kind, mesh.ambient_dimension),
+    )
+    before = reference_budget.ticket.geometry_queries
+    actual = owner._mapped_block_quality(
+        kind, source, values, None, budget=reference_budget, rule=rule
+    )
+    # One earned differential also feeds canonical P1 tetrahedral face probes;
+    # their original normal arithmetic is retained without re-querying the map.
+    expected_queries = values.shape[0] * (
+        rule.query_count if rule.faces and kind != "tetrahedron" else 1
+    )
+    assert reference_budget.ticket.geometry_queries - before == expected_queries
+    measured = owner._mapped_sample_worksets(kind, source, values, None, rule.volume)
+    minimum, maximum = owner._mapped_boundary_angles(
+        rule, source, values, budget=reference_budget
+    )
+    warpage = owner._mapped_face_warpage(
+        rule, source, values, budget=reference_budget
+    )
+    expected = owner._finish_mapped_quality(measured, minimum, maximum, warpage)
+    for observed, original in zip(
+        jax.tree_util.tree_leaves(actual), jax.tree_util.tree_leaves(expected), strict=True
+    ):
+        np.testing.assert_array_equal(observed, original)
 
 
 @pytest.mark.parametrize("cell_kind", ("triangle", "tetrahedron", "hexahedron", "prism"))
@@ -1436,14 +1506,16 @@ def test_audit_prepared_validity_refuses_forged_positive_summary() -> None:
             (0, 1, 2),
             (0, 3, 4),
             False,
-            3,
+            2,
         ),
         (
             ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0.2, 0.2, 1), (0.2, 0.2, -1)),
             (0, 1, 2),
             (0, 3, 4),
             True,
-            13,
+            # Two nonshared plane signs, the two needed plane sides of the
+            # first triangle's free vertices and five opposite-edge signs.
+            9,
         ),
         (
             ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1)),
@@ -1452,8 +1524,28 @@ def test_audit_prepared_validity_refuses_forged_positive_summary() -> None:
             False,
             3,
         ),
+        (
+            ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, -1, 0)),
+            (0, 1, 2),
+            (1, 0, 3),
+            False,
+            0,
+        ),
+        (
+            ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0.25, 0.25, 0)),
+            (0, 1, 2),
+            (0, 1, 3),
+            True,
+            0,
+        ),
     ),
-    ids=("shared-vertex-separated", "shared-vertex-crossing", "disjoint-separated"),
+    ids=(
+        "shared-vertex-separated",
+        "shared-vertex-crossing",
+        "disjoint-separated",
+        "coordinate-plane-separated",
+        "coordinate-plane-folded",
+    ),
 )
 def test_triangle_intersection_skips_certified_irrelevant_predicates(
     points: tuple[tuple[float, float, float], ...],
@@ -1493,6 +1585,163 @@ def test_triangle_intersection_skips_certified_irrelevant_predicates(
     assert queried_rows == orientation_rows
 
 
+@pytest.mark.parametrize("exact_objects", (False, True))
+@pytest.mark.parametrize("shared", (1, 2, 3))
+def test_triangle_plane_predicates_never_receive_a_repeated_shared_index(
+    shared: int, exact_objects: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import phydrax.meshing._audit_topology as owner
+
+    points = np.asarray(
+        ((1, 2, 3), (2, 4, 7), (3, 1, 5), (2, 3, 8), (4, 2, 9)),
+        dtype=np.float64,
+    )
+    if exact_objects:
+        points = np.asarray(
+            [[int(value) for value in row] for row in points], dtype=object
+        )
+    first = np.asarray(((0, 1, 2),), dtype=np.int64)
+    second = np.asarray(
+        ({1: (0, 3, 4), 2: (1, 0, 3), 3: (2, 0, 1)}[shared],),
+        dtype=np.int64,
+    )
+    expected = owner.triangle_pairs_intersect(points, first, second)
+    original = owner.orientation3d_signs
+
+    def orientation(
+        a: np.ndarray,
+        b: np.ndarray,
+        c: np.ndarray,
+        d: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        assert not np.any(np.all(a == d, axis=1))
+        assert not np.any(np.all(b == d, axis=1))
+        assert not np.any(np.all(c == d, axis=1))
+        return original(a, b, c, d, budget=budget)
+
+    monkeypatch.setattr(owner, "orientation3d_signs", orientation)
+    actual = owner.triangle_pairs_intersect(points, first, second)
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "kind", ("boolean", "complex", "object-float", "fraction", "large-integer")
+)
+def test_triangle_shared_indices_preserve_predicate_numeric_admission(kind: str) -> None:
+    from fractions import Fraction
+
+    from phydrax.meshing._audit_topology import triangle_pairs_intersect
+
+    points = np.asarray(((1, 2, 3), (2, 4, 7), (3, 1, 5)), dtype=np.float64)
+    if kind == "boolean":
+        points = np.eye(3, dtype=np.bool_)
+    elif kind == "complex":
+        points = points.astype(np.complex128)
+    elif kind == "object-float":
+        points = points.astype(object)
+    elif kind == "fraction":
+        points = np.asarray(
+            [[Fraction(value) for value in row] for row in points], dtype=object
+        )
+    else:
+        points = points.astype(np.int64) * (1 << 54)
+    with pytest.raises((TypeError, ValueError)):
+        triangle_pairs_intersect(
+            points,
+            np.asarray(((0, 1, 2),), dtype=np.int64),
+            np.asarray(((2, 0, 1),), dtype=np.int64),
+        )
+
+
+def _exact_orientation(*points: tuple[float, ...]) -> int:
+    from fractions import Fraction
+
+    a, b, c, d = (tuple(Fraction(value) for value in point) for point in points)
+    u, v, w = (tuple(q - p for p, q in zip(a, point, strict=True)) for point in (b, c, d))
+    determinant = (
+        u[0] * (v[1] * w[2] - v[2] * w[1])
+        - u[1] * (v[0] * w[2] - v[2] * w[0])
+        + u[2] * (v[0] * w[1] - v[1] * w[0])
+    )
+    return (determinant > 0) - (determinant < 0)
+
+
+def _reference_noncoplanar_contact(
+    one: list[tuple[float, ...]], two: list[tuple[float, ...]], shared: int
+) -> bool | None:
+    """Per-direction segment/triangle route evaluating every orientation afresh."""
+    plane = [_exact_orientation(*one, vertex) for vertex in two]
+    if all(value == 0 for value in plane):
+        return None
+    free = [index != 0 for index in range(3)] if shared else [True] * 3
+    if any(free) and (
+        all(value > 0 or not keep for value, keep in zip(plane, free, strict=True))
+        or all(value < 0 or not keep for value, keep in zip(plane, free, strict=True))
+    ):
+        return False
+    contact = False
+    for source, target in ((one, two), (two, one)):
+        for index in range(3):
+            if shared and index != 1:
+                continue
+            start, end = source[index], source[(index + 1) % 3]
+            side_a = _exact_orientation(*target, start)
+            side_b = _exact_orientation(*target, end)
+            edges = [
+                _exact_orientation(start, end, target[edge], target[(edge + 1) % 3])
+                for edge in range(3)
+            ]
+            straddles = side_a * side_b <= 0 and not (side_a == 0 and side_b == 0)
+            inside = all(value >= 0 for value in edges) or all(value <= 0 for value in edges)
+            contact |= straddles and inside
+    return contact
+
+
+def test_triangle_crossing_reuses_alternating_orientations_exactly() -> None:
+    import phydrax.meshing._audit_topology as owner
+
+    generator = np.random.default_rng(20261020)
+    points: list[tuple[float, ...]] = []
+    first: list[tuple[int, int, int]] = []
+    second: list[tuple[int, int, int]] = []
+    expected: list[bool] = []
+    while len(expected) < 400:
+        corners = [tuple(float(v) for v in generator.integers(-2, 3, 3)) for _ in range(6)]
+        shared = int(generator.integers(0, 2))
+        if shared:
+            corners[3] = corners[0]
+        one, two = corners[:3], corners[3:]
+        if any(
+            all(_exact_orientation(*triangle, probe) == 0 for probe in corners)
+            for triangle in (one, two)
+        ):
+            continue
+        reference = _reference_noncoplanar_contact(one, two, shared)
+        if reference is None:
+            continue
+        base = len(points)
+        points.extend(one)
+        first.append((base, base + 1, base + 2))
+        if shared:
+            points.extend(two[1:])
+            second.append((base, base + 3, base + 4))
+        else:
+            points.extend(two)
+            second.append((base + 3, base + 4, base + 5))
+        expected.append(reference)
+    hit, certain = owner.triangle_pairs_intersect(
+        np.asarray(points, dtype=np.float64),
+        np.asarray(first, dtype=np.int64),
+        np.asarray(second, dtype=np.int64),
+    )
+    assert np.all(certain)
+    assert any(expected) and not all(expected)
+    np.testing.assert_array_equal(hit, expected)
+
+
 def test_triangle_shared_vertex_contact_reduces_exact_native_queries() -> None:
     from phydrax._meshcore import (
         meshcore_available,
@@ -1517,7 +1766,106 @@ def test_triangle_shared_vertex_contact_reduces_exact_native_queries() -> None:
         )
     np.testing.assert_array_equal(hit, (True,))
     np.testing.assert_array_equal(certain, (True,))
-    assert scope.completed_evidence().native_primitive_queries == 1
+    # The one filter-unresolved edge orientation is the even permutation of
+    # an edge sign the filter already certified in the other direction.
+    assert scope.completed_evidence().native_primitive_queries == 0
+
+
+def test_triangle_contact_batch_reuses_reordered_subsets_and_binds_values(
+    reference_budget: CoordinateEnclosureBudget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._audit_topology as owner
+
+    points = np.asarray(
+        ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, -1, 0), (0.25, 0.25, 0)),
+        dtype=np.float64,
+    )
+    first = np.asarray(((0, 1, 2), (0, 1, 2)), dtype=np.int64)
+    second = np.asarray(((1, 0, 3), (0, 1, 4)), dtype=np.int64)
+    original = owner._triangle_pairs_intersect
+    evaluated_rows = 0
+
+    def evaluate(
+        points: np.ndarray,
+        first: np.ndarray,
+        second: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        nonlocal evaluated_rows
+        evaluated_rows += first.shape[0]
+        return original(points, first, second, budget=budget)
+
+    monkeypatch.setattr(owner, "_triangle_pairs_intersect", evaluate)
+    hit, certain = owner.triangle_pairs_intersect(
+        points, first, second, budget=reference_budget
+    )
+    np.testing.assert_array_equal(hit, (False, True))
+    np.testing.assert_array_equal(certain, (True, True))
+    assert evaluated_rows == 2
+    # Different batching, pair direction, and local winding consume the same
+    # bound proof, including its negative (contact) verdict.
+    hit, certain = owner.triangle_pairs_intersect(
+        points, second[1:, ::-1], first[1:, ::-1], budget=reference_budget
+    )
+    np.testing.assert_array_equal(hit, (True,))
+    np.testing.assert_array_equal(certain, (True,))
+    assert evaluated_rows == 2
+    points[4] = (0, -0.25, 0)
+    hit, certain = owner.triangle_pairs_intersect(
+        points, first[1:], second[1:], budget=reference_budget
+    )
+    np.testing.assert_array_equal(hit, (False,))
+    np.testing.assert_array_equal(certain, (True,))
+    assert evaluated_rows == 3
+
+
+def test_triangle_contact_batch_binds_welded_vertex_identities(
+    reference_budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.meshing._audit_topology import triangle_pairs_intersect
+
+    points = np.asarray(
+        ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 0), (1, 0, 0)),
+        dtype=np.float64,
+    )
+    first = np.asarray(((0, 1, 2),), dtype=np.int64)
+    for second, expected in (((1, 0, 3), False), ((5, 4, 3), True)):
+        hit, certain = triangle_pairs_intersect(
+            points, first, np.asarray((second,), dtype=np.int64), budget=reference_budget
+        )
+        np.testing.assert_array_equal(hit, (expected,))
+        np.testing.assert_array_equal(certain, (True,))
+
+
+@pytest.mark.parametrize("shared_vertex", (False, True))
+def test_filtered_triangle_separation_matches_complete_contact_predicate(
+    shared_vertex: bool,
+) -> None:
+    import phydrax.meshing._audit_topology as owner
+
+    rng = np.random.default_rng(519)
+    one = rng.integers(-16, 17, size=(48, 3, 2)).astype(np.float64) / 8
+    two = rng.integers(-16, 17, size=(48, 3, 2)).astype(np.float64) / 8
+    shared = np.full(48, int(shared_vertex), dtype=np.int64)
+    if shared_vertex:
+        two[:, 0] = one[:, 0]
+    separated = owner._coplanar_filtered_separation(one, two, shared, budget=None)
+    expected_hit, expected_certain = owner._coplanar_projected_overlap(
+        one, two, shared, budget=None
+    )
+    assert np.any(separated)
+    assert np.all(expected_certain[separated] & ~expected_hit[separated])
+    hit, certain = owner._coplanar_overlap(
+        np.pad(one, ((0, 0), (0, 0), (0, 1))),
+        np.pad(two, ((0, 0), (0, 0), (0, 1))),
+        shared,
+        budget=None,
+    )
+    np.testing.assert_array_equal(hit, expected_hit)
+    np.testing.assert_array_equal(certain, expected_certain)
 
 
 def _periodic_torus_fan_shifts(

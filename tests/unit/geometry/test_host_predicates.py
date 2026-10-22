@@ -15,8 +15,10 @@ import pytest
 from phydrax._geometry_predicates import (
     orient2d,
     orient2d_host,
+    orient2d_enclosure_host,
     orient3d,
     orient3d_host,
+    orient3d_enclosure_host,
     PredicateMode,
     PredicateSign,
 )
@@ -80,6 +82,47 @@ def _cases(dimension: int) -> tuple[np.ndarray, ...]:
         )
     rows = np.concatenate((random, adversarial))
     return tuple(rows[:, index] for index in range(dimension + 1))
+
+
+@pytest.mark.parametrize("dimension", (2, 3), ids=("planar", "spatial"))
+@pytest.mark.parametrize("exponent", (-350, 0, 350))
+def test_orientation_enclosure_contains_the_exact_binary64_determinant(
+    exponent: int, dimension: int,
+) -> None:
+    points = tuple(np.ldexp(value, exponent) for value in _cases(dimension))
+    with coordinate_reference_budget() as budget:
+        lower, upper = (
+            orient2d_enclosure_host(*points, budget=budget)
+            if dimension == 2
+            else orient3d_enclosure_host(*points, budget=budget)
+        )
+    for row in range(points[0].shape[0]):
+        origin = tuple(Fraction(float(value)) for value in points[0][row])
+        edges = tuple(
+            tuple(
+                Fraction(float(value)) - base
+                for value, base in zip(point[row], origin, strict=True)
+            )
+            for point in points[1:]
+        )
+        exact = Fraction(0)
+        for order in permutations(range(dimension)):
+            inversions = sum(
+                order[i] > order[j]
+                for i in range(dimension) for j in range(i + 1, dimension)
+            )
+            term = Fraction((-1) ** inversions)
+            for index, column in enumerate(order):
+                term *= edges[index][column]
+            exact += term
+        if np.isfinite(lower[row]):
+            assert Fraction(float(lower[row])) <= exact
+        else:
+            assert lower[row] == -np.inf
+        if np.isfinite(upper[row]):
+            assert exact <= Fraction(float(upper[row]))
+        else:
+            assert upper[row] == np.inf
 
 
 @pytest.mark.parametrize("dimension", (2, 3), ids=("planar", "spatial"))
@@ -228,8 +271,12 @@ def test_native_orientation_charges_whole_remainder_reservation(
         )
         budget = CoordinateEnclosureBudget(
             ticket,
-            maximum_work_units=limits.maximum_work_units if memoize else 0,
-            maximum_memory_bytes=limits.maximum_managed_bytes if memoize else 0,
+            maximum_work_units=(
+                limits.maximum_work_units if memoize or dimension == 3 else 0
+            ),
+            maximum_memory_bytes=(
+                limits.maximum_managed_bytes if memoize or dimension == 3 else 0
+            ),
         )
         with ticket, budget.activate():
             assert scope.remaining().remaining_work_units == 0
@@ -237,7 +284,10 @@ def test_native_orientation_charges_whole_remainder_reservation(
             result = (
                 orient2d_host(*points, mode=PredicateMode.EXACT, budget=budget)
                 if dimension == 2
-                else orient3d_host(*points, mode=PredicateMode.EXACT, budget=budget)
+                else orient3d_host(
+                    *points, mode=PredicateMode.EXACT, budget=budget,
+                    memoize_native=memoize,
+                )
             )
             assert ticket.work_units == budget.work_units
             evaluations = budget.exact_predicate_evaluations.get(f"orient{dimension}d", 0)
@@ -263,6 +313,53 @@ def test_native_orientation_charges_whole_remainder_reservation(
 @pytest.mark.skipif(
     not meshcore_available(), reason="native phydrax-meshcore library is not available"
 )
+def test_direct_orientation_preserves_native_telemetry_and_counter_domains() -> None:
+    points = tuple(np.repeat(point[-2:-1], 3, axis=0) for point in _cases(3))
+
+    def run(work: int, queries: int) -> tuple[int, int]:
+        limits = NativeExecutionLimits(work, queries, 0, 1_000_000, 30.0)
+        with NativeExecutionScope(limits) as scope:
+            ticket = scope.batch(work, queries_upper=queries, bytes_upper=1_000_000)
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=work,
+                maximum_memory_bytes=1_000_000,
+            )
+            try:
+                with ticket, budget.activate():
+                    first = orient3d_host(
+                        *points, mode=PredicateMode.EXACT, budget=budget,
+                        memoize_native=False,
+                    )
+                    replay = orient3d_host(
+                        *points, mode=PredicateMode.EXACT, budget=budget,
+                        memoize_native=False,
+                    )
+                    np.testing.assert_array_equal(first.signs, replay.signs)
+                    np.testing.assert_array_equal(
+                        first.signs,
+                        [_orientation_sign(tuple(point[0] for point in points))] * 3,
+                    )
+                    assert np.all(first.certain) and np.all(replay.certain)
+                    assert budget.exact_native_sign_cache == {}
+                    assert budget.exact_predicate_cache_hits == {}
+            finally:
+                assert ticket.consumed_work_units <= work
+                assert ticket.consumed_geometry_queries <= queries
+        evidence = scope.completed_evidence()
+        assert evidence.native_primitive_queries == 6
+        return ticket.consumed_work_units, ticket.consumed_geometry_queries
+
+    work, queries = run(100_000, 100_000)
+    # Native primitive telemetry is not construction work or source queries.
+    assert (work, queries) == (0, 0)
+    assert run(work, queries) == (work, queries)
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
 @pytest.mark.parametrize("dimension", (2, 3), ids=("planar", "spatial"))
 def test_native_orientation_refuses_insufficient_reserved_storage(dimension: int) -> None:
     limits = NativeExecutionLimits(1_000_000, 1_000_000, 0, 1_000_000, 30.0)
@@ -280,4 +377,39 @@ def test_native_orientation_refuses_insufficient_reserved_storage(dimension: int
                 else:
                     orient3d_host(*points, mode=PredicateMode.EXACT, budget=budget)
     assert refusal.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert scope.completed_evidence().native_primitive_queries == 0
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+@pytest.mark.parametrize("memoize", (False, True))
+def test_host_orientation_preadmits_packed_storage_on_original_request(
+    memoize: bool,
+) -> None:
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+
+    limits = NativeExecutionLimits(1_000_000, 1_000_000, 0, 512, 30.0)
+    points = tuple(point[-2:] for point in _cases(3))
+    scope = NativeExecutionScope(limits)
+    with pytest.raises(
+        CoordinateEnclosureResourceError, match="polynomial_storage.*limit 512"
+    ):
+        with scope:
+            ticket = scope.batch(
+                limits.maximum_work_units,
+                queries_upper=limits.maximum_geometry_queries,
+                bytes_upper=limits.maximum_managed_bytes,
+            )
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_managed_bytes,
+            )
+            with ticket, budget.activate():
+                orient3d_host(
+                    *points, mode=PredicateMode.EXACT, budget=budget,
+                    memoize_native=memoize,
+                )
     assert scope.completed_evidence().native_primitive_queries == 0

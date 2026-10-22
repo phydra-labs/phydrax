@@ -89,6 +89,33 @@ def quad_case() -> tuple[CellMesh, CellGeometrySpec, CellMesh, NestedReferenceWi
     return source, CellGeometrySpec.affine(source), fine, records
 
 
+def test_planar_map_preparation_releases_only_dead_construction_storage(
+    quad_case: tuple[CellMesh, CellGeometrySpec, CellMesh, NestedReferenceWitnesses],
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.meshing._plc_planar_support import cell_maps
+
+    mesh, geometry, _, _ = quad_case
+    temporary = budget.temporary_bytes_upper
+    retained = budget.retained_basis_bytes
+    maps = cell_maps(mesh, geometry, budget=budget)
+    assert budget.temporary_bytes_upper == temporary
+    assert budget.retained_basis_bytes > retained
+    work = budget.work_units
+    retained = budget.retained_basis_bytes
+    assert cell_maps(mesh, geometry, budget=budget) is maps
+    assert budget.work_units == work
+    assert budget.retained_basis_bytes == retained
+    assert budget.temporary_bytes_upper == temporary
+    assert 0 in maps.polynomials
+    assert maps.corners(0) == (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(1), Fraction(5, 4)),
+        (Fraction(0), Fraction(1)),
+    )
+
+
 def test_bilinear_quad_restriction_retains_source_law_and_measure(
     quad_case: tuple[CellMesh, CellGeometrySpec, CellMesh, NestedReferenceWitnesses],
     budget: CoordinateEnclosureBudget,

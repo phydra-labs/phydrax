@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
@@ -73,7 +74,6 @@ from .. import (
     _cell_geometry as imported_cell_geometry,
     _cell_geometry_validity as imported_cell_geometry_validity,
     _coordinate_enclosure as imported_coordinate_enclosure,
-    _nested_reference as imported_nested_reference,
     _reference_cell as imported_reference_cell,
 )
 from .._cell_complex import (
@@ -85,6 +85,7 @@ from .._cell_geometry import (
     BarycentricCellGeometryElement,
     CellGeometrySpec,
     coordinate_lagrange_element,
+    PolynomialComposedCellGeometryElement,
     RestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
@@ -92,6 +93,8 @@ from .._cell_geometry_transition_types import (
     CellGeometryTransition,
     CellGeometryTransitionError,
     NestedReferenceWitnesses,
+    require_binary64_witness,
+    require_reference_homogeneous,
 )
 from .._cell_mesh import CellMesh
 from .._coordinate_budget import (
@@ -110,8 +113,18 @@ from .._mapped_geometry_measure import (
     mapped_root_identities,
     PreparedMappedSqrtIntegral,
 )
-from .._nested_reference import rooted_nested_reference_pairs
-from .._nested_reference_types import NestedReferencePair, PolynomialReferencePair
+from .._nested_reference import (
+    nested_reference_binding,
+    prepare_nested_reference,
+    PreparedNestedReference,
+    require_nested_reference,
+)
+from .._nested_reference_types import (
+    NestedReferencePair,
+    PolynomialReferencePair,
+    rational_pair_arrays,
+)
+from .._reference_cell_types import CellGeometryElement
 from .._source_geometry_realization import SourceGeometryRealization
 from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import (
@@ -154,79 +167,126 @@ type MappedDgCell = tuple[FiniteElementSpec, NDArray[np.int64], tuple[Polynomial
 type _NestedFiniteElementDiscretization = (
     FiniteElementDiscretization | FiniteElementTransferDiscretization
 )
-type _CompatibleFieldBinding = tuple[
-    str,
-    int,
-    str,
-    str,
-    tuple[str, ...],
-    tuple[int, ...],
-    str,
+type _NestedFieldRoute = Literal[
+    "reference-coarsening",
+    "affine",
+    "affine-coefficient",
+    "mapped-form",
+    "mapped-h1",
+    "mapped-dg",
+    "mapped-compatible",
+    "mapped-conformity",
 ]
 
 
-def _compatible_field_binding(
-    discretization: _NestedFiniteElementDiscretization, field_name: str, /
-) -> _CompatibleFieldBinding:
-    name = canonical_identifier(field_name, "field_name")
+class _NestedFieldDispatch(NamedTuple):
+    route: _NestedFieldRoute
+    coefficient_actions: bool
+
+
+class _NestedReferenceUse(NamedTuple):
+    """The nested pieces one route reads: route flags and its exact witnesses."""
+
+    rooted: bool
+    certified: bool
+    parent_cells: ArrayLike | None
+    parent_reference_vertices: ArrayLike | None
+    parent_reference_homogeneous: ArrayLike | None
+    geometry_transition: CellGeometryTransition | None
+    coarsening_witnesses: NestedReferenceWitnesses | None
+
+
+def _compatible_field_index(
+    discretization: _NestedFiniteElementDiscretization, name: str, /
+) -> int:
     index = discretization.field_index(name)
-    field = discretization.construction_plan.fields[index]
-    dof_map = discretization.dof_maps[index]
-    space = discretization.field_spaces[index].vector_space
-    if not isinstance(space, ArraySpace):
+    if not isinstance(discretization.field_spaces[index].vector_space, ArraySpace):
         raise TypeError(
             "compatible_field_binding.configuration must provide ArraySpace coefficients; got Compatible transfer fields require ArraySpace coefficients."
         )
-    return (
-        name,
-        index,
-        field.field_spec_id,
-        dof_map.dof_map_id,
-        tuple(element.element_id for element in discretization.elements[index]),
-        space.shape,
-        space.dtype.str,
-    )
+    return index
 
 
-@dataclass(frozen=True)
-class _MappedNestedCompatiblePreparation:
-    source_prepared_id: str
-    target_prepared_id: str
-    source_revision: str
-    target_revision: str
-    source_geometry_id: str
-    target_geometry_id: str
-    bindings: tuple[tuple[_CompatibleFieldBinding, _CompatibleFieldBinding], ...]
-    pairs: tuple[NestedReferencePair | PolynomialReferencePair, ...]
-    geometry_bound: float
-
-    def require(
-        self,
-        source: _NestedFiniteElementDiscretization,
-        target: _NestedFiniteElementDiscretization,
-        source_geometry: CellGeometrySpec,
-        target_geometry: CellGeometrySpec,
-        field_name: str,
-        /,
-    ) -> None:
-        binding = (
-            _compatible_field_binding(source, field_name),
-            _compatible_field_binding(target, field_name),
+def _require_compatible_fields(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    field_names: Sequence[str],
+    /,
+) -> tuple[str, ...]:
+    """Unique ordered compatible form-basis roles on both endpoints."""
+    names = tuple(canonical_identifier(name, "field_name") for name in field_names)
+    if not names or len(set(names)) != len(names):
+        raise ValueError(
+            "mapped_nested_compatible_preparation.configuration must provide unique ordered field roles; got Compatible field preparation requires unique ordered field roles."
         )
-        if (
-            source.prepared_id != self.source_prepared_id
-            or target.prepared_id != self.target_prepared_id
-            or source.mesh.numeric_version != self.source_revision
-            or target.mesh.numeric_version != self.target_revision
-            or _coordinate_geometry_id(source_geometry) != self.source_geometry_id
-            or _coordinate_geometry_id(target_geometry) != self.target_geometry_id
-            or binding not in self.bindings
-        ):
+    indices = tuple(
+        (_compatible_field_index(source, name), _compatible_field_index(target, name))
+        for name in names
+    )
+    for (source_index, target_index), name in zip(indices, names, strict=True):
+        elements = source.elements[source_index] + target.elements[target_index]
+        if {element.conformity for element in elements} not in (
+            {"Hcurl"},
+            {"Hdiv"},
+        ) or any(element.form_basis is None for element in elements):
             raise ValueError(
-                "_MappedNestedCompatiblePreparation.binding must match the prepared mesh revisions, coordinate maps, and field bindings; got "
-                f"source=({source.prepared_id!r}, {source.mesh.numeric_version!r}, {_coordinate_geometry_id(source_geometry)!r}), "
-                f"target=({target.prepared_id!r}, {target.mesh.numeric_version!r}, {_coordinate_geometry_id(target_geometry)!r}), binding={binding!r}"
+                f"mapped_nested_compatible_preparation.configuration must use a compatible form-basis field role; got Field {name!r} is not a declared compatible finite-element role."
             )
+    return names
+
+
+def _bound_nested_reference(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    nested_reference: PreparedNestedReference | None,
+    /,
+    *,
+    parent_cells: ArrayLike | None = None,
+    parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    coarsening_witnesses: NestedReferenceWitnesses | None = None,
+    rooted: bool,
+    certified: bool,
+    budget: CoordinateEnclosureBudget,
+) -> PreparedNestedReference:
+    """This route's nested pieces: the caller's issued preparation, or its own.
+
+    A supplied preparation must be the record issued for exactly these endpoint
+    maps, witnesses and route, or it is refused; it is never silently recomputed.
+    """
+    if nested_reference is None:
+        return prepare_nested_reference(
+            source.mesh,
+            source_geometry,
+            target.mesh,
+            target_geometry,
+            parent_cells=parent_cells,
+            parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
+            rooted=rooted,
+            certify=certified,
+            budget=budget,
+        )
+    return require_nested_reference(
+        nested_reference,
+        source.mesh,
+        source_geometry,
+        target.mesh,
+        target_geometry,
+        parent_cells=parent_cells,
+        parent_reference_vertices=parent_reference_vertices,
+        parent_reference_homogeneous=parent_reference_homogeneous,
+        geometry_transition=geometry_transition,
+        coarsening_witnesses=coarsening_witnesses,
+        rooted=rooted,
+        certified=certified,
+        budget=budget,
+    )
 
 
 def _simplex_cubature_kind(kind: str, /) -> Literal["triangle", "tetrahedron"]:
@@ -1158,6 +1218,36 @@ def _validated_overlaps(
     )
 
 
+def _coefficient_action_element(element: CellGeometryElement, /) -> bool:
+    """A barycentric action or a degree-one simplex chart chain of a P1 action.
+
+    Each chart of the chain is an exact rational barycentric action of its
+    source, so the composed map is a coefficient action of the P1 root; affine
+    corner images are still proved per cell before the route is used.
+    """
+    current = element
+    while isinstance(current, PolynomialComposedCellGeometryElement):
+        chart = current.chart_element
+        if (
+            chart.degree != 1
+            or chart.cell_kind not in _SIMPLEX_KINDS.values()
+            or chart.cell_kind != current.source_element.cell_kind
+        ):
+            return False
+        current = current.source_element
+    match current:
+        case BarycentricCellGeometryElement():
+            return True
+        case FiniteElementSpec():
+            return current is not element and (
+                current.element_id
+                == coordinate_lagrange_element(current.cell_kind, 1).element_id
+            )
+        case _:
+            return False
+
+
+
 def _require_affine_simplices(
     discretization: _NestedFiniteElementDiscretization, role: str, operation: str, /
 ) -> None:
@@ -1231,7 +1321,8 @@ def _require_coefficient_affine_simplices(
         strict=True,
     ):
         canonical = coordinate_lagrange_element(block.cell_kind, 1)
-        if not isinstance(element, BarycentricCellGeometryElement):
+        action = _coefficient_action_element(element)
+        if not action:
             if (
                 not isinstance(element, FiniteElementSpec)
                 or element.element_id != canonical.element_id
@@ -1263,7 +1354,7 @@ def _require_coefficient_affine_simplices(
                 )
             if (
                 not published_roots
-                and isinstance(element, BarycentricCellGeometryElement)
+                and action
                 and not np.array_equal(
                     np.asarray(
                         [
@@ -3522,14 +3613,20 @@ def _nested_affine_geometry(
     target: _NestedFiniteElementDiscretization,
     parent_cells: ArrayLike | None,
     parent_reference_vertices: ArrayLike | None,
+    parent_reference_homogeneous: ArrayLike | None,
     actual_source_geometry: CellGeometrySpec,
     actual_target_geometry: CellGeometrySpec,
     affine_coefficient_actions: bool,
     *,
+    nested_reference: PreparedNestedReference | None,
     budget: CoordinateEnclosureBudget,
 ) -> _NestedAffineGeometry:
     geometry_defects: dict[str, float] = {}
     if parent_reference_vertices is None:
+        if parent_reference_homogeneous is not None:
+            raise ValueError(
+                "nested_affine_geometry.parent_reference_homogeneous must accompany parent_reference_vertices; got homogeneous rows without vertices"
+            )
         _require_affine_simplices(source, "source", "Nested transfer")
         _require_affine_simplices(target, "target", "Nested transfer")
         affine = True
@@ -3545,12 +3642,14 @@ def _nested_affine_geometry(
         affine = all(
             element_.element_id
             == coordinate_lagrange_element(block.cell_kind, 1).element_id
-            or isinstance(element_, BarycentricCellGeometryElement)
+            or _coefficient_action_element(element_)
             for block, element_ in zip(
                 source.mesh.blocks, source.coordinate_elements, strict=True
             )
         )
-        corners = np.asarray(parent_reference_vertices, dtype=np.float64)
+        corners = require_binary64_witness(
+            parent_reference_vertices, "nested_affine_geometry.parent_reference_vertices"
+        )
         dimension = target.mesh.topological_dimension
         count = sum(block.cell_count for block in target.mesh.blocks)
         if corners.shape != (count, dimension + 1, dimension) or not np.all(
@@ -3559,6 +3658,12 @@ def _nested_affine_geometry(
             raise ValueError(
                 "nested_affine_geometry.target must be finite (target cells, d+1, d); got parent_reference_vertices must be finite (target cells, d+1, d)."
             )
+        homogeneous = require_reference_homogeneous(
+            corners,
+            parent_reference_homogeneous,
+            "nested_affine_geometry.parent",
+            budget=budget,
+        )
         parents = _parent_witness(
             parent_cells, count, sum(block.cell_count for block in source.mesh.blocks)
         )
@@ -3567,23 +3672,19 @@ def _nested_affine_geometry(
         parent_origins = np.zeros_like(target_origins)
         parent_frames = np.broadcast_to(np.eye(dimension), target_frames.shape).copy()
         if affine_coefficient_actions:
-            pairs = imported_nested_reference.nested_reference_pairs(
-                source.mesh,
+            bound = _bound_nested_reference(
+                source,
+                target,
                 actual_source_geometry,
-                target.mesh,
                 actual_target_geometry,
+                nested_reference,
                 parent_cells=parents,
                 parent_reference_vertices=corners,
+                parent_reference_homogeneous=homogeneous,
+                rooted=False,
+                certified=True,
                 budget=budget,
-            )
-            bound = mapped_measure_owner.certify_nested_geometry_pairs(
-                source.mesh,
-                actual_source_geometry,
-                target.mesh,
-                actual_target_geometry,
-                pairs,
-                budget=budget,
-            )
+            ).certified_bound()
             if bound != 0.0:
                 raise ValueError(
                     "nested_affine_geometry.coefficient_action must preserve the source map algebraically under its reference witnesses; got a nonzero algebraic difference."
@@ -3627,11 +3728,13 @@ def _prepare_affine_nested_field_transfer(
     source_index: int,
     target_index: int,
     parent_reference_vertices: ArrayLike | None,
+    parent_reference_homogeneous: ArrayLike | None,
     actual_source_geometry: CellGeometrySpec,
     actual_target_geometry: CellGeometrySpec,
     affine_coefficient_actions: bool,
     maximum_work: int,
     maximum_storage_bytes: int,
+    nested_reference: PreparedNestedReference | None,
     budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
     element = _field_signature(source, source_index, target, target_index)
@@ -3640,9 +3743,11 @@ def _prepare_affine_nested_field_transfer(
         target,
         parent_cells,
         parent_reference_vertices,
+        parent_reference_homogeneous,
         actual_source_geometry,
         actual_target_geometry,
         affine_coefficient_actions,
+        nested_reference=nested_reference,
         budget=budget,
     )
     parents = prepared.parents
@@ -3826,32 +3931,18 @@ def _reference_coarsening_admissible(
     )
 
 
-def _prepare_nested_field_transfer(
+def _nested_field_route(
     source: _NestedFiniteElementDiscretization,
     target: _NestedFiniteElementDiscretization,
-    parent_cells: ArrayLike | None,
+    source_index: int,
+    target_index: int,
     /,
     *,
-    field_name: str,
-    parent_reference_vertices: ArrayLike | None = None,
-    source_geometry: CellGeometrySpec | None = None,
-    target_geometry: CellGeometrySpec | None = None,
-    geometry_transition: CellGeometryTransition | None = None,
-    coarsening_witnesses: NestedReferenceWitnesses | None = None,
-    maximum_work: int = 100_000_000,
-    maximum_storage_bytes: int = 256_000_000,
-    budget: CoordinateEnclosureBudget,
-) -> FiniteElementFieldTransfer:
-    """Dispatch certified affine, mapped, and retained-reference field transfers."""
-    name = str(field_name)
-    source_index = source.field_index(name)
-    target_index = target.field_index(name)
-    actual_source_geometry = bound_coordinate_spec(
-        source, source_geometry, "source", budget=budget
-    )
-    actual_target_geometry = bound_coordinate_spec(
-        target, target_geometry, "target", budget=budget
-    )
+    parent_reference_vertices: ArrayLike | None,
+    geometry_transition: CellGeometryTransition | None,
+    coarsening_witnesses: NestedReferenceWitnesses | None,
+) -> _NestedFieldDispatch:
+    """Select the declared nested route from element and map families, never widths."""
     match source, target:
         case FiniteElementDiscretization(), FiniteElementDiscretization() if (
             coarsening_witnesses is not None
@@ -3859,19 +3950,11 @@ def _prepare_nested_field_transfer(
                 source, target, source_index, target_index
             )
         ):
-            return _prepare_reference_coarsening_projection(
-                source,
-                target,
-                actual_source_geometry,
-                actual_target_geometry,
-                field_name=name,
-                coarsening_witnesses=coarsening_witnesses,
-                budget=budget,
-            )
+            return _NestedFieldDispatch("reference-coarsening", False)
         case _:
             pass
     coefficient_action_geometry = any(
-        isinstance(element, BarycentricCellGeometryElement)
+        _coefficient_action_element(element)
         for space in (source, target)
         for element in space.coordinate_elements
     )
@@ -3881,13 +3964,7 @@ def _prepare_nested_field_transfer(
         and geometry_transition is None
         and parent_reference_vertices is not None
     )
-    if affine_coefficient_actions:
-        _require_coefficient_affine_simplices(
-            source, actual_source_geometry, "source", budget=budget
-        )
-        _require_coefficient_affine_simplices(
-            target, actual_target_geometry, "target", budget=budget
-        )
+    elements = source.elements[source_index] + target.elements[target_index]
     mapped = (
         any(
             block.cell_kind not in _SIMPLEX_KINDS.values()
@@ -3896,7 +3973,7 @@ def _prepare_nested_field_transfer(
         )
         or any(
             isinstance(element, RestrictedCellGeometryElement)
-            or isinstance(element, BarycentricCellGeometryElement)
+            or _coefficient_action_element(element)
             and not affine_coefficient_actions
             for space in (source, target)
             for element in space.coordinate_elements
@@ -3905,21 +3982,149 @@ def _prepare_nested_field_transfer(
         or geometry_transition is not None
         or (
             parent_reference_vertices is not None
-            and all(
-                element.form_basis is not None
-                for element in source.elements[source_index]
-                + target.elements[target_index]
-            )
+            and all(element.form_basis is not None for element in elements)
         )
     )
-    if mapped:
-        source_elements = source.elements[source_index]
-        target_elements = target.elements[target_index]
-        kinds = {element.conformity for element in source_elements + target_elements}
-        if all(
-            element.form_basis is not None
-            for element in source_elements + target_elements
-        ):
+    if not mapped:
+        return _NestedFieldDispatch(
+            "affine-coefficient" if affine_coefficient_actions else "affine",
+            affine_coefficient_actions,
+        )
+    if all(element.form_basis is not None for element in elements):
+        return _NestedFieldDispatch("mapped-form", affine_coefficient_actions)
+    match sorted({element.conformity for element in elements}):
+        case ["H1"]:
+            route: _NestedFieldRoute = "mapped-h1"
+        case ["L2"]:
+            route = "mapped-dg"
+        case ["Hcurl"] | ["Hdiv"]:
+            route = "mapped-compatible"
+        case _:
+            route = "mapped-conformity"
+    return _NestedFieldDispatch(route, affine_coefficient_actions)
+
+
+def _nested_reference_use(
+    route: _NestedFieldRoute,
+    /,
+    *,
+    parent_cells: ArrayLike | None,
+    parent_reference_vertices: ArrayLike | None,
+    parent_reference_homogeneous: ArrayLike | None,
+    geometry_transition: CellGeometryTransition | None,
+    coarsening_witnesses: NestedReferenceWitnesses | None,
+) -> _NestedReferenceUse | None:
+    """The exact nested pieces and witnesses each route reads, if any.
+
+    Mapped H(curl)/H(div) without form bases, the conformity refusal and the
+    physical-corner affine route read no nested pieces.
+    """
+    refinement = (parent_cells, parent_reference_vertices, parent_reference_homogeneous)
+    match route:
+        case "reference-coarsening":
+            return _NestedReferenceUse(
+                False, False, None, None, None, None, coarsening_witnesses
+            )
+        case "affine-coefficient":
+            return _NestedReferenceUse(False, True, *refinement, None, None)
+        case "mapped-h1":
+            return _NestedReferenceUse(
+                False, True, *refinement, geometry_transition, None
+            )
+        case "mapped-dg":
+            return _NestedReferenceUse(True, True, *refinement, geometry_transition, None)
+        case "mapped-form":
+            return _NestedReferenceUse(
+                True, True, *refinement, geometry_transition, coarsening_witnesses
+            )
+        case "affine" | "mapped-compatible" | "mapped-conformity":
+            return None
+        case invalid:
+            assert_never(invalid)
+
+
+def _prepare_nested_field_transfer(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    parent_cells: ArrayLike | None,
+    /,
+    *,
+    field_name: str,
+    parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
+    source_geometry: CellGeometrySpec | None = None,
+    target_geometry: CellGeometrySpec | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    coarsening_witnesses: NestedReferenceWitnesses | None = None,
+    maximum_work: int = 100_000_000,
+    maximum_storage_bytes: int = 256_000_000,
+    nested_reference: PreparedNestedReference | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> FiniteElementFieldTransfer:
+    """Dispatch certified affine, mapped, and retained-reference field transfers."""
+    name = str(field_name)
+    source_index = source.field_index(name)
+    target_index = target.field_index(name)
+    dispatch = _nested_field_route(
+        source,
+        target,
+        source_index,
+        target_index,
+        parent_reference_vertices=parent_reference_vertices,
+        geometry_transition=geometry_transition,
+        coarsening_witnesses=coarsening_witnesses,
+    )
+    if (
+        nested_reference is not None
+        and _nested_reference_use(
+            dispatch.route,
+            parent_cells=parent_cells,
+            parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
+        )
+        is None
+    ):
+        raise ValueError(
+            f"prepare_nested_field_transfer.nested_reference must be None for a route without nested pieces; got route={dispatch.route!r}"
+        )
+    actual_source_geometry = bound_coordinate_spec(
+        source, source_geometry, "source", budget=budget
+    )
+    actual_target_geometry = bound_coordinate_spec(
+        target, target_geometry, "target", budget=budget
+    )
+    if dispatch.coefficient_actions:
+        _require_coefficient_affine_simplices(
+            source, actual_source_geometry, "source", budget=budget
+        )
+        _require_coefficient_affine_simplices(
+            target, actual_target_geometry, "target", budget=budget
+        )
+    match dispatch.route:
+        case "reference-coarsening":
+            match source, target, coarsening_witnesses:
+                case (
+                    FiniteElementDiscretization(),
+                    FiniteElementDiscretization(),
+                    NestedReferenceWitnesses(),
+                ):
+                    return _prepare_reference_coarsening_projection(
+                        source,
+                        target,
+                        actual_source_geometry,
+                        actual_target_geometry,
+                        field_name=name,
+                        coarsening_witnesses=coarsening_witnesses,
+                        nested_reference=nested_reference,
+                        budget=budget,
+                    )
+                case _:
+                    raise ValueError(
+                        "prepare_nested_field_transfer.configuration must provide full discretizations and coarsening witnesses for reference coarsening; got incompatible inputs."
+                    )
+        case "mapped-form":
             return _prepare_mapped_nested_compatible_transfer(
                 source,
                 target,
@@ -3928,47 +4133,55 @@ def _prepare_nested_field_transfer(
                 field_name=name,
                 parent_cells=parent_cells,
                 parent_reference_vertices=parent_reference_vertices,
+                parent_reference_homogeneous=parent_reference_homogeneous,
                 geometry_transition=geometry_transition,
                 coarsening_witnesses=coarsening_witnesses,
                 maximum_work=maximum_work,
                 maximum_storage_bytes=maximum_storage_bytes,
+                nested_reference=nested_reference,
                 budget=budget,
             )
-        match sorted(kinds):
-            case ["H1"]:
-                prepare = _prepare_mapped_nested_h1_transfer
-            case ["L2"]:
-                prepare = prepare_mapped_nested_dg_transfer
-            case ["Hcurl"] | ["Hdiv"]:
-                prepare = _prepare_mapped_nested_compatible_transfer
-            case _:
-                raise ValueError(
-                    "prepare_nested_field_transfer.configuration must preserve field-family conformity; got Mapped nested transfer cannot change field-family conformity."
-                )
-        return prepare(
-            source,
-            target,
-            actual_source_geometry,
-            actual_target_geometry,
-            field_name=name,
-            parent_cells=parent_cells,
-            parent_reference_vertices=parent_reference_vertices,
-            geometry_transition=geometry_transition,
-            budget=budget,
-        )
-    return _prepare_affine_nested_field_transfer(
+        case "mapped-h1":
+            prepare = _prepare_mapped_nested_h1_transfer
+        case "mapped-dg":
+            prepare = prepare_mapped_nested_dg_transfer
+        case "mapped-compatible":
+            prepare = _prepare_mapped_nested_compatible_transfer
+        case "mapped-conformity":
+            raise ValueError(
+                "prepare_nested_field_transfer.configuration must preserve field-family conformity; got Mapped nested transfer cannot change field-family conformity."
+            )
+        case "affine" | "affine-coefficient":
+            return _prepare_affine_nested_field_transfer(
+                source,
+                target,
+                parent_cells,
+                name=name,
+                source_index=source_index,
+                target_index=target_index,
+                parent_reference_vertices=parent_reference_vertices,
+                parent_reference_homogeneous=parent_reference_homogeneous,
+                actual_source_geometry=actual_source_geometry,
+                actual_target_geometry=actual_target_geometry,
+                affine_coefficient_actions=dispatch.coefficient_actions,
+                maximum_work=maximum_work,
+                maximum_storage_bytes=maximum_storage_bytes,
+                nested_reference=nested_reference,
+                budget=budget,
+            )
+        case invalid:
+            assert_never(invalid)
+    return prepare(
         source,
         target,
-        parent_cells,
-        name=name,
-        source_index=source_index,
-        target_index=target_index,
+        actual_source_geometry,
+        actual_target_geometry,
+        field_name=name,
+        parent_cells=parent_cells,
         parent_reference_vertices=parent_reference_vertices,
-        actual_source_geometry=actual_source_geometry,
-        actual_target_geometry=actual_target_geometry,
-        affine_coefficient_actions=affine_coefficient_actions,
-        maximum_work=maximum_work,
-        maximum_storage_bytes=maximum_storage_bytes,
+        parent_reference_homogeneous=parent_reference_homogeneous,
+        geometry_transition=geometry_transition,
+        nested_reference=nested_reference,
         budget=budget,
     )
 
@@ -4307,7 +4520,9 @@ def _mapped_dg_input(
     field_name: str,
     parent_cells: ArrayLike | None,
     parent_reference_vertices: ArrayLike | None,
+    parent_reference_homogeneous: ArrayLike | None,
     geometry_transition: CellGeometryTransition | None,
+    nested_reference: PreparedNestedReference | None,
     budget: CoordinateEnclosureBudget,
 ) -> _MappedDgInput:
     name = canonical_identifier(field_name, "field_name")
@@ -4328,16 +4543,21 @@ def _mapped_dg_input(
         raise ValueError(
             "mapped_dg_input.source must agree with the declared geometry, topology, and field layout; got Mapped DG source and target component payloads differ."
         )
-    pairs, geometry_bound = rooted_nested_reference_pairs(
-        source.mesh,
+    reference = _bound_nested_reference(
+        source,
+        target,
         source_geometry,
-        target.mesh,
         target_geometry,
+        nested_reference,
         parent_cells=parent_cells,
         parent_reference_vertices=parent_reference_vertices,
+        parent_reference_homogeneous=parent_reference_homogeneous,
         geometry_transition=geometry_transition,
+        rooted=True,
+        certified=True,
         budget=budget,
     )
+    pairs, geometry_bound = reference.pairs, reference.certified_bound()
     source_geometry_cells = mapped_measure_owner.mapped_geometry_cells(
         source.mesh, source_geometry, budget=budget
     )
@@ -4420,6 +4640,8 @@ def _mapped_dg_cell_forms(
     target_geometry_cells = prepared.target_geometry_cells
     source_size = source.dof_maps[source_index].global_dof_count
     target_size = target.dof_maps[target_index].global_dof_count
+    # Measures/errors survive every local integration; expansion scratch does not.
+    budget.reserve(0, 16 * (source_size + target_size))
     source_measures, target_measures = np.zeros(source_size), np.zeros(target_size)
     source_errors, target_errors = np.zeros(source_size), np.zeros(target_size)
     masses: list[NDArray[np.float64]] = []
@@ -4441,62 +4663,67 @@ def _mapped_dg_cell_forms(
         for cell, ((element, route, basis), (geometry_element, local)) in enumerate(
             zip(cells, geometries, strict=True)
         ):
-            density = (
-                _mapped_dg_embedded_density(
-                    geometry_element,
-                    local,
-                    uniform_goal,
-                    integration_work,
-                    density_cache,
-                    budget=budget,
-                )
-                if embedded
-                else mapped_measure_owner.mapped_density_expression(
-                    geometry_element, local, budget=budget
-                )
-            )
-            chart_basis = (
-                tuple(
-                    imported_coordinate_enclosure.compose(
-                        term,
-                        imported_coordinate_enclosure.chart_arguments(
-                            element.cell_kind,
-                            element.topological_dimension,
-                            budget=budget,
-                        ),
+            with budget.temporary_scope():
+                density = (
+                    _mapped_dg_embedded_density(
+                        geometry_element,
+                        local,
+                        uniform_goal,
+                        integration_work,
+                        density_cache,
                         budget=budget,
                     )
-                    for term in basis
+                    if embedded
+                    else mapped_measure_owner.mapped_density_expression(
+                        geometry_element, local, budget=budget
+                    )
                 )
-                if element.cell_kind != "pyramid"
-                else basis
-            )
-            for dof, term in zip(route, chart_basis, strict=True):
-                measures[dof], errors[dof] = _mapped_dg_integral(
-                    term, density, element.cell_kind, integration_work, budget=budget
+                chart_basis = (
+                    tuple(
+                        imported_coordinate_enclosure.compose(
+                            term,
+                            imported_coordinate_enclosure.chart_arguments(
+                                element.cell_kind,
+                                element.topological_dimension,
+                                budget=budget,
+                            ),
+                            budget=budget,
+                        )
+                        for term in basis
+                    )
+                    if element.cell_kind != "pyramid"
+                    else basis
                 )
-            if is_target:
-                mass, error = _mapped_dg_forms(
-                    chart_basis,
-                    chart_basis,
-                    density,
-                    element.cell_kind,
-                    integration_work,
-                    budget=budget,
-                )
-                masses.append(mass)
-                integration_error += float(np.sum(error))
-                root_element = geometry_element
-                while isinstance(
-                    root_element, imported_cell_geometry.RestrictedCellGeometryElement
-                ):
-                    root_element = root_element.source_element
-                key = (
-                    element.element_id,
-                    geometry_element.cell_kind,
-                    root_element.element_id,
-                )
-                groups.setdefault(key, []).append(cell)
+                for dof, term in zip(route, chart_basis, strict=True):
+                    measures[dof], errors[dof] = _mapped_dg_integral(
+                        term, density, element.cell_kind, integration_work, budget=budget
+                    )
+                if is_target:
+                    budget.reserve(0, 16 * len(chart_basis) ** 2)
+                    mass, error = _mapped_dg_forms(
+                        chart_basis,
+                        chart_basis,
+                        density,
+                        element.cell_kind,
+                        integration_work,
+                        budget=budget,
+                    )
+                    budget.retain_owner(mass)
+                    masses.append(mass)
+                    integration_error += float(np.sum(error))
+                    root_element = geometry_element
+                    while isinstance(
+                        root_element, imported_cell_geometry.RestrictedCellGeometryElement
+                    ):
+                        root_element = root_element.source_element
+                    key = (
+                        element.element_id,
+                        geometry_element.cell_kind,
+                        root_element.element_id,
+                    )
+                    groups.setdefault(key, []).append(cell)
+                    del mass, error
+                del density, chart_basis, term
     return _MappedDgForms(
         source_measures,
         target_measures,
@@ -4532,77 +4759,83 @@ def _mapped_dg_patch_forms(
         source.mesh.topological_dimension == 2 and source.mesh.ambient_dimension == 3
     )
     for pair in pairs:
-        se, sr, sb = source_cells[pair.source_cell]
-        te, tr, tb = target_cells[pair.target_cell]
-        fine_element, fine_local = (
-            source_geometry_cells[pair.source_cell]
-            if pair.fine_is_source
-            else target_geometry_cells[pair.target_cell]
-        )
-        fine_kind = fine_element.cell_kind
-        match pair:
-            case PolynomialReferencePair():
-                if pair.fine_is_source:
-                    first = tuple(
-                        imported_coordinate_enclosure.compose(
-                            value, pair.arguments, budget=budget
+        with budget.temporary_scope():
+            se, sr, sb = source_cells[pair.source_cell]
+            te, tr, tb = target_cells[pair.target_cell]
+            fine_element, fine_local = (
+                source_geometry_cells[pair.source_cell]
+                if pair.fine_is_source
+                else target_geometry_cells[pair.target_cell]
+            )
+            fine_kind = fine_element.cell_kind
+            match pair:
+                case PolynomialReferencePair():
+                    if pair.fine_is_source:
+                        first = tuple(
+                            imported_coordinate_enclosure.compose(
+                                value, pair.arguments, budget=budget
+                            )
+                            for value in tb
                         )
-                        for value in tb
-                    )
-                    second = tuple(sb)
-                else:
-                    first = tuple(tb)
-                    second = tuple(
-                        imported_coordinate_enclosure.compose(
-                            value, pair.arguments, budget=budget
+                        second = tuple(sb)
+                    else:
+                        first = tuple(tb)
+                        second = tuple(
+                            imported_coordinate_enclosure.compose(
+                                value, pair.arguments, budget=budget
+                            )
+                            for value in sb
                         )
-                        for value in sb
+                case NestedReferencePair() if pair.fine_is_source:
+                    matrix, offset = rational_pair_arrays(pair)
+                    first = mapped_measure_owner.mapped_expression_restriction(
+                        tb, te.cell_kind, fine_kind, matrix, offset, budget=budget
                     )
-            case NestedReferencePair() if pair.fine_is_source:
-                first = mapped_measure_owner.mapped_expression_restriction(
-                    tb, te.cell_kind, fine_kind, pair.matrix, pair.offset, budget=budget
-                )
-                second = mapped_measure_owner.mapped_expression_restriction(
-                    sb,
-                    se.cell_kind,
-                    fine_kind,
-                    np.eye(se.topological_dimension),
-                    np.zeros(se.topological_dimension),
+                    second = mapped_measure_owner.mapped_expression_restriction(
+                        sb,
+                        se.cell_kind,
+                        fine_kind,
+                        np.eye(se.topological_dimension),
+                        np.zeros(se.topological_dimension),
+                        budget=budget,
+                    )
+                case NestedReferencePair():
+                    first = mapped_measure_owner.mapped_expression_restriction(
+                        tb,
+                        te.cell_kind,
+                        fine_kind,
+                        np.eye(te.topological_dimension),
+                        np.zeros(te.topological_dimension),
+                        budget=budget,
+                    )
+                    matrix, offset = rational_pair_arrays(pair)
+                    second = mapped_measure_owner.mapped_expression_restriction(
+                        sb, se.cell_kind, fine_kind, matrix, offset, budget=budget
+                    )
+                case _:
+                    assert_never(pair)
+            density = (
+                _mapped_dg_embedded_density(
+                    fine_element,
+                    fine_local,
+                    uniform_goal,
+                    integration_work,
+                    density_cache,
                     budget=budget,
                 )
-            case NestedReferencePair():
-                first = mapped_measure_owner.mapped_expression_restriction(
-                    tb,
-                    te.cell_kind,
-                    fine_kind,
-                    np.eye(te.topological_dimension),
-                    np.zeros(te.topological_dimension),
-                    budget=budget,
+                if embedded
+                else mapped_measure_owner.mapped_density_expression(
+                    fine_element, fine_local, budget=budget
                 )
-                second = mapped_measure_owner.mapped_expression_restriction(
-                    sb, se.cell_kind, fine_kind, pair.matrix, pair.offset, budget=budget
-                )
-            case _:
-                assert_never(pair)
-        density = (
-            _mapped_dg_embedded_density(
-                fine_element,
-                fine_local,
-                uniform_goal,
-                integration_work,
-                density_cache,
-                budget=budget,
             )
-            if embedded
-            else mapped_measure_owner.mapped_density_expression(
-                fine_element, fine_local, budget=budget
+            budget.reserve(0, 16 * len(first) * len(second))
+            form, error = _mapped_dg_forms(
+                first, second, density, fine_kind, integration_work, budget=budget
             )
-        )
-        form, error = _mapped_dg_forms(
-            first, second, density, fine_kind, integration_work, budget=budget
-        )
-        mixed[pair.target_cell][pair.source_cell] = form
-        integration_error += float(np.sum(error))
+            budget.retain_owner(form)
+            mixed[pair.target_cell][pair.source_cell] = form
+            integration_error += float(np.sum(error))
+            del first, second, density, form, error
     return _MappedDgForms(
         source_measures,
         target_measures,
@@ -4873,7 +5106,9 @@ def prepare_mapped_nested_dg_transfer(
     field_name: str,
     parent_cells: ArrayLike | None = None,
     parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
     geometry_transition: CellGeometryTransition | None = None,
+    nested_reference: PreparedNestedReference | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
     """Prepare physical cell-local L2 DG projection over certified nested patches.
@@ -4882,6 +5117,7 @@ def prepare_mapped_nested_dg_transfer(
     charts), with explicit outward publication errors. Local masses are batched
     by represented field and geometry descriptors and solved by native SVD factors.
     The sparse primal and its algebraic transpose preserve all payload axes.
+    A supplied rooted ``nested_reference`` must bind these maps and witnesses.
     """
     with budget.measurement(), budget.temporary_scope():
         try:
@@ -4893,7 +5129,9 @@ def prepare_mapped_nested_dg_transfer(
                 field_name=field_name,
                 parent_cells=parent_cells,
                 parent_reference_vertices=parent_reference_vertices,
+                parent_reference_homogeneous=parent_reference_homogeneous,
                 geometry_transition=geometry_transition,
+                nested_reference=nested_reference,
                 budget=budget,
             )
             forms = _mapped_dg_cell_forms(source, target, prepared, budget=budget)
@@ -5015,6 +5253,57 @@ def _reference_contains(
     )
 
 
+class _NodalPattern(NamedTuple):
+    """Source nodal functionals shared by every pair with one child law."""
+
+    source_block: int
+    target_block: int
+    selected: NDArray[np.bool_]
+    values: NDArray[np.float64]
+    condition: float
+
+
+def _mapped_h1_pattern(
+    source_block: int,
+    target_block: int,
+    source_element: FiniteElementSpec,
+    target_element: FiniteElementSpec,
+    pair: NestedReferencePair,
+    /,
+) -> _NodalPattern:
+    """Evaluate one pair's oriented-free nodal functionals in its own shapes."""
+    nodes = np.asarray(target_element.reference_nodes, dtype=np.float64)
+    condition = _frame_condition(pair.matrix[None])
+    if pair.fine_is_source:
+        solve = imported_linalg.solve_small_linear(
+            imported_linalg.SmallLinearSolvePlan(pair.matrix.shape[0]),
+            pair.matrix,
+            (nodes - pair.offset).T,
+        )
+        if not bool(np.all(np.asarray(solve.successful))):
+            raise ValueError(
+                "prepare_mapped_nested_h1_transfer.configuration must have a nonsingular chart with resolved orientation; got Mapped H1 coarsening has a singular reference chart."
+            )
+        points = np.asarray(solve.value, dtype=np.float64).T
+        selected = _reference_contains(
+            source_element.cell_kind,
+            points,
+            CLAIM_ULPS * np.finfo(np.float64).eps * condition,
+        )
+    else:
+        points = nodes @ pair.matrix.T + pair.offset
+        selected = np.ones(nodes.shape[0], dtype=np.bool_)
+    if not np.any(selected):
+        values = np.zeros((0, source_element.local_dof_count), dtype=np.float64)
+        return _NodalPattern(source_block, target_block, selected, values, condition)
+    values, _ = tabulated(source_element, points[selected])
+    if not np.all(np.isfinite(values)):
+        raise ValueError(
+            "prepare_mapped_nested_h1_transfer.source must be finite; got Mapped H1 source nodal functionals are not finite."
+        )
+    return _NodalPattern(source_block, target_block, selected, values, condition)
+
+
 def _mapped_h1_functional_rows(
     source: _NestedFiniteElementDiscretization,
     target: _NestedFiniteElementDiscretization,
@@ -5024,79 +5313,119 @@ def _mapped_h1_functional_rows(
     target_dofs: FiniteElementDofMap,
     pairs: tuple[NestedReferencePair, ...],
 ) -> tuple[np.ndarray, np.ndarray, float, float, int]:
-    """Evaluate oriented nodal functionals and reconcile shared target rows."""
+    """Evaluate oriented nodal functionals and reconcile shared target rows.
+
+    A pair's reference functionals depend only on its block elements and its
+    binary64 child law. Each distinct law is evaluated once with the exact
+    per-pair arithmetic and shapes; routing and orientation stay per pair.
+    """
     source_starts = np.cumsum(
         (0,) + tuple(block.cell_count for block in source.mesh.blocks)
     )
     target_starts = np.cumsum(
         (0,) + tuple(block.cell_count for block in target.mesh.blocks)
     )
-    candidate_targets: list[int] = []
-    candidate_sources: list[NDArray[np.int64]] = []
-    candidate_values: list[NDArray[np.float64]] = []
-    frame_condition = 1.0
-    for pair in pairs:
-        source_block = int(
-            np.searchsorted(source_starts, pair.source_cell, side="right") - 1
-        )
-        target_block = int(
-            np.searchsorted(target_starts, pair.target_cell, side="right") - 1
-        )
-        source_local = pair.source_cell - int(source_starts[source_block])
-        target_local = pair.target_cell - int(target_starts[target_block])
-        source_element, target_element = (
-            source_elements[source_block],
-            target_elements[target_block],
-        )
-        nodes = np.asarray(target_element.reference_nodes, dtype=np.float64)
-        condition = _frame_condition(pair.matrix[None])
-        frame_condition = max(frame_condition, condition)
-        if pair.fine_is_source:
-            solve = imported_linalg.solve_small_linear(
-                imported_linalg.SmallLinearSolvePlan(pair.matrix.shape[0]),
-                pair.matrix,
-                (nodes - pair.offset).T,
-            )
-            if not bool(np.all(np.asarray(solve.successful))):
-                raise ValueError(
-                    "prepare_mapped_nested_h1_transfer.configuration must have a nonsingular chart with resolved orientation; got Mapped H1 coarsening has a singular reference chart."
-                )
-            points = np.asarray(solve.value, dtype=np.float64).T
-            selected = _reference_contains(
-                source_element.cell_kind,
-                points,
-                CLAIM_ULPS * np.finfo(np.float64).eps * condition,
-            )
-        else:
-            points = nodes @ pair.matrix.T + pair.offset
-            selected = np.ones(nodes.shape[0], dtype=np.bool_)
-        if not np.any(selected):
-            continue
-        values, _ = tabulated(source_element, points[selected])
-        if not np.all(np.isfinite(values)):
-            raise ValueError(
-                "prepare_mapped_nested_h1_transfer.source must be finite; got Mapped H1 source nodal functionals are not finite."
-            )
-        columns = np.asarray(source_dofs.cell_dofs[source_block])[source_local]
-        source_signs = np.asarray(source_dofs.orientations[source_block])[source_local]
-        targets = np.asarray(target_dofs.cell_dofs[target_block])[target_local, selected]
-        target_signs = np.asarray(target_dofs.orientations[target_block])[
-            target_local, selected
-        ]
-        candidate_targets.extend(targets.tolist())
-        candidate_sources.extend(np.broadcast_to(columns, values.shape))
-        candidate_values.extend(values * source_signs[None] / target_signs[:, None])
-    width = max(element.local_dof_count for element in source_elements)
-    columns = np.zeros((len(candidate_targets), width), dtype=np.int64)
-    coefficients = np.zeros(columns.shape, dtype=np.float64)
-    for row, (indices, values) in enumerate(
-        zip(candidate_sources, candidate_values, strict=True)
+    count = len(pairs)
+    source_cells = np.fromiter(
+        (pair.source_cell for pair in pairs), dtype=np.int64, count=count
+    )
+    target_cells = np.fromiter(
+        (pair.target_cell for pair in pairs), dtype=np.int64, count=count
+    )
+    source_blocks = np.searchsorted(source_starts, source_cells, side="right") - 1
+    target_blocks = np.searchsorted(target_starts, target_cells, side="right") - 1
+    source_local = source_cells - source_starts[source_blocks]
+    target_local = target_cells - target_starts[target_blocks]
+    patterns: list[_NodalPattern] = []
+    known: dict[tuple[object, ...], int] = {}
+    pattern_rows = np.empty(count, dtype=np.int64)
+    for row, (pair, source_block, target_block) in enumerate(
+        zip(pairs, source_blocks.tolist(), target_blocks.tolist(), strict=True)
     ):
-        columns[row, : indices.size] = indices
-        coefficients[row, : values.size] = values
+        key = (
+            source_block,
+            target_block,
+            bool(pair.fine_is_source),
+            pair.matrix.shape,
+            np.asarray(pair.matrix, dtype=np.float64).tobytes(),
+            np.asarray(pair.offset, dtype=np.float64).tobytes(),
+        )
+        index = known.get(key)
+        if index is None:
+            index = len(patterns)
+            known[key] = index
+            patterns.append(
+                _mapped_h1_pattern(
+                    source_block,
+                    target_block,
+                    source_elements[source_block],
+                    target_elements[target_block],
+                    pair,
+                )
+            )
+        pattern_rows[row] = index
+    frame_condition = 1.0
+    for pattern in patterns:
+        frame_condition = max(frame_condition, pattern.condition)
+    width = max(element.local_dof_count for element in source_elements)
+    node_count = max((pattern.selected.shape[0] for pattern in patterns), default=1)
+    members: dict[tuple[int, int], list[int]] = {}
+    for index, pattern in enumerate(patterns):
+        members.setdefault((pattern.source_block, pattern.target_block), []).append(
+            index
+        )
+    slots = np.empty(len(patterns), dtype=np.int64)
+    order_keys: list[NDArray[np.int64]] = []
+    candidate_targets: list[NDArray[np.int64]] = []
+    candidate_columns: list[NDArray[np.int64]] = []
+    candidate_values: list[NDArray[np.float64]] = []
+    for (source_block, target_block), indices in members.items():
+        slots[indices] = np.arange(len(indices))
+        selected = np.stack([patterns[index].selected for index in indices])
+        local = source_elements[source_block].local_dof_count
+        nodal = np.zeros((len(indices), selected.shape[1], local), dtype=np.float64)
+        for slot, index in enumerate(indices):
+            nodal[slot, patterns[index].selected] = patterns[index].values
+        rows = np.flatnonzero(
+            (source_blocks == source_block) & (target_blocks == target_block)
+        )
+        laws = slots[pattern_rows[rows]]
+        # Row-major nonzero order is pair-major, node-minor within the block.
+        pair_index, node_index = np.nonzero(selected[laws])
+        sources = source_local[rows][pair_index]
+        targets = target_local[rows][pair_index]
+        source_signs = np.asarray(source_dofs.orientations[source_block])[sources]
+        target_signs = np.asarray(target_dofs.orientations[target_block])[
+            targets, node_index
+        ]
+        columns = np.zeros((pair_index.size, width), dtype=np.int64)
+        columns[:, :local] = np.asarray(source_dofs.cell_dofs[source_block])[sources]
+        coefficients = np.zeros((pair_index.size, width), dtype=np.float64)
+        coefficients[:, :local] = (
+            nodal[laws[pair_index], node_index] * source_signs / target_signs[:, None]
+        )
+        order_keys.append(rows[pair_index] * node_count + node_index)
+        candidate_targets.append(
+            np.asarray(target_dofs.cell_dofs[target_block])[targets, node_index].astype(
+                np.int64
+            )
+        )
+        candidate_columns.append(columns)
+        candidate_values.append(coefficients)
+    if order_keys:
+        # Pair-major, node-minor: the first owner of every shared target row
+        # is the pair and node that owned it in sequential order.
+        order = np.argsort(np.concatenate(order_keys), kind="stable")
+        targets_all = np.concatenate(candidate_targets)[order]
+        columns_all = np.concatenate(candidate_columns)[order]
+        coefficients = np.concatenate(candidate_values)[order]
+    else:
+        targets_all = np.zeros(0, dtype=np.int64)
+        columns_all = np.zeros((0, width), dtype=np.int64)
+        coefficients = np.zeros((0, width), dtype=np.float64)
     rows, values, continuity = owned_rows(
-        np.asarray(candidate_targets, dtype=np.int64)[:, None],
-        columns,
+        targets_all[:, None],
+        columns_all,
         coefficients[:, None],
         target_dofs.global_dof_count,
         source_dofs.global_dof_count,
@@ -5114,14 +5443,18 @@ def _prepare_mapped_nested_h1_transfer(
     field_name: str,
     parent_cells: ArrayLike | None = None,
     parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
     geometry_transition: CellGeometryTransition | None = None,
+    nested_reference: PreparedNestedReference | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
     """represented target nodal functionals, including full-patch coarsening.
 
     Coarsening and family charts need not have a field-space inclusion. This
     route therefore certifies nodal interpolation and shared trace agreement,
-    never claims full function reproduction or conserved H1 content.
+    never claims full function reproduction or conserved H1 content. A supplied
+    ``nested_reference`` must be the certified affine witness preparation of
+    exactly these maps and witnesses.
     """
 
     name = canonical_identifier(field_name, "field_name")
@@ -5155,19 +5488,21 @@ def _prepare_mapped_nested_h1_transfer(
         raise ValueError(
             "prepare_mapped_nested_h1_transfer.configuration must agree with the declared geometry, topology, and field layout; got Mapped nested H1 component payloads differ."
         )
-    pairs = imported_nested_reference.nested_reference_pairs(
-        source.mesh,
+    reference = _bound_nested_reference(
+        source,
+        target,
         source_geometry,
-        target.mesh,
         target_geometry,
+        nested_reference,
         parent_cells=parent_cells,
         parent_reference_vertices=parent_reference_vertices,
+        parent_reference_homogeneous=parent_reference_homogeneous,
         geometry_transition=geometry_transition,
+        rooted=False,
+        certified=True,
         budget=budget,
     )
-    geometry_bound = mapped_measure_owner.certify_nested_geometry_pairs(
-        source.mesh, source_geometry, target.mesh, target_geometry, pairs, budget=budget
-    )
+    pairs, geometry_bound = reference.affine_pieces(), reference.certified_bound()
     source_dofs, target_dofs = (
         source.dof_maps[source_index],
         target.dof_maps[target_index],
@@ -5252,69 +5587,6 @@ def _coordinate_geometry_id(geometry: CellGeometrySpec) -> str:
     return imported_cell_geometry_validity.cell_geometry_id(geometry)
 
 
-def _mapped_nested_compatible_preparation(
-    source: _NestedFiniteElementDiscretization,
-    target: _NestedFiniteElementDiscretization,
-    source_geometry: CellGeometrySpec,
-    target_geometry: CellGeometrySpec,
-    field_names: Sequence[str],
-    /,
-    *,
-    parent_cells: ArrayLike | None = None,
-    parent_reference_vertices: ArrayLike | None = None,
-    geometry_transition: CellGeometryTransition | None = None,
-    coarsening_witnesses: NestedReferenceWitnesses | None = None,
-    budget: CoordinateEnclosureBudget,
-) -> _MappedNestedCompatiblePreparation:
-    names = tuple(canonical_identifier(name, "field_name") for name in field_names)
-    if not names or len(set(names)) != len(names):
-        raise ValueError(
-            "mapped_nested_compatible_preparation.configuration must provide unique ordered field roles; got Compatible field preparation requires unique ordered field roles."
-        )
-    bindings = tuple(
-        (
-            _compatible_field_binding(source, name),
-            _compatible_field_binding(target, name),
-        )
-        for name in names
-    )
-    for (source_binding, target_binding), name in zip(bindings, names, strict=True):
-        source_index, target_index = source_binding[1], target_binding[1]
-        conformities = {
-            element.conformity
-            for element in source.elements[source_index] + target.elements[target_index]
-        }
-        if conformities not in ({"Hcurl"}, {"Hdiv"}) or any(
-            element.form_basis is None
-            for element in source.elements[source_index] + target.elements[target_index]
-        ):
-            raise ValueError(
-                f"mapped_nested_compatible_preparation.configuration must use a compatible form-basis field role; got Field {name!r} is not a declared compatible finite-element role."
-            )
-    pairs, geometry_bound = rooted_nested_reference_pairs(
-        source.mesh,
-        source_geometry,
-        target.mesh,
-        target_geometry,
-        parent_cells=parent_cells,
-        parent_reference_vertices=parent_reference_vertices,
-        geometry_transition=geometry_transition,
-        coarsening_witnesses=coarsening_witnesses,
-        budget=budget,
-    )
-    return _MappedNestedCompatiblePreparation(
-        source.prepared_id,
-        target.prepared_id,
-        source.mesh.numeric_version,
-        target.mesh.numeric_version,
-        _coordinate_geometry_id(source_geometry),
-        _coordinate_geometry_id(target_geometry),
-        bindings,
-        pairs,
-        geometry_bound,
-    )
-
-
 def _prepare_nested_compatible_field_transfers(
     source: _NestedFiniteElementDiscretization,
     target: _NestedFiniteElementDiscretization,
@@ -5323,12 +5595,14 @@ def _prepare_nested_compatible_field_transfers(
     *,
     field_names: Sequence[str],
     parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
     source_geometry: CellGeometrySpec | None = None,
     target_geometry: CellGeometrySpec | None = None,
     geometry_transition: CellGeometryTransition | None = None,
     coarsening_witnesses: NestedReferenceWitnesses | None = None,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
+    nested_reference: PreparedNestedReference | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> tuple[FiniteElementFieldTransfer, ...]:
     """Prepare ordered compatible fields from one authenticated nested substrate."""
@@ -5339,17 +5613,20 @@ def _prepare_nested_compatible_field_transfers(
     actual_target_geometry = bound_coordinate_spec(
         target, target_geometry, "target", budget=budget
     )
-    names = tuple(field_names)
-    preparation = _mapped_nested_compatible_preparation(
+    names = _require_compatible_fields(source, target, tuple(field_names))
+    reference = _bound_nested_reference(
         source,
         target,
         actual_source_geometry,
         actual_target_geometry,
-        names,
+        nested_reference,
         parent_cells=parent_cells,
         parent_reference_vertices=parent_reference_vertices,
+        parent_reference_homogeneous=parent_reference_homogeneous,
         geometry_transition=geometry_transition,
         coarsening_witnesses=coarsening_witnesses,
+        rooted=True,
+        certified=True,
         budget=budget,
     )
     return tuple(
@@ -5359,9 +5636,14 @@ def _prepare_nested_compatible_field_transfers(
             actual_source_geometry,
             actual_target_geometry,
             field_name=name,
+            parent_cells=parent_cells,
+            parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
             maximum_work=maximum_work,
             maximum_storage_bytes=maximum_storage_bytes,
-            _reference_preparation=preparation,
+            nested_reference=reference,
             budget=budget,
         )
         for name in names
@@ -5378,32 +5660,34 @@ def _prepare_mapped_nested_compatible_transfer(
     field_name: str,
     parent_cells: ArrayLike | None = None,
     parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
     geometry_transition: CellGeometryTransition | None = None,
     coarsening_witnesses: NestedReferenceWitnesses | None = None,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
-    _reference_preparation: _MappedNestedCompatiblePreparation | None = None,
+    nested_reference: PreparedNestedReference | None = None,
     budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
 
     source_index = source.field_index(field_name)
     target_index = target.field_index(field_name)
-    preparation = _reference_preparation
-    if preparation is None:
-        preparation = _mapped_nested_compatible_preparation(
-            source,
-            target,
-            source_geometry,
-            target_geometry,
-            (field_name,),
-            parent_cells=parent_cells,
-            parent_reference_vertices=parent_reference_vertices,
-            geometry_transition=geometry_transition,
-            coarsening_witnesses=coarsening_witnesses,
-            budget=budget,
-        )
-    preparation.require(source, target, source_geometry, target_geometry, field_name)
-    pairs, geometry_bound = preparation.pairs, preparation.geometry_bound
+    _require_compatible_fields(source, target, (field_name,))
+    reference = _bound_nested_reference(
+        source,
+        target,
+        source_geometry,
+        target_geometry,
+        nested_reference,
+        parent_cells=parent_cells,
+        parent_reference_vertices=parent_reference_vertices,
+        parent_reference_homogeneous=parent_reference_homogeneous,
+        geometry_transition=geometry_transition,
+        coarsening_witnesses=coarsening_witnesses,
+        rooted=True,
+        certified=True,
+        budget=budget,
+    )
+    pairs, geometry_bound = reference.pairs, reference.certified_bound()
     actions = imported_mapped_form_transfer.prepare_form_patch_actions(
         source,
         target,
@@ -5571,6 +5855,7 @@ def _prepare_reference_coarsening_projection(
     *,
     field_name: str,
     coarsening_witnesses: NestedReferenceWitnesses,
+    nested_reference: PreparedNestedReference | None,
     budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
     """Conservative/commuting projection on the represented retained reference join."""
@@ -5586,14 +5871,17 @@ def _prepare_reference_coarsening_projection(
         target.field_index(field_name),
     )
     element = _field_signature(source, source_index, target, target_index)
-    pairs = imported_nested_reference.nested_reference_pairs(
-        source.mesh,
+    pairs = _bound_nested_reference(
+        source,
+        target,
         source_geometry,
-        target.mesh,
         target_geometry,
+        nested_reference,
         coarsening_witnesses=coarsening_witnesses,
+        rooted=False,
+        certified=False,
         budget=budget,
-    )
+    ).affine_pieces()
     if not all(pair.fine_is_source for pair in pairs):
         raise ValueError(
             "prepare_reference_coarsening_projection.source must provide fine-source integration pieces; got Reference coarsening projection needs fine-source integration pieces."
@@ -5660,6 +5948,15 @@ def _prepare_reference_coarsening_projection(
         ),
         "reference": array_tree_fingerprint(
             np.asarray(coarsening_witnesses.fine_reference_vertices)
+        ),
+        **(
+            {}
+            if coarsening_witnesses.fine_reference_homogeneous is None
+            else {
+                "reference_homogeneous": array_tree_fingerprint(
+                    np.asarray(coarsening_witnesses.fine_reference_homogeneous)
+                )
+            }
         ),
     }
     mixed = coalesced_map(
@@ -6162,6 +6459,152 @@ def _prepare_source_realization_field_transfer(
     )
 
 
+@contextmanager
+def _owned_transfer_budget(
+    maximum_work: int,
+    maximum_storage_bytes: int,
+    source_geometry: CellGeometrySpec | None,
+    target_geometry: CellGeometrySpec | None,
+    /,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """One fresh call-owned ticket bounded by the declared work and storage."""
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=maximum_storage_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=maximum_work,
+            maximum_memory_bytes=maximum_storage_bytes,
+        )
+        with budget.activate():
+            yield budget
+
+
+@checked
+def prepare_shared_nested_field_transfer(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    parent_cells: ArrayLike | None,
+    /,
+    *,
+    field_name: str,
+    parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
+    source_geometry: CellGeometrySpec | None = None,
+    target_geometry: CellGeometrySpec | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    coarsening_witnesses: NestedReferenceWitnesses | None = None,
+    prepared: Sequence[PreparedNestedReference] = (),
+    maximum_work: int = 100_000_000,
+    maximum_storage_bytes: int = 256_000_000,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> tuple[FiniteElementFieldTransfer, PreparedNestedReference | None]:
+    """Prepare one field of a transition, sharing its nested pieces across fields.
+
+    Arguments are those of `prepare_nested_field_transfer`. A supplied live
+    request budget owns every preparation; standalone callers instead own one
+    bounded ticket. Returns the transfer and the nested preparation its route
+    read (``None`` for routes without nested pieces). An element of ``prepared``
+    binding exactly this route's endpoint maps, witnesses and route is reused,
+    with its completed charges admitted by the receiving budget.
+    """
+    name = str(field_name)
+    dispatch = _nested_field_route(
+        source,
+        target,
+        source.field_index(name),
+        target.field_index(name),
+        parent_reference_vertices=parent_reference_vertices,
+        geometry_transition=geometry_transition,
+        coarsening_witnesses=coarsening_witnesses,
+    )
+    use = _nested_reference_use(
+        dispatch.route,
+        parent_cells=parent_cells,
+        parent_reference_vertices=parent_reference_vertices,
+        parent_reference_homogeneous=parent_reference_homogeneous,
+        geometry_transition=geometry_transition,
+        coarsening_witnesses=coarsening_witnesses,
+    )
+    context = (
+        nullcontext(budget)
+        if budget is not None
+        else _owned_transfer_budget(
+            maximum_work, maximum_storage_bytes, source_geometry, target_geometry
+        )
+    )
+    with context as budget:
+        reference: PreparedNestedReference | None = None
+        if use is not None:
+            actual_source_geometry = (
+                source_geometry
+                if source_geometry is not None
+                else bound_coordinate_spec(source, None, "source", budget=budget)
+            )
+            actual_target_geometry = (
+                target_geometry
+                if target_geometry is not None
+                else bound_coordinate_spec(target, None, "target", budget=budget)
+            )
+            binding = nested_reference_binding(
+                source.mesh,
+                actual_source_geometry,
+                target.mesh,
+                actual_target_geometry,
+                parent_cells=use.parent_cells,
+                parent_reference_vertices=use.parent_reference_vertices,
+                parent_reference_homogeneous=use.parent_reference_homogeneous,
+                geometry_transition=use.geometry_transition,
+                coarsening_witnesses=use.coarsening_witnesses,
+            )
+            reference = next(
+                (
+                    candidate
+                    for candidate in prepared
+                    if candidate.serves(
+                        binding, rooted=use.rooted, certified=use.certified
+                    )
+                ),
+                None,
+            )
+            if reference is None:
+                reference = prepare_nested_reference(
+                    source.mesh,
+                    actual_source_geometry,
+                    target.mesh,
+                    actual_target_geometry,
+                    parent_cells=use.parent_cells,
+                    parent_reference_vertices=use.parent_reference_vertices,
+                    parent_reference_homogeneous=use.parent_reference_homogeneous,
+                    geometry_transition=use.geometry_transition,
+                    coarsening_witnesses=use.coarsening_witnesses,
+                    rooted=use.rooted,
+                    certify=use.certified,
+                    budget=budget,
+                )
+        transfer = _prepare_nested_field_transfer(
+            source,
+            target,
+            parent_cells,
+            field_name=name,
+            parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
+            nested_reference=reference,
+            budget=budget,
+        )
+    return transfer, reference
+
+
 @checked
 def prepare_nested_field_transfer(
     source: _NestedFiniteElementDiscretization,
@@ -6171,12 +6614,14 @@ def prepare_nested_field_transfer(
     *,
     field_name: str,
     parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
     source_geometry: CellGeometrySpec | None = None,
     target_geometry: CellGeometrySpec | None = None,
     geometry_transition: CellGeometryTransition | None = None,
     coarsening_witnesses: NestedReferenceWitnesses | None = None,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
+    nested_reference: PreparedNestedReference | None = None,
     budget: CoordinateEnclosureBudget | None = None,
 ) -> FiniteElementFieldTransfer:
     """Prepare the algebraic transfer of one FE field onto a nested refinement.
@@ -6193,6 +6638,11 @@ def prepare_nested_field_transfer(
     reference coordinates, so curved Lagrange coordinate maps are admitted; the
     ``geometry`` defect then certifies that the target map is the algebraic
     restriction of the parent map at every target coordinate node.
+    ``parent_reference_homogeneous`` (``(C, d+1, d+1)``, e.g.
+    ``MeshAdaptationResult.parent_reference_homogeneous``) retains source-owned
+    exact corners such as level-set roots; algebraic nesting, measure, and
+    reference-tiling claims then use those rationals, and the binary64 corners
+    only drive numerical execution.
 
     Each target cell reconstructs the parent's basis functions in its own space,
     ``M^{-1} B`` with the target Piola-mapped basis (identity for H1/L2 Lagrange,
@@ -6226,6 +6676,13 @@ def prepare_nested_field_transfer(
     patches, including full-source coarsening. Compatible preparation obeys
     cumulative ``maximum_work`` and ``maximum_storage_bytes`` bounds.
 
+    ``nested_reference`` (the record `prepare_nested_reference` issued, as
+    returned by `prepare_shared_nested_field_transfer`) supplies the certified
+    nested pieces of this transition; only that issued record is admitted, and
+    it must bind exactly these meshes, coordinate maps, witnesses and the field's
+    route, or the call refuses. A route that reads no nested pieces refuses any
+    supplied one.
+
     A supplied budget retains request accounting; otherwise the call owns one
     ticket bounded by maximum_work and maximum_storage_bytes.
     """
@@ -6236,41 +6693,35 @@ def prepare_nested_field_transfer(
             parent_cells,
             field_name=field_name,
             parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
             source_geometry=source_geometry,
             target_geometry=target_geometry,
             geometry_transition=geometry_transition,
             coarsening_witnesses=coarsening_witnesses,
             maximum_work=maximum_work,
             maximum_storage_bytes=maximum_storage_bytes,
+            nested_reference=nested_reference,
             budget=budget,
         )
-    with HostBatchTicket(
-        maximum_work,
-        queries_upper=field_transfer_query_upper(
-            maximum_work, source_geometry, target_geometry
-        ),
-        bytes_upper=maximum_storage_bytes,
-    ) as ticket:
-        budget = CoordinateEnclosureBudget(
-            ticket,
-            maximum_work_units=maximum_work,
-            maximum_memory_bytes=maximum_storage_bytes,
+    with _owned_transfer_budget(
+        maximum_work, maximum_storage_bytes, source_geometry, target_geometry
+    ) as owned:
+        return _prepare_nested_field_transfer(
+            source,
+            target,
+            parent_cells,
+            field_name=field_name,
+            parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
+            nested_reference=nested_reference,
+            budget=owned,
         )
-        with budget.activate():
-            return _prepare_nested_field_transfer(
-                source,
-                target,
-                parent_cells,
-                field_name=field_name,
-                parent_reference_vertices=parent_reference_vertices,
-                source_geometry=source_geometry,
-                target_geometry=target_geometry,
-                geometry_transition=geometry_transition,
-                coarsening_witnesses=coarsening_witnesses,
-                maximum_work=maximum_work,
-                maximum_storage_bytes=maximum_storage_bytes,
-                budget=budget,
-            )
 
 
 @checked
@@ -6282,18 +6733,23 @@ def prepare_nested_compatible_field_transfers(
     *,
     field_names: Sequence[str],
     parent_reference_vertices: ArrayLike | None = None,
+    parent_reference_homogeneous: ArrayLike | None = None,
     source_geometry: CellGeometrySpec | None = None,
     target_geometry: CellGeometrySpec | None = None,
     geometry_transition: CellGeometryTransition | None = None,
     coarsening_witnesses: NestedReferenceWitnesses | None = None,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
+    nested_reference: PreparedNestedReference | None = None,
     budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[FiniteElementFieldTransfer, ...]:
     """Prepare field-ordered compatible transfers on the declared nested geometry.
 
-    A supplied coordinate budget retains request accounting; otherwise the call
-    owns one ticket bounded by maximum_work and maximum_storage_bytes.
+    Every field reads one rooted nested preparation: ``nested_reference`` when
+    supplied (it must bind exactly these maps and witnesses), otherwise one
+    prepared here. A supplied coordinate budget retains request accounting;
+    otherwise the call owns one ticket bounded by maximum_work and
+    maximum_storage_bytes.
     """
     if budget is not None:
         return _prepare_nested_compatible_field_transfers(
@@ -6302,41 +6758,35 @@ def prepare_nested_compatible_field_transfers(
             parent_cells,
             field_names=field_names,
             parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
             source_geometry=source_geometry,
             target_geometry=target_geometry,
             geometry_transition=geometry_transition,
             coarsening_witnesses=coarsening_witnesses,
             maximum_work=maximum_work,
             maximum_storage_bytes=maximum_storage_bytes,
+            nested_reference=nested_reference,
             budget=budget,
         )
-    with HostBatchTicket(
-        maximum_work,
-        queries_upper=field_transfer_query_upper(
-            maximum_work, source_geometry, target_geometry
-        ),
-        bytes_upper=maximum_storage_bytes,
-    ) as ticket:
-        budget = CoordinateEnclosureBudget(
-            ticket,
-            maximum_work_units=maximum_work,
-            maximum_memory_bytes=maximum_storage_bytes,
+    with _owned_transfer_budget(
+        maximum_work, maximum_storage_bytes, source_geometry, target_geometry
+    ) as owned:
+        return _prepare_nested_compatible_field_transfers(
+            source,
+            target,
+            parent_cells,
+            field_names=field_names,
+            parent_reference_vertices=parent_reference_vertices,
+            parent_reference_homogeneous=parent_reference_homogeneous,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
+            nested_reference=nested_reference,
+            budget=owned,
         )
-        with budget.activate():
-            return _prepare_nested_compatible_field_transfers(
-                source,
-                target,
-                parent_cells,
-                field_names=field_names,
-                parent_reference_vertices=parent_reference_vertices,
-                source_geometry=source_geometry,
-                target_geometry=target_geometry,
-                geometry_transition=geometry_transition,
-                coarsening_witnesses=coarsening_witnesses,
-                maximum_work=maximum_work,
-                maximum_storage_bytes=maximum_storage_bytes,
-                budget=budget,
-            )
 
 
 @checked

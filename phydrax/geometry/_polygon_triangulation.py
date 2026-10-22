@@ -11,7 +11,6 @@ from itertools import combinations
 import numpy as np
 
 from .._geometry_predicates import (
-    exact_charge,
     orient2d,
     orient3d,
     polygon_simplicity_2d,
@@ -246,20 +245,27 @@ def loop_triangles(
                 corners = tuple(
                     tuple(value for value in points[index]) for index in indices
                 )
-                if planar_primitives_owner.plane_key(corners, budget=budget) is None:
+                # Only the rank verdict survives; its rational temporaries do not.
+                with budget.temporary_scope():
+                    rank_two = (
+                        planar_primitives_owner.plane_key(corners, budget=budget)
+                        is not None
+                    )
+                if not rank_two:
                     failed[owner] = True
                     continue
                 exact_triangles.append(indices)
                 exact_owners.append(owner)
                 continue
-            # Charged outside the refusal handler: exhausting the request
-            # ledger is a resource decision, never a failed facet.
-            with exact_charge(
-                *exact_polyhedral_geometry_owner.triangulation_charge(
-                    points, indices, budget=budget
-                ),
-                budget=budget,
-            ):
+            # Admitted outside the refusal handler: exhausting the request
+            # ledger is a resource decision, never a failed facet. The loop
+            # proof charges every performed operation; the bound is a priori.
+            work, storage = exact_polyhedral_geometry_owner.triangulation_charge(
+                points, indices, budget=budget
+            )
+            with budget.temporary_scope():
+                budget.admit_work_bound(work, storage_upper=storage)
+                budget.reserve(0, storage)
                 try:
                     pieces = exact_polyhedral_geometry_owner.triangulate_loop(
                         points, indices, budget=budget

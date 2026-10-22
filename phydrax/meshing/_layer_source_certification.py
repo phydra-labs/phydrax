@@ -180,6 +180,7 @@ def layer_source_fidelity_requests(
         )
     )
     mesh = construction.mesh
+    work.charge(mesh.coordinates.shape[0] + mesh.entity_set(2).count)
     face_ids = dict(
         zip(
             _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(

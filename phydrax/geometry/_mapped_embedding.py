@@ -52,9 +52,11 @@ from __future__ import annotations
 
 import math
 import sys
+from collections.abc import Callable, Generator, Iterable, Sequence
+from contextlib import closing
 from fractions import Fraction
-from itertools import combinations
-from typing import assert_never, cast, final, NamedTuple
+from itertools import chain, combinations
+from typing import assert_never, cast, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -66,10 +68,16 @@ import phydrax.geometry._affine_mapped_contact as affine_mapped_contact_owner
 import phydrax.geometry._boundary_degree_embedding as boundary_degree_embedding_owner
 import phydrax.geometry._embedding_state as embedding_state_owner
 import phydrax.geometry._global_embedding as mesh_certificates_owner
+import phydrax.geometry._planar_primitives as planar_primitives_owner
 import phydrax.geometry._prism_embedding as prism_embedding_owner
 from phydrax.discretization._coordinate_budget import reserve_polynomial
 from phydrax.discretization._reference_cell_types import CellGeometryElement
 
+if TYPE_CHECKING:
+    from ._domain_chart_chain import _CarrierAdmission
+
+from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
@@ -114,6 +122,7 @@ from ..discretization._exact_algebraic_geometry import (
     reserve_algebraic_work,
 )
 from ..discretization._reference_cell import reference_cell_topology
+from ..linalg._small_batched import cofactor_determinant
 from ..typing import checked
 from ._embedding_cells import (
     BisectionWorklist,
@@ -123,11 +132,22 @@ from ._embedding_cells import (
     convex_triangle_union,
     domain as embedding_domain,
     identity_reference_map,
+    IntervalBoundaryCell,
+    IntervalBoundaryHomotopy,
+    IntervalSurfaceMap,
     vertices as embedding_vertices,
 )
 from ._embedding_state import ContactDecision, EmbeddingState, MeshCertificateLimits
 from ._mesh_check_names import MeshCertificateCheck
 from ._rational import rational_cross, rational_vector
+from ._interval_enclosure import (
+    interval_add,
+    interval_dot,
+    interval_multiply,
+    interval_subtract,
+)
+from ._rational import fraction_endpoint
+from ._planar_primitives import reserve_fraction_work
 
 
 def _planar_boundary_edges(
@@ -937,6 +957,58 @@ def _box_p_matrix_univalent(
     return True
 
 
+def root_injective(
+    cell: Cell,
+    element: CellGeometryElement,
+    local: coordinate_enclosure_owner.CoordinateSourceBank,
+    limits: MeshCertificateLimits,
+    state: EmbeddingState,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> MeshCertificateCheck | None:
+    """Reuse an earned root theorem, not its discarded Bernstein workspace.
+
+    Both callers construct the complete root map from this exact element and
+    coefficient bank. The reference family, ordered incidence, and every proof
+    limit remain bound to the result. Logical subdivision coverage still counts
+    against the receiving certificate, although its arithmetic is not repeated.
+    """
+    _, source_key = coordinate_enclosure_owner.coordinate_preparation_key(
+        element, local, budget=budget
+    )
+    budget.reserve(1 + len(cell.vertices) + sum(map(len, cell.reference_vertices)))
+    key = (
+        source_key, cell.kind, cell.domain, cell.dimension, limits.limits_id,
+        cell.vertices, cell.reference_vertices,
+    )
+    proof = budget.root_injectivity_cache.get(key)
+    remaining = limits.maximum_subdivision_pieces - state.subdivision_pieces
+    if proof is None:
+        proved = embedding_state_owner.EmbeddingState([], [])
+        with budget.polynomial_preparation_scope():
+            reason = injective(
+                cell, limits, proved, maximum_work=remaining, budget=budget
+            )
+        proof = proved.subdivision_pieces, cast(
+            tuple[MeshCertificateCheck, ...], tuple(proved.checks)
+        )
+        if reason is None:
+            budget.reserve(1, 128)
+            budget.retain_basis((key, proof))
+            budget.root_injectivity_cache[key] = proof
+    else:
+        reason = (
+            "local_injectivity_piece_budget" if proof[0] > remaining else None
+        )
+        if reason is not None:
+            return reason
+    state.subdivision_pieces += proof[0]
+    for check in proof[1]:
+        if check not in state.checks:
+            state.checks.append(check)
+    return reason
+
+
 @checked
 def injective(
     cell: Cell,
@@ -986,6 +1058,30 @@ def injective(
                 return "local_injectivity_piece_budget"
             state.subdivision_pieces += 1
             return None
+        if (
+            cell.dimension in (2, 3)
+            and len(affine_key) == cell.dimension
+            and all(isinstance(value, (int, Fraction)) for row in affine_key for value in row)
+        ):
+            if state.subdivision_pieces >= maximum_pieces:
+                return "local_injectivity_piece_budget"
+            # A constant square Jacobian is globally injective precisely
+            # when its exact matrix has full rank. No interval/SPD net is
+            # needed to re-prove this linear-algebra identity.
+            reserve_fraction_work(
+                affine_key,
+                3 if cell.dimension == 2 else 14,
+                1,
+                4 if cell.dimension == 2 else 18,
+                budget=budget,
+            )
+            budget.reserve(0, 256 + 8 * cell.dimension * cell.dimension)
+            determinant = cofactor_determinant(np.asarray(affine_key, dtype=object))
+            if determinant != 0:
+                budget.retain_basis((affine_key,))
+                budget.affine_injectivity_cache.add(affine_key)
+                state.subdivision_pieces += 1
+                return None
     projection = _midpoint_projection(
         jacobian_midpoint(cell, physical, budget=budget), cell.dimension
     )
@@ -1331,6 +1427,40 @@ def _box_entity_diagonal(
     )
 
 
+type _EntityRow = tuple[int, int, tuple[int, ...]]
+_PROPER_ENTITY_TABLES: dict[
+    str,
+    tuple[
+        tuple[_EntityRow, ...],
+        tuple[int, ...],
+        dict[frozenset[int], _EntityRow],
+    ],
+] = {}
+
+
+def _proper_entity_table(
+    kind: str, /
+) -> tuple[
+    tuple[_EntityRow, ...], tuple[int, ...], dict[frozenset[int], _EntityRow]
+]:
+    """Static ``(degree, position, local vertices)`` rows of a kind's proper faces."""
+    table = _PROPER_ENTITY_TABLES.get(kind)
+    if table is None:
+        topology = reference_cell_topology(kind)
+        rows = tuple(
+            (degree, position, tuple(int(vertex) for vertex in entity))
+            for degree in range(1, topology.dimension)
+            for position, entity in enumerate(topology.entities[degree])
+        )
+        table = (
+            rows,
+            tuple(sorted({len(entity) for _, _, entity in rows})),
+            {frozenset(entity): row for row in rows for entity in (row[2],)},
+        )
+        _PROPER_ENTITY_TABLES[kind] = table
+    return table
+
+
 def _multi_affine_trace_equal(
     first: Cell, second: Cell, shared: list[int], *, budget: CoordinateEnclosureBudget
 ) -> bool | None:
@@ -1354,28 +1484,42 @@ def _multi_affine_trace_equal(
         first.reference_vertices,
         second.reference_vertices,
     )
-    topology = reference_cell_topology(first.kind)
-    budget.reserve(
-        len(shared) * (len(first.coordinates) + 2 * first.dimension)
-        + sum(
-            len(entity)
-            for degree in range(1, first.dimension)
-            for entity in topology.entities[degree]
+    entities, sizes, lookup = _proper_entity_table(first.kind)
+    # Only entities whose every vertex is shared can need a trace check. Probe
+    # those vertex subsets directly when that is cheaper than scanning every
+    # entity; both visit the same entities in degree and topology order.
+    local = sorted(first.vertices.index(key) for key in shared)
+    probes = sum(math.comb(len(local), size) for size in sizes)
+    if probes < len(entities):
+        budget.reserve(
+            len(shared) * (len(first.coordinates) + 2 * first.dimension)
+            + sum(math.comb(len(local), size) * size for size in sizes)
         )
-    )
-    for degree in range(1, first.dimension):
-        for entity in topology.entities[degree]:
-            keys = sorted(first.vertices[i] for i in entity)
-            if not set(keys).issubset(shared):
-                continue
-            partners = []
-            for cell, reference in ((first, first_reference), (second, second_reference)):
-                partner = _box_entity_diagonal(cell, reference, keys, degree)
-                if partner is None:
-                    return None
-                partners.append(partner)
-            if degree == 2 and (partners[0] != partners[1] or len(partners[0]) != 1):
+        entities = tuple(
+            sorted(
+                lookup[subset]
+                for size in sizes
+                for subset in map(frozenset, combinations(local, size))
+                if subset in lookup
+            )
+        )
+    else:
+        budget.reserve(
+            len(shared) * (len(first.coordinates) + 2 * first.dimension)
+            + sum(len(entity) for _, _, entity in entities)
+        )
+    for degree, _, entity in entities:
+        keys = sorted(first.vertices[i] for i in entity)
+        if not set(keys).issubset(shared):
+            continue
+        partners = []
+        for cell, reference in ((first, first_reference), (second, second_reference)):
+            partner = _box_entity_diagonal(cell, reference, keys, degree)
+            if partner is None:
                 return None
+            partners.append(partner)
+        if degree == 2 and (partners[0] != partners[1] or len(partners[0]) != 1):
+            return None
     for key in shared:
         if (
             first.corner_images[first.vertices.index(key)]
@@ -1385,23 +1529,38 @@ def _multi_affine_trace_equal(
     return True
 
 
-def _multi_affine_axis_separation(
-    first: Cell, second: Cell, shared: set[int], *, budget: CoordinateEnclosureBudget
+def _multi_affine_box(cell: Cell, /) -> bool:
+    """Whether ``cell`` carries the rational corner images of a multi-affine box map."""
+    return (
+        cell.corner_images is not None
+        and cell.domain == "box"
+        and cell.kind != "pyramid"
+    )
+
+
+def _corner_plane_separates(
+    first: Cell,
+    second: Cell,
+    shared: set[int],
+    anchor: int | None,
+    left: list[ExactScalar],
+    right: list[ExactScalar],
 ) -> bool:
-    """Prove coordinate-axis separation of multi-affine box cells using rational controls.
+    """Accept one signed plane on the corner values of two multi-affine box cells.
 
-    The signed plane value of a multi-affine map is multi-affine, so its
-    degree-one Bernstein controls are its corner values. This is the generic
-    separating-plane acceptance for the coordinate normals, decided on rational
-    corner images; ``False`` leaves every other normal to the generic proof.
+    ``left``/``right`` are the signed normal projections of the rational corner
+    images. The plane passes through a shared vertex, or the midpoint gap when
+    none is shared, and both sides need the generic shared-support conditions.
     """
-    if first.corner_images is None or second.corner_images is None:
+    offset = (
+        left[first.vertices.index(anchor)]
+        if anchor is not None
+        else (max(left) + min(right)) / 2
+    )
+    below = [offset - value for value in left]
+    above = [value - offset for value in right]
+    if any(value < 0 for value in below) or any(value < 0 for value in above):
         return False
-    a, b = first.corner_images, second.corner_images
-    ambient = len(a[0])
-
-    budget.reserve(4 * ambient * (len(a) + len(b)))
-    anchor = next(iter(shared), None)
 
     def side(values: list[ExactScalar], vertices: tuple[int, ...], strict: bool) -> bool:
         if not any(values):
@@ -1414,26 +1573,87 @@ def _multi_affine_axis_separation(
                 return False
         return True
 
-    for axis in range(ambient):
-        for sign in (1, -1):
-            left = [sign * corner[axis] for corner in a]
-            right = [sign * corner[axis] for corner in b]
-            offset = (
-                sign * a[first.vertices.index(anchor)][axis]
-                if anchor is not None
-                else (max(left) + min(right)) / 2
-            )
-            below = [offset - value for value in left]
-            above = [value - offset for value in right]
-            if any(value < 0 for value in below) or any(value < 0 for value in above):
+    return (
+        side(below, first.vertices, True) and side(above, second.vertices, False)
+    ) or (side(below, first.vertices, False) and side(above, second.vertices, True))
+
+
+def _multi_affine_candidate_separation(
+    first: Cell,
+    second: Cell,
+    shared: set[int],
+    candidates: _PlaneCandidates,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Decide the ordered candidate normals of multi-affine box cells on corners.
+
+    A signed plane value of a multi-affine map is multi-affine, so its Bernstein
+    controls are exactly its corner values: accepting a candidate on rational
+    corner images is the source-control acceptance of
+    ``_candidate_plane_separates``. Base normals precede their pairwise sums and
+    differences, as in the integer route.
+    """
+    if first.corner_images is None or second.corner_images is None:
+        raise ValueError(
+            "mapped_embedding.multi_affine_candidates must have rational corner images; got None"
+        )
+    a = np.asarray(first.corner_images, dtype=object)
+    b = np.asarray(second.corner_images, dtype=object)
+    ambient = a.shape[1]
+    anchor = next(iter(shared), None)
+    base = candidates.normals
+    tested: set[tuple[Fraction, ...]] = set()
+
+    def separates(normals: Iterable[np.ndarray]) -> bool:
+        for normal in normals:
+            if not np.any(normal):
                 continue
-            if (
-                side(below, first.vertices, True) and side(above, second.vertices, False)
-            ) or (
-                side(below, first.vertices, False) and side(above, second.vertices, True)
-            ):
-                return True
-    return False
+            with budget.temporary_scope():
+                key: tuple[Fraction, ...] | None = None
+                if all(isinstance(value, Fraction) for value in normal):
+                    # Match the canonical plane owner's unit-first-component
+                    # convention. Fraction division includes its exact gcd
+                    # reduction; reserve its operand-derived work and bit bound.
+                    values = tuple(cast(Fraction, value) for value in normal)
+                    planar_primitives_owner.reserve_fraction_work(
+                        (values,), 3 * ambient, ambient, 4, budget=budget
+                    )
+                    pivot = next(value for value in values if value)
+                    key = tuple(value / pivot for value in values)
+                    if key in tested:
+                        continue
+                budget.reserve((ambient + 4) * (len(a) + len(b)) + ambient)
+                projected_a, projected_b = list(a @ normal), list(b @ normal)
+                for sign in (1, -1):
+                    if _corner_plane_separates(
+                        first,
+                        second,
+                        shared,
+                        anchor,
+                        [sign * value for value in projected_a],
+                        [sign * value for value in projected_b],
+                    ):
+                        return True
+                if key is not None:
+                    # Only a completely tested plane is reusable. Positive
+                    # scaling preserves every support sign and zero; negative
+                    # scaling exchanges the two orientations just tested.
+                    storage.set_bound(
+                        storage.bound + budget.live_object_storage_upper(key) + 128
+                    )
+                    tested.add(key)
+        return False
+
+    with budget.live_storage() as storage:
+        storage.set_bound(256)
+        # Keep the original base vectors: scaling a base vector before sums
+        # or differences would change the family of proposed planes.
+        return separates(chain(
+            base,
+            (x + y for index, x in enumerate(base) for y in base[index + 1 :]),
+            (x - y for index, x in enumerate(base) for y in base[index + 1 :]),
+        ))
 
 
 def _same_entity_trace(
@@ -1566,12 +1786,19 @@ class _IntegerPlaneCandidates(StrictModule, NonTrainableState):
     second: np.ndarray
     normals: list[np.ndarray]
     coordinate_denominator: int = eqx.field(static=True)
+    bits: int = eqx.field(static=True)
 
 
 def _plane_corner_images(
     cell: Cell, /, *, budget: CoordinateEnclosureBudget
 ) -> np.ndarray:
-    """Evaluate rational reference corners in reference-vertex and coordinate order."""
+    """Evaluate rational reference corners in reference-vertex and coordinate order.
+
+    Multi-affine box cells carry these exact images already.
+    """
+    if cell.corner_images is not None:
+        budget.reserve(len(cell.corner_images) * len(cell.coordinates))
+        return np.asarray(cell.corner_images, dtype=object)
     return np.asarray(
         [
             [
@@ -1661,7 +1888,7 @@ def _plane_candidates(
 def _integer_plane_candidates(
     first: Cell, candidates: _PlaneCandidates, *, budget: CoordinateEnclosureBudget
 ) -> _IntegerPlaneCandidates:
-    """Lift all candidates by common positive scales before forming cone sums."""
+    """Lift base candidates by common positive scales; cone sums stay pending."""
     a, b, normals = candidates.first, candidates.second, candidates.normals
     ambient = a.shape[1]
     budget.reserve(3 * len(normals) * ambient + 2 * (a.size + b.size))
@@ -1689,13 +1916,12 @@ def _integer_plane_candidates(
         )
         + coordinate_denominator.bit_length()
     )
-    count = len(normals) ** 2 * ambient + a.size + b.size
+    bits = max(normal_bits, coordinate_bits)
+    # The base normals and both corner banks; their pairwise cone sums and
+    # differences are formed only after every base normal declined.
+    count = len(normals) * ambient + a.size + b.size
     coordinate_enclosure_owner.reserve_polynomial(
-        count,
-        count,
-        first.dimension,
-        max(normal_bits, coordinate_bits),
-        budget=budget,
+        count, count, first.dimension, bits, budget=budget
     )
     # One common positive scale preserves every base vector AND all cone
     # sums/differences. Independently normalizing each vector would not.
@@ -1711,12 +1937,6 @@ def _integer_plane_candidates(
         for normal in normals
     )
     normals = list(base_normals)
-    normals.extend(
-        x + y for index, x in enumerate(base_normals) for y in base_normals[index + 1 :]
-    )
-    normals.extend(
-        x - y for index, x in enumerate(base_normals) for y in base_normals[index + 1 :]
-    )
     a = np.asarray(
         [
             [
@@ -1737,7 +1957,30 @@ def _integer_plane_candidates(
         ],
         dtype=object,
     )
-    return _IntegerPlaneCandidates(a, b, normals, coordinate_denominator)
+    return _IntegerPlaneCandidates(a, b, normals, coordinate_denominator, bits)
+
+
+def _integer_plane_combinations(
+    first: Cell, candidates: _IntegerPlaneCandidates, *, budget: CoordinateEnclosureBudget
+) -> list[np.ndarray]:
+    """Form the ordered cone sums, then differences, of the lifted base normals.
+
+    Every pair shares the common positive scale of its base normals, so each
+    sum and difference is the same direction as its rational counterpart.
+    """
+    base_normals = candidates.normals
+    ambient = candidates.first.shape[1]
+    count = (len(base_normals) ** 2 - len(base_normals)) * ambient
+    coordinate_enclosure_owner.reserve_polynomial(
+        count, count, first.dimension, candidates.bits, budget=budget
+    )
+    normals = [
+        x + y for index, x in enumerate(base_normals) for y in base_normals[index + 1 :]
+    ]
+    normals.extend(
+        x - y for index, x in enumerate(base_normals) for y in base_normals[index + 1 :]
+    )
+    return normals
 
 
 def _source_plane_separates(
@@ -1885,6 +2128,11 @@ def _separating_candidate_family(
             return _algebraic_candidate_family_separates(
                 first, second, shared, candidates, budget=budget
             )
+    if _multi_affine_box(first) and _multi_affine_box(second):
+        with budget.temporary_scope():
+            return _multi_affine_candidate_separation(
+                first, second, shared, candidates, budget=budget
+            )
     with budget.temporary_scope():
         integers = _integer_plane_candidates(first, candidates, budget=budget)
         prepared_a, prepared_b = (
@@ -1895,22 +2143,30 @@ def _separating_candidate_family(
             if prepared_controls is None
             else prepared_controls
         )
-        for normal in integers.normals:
-            with budget.temporary_scope():
-                if not np.any(normal):
-                    continue
-                if _candidate_plane_separates(
-                    first,
-                    second,
-                    shared,
-                    normal,
-                    integers,
-                    prepared_a,
-                    prepared_b,
-                    budget=budget,
-                ):
-                    return True
-    return False
+
+        def separates(normals: list[np.ndarray]) -> bool:
+            for normal in normals:
+                with budget.temporary_scope():
+                    if not np.any(normal):
+                        continue
+                    if _candidate_plane_separates(
+                        first,
+                        second,
+                        shared,
+                        normal,
+                        integers,
+                        prepared_a,
+                        prepared_b,
+                        budget=budget,
+                    ):
+                        return True
+            return False
+
+        # The deterministic order is every base normal, then their cone sums
+        # and differences; later candidates are only formed when needed.
+        if separates(integers.normals):
+            return True
+        return separates(_integer_plane_combinations(first, integers, budget=budget))
 
 
 def _surface_edge_candidates(
@@ -2761,9 +3017,11 @@ def pair_decision(
 ) -> ContactDecision:
     if not cell_traces_equal(first, second, budget=budget):
         return ContactDecision("unresolved", 0, check="mapped_trace_mismatch")
-    if _multi_affine_axis_separation(
-        first, second, set(first.vertices).intersection(second.vertices), budget=budget
-    ):
+    # Multi-affine box pairs decide the whole ordered candidate family,
+    # coordinate axes included, on rational corner images before any
+    # other contact route; a refusal there is final for that family.
+    multi_affine = _multi_affine_box(first) and _multi_affine_box(second)
+    if multi_affine and separating_plane(first, second, prepared_controls, budget=budget):
         return ContactDecision("separated", 0)
 
     affine = affine_mapped_contact_owner.contact_decision(
@@ -2802,7 +3060,9 @@ def pair_decision(
             cone_work = contact.work
             if proved:
                 return ContactDecision("separated", cone_work)
-    if separating_plane(first, second, prepared_controls, budget=budget):
+    if not multi_affine and separating_plane(
+        first, second, prepared_controls, budget=budget
+    ):
         return ContactDecision("separated", cone_work)
     adjacent, adjacency_work = _adjacent_triangle_injectivity(
         first, second, limits, maximum_work - cone_work, budget=budget
@@ -3088,7 +3348,8 @@ def trace_continuity(
     shared_charts: bool = False,
     geometry: CellGeometrySpec | None = None,
     budget: CoordinateEnclosureBudget,
-) -> None:
+    retain_facet_traces: bool = False,
+) -> boundary_degree_embedding_owner._FacetTraceWitness | None:
     """Prove coefficient identity of both traces on every interior facet.
 
     With ``shared_charts`` many cells share one rational corner-image record, as the
@@ -3098,10 +3359,44 @@ def trace_continuity(
     its hypotheses retain the full expression proof.
     """
 
+    with budget.live_storage() as storage:
+        connections = _trace_continuity(
+            state, mesh, cells, cell_groups,
+            shared_charts=shared_charts, geometry=geometry, budget=budget,
+            storage=storage,
+            retain_connections=retain_facet_traces and cell_groups is None,
+        )
+        if retain_facet_traces and cell_groups is None and state.clean:
+            return boundary_degree_embedding_owner._issue_facet_trace_witness(
+                state, mesh, cells, connections, geometry=geometry, budget=budget,
+            )
+    return None
+
+
+def _trace_continuity(
+    state: EmbeddingState,
+    mesh: CellMesh,
+    cells: list[Cell],
+    cell_groups: np.ndarray | None,
+    *,
+    shared_charts: bool,
+    geometry: CellGeometrySpec | None,
+    budget: CoordinateEnclosureBudget,
+    storage: CoordinateLiveStorage,
+    retain_connections: bool,
+) -> tuple[tuple[int, int, tuple[int, ...]], ...]:
     facets = embedding_state_owner.mesh_facets(mesh, geometry=geometry, budget=budget)
     state.checks.append("mapped_trace_continuity")
-
+    # These internally prepared coordinate expressions are strongly owned by
+    # cells and never mutated during this callback-free proof phase. Only the
+    # ordered local facet, not global vertex numbering, enters a restriction.
+    traces: dict[
+        tuple[int, str, str, int, tuple[int, ...]],
+        tuple[ExactScalar, ...] | tuple[Expression, ...],
+    ] = {}
+    storage.set_bound(1024)
     decided: dict[tuple[int, ...], bool | None] = {}
+    connections = []
     for group in np.flatnonzero(facets.counts == 2):
         occurrences = np.flatnonzero(facets.group == group)
         if (
@@ -3117,6 +3412,13 @@ def trace_continuity(
             second = cells[int(facets.cells[occurrences[1]])]
             vertices = facets.rows[occurrences[0]]
             vertices = vertices[vertices >= 0]
+            if retain_connections:
+                storage.set_bound(storage.bound + 512, work=1)
+                connections.append((
+                    int(facets.cells[occurrences[0]]),
+                    int(facets.cells[occurrences[1]]),
+                    tuple(int(vertex) for vertex in vertices),
+                ))
             entities = np.asarray((group,), dtype=np.int64)
             shared_records = (
                 shared_charts
@@ -3149,13 +3451,26 @@ def trace_continuity(
                 if not identity:
                     state.add("mapped_trace_mismatch", "violated", "facet", entities)
                 continue
-            restrictions = [
-                _facet_trace(cell, vertices, budget=budget) for cell in (first, second)
-            ]
+            restrictions = []
+            for cell in (first, second):
+                local_facet = tuple(cell.vertices.index(int(vertex)) for vertex in vertices)
+                key = (
+                    id(cell.coordinates), cell.kind, cell.domain, cell.dimension, local_facet
+                )
+                budget.reserve(1 + len(local_facet))
+                trace = traces.get(key)
+                if trace is None:
+                    trace = _facet_trace(cell, vertices, budget=budget)
+                    storage.set_bound(
+                        storage.bound + 512 + budget.live_object_storage_upper(trace)
+                    )
+                    traces[key] = trace
+                restrictions.append(trace)
             if any(value is None for value in restrictions):
                 state.add("mapped_trace_denominator", "unresolved", "facet", entities)
             elif restrictions[0] != restrictions[1]:
                 state.add("mapped_trace_mismatch", "violated", "facet", entities)
+    return tuple(connections)
 
 
 @checked
@@ -3818,7 +4133,7 @@ def _prepare_parent_partition(
     origin = geometry.restriction_source
     if origin is None:
         return None
-    elements, routes, _ = geometry.resolve(mesh)
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
     bank = coordinate_enclosure_owner.prepared_coordinate_source_bank(
         geometry, budget=budget
     )
@@ -3834,7 +4149,6 @@ def _prepare_parent_partition(
         0
     ]
     numeric = np.asarray(mesh.coordinates, dtype=np.float64)
-    reference_actions: dict[str, _ParentReferenceAction] = {}
     for block, element, routes_ in zip(mesh.blocks, elements, routes, strict=True):
         if block.cell_kind != "triangle":
             return None
@@ -3843,26 +4157,58 @@ def _prepare_parent_partition(
             origin.block_parent_vertex_ids[block.name], dtype=np.int64
         )
         target_rows = np.asarray(block.vertices, dtype=np.int64)
-        for parent, vertices, target_vertices, route in zip(
-            parent_ids.tolist(),
-            parent_rows.tolist(),
-            target_rows.tolist(),
-            np.asarray(routes_).tolist(),
-            strict=True,
+        prepared: _ParentReferenceAction | None = None
+        parent_images: tuple[tuple[ExactScalar, ...] | None, ...] | None = None
+        for row, (parent, vertices, target_vertices, route) in enumerate(
+            zip(
+                parent_ids.tolist(),
+                parent_rows.tolist(),
+                target_rows.tolist(),
+                np.asarray(routes_).tolist(),
+                strict=True,
+            )
         ):
-            local = tuple(bank[int(index)] for index in route)
-            prepared = reference_actions.get(element.element_id)
             if prepared is None:
+                # Earn the reference law for this actual block owner, never
+                # reuse an action just because its asserted element ID agrees.
                 prepared = _parent_reference_action(element, reference, budget=budget)
                 if prepared is None:
                     return None
-                reference_actions[element.element_id] = prepared
+                root = prepared.root
+                if root.cell_kind == "triangle":
+                    # These are independent temporary operand rows, not source
+                    # vertex identities. The existing batch authenticates the
+                    # complete root, current bank and every routed coefficient
+                    # once, while the checks below still bind every real child
+                    # and scientific parent. Admit the table and output slots
+                    # before constructing either.
+                    count = parent_ids.size
+                    budget.reserve(0, 512 + 96 * count)
+                    corner_rows = np.arange(3 * count, dtype=np.int64).reshape((-1, 3))
+                    parent_images = coordinate_enclosure_owner.coordinate_vertex_images(
+                        ((root, np.asarray(routes_), corner_rows),),
+                        bank,
+                        3 * count,
+                        mismatch="mapped_embedding.parent_corner_images",
+                        budget=budget,
+                    )
+                    if parent_images is not None:
+                        budget.retain_basis(parent_images)
             root, exact_reference = prepared.root, prepared.vertices
-            exact_parent = coordinate_enclosure_owner.coordinate_corner_images(
-                root, local, budget=budget
-            )
-            if exact_parent is None or len(exact_parent) != 3:
-                return None
+            if parent_images is None:
+                # Nontriangular roots and unsupported corner-weight laws keep
+                # their original full per-cell coordinate evaluation.
+                local = tuple(bank[int(index)] for index in route)
+                exact_parent = coordinate_enclosure_owner.coordinate_corner_images(
+                    root, local, budget=budget
+                )
+                if exact_parent is None or len(exact_parent) != 3:
+                    return None
+            else:
+                first, second, third = parent_images[3 * row : 3 * row + 3]
+                if first is None or second is None or third is None:
+                    return None
+                exact_parent = (first, second, third)
             physical = _parent_child_images(
                 exact_reference, exact_parent, mesh.ambient_dimension, budget=budget
             ).values
@@ -4019,7 +4365,7 @@ def _collect_affine_images(
     budget: CoordinateEnclosureBudget,
 ) -> _AffineSourceImages | None:
     """Authenticate corner carriers, shared incidence and affine cell orientation."""
-    elements, routes, _ = geometry.resolve(mesh)
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
     bank = prepared_coordinate_source_bank(geometry, budget=budget)
     ledger = budget
     ledger.reserve(0, 128 + 8 * mesh.coordinates.shape[0])
@@ -4317,7 +4663,7 @@ def _prepare_embedding_cell(
             entities,
         )
         return None
-    reason = injective(cell, limits, state, budget=budget)
+    reason = root_injective(cell, element, local, limits, state, budget=budget)
     if reason is not None:
         state.add(reason, "unresolved", "cell", entities)
         _self_contact_diagnostics(cell, state, entities, limits, budget=budget)
@@ -4356,7 +4702,7 @@ def _prepare_embedding_carrier(
         for row, vertices in zip(
             np.asarray(route), np.asarray(block.vertices), strict=True
         ):
-            with ledger.temporary_scope():
+            with ledger.polynomial_preparation_scope():
                 local = tuple(points[index] for index in row)
                 prepared_cell = _prepare_embedding_cell(
                     element,
@@ -4419,7 +4765,7 @@ def _certify_embedding_pairs(
     for a, b in zip(first.tolist(), second.tolist(), strict=True):
         if atlas_labels[a] >= 0 and atlas_labels[a] == atlas_labels[b]:
             continue
-        with ledger.temporary_scope():
+        with ledger.polynomial_preparation_scope():
             trace_equal = cell_traces_equal(cells[a], cells[b], budget=budget)
         if not trace_equal:
             state.add("mapped_trace_mismatch", "violated", "cell", cell_ids[[a, b]])
@@ -4427,7 +4773,7 @@ def _certify_embedding_pairs(
         for index in (a, b):
             if index in prepared_controls:
                 continue
-            with ledger.temporary_scope():
+            with ledger.polynomial_preparation_scope():
                 prepared = _prepare_plane_controls(cells[index], budget=budget)
                 if prepared is not None:
                     # This cache is local to the proof, not a retained history
@@ -4436,7 +4782,7 @@ def _certify_embedding_pairs(
                         live.bound + _plane_controls_storage_upper(prepared, ledger)
                     )
             prepared_controls[index] = prepared
-        with ledger.temporary_scope():
+        with ledger.polynomial_preparation_scope():
             contact_decision_2 = pair_decision(
                 cells[a],
                 cells[b],
@@ -4480,7 +4826,7 @@ def _certify_mapped_embedding(
     ledger = budget
 
     state.checks.extend(("mapped_local_injectivity", "mapped_cell_contact"))
-    elements, routes, _ = geometry.resolve(mesh)
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
 
     points = prepared_coordinate_source_bank(geometry, budget=budget)
     if geometry.restriction_source is not None and all(
@@ -4510,7 +4856,7 @@ def _certify_mapped_embedding(
     if carrier is None:
         return
     cells, boxes = carrier.cells, carrier.boxes
-    with ledger.temporary_scope():
+    with ledger.polynomial_preparation_scope():
         trace_continuity(state, mesh, cells, geometry=geometry, budget=budget)
         straight_boundary = (
             state.clean
@@ -4530,13 +4876,13 @@ def _certify_mapped_embedding(
         )
         return
 
-    with ledger.temporary_scope():
+    with ledger.polynomial_preparation_scope():
         decided = boundary_degree_embedding_owner.certify_boundary_degree_embedding(
             state, mesh, cells, cell_ids, limits, budget=budget
         )
     if decided:
         return
-    with ledger.temporary_scope():
+    with ledger.polynomial_preparation_scope():
         atlas_labels = tensor_component_injectivity(
             state, mesh, cells, limits, budget=budget
         )
@@ -4557,3 +4903,1760 @@ def _certify_mapped_embedding(
     _certify_embedding_pairs(
         state, cells, cell_ids, limits, first, second, atlas_labels, live, budget=budget
     )
+
+
+# The source side of this proof is deliberately not a coordinate Expression.
+# Native interval jets and exact polynomial target restrictions have different
+# authorities; only their outward enclosures meet in the following arithmetic.
+type _HomotopyInterval = tuple[np.ndarray, np.ndarray]
+_HOMOTOPY_REFERENCE = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+
+
+class _IntervalHomotopyRefusal(ValueError):
+    """An unresolved sufficient inequality, optionally naming its facets."""
+
+    def __init__(self, reason: str, entities: tuple[int, ...] | None = None) -> None:
+        super().__init__(reason)
+        self.entities = entities
+
+
+_HOMOTOPY_MEMO_ENTRIES = 1 << 14
+# Key tuple, reference bytes, map identity and up to four (3, 2) host
+# intervals: a completed jet and its raw/completed orientation hull.
+_HOMOTOPY_MEMO_ENTRY_BYTES = 2048
+# One prefetched batch inserts at most a quarter of the memo, so its own LRU
+# entries survive until every predicate of that batch has read them.
+_HOMOTOPY_BATCH = 1024
+# One retained pair/task record or prepared vertex cone: indices, exact target
+# rays, rounded proposal rays, projections and transforms.
+_HOMOTOPY_RECORD_BYTES = 1024
+
+# (cell, reference triangle, jet): a jet row also yields its orientation hull.
+type _SourceRequest = tuple[IntervalBoundaryCell, np.ndarray, bool]
+
+
+class _HomotopyVertex(NamedTuple):
+    """Reference rays from one shared corner and the exact target rays there."""
+
+    directions: np.ndarray
+    point: np.ndarray
+    target_rays: tuple[tuple[ExactScalar, ...], ...]
+    rounded_rays: np.ndarray
+    # Outward binary bounds of rational target rays; None for radical rays.
+    ray_bounds: _HomotopyInterval | None
+
+
+class _IntervalHomotopyWork:
+    """One piece/query/storage allowance for every obligation of this request.
+
+    Source and exact-target enclosures are memoized per map and dyadic
+    reference triangle: deviation, monotonicity and pair obligations revisit
+    the same subdivision pieces. A memo hit is the identical enclosure of the
+    identical request, so it consumes no new source query. Missing source rows
+    are enclosed in per-map batches, still one source query per row. The
+    bounded LRU memo is charged to live storage.
+    Authenticated native source rows additionally share the original request's
+    bounded, byte-accounted source LRU across proofs. Target Bernstein bounds
+    always remain proof-local because a new candidate changes their meaning.
+    """
+
+    def __init__(
+        self,
+        limits: MeshCertificateLimits,
+        budget: CoordinateEnclosureBudget,
+        live: CoordinateLiveStorage,
+        base_bytes: int,
+    ) -> None:
+        self.limits = limits
+        self.budget = budget
+        self.live = live
+        self.base_bytes = base_bytes
+        self.pieces = 0
+        self.distances = 0
+        self.pairs = 0
+        self.source_queries = 0
+        self.ray_tests = 0
+        self.pending = 0
+        self.records = 0
+        self.memo: dict[tuple[object, ...], tuple[_HomotopyInterval, ...]] = {}
+        self.vertices: dict[tuple[int, int], _HomotopyVertex] = {}
+        self._source_tokens: dict[int, tuple[object, str | tuple[str, int]]] = {}
+        self._source_carriers: dict[int, tuple[object, str]] = {}
+        self._source_admissions: dict[int, _CarrierAdmission] = {}
+        self.storage(0)
+
+    def storage(self, pending: int, *, additional_source_admissions: int = 0) -> None:
+        # Each entry owns at most two (3,2) references, time bounds, depths,
+        # interval vectors/matrices and the worklist tuple. The live bound is
+        # this request's high-water mark: it is raised, never lowered early.
+        self.pending = pending
+        size = (
+            self.base_bytes
+            + 4096 * (pending + self.limits.maximum_subdivision_depth + 3)
+            + _HOMOTOPY_MEMO_ENTRY_BYTES * len(self.memo)
+            + _HOMOTOPY_RECORD_BYTES * (
+                self.records + len(self.vertices)
+                + len(self._source_tokens) + len(self._source_carriers)
+            )
+            + 512 * (len(self._source_admissions) + additional_source_admissions)
+        )
+        if size > self.live.bound:
+            self.live.set_bound(size)
+
+    def _retain_source_admission(self) -> None:
+        """Admit each persistent proof-local entry before creating it."""
+        self.storage(self.pending, additional_source_admissions=1)
+
+    def retain(self, records: int) -> None:
+        self.records += records
+        self.storage(self.pending)
+
+    def piece(self) -> None:
+        if self.pieces >= self.limits.maximum_subdivision_pieces:
+            raise _IntervalHomotopyRefusal("interval_homotopy_piece_limit")
+        self.pieces += 1
+        self.budget.reserve(1)
+
+    def poll(self) -> None:
+        self.budget.reserve(0)
+
+    def distance(self) -> None:
+        if self.distances >= self.limits.maximum_distance_evaluations:
+            raise _IntervalHomotopyRefusal("interval_homotopy_distance_limit")
+        self.distances += 1
+
+    def _lookup(self, key: tuple[object, ...]) -> tuple[_HomotopyInterval, ...] | None:
+        value = self.memo.pop(key, None)
+        if value is not None:
+            self.memo[key] = value
+        return value
+
+    def _remember(self, key: tuple[object, ...], value: tuple[_HomotopyInterval, ...]) -> None:
+        if len(self.memo) >= _HOMOTOPY_MEMO_ENTRIES:
+            del self.memo[next(iter(self.memo))]
+        self.memo[key] = value
+
+    def _source_token(self, cell: IntervalBoundaryCell) -> str | tuple[str, int]:
+        source = cell.source
+        from ._domain_chart_chain import SourceChartMap, SourceChartMapError, source_chart_enclosure_identity
+
+        previous = self._source_tokens.get(id(source))
+        immutable_native = self._source_carriers.get(id(source))
+        if previous is not None and previous[0] is source and (
+            type(source) is not SourceChartMap
+            or (immutable_native is not None and immutable_native[0] is source)
+        ):
+            # This work object owns one pure proof. Only a fully authenticated
+            # immutable native source enters its root memo; new proofs and
+            # actual native evaluations still authenticate their own inputs.
+            return previous[1]
+
+        identity = (
+            source_chart_enclosure_identity(
+                source, self.budget, self._source_carriers,
+                admissions=self._source_admissions,
+                retain_admission=self._retain_source_admission,
+            )
+            if type(source) is SourceChartMap else None
+        )
+        if type(source) is SourceChartMap and identity is None:
+            raise SourceChartMapError("source_chart_requires_genuine_reprepare")
+        # Other protocol implementations have only proof-local object
+        # identities; an asserted map_id never earns cross-proof reuse.
+        token = identity if identity is not None else (source.map_id, id(source))
+        self._source_tokens[id(source)] = (source, token)
+        self.storage(self.pending)
+        return token
+
+    def _source_lookup(self, cell, kind: str, raw: bytes):
+        token = self._source_token(cell)
+        key = (kind, token, raw)
+        value = self._lookup(key)
+        if value is None and isinstance(token, str):
+            cache = self.budget.source_homotopy_enclosure_cache
+            value = cache.pop((kind, token, raw), None)
+            if value is not None:
+                cache[kind, token, raw] = value
+                self._remember(key, value)
+                self.storage(self.pending)
+        return value
+
+    def _enclose(
+        self, requests: list[tuple[IntervalBoundaryCell, list[np.ndarray]]], jet: bool
+    ) -> None:
+        """Enclose source rows of several maps; each row is one source query."""
+        count = sum(len(references) for _, references in requests)
+        if self.source_queries + count > self.limits.maximum_source_samples:
+            raise _IntervalHomotopyRefusal("interval_homotopy_source_query_limit")
+        self.source_queries += count
+        kinds: dict[
+            type[IntervalSurfaceMap], list[tuple[IntervalBoundaryCell, list[np.ndarray]]]
+        ] = {}
+        for cell, references in requests:
+            kinds.setdefault(type(cell.source), []).append((cell, references))
+        kind = "jet" if jet else "image"
+        for owner, group in kinds.items():
+            results = owner.enclosures(
+                [(cell.source, np.stack(references)) for cell, references in group],
+                image=not jet, jacobian=jet, budget=self.budget,
+            )
+            if len(results) != len(group):
+                raise _IntervalHomotopyRefusal("interval_homotopy_invalid_enclosure")
+            for (cell, references), result in zip(group, results, strict=True):
+                parts = (result.jacobian, result.orientation) if jet else (result.image,)
+                shape = (len(references), 3, 2) if jet else (len(references), 3)
+                if any(part is None for part in parts):
+                    raise _IntervalHomotopyRefusal("interval_homotopy_invalid_enclosure")
+                checked = [
+                    _homotopy_checked_interval(cast(_HomotopyInterval, part), shape)
+                    for part in parts
+                ]
+                for index, reference in enumerate(references):
+                    raw = reference.tobytes()
+                    token = self._source_token(cell)
+                    rows = tuple((lower[index], upper[index]) for lower, upper in checked)
+                    if isinstance(token, str):
+                        stored = self.budget.source_homotopy_enclosure(
+                            (kind, token, raw), rows,
+                            maximum_entries=_HOMOTOPY_MEMO_ENTRIES,
+                        )
+                    else:
+                        stored = tuple((lower.copy(), upper.copy()) for lower, upper in rows)
+                    self._remember((kind, token, raw), stored)
+        self.storage(self.pending)
+
+    def prefetch(self, requests: Iterable[_SourceRequest]) -> None:
+        """Enclose every missing source row of these requests in batches of maps."""
+        groups: dict[tuple[object, bool], tuple[IntervalBoundaryCell, dict[bytes, np.ndarray]]] = {}
+        for cell, reference, jet in requests:
+            reference = np.asarray(reference, dtype=np.float64)
+            raw = reference.tobytes()
+            kind = "jet" if jet else "image"
+            if self._source_lookup(cell, kind, raw) is not None:
+                continue
+            groups.setdefault((self._source_token(cell), jet), (cell, {}))[1].setdefault(raw, reference)
+        for wanted in (False, True):
+            batch: list[tuple[IntervalBoundaryCell, list[np.ndarray]]] = []
+            rows = 0
+            for (_, jet), (cell, references) in groups.items():
+                if jet != wanted:
+                    continue
+                pending = list(references.values())
+                while pending:
+                    taken = pending[: _HOMOTOPY_BATCH - rows]
+                    pending = pending[len(taken) :]
+                    batch.append((cell, taken))
+                    rows += len(taken)
+                    if rows == _HOMOTOPY_BATCH:
+                        self._enclose(batch, wanted)
+                        batch, rows = [], 0
+            if batch:
+                self._enclose(batch, wanted)
+
+    def source_interval(
+        self, cell: IntervalBoundaryCell, reference: np.ndarray, *,
+        jet: bool, orientation: bool = False,
+    ) -> _HomotopyInterval:
+        reference = np.asarray(reference, dtype=np.float64)
+        kind, raw = "jet" if jet else "image", reference.tobytes()
+        value = self._source_lookup(cell, kind, raw)
+        if value is None:
+            self._enclose([(cell, [reference])], jet)
+            value = self.memo[kind, self._source_token(cell), raw]
+        return value[1] if orientation else value[0]
+
+    def target_interval(
+        self,
+        cell: IntervalBoundaryCell,
+        kind: str,
+        expressions: tuple[Expression, ...],
+        reference: np.ndarray,
+    ) -> _HomotopyInterval:
+        """Exact-target hull of one cell's coordinates or Jacobian, memoized."""
+        return self.target_enclosure(cell, kind, expressions, reference)[0]
+
+    def target_enclosure(
+        self,
+        cell: IntervalBoundaryCell,
+        kind: str,
+        expressions: tuple[Expression, ...],
+        reference: np.ndarray,
+    ) -> tuple[_HomotopyInterval, _HomotopyInterval | None]:
+        """Memoized exact-target hull and outward Bernstein control net."""
+        key = (kind, cell.entity, np.asarray(reference, dtype=np.float64).tobytes())
+        cached = self._lookup(key)
+        if cached is not None:
+            return cached[0], cached[1] if len(cached) > 1 else None
+        box, net = _homotopy_target_enclosure(expressions, reference, budget=self.budget)
+        self._remember(key, (box,) if net is None else (box, net))
+        self.storage(self.pending)
+        return box, net
+
+
+def _homotopy_checked_interval(
+    value: _HomotopyInterval, shape: tuple[int, ...]
+) -> _HomotopyInterval:
+    lower, upper = (np.asarray(part, dtype=np.float64) for part in value)
+    if (
+        lower.shape != shape
+        or upper.shape != shape
+        or not np.all(np.isfinite(lower))
+        or not np.all(np.isfinite(upper))
+        or np.any(lower > upper)
+    ):
+        raise _IntervalHomotopyRefusal("interval_homotopy_invalid_enclosure")
+    return lower, upper
+
+
+def _homotopy_quadratic_controls(
+    expressions: tuple[Expression, ...], reference: np.ndarray
+) -> list[tuple[list[int], int]] | None:
+    """Exact degree-two Bernstein nets of rational quadratics on a subtriangle.
+
+    On the subtriangle with corners r_i the restriction has control values
+    P(r_i) and 2 P((r_i + r_j) / 2) - (P(r_i) + P(r_j)) / 2. These are exactly
+    the degree-two simplex Bernstein coefficients of the composed polynomial.
+    Binary corners are exact integers on one dyadic grid that also holds their
+    midpoints, so each expression's six controls are integers over one common
+    denominator, returned as (controls, denominator). Radical or higher-degree
+    coefficients return ``None``.
+    """
+    ratios = [
+        float(value).as_integer_ratio()
+        for value in np.asarray(reference, dtype=np.float64).reshape(-1)
+    ]
+    scale = 2 * max(denominator for _, denominator in ratios)
+    grid = [numerator * (scale // denominator) for numerator, denominator in ratios]
+    corners = [(grid[2 * k], grid[2 * k + 1]) for k in range(3)]
+    points = [
+        *corners,
+        *(
+            ((corners[i][0] + corners[j][0]) // 2, (corners[i][1] + corners[j][1]) // 2)
+            for i, j in ((0, 1), (1, 2), (0, 2))
+        ),
+    ]
+    hulls = []
+    for value in expressions:
+        if not isinstance(value, dict):
+            return None
+        terms = []
+        common = 1
+        for exponent, coefficient in value.items():
+            if (
+                not isinstance(coefficient, (int, Fraction))
+                or isinstance(coefficient, bool)
+                or len(exponent) != 2
+                or min(exponent) < 0
+                or sum(exponent) > 2
+            ):
+                return None
+            coefficient = Fraction(coefficient)
+            terms.append((exponent, coefficient))
+            common = math.lcm(common, coefficient.denominator)
+        # value * scale**2 * common is an integer polynomial in grid points.
+        integer_terms = [
+            (
+                exponent[0],
+                exponent[1],
+                coefficient.numerator
+                * (common // coefficient.denominator)
+                * scale ** (2 - exponent[0] - exponent[1]),
+            )
+            for exponent, coefficient in terms
+        ]
+        values = [
+            sum(term * x**first * y**second for first, second, term in integer_terms)
+            for x, y in points
+        ]
+        controls = [
+            *(2 * corner for corner in values[:3]),
+            *(
+                4 * values[3 + index] - values[i] - values[j]
+                for index, (i, j) in enumerate(((0, 1), (1, 2), (0, 2)))
+            ),
+        ]
+        hulls.append((controls, 2 * scale * scale * common))
+    return hulls
+
+
+def _homotopy_target_enclosure(
+    expressions: tuple[Expression, ...],
+    reference: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[_HomotopyInterval, _HomotopyInterval | None]:
+    """Exact-hull box and outward (6,k) Bernstein control net, when rational.
+
+    The degree-two control net of any scalar combination n.P on the
+    subtriangle is n applied to this vector net, so it bounds every projection.
+    """
+    budget.reserve(6, 1024)
+    nets = _homotopy_quadratic_controls(expressions, reference)
+    if nets is not None:
+        budget.reserve(len(nets))
+        box = (
+            np.asarray(
+                [fraction_endpoint(Fraction(min(net), scale), upper=False) for net, scale in nets]
+            ),
+            np.asarray(
+                [fraction_endpoint(Fraction(max(net), scale), upper=True) for net, scale in nets]
+            ),
+        )
+        # Integer true division is correctly rounded; one ulp is outward.
+        rounded = np.asarray([[value / scale for value in net] for net, scale in nets]).T
+        return box, (np.nextafter(rounded, -np.inf), np.nextafter(rounded, np.inf))
+    exact = np.asarray([rational_vector(point) for point in reference], dtype=object)
+    composition = ArgumentComposition(
+        affine_arguments(
+            exact[0], (exact[1:] - exact[0]).T, budget=budget
+        ),
+        budget=budget,
+    )
+    result = np.asarray(
+        [
+            polynomial_bounds(
+                composition(value, budget=budget), "simplex", 2, budget=budget
+            )
+            for value in expressions
+        ],
+        dtype=np.float64,
+    )
+    return (result[:, 0], result[:, 1]), None
+
+
+def _homotopy_target_bounds(
+    expressions: tuple[Expression, ...],
+    reference: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _HomotopyInterval:
+    return _homotopy_target_enclosure(expressions, reference, budget=budget)[0]
+
+
+def _homotopy_jets(
+    cell: IntervalBoundaryCell,
+    jacobian: tuple[Expression, ...],
+    reference: np.ndarray,
+    *,
+    work: _IntervalHomotopyWork,
+    orientation: bool = False,
+) -> tuple[_HomotopyInterval, _HomotopyInterval]:
+    source = work.source_interval(cell, reference, jet=True, orientation=orientation)
+    lower, upper = work.target_interval(cell, "jacobian", jacobian, reference)
+    return source, (lower.reshape(3, 2), upper.reshape(3, 2))
+
+
+def _homotopy_linear(
+    left: _HomotopyInterval, right: _HomotopyInterval
+) -> _HomotopyInterval:
+    """Small (batched) matrix product with directed rounding on every accumulation.
+
+    Operands are (..., a, b) and (..., b, c). Elementwise outward products are
+    accumulated left to right from zero, the same rounding sequence as one
+    ``interval_dot`` per entry; leading batch axes never mix entries.
+    """
+    left_lower, left_upper = np.asarray(left[0]), np.asarray(left[1])
+    products = interval_multiply(
+        (left_lower[..., :, :, None], left_upper[..., :, :, None]),
+        (np.asarray(right[0])[..., None, :, :], np.asarray(right[1])[..., None, :, :]),
+    )
+    shape = np.asarray(products[0]).shape
+    lower, upper = np.zeros(shape[:-2] + shape[-1:]), np.zeros(shape[:-2] + shape[-1:])
+    for index in range(left_lower.shape[-1]):
+        lower, upper = interval_add(
+            (lower, upper),
+            (np.asarray(products[0])[..., index, :], np.asarray(products[1])[..., index, :]),
+        )
+    return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+
+
+def _homotopy_spd(
+    jacobian: _HomotopyInterval,
+    projection: np.ndarray,
+    transform: _HomotopyInterval,
+) -> bool:
+    projected = _homotopy_linear(
+        _homotopy_linear((projection, projection), jacobian), transform
+    )
+    low, high = projected
+    off = interval_multiply(
+        interval_add((low[0, 1], high[0, 1]), (low[1, 0], high[1, 0])),
+        (np.asarray(0.5), np.asarray(0.5)),
+    )
+    square = interval_multiply(off, off)
+    determinant = interval_subtract(
+        interval_multiply(
+            (low[0, 0], high[0, 0]), (low[1, 1], high[1, 1])
+        ),
+        square,
+    )
+    return bool(low[0, 0] > 0 and determinant[0] > 0)
+
+
+def _homotopy_children(reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    # All reference coordinates start dyadic. Refuse stagnation rather than
+    # treating a rounded midpoint as an exact partition.
+    edges = ((0, 1), (1, 2), (2, 0))
+    a, b = max(edges, key=lambda edge: np.linalg.norm(reference[edge[0]] - reference[edge[1]]))
+    midpoint = (reference[a] + reference[b]) * 0.5
+    if np.array_equal(midpoint, reference[a]) or np.array_equal(midpoint, reference[b]):
+        raise _IntervalHomotopyRefusal("interval_homotopy_reference_resolution")
+    if any(
+        Fraction(float(midpoint[k]))
+        != (Fraction(float(reference[a, k])) + Fraction(float(reference[b, k]))) / 2
+        for k in range(2)
+    ):
+        raise _IntervalHomotopyRefusal("interval_homotopy_reference_resolution")
+    first, second = reference.copy(), reference.copy()
+    first[b], second[a] = midpoint, midpoint
+    return first, second
+
+
+# (refusal facets, predicate on a reference subtriangle, its source rows).
+type _CoverTask = tuple[
+    tuple[int, ...],
+    Callable[[np.ndarray], bool],
+    Callable[[np.ndarray], tuple[_SourceRequest, ...]],
+]
+
+
+def _homotopy_covers(
+    tasks: list[_CoverTask],
+    work: _IntervalHomotopyWork,
+    reason: str,
+    *,
+    depth_offset: int = 0,
+    batch: int = _HOMOTOPY_BATCH,
+) -> None:
+    """Prove every task predicate on a bisection cover of the reference triangle.
+
+    The worklist is popped in last-in batches of at most ``batch`` pieces whose
+    missing source rows are enclosed together before any predicate reads them.
+    Every piece is charged and depth-limited exactly as in independent covers;
+    a two-piece batch keeps the depth-first order of a failing sibling pair.
+    """
+    active = [(task, _HOMOTOPY_REFERENCE, depth_offset) for task in reversed(range(len(tasks)))]
+    while active:
+        work.storage(len(active))
+        chunk = active[-batch:]
+        del active[-batch:]
+        with work.budget.temporary_scope():
+            work.prefetch(
+                request for task, reference, _ in chunk for request in tasks[task][2](reference)
+            )
+        for task, reference, depth in reversed(chunk):
+            work.piece()
+            with work.budget.temporary_scope():
+                proved = tasks[task][1](reference)
+            work.poll()
+            if proved:
+                continue
+            if depth >= work.limits.maximum_subdivision_depth:
+                raise _IntervalHomotopyRefusal(reason, tasks[task][0])
+            active.extend((task, child, depth + 1) for child in _homotopy_children(reference))
+            work.storage(len(active) + len(chunk))
+
+
+def _homotopy_exact_matrix(matrix: tuple) -> _HomotopyInterval:
+    return (
+        np.asarray(
+            [[fraction_endpoint(value, upper=False) for value in row] for row in matrix]
+        ),
+        np.asarray(
+            [[fraction_endpoint(value, upper=True) for value in row] for row in matrix]
+        ),
+    )
+
+
+def _homotopy_common_atlas(
+    first: Cell,
+    second: Cell,
+    shared: set[int],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _TriangleAtlas | None:
+    atlas = _triangle_atlas(first, second, shared, budget=budget)
+    if atlas is not None:
+        return atlas
+    # A first-face tangent projection can collapse a perpendicular second face.
+    # Propose a bisector projection instead, with a convex ABSTRACT diamond.
+    # Its straight common edge lives in reference space, never in physical space.
+    a, b = sorted(shared)
+    corners = [
+        np.asarray(_plane_corner_images(cell, budget=budget), dtype=np.float64)
+        for cell in (first, second)
+    ]
+    origin = corners[0][first.vertices.index(a)]
+    tangent = corners[0][first.vertices.index(b)] - origin
+    length_squared = float(tangent @ tangent)
+    if not math.isfinite(length_squared) or length_squared <= 0:
+        return None
+    edge_row = tangent / length_squared
+    outer = [
+        points[next(i for i, key in enumerate(cell.vertices) if key not in shared)] - origin
+        for cell, points in zip((first, second), corners, strict=True)
+    ]
+    transverse = [value - float(value @ edge_row) * tangent for value in outer]
+    lengths = [float(np.linalg.norm(value)) for value in transverse]
+    if any(not math.isfinite(value) or value <= 0 for value in lengths):
+        return None
+    normal_row = transverse[0] / lengths[0] - transverse[1] / lengths[1]
+    if not np.any(normal_row):
+        return None
+    projection = np.stack((edge_row, normal_row))
+    projected_outer = [projection @ value for value in outer]
+    if projected_outer[0][1] <= 0 or projected_outer[1][1] >= 0:
+        return None
+    height = max(
+        1.0,
+        *(4 * (value[0] - 0.5) ** 2 / abs(value[1]) for value in projected_outer),
+    )
+    if not math.isfinite(height):
+        return None
+    height_exact = Fraction(height)
+    start, end = (Fraction(0), Fraction(0)), (Fraction(1), Fraction(0))
+    outer_points = (
+        (Fraction(1, 2), height_exact),
+        (Fraction(1, 2), -height_exact),
+    )
+    if not convex_triangle_union(start, end, *outer_points, budget=budget):
+        return None
+    transforms: list[
+        tuple[tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]]
+    ] = []
+    for cell, point in zip((first, second), outer_points, strict=True):
+        chart = [start if key == a else end if key == b else point for key in cell.vertices]
+        matrix = tuple(
+            tuple(chart[j + 1][i] - chart[0][i] for j in range(2)) for i in range(2)
+        )
+        determinant = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]
+        budget.reserve(1, 1024)
+        transforms.append((
+            (matrix[1][1] / determinant, -matrix[0][1] / determinant),
+            (-matrix[1][0] / determinant, matrix[0][0] / determinant),
+        ))
+    # The rounded candidate is not evidence. Both source and target Jacobians
+    # must subsequently pass the outward SPD proof in this fixed exact atlas.
+    return _TriangleAtlas(projection, transforms)
+
+
+def _homotopy_candidate_pairs(
+    lower: np.ndarray, upper: np.ndarray, work: _IntervalHomotopyWork
+) -> Generator[tuple[int, int], None, None]:
+    with work.budget.temporary_scope(), work.budget.live_storage() as live:
+        bvh = prepare_bvh(
+            lower,
+            upper,
+            dtype=np.float64,
+            _charge_work=work.budget.reserve,
+            _reserve_storage=lambda size: work.budget.reserve(0, size),
+        )
+        block = 1024
+        # Median-tree depth bounds pending DFS blocks. Include both host banks
+        # and all simultaneous indexed box, mask and child arrays.
+        live.set_bound(
+            8192 + 1024 * len(lower)
+            + block * (512 + 64 * (len(lower).bit_length() + 1))
+        )
+        for first, second in bvh_overlap_pair_blocks(
+            bvh, bvh, include_touching=True,
+            maximum_block_pairs=block, visit=work.budget.reserve,
+        ):
+            for a, b in zip(first, second, strict=True):
+                if a >= b:
+                    continue
+                if work.pairs >= work.limits.maximum_candidate_pairs:
+                    raise _IntervalHomotopyRefusal("interval_homotopy_candidate_pair_limit")
+                work.pairs += 1
+                yield int(a), int(b)
+
+
+def _homotopy_monotone(
+    items: Sequence[
+        tuple[
+            IntervalBoundaryCell, tuple[Expression, ...], np.ndarray, _HomotopyInterval,
+            tuple[int, ...],
+        ]
+    ],
+    work: _IntervalHomotopyWork,
+) -> None:
+    """Prove each (cell, jacobian, projection, transform, facets) item monotone."""
+    tasks: list[_CoverTask] = []
+    for cell, jacobian, projection, transform, entities in items:
+
+        def predicate(
+            reference: np.ndarray,
+            cell: IntervalBoundaryCell = cell,
+            jacobian: tuple[Expression, ...] = jacobian,
+            projection: np.ndarray = projection,
+            transform: _HomotopyInterval = transform,
+        ) -> bool:
+            return all(
+                _homotopy_spd(jet, projection, transform)
+                for jet in _homotopy_jets(
+                    cell, jacobian, reference, work=work, orientation=True
+                )
+            )
+
+        def requests(
+            reference: np.ndarray, cell: IntervalBoundaryCell = cell
+        ) -> tuple[_SourceRequest, ...]:
+            return ((cell, reference, True),)
+
+        tasks.append((entities, predicate, requests))
+    # A fixed projection/atlas is essential: changing it at children would prove
+    # only local rank, not global injectivity. SPD is convex in homotopy time.
+    # Integrating the a.e. directional inequality along absolutely continuous
+    # chart segments also covers continuous piecewise-C1 native chart joins.
+    # The source hull includes RAW authored and completed jets: convexity also
+    # proves orientation along the authored-face-to-representative correction.
+    _homotopy_covers(tasks, work, "interval_homotopy_monotonicity_unresolved")
+
+
+def _homotopy_norm_upper(value: _HomotopyInterval) -> float:
+    absolute = np.maximum(np.abs(value[0]), np.abs(value[1]))
+    square = interval_dot((absolute, absolute), (absolute, absolute))[1]
+    return float(np.nextafter(np.sqrt(square), np.inf))
+
+
+def _homotopy_deviation(
+    items: list[tuple[IntervalBoundaryCell, tuple[Expression, ...], float]],
+    work: _IntervalHomotopyWork,
+) -> list[float]:
+    """Bound each representative-to-target deviation within its allowance."""
+    maxima = [0.0] * len(items)
+    tasks: list[_CoverTask] = []
+    for index, (cell, jacobian, tolerance) in enumerate(items):
+
+        def predicate(
+            reference: np.ndarray,
+            index: int = index,
+            cell: IntervalBoundaryCell = cell,
+            jacobian: tuple[Expression, ...] = jacobian,
+            tolerance: float = tolerance,
+        ) -> bool:
+            work.distance()
+            point = np.broadcast_to(reference[0], (3, 2))
+            source_point = work.source_interval(cell, point, jet=False)
+            target_point = work.target_interval(cell, "target", cell.target, point)
+            difference = interval_subtract(source_point, target_point)
+            source_jet, target_jet = _homotopy_jets(
+                cell, jacobian, reference, work=work
+            )
+            difference_lower, difference_upper = interval_subtract(source_jet, target_jet)
+            displacement_lower, displacement_upper = interval_subtract(
+                (np.min(reference, axis=0), np.max(reference, axis=0)),
+                (reference[0], reference[0]),
+            )
+            increment = _homotopy_linear(
+                (np.asarray(difference_lower), np.asarray(difference_upper)),
+                (
+                    np.asarray(displacement_lower)[:, None],
+                    np.asarray(displacement_upper)[:, None],
+                ),
+            )
+            residual_lower, residual_upper = interval_add(
+                difference, (increment[0][:, 0], increment[1][:, 0])
+            )
+            bound = _homotopy_norm_upper(
+                (np.asarray(residual_lower), np.asarray(residual_upper))
+            )
+            if bound > tolerance or not math.isfinite(bound):
+                return False
+            maxima[index] = max(maxima[index], bound)
+            return True
+
+        def requests(
+            reference: np.ndarray, cell: IntervalBoundaryCell = cell
+        ) -> tuple[_SourceRequest, ...]:
+            return (
+                (cell, np.broadcast_to(reference[0], (3, 2)), False),
+                (cell, reference, True),
+            )
+
+        tasks.append(((cell.entity,), predicate, requests))
+    _homotopy_covers(tasks, work, "interval_homotopy_deviation_unresolved")
+    return maxima
+
+
+def _homotopy_blend(
+    source: _HomotopyInterval, target: _HomotopyInterval, time: tuple[float, float]
+) -> _HomotopyInterval:
+    # H is affine in t: hull of its endpoint enclosures avoids the dependency
+    # inflation of independently multiplying (1-t) and t over the whole slab.
+    # H(.,0)=S and H(.,1)=P exactly, so those endpoints need no arithmetic.
+    endpoints = []
+    for value in time:
+        if value == 0.0:
+            endpoints.append(source)
+            continue
+        if value == 1.0:
+            endpoints.append(target)
+            continue
+        t = np.asarray(value)
+        endpoints.append(
+            interval_add(
+                interval_multiply(
+                    interval_subtract((np.asarray(1.0), np.asarray(1.0)), (t, t)),
+                    source,
+                ),
+                interval_multiply((t, t), target),
+            )
+        )
+    return (
+        np.minimum(endpoints[0][0], endpoints[1][0]),
+        np.maximum(endpoints[0][1], endpoints[1][1]),
+    )
+
+
+def _homotopy_image(
+    cell: IntervalBoundaryCell,
+    reference: np.ndarray,
+    time: tuple[float, float],
+    *,
+    work: _IntervalHomotopyWork,
+) -> _HomotopyInterval:
+    source = work.source_interval(cell, reference, jet=False)
+    target = work.target_interval(cell, "target", cell.target, reference)
+    return _homotopy_checked_interval(_homotopy_blend(source, target, time), (3,))
+
+
+def _homotopy_target_vertex_rays(
+    target: Cell,
+    jacobian: tuple[Expression, ...],
+    vertex: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[ExactScalar, ...], ...]:
+    corner = target.vertices.index(vertex)
+    point = target.reference_vertices[corner]
+    jet = tuple(
+        expression_reference_evaluate(value, point, "simplex", budget=budget)
+        for value in jacobian
+    )
+    reserve_algebraic_work(jet, 12, 6, 2, budget=budget)
+    return tuple(
+        tuple(
+            sum(
+                (
+                    jet[2 * axis + j] * (other[j] - point[j])
+                    for j in range(2)
+                ),
+                Fraction(0),
+            )
+            for axis in range(3)
+        )
+        for local, other in enumerate(target.reference_vertices) if local != corner
+    )
+
+
+def _homotopy_target_cone_signs(
+    normal: np.ndarray,
+    rays: tuple[tuple[ExactScalar, ...], ...],
+    work: _IntervalHomotopyWork,
+    bounds: _HomotopyInterval | None = None,
+) -> tuple[bool, bool]:
+    """Exact signs of n.r for the first two rays and the remaining rays.
+
+    Outward rounded (k,3) ray ``bounds`` decide every sign whose interval dot
+    product excludes zero; otherwise all signs are evaluated exactly.
+    """
+    if work.ray_tests + len(rays) > work.limits.maximum_ray_tests:
+        raise _IntervalHomotopyRefusal("interval_homotopy_ray_test_limit")
+    if bounds is not None:
+        lower, upper = interval_multiply((normal[None, :], normal[None, :]), bounds)
+        products = np.asarray(lower), np.asarray(upper)
+        dot: _HomotopyInterval = (np.zeros(len(rays)), np.zeros(len(rays)))
+        for axis in range(3):
+            lower, upper = interval_add(dot, (products[0][:, axis], products[1][:, axis]))
+            dot = np.asarray(lower), np.asarray(upper)
+        positive, negative = dot[0] > 0, dot[1] < 0
+        if np.all(positive | negative):
+            work.ray_tests += len(rays)
+            work.budget.reserve(3 * len(rays))
+            return (
+                bool(np.all(positive[:2]) and np.all(negative[2:])),
+                bool(np.all(negative[:2]) and np.all(positive[2:])),
+            )
+    dots = []
+    weights = rational_vector(normal)
+    for ray in rays:
+        work.ray_tests += 1
+        reserve_algebraic_work((*weights, *ray), 3, 3, 2, budget=work.budget)
+        dots.append(sum(
+            (weight * value for weight, value in zip(weights, ray, strict=True)),
+            Fraction(0),
+        ))
+    return (
+        all(value > 0 for value in dots[:2]) and all(value < 0 for value in dots[2:]),
+        all(value < 0 for value in dots[:2]) and all(value > 0 for value in dots[2:]),
+    )
+
+
+def _homotopy_vertex_prepared(
+    index: int,
+    cell: IntervalBoundaryCell,
+    target: Cell,
+    jacobian: tuple[Expression, ...],
+    vertex: int,
+    work: _IntervalHomotopyWork,
+) -> _HomotopyVertex:
+    """Reference rays and exact target rays of one cell corner, once per request."""
+    key = (index, vertex)
+    prepared = work.vertices.get(key)
+    if prepared is None:
+        corner = cell.vertices.index(vertex)
+        rays = _homotopy_target_vertex_rays(target, jacobian, vertex, budget=work.budget)
+        ray_bounds = None
+        if all(isinstance(value, Fraction) for ray in rays for value in ray):
+            ray_bounds = (
+                np.asarray([
+                    [
+                        fraction_endpoint(
+                            rational_coefficient(value, role="homotopy.vertex_ray"), upper=False
+                        )
+                        for value in ray
+                    ]
+                    for ray in rays
+                ]),
+                np.asarray([
+                    [
+                        fraction_endpoint(
+                            rational_coefficient(value, role="homotopy.vertex_ray"), upper=True
+                        )
+                        for value in ray
+                    ]
+                    for ray in rays
+                ]),
+            )
+        prepared = _HomotopyVertex(
+            (
+                _HOMOTOPY_REFERENCE[[i for i in range(3) if i != corner]]
+                - _HOMOTOPY_REFERENCE[corner]
+            ).T,
+            np.repeat(_HOMOTOPY_REFERENCE[corner][None, :], 3, axis=0),
+            rays,
+            np.asarray([[float(value) for value in ray] for ray in rays], dtype=np.float64),
+            ray_bounds,
+        )
+        work.vertices[key] = prepared
+        work.storage(work.pending)
+    return prepared
+
+
+def _homotopy_subsets(count: int, size: int) -> np.ndarray:
+    return np.asarray(list(combinations(range(count), size)), dtype=np.int64).reshape(-1, size)
+
+
+def _homotopy_max_margins(rays: np.ndarray) -> np.ndarray:
+    """Rounded unit n maximizing min n.u over each batch's unit rows u.
+
+    ``rays`` is (P,R,3); rows of length zero are ignored and batches without a
+    positive margin return NaN. The minimum-norm point of conv(U) is the
+    max-margin direction and lies on a point, segment or triangle face of U, so
+    those faces are enumerated. A proposal is never evidence; interval covers
+    decide every separator.
+    """
+    lengths = np.linalg.norm(rays, axis=2)
+    usable = np.isfinite(lengths) & (lengths > 0)
+    units = np.where(
+        usable[..., None], rays / np.where(usable, lengths, 1.0)[..., None], np.nan
+    )
+    points = [units]
+    for size in (2, 3):
+        subsets = _homotopy_subsets(units.shape[1], size)
+        if not len(subsets):
+            break
+        base = units[:, subsets[:, 0]]
+        edges = units[:, subsets[:, 1:]] - base[:, :, None, :]
+        gram = np.einsum("psij,pskj->psik", edges, edges)
+        with np.errstate(invalid="ignore"):
+            regular = np.nan_to_num(np.linalg.det(gram), nan=0.0) > 1e-12
+        safe = np.where(regular[..., None, None], gram, np.eye(size - 1))
+        rhs = np.where(regular[..., None], -np.einsum("psij,psj->psi", edges, base), 0.0)
+        weights = np.linalg.solve(safe, rhs[..., None])[..., 0]
+        inside = regular & np.all(weights >= 0, axis=2) & (np.sum(weights, axis=2) <= 1)
+        points.append(np.where(
+            inside[..., None], base + np.einsum("psi,psij->psj", weights, edges), np.nan
+        ))
+    candidates = np.concatenate(points, axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        normals = candidates / np.linalg.norm(candidates, axis=2)[..., None]
+        margins = np.where(
+            usable[:, None, :], np.einsum("pcj,prj->pcr", normals, np.nan_to_num(units)), np.inf
+        ).min(axis=2)
+    margins = np.where(np.isfinite(margins), margins, -np.inf)
+    best = np.argmax(margins, axis=1)
+    chosen = normals[np.arange(len(best)), best]
+    return np.where((margins[np.arange(len(best)), best] > 0)[:, None], chosen, np.nan)
+
+
+def _homotopy_cone_rays(
+    cells: tuple[IntervalBoundaryCell, IntervalBoundaryCell],
+    prepared: tuple[_HomotopyVertex, _HomotopyVertex],
+    jacobians: tuple[tuple[Expression, ...], tuple[Expression, ...]],
+    work: _IntervalHomotopyWork,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sampled cone rays oriented positive on the first and negative on the second.
+
+    Returns (16,3) rays: shared-vertex source jet midpoints and exact target
+    rays, then whole-triangle source/target jet midpoints; the first eight per
+    cell pair are the vertex-only rays.
+    """
+    near: list[np.ndarray] = []
+    wide: list[np.ndarray] = []
+    for cell, data, jacobian, side in zip(cells, prepared, jacobians, (1.0, -1.0), strict=True):
+        vertex = work.source_interval(cell, data.point, jet=True)
+        root = work.source_interval(cell, _HOMOTOPY_REFERENCE, jet=True)
+        target = work.target_interval(cell, "jacobian", jacobian, _HOMOTOPY_REFERENCE)
+        near.extend((
+            side * ((0.5 * (vertex[0] + vertex[1])) @ data.directions).T,
+            side * data.rounded_rays,
+        ))
+        wide.extend((
+            side * ((0.5 * (root[0] + root[1])) @ data.directions).T,
+            side * ((0.5 * (target[0] + target[1])).reshape(3, 2) @ data.directions).T,
+        ))
+    return np.concatenate(near + wide), np.concatenate(near)
+
+
+def _homotopy_ray_proposals(
+    cells: tuple[IntervalBoundaryCell, IntervalBoundaryCell],
+    prepared: tuple[_HomotopyVertex, _HomotopyVertex],
+    jacobians: tuple[tuple[Expression, ...], tuple[Expression, ...]],
+    work: _IntervalHomotopyWork,
+) -> Generator[np.ndarray, None, None]:
+    """Rounded separators of sampled cone rays, positive on the first cell.
+
+    The whole-triangle proposal comes first; the vertex-only separator is
+    formed only if the first one is not accepted.
+    """
+    wide, near = _homotopy_cone_rays(cells, prepared, jacobians, work)
+    first = _homotopy_max_margins(wide[None])[0]
+    if np.all(np.isfinite(first)):
+        yield first
+    second = _homotopy_max_margins(near[None])[0]
+    if np.all(np.isfinite(second)) and not np.array_equal(first, second):
+        yield second
+
+
+def _homotopy_vertex_cone(
+    indices: tuple[int, int],
+    cells: tuple[IntervalBoundaryCell, IntervalBoundaryCell],
+    targets: tuple[Cell, Cell],
+    jacobians: tuple[tuple[Expression, ...], tuple[Expression, ...]],
+    vertex: int,
+    work: _IntervalHomotopyWork,
+) -> None:
+    """Separate two vertex-adjacent cones: n>0 on the first, n<0 on the second."""
+    prepared = (
+        _homotopy_vertex_prepared(indices[0], cells[0], targets[0], jacobians[0], vertex, work),
+        _homotopy_vertex_prepared(indices[1], cells[1], targets[1], jacobians[1], vertex, work),
+    )
+    target_rays = prepared[0].target_rays + prepared[1].target_rays
+    first_bounds, second_bounds = prepared[0].ray_bounds, prepared[1].ray_bounds
+    target_bounds = (
+        None
+        if first_bounds is None or second_bounds is None
+        else (
+            np.concatenate((first_bounds[0], second_bounds[0])),
+            np.concatenate((first_bounds[1], second_bounds[1])),
+        )
+    )
+    # The degenerate reference triangle at the shared vertex encloses the
+    # actual source jet there (one-sided hull at native chart joins).
+    vertex_jets = [
+        work.source_interval(cell, data.point, jet=True)
+        for cell, data in zip(cells, prepared, strict=True)
+    ]
+
+    # Necessary conditions only ORDER and skip strict separators: a candidate
+    # whose ray upper bound at the vertex itself is nonpositive at either
+    # homotopy end can never satisfy the strict cone inequality on a slab
+    # containing that end. Every accepted separator is still proved below.
+    def screened(normal: np.ndarray) -> tuple[float, bool]:
+        lowest = math.inf
+        length = float(np.linalg.norm(normal))
+        for jet, data, side in zip(vertex_jets, prepared, (1.0, -1.0), strict=True):
+            oriented = (side * normal)[None, :]
+            rays = _homotopy_linear(
+                _homotopy_linear((oriented, oriented), jet),
+                (data.directions, data.directions),
+            )
+            if not np.all(rays[1] > 0):
+                return -math.inf, False
+            lowest = min(lowest, float(np.min(rays[0])) / length)
+        return lowest, True
+
+    proposals: list[tuple[np.ndarray, bool, bool]] = []
+    proposed = _homotopy_ray_proposals(cells, prepared, jacobians, work)
+    planar: list[tuple[np.ndarray, bool, bool]] | None = None
+
+    def attempts() -> Generator[tuple[np.ndarray, bool, bool], None, None]:
+        # Cone-ray proposals are formed lazily; the authored target plane
+        # family is ranked only if none of them proves a slab.
+        nonlocal planar
+        yield from list(proposals)
+        for normal in proposed:
+            with work.budget.temporary_scope():
+                target_possible = _homotopy_target_cone_signs(
+                    normal, target_rays, work, target_bounds
+                )[0]
+            proposals.append((normal, screened(normal)[1], target_possible))
+            yield proposals[-1]
+        if planar is None:
+            candidates = _plane_candidates(targets[0], targets[1], {vertex}, budget=work.budget)
+            normals = [
+                np.asarray(normal, dtype=np.float64)
+                for normal in candidates.normals
+                if any(normal)
+            ]
+            ranked = []
+            for candidate, normal in enumerate(normals):
+                if not np.all(np.isfinite(normal)):
+                    continue
+                with work.budget.temporary_scope():
+                    target_signs = _homotopy_target_cone_signs(
+                        normal, target_rays, work, target_bounds
+                    )
+                for sign_index, sign in enumerate((1.0, -1.0)):
+                    oriented = sign * normal
+                    lowest, source_possible = screened(oriented)
+                    score = lowest if source_possible and target_signs[sign_index] else -math.inf
+                    ranked.append((
+                        (-score, candidate, sign_index),
+                        (oriented, source_possible, target_signs[sign_index]),
+                    ))
+            ranked.sort(key=lambda item: item[0])
+            planar = [attempt for _, attempt in ranked]
+        yield from planar
+
+    entities = (cells[0].entity, cells[1].entity)
+    active = [((0.0, 1.0), 0)]
+    while active:
+        work.storage(len(active))
+        time, depth = active.pop()
+        proved = False
+        for normal, source_possible, target_possible in attempts():
+            # A nonpositive exact target ray at the actual vertex excludes
+            # this STRICT separator, not the embedding or the contact.
+            if (time[0] == 0.0 and not source_possible) or (
+                time[1] == 1.0 and not target_possible
+            ):
+                continue
+            try:
+                for cell, jacobian, data, side in zip(
+                    cells, jacobians, prepared, (1.0, -1.0), strict=True
+                ):
+                    oriented = (side * normal)[None, :]
+
+                    def predicate(
+                        reference: np.ndarray,
+                        cell: IntervalBoundaryCell = cell,
+                        jacobian: tuple[Expression, ...] = jacobian,
+                        oriented: np.ndarray = oriented,
+                        directions: np.ndarray = data.directions,
+                    ) -> bool:
+                        source, target = _homotopy_jets(
+                            cell, jacobian, reference, work=work
+                        )
+                        jet = _homotopy_blend(source, target, time)
+                        rays = _homotopy_linear(
+                            _homotopy_linear((oriented, oriented), jet),
+                            (directions, directions),
+                        )
+                        return bool(np.all(rays[0] > 0))
+
+                    def requests(
+                        reference: np.ndarray, cell: IntervalBoundaryCell = cell
+                    ) -> tuple[_SourceRequest, ...]:
+                        return ((cell, reference, True),)
+
+                    _homotopy_covers(
+                        [(entities, predicate, requests)],
+                        work,
+                        "interval_homotopy_vertex_cone_unresolved",
+                        depth_offset=depth,
+                        batch=2,
+                    )
+            except _IntervalHomotopyRefusal as error:
+                if str(error) != "interval_homotopy_vertex_cone_unresolved":
+                    raise
+            else:
+                proved = True
+                break
+        if proved:
+            continue
+        if depth >= work.limits.maximum_subdivision_depth:
+            raise _IntervalHomotopyRefusal("interval_homotopy_vertex_cone_unresolved", entities)
+        middle = (time[0] + time[1]) * 0.5
+        if middle in time:
+            raise _IntervalHomotopyRefusal("interval_homotopy_time_resolution", entities)
+        work.storage(len(active) + 2)
+        active.extend((((time[0], middle), depth + 1), ((middle, time[1]), depth + 1)))
+    # For x=v+a*d0+b*d1, a,b>=0, absolute continuity along [v,x] and
+    # the a.e. one-sided-jet inequality give n.(H(x,t)-H(v,t)) the strict
+    # prescribed sign unless a=b=0; a derivative at every join is unnecessary.
+    # The authenticated vertex trace makes H(v,t) the SAME moving vertex.
+
+
+def _homotopy_tube_separated(
+    first: IntervalBoundaryCell,
+    second: IntervalBoundaryCell,
+    targets: tuple[tuple[Polynomial, ...], tuple[Polynomial, ...]],
+    deviations: tuple[float, float],
+    directions: list[np.ndarray],
+    work: _IntervalHomotopyWork,
+) -> bool:
+    """Separate the two moving images inside their certified target tubes.
+
+    Each cell's deviation proof bounds sup_x |S(x)-P(x)| by D. Since
+    H(x,t)-P(x)=(1-t)(S(x)-P(x)), every image H(.,t) stays in the closed
+    D-tube of its exact target for EVERY t, so tube separation needs no time
+    refinement. Separation is tested by outward axis boxes and by outward
+    projections of the exact Bernstein nets on the given rounded directions.
+    Failure is only inconclusive; the caller then refines the synchronized
+    swept images.
+    """
+    projections: list[tuple[np.ndarray, list[float]]] = []
+    for direction in directions:
+        if not np.all(np.isfinite(direction)) or not np.any(direction):
+            continue
+        direction = direction / float(np.max(np.abs(direction)))
+        norm = _homotopy_norm_upper((direction, direction))
+        projections.append((
+            direction,
+            [float(np.nextafter(norm * radius, np.inf)) for radius in deviations],
+        ))
+    active = [(_HOMOTOPY_REFERENCE, _HOMOTOPY_REFERENCE, 0)]
+    while active:
+        work.storage(len(active))
+        a, b, depth = active.pop()
+        work.piece()
+        with work.budget.temporary_scope():
+            enclosures = [
+                work.target_enclosure(cell, "target", target, reference)
+                for cell, target, reference in zip(
+                    (first, second), targets, (a, b), strict=True
+                )
+            ]
+            tubes = [
+                (np.nextafter(box[0] - radius, -np.inf), np.nextafter(box[1] + radius, np.inf))
+                for (box, _), radius in zip(enclosures, deviations, strict=True)
+            ]
+            separated = bool(
+                np.any(tubes[0][1] < tubes[1][0]) or np.any(tubes[1][1] < tubes[0][0])
+            )
+            nets = [net for _, net in enclosures]
+            for direction, projected_radii in projections:
+                if separated or nets[0] is None or nets[1] is None:
+                    break
+                ranges = [_homotopy_net_range(direction, cast(_HomotopyInterval, net)) for net in nets]
+                low = [
+                    float(np.nextafter(value[0] - radius, -np.inf))
+                    for value, radius in zip(ranges, projected_radii, strict=True)
+                ]
+                high = [
+                    float(np.nextafter(value[1] + radius, np.inf))
+                    for value, radius in zip(ranges, projected_radii, strict=True)
+                ]
+                separated = high[0] < low[1] or high[1] < low[0]
+        work.poll()
+        if separated:
+            continue
+        if depth >= work.limits.maximum_subdivision_depth:
+            return False
+        work.storage(len(active) + 2)
+        widths = [float(np.max(box[1] - box[0])) for box, _ in enclosures]
+        if widths[0] >= widths[1]:
+            active.extend((child, b, depth + 1) for child in _homotopy_children(a))
+        else:
+            active.extend((a, child, depth + 1) for child in _homotopy_children(b))
+    return True
+
+
+def _homotopy_net_range(direction: np.ndarray, net: _HomotopyInterval) -> tuple[float, float]:
+    """Outward range of the scalar net n.b_k, which bounds n.P on its subtriangle."""
+    lower, upper = interval_multiply((direction[None, :], direction[None, :]), net)
+    products = np.asarray(lower), np.asarray(upper)
+    total: _HomotopyInterval = (np.zeros(len(net[0])), np.zeros(len(net[0])))
+    for axis in range(net[0].shape[1]):
+        lower, upper = interval_add(total, (products[0][:, axis], products[1][:, axis]))
+        total = np.asarray(lower), np.asarray(upper)
+    return float(np.min(total[0])), float(np.max(total[1]))
+
+
+_HOMOTOPY_SAMPLE_LATTICE = np.asarray(
+    [(i / 4, j / 4) for i in range(5) for j in range(5 - i)], dtype=np.float64
+)
+
+
+def _homotopy_target_samples(target: tuple[Polynomial, ...]) -> np.ndarray:
+    """Rounded target points on an order-four reference lattice; never evidence."""
+    x, y = _HOMOTOPY_SAMPLE_LATTICE[:, 0], _HOMOTOPY_SAMPLE_LATTICE[:, 1]
+    return np.stack(
+        [
+            sum(
+                (float(coefficient) * x ** exponent[0] * y ** exponent[1]
+                 for exponent, coefficient in value.items()),
+                np.zeros_like(x),
+            )
+            for value in target
+        ],
+        axis=1,
+    )
+
+
+def _homotopy_disjoint(
+    items: list[
+        tuple[
+            IntervalBoundaryCell,
+            IntervalBoundaryCell,
+            tuple[tuple[Polynomial, ...], tuple[Polynomial, ...]],
+            tuple[float, float],
+        ]
+    ],
+    work: _IntervalHomotopyWork,
+) -> None:
+    """Separate every nonadjacent pair on synchronized homotopy slabs.
+
+    Rounded target lattice samples only propose projection directions: the
+    closest sampled points' difference and the anchor-centroid difference. The
+    certified target-tube test is skipped when sampled target points already
+    lie closer than the two tube radii: closed tubes then intersect and that
+    sufficient test cannot succeed. Remaining pairs share one worklist, popped
+    in batches whose source images are enclosed together. Each entry keeps its
+    own pair, pieces, slab and fair depth limit; images separate by an axis or
+    along the closest-sample direction.
+    """
+    samples: dict[int, np.ndarray] = {}
+    for first, second, targets, _ in items:
+        for cell, target in zip((first, second), targets, strict=True):
+            if cell.entity not in samples:
+                samples[cell.entity] = _homotopy_target_samples(target)
+    pending = []
+    directions: dict[int, np.ndarray | None] = {}
+    for index, (first, second, targets, deviations) in enumerate(items):
+        gaps = samples[second.entity][None, :, :] - samples[first.entity][:, None, :]
+        lengths = np.linalg.norm(gaps, axis=2)
+        nearest = np.unravel_index(int(np.argmin(lengths)), lengths.shape)
+        closest = gaps[nearest]
+        centroid = np.mean(second.anchor, axis=0) - np.mean(first.anchor, axis=0)
+        if float(lengths[nearest]) >= sum(deviations) and _homotopy_tube_separated(
+            first, second, targets, deviations, [closest, centroid], work
+        ):
+            continue
+        pending.append(index)
+        scale = float(np.max(np.abs(closest)))
+        directions[index] = (
+            closest / scale if math.isfinite(scale) and scale > 0 else None
+        )
+    active = [
+        (index, _HOMOTOPY_REFERENCE, _HOMOTOPY_REFERENCE, (0.0, 1.0), (0, 0, 0))
+        for index in reversed(pending)
+    ]
+    while active:
+        work.storage(len(active))
+        chunk = active[-_HOMOTOPY_BATCH:]
+        del active[-_HOMOTOPY_BATCH:]
+        with work.budget.temporary_scope():
+            work.prefetch(
+                request
+                for index, a, b, _, _ in chunk
+                for request in ((items[index][0], a, False), (items[index][1], b, False))
+            )
+        for index, a, b, time, depths in reversed(chunk):
+            first, second = items[index][0], items[index][1]
+            work.piece()
+            work.distance()
+            with work.budget.temporary_scope():
+                first_image = _homotopy_image(first, a, time, work=work)
+                second_image = _homotopy_image(second, b, time, work=work)
+            work.poll()
+            if np.any(first_image[1] < second_image[0]) or np.any(
+                second_image[1] < first_image[0]
+            ):
+                continue
+            direction = directions[index]
+            if direction is not None:
+                row = (direction[None, :], direction[None, :])
+                projected = [
+                    _homotopy_linear(row, (image[0][:, None], image[1][:, None]))
+                    for image in (first_image, second_image)
+                ]
+                if (
+                    projected[0][1][0, 0] < projected[1][0][0, 0]
+                    or projected[1][1][0, 0] < projected[0][0][0, 0]
+                ):
+                    continue
+            entities = (first.entity, second.entity)
+            if sum(depths) >= work.limits.maximum_subdivision_depth:
+                raise _IntervalHomotopyRefusal(
+                    "interval_homotopy_nonadjacent_contact_unresolved", entities
+                )
+            # Fair reference/reference/time refinement. Both images ALWAYS use
+            # the same slab; intersections of independent swept tubes are not
+            # witnesses.
+            axis = min(range(3), key=lambda value: depths[value])
+            child_depths = (
+                depths[0] + int(axis == 0),
+                depths[1] + int(axis == 1),
+                depths[2] + int(axis == 2),
+            )
+            if axis == 0:
+                active.extend(
+                    (index, child, b, time, child_depths) for child in _homotopy_children(a)
+                )
+            elif axis == 1:
+                active.extend(
+                    (index, a, child, time, child_depths) for child in _homotopy_children(b)
+                )
+            else:
+                middle = (time[0] + time[1]) * 0.5
+                if middle in time:
+                    raise _IntervalHomotopyRefusal(
+                        "interval_homotopy_time_resolution", entities
+                    )
+                active.extend(
+                    (index, a, b, child, child_depths)
+                    for child in ((time[0], middle), (middle, time[1]))
+                )
+            work.storage(len(active) + len(chunk))
+
+
+def _homotopy_p2_coordinates(
+    coordinates: tuple[Expression, ...],
+) -> tuple[Polynomial, ...]:
+    polynomials: list[Polynomial] = []
+    for value in coordinates:
+        if not isinstance(value, dict):
+            raise _IntervalHomotopyRefusal("interval_homotopy_target_not_p2")
+        polynomial = cast(Polynomial, value)
+        if any(
+            len(exponent) != 2 or min(exponent) < 0 or sum(exponent) > 2
+            for exponent in polynomial
+        ):
+            raise _IntervalHomotopyRefusal("interval_homotopy_target_not_p2")
+        polynomials.append(polynomial)
+    return tuple(polynomials)
+
+
+def _homotopy_target_identity(target: tuple[Polynomial, ...]) -> tuple:
+    def scalar(value: ExactScalar) -> tuple:
+        terms = value.terms if isinstance(value, RadicalElement) else ((1, value),)
+        return tuple((radicand, str(coefficient.numerator), str(coefficient.denominator)) for radicand, coefficient in terms)
+
+    return tuple(
+        tuple((exponent, scalar(coefficient)) for exponent, coefficient in sorted(value.items()))
+        for value in target
+    )
+
+
+def certify_interval_boundary_homotopy(
+    cells: tuple[IntervalBoundaryCell, ...],
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    tolerance: float,
+    budget: CoordinateEnclosureBudget,
+) -> IntervalBoundaryHomotopy:
+    """Prove representative-to-P2 isotopy and original authored-source deviation.
+
+    The caller authenticates source-authority coverage and target boundary
+    completeness. Here closure, manifold links, all shared traces, one-sided rank,
+    self/pair injectivity, synchronized-time separation and deviation are
+    independent proof obligations.
+
+    The raw-face-to-representative correction is separately bounded in distance
+    and orientation. Its outward distance bound consumes the SAME tolerance;
+    contact is proved for the closed representative, not for unglued raw faces.
+    A failed sufficient interval inequality is
+    unresolved, never an intersection witness. Resource exceptions from the
+    shared coordinate ledger deliberately propagate unchanged.
+    """
+    entities: tuple[int, ...] = ()
+    work = None
+    try:
+        if not cells or not math.isfinite(tolerance) or tolerance < 0:
+            raise _IntervalHomotopyRefusal("interval_homotopy_invalid_request")
+        with (
+            budget.temporary_scope(),
+            budget.bound_stage(limits.maximum_work_units, limits.maximum_scratch_bytes),
+            budget.live_storage() as live,
+        ):
+            work = _IntervalHomotopyWork(limits, budget, live, 8192 + 4096 * len(cells))
+            targets: list[Cell] = []
+            target_polynomials: list[tuple[Polynomial, ...]] = []
+            jacobians: list[tuple[Expression, ...]] = []
+            authored_bounds: list[float] = []
+            edges: dict[tuple[int, int], list[tuple[int, int]]] = {}
+            vertex_uses: dict[int, list[int]] = {}
+            facets: set[tuple[int, ...]] = set()
+            entity_ids: set[int] = set()
+            identities = []
+            for index, cell in enumerate(cells):
+                entities = (cell.entity,)
+                work.piece()
+                if (
+                    len(cell.vertices) != 3
+                    or len(set(cell.vertices)) != 3
+                    or cell.orientation not in (-1, 1)
+                    or len(cell.target) != 3
+                    or cell.anchor.shape != (3, 3)
+                    or not np.all(np.isfinite(cell.anchor))
+                    or not cell.source.map_id
+                ):
+                    raise _IntervalHomotopyRefusal("interval_homotopy_invalid_cell")
+                authored_bound = float(cell.source.authored_deviation_bound)
+                if not math.isfinite(authored_bound) or authored_bound < 0:
+                    raise _IntervalHomotopyRefusal("interval_homotopy_invalid_authored_bound")
+                if authored_bound > tolerance:
+                    raise _IntervalHomotopyRefusal("interval_homotopy_authored_deviation_exceeds_tolerance")
+                authored_bounds.append(authored_bound)
+                key = tuple(sorted(cell.vertices))
+                if key in facets or cell.entity in entity_ids:
+                    raise _IntervalHomotopyRefusal("interval_homotopy_duplicate_facet")
+                facets.add(key)
+                entity_ids.add(cell.entity)
+                target_coordinates = _homotopy_p2_coordinates(cell.target)
+                target_polynomials.append(target_coordinates)
+                if any(
+                    bernstein_node_count(value, "simplex", 2) > limits.maximum_bernstein_nodes
+                    for value in target_coordinates
+                ):
+                    raise _IntervalHomotopyRefusal("interval_homotopy_bernstein_limit")
+                target = Cell(
+                    target_coordinates, "simplex", "triangle", 2, cell.vertices,
+                    embedding_vertices("triangle"),
+                )
+                if any(
+                    tuple(expression_reference_evaluate(value, reference, "simplex", budget=budget) for value in target_coordinates)
+                    != rational_vector(cell.anchor[corner])
+                    for corner, reference in enumerate(target.reference_vertices)
+                ):
+                    raise _IntervalHomotopyRefusal("interval_homotopy_anchor_mismatch")
+                targets.append(target)
+                jacobians.append(
+                    tuple(derivative(value, axis, budget=budget) for value in target_coordinates for axis in range(2))
+                )
+                traces = []
+                for local, vertex in enumerate(cell.vertices):
+                    identity = cell.source.trace_identity((local,))
+                    if not identity:
+                        raise _IntervalHomotopyRefusal("interval_homotopy_source_vertex_unsupported")
+                    traces.append(identity)
+                    vertex_uses.setdefault(vertex, []).append(index)
+                for a, b in ((0, 1), (1, 2), (2, 0)):
+                    start, end = cell.vertices[a], cell.vertices[b]
+                    edge = (start, end) if start < end else (end, start)
+                    ordered = (a, b) if start < end else (b, a)
+                    identity = cell.source.trace_identity(ordered)
+                    if not identity:
+                        raise _IntervalHomotopyRefusal("interval_homotopy_source_edge_unsupported")
+                    traces.append(identity)
+                    edges.setdefault(edge, []).append((index, cell.orientation * (1 if start < end else -1)))
+                identities.append((
+                    cell.source.map_id, cell.entity, cell.vertices, cell.orientation,
+                    cell.anchor.copy(), _homotopy_target_identity(target_coordinates), tuple(traces),
+                    authored_bound,
+                ))
+            for edge, uses in edges.items():
+                if len(uses) != 2 or uses[0][1] + uses[1][1] != 0:
+                    entities = tuple(cells[index].entity for index, _ in uses)
+                    raise _IntervalHomotopyRefusal("interval_homotopy_boundary_not_closed_oriented")
+            for vertex, uses in vertex_uses.items():
+                # Edge cancellation alone admits pinched vertices. The link
+                # must be one connected degree-two cycle.
+                link: dict[int, set[int]] = {index: set() for index in uses}
+                for index in uses:
+                    for other in cells[index].vertices:
+                        if other != vertex:
+                            edge_key = (vertex, other) if vertex < other else (other, vertex)
+                            for neighbor, _ in edges[edge_key]:
+                                if neighbor != index:
+                                    link[index].add(neighbor)
+                reached, pending = set(), [uses[0]]
+                while pending:
+                    index = pending.pop()
+                    if index not in reached:
+                        reached.add(index)
+                        pending.extend(link[index] - reached)
+                if len(reached) != len(uses) or any(len(neighbors) != 2 for neighbors in link.values()):
+                    entities = tuple(cells[index].entity for index in uses)
+                    raise _IntervalHomotopyRefusal("interval_homotopy_nonmanifold_vertex")
+                first = uses[0]
+                identity = cells[first].source.trace_identity((cells[first].vertices.index(vertex),))
+                for index in uses[1:]:
+                    entities = (cells[first].entity, cells[index].entity)
+                    if (
+                        cells[index].source.trace_identity((cells[index].vertices.index(vertex),)) != identity
+                        or not _same_entity_trace(
+                            targets[first], targets[index], [vertex], 0,
+                            _HOMOTOPY_REFERENCE[[cells[first].vertices.index(vertex)]],
+                            _HOMOTOPY_REFERENCE[[cells[index].vertices.index(vertex)]],
+                            budget=budget,
+                        )
+                    ):
+                        raise _IntervalHomotopyRefusal("interval_homotopy_vertex_trace_mismatch")
+            for edge, uses in edges.items():
+                first, second = (use[0] for use in uses)
+                entities = (cells[first].entity, cells[second].entity)
+                trace_ids = [
+                    cells[index].source.trace_identity(tuple(cells[index].vertices.index(vertex) for vertex in edge))
+                    for index in (first, second)
+                ]
+                if trace_ids[0] != trace_ids[1] or not cell_traces_equal(targets[first], targets[second], budget=budget):
+                    raise _IntervalHomotopyRefusal("interval_homotopy_edge_trace_mismatch")
+            distance_upper = 0.0
+            identity_transform = (np.eye(2), np.eye(2))
+            projections = []
+            for cell, target in zip(cells, targets, strict=True):
+                entities = (cell.entity,)
+                projection = _midpoint_projection(jacobian_midpoint(target, budget=budget), 2)
+                if projection is None:
+                    raise _IntervalHomotopyRefusal("interval_homotopy_singular_target_chart")
+                projections.append(projection)
+            entities = ()
+            _homotopy_monotone(
+                [
+                    (cell, jacobian, projection, identity_transform, (cell.entity,))
+                    for cell, jacobian, projection in zip(cells, jacobians, projections, strict=True)
+                ],
+                work,
+            )
+            allowances = [
+                float(interval_subtract(
+                    (np.asarray(tolerance), np.asarray(tolerance)),
+                    (np.asarray(authored_bound), np.asarray(authored_bound)),
+                )[0])
+                for authored_bound in authored_bounds
+            ]
+            deviations = _homotopy_deviation(
+                list(zip(cells, jacobians, allowances, strict=True)), work
+            )
+            for cell, completed_distance, authored_bound in zip(
+                cells, deviations, authored_bounds, strict=True
+            ):
+                entities = (cell.entity,)
+                authored_distance = float(interval_add(
+                    (np.asarray(completed_distance), np.asarray(completed_distance)),
+                    (np.asarray(authored_bound), np.asarray(authored_bound)),
+                )[1])
+                if not math.isfinite(authored_distance) or authored_distance > tolerance:
+                    raise _IntervalHomotopyRefusal("interval_homotopy_deviation_unresolved")
+                distance_upper = max(distance_upper, authored_distance)
+            lower, upper = np.empty((len(cells), 3)), np.empty((len(cells), 3))
+            for start in range(0, len(cells), _HOMOTOPY_BATCH):
+                with budget.temporary_scope():
+                    work.prefetch(
+                        (cell, _HOMOTOPY_REFERENCE, False)
+                        for cell in cells[start : start + _HOMOTOPY_BATCH]
+                    )
+                for index in range(start, min(start + _HOMOTOPY_BATCH, len(cells))):
+                    entities = (cells[index].entity,)
+                    work.distance()
+                    lower[index], upper[index] = _homotopy_image(
+                        cells[index], _HOMOTOPY_REFERENCE, (0.0, 1.0), work=work
+                    )
+            # Swept boxes only discard pairs with a rigorous disjoint enclosure.
+            # Overlapping boxes are NOT contact witnesses: refine common time.
+            # Pairs are grouped by contact type; every pair keeps its obligation.
+            edge_pairs: list[tuple[int, int, set[int]]] = []
+            vertex_pairs: list[tuple[int, int, int]] = []
+            separate_pairs: list[tuple[int, int]] = []
+            with closing(_homotopy_candidate_pairs(lower, upper, work)) as pairs:
+                for first, second in pairs:
+                    entities = (cells[first].entity, cells[second].entity)
+                    work.piece()
+                    work.retain(1)
+                    shared = set(cells[first].vertices).intersection(cells[second].vertices)
+                    if len(shared) == 2:
+                        edge_pairs.append((first, second, shared))
+                    elif len(shared) == 1:
+                        vertex_pairs.append((first, second, next(iter(shared))))
+                    else:
+                        separate_pairs.append((first, second))
+            items = []
+            for first, second, shared in edge_pairs:
+                entities = (cells[first].entity, cells[second].entity)
+                atlas = _homotopy_common_atlas(
+                    targets[first], targets[second], shared, budget=budget
+                )
+                if atlas is None:
+                    raise _IntervalHomotopyRefusal(
+                        "interval_homotopy_common_convex_atlas_unresolved"
+                    )
+                items.extend(
+                    (
+                        cells[index], jacobians[index], atlas.projection,
+                        _homotopy_exact_matrix(transform), entities,
+                    )
+                    for index, transform in zip((first, second), atlas.transforms, strict=True)
+                )
+                work.retain(2)
+            entities = ()
+            _homotopy_monotone(items, work)
+            work.retain(-len(items))
+            del items
+            for start in range(0, len(vertex_pairs), _HOMOTOPY_BATCH // 4):
+                chunk = vertex_pairs[start : start + _HOMOTOPY_BATCH // 4]
+                with budget.temporary_scope():
+                    work.prefetch(
+                        (cells[index], reference, True)
+                        for first, second, vertex in chunk
+                        for index in (first, second)
+                        for reference in (
+                            _HOMOTOPY_REFERENCE,
+                            np.repeat(
+                                _HOMOTOPY_REFERENCE[cells[index].vertices.index(vertex)][None, :],
+                                3,
+                                axis=0,
+                            ),
+                        )
+                    )
+                for first, second, vertex in chunk:
+                    entities = (cells[first].entity, cells[second].entity)
+                    _homotopy_vertex_cone(
+                        (first, second), (cells[first], cells[second]),
+                        (targets[first], targets[second]),
+                        (jacobians[first], jacobians[second]), vertex, work,
+                    )
+            entities = ()
+            _homotopy_disjoint(
+                [
+                    (
+                        cells[first], cells[second],
+                        (target_polynomials[first], target_polynomials[second]),
+                        (deviations[first], deviations[second]),
+                    )
+                    for first, second in separate_pairs
+                ],
+                work,
+            )
+            for cell, identity in zip(cells, identities, strict=True):
+                if (
+                    cell.source.map_id != identity[0]
+                    or not np.array_equal(cell.anchor, identity[4])
+                    or _homotopy_target_identity(_homotopy_p2_coordinates(cell.target)) != identity[5]
+                    or float(cell.source.authored_deviation_bound) != identity[7]
+                ):
+                    entities = (cell.entity,)
+                    raise _IntervalHomotopyRefusal("interval_homotopy_source_state_changed")
+            work.poll()
+            proof_id = canonical_fingerprint({
+                "kind": "continuous-native-interval-boundary-homotopy",
+                "cells": tuple(identities),
+                "limits": limits.limits_id,
+                "tolerance": tolerance,
+                "distance_upper": distance_upper,
+            })
+            return IntervalBoundaryHomotopy(True, distance_upper, "", (), work.pieces, proof_id)
+    except _IntervalHomotopyRefusal as error:
+        return IntervalBoundaryHomotopy(
+            False,
+            math.inf,
+            str(error),
+            entities if error.entities is None else error.entities,
+            0 if work is None else work.pieces,
+            None,
+        )

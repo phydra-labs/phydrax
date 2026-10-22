@@ -13,7 +13,7 @@ from __future__ import annotations
 import copy as _owner_copy
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from itertools import combinations
 from math import isfinite, lcm, sqrt
@@ -41,6 +41,8 @@ import phydrax.geometry._domain_boundary as _dependency_phydrax_geometry__domain
 import phydrax.geometry._domain_numerics as _owner_phydrax_geometry__domain_numerics
 import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
 import phydrax.geometry._global_embedding as _dependency_phydrax_geometry__mesh_certificates
+import phydrax.geometry._interval_enclosure as interval_enclosure_owner
+import phydrax.geometry._mapped_reference_coverage as mapped_reference_coverage_owner
 import phydrax.geometry._meshing_domain as _dependency_phydrax_geometry__meshing_domain
 import phydrax.geometry._meshing_domain as _owner_phydrax_geometry__meshing_domain
 import phydrax.geometry._source_fidelity as source_fidelity_owner
@@ -129,6 +131,7 @@ class SurfaceMetricGeometryWitness(NamedTuple):
     domain_id: str
     cell_geometry_entity_ids: tuple[str, ...]
     cell_occurrence_paths: tuple[tuple[str, ...], ...]
+    cell_coedges: np.ndarray | None
 
 
 class SurfaceSource(NamedTuple):
@@ -139,6 +142,111 @@ class SurfaceSource(NamedTuple):
     vertex_ids: np.ndarray
     metric: np.ndarray
     physical_charts: np.ndarray
+
+
+type _MaterialPointKey = tuple[int, tuple[tuple[int, int], ...]]
+type _MaterialStencil = tuple[tuple[int, ...], tuple[float, ...], int]
+
+
+@dataclass(slots=True)
+class PreparedMaterialRouting:
+    """Request-local numeric locations, never edit or geometry verdicts.
+
+    The binding authenticates the complete source cover before every batch: a
+    changed neighbour can change the lowest-ID containing cell even when the
+    previously selected triangle is unchanged. Carrier topology is not an owner.
+    """
+
+    frame: tuple[str, ...]
+    storage: _dependency_phydrax_discretization__coordinate_budget.CoordinateLiveStorage
+    budget: (
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    )
+    entries: dict[_MaterialPointKey, _MaterialStencil] = field(default_factory=dict)
+    _binding: tuple[object, ...] | None = None
+
+    def authenticate(
+        self,
+        cells: np.ndarray,
+        charts: np.ndarray,
+        patches: np.ndarray,
+        cell_ids: np.ndarray,
+        vertex_ids: np.ndarray,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
+        if budget is not self.budget:
+            raise ValueError("material routing must remain in its request budget")
+        budget.ticket.checkpoint()
+        arrays = cells, patches, cell_ids, vertex_ids
+        size = 2048 + sum(value.nbytes for value in arrays)
+        size += sum(len(value) * 4 + 128 for value in self.frame)
+        size += sum(
+            256
+            + _dependency_phydrax__geometry_predicates.bigint_bytes(
+                value.numerator.bit_length()
+            )
+            + _dependency_phydrax__geometry_predicates.bigint_bytes(
+                value.denominator.bit_length()
+            )
+            for uv in charts.reshape((-1, 2))
+            for value in _exact_uv(uv)
+        )
+        with budget.temporary_scope():
+            budget.reserve(0, int(size))
+            binding = (
+                self.frame,
+                tuple(
+                    (value.shape, value.dtype.str, value.tobytes()) for value in arrays
+                ),
+                charts.shape,
+                tuple(_exact_uv(uv) for uv in charts.reshape((-1, 2))),
+            )
+            if binding != self._binding:
+                self.entries.clear()
+                self._binding = None
+                self.storage.set_bound(int(size))
+                self._binding = binding
+
+    def get(self, key: _MaterialPointKey) -> _MaterialStencil | None:
+        return self.entries.get(key)
+
+    def store(
+        self,
+        key: _MaterialPointKey,
+        sources: np.ndarray,
+        weights: np.ndarray,
+        identifier: int,
+    ) -> None:
+        if key not in self.entries:
+            size = 2048 + sum(
+                _dependency_phydrax__geometry_predicates.bigint_bytes(value.bit_length())
+                for pair in key[1]
+                for value in pair
+            )
+            self.storage.set_bound(self.storage.bound + size)
+        self.entries[key] = (
+            tuple(map(int, sources)),
+            tuple(map(float, weights)),
+            identifier,
+        )
+
+    def clear(self) -> None:
+        self.entries.clear()
+        self._binding = None
+
+
+@contextmanager
+def prepared_material_routing(
+    frame: tuple[str, ...],
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> Iterator[PreparedMaterialRouting]:
+    with budget.live_storage() as storage:
+        bank = PreparedMaterialRouting(frame, storage, budget)
+        try:
+            yield bank
+        finally:
+            bank.clear()
 
 
 @dataclass(slots=True)
@@ -167,6 +275,7 @@ class SurfaceState:
     material_charts: np.ndarray | None = None
     material_workspace_bytes_upper: int = 0
     material_fraction_bits: int = 0
+    cell_coedges: np.ndarray | None = None
 
 
 class SurfaceMetricControllerProtocol(Protocol):
@@ -177,6 +286,7 @@ class SurfaceMetricControllerProtocol(Protocol):
     background: SurfaceSource | None
     prior_stage: _dependency_phydrax_meshing__periodic.PeriodicMetricOrbitOutcome | None
     minimum_metric_quality: float
+    material_routing: PreparedMaterialRouting | None
 
     @property
     def operation_count(self) -> int: ...
@@ -245,31 +355,45 @@ def _edge_table(state: SurfaceState, /) -> tuple[np.ndarray, np.ndarray, np.ndar
     return edges, first, inverse.reshape((-1, 3))
 
 
-def _mapped_quality(
+# Keep eager primitive boundaries: fusing this program can change last bits,
+# candidate ordering, and committed mesh identities.
+_metric_surface_differential = (
+    _dependency_phydrax_geometry_brep__patches.surface_differential
+)
+
+
+def _surface_differentials(
     domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
-    metric: np.ndarray,
-    cells: np.ndarray,
     patches: np.ndarray,
-    charts: np.ndarray,
+    parameters: np.ndarray,
     /,
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
-    """Mean ratio of the physical map differential, never a chord/UV surrogate."""
-    _consume_native_work(geometry_queries=cells.shape[0], budget=budget)
-    tangent = np.zeros((cells.shape[0], 3, 3), dtype=np.float64)
+    _consume_native_work(geometry_queries=parameters.shape[0], budget=budget)
+    differential = np.empty((parameters.shape[0], 3, 2), dtype=np.float64)
     for patch in np.unique(patches).tolist():
         selected = patches == patch
-        differential = np.asarray(
-            _dependency_phydrax_geometry_brep__patches.surface_differential(
+        differential[selected] = np.asarray(
+            _metric_surface_differential(
                 domain.patches[patch].surface,
-                jnp.asarray(np.mean(charts[selected], axis=1), dtype=jnp.float64),
+                jnp.asarray(parameters[selected], dtype=jnp.float64),
             ),
             dtype=np.float64,
         )
-        tangent[selected, 1:] = (
-            charts[selected, 1:] - charts[selected, :1]
-        ) @ np.swapaxes(differential, -1, -2)
+    budget.ticket.checkpoint()
+    return differential
+
+
+def _quality_from_differential(
+    metric: np.ndarray,
+    cells: np.ndarray,
+    charts: np.ndarray,
+    differential: np.ndarray,
+    /,
+) -> np.ndarray:
+    tangent = np.zeros((cells.shape[0], 3, 3), dtype=np.float64)
+    tangent[:, 1:] = (charts[:, 1:] - charts[:, :1]) @ np.swapaxes(differential, -1, -2)
     mean = np.asarray(
         _dependency_phydrax_meshing__metric.interpolate_mesh_metric(
             metric[cells], np.full(cells.shape, 1.0 / 3.0, dtype=np.float64)
@@ -282,6 +406,25 @@ def _mapped_quality(
         ),
         dtype=np.float64,
     )
+
+
+def _mapped_quality(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    metric: np.ndarray,
+    cells: np.ndarray,
+    patches: np.ndarray,
+    charts: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Mean ratio of the physical map differential, never a chord/UV surrogate."""
+    with budget.temporary_scope():
+        budget.reserve(0, 80 * cells.shape[0])
+        differential = _surface_differentials(
+            domain, patches, np.mean(charts, axis=1), budget=budget
+        )
+        return _quality_from_differential(metric, cells, charts, differential)
 
 
 def _exact_uv(values: np.ndarray, /) -> tuple[Fraction, Fraction]:
@@ -678,6 +821,33 @@ def _constant_metric_subdivided_arc_upper(
 
 
 # Fixed subdivision execution is separate from edge preparation and work settlement.
+def _source_metric_chord_lower(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    matrix: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> Fraction:
+    """Bound the source endpoint chord, not its rounded mesh realization."""
+    delta = tuple(
+        (
+            Fraction(float(lower[1, axis])) - Fraction(float(upper[0, axis])),
+            Fraction(float(upper[1, axis])) - Fraction(float(lower[0, axis])),
+        )
+        for axis in range(3)
+    )
+    squared = Fraction(0)
+    for i in range(3):
+        low, high = delta[i]
+        # The exact minimum of x*x on an interval is zero iff it contains zero.
+        square = Fraction(0) if low <= 0 <= high else min(low * low, high * high)
+        squared += matrix[i][i] * square
+        for j in range(i):
+            squared += 2 * min(matrix[i][j] * a * b for a in delta[i] for b in delta[j])
+    return _fraction_sqrt_lower(max(Fraction(0), squared), budget=budget)
+
+
 def _constant_surface_metric_arc_bounds(
     domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     state: SurfaceState,
@@ -716,6 +886,19 @@ def _constant_surface_metric_arc_bounds(
         derivative_lower[selected] = low
         derivative_upper[selected] = high
     box_count = base_rows.size
+    endpoint_lower = np.empty((edges.shape[0], 2, 3), dtype=np.float64)
+    endpoint_upper = np.empty_like(endpoint_lower)
+    for patch in np.unique(patches[lower_required]).tolist():
+        selected = np.flatnonzero(lower_required & (patches == patch))
+        endpoints = edge_charts[selected].reshape((-1, 2))
+        low, high = _dependency_phydrax_geometry_brep__patches.surface_value_bounds(
+            domain.patches[patch].surface,
+            np.stack((endpoints, endpoints), axis=1),
+            budget=budget,
+        )
+        endpoint_lower[selected] = low.reshape((-1, 2, 3))
+        endpoint_upper[selected] = high.reshape((-1, 2, 3))
+        box_count += endpoints.shape[0]
     matrix = tuple(rational_vector(row) for row in metric)
 
     results = []
@@ -743,17 +926,13 @@ def _constant_surface_metric_arc_bounds(
                 budget=budget,
             )
             box_count += divisions
-        delta = tuple(
-            Fraction(float(state.points[int(edge[1]), axis]))
-            - Fraction(float(state.points[int(edge[0]), axis]))
-            for axis in range(3)
-        )
-        chord_squared = sum(
-            (matrix[i][j] * delta[i] * delta[j] for i in range(3) for j in range(3)),
-            Fraction(0),
-        )
         if lower_required[edge_index]:
-            low = _fraction_sqrt_lower(chord_squared, budget=budget)
+            low = _source_metric_chord_lower(
+                endpoint_lower[edge_index],
+                endpoint_upper[edge_index],
+                matrix,
+                budget=budget,
+            )
         else:
             low = Fraction(0)
         results.append(
@@ -1143,21 +1322,25 @@ def _certify_surface_metric_quality(
     return result, work
 
 
-def _measure(
-    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
-    state: SurfaceState,
-    /,
-    *,
-    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+def _surface_edge_coordinates(
+    state: SurfaceState, edges: np.ndarray, first: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    edges, first, _ = _edge_table(state)
     owner, local = first // 3, first % 3
     uv = state.charts[owner[:, None], _LOCAL_EDGES[local]]
     reversed_edges = state.cells[owner, _LOCAL_EDGES[local, 0]] != edges[:, 0]
     uv[reversed_edges] = uv[reversed_edges, ::-1]
     velocity = uv[:, 1] - uv[:, 0]
     charts = uv[:, :1] + _PARAMETERS[None, :, None] * velocity[:, None]
-    patches = state.patches[owner]
+    return velocity, charts, state.patches[owner]
+
+
+def _lengths_from_differential(
+    state: SurfaceState,
+    edges: np.ndarray,
+    velocity: np.ndarray,
+    differential: np.ndarray,
+    /,
+) -> np.ndarray:
     samples = np.asarray(
         _dependency_phydrax_meshing__metric.interpolate_mesh_metric(
             np.broadcast_to(state.metric[edges][:, None], (edges.shape[0], 8, 2, 3, 3)),
@@ -1167,20 +1350,108 @@ def _measure(
         ),
         dtype=np.float64,
     )
-    tangent = np.zeros((edges.shape[0], 8, 3), dtype=np.float64)
-    _consume_native_work(geometry_queries=edges.shape[0] * 8, budget=budget)
-    for patch in np.unique(patches).tolist():
-        selected = patches == patch
-        differential = np.asarray(
-            _dependency_phydrax_geometry_brep__patches.surface_differential(
-                domain.patches[patch].surface,
-                jnp.asarray(charts[selected].reshape((-1, 2)), dtype=jnp.float64),
-            ),
-            dtype=np.float64,
-        ).reshape((-1, 8, 3, 2))
-        tangent[selected] = (differential @ velocity[selected, None, :, None])[..., 0]
+    tangent = (differential @ velocity[:, None, :, None])[..., 0]
     speed = np.sqrt(np.sum(tangent * (samples @ tangent[..., None])[..., 0], axis=-1))
-    lengths = speed @ _WEIGHTS
+    return speed @ _WEIGHTS
+
+
+def _surface_lengths(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: SurfaceState,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    edges, first, _ = _edge_table(state)
+    with budget.temporary_scope():
+        budget.reserve(0, 80 * 8 * edges.shape[0])
+        velocity, charts, patches = _surface_edge_coordinates(state, edges, first)
+        differential = _surface_differentials(
+            domain, np.repeat(patches, 8), charts.reshape((-1, 2)), budget=budget
+        ).reshape((-1, 8, 3, 2))
+        lengths = _lengths_from_differential(state, edges, velocity, differential)
+        budget.ticket.checkpoint()
+        return edges, lengths
+
+
+def _surface_relocation_measures(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    local: SurfaceState,
+    trial: SurfaceState,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[float, float, bool]:
+    """Share numerical derivative lanes only within one current-state candidate."""
+    edges, first, _ = _edge_table(local)
+    cells = local.cells.shape[0]
+    edge_samples = 8 * edges.shape[0]
+    with budget.temporary_scope():
+        budget.reserve(0, 256 * (2 * cells + 2 * edge_samples))
+        local_velocity, local_charts, edge_patches = _surface_edge_coordinates(
+            local, edges, first
+        )
+        trial_velocity, trial_charts, _ = _surface_edge_coordinates(trial, edges, first)
+        patches = np.concatenate(
+            (local.patches, trial.patches, np.tile(np.repeat(edge_patches, 8), 2))
+        )
+        parameters = np.concatenate(
+            (
+                np.mean(local.charts, axis=1),
+                np.mean(trial.charts, axis=1),
+                local_charts.reshape((-1, 2)),
+                trial_charts.reshape((-1, 2)),
+            )
+        )
+        differential = _surface_differentials(domain, patches, parameters, budget=budget)
+        before = float(
+            np.min(
+                _quality_from_differential(
+                    local.metric, local.cells, local.charts, differential[:cells]
+                )
+            )
+        )
+        after = float(
+            np.min(
+                _quality_from_differential(
+                    trial.metric,
+                    trial.cells,
+                    trial.charts,
+                    differential[cells : 2 * cells],
+                )
+            )
+        )
+        local_differential = differential[2 * cells : 2 * cells + edge_samples].reshape(
+            (-1, 8, 3, 2)
+        )
+        trial_differential = differential[2 * cells + edge_samples :].reshape(
+            (-1, 8, 3, 2)
+        )
+        unit_improved = (
+            _unit_defect(
+                _lengths_from_differential(
+                    trial, edges, trial_velocity, trial_differential
+                )
+            )
+            < _unit_defect(
+                _lengths_from_differential(
+                    local, edges, local_velocity, local_differential
+                )
+            )
+            - 1.0e-12
+        )
+        budget.ticket.checkpoint()
+        return before, after, unit_improved
+
+
+def _measure(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: SurfaceState,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    _, lengths = _surface_lengths(domain, state, budget=budget)
     quality = _mapped_quality(
         domain, state.metric, state.cells, state.patches, state.charts, budget=budget
     )
@@ -1326,6 +1597,78 @@ def _material_legal(
     )
 
 
+def _transport_cell_coedges(
+    state: SurfaceState,
+    owners: np.ndarray,
+    cells: np.ndarray,
+    *,
+    split_edge: np.ndarray | None = None,
+    split_vertex: int | None = None,
+) -> np.ndarray | None:
+    """Transport local sides by nominal vertex incidence, never coordinates."""
+    if state.cell_coedges is None:
+        return None
+    result = np.full((len(cells), 3, 3), -1, dtype=np.int32)
+    for row, (owner, cell) in enumerate(zip(owners, cells, strict=True)):
+        parent = state.cells[owner]
+        for side, slots in enumerate(_LOCAL_EDGES):
+            vertices: set[int] = set()
+            for vertex in cell[slots]:
+                if split_vertex is not None and vertex == split_vertex:
+                    assert split_edge is not None
+                    vertices.update(map(int, split_edge))
+                else:
+                    vertices.add(int(vertex))
+            for parent_side, parent_slots in enumerate(_LOCAL_EDGES):
+                if vertices == set(map(int, parent[parent_slots])):
+                    result[row, side] = state.cell_coedges[owner, parent_side]
+    return result
+
+
+def _cavity_cell_coedges(
+    state: SurfaceState, removed: np.ndarray, cells: np.ndarray
+) -> tuple[np.ndarray | None, bool]:
+    """Move unchanged cavity boundary sides without merging source occurrences."""
+    if state.cell_coedges is None:
+        return None, True
+    result = np.full((len(cells), 3, 3), -1, dtype=np.int32)
+    for owner in removed:
+        for side, slots in enumerate(_LOCAL_EDGES):
+            occurrence = state.cell_coedges[owner, side]
+            if np.all(occurrence == -1):
+                continue
+            edge = state.cells[owner, slots]
+            matches = [
+                (row, target_side)
+                for row, cell in enumerate(cells)
+                for target_side, target_slots in enumerate(_LOCAL_EDGES)
+                if np.array_equal(cell[target_slots], edge)
+            ]
+            if len(matches) != 1:
+                return None, False
+            row, target_side = matches[0]
+            if np.any(result[row, target_side] != -1):
+                return None, False
+            result[row, target_side] = occurrence
+    return result, True
+
+
+def surface_cell_coedges(
+    state: SurfaceState,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+) -> np.ndarray | None:
+    """Order the nominal side bank by the edit's scientific cell identifiers."""
+    if state.cell_coedges is None:
+        return None
+    rows = entity_keys_owner.key_rows(
+        state.cell_ids[:, None],
+        np.concatenate([block.cell_ids for block in edit.blocks])[:, None],
+    )
+    if np.any(rows < 0):
+        raise ValueError("surface_metric.coedges must retain every edited cell")
+    return state.cell_coedges[rows]
+
+
 def _replace(
     state: SurfaceState,
     removed: np.ndarray,
@@ -1339,6 +1682,7 @@ def _replace(
     *,
     material_charts: np.ndarray | None = None,
     cell_ids: np.ndarray | None = None,
+    cell_coedges: np.ndarray | None = None,
 ) -> None:
     keep = np.ones((state.cells.shape[0],), dtype=np.bool_)
     keep[removed] = False
@@ -1346,6 +1690,8 @@ def _replace(
         raise ValueError(
             "surface_metric.replace must retain source geometry invariants; got a material topology edit must retain its chart carrier"
         )
+    if state.cell_coedges is not None and cell_coedges is None:
+        raise ValueError("surface_metric.replace must retain nominal coedge sides")
     ids = (
         _dependency_phydrax_meshing__tetra_metric.fresh_identifiers(
             state.next_cell_id, cells.shape[0]
@@ -1377,6 +1723,9 @@ def _replace(
         state.material_charts = np.concatenate(
             (state.material_charts[keep], material_charts)
         )
+    if state.cell_coedges is not None:
+        assert cell_coedges is not None
+        state.cell_coedges = np.concatenate((state.cell_coedges[keep], cell_coedges))
     state.classes = np.concatenate((state.classes[keep], classes))
     state.cell_ids = np.concatenate((state.cell_ids[keep], ids))
     state.parents = [
@@ -1384,29 +1733,29 @@ def _replace(
     ] + parents
 
 
-def _curve_occurrence_chart(
-    patch: int,
-    anchors: tuple[tuple[np.ndarray, tuple[tuple[int, int, np.ndarray], ...]], ...],
-    target_uses: tuple[tuple[int, int, np.ndarray], ...],
-    tolerance: float,
-    /,
-) -> np.ndarray | None:
-    """Select the coedge use, never a nearest periodic representative."""
-    candidates = []
-    for target_patch, occurrence, chart in target_uses:
-        if target_patch != patch:
-            continue
-        if all(
-            any(
-                old_patch == patch
-                and old_occurrence == occurrence
-                and np.linalg.norm(old_chart - retained) <= tolerance
-                for old_patch, old_occurrence, old_chart in old_uses
-            )
-            for retained, old_uses in anchors
-        ):
-            candidates.append(chart)
-    return candidates[0] if len(candidates) == 1 else None
+def _edge_coedge_use(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: SurfaceState,
+    row: int,
+    edge: np.ndarray,
+) -> _dependency_phydrax_geometry__meshing_domain.PatchCurveUse:
+    if state.cell_coedges is None:
+        raise ValueError("surface_metric.coedges must retain nominal cell sides")
+    side = next(
+        side
+        for side, slots in enumerate(_LOCAL_EDGES)
+        if set(map(int, state.cells[row, slots])) == set(map(int, edge))
+    )
+    loop, ordinal, orientation = map(int, state.cell_coedges[row, side])
+    loops = domain.patches[int(state.patches[row])].loops
+    if not 0 <= loop < len(loops) or not 0 <= ordinal < len(loops[loop]):
+        raise ValueError("surface_metric.coedges must name an authored boundary side")
+    use = loops[loop][ordinal]
+    if not isinstance(use, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse):
+        raise ValueError("surface_metric.coedges must name a curve use")
+    if orientation != (1 if use.last > use.first else -1):
+        raise ValueError("surface_metric.coedges must preserve source orientation")
+    return use
 
 
 @checked
@@ -1425,6 +1774,9 @@ def split(
         return False
 
     _admit_cavity(int(rows.size), budget=budget)
+    if state.cell_coedges is not None:
+        # Child, kept-row selection and successor banks coexist during replacement.
+        budget.reserve(0, 2 * int(state.cell_coedges.nbytes) + 4 * int(rows.size) * 36)
     token = None
     chart_midpoints = np.asarray(
         [
@@ -1452,25 +1804,21 @@ def split(
             np.asarray([value[0] for value in tokens]),
             np.asarray([value[1] for value in tokens]),
             np.asarray([value[2] for value in tokens]),
+            curve=_edge_coedge_use(domain, state, int(rows[0]), edge).curve,
         )
         if interval is None:
             return False
         curve, left, right = interval
         parameter = (left + right) / 2
-        point, target_uses = witness.evaluate_curve(curve, parameter, budget=budget)
-        _, left_uses = witness.evaluate_curve(curve, left, budget=budget)
-        _, right_uses = witness.evaluate_curve(curve, right, budget=budget)
+        point, _ = witness.evaluate_curve(curve, parameter, budget=budget)
         for position, row in enumerate(rows):
-            anchors = tuple(
-                (state.charts[row, np.flatnonzero(state.cells[row] == vertex)[0]], uses)
-                for vertex, uses in zip(edge, (left_uses, right_uses), strict=True)
-            )
-            chart = _curve_occurrence_chart(
-                int(state.patches[row]), anchors, target_uses, domain.tolerance
-            )
-            if chart is None:
-                return False
-            chart_midpoints[position] = chart
+            use = _edge_coedge_use(domain, state, int(row), edge)
+            if use.curve != curve:
+                raise ValueError(
+                    "surface_metric.split must preserve the nominal source curve"
+                )
+            budget.reserve_geometry_queries(1)
+            chart_midpoints[position] = use.charts(np.asarray((parameter,)))[0]
         physical = np.broadcast_to(point, (rows.size, 3))
         represented = domain.evaluate(state.patches[rows], chart_midpoints)
         if (
@@ -1568,6 +1916,9 @@ def split(
         _dependency_phydrax_meshing__lineage.EntityLineageKind.REFINED_FROM,
         material_charts=material_charts,
         cell_ids=child_ids,
+        cell_coedges=_transport_cell_coedges(
+            state, owner, children, split_edge=edge, split_vertex=vertex
+        ),
     )
     return True
 
@@ -1618,6 +1969,8 @@ def collapse(
         return False
 
     _admit_cavity(int(np.union1d(rows, keep_rows).size), budget=budget)
+    if state.cell_coedges is not None:
+        budget.reserve(0, 2 * int(state.cell_coedges.nbytes) + 2 * int(rows.size) * 36)
     owner = keep_rows[0]
     chart_kept = state.charts[owner, np.flatnonzero(state.cells[owner] == kept)[0]]
     proposed = state.cells[rows].copy()
@@ -1687,6 +2040,9 @@ def collapse(
     if np.max(_measure(domain, trial, budget=budget)[0], initial=0.0) > 2.0:
         return False
     parents = set().union(*(state.parents[row] for row in rows))
+    coedges, coedges_preserved = _cavity_cell_coedges(state, rows, proposed)
+    if not coedges_preserved:
+        return False
     _replace(
         state,
         rows,
@@ -1697,6 +2053,7 @@ def collapse(
         [parents.copy() for _ in owners],
         _dependency_phydrax_meshing__lineage.EntityLineageKind.COLLAPSED_INTO,
         material_charts=material_charts,
+        cell_coedges=coedges,
     )
     if state.vertex_successor is None:
         state.vertex_successor = {}
@@ -1726,6 +2083,8 @@ def flip(
         return False
 
     _admit_cavity(int(rows.size), budget=budget)
+    if state.cell_coedges is not None:
+        budget.reserve(0, 2 * int(state.cell_coedges.nbytes) + 2 * int(rows.size) * 36)
     old = state.cells[rows]
     apex = old[~np.isin(old, edge)]
     if np.any(np.sum(np.isin(state.cells, apex), axis=1) == 2):
@@ -1791,6 +2150,9 @@ def flip(
     if after <= before + 1.0e-6:
         return False
     parents = state.parents[rows[0]] | state.parents[rows[1]]
+    coedges, coedges_preserved = _cavity_cell_coedges(state, rows, proposed)
+    if not coedges_preserved:
+        return False
     _replace(
         state,
         rows,
@@ -1801,6 +2163,7 @@ def flip(
         [parents.copy(), parents.copy()],
         _dependency_phydrax_meshing__lineage.EntityLineageKind.SWAPPED_FROM,
         material_charts=material_charts,
+        cell_coedges=coedges,
     )
     return True
 
@@ -1843,6 +2206,7 @@ def _source_curve_slide_charts(
             np.asarray([value[0] for value in neighbor_tokens]),
             np.asarray([value[1] for value in neighbor_tokens]),
             np.asarray([value[2] for value in neighbor_tokens]),
+            curve=curve,
         )
         if interval is None:
             continue
@@ -1850,26 +2214,36 @@ def _source_curve_slide_charts(
         if owner != curve or not min(left, right) <= current[0] <= max(left, right):
             continue
         parameter = (left + right) / 2
-        point, target_uses = witness.evaluate_curve(curve, parameter, budget=budget)
-        _, original_uses = witness.evaluate_curve(curve, float(current[0]), budget=budget)
+        point, _ = witness.evaluate_curve(curve, parameter, budget=budget)
+        if state.cell_coedges is None:
+            raise ValueError("surface_metric.slide must retain nominal coedge sides")
         rows = np.flatnonzero(np.any(state.cells == vertex, axis=1))
-        charts = [
-            _curve_occurrence_chart(
-                int(state.patches[row]),
-                (
-                    (
-                        state.charts[row, np.flatnonzero(state.cells[row] == vertex)[0]],
-                        original_uses,
-                    ),
-                ),
-                target_uses,
-                domain.tolerance,
-            )
+        occurrences = {
+            (int(state.patches[row]), int(coedge[0]), int(coedge[1]))
             for row in rows
-        ]
-        resolved_charts = [value for value in charts if value is not None]
-        if len(resolved_charts) != len(charts):
-            continue
+            for side, slots in enumerate(_LOCAL_EDGES)
+            if vertex in state.cells[row, slots]
+            for coedge in (state.cell_coedges[row, side],)
+            if coedge[0] >= 0
+        }
+        if {patch for patch, _, _ in occurrences} != set(map(int, state.patches[rows])):
+            raise ValueError(
+                "surface_metric.slide must retain each incident patch occurrence"
+            )
+        resolved_charts = []
+        for patch, loop, ordinal in sorted(occurrences):
+            use = domain.patches[patch].loops[loop][ordinal]
+            if (
+                not isinstance(
+                    use, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse
+                )
+                or use.curve != curve
+            ):
+                raise ValueError(
+                    "surface_metric.slide must preserve the nominal source curve"
+                )
+            budget.reserve_geometry_queries(1)
+            resolved_charts.append(use.charts(np.asarray((parameter,)))[0])
         chart = resolved_charts[0]
         if any(not np.array_equal(chart, other) for other in resolved_charts[1:]):
             continue
@@ -2059,6 +2433,7 @@ class _SurfaceRelocationRequest(StrictModule):
     budget: (
         _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     )
+    material_routing: PreparedMaterialRouting | None = None
 
 
 class _SurfaceRelocationPreparation(StrictModule):
@@ -2091,8 +2466,7 @@ def _prepare_surface_relocation(
     record_phase = request.record_phase
     selected_vertices = request.selected_vertices
     budget = request.budget
-    edges, _, _ = _edge_table(state)
-    lengths, _, _ = _measure(domain, state, budget=budget)
+    edges, lengths = _surface_lengths(domain, state, budget=budget)
     force = (1.0 - 1.0 / np.maximum(lengths, 1.0e-30))[:, None] * (
         state.points[edges[:, 1]] - state.points[edges[:, 0]]
     )
@@ -2186,6 +2560,7 @@ def _prepare_surface_relocation(
         state.patches[owner],
         query_material,
         maximum_pairs,
+        material_cache=request.material_routing,
         budget=budget,
     )
     source_rows = entity_keys_owner.key_rows(
@@ -2245,28 +2620,8 @@ def _execute_surface_relocation(
             budget=budget,
         ):
             continue
-        before = np.min(
-            _mapped_quality(
-                domain,
-                state.metric,
-                state.cells[rows],
-                state.patches[rows],
-                state.charts[rows],
-                budget=budget,
-            )
-        )
         metrics = state.metric.copy()
         metrics[vertex] = proposal_metrics[index]
-        after = np.min(
-            _mapped_quality(
-                domain,
-                metrics,
-                state.cells[rows],
-                state.patches[rows],
-                charts,
-                budget=budget,
-            )
-        )
         local = SurfaceState(
             state.points,
             state.metric,
@@ -2295,9 +2650,8 @@ def _execute_surface_relocation(
             state.next_cell_id,
             state.next_vertex_id,
         )
-        unit_improved = (
-            _unit_defect(_measure(domain, trial, budget=budget)[0])
-            < _unit_defect(_measure(domain, local, budget=budget)[0]) - 1.0e-12
+        before, after, unit_improved = _surface_relocation_measures(
+            domain, local, trial, budget=budget
         )
         if after <= before + 1.0e-6 and not (unit_improved and after >= minimum_quality):
             continue
@@ -2351,6 +2705,7 @@ def relocate(
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
     selected_vertices: frozenset[int] | None = None,
+    material_routing: PreparedMaterialRouting | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[int, int]:
     request = _SurfaceRelocationRequest(
@@ -2368,6 +2723,7 @@ def relocate(
         record_phase,
         selected_vertices,
         budget,
+        material_routing,
     )
     prepared = _prepare_surface_relocation(request)
     if prepared is None:
@@ -2385,10 +2741,7 @@ class _MaterialChartRequest(StrictModule):
     query_patches: np.ndarray
     query_charts: np.ndarray
     maximum_pairs: int
-    cache: (
-        dict[tuple[int, tuple[tuple[int, int], ...]], tuple[np.ndarray, np.ndarray, int]]
-        | None
-    )
+    cache: PreparedMaterialRouting | None
     budget: (
         _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     )
@@ -2399,7 +2752,7 @@ class _MaterialChartRouting(StrictModule):
     weights: np.ndarray
     selected_ids: np.ndarray
     work: int
-    query_keys: list[tuple[int, tuple[tuple[int, int], ...]]]
+    query_keys: list[_MaterialPointKey]
 
 
 class _MaterialChartPatch(StrictModule):
@@ -2420,7 +2773,7 @@ def _prepare_material_chart_cache(
     selected_ids = np.full(query_patches.size, np.iinfo(np.int64).max, dtype=np.int64)
     work = 0
 
-    query_keys: list[tuple[int, tuple[tuple[int, int], ...]]] = []
+    query_keys: list[_MaterialPointKey] = []
     for row, patch in enumerate(query_patches):
         point = _exact_uv(query_charts[row])
         key = (
@@ -2560,20 +2913,8 @@ def _execute_material_chart_patch(
                 weights[query] = tuple(float(value) for value in values)
                 selected_ids[query] = identifier
                 if cache is not None:
-                    cached_sources = sources[query].copy()
-                    cached_weights = weights[query].copy()
-                    budget.retain_basis(
-                        (
-                            query_keys[query],
-                            cached_sources,
-                            cached_weights,
-                            identifier,
-                        )
-                    )
-                    cache[query_keys[query]] = (
-                        cached_sources,
-                        cached_weights,
-                        identifier,
+                    cache.store(
+                        query_keys[query], sources[query], weights[query], identifier
                     )
     return _MaterialChartRouting(sources, weights, selected_ids, work, query_keys)
 
@@ -2589,13 +2930,19 @@ def _material_chart_stencil(
     maximum_pairs: int,
     /,
     *,
-    cache: dict[
-        tuple[int, tuple[tuple[int, int], ...]], tuple[np.ndarray, np.ndarray, int]
-    ]
-    | None = None,
+    cache: PreparedMaterialRouting | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Route material coordinates through rational barycentric containment."""
+    if cache is not None:
+        cache.authenticate(
+            source_cells,
+            source_charts,
+            source_patches,
+            source_cell_ids,
+            source_vertex_ids,
+            budget,
+        )
     request = _MaterialChartRequest(
         source_cells,
         source_charts,
@@ -2610,6 +2957,10 @@ def _material_chart_stencil(
     )
     routing = _prepare_material_chart_cache(request)
     for patch in np.unique(query_patches):
+        if not np.any(
+            (query_patches == patch) & (routing.selected_ids == np.iinfo(np.int64).max)
+        ):
+            continue
         prepared = _prepare_material_chart_patch(request, routing, int(patch))
         routing = _execute_material_chart_patch(request, routing, prepared)
     sources, weights, selected_ids = (
@@ -2638,10 +2989,7 @@ def chart_stencil(
     maximum_pairs: int,
     /,
     *,
-    material_cache: dict[
-        tuple[int, tuple[tuple[int, int], ...]], tuple[np.ndarray, np.ndarray, int]
-    ]
-    | None = None,
+    material_cache: PreparedMaterialRouting | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if query_charts.dtype == object:
@@ -2821,6 +3169,7 @@ def _stencil(
     maximum_pairs: int,
     /,
     *,
+    material_routing: PreparedMaterialRouting | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     patches = np.zeros((live.size,), dtype=np.int32)
@@ -2842,6 +3191,7 @@ def _stencil(
         patches,
         charts,
         maximum_pairs,
+        material_cache=material_routing,
         budget=budget,
     )
 
@@ -2888,6 +3238,85 @@ def surface_metric_source_cover(
     return boundary
 
 
+def _certified_restriction_charts(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    transfer: _dependency_phydrax_meshing__association.SurfaceAssociationTransfer,
+    retained: _owner_phydrax_geometry__surface_source_support.SurfaceNativeRestrictionBoundarySource,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> surface_chart_records_owner.SurfaceChartWitness:
+    """Lower certified restrictions, without repeating their whole-map proof.
+
+    Only geometric source support is reused. Metric and feature constraints still
+    come from the current adaptation request and are certified independently.
+    """
+    retained.require_current()
+    certification = source.certification
+    if (
+        certification is None
+        or not certification.passed
+        or certification.fidelity is None
+        or certification.fidelity.status != "certified"
+        or retained.support.support_id != transfer.support.support_id
+    ):
+        raise ValueError(
+            "surface_metric.source_restrictions must retain passing source-bound fidelity and identical support; got incompatible proof"
+        )
+    binding = certification.fidelity.binding
+    binding.require(source.mesh, source.geometry)
+    binding.require(retained.mesh, retained.geometry)
+    if (binding.source_id, binding.source_revision) != (
+        retained.source_id,
+        retained.source_revision,
+    ):
+        raise ValueError(
+            "surface_metric.source_restrictions must match the certified source revision; got changed source"
+        )
+    # These charts are extracted from the same root parameters and coordinate
+    # restriction chain already proved by the retained fidelity certificate.
+    chart_bank = (
+        _owner_phydrax_geometry__surface_source_support._restriction_fidelity_charts(
+            transfer.support, source.mesh, source.geometry, budget=budget
+        )
+    )
+    rows = {}
+    for patch, charts in chart_bank.charts.items():
+        for chart in charts:
+            if not isinstance(
+                chart, mapped_reference_coverage_owner.ComposedReferenceChart
+            ):
+                raise TypeError(
+                    "surface_metric.source_restrictions must retain composed root charts; got incompatible chart"
+                )
+            corners = _dependency_phydrax_discretization__coordinate_enclosure.coordinate_corner_images(
+                chart.reference_element, chart.reference_controls, budget=budget
+            )
+            if corners is None:
+                raise ValueError(
+                    "surface_metric.source_restrictions must resolve certified chart corners; got unavailable source map"
+                )
+            rows[chart.cell_id] = (patch, corners)
+    ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in source.mesh.blocks]
+    )
+    patches = np.asarray([rows[int(cell)][0] for cell in ids], dtype=np.int64)
+    return surface_chart_records_owner.SurfaceChartWitness(
+        geometry_id=binding.geometry_id,
+        topology_id=source.mesh.topology_id,
+        domain_id=transfer.support.domain.domain_id,
+        cell_global_ids=ids,
+        patches=patches,
+        charts=np.asarray([rows[int(cell)][1] for cell in ids], dtype=np.float64),
+        geometry_entity_ids=tuple(
+            transfer.support.domain.entity_id(2, int(patch)) for patch in patches
+        ),
+        occurrence_paths=tuple(
+            transfer.support.domain.source_occurrences[2][int(patch)] for patch in patches
+        ),
+    )
+
+
 @checked
 def prepare_surface_metric_source(
     source: _dependency_phydrax_meshing__result.CellMeshingResult,
@@ -2896,9 +3325,16 @@ def prepare_surface_metric_source(
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> surface_chart_records_owner.SurfaceChartWitness:
-    """Recover source-bound chart uses without inferring seams from coordinates."""
+    """Recover chart occurrences under exact source/support bindings.
 
-    transfer.source_associations(source)
+    Serial roots reuse their authenticated prepared chart arrays. Certified
+    restrictions lower the retained root maps without repeating whole-map
+    fidelity. Changed geometry or support cannot use those proofs; current
+    metric tensors and feature constraints are never cached here. Collective
+    sources continue through their receipt-bound owner-local proof.
+    """
+
+    transfer.source_associations(source, budget=budget)
     transfer.support.require_current()
     retained = (
         None if source.certification is None else source.certification.request.source
@@ -2927,18 +3363,56 @@ def prepare_surface_metric_source(
                 "surface_metric.source_chart_binding must match the source mesh and geometry; got a stale chart binding"
             )
         return witness
-    proof = _owner_phydrax_meshing__surface_association_transfer.source_proof(
-        transfer.support, source, transfer.receipts, budget=budget
-    )
+    if source.mesh.storage is None and isinstance(
+        retained,
+        _owner_phydrax_geometry__surface_source_support.SurfaceNativeRestrictionBoundarySource,
+    ):
+        return _certified_restriction_charts(source, transfer, retained, budget=budget)
+    support = transfer.support
+    if (
+        isinstance(
+            support.original, _dependency_phydrax_meshing__result.CellMeshingResult
+        )
+        and source.mesh.storage is None
+        and source.result_id == support.original.result_id
+        and source.coordinate_contract.spatial_id
+        == support.coordinate_contract.spatial_id
+        and source.mesh.mesh_id == support.original.mesh.mesh_id
+        and source.mesh.topology_id == support.root_topology_id
+        and _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+            source.geometry
+        )
+        == support.root_geometry_id
+    ):
+        # Preparation already authenticated these root chart occurrences against
+        # this exact accepted coordinate map. No metric evidence is reused.
+        # Host views, entity routing and the published numerical witness can
+        # coexist even though no new source-restriction proof is constructed.
+        budget.reserve(
+            0,
+            support.root_cell_ids.nbytes
+            + support.root_patches.nbytes
+            + support.root_parameters.nbytes
+            + support.root_cell_ids.size * 192,
+        )
+        proof_ids = np.asarray(support.root_cell_ids, dtype=np.int64)
+        proof_patches = np.asarray(support.root_patches, dtype=np.int64)
+        proof_charts = np.asarray(support.root_parameters, dtype=np.float64)
+    else:
+        proof = _owner_phydrax_meshing__surface_association_transfer.source_proof(
+            support, source, transfer.receipts, budget=budget
+        )
+        proof_ids, proof_patches = proof.cell_ids, proof.patches
+        proof_charts = np.asarray(proof.source_corners, dtype=np.float64)
     ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in source.mesh.blocks]
     )
-    rows = entity_keys_owner.key_rows(proof.cell_ids[:, None], ids[:, None])
+    rows = entity_keys_owner.key_rows(proof_ids[:, None], ids[:, None])
     if np.any(rows < 0):
         raise ValueError(
             "surface_metric.prepare_surface_metric_source must retain source geometry invariants; got source support omits current surface cells"
         )
-    patches = proof.patches[rows]
+    patches = proof_patches[rows]
     return surface_chart_records_owner.SurfaceChartWitness(
         geometry_id=_dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
             source.geometry
@@ -2947,7 +3421,7 @@ def prepare_surface_metric_source(
         domain_id=transfer.support.domain.domain_id,
         cell_global_ids=ids,
         patches=patches,
-        charts=np.asarray(proof.source_corners, dtype=np.float64)[rows],
+        charts=proof_charts[rows],
         geometry_entity_ids=tuple(
             transfer.support.domain.entity_id(2, int(patch)) for patch in patches
         ),
@@ -2990,6 +3464,7 @@ class _SurfaceMetricExecutionRequest(StrictModule):
         _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     )
     scope: NativeExecutionScope
+    material_routing: PreparedMaterialRouting | None = None
 
 
 class _SurfaceMetricPreparedInputs(StrictModule):
@@ -3329,6 +3804,7 @@ def _prepare_surface_metric_carriers(
             )
         controller.background = source
         controller.minimum_metric_quality = request.minimum_metric_quality
+        controller.material_routing = request.material_routing
     state = SurfaceState(
         points.copy(),
         values,
@@ -3362,6 +3838,8 @@ def _prepare_surface_metric_carriers(
 
         budget.reserve(int(vertex_ids.size), 1024 * int(vertex_ids.size))
         state.curve_witness = curve_witness
+        budget.reserve(0, int(cell_ids.size) * 36)
+        state.cell_coedges = curve_witness.cell_coedges(cell_ids, patches)
         state.curve_workspace_vertices = int(vertex_ids.size)
         state.vertex_strata = [
             (
@@ -3436,52 +3914,34 @@ def _prepare_surface_split_eligibility(
             key = tuple(map(int, candidate_edge))
             if key not in features:
                 continue
+            candidate_rows = np.flatnonzero(
+                np.sum(np.isin(state.cells, candidate_edge), axis=1) == 2
+            )
             tokens = [state.vertex_strata[int(vertex)] for vertex in candidate_edge]
             interval = state.curve_witness.admissible_edge_interval(
                 np.asarray([value[0] for value in tokens]),
                 np.asarray([value[1] for value in tokens]),
                 np.asarray([value[2] for value in tokens]),
+                curve=_edge_coedge_use(
+                    domain, state, int(candidate_rows[0]), candidate_edge
+                ).curve,
             )
             if interval is None:
                 split_admissible[edge_index] = False
                 continue
             curve, left, right = interval
-            point, target_uses = state.curve_witness.evaluate_curve(
+            point, _ = state.curve_witness.evaluate_curve(
                 curve, (left + right) / 2, budget=budget
-            )
-            _, left_uses = state.curve_witness.evaluate_curve(curve, left, budget=budget)
-            _, right_uses = state.curve_witness.evaluate_curve(
-                curve, right, budget=budget
-            )
-            candidate_rows = np.flatnonzero(
-                np.sum(np.isin(state.cells, candidate_edge), axis=1) == 2
             )
             candidate_charts = []
             for candidate_row in candidate_rows:
-                anchors = tuple(
-                    (
-                        state.charts[
-                            candidate_row,
-                            np.flatnonzero(state.cells[candidate_row] == vertex)[0],
-                        ],
-                        uses,
+                use = _edge_coedge_use(domain, state, int(candidate_row), candidate_edge)
+                if use.curve != curve:
+                    raise ValueError(
+                        "surface_metric.split must preserve the nominal source curve"
                     )
-                    for vertex, uses in zip(
-                        candidate_edge,
-                        (left_uses, right_uses),
-                        strict=True,
-                    )
-                )
-                chart = _curve_occurrence_chart(
-                    int(state.patches[candidate_row]),
-                    anchors,
-                    target_uses,
-                    domain.tolerance,
-                )
-                if chart is None:
-                    split_admissible[edge_index] = False
-                    break
-                candidate_charts.append(chart)
+                budget.reserve_geometry_queries(1)
+                candidate_charts.append(use.charts(np.asarray(((left + right) / 2,)))[0])
             if split_admissible[edge_index] and candidate_rows.size:
                 represented = domain.evaluate(
                     state.patches[candidate_rows],
@@ -3588,6 +4048,7 @@ def _stage_surface_metric_operation(
                 carrier.blocked,
                 request.minimum_metric_quality,
                 selected_vertices=frozenset(vertices),
+                material_routing=request.material_routing,
                 budget=budget,
             )
             changed = changes == 1
@@ -3607,10 +4068,6 @@ def _prepare_surface_metric_splits(
     first: np.ndarray,
     lengths: np.ndarray,
     forced: set[int],
-    material_stencil_cache: dict[
-        tuple[int, tuple[tuple[int, int], ...]], tuple[np.ndarray, np.ndarray, int]
-    ]
-    | None,
 ) -> _SurfaceMetricSplitPreparation:
     maximum_location_pairs = prepared.schedule.maximum_location_pairs
     budget = request.budget
@@ -3635,7 +4092,7 @@ def _prepare_surface_metric_splits(
         state.patches[owner],
         midpoint_charts,
         maximum_location_pairs,
-        material_cache=material_stencil_cache,
+        material_cache=request.material_routing,
         budget=budget,
     )
     sample_rows = entity_keys_owner.key_rows(
@@ -3779,8 +4236,7 @@ def _run_surface_collapse_pass(
     passes = progress.passes
     status = progress.status
     applied = progress.applied
-    edges, _, _ = _edge_table(state)
-    lengths, _, _ = _measure(domain, state, budget=budget)
+    edges, lengths = _surface_lengths(domain, state, budget=budget)
     for index in np.argsort(lengths, kind="stable"):
         if applied:
             break
@@ -3886,6 +4342,7 @@ def _run_surface_relocation_pass(
                 blocked,
                 minimum_metric_quality,
                 record_phase=record_phase,
+                material_routing=request.material_routing,
                 budget=budget,
             )
         else:
@@ -3926,13 +4383,6 @@ def _run_surface_metric_execution(
     counts = MetricOperationCounts()
     rejected, work, passes = 0, 0, 0
     status = _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.PASS_LIMIT
-    material_stencil_cache: (
-        dict[
-            tuple[int, tuple[tuple[int, int], ...]],
-            tuple[np.ndarray, np.ndarray, int],
-        ]
-        | None
-    ) = {} if state.material_charts is not None else None
 
     def checkpoint() -> None:
 
@@ -3981,7 +4431,6 @@ def _run_surface_metric_execution(
                 first,
                 lengths,
                 forced,
-                material_stencil_cache,
             )
             progress = _run_surface_split_pass(
                 request, prepared, carrier, progress, split_phase
@@ -4135,6 +4584,9 @@ def _certify_surface_metric_execution(
                 "target_charts": array_tree_fingerprint(
                     (state.cells, state.charts, state.patches)
                 ),
+                "target_coedges": None
+                if state.cell_coedges is None
+                else array_tree_fingerprint(state.cell_coedges),
                 "target_material_charts": None
                 if state.material_charts is None
                 else tuple(
@@ -4217,6 +4669,7 @@ def _assemble_surface_metric_outcome(
                 patches,
                 source.charts,
                 maximum_location_pairs,
+                material_routing=request.material_routing,
                 budget=budget,
             )
         )
@@ -4271,6 +4724,8 @@ def _assemble_surface_metric_outcome(
     )
     live = np.unique(state.cells)
     vertex_strata = surface_vertex_strata(state, live)
+    if state.cell_coedges is not None:
+        budget.reserve(0, int(state.cell_coedges.nbytes))
     geometry = SurfaceMetricGeometryWitness(
         edit,
         ordered_patches,
@@ -4284,6 +4739,7 @@ def _assemble_surface_metric_outcome(
         domain.domain_id,
         tuple(domain.entity_id(2, patch) for patch in ordered_patches.tolist()),
         tuple(domain.source_occurrences[2][patch] for patch in ordered_patches.tolist()),
+        surface_cell_coedges(state, edit),
     )
     return SurfaceMetricOutcome(
         geometry,
@@ -4363,15 +4819,32 @@ def execute_surface_metric_adaptation(
         scope=scope,
     )
     prepared = _prepare_surface_metric_inputs(request)
-    with budget.activate(), budget.ticket.native_target():
-        carrier = _prepare_surface_metric_carriers(request, prepared)
-        execution = _run_surface_metric_execution(request, prepared, carrier)
-        certificate = _certify_surface_metric_execution(
-            request, prepared, carrier, execution
-        )
-        return _assemble_surface_metric_outcome(
-            request, prepared, carrier, execution, certificate
-        )
+    frame = (
+        source_id,
+        source_revision,
+        domain.domain_id,
+        mesh.mesh_id,
+        canonical_fingerprint(array_tree_fingerprint(mesh.coordinates)),
+        "surface-material-barycentric",
+    )
+    with (
+        budget.activate(),
+        budget.ticket.native_target(),
+        prepared_material_routing(frame, budget=budget) as routing,
+    ):
+        request = replace(request, material_routing=routing)
+        try:
+            carrier = _prepare_surface_metric_carriers(request, prepared)
+            execution = _run_surface_metric_execution(request, prepared, carrier)
+            certificate = _certify_surface_metric_execution(
+                request, prepared, carrier, execution
+            )
+            return _assemble_surface_metric_outcome(
+                request, prepared, carrier, execution, certificate
+            )
+        finally:
+            if controller is not None:
+                controller.material_routing = None
 
 
 @checked
@@ -4400,6 +4873,7 @@ def assemble_surface(
     maximum_pairs: int,
     /,
     *,
+    material_routing: PreparedMaterialRouting | None = None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
     _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
@@ -4424,6 +4898,7 @@ def assemble_surface(
         state,
         live,
         maximum_pairs,
+        material_routing=material_routing,
         budget=budget,
     )
     owner_of = {
@@ -4748,6 +5223,7 @@ def prepare_surface_metric_geometry_transition(
             or indices is None
             or parameters is None
             or source_chart_cover is None
+            or geometry.cell_coedges is None
         ):
             raise ValueError(
                 "surface_metric.prepare_surface_metric_geometry_transition must retain source-stratum parameters and incidence; got target curve provenance requires its retained strata and cover"
@@ -4768,6 +5244,7 @@ def prepare_surface_metric_geometry_transition(
             indices[vertex_rows],
             parameters[vertex_rows],
             source_chart_cover=source_chart_cover,
+            cell_coedges=geometry.cell_coedges[target_rows],
             budget=budget,
         )
     with measure_phase(record_phase, "common_refinement"):
@@ -4982,6 +5459,35 @@ def _sphere_charge(
     budget.reserve(work, storage)
 
 
+def _sphere_location_cones(
+    background: _SphereMetricBackground,
+    rows: np.ndarray,
+    direction: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> Iterator[tuple[int, np.ndarray]]:
+    """Visit exact containing cones in source order using bounded native batches."""
+    for start in range(0, rows.size, 32):
+        selected = rows[start : start + 32]
+        with budget.temporary_scope():
+            budget.reserve(0, 1024 + 512 * selected.size)
+            corners = background.cone_directions[selected]
+            query = np.broadcast_to(direction, (selected.size, 3))
+            first = np.stack((query, corners[:, 0], corners[:, 0]), axis=1)
+            second = np.stack((corners[:, 1], query, corners[:, 1]), axis=1)
+            third = np.stack((corners[:, 2], corners[:, 2], query), axis=1)
+            signs = exact_orient3d(np.zeros((3,), dtype=np.float64), first, second, third)
+            admitted = np.flatnonzero(
+                np.all(
+                    signs * background.cone_orientations[selected, None] >= 0,
+                    axis=1,
+                )
+            )
+            for local in admitted:
+                yield int(selected[local]), signs[local]
+
+
 def _sphere_location(
     background: _SphereMetricBackground,
     patch: int,
@@ -4996,20 +5502,9 @@ def _sphere_location(
     lifted = rational_vector(direction)
     point = (lifted[0], lifted[1], lifted[2])
     rows = np.flatnonzero(np.asarray(atlas.patches) == patch)
-    for row in rows:
-        # Cramer's numerator signs reject exterior cones exactly, before the
-        # rational action constructs coefficients. Zero signs stay admitted:
-        # shared boundaries retain the first source row's point key.
-        with budget.temporary_scope():
-            budget.reserve(0, 1024)
-            corners = background.cone_directions[row]
-            first = np.stack((direction, corners[0], corners[0]))
-            second = np.stack((corners[1], direction, corners[1]))
-            third = np.stack((corners[2], corners[2], direction))
-            signs = exact_orient3d(np.zeros((3,), dtype=np.float64), first, second, third)
-
-            if np.any(signs * background.cone_orientations[row] < 0):
-                continue
+    # Zero signs remain admitted, and batching preserves the first source
+    # row's exact point key on shared boundaries.
+    for row, signs in _sphere_location_cones(background, rows, direction, budget=budget):
         with budget.temporary_scope():
             if atlas.exact_determinants[row] == 0:
                 raise ValueError(
@@ -5116,7 +5611,7 @@ def _sphere_point(
     _sphere_charge(64, budget=budget)
     _consume_native_work(geometry_queries=1, budget=budget)
     direction, _ = _dependency_phydrax_geometry__sphere_material_atlas.corner_direction(
-        domain, patch, dimension, index, parameters
+        domain, patch, dimension, index, parameters, budget=budget
     )
     slot = int(
         np.asarray(background.atlas.source_slots)[
@@ -5145,6 +5640,8 @@ def _sphere_radial_parameters(
     domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     patch: int,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
     norm = np.linalg.norm(direction)
     if not np.isfinite(norm) or norm <= 0:
@@ -5167,8 +5664,81 @@ def _sphere_radial_parameters(
         uv[0] += period
     elif uv[0] > box[1, 0]:
         uv[0] -= period
-    domain.patches[patch].surface.validate_parameter_box(np.stack((uv, uv)))
+    domain.patches[patch].surface.validate_parameter_box(
+        np.stack((uv, uv)), budget=budget
+    )
     return uv
+
+
+def _sphere_radial_normalization_upper(
+    rays: np.ndarray,
+    orientation: int,
+    source_norm: float,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> float | None:
+    """Filter candidate cone normalization with outward-rounded intervals.
+
+    Exact determinant values remain mandatory in the published material atlas.
+    A private candidate needs only a certified positive plane-distance lower
+    bound; inconclusive interval arithmetic leaves the exact proof in charge.
+    """
+    # One candidate enclosure root; exact rational coefficients and determinant
+    # arithmetic are charged separately only when the filter is inconclusive.
+    budget.reserve(1, 8192)
+    first = interval_enclosure_owner.interval_subtract(
+        (rays[1], rays[1]), (rays[0], rays[0])
+    )
+    second = interval_enclosure_owner.interval_subtract(
+        (rays[2], rays[2]), (rays[0], rays[0])
+    )
+    normal = _owner_phydrax_geometry__domain_numerics.interval_vector_cross(
+        (np.asarray(first[0]), np.asarray(first[1])),
+        (np.asarray(second[0]), np.asarray(second[1])),
+    )
+    determinant = interval_enclosure_owner.interval_dot((rays[0], rays[0]), normal)
+    signed = interval_enclosure_owner.interval_multiply(
+        determinant, (np.asarray(float(orientation)), np.asarray(float(orientation)))
+    )
+    normal_upper = float(
+        _owner_phydrax_geometry__domain_numerics.interval_vector_norm(normal)[1]
+    )
+    if float(signed[0]) <= 0 or not np.isfinite(normal_upper) or normal_upper <= 0:
+        return None
+    floor = float(
+        interval_enclosure_owner.interval_divide(
+            signed, (np.asarray(normal_upper), np.asarray(normal_upper))
+        )[0]
+    )
+    if not np.isfinite(floor) or floor <= 0:
+        return None
+    lows, highs = _owner_phydrax_geometry__domain_numerics.interval_vector_norm(
+        (rays, rays)
+    )
+    ceiling = float(np.max(highs))
+    unit_error = float(
+        np.max(
+            np.maximum(
+                np.maximum(
+                    np.nextafter(highs - 1.0, np.inf),
+                    np.nextafter(1.0 - lows, np.inf),
+                ),
+                0.0,
+            )
+        )
+    )
+    radial_defect = max(
+        float(np.nextafter(1.0 - floor, np.inf)),
+        float(np.nextafter(ceiling - 1.0, np.inf)),
+        0.0,
+    )
+    upper = float(
+        np.nextafter(
+            source_norm * np.nextafter(radial_defect + unit_error, np.inf), np.inf
+        )
+    )
+    return upper if np.isfinite(upper) else None
 
 
 def _sphere_legal(
@@ -5187,33 +5757,27 @@ def _sphere_legal(
         return False
     if np.unique(np.sort(cells, axis=1), axis=0).shape[0] != cells.shape[0]:
         return False
+    # Reject the entire invalid cavity before constructing any rational cone
+    # bounds. This exact native predicate has the same determinant orientation
+    # as the subsequent bound; it does not replace accepted-cell certificates.
+    with budget.temporary_scope():
+        budget.reserve(0, 1024 + 128 * cells.shape[0])
+        orientations = exact_orient3d(
+            np.zeros((3,), dtype=np.float64),
+            directions[cells[:, 0]],
+            directions[cells[:, 1]],
+            directions[cells[:, 2]],
+        )
+        required = np.asarray(
+            [-1 if domain.patches[int(patch)].reversed else 1 for patch in patches],
+            dtype=np.int8,
+        )
+        if np.any(orientations * required <= 0):
+            return False
     for row in range(cells.shape[0]):
         cell, patch = cells[row, :], int(patches[row])
         with budget.temporary_scope():
             rays = directions[cell]
-            key = tuple(
-                float(rays[corner, axis]) for corner in range(3) for axis in range(3)
-            )
-            budget.reserve(9)
-            if key not in background.radial_bounds:
-                # The memo holds immutable cone enclosures, not rounded
-                # source-cell identities or a renewed workspace allowance.
-                budget.reserve(0, 4096)
-                radial = _dependency_phydrax_geometry__sphere_material_atlas.sphere_radial_triangle_bounds(
-                    rays, budget=budget
-                )
-                budget.retain_basis((key, radial))
-                background.radial_bounds[key] = radial
-            radial = background.radial_bounds[key]
-            if radial is None:
-                return False
-            determinant, floor, ceiling, unit_error = radial
-            sign = -1 if domain.patches[int(patch)].reversed else 1
-            if sign * determinant <= 0:
-                return False
-            normalization = Fraction(background.normalization_norms[int(patch)]) * (
-                max(1 - Fraction(floor), Fraction(ceiling) - 1, Fraction(0)) + unit_error
-            )
             low, high = (
                 _dependency_phydrax_geometry__sphere_material_atlas.source_image_enclosure(
                     domain.patches[int(patch)].surface, directions[cell], budget=budget
@@ -5237,6 +5801,40 @@ def _sphere_legal(
                     Fraction(0),
                 )
                 for corner in range(3)
+            )
+            sign = -1 if domain.patches[patch].reversed else 1
+            filtered = _sphere_radial_normalization_upper(
+                rays, sign, background.normalization_norms[patch], budget=budget
+            )
+            if (
+                filtered is not None
+                and fraction_endpoint(
+                    Fraction(filtered) + error, upper=True, saturate=True
+                )
+                <= maximum_fidelity
+            ):
+                continue
+            key = tuple(
+                float(rays[corner, axis]) for corner in range(3) for axis in range(3)
+            )
+            budget.reserve(9)
+            if key not in background.radial_bounds:
+                # The memo holds immutable cone enclosures, not rounded
+                # source-cell identities or a renewed workspace allowance.
+                budget.reserve(0, 4096)
+                radial = _dependency_phydrax_geometry__sphere_material_atlas.sphere_radial_triangle_bounds(
+                    rays, budget=budget
+                )
+                budget.retain_basis((key, radial))
+                background.radial_bounds[key] = radial
+            radial = background.radial_bounds[key]
+            if radial is None:
+                return False
+            determinant, floor, ceiling, unit_error = radial
+            if sign * determinant <= 0:
+                return False
+            normalization = Fraction(background.normalization_norms[int(patch)]) * (
+                max(1 - Fraction(floor), Fraction(ceiling) - 1, Fraction(0)) + unit_error
             )
             # The final atlas adds only nonnegative polynomial-to-chord error.
             # This necessary gate never claims the full-map certificate;
@@ -5385,7 +5983,10 @@ def _sphere_split(
     else:
         dimension, index = 2, patch
         parameters = _sphere_radial_parameters(
-            np.sum(state.directions[np.asarray(edge)], axis=0), domain, patch
+            np.sum(state.directions[np.asarray(edge)], axis=0),
+            domain,
+            patch,
+            budget=budget,
         )
     point, direction, metric, stencil = _sphere_point(
         domain, background, patch, dimension, index, parameters, budget=budget
@@ -5450,6 +6051,52 @@ def _sphere_split(
     return True
 
 
+def _sphere_collapse_organization(
+    state: _SphereMetricState,
+    removed: int,
+    kept: int,
+    background: _SphereMetricBackground,
+    /,
+) -> bool:
+    """Bind organization to the live cavity, not only historical point ancestry."""
+    removed_classes = {
+        background.vertex_closure_memberships[parent]
+        for parent in state.vertex_sources[removed]
+    }
+    kept_classes = {
+        background.vertex_closure_memberships[parent]
+        for parent in state.vertex_sources[kept]
+    }
+    if len(removed_classes) == 1 and removed_classes == kept_classes:
+        return True
+    # An interior point born next to a labeled trace can have ancestors in
+    # different closures without itself lying on that trace. Neither endpoint
+    # may touch a current trace, and both entire stars must retain the same
+    # cell organization and source patch. Cell classes survive each edit only
+    # through equal-class copies/merges, so this is a current incidence proof.
+    if any(removed in edge or kept in edge for edge in state.features):
+        return False
+    rows = np.flatnonzero(np.any(np.isin(state.cells, (removed, kept)), axis=1))
+    if (
+        not rows.size
+        or np.unique(state.classes[rows]).size != 1
+        or np.unique(state.patches[rows]).size != 1
+    ):
+        return False
+    # Vertex-scope inheritance still needs unanimous deciding source members;
+    # current interior incidence does not erase an authored point label.
+    return (
+        len(
+            {
+                background.vertex_memberships[parent]
+                for vertex in (removed, kept)
+                for parent in state.vertex_sources[vertex]
+            }
+        )
+        == 1
+    )
+
+
 def _sphere_collapse(
     state: _SphereMetricState,
     removed: int,
@@ -5464,15 +6111,7 @@ def _sphere_collapse(
     edge = (min(removed, kept), max(removed, kept))
     if removed in state.fixed or edge in state.blocked:
         return False
-    removed_classes = {
-        background.vertex_closure_memberships[parent]
-        for parent in state.vertex_sources[removed]
-    }
-    kept_classes = {
-        background.vertex_closure_memberships[parent]
-        for parent in state.vertex_sources[kept]
-    }
-    if len(removed_classes) != 1 or removed_classes != kept_classes:
+    if not _sphere_collapse_organization(state, removed, kept, background):
         return False
     if np.count_nonzero(np.sum(np.isin(state.cells, edge), axis=1) == 2) != 2:
         return False
@@ -5558,6 +6197,149 @@ def _sphere_collapse(
     return True
 
 
+def _sphere_midpoint_collapse(
+    state: _SphereMetricState,
+    removed: int,
+    kept: int,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    background: _SphereMetricBackground,
+    quality_floor: float,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> bool:
+    """Collapse one interior edge onto its source radial midpoint.
+
+    This is the endpoint collapse followed by relocation of the kept vertex,
+    decided atomically: an endpoint collapse of a short interior edge can
+    create an overlong edge that the relocated midpoint does not. Feature,
+    fixed and protected vertices never move; organization, link, duplicate,
+    quality, upper-length and exact legality obligations are unchanged.
+    """
+    edge = (min(removed, kept), max(removed, kept))
+    if (
+        removed in state.fixed
+        or kept in state.fixed
+        or edge in state.blocked
+        or state.dimensions[removed] != 2
+        or state.dimensions[kept] != 2
+        or any(removed in value or kept in value for value in state.features)
+    ):
+        return False
+    if not _sphere_collapse_organization(state, removed, kept, background):
+        return False
+    if np.count_nonzero(np.sum(np.isin(state.cells, edge), axis=1) == 2) != 2:
+        return False
+    if _link(state.cells, (removed,)) & _link(state.cells, (kept,)) != _link(
+        state.cells, edge
+    ):
+        return False
+    rows = np.flatnonzero(np.any(state.cells == removed, axis=1))
+    moved = np.flatnonzero(
+        np.any(state.cells == kept, axis=1) & ~np.any(state.cells == removed, axis=1)
+    )
+    star = np.concatenate((rows, moved))
+    if (
+        not rows.size
+        or np.unique(state.patches[star]).size != 1
+        or np.unique(state.classes[star]).size != 1
+    ):
+        return False
+    candidates = state.cells[rows].copy()
+    candidates[candidates == removed] = kept
+    live = np.all(np.diff(np.sort(candidates, axis=1), axis=1) != 0, axis=1)
+    cells, patches = candidates[live], state.patches[rows][live]
+    untouched = np.delete(state.cells, rows, axis=0)
+    combined = np.concatenate((untouched, cells))
+    if np.unique(np.sort(combined, axis=1), axis=0).shape[0] != combined.shape[0]:
+        return False
+    patch = int(state.patches[rows[0]])
+    parameters = _sphere_radial_parameters(
+        np.sum(state.directions[np.asarray(edge)], axis=0),
+        domain,
+        patch,
+        budget=budget,
+    )
+    point, direction, metric, stencil = _sphere_point(
+        domain, background, patch, 2, patch, parameters, budget=budget
+    )
+    # Relocated vertex-scope inheritance is decided by the new support.
+    if (
+        len(
+            {
+                background.vertex_memberships[parent]
+                for parent in (
+                    *state.vertex_sources[removed],
+                    *state.vertex_sources[kept],
+                    *(parent for parent, _ in stencil),
+                )
+            }
+        )
+        != 1
+    ):
+        return False
+    old_point, old_direction, old_metric = (
+        state.points[kept].copy(),
+        state.directions[kept].copy(),
+        state.metric[kept].copy(),
+    )
+    state.points[kept], state.directions[kept], state.metric[kept] = (
+        point,
+        direction,
+        metric,
+    )
+    accepted = False
+    try:
+        final = np.concatenate((cells, state.cells[moved]))
+        final_patches = np.concatenate((patches, state.patches[moved]))
+        if np.all(
+            _sphere_quality(state, final, final_patches, background) >= quality_floor
+        ):
+            local_edges = np.unique(
+                np.sort(final[:, _LOCAL_EDGES].reshape((-1, 2)), axis=1), axis=0
+            )
+            _, lengths = _sphere_lengths(state, edges=local_edges)
+            accepted = bool(np.all(lengths <= _UPPER)) and _sphere_legal(
+                domain,
+                final,
+                final_patches,
+                state.directions,
+                points=state.points,
+                background=background,
+                maximum_fidelity=state.maximum_fidelity,
+                budget=budget,
+            )
+    finally:
+        if not accepted:
+            state.points[kept], state.directions[kept], state.metric[kept] = (
+                old_point,
+                old_direction,
+                old_metric,
+            )
+    if not accepted:
+        return False
+    for identifier in state.cell_ids[moved]:
+        state.kinds[int(identifier)] = int(
+            _dependency_phydrax_meshing__lineage.EntityLineageKind.RELOCATED
+        )
+    cavity_parents = set().union(*(state.parents[row] for row in rows))
+    _sphere_replace(
+        state,
+        rows,
+        cells,
+        patches,
+        state.classes[rows][live],
+        [cavity_parents.copy() for _ in range(cells.shape[0])],
+        _dependency_phydrax_meshing__lineage.EntityLineageKind.COLLAPSED_INTO,
+    )
+    state.successors[removed] = kept
+    state.parameters[kept] = parameters
+    state.stencils[kept] = stencil
+    state.vertex_sources[kept] = {parent for parent, _ in stencil}
+    state.relocated.add(kept)
+    return True
+
+
 def _sphere_flip(
     state: _SphereMetricState,
     edge: tuple[int, int],
@@ -5590,7 +6372,19 @@ def _sphere_flip(
     patches = state.patches[rows]
     old = _sphere_quality(state, state.cells[rows], patches, background)
     new = _sphere_quality(state, cells, patches, background)
-    if np.min(new) <= np.min(old):
+    # The flip replaces only the diagonal; the four boundary edges persist.
+    # Prefer strictly less edge-size defect above the hard quality floor, and
+    # otherwise only shape improvement that does not worsen the size defect.
+    # Both orders strictly decrease (defect, -minimum quality), so the pass
+    # cannot cycle between them.
+    _, diagonals = _sphere_lengths(
+        state, edges=np.asarray(((min(a, b), max(a, b)), (min(c, d), max(c, d))))
+    )
+    old_defect, new_defect = _unit_defect(diagonals[:1]), _unit_defect(diagonals[1:])
+    if new_defect < old_defect:
+        if np.min(new) < state.minimum_metric_quality:
+            return False
+    elif new_defect > old_defect or np.min(new) <= np.min(old):
         return False
     if not _sphere_legal(
         domain,
@@ -5635,6 +6429,28 @@ def _sphere_relocate(
         or np.unique(state.classes[rows]).size != 1
     ):
         return False
+    old_quality = _sphere_quality(
+        state, state.cells[rows], state.patches[rows], background
+    )
+    neighbors = np.unique(state.cells[rows])
+    neighbors = neighbors[neighbors != vertex]
+    local_edges = np.unique(
+        np.sort(
+            np.column_stack(
+                (np.full(neighbors.shape, vertex, dtype=np.int32), neighbors)
+            ),
+            axis=1,
+        ),
+        axis=0,
+    )
+    _, old_lengths = _sphere_lengths(state, edges=local_edges)
+    # The global pass uses these same metric obligations. A conforming live
+    # star needs no relocation merely to decrease an already-admitted defect.
+    # Re-evaluate the star on every visit: preceding edits can reactivate it.
+    if np.all((old_lengths >= _LOWER) & (old_lengths <= _UPPER)) and np.all(
+        old_quality >= state.minimum_metric_quality
+    ):
+        return False
     patch = int(state.patches[rows[0]])
     incident = [edge for edge in state.features if vertex in edge]
     dimension, index = state.dimensions[vertex], state.indices[vertex]
@@ -5655,75 +6471,92 @@ def _sphere_relocate(
             )
             for neighbor in neighbors
         ]
-        parameters = np.asarray((sum(values) / 2, np.nan), dtype=np.float64)
+        candidates = [np.asarray((sum(values) / 2, np.nan), dtype=np.float64)]
+        floors = [float(np.min(old_quality))]
     else:
         if incident:
             return False
         neighbors = np.unique(state.cells[rows])
         neighbors = neighbors[neighbors != vertex]
-        parameters = _sphere_radial_parameters(
-            np.mean(state.directions[neighbors], axis=0), domain, patch
-        )
-    point, direction, metric, stencil = _sphere_point(
-        domain, background, patch, dimension, index, parameters, budget=budget
-    )
+        candidates = [
+            _sphere_radial_parameters(
+                np.mean(state.directions[neighbors], axis=0),
+                domain,
+                patch,
+                budget=budget,
+            )
+        ]
+        # Smoothing must not degrade the star's shape.
+        floors = [float(np.min(old_quality))]
+        short = old_lengths < _LOWER
+        if np.any(short):
+            # The centroid can leave a short edge short. Also try moving
+            # directly away from the too-close neighbours until the shortest
+            # edge would reach each declared length. Such a repair must still
+            # strictly decrease the size defect and keep the hard shape floor.
+            close = local_edges[short]
+            others = np.where(close[:, 0] == vertex, close[:, 1], close[:, 0])
+            away = state.directions[vertex] - np.mean(state.directions[others], axis=0)
+            shortest = float(np.min(old_lengths[short]))
+            for length in (1.03 * _LOWER, 0.5 * (_LOWER + 1.0)):
+                candidates.append(
+                    _sphere_radial_parameters(
+                        state.directions[vertex] + (length / shortest - 1.0) * away,
+                        domain,
+                        patch,
+                        budget=budget,
+                    )
+                )
+                floors.append(state.minimum_metric_quality)
     old_point, old_direction, old_metric = (
         state.points[vertex].copy(),
         state.directions[vertex].copy(),
         state.metric[vertex].copy(),
     )
-    old_quality = _sphere_quality(
-        state, state.cells[rows], state.patches[rows], background
-    )
-    neighbors = np.unique(state.cells[rows])
-    neighbors = neighbors[neighbors != vertex]
-    local_edges = np.unique(
-        np.sort(
-            np.column_stack(
-                (np.full(neighbors.shape, vertex, dtype=np.int32), neighbors)
-            ),
-            axis=1,
-        ),
-        axis=0,
-    )
-    _, old_lengths = _sphere_lengths(state, edges=local_edges)
-    state.points[vertex], state.directions[vertex], state.metric[vertex] = (
-        point,
-        direction,
-        metric,
-    )
     accepted = False
-    try:
-        new_quality = _sphere_quality(
-            state, state.cells[rows], state.patches[rows], background
+    for parameters, floor in zip(candidates, floors, strict=True):
+        point, direction, metric, stencil = _sphere_point(
+            domain, background, patch, dimension, index, parameters, budget=budget
         )
-        _, new_lengths = _sphere_lengths(state, edges=local_edges)
-        # A proposal rejected by the existing numerical merit cannot become
-        # admissible through a legality proof. Earn that proof only for a
-        # nondegrading shape with a strictly improved edge-size defect.
-        if np.min(new_quality) >= np.min(old_quality) and _unit_defect(
-            new_lengths
-        ) < _unit_defect(old_lengths):
-            accepted = _sphere_legal(
-                domain,
-                state.cells[rows],
-                state.patches[rows],
-                state.directions,
-                points=state.points,
-                background=background,
-                maximum_fidelity=state.maximum_fidelity,
-                budget=budget,
+        state.points[vertex], state.directions[vertex], state.metric[vertex] = (
+            point,
+            direction,
+            metric,
+        )
+        try:
+            new_quality = _sphere_quality(
+                state, state.cells[rows], state.patches[rows], background
             )
-    finally:
-        # Certification can refuse by raising after the trial coordinates have
-        # been installed. Restore the numeric carrier on every noncommit exit;
-        # the source ledgers still retain all attempted work and queries.
-        if not accepted:
-            state.points[vertex], state.directions[vertex], state.metric[vertex] = (
-                old_point,
-                old_direction,
-                old_metric,
-            )
+            _, new_lengths = _sphere_lengths(state, edges=local_edges)
+            # A proposal rejected by the existing numerical merit cannot become
+            # admissible through a legality proof. Earn that proof only for a
+            # shape above the candidate floor with a strictly improved
+            # edge-size defect; each commit decreases the global defect.
+            if np.min(new_quality) >= floor and _unit_defect(new_lengths) < _unit_defect(
+                old_lengths
+            ):
+                accepted = _sphere_legal(
+                    domain,
+                    state.cells[rows],
+                    state.patches[rows],
+                    state.directions,
+                    points=state.points,
+                    background=background,
+                    maximum_fidelity=state.maximum_fidelity,
+                    budget=budget,
+                )
+        finally:
+            # Certification can refuse by raising after the trial coordinates
+            # have been installed. Restore the numeric carrier on every
+            # noncommit exit; the source ledgers retain all attempted work.
+            if not accepted:
+                state.points[vertex], state.directions[vertex], state.metric[vertex] = (
+                    old_point,
+                    old_direction,
+                    old_metric,
+                )
+        if accepted:
+            break
     if not accepted:
         return False
     state.parameters[vertex] = parameters
@@ -6558,8 +7391,8 @@ def _sphere_initial_state(
 ) -> tuple[_SphereMetricState, _SphereMetricBackground]:
 
     mesh, domain = source.mesh, atlas.domain
-    vertex, _ = transfer.source_associations(source)
-    classes = transfer.classes(source)
+    vertex, _ = transfer.source_associations(source, budget=budget)
+    classes = transfer.classes(source, budget=budget)
     ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     vertex_rows = vertex.target_rows(ids)
     dimensions = np.asarray(vertex.source_dimensions)[vertex_rows].astype(np.int64)
@@ -6619,7 +7452,8 @@ def _sphere_initial_state(
         _leaf_phydrax_meshing__host_banks.membership(mesh, organization, 0), axis=1
     )
     protected = (
-        transfer.protected_edges(source, midpoint_required=False) | ~classes[1].resolved
+        transfer.protected_edges(source, midpoint_required=False, budget=budget)
+        | ~classes[1].resolved
     )
     for scope in policy.protected_scopes:
         rows = _leaf_phydrax_meshing__host_banks.selected_rows(mesh, scope)
@@ -7025,22 +7859,34 @@ def _sphere_apply_operation(
                     raise ValueError(
                         "surface_metric.sphere_apply_operation must its removed and kept vertices; got a sphere collapse requires its removed and kept vertices"
                     )
-                return _sphere_collapse(
-                    state,
-                    vertices[0],
-                    vertices[1],
-                    domain,
-                    background,
-                    state.minimum_metric_quality,
-                    budget=budget,
-                ) or _sphere_collapse(
-                    state,
-                    vertices[1],
-                    vertices[0],
-                    domain,
-                    background,
-                    state.minimum_metric_quality,
-                    budget=budget,
+                return (
+                    _sphere_collapse(
+                        state,
+                        vertices[0],
+                        vertices[1],
+                        domain,
+                        background,
+                        state.minimum_metric_quality,
+                        budget=budget,
+                    )
+                    or _sphere_collapse(
+                        state,
+                        vertices[1],
+                        vertices[0],
+                        domain,
+                        background,
+                        state.minimum_metric_quality,
+                        budget=budget,
+                    )
+                    or _sphere_midpoint_collapse(
+                        state,
+                        vertices[0],
+                        vertices[1],
+                        domain,
+                        background,
+                        state.minimum_metric_quality,
+                        budget=budget,
+                    )
                 )
             case "flip":
                 if len(vertices) != 2:
@@ -7134,6 +7980,39 @@ class _SphereMetricCertificatePhase(StrictModule):
     status: _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus
 
 
+@dataclass(slots=True)
+class _SphereProposalMemo:
+    """Skip only proposals whose complete local decision inputs are unchanged.
+
+    Every sphere edit decides from the cells incident to its proposal vertices
+    and those cells' vertices (positions, metrics, sources, feature edges and
+    any other cell through two of them). A committed edit touches every vertex
+    of its cavity and every born vertex, so an unchanged rejected cavity would
+    deterministically be rejected again by the same numerical and exact tests.
+    """
+
+    epoch: int = 0
+    touched: dict[int, int] = field(default_factory=dict)
+    rejected: dict[tuple[str, tuple[int, ...]], tuple[int, tuple[int, ...]]] = field(
+        default_factory=dict
+    )
+
+    def unchanged(self, key: tuple[str, tuple[int, ...]], /) -> bool:
+        entry = self.rejected.get(key)
+        if entry is None:
+            return False
+        epoch, involved = entry
+        return all(self.touched.get(vertex, -1) <= epoch for vertex in involved)
+
+    def reject(self, key: tuple[str, tuple[int, ...]], involved: np.ndarray, /) -> None:
+        self.rejected[key] = (self.epoch, tuple(map(int, involved)))
+
+    def commit(self, involved: np.ndarray, born: range, /) -> None:
+        self.epoch += 1
+        for vertex in (*map(int, involved), *born):
+            self.touched[vertex] = self.epoch
+
+
 def _prepare_sphere_metric_inputs(
     request: _SphereMetricExecutionRequest,
 ) -> _SphereMetricPreparedInputs:
@@ -7150,7 +8029,9 @@ def _prepare_sphere_metric_inputs(
     budget = request.budget
     record_phase = request.record_phase
     minimum_metric_quality = request.minimum_metric_quality
-    source_atlas.require_bound(domain, source.mesh, source.geometry, coordinate_contract)
+    source_atlas.require_bound(
+        domain, source.mesh, source.geometry, coordinate_contract, budget=budget
+    )
     domain.require_current(source_atlas.source_id, source_atlas.source_revision)
     if (
         not source.audit.passed
@@ -7256,6 +8137,7 @@ def _execute_sphere_metric_proposals(
             _dependency_phydrax_meshing__periodic.PeriodicMetricOperation, tuple[int, ...]
         ]
     ],
+    memo: _SphereProposalMemo | None = None,
 ) -> _SphereMetricExecutionPhase:
     source = request.source
     domain = request.domain
@@ -7296,6 +8178,14 @@ def _execute_sphere_metric_proposals(
         if cavity.size > limits.maximum_cavity_cells:
             rejected += 1
             continue
+        # Periodic orbit staging replaces the carrier; only direct carriers
+        # keep the local-incidence memo.
+        local = memo if source.mesh.periodic_topology is None else None
+        key = (str(operation), tuple(map(int, vertices)))
+        if local is not None and local.unchanged(key):
+            continue
+        involved = np.unique(state.cells[cavity])
+        born_from = state.points.shape[0]
 
         _admit_cavity(cavity.size, budget=budget)
         attempts += 1
@@ -7345,6 +8235,11 @@ def _execute_sphere_metric_proposals(
                 if synchronized is not None:
                     state, periodic_stage, reconstruction, deformation = synchronized
                     periodic_geometry = reconstruction, deformation
+        if local is not None:
+            if changed:
+                local.commit(involved, range(born_from, state.points.shape[0]))
+            else:
+                local.reject(key, involved)
         if changed:
             match operation:
                 case "split":
@@ -7406,6 +8301,8 @@ def _run_sphere_metric_execution(
     # Pass measurement and direct operations share these same four live
     # carriers. Keep their high-water reservation until the phase
     # ends; unchanged state must not allocate another carrier bank.
+    memo = _SphereProposalMemo()
+
     def checkpoint() -> None:
 
         budget.ticket.checkpoint()
@@ -7459,7 +8356,7 @@ def _run_sphere_metric_execution(
             applied,
         )
         execution = _execute_sphere_metric_proposals(
-            request, prepared, carrier, execution, proposals
+            request, prepared, carrier, execution, proposals, memo
         )
         state = execution.state
         workspace_upper = execution.workspace_upper
@@ -7989,6 +8886,7 @@ def _sphere_stage_periodic_operation(
                 reconstruction,
                 deformation,
                 policy=policy.geometry_transition,
+                budget=budget,
             )
             lineage = _owner_phydrax_meshing__periodic.metric_target_lineage(
                 source.mesh, edit, target, scope=scope, budget=budget

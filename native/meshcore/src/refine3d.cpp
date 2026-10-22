@@ -23,6 +23,35 @@
 // (priority, sorted vertex tuple) for cells; stale entries are skipped by
 // comparing the slot's vertex tuple.  Every insertion is one validated
 // transaction, so the mesh is valid whenever refinement stops.
+//
+// Circumcenter insertion needs empty circumspheres: in a constrained Delaunay
+// mesh no vertex visible from a cell lies inside its circumsphere, so a
+// circumcenter is inserted at least the circumradius from every vertex it is
+// connected to. A recovered carrier need not be constrained Delaunay, and
+// Bowyer-Watson cavities refused or shrunk on it, like edge-star splits, add
+// locally non-Delaunay faces; a circumcenter can then fall next to an existing
+// vertex and the insertion radius collapses without end. Lawson flips restore
+// the property on the carrier and on every cell an insertion creates: an
+// unconstrained face whose opposite apex lies strictly inside the circumsphere
+// of its cell (exact insphere, on exact source positions when bounded) is
+// flipped 2-3, or 3-2 around a non-segment edge of it with three cells, or
+// 4-4 around such an edge with four cells when both apexes are coplanar with
+// it. Each flip replaces a locally non-Delaunay configuration by the other
+// triangulation of the same vertices and strictly lowers the lifted
+// triangulation, so flipping terminates. Constrained faces and segments never
+// flip (immutable features are never crossed); a face no flip admits stays
+// until a later change frees it. Flipped cells are queued and checked for
+// encroachment like inserted ones. A circumcenter whose prepared cavity omits
+// its cell, or connects it to a vertex strictly inside the cell's
+// circumsphere (possible only beside such a face), is refused instead of
+// inserted, so every circumcenter edge is at least the circumradius long.
+//
+// Work is not repeated where its answer is already determined: the
+// circumcenter assessed for a cell is the one inserted; queued faces are not
+// located unless the shape obstruction needs them; and a queued face whose
+// vertex triple a committed insertion retired (its constrained faces with
+// both sides in the cavity, or the faces around a split edge star) is
+// skipped without a star walk, since every later face contains a later vertex.
 #include "refine3d.hpp"
 
 #include <algorithm>
@@ -37,6 +66,7 @@
 #include "counter_records.hpp"
 #include "filtered.hpp"
 #include "geometry3.hpp"
+#include "improve3d.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "tet_mesh.hpp"
@@ -108,6 +138,14 @@ struct FaceEntry {
   bool forced;
 };
 
+// A face queued for the local Delaunay test: the cell, the vertex opposite
+// the face in it, and the face triple (stale once either changed).
+struct PendingFace {
+  int32_t tet;
+  int32_t apex;
+  FaceKey face;
+};
+
 enum class Step : std::uint8_t { kContinue, kStop };
 
 // At an acute protected source-facet corner theta, every descendant sector has
@@ -165,8 +203,12 @@ class Refiner {
       mesh_.clear_source_refusals();
       mesh_.clear_slot_reasons();
       prepare_shape_feasibility();
-      seed_queues();
-      status = mesh_.work_exhausted() ? PHX_MC_CAPACITY_EXCEEDED : PHX_MC_OK;
+      if (restore_delaunay()) {
+        seed_queues();
+        status = mesh_.work_exhausted() ? PHX_MC_CAPACITY_EXCEEDED : PHX_MC_OK;
+      } else {
+        status = stop_status_;
+      }
       while (status == PHX_MC_OK && (!segments_.empty() || !faces_.empty() || !tets_.empty())) {
         if (inserted_ >= options_.max_insertions) break;
         if (!mesh_.spend(1)) {
@@ -289,18 +331,28 @@ class Refiner {
 
   // Whether finite tetrahedron t violates a criterion; priority > 1 ranks
   // it, ratio is its radius-edge ratio and size_ratio its circumradius over
-  // the mean target size of its vertices (0 without targets).
-  bool assess(int32_t t, double& priority, double& ratio, double& size_ratio) const {
+  // the mean target size of its vertices (0 without targets). The computed
+  // circumcenter is returned through `center` (valid when constructed) so the
+  // insertion reuses it instead of constructing it again.
+  struct Circumcenter {
+    double point[3] = {0.0, 0.0, 0.0};
+    bool valid = false;
+  };
+  bool assess(int32_t t, double& priority, double& ratio, double& size_ratio,
+              Circumcenter* center = nullptr) const {
     const double* p[4];
     mesh_.corners(t, p);
-    double center[3];
+    Circumcenter local;
+    Circumcenter& built = center == nullptr ? local : *center;
+    double* c = built.point;
     size_ratio = 0.0;
-    if (!geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], center)) {
+    built.valid = geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], c);
+    if (!built.valid) {
       ratio = std::numeric_limits<double>::infinity();
       priority = ratio;
       return true;
     }
-    const double radius = std::sqrt(geometry::squared_distance(center, p[0]));
+    const double radius = std::sqrt(geometry::squared_distance(c, p[0]));
     ratio = radius / geometry::shortest_edge(p);
     if (!std::isfinite(ratio)) {
       ratio = std::numeric_limits<double>::infinity();
@@ -440,14 +492,15 @@ class Refiner {
     if (!conforming() || stuck_faces_.count(key) != 0) {
       return;
     }
+    // The located face is only consulted for the shape-obstruction verdict;
+    // without that obstruction the face is queued unconditionally, so the
+    // star walk of find_face is not made.
     int32_t t = -1;
     int slot = -1;
-    if (mesh_.find_face(key.v[0], key.v[1], key.v[2], t, slot) &&
+    if (shape_obstructed_ && mesh_.find_face(key.v[0], key.v[1], key.v[2], t, slot) &&
         facet_size_ratio(t, slot) <= 1.0) {
-      if (shape_obstructed_) {
-        stuck_faces_.emplace(key, Unmet::kProtected);
-        return;
-      }
+      stuck_faces_.emplace(key, Unmet::kProtected);
+      return;
     }
     faces_.push_back({key, forced});
   }
@@ -503,13 +556,166 @@ class Refiner {
     return FaceKey::of(f[0], f[1], f[2]);
   }
 
-  // New cells enter the queue; constraints of new cells encroached by their
-  // own vertices are queued for splitting.
-  void after_insert() {
+  // Queues the unconstrained faces of live finite cell t that have a finite
+  // neighbor; a face whose neighbor is a smaller cell of the same group (every
+  // cell when `everywhere`) is queued once, from that neighbor.
+  void queue_faces(int32_t t, std::span<const int32_t> group, bool everywhere) {
+    if (!mesh_.complex().live(t) || !mesh_.finite(t)) {
+      return;
+    }
+    for (int k = 0; k < 4; ++k) {
+      native_execution_charge(0);
+      const int32_t u = mesh_.tet(t).n[k];
+      if (mesh_.complex().constraint(t, k) != kNoConstraint || !mesh_.finite(u) ||
+          (u < t && (everywhere || std::find(group.begin(), group.end(), u) != group.end()))) {
+        continue;
+      }
+      pending_faces_.push_back({t, mesh_.tet(t).v[k], face_key(t, k)});
+    }
+  }
+
+  bool halted(int32_t status) {
+    stop_status_ = status;
+    return false;
+  }
+
+  // Edge flips across the face of t opposite `slot`, whose apexes are d (in
+  // t) and e (beyond): a non-segment edge (a, b) of the face whose ring is
+  // exactly t, its neighbor and the cell of both apexes is removed 3-2 by the
+  // unique two-cell ring triangulation; when (a, b) has four cells and d, e,
+  // a, b are coplanar (the degenerate crossing of de through ab), the 4-4 flip
+  // replaces it by the diagonal (d, e).
+  bool flip_around_edge(int32_t t, int slot, int32_t d, int32_t e) {
+    int32_t f[3];
+    oriented_facet(mesh_.tet(t).v, slot, f);
+    for (int r = 0; r < 3; ++r) {
+      const int32_t a = f[r];
+      const int32_t b = f[(r + 1) % 3];
+      if (mesh_.segment_source(a, b) >= 0 || !mesh_.edge_ring(a, b, ring_tets_, ring_)) {
+        continue;
+      }
+      if ((ring_.size() == 3 && try_edge_removal(mesh_, a, b, false)) ||
+          (ring_.size() == 4 && flip_four_four(a, b, d, e))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // The 4-4 flip of the gathered ring of (a, b) (ring_tets_[i] is (a, b,
+  // ring_[i], ring_[i + 1])): its unconstrained ring faces are kept and the
+  // ring quadrilateral is split by the diagonal joining d and e, the same
+  // cell convention as every ring triangulation (one validated replacement).
+  bool flip_four_four(int32_t a, int32_t b, int32_t d, int32_t e) {
+    int at_d = -1;
+    int at_e = -1;
+    for (int i = 0; i < 4; ++i) {
+      const int32_t vertex = ring_[static_cast<std::size_t>(i)];
+      const int32_t cell = ring_tets_[static_cast<std::size_t>(i)];
+      if (vertex < 0 ||
+          mesh_.complex().constraint(cell, vertex_slot(mesh_.tet(cell), vertex)) != kNoConstraint) {
+        return false;
+      }
+      at_d = vertex == d ? i : at_d;
+      at_e = vertex == e ? i : at_e;
+    }
+    if (at_d < 0 || at_e < 0 || (at_d - at_e + 4) % 4 != 2 ||
+        orient3d(mesh_.point(a), mesh_.point(b), mesh_.point(d), mesh_.point(e)) != 0 ||
+        !mesh_.spend(TetWorkCost::kCell)) {
+      return false;
+    }
+    // Ring triangles (i < k < j) sharing the diagonal {0, 2} or {1, 3}.
+    static constexpr int kTriangles[2][2][3] = {{{0, 1, 2}, {0, 2, 3}}, {{0, 1, 3}, {1, 2, 3}}};
+    const auto& triangles = kTriangles[std::min(at_d, at_e)];
+    std::array<std::array<int32_t, 4>, 4> proposed{};
+    for (int s = 0; s < 2; ++s) {
+      const int32_t ri = ring_[static_cast<std::size_t>(triangles[s][0])];
+      const int32_t rk = ring_[static_cast<std::size_t>(triangles[s][1])];
+      const int32_t rj = ring_[static_cast<std::size_t>(triangles[s][2])];
+      proposed[static_cast<std::size_t>(2 * s)] = {rk, ri, rj, a};
+      proposed[static_cast<std::size_t>(2 * s + 1)] = {ri, rk, rj, b};
+    }
+    return mesh_.replace(ring_tets_, proposed) == EditStatus::kOk;
+  }
+
+  // Lawson flips of the queued faces (see the file comment); every cell a
+  // flip creates is appended to created_ and its faces are queued. False
+  // (stop status set) when the work allowance or an internal check stopped it.
+  bool legalize() {
+    while (!pending_faces_.empty()) {
+      const PendingFace entry = pending_faces_.back();
+      pending_faces_.pop_back();
+      const int32_t t = entry.tet;
+      if (!mesh_.complex().live(t) || !mesh_.finite(t)) {
+        continue;
+      }
+      const int slot = vertex_slot(mesh_.tet(t), entry.apex);
+      if (slot < 0 || mesh_.complex().constraint(t, slot) != kNoConstraint ||
+          !(face_key(t, slot) == entry.face)) {
+        continue;
+      }
+      const int32_t u = mesh_.tet(t).n[slot];
+      if (!mesh_.finite(u)) {
+        continue;
+      }
+      if (!mesh_.spend(TetWorkCost::kVisit)) {
+        return halted(PHX_MC_CAPACITY_EXCEEDED);
+      }
+      const int32_t far = mesh_.tet(u).v[neighbor_slot(mesh_.tet(u), t)];
+      if (!mesh_.vertex_conflicts(t, far)) {
+        continue;
+      }
+      if (!try_face_removal(mesh_, t, slot, false) &&
+          !flip_around_edge(t, slot, entry.apex, far)) {
+        if (mesh_.broken()) {
+          return halted(PHX_MC_INTERNAL_ERROR);
+        }
+        if (mesh_.work_exhausted()) {
+          return halted(PHX_MC_CAPACITY_EXCEEDED);
+        }
+        continue;
+      }
+      const std::span<const int32_t> flipped = mesh_.created();
+      for (int32_t cell : flipped) {
+        created_.push_back(cell);
+        queue_faces(cell, flipped, false);
+      }
+    }
+    return true;
+  }
+
+  // The carrier's faces are legalized before any queue is seeded.
+  bool restore_delaunay() {
+    const auto slots = static_cast<int32_t>(mesh_.complex().tets.size());
+    for (int32_t t = 0; t < slots; ++t) {
+      queue_faces(t, {}, true);
+    }
+    const bool restored = legalize();
+    created_.clear();
+    return restored;
+  }
+
+  // New cells, legalized first (flipped cells join them), enter the queue;
+  // constraints of new cells encroached by their own vertices are queued
+  // for splitting.
+  Step after_insert() {
     ++inserted_;
     created_.assign(mesh_.created().begin(), mesh_.created().end());
+    const std::size_t inserted_cells = created_.size();
+    for (std::size_t i = 0; i < inserted_cells; ++i) {
+      queue_faces(created_[i], std::span<const int32_t>(created_.data(), inserted_cells),
+                  false);
+    }
+    if (!legalize()) {
+      return Step::kStop;
+    }
+    if (created_.size() > inserted_cells) {
+      // A slot freed by one flip can be reused by a later one.
+      std::sort(created_.begin(), created_.end());
+      created_.erase(std::unique(created_.begin(), created_.end()), created_.end());
+    }
     for (int32_t t : created_) {
-      if (!mesh_.finite(t)) {
+      if (!mesh_.complex().live(t) || !mesh_.finite(t)) {
         continue;
       }
       push_tet(t);
@@ -538,11 +744,28 @@ class Refiner {
         }
       }
     }
+    return Step::kContinue;
   }
 
   Step stop(int32_t status) {
     stop_status_ = status;
     return Step::kStop;
+  }
+
+  // Stages the constrained faces interior to the prepared cavity; the commit
+  // that follows removes both sides of each, retiring the vertex triple.
+  void stage_retired_crossed() {
+    retiring_.clear();
+    const std::size_t count = mesh_.crossed_count();
+    for (std::size_t i = 0; i < count; ++i) {
+      retiring_.push_back(mesh_.crossed_face(i));
+    }
+  }
+
+  // The staged faces after a successful commit.
+  void retire_staged() {
+    retired_faces_.insert(retiring_.begin(), retiring_.end());
+    retiring_.clear();
   }
 
   // Maps a failed prepare/commit to a stop or to the given evidence.
@@ -650,18 +873,18 @@ class Refiner {
     double priority = 0.0;
     double ratio = 0.0;
     double size_ratio = 0.0;
+    Circumcenter center;
     if (!current(entry) || mesh_.slot_reason(t) != Unmet::kNone ||
-        !assess(t, priority, ratio, size_ratio)) {
+        !assess(t, priority, ratio, size_ratio, &center)) {
       return Step::kContinue;
     }
     if (ratio > options_.radius_edge_bound && size_ratio <= 1.0 && shape_obstructed_) {
       mesh_.set_slot_reason(t, Unmet::kProtected);
       return Step::kContinue;
     }
-    const double* p[4];
-    mesh_.corners(t, p);
-    double c[3];
-    if (!geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], c) || !geometry::point_in_domain(c)) {
+    // The circumcenter assess just constructed from the same corners.
+    const double* c = center.point;
+    if (!center.valid || !geometry::point_in_domain(c)) {
       mesh_.set_slot_reason(t, Unmet::kNonrepresentable);
       return Step::kContinue;
     }
@@ -702,13 +925,53 @@ class Refiner {
       mesh_.set_slot_reason(t, Unmet::kProtected);
       return Step::kContinue;
     }
-    const Insertion committed = mesh_.commit(InsertKind::kInterior, mesh_.interpolated_size(located, c));
+    if (!empty_ball(t)) {
+      mesh_.abandon();
+      if (mesh_.work_exhausted()) {
+        return stop(PHX_MC_CAPACITY_EXCEEDED);
+      }
+      ++counters_.refused_insertions;
+      mesh_.set_slot_reason(t, Unmet::kRefused);
+      return Step::kContinue;
+    }
+    const double size = mesh_.interpolated_size(located, c);
+    stage_retired_crossed();
+    const Insertion committed = mesh_.commit(InsertKind::kInterior, size);
     if (committed != Insertion::kOk) {
       return failed(committed, t, nullptr);
     }
+    retire_staged();
     ++counters_.circumcenter_insertions;
-    after_insert();
-    return Step::kContinue;
+    return after_insert();
+  }
+
+  // Delaunay refinement's separation premise for the circumcenter of t: t is
+  // in the prepared cavity and no vertex the insertion connects to lies
+  // strictly inside t's circumsphere, so every new edge is at least the
+  // circumradius long. A constrained Delaunay mesh always satisfies it; next
+  // to a face no flip admits it can fail, and the center would then land
+  // beside an existing vertex. False also when the work allowance stops it.
+  bool empty_ball(int32_t t) {
+    if (!mesh_.in_prepared_cavity(t)) {
+      return false;
+    }
+    ball_vertices_.clear();
+    for (int32_t cell : mesh_.cavity()) {
+      for (int32_t v : mesh_.tet(cell).v) {
+        if (v >= 0) {
+          ball_vertices_.push_back(v);
+        }
+      }
+    }
+    std::sort(ball_vertices_.begin(), ball_vertices_.end());
+    ball_vertices_.erase(std::unique(ball_vertices_.begin(), ball_vertices_.end()),
+                         ball_vertices_.end());
+    for (int32_t v : ball_vertices_) {
+      if (!mesh_.spend(TetWorkCost::kVisit) || mesh_.vertex_conflicts(t, v)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // The walk toward c stopped at constrained face (bt, bs): c lies beyond it.
@@ -784,11 +1047,13 @@ class Refiner {
   // Bisects constrained edge (a, b) at the ancestry-backed carrier of its
   // source row. Like exact subfacet splits (and unlike subsegment splits), a
   // facet carrier encroaching a subsegment of the edge star defers to it.
-  // `stuck` receives the reason when the edge stays unsplit.
+  // `stuck` receives the reason when the edge stays unsplit; `split` whether
+  // the split was committed (its legalization may still stop the run).
   Step split_bounded(int32_t a, int32_t b, double fraction, double size, bool facet,
-                     Unmet& stuck, bool& deferred) {
+                     Unmet& stuck, bool& deferred, bool& split) {
     stuck = Unmet::kNone;
     deferred = false;
+    split = false;
     double m[3];
     SourceWitness witness;
     const Insertion constructed = mesh_.construct_source_split(a, b, fraction, m, witness);
@@ -837,8 +1102,8 @@ class Refiner {
     if (committed != Insertion::kOk) {
       return failed(committed, -1, &stuck);
     }
-    after_insert();
-    return Step::kContinue;
+    split = true;
+    return after_insert();
   }
 
   Step split_segment(const SegmentEntry& entry) {
@@ -871,12 +1136,13 @@ class Refiner {
       }
       Unmet stuck = Unmet::kNone;
       bool deferred = false;
+      bool split = false;
       const Step step = split_bounded(a, b, split_fraction(a, b),
                                       0.5 * (mesh_.size(a) + mesh_.size(b)), false, stuck,
-                                      deferred);
+                                      deferred, split);
       if (stuck != Unmet::kNone) {
         stuck_segments_.emplace(entry.edge, stuck);
-      } else if (step == Step::kContinue) {
+      } else if (split) {
         ++counters_.subsegment_splits;
       }
       return step;
@@ -889,10 +1155,19 @@ class Refiner {
     }
     Insertion result = mesh_.prepare(m, seed, a, b);
     if (result == Insertion::kOk) {
+      stage_retired_crossed();
       result = mesh_.commit(InsertKind::kSubsegment, 0.5 * (mesh_.size(a) + mesh_.size(b)));
     }
     if (result == Insertion::kRefused) {
       mesh_.abandon();
+      // The refused commit wrote nothing, so ring_ is still the star of (a, b)
+      // that the edge split replaces completely: every face (a, b, r) goes.
+      retiring_.clear();
+      for (std::size_t i = 0; i < ring_tets_.size(); ++i) {
+        if (ring_[i] >= 0) {
+          retiring_.push_back(FaceKey::of(a, b, ring_[i]));
+        }
+      }
       int32_t inserted = -1;
       result = mesh_.split_edge(a, b, m, 0.5 * (mesh_.size(a) + mesh_.size(b)), inserted);
     }
@@ -904,9 +1179,9 @@ class Refiner {
       }
       return step;
     }
+    retire_staged();
     ++counters_.subsegment_splits;
-    after_insert();
-    return Step::kContinue;
+    return after_insert();
   }
 
   // Inserts the prepared split point of a subfacet unless it encroaches a
@@ -928,6 +1203,7 @@ class Refiner {
       stuck_faces_.emplace(entry.key, Unmet::kProtected);
       return Step::kContinue;
     }
+    stage_retired_crossed();
     const Insertion committed = mesh_.commit(InsertKind::kSubfacet, size);
     if (committed != Insertion::kOk) {
       Unmet reason = Unmet::kNone;
@@ -937,9 +1213,9 @@ class Refiner {
       }
       return step;
     }
+    retire_staged();
     ++counters_.subfacet_splits;
-    after_insert();
-    return Step::kContinue;
+    return after_insert();
   }
 
   struct FaceSplitGeometry {
@@ -951,33 +1227,40 @@ class Refiner {
     double center[3];
     bool bounded_face;
     bool oversized;
+    // The triangle circumcenter and its exact coplanarity, constructed once
+    // for both center routes (they are mutually exclusive on `coplanar`).
+    bool centered = false;
+    bool coplanar = false;
 
-    FaceSplitGeometry(TetMesh& mesh, int32_t t, int s, const int32_t* key)
+    FaceSplitGeometry(TetMesh& mesh, int32_t t, int s, const int32_t* key, bool too_large)
         : cell(t), slot(s), x(mesh.point(key[0])), y(mesh.point(key[1])), z(mesh.point(key[2])),
           bounded_face(mesh.witness(key[0]).deviation > 0.0 ||
                        mesh.witness(key[1]).deviation > 0.0 ||
-                       mesh.witness(key[2]).deviation > 0.0) {}
+                       mesh.witness(key[2]).deviation > 0.0),
+          oversized(too_large) {
+      centered = !oversized && geometry::triangle_circumcenter(x, y, z, center) &&
+                 geometry::point_in_domain(center);
+      coplanar = centered && !bounded_face && orient3d(x, y, z, center) == 0;
+    }
   };
+
+  // Both sides of the queued facet lie in the prepared cavity, so the
+  // insertion retires the facet itself (O(1) per side from the cavity stamp).
+  bool retires_facet(const FaceSplitGeometry& state) const {
+    return mesh_.in_prepared_cavity(state.cell) &&
+           mesh_.in_prepared_cavity(mesh_.tet(state.cell).n[state.slot]);
+  }
 
   std::optional<Step> prepare_source_face_center(const FaceEntry& entry,
                                                 FaceSplitGeometry& state) {
     const int32_t t = state.cell;
     const int slot = state.slot;
-    const double* x = state.x;
-    const double* y = state.y;
-    const double* z = state.z;
-    double* c = state.center;
-    const bool bounded_face = state.bounded_face;
-    const bool oversized = state.oversized;
-    if (!oversized && geometry::triangle_circumcenter(x, y, z, c) && geometry::point_in_domain(c) &&
-        (bounded_face || orient3d(x, y, z, c) != 0)) {
+    const double* c = state.center;
+    if (state.centered && (state.bounded_face || !state.coplanar)) {
       double carrier[3];
       SourceWitness witness;
       const Insertion prepared = mesh_.prepare_source_facet(t, slot, c, carrier, witness);
-      if (prepared == Insertion::kOk &&
-          std::find(mesh_.cavity().begin(), mesh_.cavity().end(), t) != mesh_.cavity().end() &&
-          std::find(mesh_.cavity().begin(), mesh_.cavity().end(), mesh_.tet(t).n[slot]) !=
-              mesh_.cavity().end()) {
+      if (prepared == Insertion::kOk && retires_facet(state)) {
         return commit_face_split(entry, carrier, mesh_.interpolated_size(t, carrier));
       }
       mesh_.abandon();
@@ -995,15 +1278,8 @@ class Refiner {
   std::optional<Step> prepare_exact_face_center(const FaceEntry& entry,
                                                FaceSplitGeometry& state) {
     const int32_t t = state.cell;
-    const int slot = state.slot;
-    const double* x = state.x;
-    const double* y = state.y;
-    const double* z = state.z;
-    double* c = state.center;
-    const bool bounded_face = state.bounded_face;
-    const bool oversized = state.oversized;
-    if (!bounded_face && !oversized && geometry::triangle_circumcenter(x, y, z, c) &&
-        geometry::point_in_domain(c) && orient3d(x, y, z, c) == 0) {
+    const double* c = state.center;
+    if (state.coplanar) {
       int32_t blocked_tet = -1;
       int blocked_slot = -1;
       const int32_t located = mesh_.locate(c, t, blocked_tet, blocked_slot);
@@ -1012,10 +1288,7 @@ class Refiner {
       }
       if (located >= 0) {
         const Insertion prepared = mesh_.prepare(c, located);
-        if (prepared == Insertion::kOk &&
-            std::find(mesh_.cavity().begin(), mesh_.cavity().end(), t) != mesh_.cavity().end() &&
-            std::find(mesh_.cavity().begin(), mesh_.cavity().end(), mesh_.tet(t).n[slot]) !=
-                mesh_.cavity().end()) {
+        if (prepared == Insertion::kOk && retires_facet(state)) {
           // An obtuse facet's center can lie in another same-plane facet.
           // Accept its Delaunay patch only when it actually retires both sides
           // of the queued source facet, not just a remote triangle.
@@ -1066,13 +1339,14 @@ class Refiner {
       }
       Unmet stuck = Unmet::kNone;
       bool deferred = false;
+      bool split = false;
       const Step step = split_bounded(u, w, 0.5, 0.5 * (mesh_.size(u) + mesh_.size(w)), true,
-                                      stuck, deferred);
+                                      stuck, deferred, split);
       if (deferred) {
         faces_.push_back({entry.key, true});
       } else if (stuck != Unmet::kNone) {
         stuck_faces_.emplace(entry.key, stuck);
-      } else if (step == Step::kContinue) {
+      } else if (split) {
         ++counters_.subfacet_splits;
       }
       return step;
@@ -1093,15 +1367,18 @@ class Refiner {
     const int32_t* key = entry.key.v;
     int32_t t = -1;
     int slot = -1;
-    if (stuck_faces_.count(entry.key) != 0 || !mesh_.find_face(key[0], key[1], key[2], t, slot) ||
+    // A retired vertex triple can never be a face again (every later face
+    // contains a later vertex), so find_face would walk the star of key[0]
+    // only to fail; the retired set gives that same answer without the walk.
+    if (stuck_faces_.count(entry.key) != 0 || retired_faces_.count(entry.key) != 0 ||
+        !mesh_.find_face(key[0], key[1], key[2], t, slot) ||
         mesh_.complex().constraint(t, slot) == kNoConstraint) {
       return Step::kContinue;
     }
     if (!entry.forced && !face_encroached(t, slot)) {
       return Step::kContinue;
     }
-    FaceSplitGeometry state(mesh_, t, slot, key);
-    state.oversized = facet_size_ratio(t, slot) > 1.0;
+    FaceSplitGeometry state(mesh_, t, slot, key, facet_size_ratio(t, slot) > 1.0);
     if (const auto step = prepare_source_face_center(entry, state)) return *step;
     if (const auto step = prepare_exact_face_center(entry, state)) return *step;
     return split_face_longest_edge(entry, t);
@@ -1153,8 +1430,14 @@ class Refiner {
   NativeVector<int32_t> ring_tets_;
   NativeVector<int32_t> ring_;
   NativeVector<int32_t> created_;
+  NativeVector<PendingFace> pending_faces_;
+  NativeVector<int32_t> ball_vertices_;
   NativeVector<std::uint64_t> hit_segments_;
   NativeVector<FaceKey> hit_faces_;
+  // Constrained faces a pending commit retires (staged before the commit,
+  // published only when it succeeds) and every face retired so far.
+  NativeVector<FaceKey> retiring_;
+  NativeUnorderedSet<FaceKey, FaceKeyHash> retired_faces_;
   bool shape_obstructed_ = false;
 };
 

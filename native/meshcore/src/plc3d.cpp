@@ -12,7 +12,9 @@
 //   3. recovery rounds on the exact Delaunay tetrahedralization of all points
 //      and eight enclosing corners: (a) segment recovery -- every subsegment
 //      of every PLC edge becomes a Delaunay edge by exact on-segment splits
-//      (fixed boundary: refused); (b) facet recovery -- the missing parts of
+//      (fixed boundary: refused); (b) facet recovery -- exactly cocircular
+//      polygon CDT diagonals first follow the tetrahedralization where it
+//      contains the other diagonal, then the missing parts of
 //      every coplanar group are recovered component by component: the cavity
 //      is the set of tetrahedra whose interior meets the component's relative
 //      interior (an edge crossing its interior or an internal edge of it, or a
@@ -238,6 +240,8 @@ bool triangulate_planar(std::span<const double* const> corners, int64_t loop_cou
       .keep_convex_hull = 0,
       .min_angle_degrees = 0.0,
       .max_area = std::numeric_limits<double>::infinity(),
+      .max_edge_length = std::numeric_limits<double>::infinity(),
+      .lattice_spacing = 0.0,
       .max_steiner = 0,
       .max_triangles = 4 * count + 8,
       .max_cavity_cells = 4 * count + 8,
@@ -254,8 +258,11 @@ bool triangulate_planar(std::span<const double* const> corners, int64_t loop_cou
   status = phx_mc_constrained_delaunay_2d(&request);
   const std::unique_ptr<phx_mc_mesh, void (*)(phx_mc_mesh*)> mesh(raw, phx_mc_mesh_free);
   used_work = static_cast<int64_t>(work_evidence[0]);
-  refusal = memory_evidence[5] ? kPlcScratchByteBudget
-            : work_evidence[7] ? kPlcWorkBudget : kPlcTetrahedronBudget;
+  // A deadline is an execution-allowance refusal, as for the PLC itself.
+  refusal = status == PHX_MC_TIMEOUT ? kPlcWorkBudget
+            : memory_evidence[5]     ? kPlcScratchByteBudget
+            : work_evidence[7]       ? kPlcWorkBudget
+                                     : kPlcTetrahedronBudget;
   if (status != PHX_MC_OK) {
     return false;
   }
@@ -374,6 +381,23 @@ class Recoverer {
 
   int32_t work_failure() {
     return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcWorkBudget, kPlcNoEntity, -1);
+  }
+
+  // A child polygon CDT keeps its resource and deadline refusals typed with
+  // their budget reason; its request or internal failure is this PLC's
+  // internal error. PHX_MC_OK leaves a geometric refusal of the polygon to
+  // the caller.
+  int32_t planar_execution_failure(int32_t status, int32_t refusal, int64_t polygon) {
+    switch (status) {
+      case PHX_MC_CAPACITY_EXCEEDED:
+      case PHX_MC_TIMEOUT:
+        return fail(status, refusal, kPlcPolygon, polygon);
+      case PHX_MC_INVALID_ARGUMENT:
+      case PHX_MC_INTERNAL_ERROR:
+        return PHX_MC_INTERNAL_ERROR;
+      default:
+        return PHX_MC_OK;
+    }
   }
 
   // Resource refusals of a cavity edit keep their resource classification: a
@@ -510,10 +534,8 @@ class Recoverer {
         return work_failure();
       }
       if (!valid || static_cast<int64_t>(local.size()) != size - 2) {
-        if (status == PHX_MC_CAPACITY_EXCEEDED) {
-          return fail(status, refusal, kPlcPolygon, polygon);
-        }
-        return invalid();
+        const int32_t failure = planar_execution_failure(status, refusal, polygon);
+        return failure != PHX_MC_OK ? failure : invalid();
       }
       for (const Triple& triangle : local) {
         add_triangle({loop[triangle[0]], loop[triangle[1]], loop[triangle[2]]}, polygon);
@@ -937,6 +959,9 @@ class Recoverer {
         status = recover_segments(restart);
       }
       if (status == PHX_MC_OK && !restart) {
+        status = align_cocircular_diagonals();
+      }
+      if (status == PHX_MC_OK && !restart) {
         status = subdivide_facets();
       }
       if (status == PHX_MC_OK && !restart) {
@@ -1343,6 +1368,116 @@ class Recoverer {
     return true;
   }
 
+  // Projection axis of a polygon, chosen as when its CDT was built.
+  int polygon_axis(int32_t polygon) const {
+    const double* p = in_.points;
+    const int32_t* loop = in_.polygon_vertices + in_.polygon_offsets[polygon];
+    const int64_t size = in_.polygon_offsets[polygon + 1] - in_.polygon_offsets[polygon];
+    int64_t third = 2;
+    while (third < size &&
+           geometry::collinear(p + 3 * loop[0], p + 3 * loop[1], p + 3 * loop[third], 1)) {
+      ++third;
+    }
+    return projection_axis(p + 3 * loop[0], p + 3 * loop[1], p + 3 * loop[third]);
+  }
+
+  // An exactly cocircular quadrilateral of a polygon CDT admits either
+  // diagonal as its CDT in the polygon's projection.  Where the current
+  // tetrahedralization contains both triangles of the other diagonal but not
+  // both of the chosen one, the pair flips: the polygon and its CDT property
+  // are unchanged and its subfacets need no recovery cavity, whose Steiner
+  // points would otherwise span the side.  Only pairs without PLC edge or
+  // facet Steiner points flip, so no witness or subfacet origin changes.
+  int32_t align_cocircular_diagonals() {
+    const int32_t count = static_cast<int32_t>(tri_facet_.size());
+    if (!spend(3 * static_cast<int64_t>(count))) {
+      return work_failure();
+    }
+    NativeVector<std::pair<uint64_t, int32_t>> uses;
+    for (int32_t t = 0; t < count; ++t) {
+      if (!tri_interior_[static_cast<std::size_t>(t)].empty()) {
+        continue;
+      }
+      for (int r = 0; r < 3; ++r) {
+        const uint64_t key = topology::undirected_edge(tri(t)[r], tri(t)[(r + 1) % 3]);
+        if (edge_ids_.find(key) == edge_ids_.end()) {
+          uses.push_back({key, t});
+        }
+      }
+    }
+    std::sort(uses.begin(), uses.end());
+    NativeVector<char> flipped(static_cast<std::size_t>(count), 0);
+    const auto split_edge = [&](int32_t x, int32_t y) {
+      const auto edge = edge_ids_.find(topology::undirected_edge(x, y));
+      return edge != edge_ids_.end() &&
+             !edge_points_[static_cast<std::size_t>(edge->second)].empty();
+    };
+    for (std::size_t k = 0; k + 1 < uses.size(); ++k) {
+      const int32_t first = uses[k].second;
+      const int32_t second = uses[k + 1].second;
+      if (uses[k].first != uses[k + 1].first || flipped[static_cast<std::size_t>(first)] ||
+          flipped[static_cast<std::size_t>(second)] ||
+          tri_polygon_[static_cast<std::size_t>(first)] !=
+              tri_polygon_[static_cast<std::size_t>(second)]) {
+        continue;
+      }
+      if (!spend(32)) {
+        return work_failure();
+      }
+      // first = (u, v, a) and second = (v, u, b) around the shared diagonal;
+      // the diagonal is an edge of `first`, so the scan stops inside it.
+      const int32_t* f = tri(first);
+      int r = 0;
+      while (topology::undirected_edge(f[r], f[(r + 1) % 3]) != uses[k].first) {
+        ++r;
+      }
+      const int32_t u = f[r], v = f[(r + 1) % 3], a = f[(r + 2) % 3];
+      const int32_t* g = tri(second);
+      int s = 0;
+      while (s < 3 && !(g[s] == v && g[(s + 1) % 3] == u)) {
+        ++s;
+      }
+      if (s == 3) {
+        continue;
+      }
+      const int32_t b = g[(s + 2) % 3];
+      if (edge_ids_.find(topology::undirected_edge(a, b)) != edge_ids_.end() ||
+          split_edge(v, a) || split_edge(a, u) || split_edge(u, b) || split_edge(b, v)) {
+        continue;
+      }
+      const int axis = polygon_axis(tri_polygon_[static_cast<std::size_t>(first)]);
+      if (axis < 0) {
+        continue;
+      }
+      const int i = (axis + 1) % 3;
+      const int j = (axis + 2) % 3;
+      const double pu[2] = {point(u)[i], point(u)[j]};
+      const double pb[2] = {point(b)[i], point(b)[j]};
+      const double pv[2] = {point(v)[i], point(v)[j]};
+      const double pa[2] = {point(a)[i], point(a)[j]};
+      const int sense = orient2d(pu, pb, pv);
+      if (sense == 0 || orient2d(pb, pv, pa) != sense || orient2d(pv, pa, pu) != sense ||
+          orient2d(pa, pu, pb) != sense || incircle(pu, pv, pa, pb) != 0) {
+        continue;
+      }
+      const int32_t kept[2][3] = {{u, v, a}, {v, u, b}};
+      const int32_t other[2][3] = {{u, b, a}, {b, v, a}};
+      int32_t cell = -1;
+      int slot = -1;
+      if ((find_face(kept[0], cell, slot) && find_face(kept[1], cell, slot)) ||
+          !find_face(other[0], cell, slot) || !find_face(other[1], cell, slot)) {
+        continue;
+      }
+      std::copy(other[0], other[0] + 3,
+                triangles_.begin() + 3 * static_cast<std::ptrdiff_t>(first));
+      std::copy(other[1], other[1] + 3,
+                triangles_.begin() + 3 * static_cast<std::ptrdiff_t>(second));
+      flipped[static_cast<std::size_t>(first)] = 1;
+      flipped[static_cast<std::size_t>(second)] = 1;
+    }
+    return PHX_MC_OK;
+  }
+
   // Subfacets: each input triangle, or the exact 2D CDT of its boundary with
   // the Steiner points of its PLC edges plus its interior Steiner points.
   int32_t subdivide_facets() {
@@ -1392,8 +1527,10 @@ class Recoverer {
         return work_failure();
       }
       if (!valid) {
-        if (status == PHX_MC_CAPACITY_EXCEEDED) {
-          return fail(status, refusal, kPlcPolygon, tri_polygon_[static_cast<std::size_t>(t)]);
+        const int32_t failure = planar_execution_failure(
+            status, refusal, tri_polygon_[static_cast<std::size_t>(t)]);
+        if (failure != PHX_MC_OK) {
+          return failure;
         }
         // Exact points of an exactly planar polygon always triangulate.
         // Bounded carriers may fold its projection: a source-deviation refusal.

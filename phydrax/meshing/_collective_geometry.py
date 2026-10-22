@@ -12,9 +12,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.sharding import NamedSharding, PartitionSpec
+from jax.sharding import NamedSharding, PartitionSpec, Sharding
 from jax.typing import ArrayLike
 
+from .._execution_array import _place_process_local_array
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
@@ -51,6 +52,38 @@ from . import (
     _result as result_owner,
 )
 from ._bisection_kernel_host import uniform_count, uniform_retain_source
+from ._collective_failure import agreed_local
+
+
+def _place_geometry_operands(
+    values: tuple[Array, ...], sharding: Sharding, /
+) -> tuple[Array, ...]:
+    """Admit complete local operands without gathering existing global banks."""
+
+    def place() -> tuple[Array, ...]:
+        placed = []
+        for value in values:
+            if value.is_fully_addressable:
+                placed.append(_place_process_local_array(value, sharding))
+            else:
+                if value.is_deleted() or value.sharding.device_set != sharding.device_set:
+                    raise ValueError(
+                        "collective_geometry.source must retain current global placement; "
+                        "got unavailable or differently placed source"
+                    )
+                placed.append(value)
+        return tuple(placed)
+
+    return agreed_local(place)
+
+
+def _geometry_replicated_sharding(value: Array) -> Sharding:
+    sharding = value.sharding
+    return (
+        NamedSharding(sharding.mesh, PartitionSpec())
+        if isinstance(sharding, NamedSharding)
+        else sharding
+    )
 
 
 @checked
@@ -343,16 +376,25 @@ def collective_action_stacks(
         parent_ids = child_ids
         root_actions = jnp.zeros((0, width, width), dtype=jnp.float64)
     else:
-        child_ids = uniform.child_ids.reshape(-1)
+        uniform_children, uniform_parents, uniform_weights = _place_geometry_operands(
+            (uniform.child_ids, uniform.parent_ids, uniform.barycentric_weights),
+            _geometry_replicated_sharding(states.mesh.cell_ids),
+        )
+        child_ids = uniform_children.reshape(-1)
         parent_ids = jnp.broadcast_to(
-            uniform.parent_ids[:, None], uniform.child_ids.shape
+            uniform_parents[:, None], uniform_children.shape
         ).reshape(-1)
-        root_actions = uniform.barycentric_weights.reshape((-1, width, width))
+        root_actions = uniform_weights.reshape((-1, width, width))
         order = jnp.argsort(child_ids, stable=True)
         child_ids, parent_ids, root_actions = (
             child_ids[order],
             parent_ids[order],
             root_actions[order],
+        )
+    if uniform is None:
+        child_ids, parent_ids, root_actions = _place_geometry_operands(
+            (child_ids, parent_ids, root_actions),
+            _geometry_replicated_sharding(states.mesh.cell_ids),
         )
     return _collective_action_values(states, child_ids, parent_ids, root_actions, depth)
 
@@ -467,13 +509,14 @@ def _prepare_geometry_source(
             source_topology_id = original.topology_id
 
             cells = original.global_entity_counts[-1]
+            block = original.premise.block_name
             source_blocks = (
                 _GeometrySourceBlock(
-                    "surface",
+                    block,
                     "triangle",
-                    source_banks["geometry/cell_ids/surface"][:cells],
+                    source_banks[f"geometry/cell_ids/{block}"][:cells],
                     source_banks["cell_vertices"][:cells],
-                    source_banks["geometry/routes/surface"][:cells],
+                    source_banks[f"geometry/routes/{block}"][:cells],
                     coordinate_lagrange_element("triangle", 1),
                 ),
             )
@@ -671,6 +714,10 @@ def _prepare_geometry_block_restriction(
         block.routes,
         block.element,
     )
+    original_cells, original_vertices, original_routes = _place_geometry_operands(
+        (original_cells, original_vertices, original_routes),
+        _geometry_replicated_sharding(target_cells),
+    )
     original_order, sorted_cells, positions, member, count_value = (
         _geometry_bank_membership(original_cells, cell_sources, logical_cell_count)
     )
@@ -721,6 +768,7 @@ def _prepare_geometry_block_restriction(
         ),
     }
     for name, value in entries.items():
+        (value,) = _place_geometry_operands((value,), sharding)
         arrays[name] = jax.device_put(value, sharding)
         shapes[name] = (block_count, *value.shape[1:])
     return _GeometryBlockRestriction(
@@ -760,13 +808,18 @@ def build_collective_geometry_witness(
 
     source = _prepare_geometry_source(original, budget)
     coordinate_count = source.coordinate_count
-    coefficients = source.coefficients
-    scientific_coordinate_ids = source.coordinate_ids
+    coefficients, scientific_coordinate_ids = _place_geometry_operands(
+        (source.coefficients, source.coordinate_ids),
+        _geometry_replicated_sharding(target_ids[0]),
+    )
     source_geometry_id, source_topology_id = source.geometry_id, source.topology_id
     source_blocks = source.blocks
     padded_count = ((coordinate_count + part_count - 1) // part_count) * part_count
     pad = padded_count - coordinate_count
     coordinate_owners = jnp.full((coordinate_count,), part_count, dtype=jnp.int32)
+    (coordinate_owners,) = _place_geometry_operands(
+        (coordinate_owners,), _geometry_replicated_sharding(target_ids[0])
+    )
     arrays: dict[str, Array] = {
         "geometry/coordinate_ids": jax.device_put(
             jnp.pad(scientific_coordinate_ids, (0, pad), constant_values=-1), sharding
@@ -803,6 +856,9 @@ def build_collective_geometry_witness(
         states, uniform_refinement, target_ids, counts, cell_sources, dimension, budget
     )
     restored = jnp.asarray(True)
+    (restored,) = _place_geometry_operands(
+        (restored,), _geometry_replicated_sharding(target_ids[0])
+    )
     all_shapes = []
     for block in source_blocks:
         restriction = _prepare_geometry_block_restriction(

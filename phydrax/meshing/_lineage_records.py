@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from dataclasses import fields
 from enum import IntEnum, StrEnum
+from fractions import Fraction
 from typing import final, TYPE_CHECKING
 
 import equinox as eqx
@@ -19,10 +22,13 @@ from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
     logical_array_value_collection_digest,
+    tree_content_equal,
 )
+from .._host_storage import declared_integer_storage_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..sparse import RowRelation, SparseLinearMap
 from ..typing import checked
 
@@ -51,6 +57,7 @@ class MeshTransitionKind(StrEnum):
     REPAIR = "repair"
     PARTITION = "partition"
     GEOMETRY_REALIZATION = "geometry_realization"
+    MOTION = "motion"
 
 
 class EntityLineage(StrictModule, NonTrainableState):
@@ -344,13 +351,130 @@ class MeshLineage(StrictModule, NonTrainableState):
         )
 
 
+def _exact_row_integer_bits(width: int, /) -> int:
+    """Bound every integer formed while rationally rounding binary64 rows.
+
+    A finite binary64 value is ``m * 2**e`` with ``|m| < 2**53`` and
+    ``-1074 <= e <= 971``, so its Fraction has at most 1024 numerator and 1075
+    denominator bits. A sum of ``width`` such values stays below
+    ``2**(2098 + width.bit_length())`` over a ``2**1074`` denominator, and the
+    unreduced terms of one quotient by that sum below
+    ``3 * 1075 + width.bit_length()`` bits.
+    """
+    return 3 * 1075 + width.bit_length()
+
+
+def exact_fraction_bytes(count: int, width: int, /) -> int:
+    """Bound ``count`` live Fractions formed from binary64 rows of ``width`` terms."""
+    return count * (
+        256 + 2 * declared_integer_storage_bytes(_exact_row_integer_bits(width))
+    )
+
+
+def _rounding_array_bytes(rows: int, width: int, /) -> int:
+    # Positive mask, rounded output, deduplication copy, unique and rounded banks,
+    # plus per-row counts, selection and inverse indices.
+    return 40 * rows * width + 32 * rows
+
+
+def homogeneous_rounding_bounds(rows: int, width: int, /) -> tuple[int, int]:
+    """Upper bound the work and bytes of rounding ``rows`` homogeneous rows.
+
+    Each distinct row with several positive weights costs ``4 * width`` rational
+    operations (conversion, summation, division, rounding); two rows of live
+    Fractions and the vectorized deduplication banks bound storage.
+    """
+    return 4 * width * rows, _rounding_array_bytes(rows, width) + exact_fraction_bytes(
+        2 * (2 * width + 1), width
+    )
+
+
+def rounded_homogeneous_barycentrics(
+    homogeneous: ArrayLike,
+    valid: ArrayLike,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> np.ndarray:
+    """Round exact homogeneous stencil rows to their binary64 barycentrics.
+
+    Along the last axis, a row holds finite sign-bit-free binary64 weights ``h`` on
+    its ``valid`` support, ``+0.0`` elsewhere, and a positive exact sum. Its rational
+    barycentrics are the rationals ``h_j / sum(h)``; each is rounded to nearest
+    with ties to even, so the result is deterministic for the exact row. A row with one
+    positive weight is a unit row that rounding leaves unchanged; every distinct row with several positive
+    weights is rounded once in rational arithmetic.
+
+    A ``budget`` admits ``homogeneous_rounding_bounds`` before validation, then
+    charges the banks and the rational work of the distinct rows before rounding
+    them; ``None`` declares unbounded host validation of a standalone record.
+    """
+
+    weights = np.asarray(homogeneous, dtype=np.float64)
+    support = np.asarray(valid, dtype=np.bool_)
+    if weights.ndim == 0 or support.shape != weights.shape:
+        raise ValueError(
+            f"VertexInterpolationStencil.homogeneous_weights must align with the stencil support; got shapes {weights.shape}/{support.shape}"
+        )
+    rows = weights.reshape(-1, weights.shape[-1])
+    count, width = rows.shape
+    with nullcontext() if budget is None else budget.temporary_scope():
+        if budget is not None:
+            work_upper, bytes_upper = homogeneous_rounding_bounds(count, width)
+            budget.admit_work_bound(work_upper, storage_upper=bytes_upper)
+            budget.reserve(0, _rounding_array_bytes(count, width))
+        if (
+            not np.all(np.isfinite(weights))
+            or np.any(np.signbit(weights))
+            or np.any(weights[~support] != 0.0)
+        ):
+            raise ValueError(
+                "VertexInterpolationStencil.homogeneous_weights must be finite sign-bit-free weights on the valid support and +0.0 elsewhere; got invalid weights"
+            )
+        positive = rows > 0.0
+        counts = np.count_nonzero(positive, axis=1)
+        if np.any(counts == 0):
+            raise ValueError(
+                "VertexInterpolationStencil.homogeneous_weights must have a positive exact sum in every row before binary64 rounding; got a zero row"
+            )
+        rounded = positive.astype(np.float64)
+        mixed = np.flatnonzero(counts > 1)
+        if mixed.size:
+            unique, inverse = np.unique(rows[mixed], axis=0, return_inverse=True)
+            if budget is not None:
+                budget.reserve(
+                    4 * width * unique.shape[0],
+                    exact_fraction_bytes(2 * (2 * width + 1), width),
+                )
+            barycentrics = np.empty_like(unique)
+            for index, row in enumerate(unique.tolist()):
+                exact = [Fraction(value) for value in row]
+                total = sum(exact, Fraction(0))
+                barycentrics[index] = [float(value / total) for value in exact]
+            rounded[mixed] = barycentrics[inverse.reshape(-1)]
+    return rounded.reshape(weights.shape)
+
+
 class VertexInterpolationStencil(StrictModule, NonTrainableState):
+    """Sparse rows interpolating target vertices from source vertex global IDs.
+
+    ``weights`` are the execution coefficients. An optional rational
+    ``homogeneous_weights`` bank on the same support retains source-owned
+    nondyadic rows: each row's exact barycentrics are ``h_j / sum(h)`` in rational
+    arithmetic, and ``weights`` must be bitwise their correctly rounded values
+    (``+0.0`` off the valid support). Such a stencil preserves constants exactly.
+    Construction charges the rational validation to ``budget``; ``None`` declares
+    unbounded host validation of a standalone record. Archive replay binds a
+    ledger sized by ``reconstruction_preparation_bounds``.
+    """
+
     source_entity_set_id: str = eqx.field(static=True)
     target_entity_set_id: str = eqx.field(static=True)
     target_global_ids: Array
     source_global_ids: Array
     weights: Array
     valid: Array
+    homogeneous_weights: Array | None
     preserves_constants: bool = eqx.field(static=True)
     stencil_id: str = eqx.field(static=True)
 
@@ -365,16 +489,19 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
         /,
         *,
         preserves_constants: bool = True,
+        homogeneous_weights: ArrayLike | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         source_set = str(source_entity_set_id).strip()
         target_set = str(target_entity_set_id).strip()
-        targets_raw, sources_raw, weights_raw, valid_raw = jax.device_get(
-            (target_global_ids, source_global_ids, weights, valid)
+        targets_raw, sources_raw, weights_raw, valid_raw, exact_raw = jax.device_get(
+            (target_global_ids, source_global_ids, weights, valid, homogeneous_weights)
         )
         targets = np.asarray(targets_raw, dtype=np.int64)
         sources = np.asarray(sources_raw, dtype=np.int64)
         coefficients = np.asarray(weights_raw, dtype=np.float64)
         valid_ = np.asarray(valid_raw, dtype=np.bool_)
+        exact = None if exact_raw is None else np.asarray(exact_raw, dtype=np.float64)
         if not source_set or not target_set:
             raise ValueError(
                 f"VertexInterpolationStencil.entity_set_ids must be nonempty; got {source_set!r}/{target_set!r}"
@@ -399,6 +526,20 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
             raise ValueError(
                 "VertexInterpolationStencil.weights must be finite on valid rows; got nonfinite values"
             )
+        if exact is not None:
+            if exact.shape != sources.shape or not preserves_constants:
+                raise ValueError(
+                    f"VertexInterpolationStencil.homogeneous_weights must align with the source support of a constant-preserving stencil; got shape {exact.shape} for {sources.shape}, preserves_constants={preserves_constants}"
+                )
+            if not np.array_equal(
+                coefficients.view(np.uint64),
+                rounded_homogeneous_barycentrics(exact, valid_, budget=budget).view(
+                    np.uint64
+                ),
+            ):
+                raise ValueError(
+                    "VertexInterpolationStencil.weights must be the correctly rounded exact barycentrics of homogeneous_weights; got different execution weights"
+                )
         row_sums = np.sum(np.where(valid_, coefficients, 0.0), axis=1)
         # Admission tolerance retained from d2dfcb941, VertexInterpolationStencil;
         # it is a public row-normalization policy, not a numerical oracle tolerance.
@@ -412,19 +553,78 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
         self.source_global_ids = jax.device_put(np.asarray(sources))
         self.weights = jax.device_put(np.asarray(coefficients))
         self.valid = jax.device_put(np.asarray(valid_))
+        self.homogeneous_weights = None if exact is None else jax.device_put(exact)
+        if (
+            self.homogeneous_weights is not None
+            and self.homogeneous_weights.dtype != np.float64
+        ):
+            raise ValueError(
+                f"VertexInterpolationStencil.homogeneous_weights must retain binary64 device storage; got {self.homogeneous_weights.dtype}"
+            )
         self.preserves_constants = bool(preserves_constants)
-        self.stencil_id = canonical_fingerprint(
-            {
-                "kind": "vertex-interpolation-stencil",
-                "source_entity_set_id": source_set,
-                "target_entity_set_id": target_set,
-                "target_global_ids": array_tree_fingerprint(targets),
-                "source_global_ids": array_tree_fingerprint(sources),
-                "weights": array_tree_fingerprint(coefficients),
-                "valid": array_tree_fingerprint(valid_),
-                "preserves_constants": bool(preserves_constants),
-            }
+        payload: dict[str, object] = {
+            "kind": "vertex-interpolation-stencil",
+            "source_entity_set_id": source_set,
+            "target_entity_set_id": target_set,
+            "target_global_ids": array_tree_fingerprint(targets),
+            "source_global_ids": array_tree_fingerprint(sources),
+            "weights": array_tree_fingerprint(coefficients),
+            "valid": array_tree_fingerprint(valid_),
+            "preserves_constants": bool(preserves_constants),
+        }
+        if exact is not None:
+            payload["homogeneous_weights"] = array_tree_fingerprint(exact)
+        self.stencil_id = canonical_fingerprint(payload)
+
+    def reconstruction_preparation_bounds(self) -> tuple[int, int, int]:
+        """Bound replay work, bytes and source queries of the rational-bank validation."""
+        if self.homogeneous_weights is None:
+            return 0, 0, 0
+        if self.homogeneous_weights.ndim != 2:
+            raise ValueError(
+                f"VertexInterpolationStencil.homogeneous_weights must be a rank-two bank; got shape {self.homogeneous_weights.shape}"
+            )
+        rows, width = self.homogeneous_weights.shape
+        work, storage = homogeneous_rounding_bounds(int(rows), int(width))
+        return work, storage, 0
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[VertexInterpolationStencil],
+        value: VertexInterpolationStencil,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None,
+    ) -> VertexInterpolationStencil:
+        """Revalidate retained rows, charging the rational bank to the replay ledger."""
+        if (
+            cls is not VertexInterpolationStencil
+            or type(value) is not VertexInterpolationStencil
+        ):
+            raise TypeError(
+                "VertexInterpolationStencil.restore_type must be the registered VertexInterpolationStencil; "
+                f"got {type(value).__qualname__}"
+            )
+        rebuilt = cls(
+            value.source_entity_set_id,
+            value.target_entity_set_id,
+            value.target_global_ids,
+            value.source_global_ids,
+            value.weights,
+            value.valid,
+            preserves_constants=value.preserves_constants,
+            homogeneous_weights=value.homogeneous_weights,
+            budget=budget,
         )
+        for member in fields(value):
+            if not tree_content_equal(
+                getattr(rebuilt, member.name), getattr(value, member.name)
+            ):
+                raise ValueError(
+                    f"stored_fields.VertexInterpolationStencil.{member.name} must match reconstructed retained content; got changed {member.name}"
+                )
+        return rebuilt
 
     def _source_routes(self, source_global_ids: ArrayLike, /) -> np.ndarray:
         """Resolve stencil source IDs to positions in one caller-supplied ID order."""
@@ -530,4 +730,7 @@ __all__ = [
     "MeshLineage",
     "MeshTransitionKind",
     "VertexInterpolationStencil",
+    "exact_fraction_bytes",
+    "homogeneous_rounding_bounds",
+    "rounded_homogeneous_barycentrics",
 ]

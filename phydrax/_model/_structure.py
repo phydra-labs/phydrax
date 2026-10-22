@@ -32,6 +32,7 @@ from .._array_archive import (
     validate_json_nesting,
 )
 from .._frozendict import frozendict
+from .._host_storage import immutable_host_array
 from .._strict import mark_strict_initialized, Strict, StrictModule
 from .._typing_plan import validate_tree
 from ..typing import checked, parse, validate
@@ -191,7 +192,11 @@ def deserialize_model_leaf(file: BinaryIO, value: Any, /) -> Any:
             )
         if value.backend == "jax":
             return jnp.asarray(payload)
-        host = np.array(payload, copy=True, order="C")
+        host = (
+            np.array(payload, copy=True, order="C")
+            if value.writable
+            else immutable_host_array(np.asarray(payload))
+        )
         host.setflags(write=value.writable)
         return host
     if _is_prng_key(value):
@@ -225,6 +230,8 @@ def deserialize_model_leaf(file: BinaryIO, value: Any, /) -> Any:
             raise TypeError(
                 f"model.leaf.backend must restore as numpy; got {type(restored).__name__}"
             )
+        if not value.flags.writeable:
+            restored = immutable_host_array(restored)
         restored.setflags(write=value.flags.writeable)
     return restored
 
@@ -1903,7 +1910,42 @@ def _paired_children(node: Mapping[str, Any], /) -> list[int]:
             return []
 
 
-def _paired_metadata(nodes: list[RecipeNode], forms: list[bytes], index: int, /) -> bytes:
+def _needed_content_forms(nodes: list[RecipeNode], /) -> Callable[[int], bytes]:
+    """Compute the same canonical forms only for requested, already-admitted nodes."""
+    forms: dict[int, bytes] = {}
+    tokens: dict[int, Any] = {}
+
+    def form_at(index: int) -> bytes:
+        pending = [(index, False)]
+        while pending:
+            current, ready = pending.pop()
+            if current in forms:
+                continue
+            node = nodes[current]
+            children = table_children(node)
+            if not ready and node["kind"] in _COMPOSITE_KINDS:
+                pending.append((current, True))
+                pending.extend(
+                    (child, False) for child in reversed(children) if child not in forms
+                )
+                continue
+            form = _canonical_recipe_payload(
+                _with_children(node, [tokens[child] for child in children])
+                if node["kind"] in _COMPOSITE_KINDS else node
+            )
+            forms[current] = form
+            tokens[current] = (
+                hashlib.sha256(form).hexdigest()
+                if node["kind"] in _COMPOSITE_KINDS else node
+            )
+        return forms[index]
+
+    return form_at
+
+
+def _paired_metadata(
+    nodes: list[RecipeNode], form_at: Callable[[int], bytes], index: int, /
+) -> bytes:
     # Object sharing is not compared; NumPy mutability is storage metadata.
     node = nodes[index]
     match node["kind"]:
@@ -1924,12 +1966,12 @@ def _paired_metadata(nodes: list[RecipeNode], forms: list[bytes], index: int, /)
                 {
                     "kind": node["kind"],
                     "keys": [
-                        hashlib.sha256(forms[key]).hexdigest() for key, _ in node["items"]
+                        hashlib.sha256(form_at(key)).hexdigest() for key, _ in node["items"]
                     ],
                 }
             )
         case _:
-            return forms[index]
+            return form_at(index)
 
 
 def model_recipe_array_pairs(
@@ -1946,8 +1988,11 @@ def model_recipe_array_pairs(
     the structures differ; otherwise each distinct pair of corresponding arrays
     (PRNG keys as key data) once, in first-correspondence order. Both
     recipes are bounded by ``limits`` over their distinct arrays.
+    Full lowering admits every node, atomic value, key, reference and limit on
+    both sides before any lazy metadata query. Laziness only avoids redundant
+    canonical serialization/hashing of composite content that pairing ignores.
     """
-    sides: list[tuple[list[RecipeNode], list[bytes], dict[int, Any]]] = []
+    sides: list[tuple[list[RecipeNode], Callable[[int], bytes], dict[int, Any]]] = []
     for value in (first, second):
         shared: _SharedObjects = {}
         recipe = _structure_recipe(value, "model", shared)
@@ -1955,7 +2000,7 @@ def model_recipe_array_pairs(
         sides.append(
             (
                 table.nodes,
-                _content_forms(table.nodes),
+                _needed_content_forms(table.nodes),
                 {table.ordinals[ordinal]: item for ordinal, item in shared.values()},
             )
         )
@@ -2090,8 +2135,14 @@ def model_from_logical_array_recipe(
                 jnp.asarray(payload, dtype=jnp.uint32), impl=entry.implementation
             )
         if entry.backend == "jax":
-            return payload if isinstance(payload, jax.Array) else jnp.asarray(payload)
-        host = np.array(payload, copy=True, order="C")
+            # These banks already have their declared shape and dtype. Place
+            # them directly; asarray would compile an identity stage per shape.
+            return payload if isinstance(payload, jax.Array) else jax.device_put(payload)
+        host = (
+            np.array(payload, copy=True, order="C")
+            if node["writable"]
+            else immutable_host_array(np.asarray(payload))
+        )
         host.setflags(write=node["writable"])
         return host
 
@@ -2109,6 +2160,8 @@ def _zero_array(node: Mapping[str, Any], /) -> jax.Array | np.ndarray:
     if node["backend"] == "jax":
         return jnp.zeros(tuple(node["shape"]), dtype=dtype)
     host = np.zeros(tuple(node["shape"]), dtype=dtype)
+    if not node["writable"]:
+        host = immutable_host_array(host)
     host.setflags(write=node["writable"])
     return host
 

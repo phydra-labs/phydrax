@@ -53,6 +53,7 @@ from ..discretization.fem import FiniteElementSpec
 from ..geometry._rational import rational_vector
 from ..typing import checked
 from ._contracts import MeshingProviderInfo, VolumeMeshingSpec
+from ._family_execution import family_route_refusals
 from ._measurements import NativeMeshingPhaseRecorder
 from ._result import CellMeshingResult
 from ._scope import mesh_entity_scope
@@ -535,10 +536,33 @@ def compose_layer_reference_mesh(
     )
 
 
+def _mapped_organization_records(
+    construction: layer_topology.LayerCoreConstruction, mesh: CellMesh, /
+) -> int:
+    """Correspondence rows per degree plus every remapped scope and attribute row."""
+    return (
+        sum(
+            2 * construction.mesh.entity_set(degree).count + mesh.entity_set(degree).count
+            for degree in range(4)
+        )
+        + sum(
+            np.asarray(item.scope.entity_ids).size
+            for item in (*construction.zones, *construction.patches, *construction.labels)
+        )
+        + 3
+        * sum(
+            np.asarray(attribute.scope.entity_ids).size
+            for attribute in construction.attributes
+        )
+    )
+
+
 def _mapped_layer_organization(
     construction: layer_topology.LayerCoreConstruction,
     mesh: CellMesh,
     /,
+    *,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
 ) -> tuple[
     tuple[_owner_phydrax_meshing__organization.MeshZone, ...],
     tuple[_owner_phydrax_meshing__organization.MeshPatch, ...],
@@ -550,6 +574,7 @@ def _mapped_layer_organization(
     for degree in range(4):
         old = np.asarray(construction.mesh.entity_set(degree).entity_ids, dtype=np.int64)
         new = np.asarray(mesh.entity_set(degree).entity_ids, dtype=np.int64)
+        work.charge(2 * old.size + new.size)
         if degree in (0, 3):
             # Composition retains explicit vertex/cell identities; only edge
             # and face registries are rebuilt from directed incidence.
@@ -581,13 +606,15 @@ def _mapped_layer_organization(
         original: _owner_phydrax_meshing_scope.MeshingScope,
     ) -> _owner_phydrax_meshing_scope.MeshingScope:
         degree = original.entity_dimension
+        identifiers = np.asarray(original.entity_ids)
+        work.charge(identifiers.size)
         return mesh_entity_scope(
             mesh,
             degree,
             np.asarray(
                 [
                     correspondences[degree][identifier]
-                    for identifier in np.asarray(original.entity_ids).tolist()
+                    for identifier in identifiers.tolist()
                 ],
                 dtype=np.int64,
             ),
@@ -625,10 +652,12 @@ def _mapped_layer_organization(
     )
     attributes = []
     for attribute in construction.attributes:
+        identifiers = np.asarray(attribute.scope.entity_ids)
+        work.charge(2 * identifiers.size)
         renamed = np.asarray(
             [
                 correspondences[attribute.scope.entity_dimension][identifier]
-                for identifier in np.asarray(attribute.scope.entity_ids).tolist()
+                for identifier in identifiers.tolist()
             ],
             dtype=np.int64,
         )
@@ -697,6 +726,31 @@ class MappedLayerCompliance(StrictModule, NonTrainableState):
     report: _owner_phydrax_meshing__result.MeshingComplianceReport
 
 
+def _mapped_core_size_bounds(
+    source: sources_owner.NativeLayerCoreSource, specification: VolumeMeshingSpec, /
+) -> tuple[float, ...]:
+    return tuple(
+        control.core_maximum_size
+        for control in (*specification.layer_controls, source.layers.control)
+        if control.core_maximum_size is not None
+    )
+
+
+def _mapped_compliance_records(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    mesh: CellMesh,
+    /,
+) -> int:
+    """Vertex rows, edge keys, lengths and growth; core rows, edges and lengths."""
+    records = mesh.coordinates.shape[0] + 3 * mesh.entity_set(1).count
+    if _mapped_core_size_bounds(source, specification):
+        records += 16 * sum(
+            block.cell_count for block in mesh.blocks if block.cell_kind == "tetrahedron"
+        )
+    return records
+
+
 def _mapped_layer_compliance(
     source: sources_owner.NativeLayerCoreSource,
     specification: VolumeMeshingSpec,
@@ -718,6 +772,7 @@ def _mapped_layer_compliance(
             raise TypeError(
                 "VolumeMeshingSpec.size_controls must provide its source uniform physical size control; got missing or incompatible its source uniform physical size control"
             )
+    work.charge(mesh.coordinates.shape[0] + 3 * mesh.entity_set(1).count)
     lengths, growth = route_checks.edge_size_evidence(
         np.asarray(mesh.coordinates, dtype=np.float64),
         np.asarray(
@@ -730,11 +785,7 @@ def _mapped_layer_compliance(
     requested, achieved, issues = route_checks.uniform_size_compliance(
         size, specification.size_compliance, lengths, growth
     )
-    bounds = tuple(
-        control.core_maximum_size
-        for control in (*specification.layer_controls, source.layers.control)
-        if control.core_maximum_size is not None
-    )
+    bounds = _mapped_core_size_bounds(source, specification)
     if bounds:
         cap = min(bounds)
         vertices = np.asarray(mesh.coordinates, dtype=np.float64)
@@ -745,8 +796,9 @@ def _mapped_layer_compliance(
                 if block.cell_kind == "tetrahedron"
             ]
         )
-
+        work.charge(core_cells.size + 6 * core_cells.shape[0])
         core_edges = route_checks.unique_edges(core_cells, "tetrahedron")
+        work.charge(core_edges.shape[0])
         maximum = float(
             np.max(
                 np.linalg.norm(
@@ -856,17 +908,22 @@ def execute_mapped_layer_core_route(
         )
         work.work_units = construction.work_units
         allowance = scope.remaining()
-        ticket = resources.enter_context(
-            scope.batch(
-                min(limits.maximum_work_units, allowance.remaining_work_units),
-                queries_upper=min(
-                    limits.maximum_geometry_queries, allowance.remaining_geometry_queries
-                ),
-                bytes_upper=min(
-                    limits.maximum_scratch_bytes, allowance.remaining_managed_bytes
-                ),
+        with family_route_refusals(
+            limits,
+            _owner_phydrax_meshing__trace.MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+        ):
+            ticket = resources.enter_context(
+                scope.batch(
+                    min(limits.maximum_work_units, allowance.remaining_work_units),
+                    queries_upper=min(
+                        limits.maximum_geometry_queries,
+                        allowance.remaining_geometry_queries,
+                    ),
+                    bytes_upper=min(
+                        limits.maximum_scratch_bytes, allowance.remaining_managed_bytes
+                    ),
+                )
             )
-        )
         work.ticket = ticket
         budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
             ticket,
@@ -880,27 +937,6 @@ def execute_mapped_layer_core_route(
             )
             mesh = composed.mesh
         with _owner_phydrax_meshing__measurements.measure_phase(
-            record_phase, "organization"
-        ):
-            zones, patches, labels, attributes = _mapped_layer_organization(
-                construction, mesh
-            )
-            physical = _owner_dataclasses.replace(
-                construction,
-                mesh=mesh,
-                domain=domain,
-                cell_regions=composed.cell_regions,
-                zones=zones,
-                patches=patches,
-                labels=labels,
-                attributes=attributes,
-            )
-            zones, patches = (
-                _owner_phydrax_meshing__layer_core_controls.compose_layer_controls(
-                    source, specification, physical, work=work
-                )
-            )
-        with _owner_phydrax_meshing__measurements.measure_phase(
             record_phase, "geometry_association"
         ):
             associations = _owner_phydrax_meshing__mapped_reference_association.mapped_reference_associations(
@@ -912,16 +948,60 @@ def execute_mapped_layer_core_route(
                     limits.maximum_geometry_queries, limits.maximum_work_units
                 ),
             )
-        with _owner_phydrax_meshing__measurements.measure_phase(
-            record_phase, "compliance"
-        ):
-            measured = _mapped_layer_compliance(
-                source, specification, construction, mesh, preparation
-            )
-            size, compliance = measured.size, measured.report
-        scoped = _owner_phydrax_meshing__layer_source_certification.layer_source_fidelity_requests(
-            source, specification, physical, work=work
+        # The coordinate phases settle; their caches stay reserved for publication,
+        # and host organization, controls, compliance and fidelity requests are
+        # admitted from carrier counts before they allocate.
+        resources.close()
+        resources.enter_context(
+            budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size))
         )
+        host_upper = (
+            _mapped_organization_records(construction, mesh)
+            + _mapped_compliance_records(source, specification, mesh)
+            + _owner_phydrax_meshing__layer_core.layer_publication_work_upper(
+                source,
+                specification,
+                _owner_dataclasses.replace(construction, mesh=mesh),
+            )
+        )
+        with _dependency_phydrax_meshing__layer_core_resources.admit_layer_phase(
+            scope,
+            limits,
+            work,
+            _owner_phydrax_meshing__trace.MeshingStageKind.CANONICALIZATION,
+            work_upper=host_upper,
+        ):
+            with _owner_phydrax_meshing__measurements.measure_phase(
+                record_phase, "organization"
+            ):
+                zones, patches, labels, attributes = _mapped_layer_organization(
+                    construction, mesh, work=work
+                )
+                physical = _owner_dataclasses.replace(
+                    construction,
+                    mesh=mesh,
+                    domain=domain,
+                    cell_regions=composed.cell_regions,
+                    zones=zones,
+                    patches=patches,
+                    labels=labels,
+                    attributes=attributes,
+                )
+                zones, patches = (
+                    _owner_phydrax_meshing__layer_core_controls.compose_layer_controls(
+                        source, specification, physical, work=work
+                    )
+                )
+            with _owner_phydrax_meshing__measurements.measure_phase(
+                record_phase, "compliance"
+            ):
+                measured = _mapped_layer_compliance(
+                    source, specification, construction, mesh, preparation
+                )
+                size, compliance = measured.size, measured.report
+            scoped = _owner_phydrax_meshing__layer_source_certification.layer_source_fidelity_requests(
+                source, specification, physical, work=work
+            )
         fidelity = source.fidelity_source
         if fidelity is None:
             raise ValueError(
@@ -962,8 +1042,6 @@ def execute_mapped_layer_core_route(
         route_checks.check_deadline(
             started, limits, _owner_phydrax_meshing__trace.MeshingStageKind.CERTIFICATION
         )
-        resources.close()
-        del budget
         publication = layer_publication.LayerCorePublication(
             mesh=mesh,
             compliance=compliance,
@@ -993,5 +1071,6 @@ def execute_mapped_layer_core_route(
             provider,
             scope,
             workspace,
+            budget=budget,
             record_phase=record_phase,
         )

@@ -52,7 +52,7 @@ from .._hexahedral import (
 from .._periodic_topology import lifted_loops, PeriodicMeshTopology
 from .._reference_cell import reference_cell_topology
 from . import _form_elements as form_elements_owner, _nodal_orbits as nodal_orbits_owner
-from ._form_basis_types import AbstractReferenceFormBasis
+from ._form_basis_types import AbstractReferenceFormBasis, EntityMomentCache
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import lagrange_element
 
@@ -485,8 +485,9 @@ def canonical_form_dof_layout(
         for degree, level in enumerate(widths)
     )
     boundary = np.zeros((int(offsets[-1]),), dtype=np.bool_)
+    physical = _physical_boundary_entity_masks(mesh)
     for degree, level in enumerate(widths):
-        mask = np.asarray(mesh.topology.entity_sets[degree].subset("boundary").mask)
+        mask = physical[degree]
         for entity in np.flatnonzero(mask):
             start = starts[degree][entity]
             boundary[start : start + level[entity]] = True
@@ -539,6 +540,7 @@ def canonical_form_block_routes(
             tuple[tuple[int, ...], tuple[str | None, ...]], np.ndarray
         ] = {}
         orientations: dict[tuple[int, ...], float] = {}
+        entity_moments = EntityMomentCache()
         for row, cell in enumerate(np.asarray(block.vertices)):
             local_bases = tuple(
                 tuple(
@@ -562,7 +564,9 @@ def canonical_form_block_routes(
             if canonical is None:
                 canonical = np.asarray(
                     basis.entity_permutation_matrix(
-                        tuple(cell.tolist()), entity_bases=local_bases
+                        tuple(cell.tolist()),
+                        entity_bases=local_bases,
+                        cache=entity_moments,
                     )
                 )
                 permutations[key] = canonical
@@ -1704,7 +1708,11 @@ def build_finite_element_dof_coordinates(
             raise TypeError(
                 "finite_element.coordinate_elements must provide supported coordinate tabulation; got an unsupported coordinate map"
             )
-        weights.append(element.tabulate(field.reference_nodes)[0])
+        weights.append(
+            cell_geometry_owner.coordinate_tabulation(element).tabulate(
+                field.reference_nodes
+            )[0]
+        )
     coordinate_weights = tuple(weights)
     match layout:
         case FiniteElementDofLayout(association="cell"):
@@ -1788,14 +1796,32 @@ def averaged_dof_coordinates(
     return averaged
 
 
+def _physical_boundary_entity_masks(
+    mesh: cell_mesh_owner.CellMesh, /
+) -> tuple[np.ndarray, ...]:
+    """Restrict physical boundary receipts, not artificial closure cut facets."""
+    topology = mesh.topology
+    storage = mesh.storage
+    if storage is not None and storage.local_physical_boundary_entities is not None:
+        return tuple(
+            np.asarray(mask, dtype=np.bool_)
+            for mask in storage.local_physical_boundary_entities
+        )
+    if storage is not None:
+        raise ValueError(
+            "finite_element.mesh.storage.local_physical_boundary_entities must retain the scientific global boundary at every degree; got missing boundary projection receipts"
+        )
+    return tuple(
+        np.asarray(entities.subset("boundary").mask, dtype=np.bool_)
+        for entities in topology.entity_sets
+    )
+
+
 def vertex_boundary_mask(
     mesh: cell_mesh_owner.CellMesh, global_count: int, /
 ) -> np.ndarray:
     boundary = np.zeros((global_count,), dtype=np.bool_)
-    boundary[: mesh.coordinates.shape[0]] = np.asarray(
-        mesh.topology.entity_sets[0].subset("boundary").mask,
-        dtype=np.bool_,
-    )
+    boundary[: mesh.coordinates.shape[0]] = _physical_boundary_entity_masks(mesh)[0]
     return boundary
 
 
@@ -1804,7 +1830,9 @@ def high_order_h1_boundary_mask(
     layout: NodalDofLayout,
     /,
 ) -> np.ndarray:
-    boundary = vertex_boundary_mask(mesh, layout.global_count)
+    physical = _physical_boundary_entity_masks(mesh)
+    boundary = np.zeros((layout.global_count,), dtype=np.bool_)
+    boundary[: mesh.coordinates.shape[0]] = physical[0]
     connectivity = mesh.connectivity
     if not isinstance(connectivity, _HIGH_ORDER_H1_CONNECTIVITIES):
         raise TypeError(
@@ -1812,7 +1840,7 @@ def high_order_h1_boundary_mask(
         )
     edge_starts = layout.edge_starts
     edge_widths = layout.edge_widths
-    for edge in np.flatnonzero(np.asarray(connectivity.boundary_edges, dtype=np.bool_)):
+    for edge in np.flatnonzero(physical[1]):
         start = int(edge_starts[edge])
         boundary[start : start + int(edge_widths[edge])] = True
     if isinstance(
@@ -1821,9 +1849,7 @@ def high_order_h1_boundary_mask(
     ):
         face_starts = layout.face_starts
         face_widths = layout.face_widths
-        for face in np.flatnonzero(
-            np.asarray(connectivity.boundary_faces, dtype=np.bool_)
-        ):
+        for face in np.flatnonzero(physical[2]):
             start = int(face_starts[face])
             boundary[start : start + int(face_widths[face])] = True
     return boundary

@@ -29,8 +29,13 @@ class PolyhedralAdaptationError(MeshingFailure):
         /,
         *,
         category: MeshingFailureCategory = MeshingFailureCategory.COMPLIANCE_FAILED,
+        requested: tuple[tuple[str, float], ...] = (),
+        achieved: tuple[tuple[str, float], ...] = (),
     ) -> None:
-        super().__init__(category, message, stage="polyhedral_adaptation")
+        super().__init__(
+            category, message, stage="polyhedral_adaptation",
+            requested=requested, achieved=achieved,
+        )
 
 
 @checked

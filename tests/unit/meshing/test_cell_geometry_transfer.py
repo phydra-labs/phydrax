@@ -12,6 +12,7 @@ material history/flux follow their reference pullback and Piola laws.
 """
 
 from collections.abc import Iterator
+from copy import copy
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,9 @@ import phydrax as phx
 from phydrax.discretization import CellGeometrySpec, CellMesh, FiniteElementSpec
 from phydrax.discretization._cell_geometry_transfer import (
     transition_displaced_cell_geometry,
+)
+from phydrax.discretization._cell_geometry_transition_budget import (
+    charged_geometry_transition,
 )
 from phydrax.discretization._cell_geometry_transition_types import (
     CellGeometryTransitionError,
@@ -346,6 +350,249 @@ def test_displacement_keeps_curvature_and_moves_vertex_nodes() -> None:
     assert abs(transition.evidence.target_measure - 1.0) < _MEASURE_ROUNDING
 
 
+@pytest.fixture(scope="module")
+def displaced_measure_source() -> Any:
+    from phydrax.meshing.qualification import native_planar_part
+
+    part, _ = native_planar_part("displaced-measures", 1.0, size=0.2)
+    return part.carrier
+
+
+def _earned_displaced_measures(source: Any) -> tuple[Any, Any, Any, Any]:
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization._coordinate_operands import CoordinateOperandCollector
+    from phydrax.meshing._measurements import NativeExecutionRecord
+    from phydrax.meshing._native_preparation import native_preparation_ledger
+
+    coordinates = np.asarray(source.mesh.coordinates).copy()
+    free = np.flatnonzero(np.asarray(source.geometry.exact_source.vertex_strata) == 0)
+    assert free.size
+    coordinates[free[0], 0] += 0.001
+    target = source.mesh.with_coordinates(coordinates, numeric_version="issued-motion")
+    limits = phx.meshing.MeshingLimits(maximum_work_units=10_000_000)
+    collector = CoordinateOperandCollector(capture_measures=True)
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        collector.begin(
+            scope, "issued-displacement", native_preparation_ledger(scope).overlap(scope, None)
+        )
+        with scope.ticket_view() as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket, maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            budget.capture_coordinate_operands = True
+            budget.capture_measure_operands = True
+            with budget.activate(), ticket.native_target():
+                transition = transition_displaced_cell_geometry(
+                    source.mesh, source.geometry, target, budget=budget
+                )
+                collector.capture(
+                    target, transition.geometry, budget, scope,
+                    input_owners=(source.mesh, source.geometry),
+                )
+    receipt = NativeExecutionRecord(
+        scope.completed_evidence(), owner_id="issued-displacement"
+    )
+    collector.complete(receipt)
+    assert collector.prepared is not None
+    return target, transition, collector.prepared, receipt
+
+
+def _replay_displaced_measures(
+    source: Any,
+    target: Any,
+    transition: Any,
+    operands: Any,
+    receipt: Any,
+    *,
+    warm: bool = True,
+    work: int = 10_000_000,
+    storage: int = 1_000_000_000,
+) -> tuple[Any, Any]:
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.meshing._native_preparation import native_preparation_ledger
+
+    limits = phx.meshing.MeshingLimits(
+        maximum_work_units=work, maximum_scratch_bytes=storage
+    )
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        scope.observe_managed_admission()
+        native_preparation_ledger(scope).import_receipt(scope, receipt)
+        with scope.ticket_view() as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket, maximum_work_units=work, maximum_memory_bytes=storage
+            )
+            with budget.activate(), ticket.native_target():
+                if warm:
+                    operands.require(operands.mesh, operands.geometry, receipt, budget)
+                rebuilt = transition_displaced_cell_geometry(
+                    source.mesh, source.geometry, target, budget=budget,
+                    _issued_transition=transition,
+                )
+    return rebuilt, scope.completed_evidence()
+
+
+def test_displaced_measure_issue_reconstructs_bitwise_and_rejects_replay(
+    displaced_measure_source: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+    from phydrax.discretization import _cell_geometry_transfer as transfer_owner
+    from phydrax.lifecycle._meshing_source_records import content_equal
+
+    source = displaced_measure_source
+    target, issued, operands, receipt = _earned_displaced_measures(source)
+    original = transfer_owner.mapped_measure_owner.certified_cell_measures
+    calls: list[object] = []
+
+    def measured(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        transfer_owner.mapped_measure_owner, "certified_cell_measures", measured
+    )
+    rebuilt, _ = _replay_displaced_measures(source, target, issued, operands, receipt)
+    assert calls == []
+    assert rebuilt is not issued and rebuilt.geometry is not issued.geometry
+    assert rebuilt.evidence is not issued.evidence
+    assert id(rebuilt) not in transfer_owner._ISSUED_DISPLACED_MEASURES
+    assert content_equal(rebuilt, issued, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+    cold, _ = _replay_displaced_measures(
+        source, target, issued, operands, receipt, warm=False
+    )
+    assert len(calls) == 2
+    assert content_equal(cold, issued, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+    # A reconstructed equal transition cannot forward the original numeric seal.
+    replay, _ = _replay_displaced_measures(source, target, rebuilt, operands, receipt)
+    assert len(calls) == 4
+    assert content_equal(replay, issued, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+    with coordinate_reference_budget(
+        phx.meshing.MeshingLimits(maximum_work_units=10_000_000),
+        queries_upper=10_000_000,
+    ) as budget:
+        budget.capture_coordinate_operands = True
+        budget.capture_measure_operands = True
+        standalone = transition_displaced_cell_geometry(
+            source.mesh, source.geometry, target, budget=budget
+        )
+    assert id(standalone) not in transfer_owner._ISSUED_DISPLACED_MEASURES
+    _replay_displaced_measures(source, target, standalone, operands, receipt)
+    assert len(calls) == 8
+
+
+@pytest.mark.parametrize(
+    "fault",
+    (
+        "copy", "replace", "transition-field", "evidence-field", "reference-bank",
+        "source-copy", "geometry-copy", "target-copy", "target-geometry",
+    ),
+)
+def test_displaced_measure_issue_misses_changed_actual_bindings(
+    displaced_measure_source: Any, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    from dataclasses import replace
+
+    import jax.numpy as jnp
+
+    from phydrax.discretization import _cell_geometry_transfer as transfer_owner
+
+    source = displaced_measure_source
+    target, issued, operands, receipt = _earned_displaced_measures(source)
+    transition = issued
+    if fault == "copy":
+        transition = copy(issued)
+    elif fault == "replace":
+        transition = replace(issued)
+    elif fault == "transition-field":
+        object.__setattr__(issued, "source_geometry_id", "foreign")
+    elif fault == "evidence-field":
+        object.__setattr__(issued.evidence, "target_measure", issued.evidence.target_measure + 1.0)
+    elif fault == "reference-bank":
+        object.__setattr__(
+            issued, "parent_reference_vertices", issued.parent_reference_vertices + jnp.asarray(0.125)
+        )
+    elif fault == "source-copy":
+        source = copy(source)
+        object.__setattr__(source, "mesh", copy(source.mesh))
+    elif fault == "geometry-copy":
+        source = copy(source)
+        object.__setattr__(source, "geometry", copy(source.geometry))
+    elif fault == "target-copy":
+        target = copy(target)
+    elif fault == "target-geometry":
+        coordinates = np.asarray(target.coordinates).copy()
+        free = np.flatnonzero(np.asarray(source.geometry.exact_source.vertex_strata) == 0)
+        coordinates[free[0], 0] += 0.001
+        target = target.with_coordinates(coordinates, numeric_version="other-motion")
+    else:
+        raise AssertionError(fault)
+    original = transfer_owner.mapped_measure_owner.certified_cell_measures
+    calls: list[object] = []
+
+    def measured(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        transfer_owner.mapped_measure_owner, "certified_cell_measures", measured
+    )
+    _replay_displaced_measures(source, target, transition, operands, receipt)
+    assert len(calls) == 2
+
+
+def test_displaced_measure_issue_rejects_unpaid_request_and_releases_weak_owner(
+    displaced_measure_source: Any,
+) -> None:
+    import gc
+    from weakref import ref
+
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization import _cell_geometry_transfer as transfer_owner
+
+    source = displaced_measure_source
+    target, issued, operands, receipt = _earned_displaced_measures(source)
+    identity, weak = id(issued), ref(issued)
+    assert identity in transfer_owner._ISSUED_DISPLACED_MEASURES
+    limits = phx.meshing.MeshingLimits()
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.ticket_view() as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket, maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with pytest.raises(ValueError, match="already be paid"):
+                operands.require(target, operands.geometry, receipt, budget)
+    del issued
+    gc.collect()
+    assert weak() is None
+    assert identity not in transfer_owner._ISSUED_DISPLACED_MEASURES
+
+
+@pytest.mark.parametrize("resource", ("work", "storage"))
+def test_displaced_measure_issue_exact_request_boundaries(
+    displaced_measure_source: Any, resource: str,
+) -> None:
+    from phydrax._meshcore import current_native_execution_scope, MeshcoreError
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+
+    source = displaced_measure_source
+    target, issued, operands, receipt = _earned_displaced_measures(source)
+    _, measured = _replay_displaced_measures(source, target, issued, operands, receipt)
+    required = (
+        measured.work_counters.construction_work if resource == "work"
+        else measured.managed_admission_peak_bytes_upper
+    )
+    assert required is not None and required > 0
+    _replay_displaced_measures(
+        source, target, issued, operands, receipt, **{resource: required}
+    )
+    with pytest.raises((MeshcoreError, CellGeometryTransitionError, CoordinateEnclosureResourceError)):
+        _replay_displaced_measures(
+            source, target, issued, operands, receipt, **{resource: required - 1}
+        )
+    assert current_native_execution_scope() is None
+
+
 def test_geometry_transition_refuses_beyond_its_evaluation_budget() -> None:
     source = curved_shear_source(transfer_triangles(2), 2, shear_term(2, 2))
     policy = CellGeometryTransitionPolicy(maximum_evaluations=10)
@@ -440,6 +687,7 @@ def test_nested_field_transfer_reproduces_curved_coordinate_fields() -> None:
         refined.parent_cells,
         field_name="u",
         parent_reference_vertices=refined.parent_reference_vertices,
+        parent_reference_homogeneous=refined.parent_reference_homogeneous,
     )
 
     # Physical coordinates are P2 fields of an isoparametric P2 map whose
@@ -678,6 +926,62 @@ def test_scientific_block_authority_survives_hierarchy_archive(tmp_path: Path) -
         restored.scientific_block_ids, hierarchy.scientific_block_ids
     )
     assert np.unique(np.asarray(restored.scientific_block_ids)).size == 1
+
+
+def test_geometry_transition_nested_phases_share_one_allowance_origin(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    budget.reserve(37)
+    policy = CellGeometryTransitionPolicy(maximum_evaluations=5)
+    with pytest.raises(CellGeometryTransitionError) as refusal:
+        with charged_geometry_transition(policy, budget=budget):
+            budget.reserve(3)
+            with charged_geometry_transition(policy, budget=budget):
+                budget.reserve(2)
+            with charged_geometry_transition(policy, budget=budget):
+                budget.reserve(1)
+    assert refusal.value.reason == "resource_limit"
+    assert refusal.value.measured == 6
+    assert refusal.value.limit == 5
+    assert budget.work_units == 42
+    # Closing a refused transition releases its stage, never request work.
+    with charged_geometry_transition(
+        CellGeometryTransitionPolicy(maximum_evaluations=1), budget=budget
+    ):
+        budget.reserve(1)
+    assert budget.work_units == 43
+
+
+def test_geometry_transition_still_obeys_the_remaining_request_allowance() -> None:
+    with coordinate_reference_budget(
+        phx.meshing.MeshingLimits(maximum_work_units=39)
+    ) as budget:
+        budget.reserve(37)
+        with pytest.raises(CellGeometryTransitionError) as refusal:
+            with charged_geometry_transition(
+                CellGeometryTransitionPolicy(maximum_evaluations=5), budget=budget
+            ):
+                budget.reserve(3)
+        assert refusal.value.measured == 3
+        assert refusal.value.limit == 2
+        assert budget.work_units == 37
+
+
+def test_geometry_transition_preserves_declared_source_local_work_cap(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.discretization._exact_plc_geometry import ExactPlcBudget
+
+    budget.reserve(37)
+    source_work = ExactPlcBudget(1, 4096, budget=budget)
+    with pytest.raises(CellGeometryTransitionError) as refusal:
+        with charged_geometry_transition(
+            CellGeometryTransitionPolicy(maximum_evaluations=5), budget=budget
+        ):
+            source_work.charge(2)
+    assert refusal.value.measured == 2
+    assert refusal.value.limit == 1
+    assert budget.work_units == 37
 
 
 @pytest.fixture

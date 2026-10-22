@@ -18,6 +18,7 @@ from ..._meshcore import MeshcoreError, MeshcoreStatus, NativeParallelExecution
 from ...typing import checked
 from .._contracts import MeshingExecutionMode
 from .._failures import CutStageRecord, MeshingFailure, MeshingFailureCategory
+from ...discretization._coordinate_operands import CoordinateOperandCollector
 from .._measurements import NativeMeshingPhaseRecorder
 from .._result import CellMeshingResult
 from .._session import AbstractMeshingSession, MeshingExecutionPolicy
@@ -98,6 +99,7 @@ class NativeMeshingSession(AbstractMeshingSession):
         /,
         *,
         record_phase: NativeMeshingPhaseRecorder | None = None,
+        coordinate_operands: CoordinateOperandCollector | None = None,
     ) -> CellMeshingResult:
         """Return a plan's audited result after restoring its native thread policy."""
         self._require_thread()
@@ -115,7 +117,10 @@ class NativeMeshingSession(AbstractMeshingSession):
             with NativeParallelExecution(
                 self._policy.parallelism, self._policy.timeout_seconds
             ):
-                result = plan._execute_in_session(state, record_phase=record_phase)
+                result = plan._execute_in_session(
+                    state, record_phase=record_phase,
+                    coordinate_operands=coordinate_operands,
+                )
                 return result
         except MeshcoreError as error:
             if error.status is not MeshcoreStatus.TIMEOUT:
@@ -123,6 +128,8 @@ class NativeMeshingSession(AbstractMeshingSession):
             raise self._timeout_failure(error, result) from error
         finally:
             self._executing = False
+            if coordinate_operands is not None:
+                coordinate_operands.abort()
 
     def _timeout_failure(
         self, error: MeshcoreError, result: CellMeshingResult | None, /

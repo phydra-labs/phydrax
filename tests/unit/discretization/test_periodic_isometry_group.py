@@ -177,3 +177,24 @@ def test_exact_admission_and_action_charge_original_work_budget() -> None:
         before = budget.work_units
         exact_periodic_element(matrices, orders, (-7,), budget=budget)
         assert budget.work_units > before > 0
+
+
+def test_exact_group_admission_reuses_only_current_request_bound_content() -> None:
+    group = PeriodicIsometryGroup(_screw()[None])
+    with _action_budget(group, ((0,),)) as budget:
+        admitted = exact_periodic_generators(group, budget=budget)
+        charged = budget.work_units
+        assert charged > 0
+        assert exact_periodic_generators(group, budget=budget) is admitted
+        assert budget.work_units == charged
+        changed = eqx.tree_at(
+            lambda value: value.generators, group,
+            group.generators.at[0, 0, 3].add(1.0),
+        )
+        with pytest.raises(PeriodicIsometryIdentityError, match="bind current generators"):
+            exact_periodic_generators(changed, budget=budget)
+        assert budget.work_units == charged
+    with _action_budget(group, ((0,),)) as fresh:
+        reconstructed = exact_periodic_generators(group, budget=fresh)
+        assert reconstructed == admitted and reconstructed is not admitted
+        assert fresh.work_units == charged

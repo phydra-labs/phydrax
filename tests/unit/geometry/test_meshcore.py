@@ -870,6 +870,49 @@ def test_cdt_observed_work_budget_is_reproducible() -> None:
     assert work[7] > 0
 
 
+def test_cdt_lattice_seeding_meets_targets_with_less_work() -> None:
+    bound = 0.15
+    # Square boundary split at the lattice spacing, as the planar route does.
+    pieces = int(np.ceil(2.0 / (0.9 * bound)))
+    side = np.arange(pieces) / pieces * 2.0
+    points = np.concatenate(
+        (
+            np.stack((side, np.zeros(pieces)), axis=1),
+            np.stack((np.full(pieces, 2.0), side), axis=1),
+            np.stack((2.0 - side, np.full(pieces, 2.0)), axis=1),
+            np.stack((np.zeros(pieces), 2.0 - side), axis=1),
+        )
+    )
+    count = points.shape[0]
+    segments = np.stack(
+        (np.arange(count), (np.arange(count) + 1) % count), axis=1
+    ).astype(np.int32)
+    options = {
+        "min_angle": 25.0,
+        "max_area": 0.25 * np.sqrt(3.0) * bound * bound,
+        "max_edge_length": bound,
+        "max_steiner": 20000,
+    }
+    plain = ConstrainedDelaunayTriangulation(points, segments, **options)
+    seeded = ConstrainedDelaunayTriangulation(
+        points, segments, lattice_spacing=0.9 * bound, **options
+    )
+    assert plain.evidence.status == seeded.evidence.status == "ok"
+    assert seeded.evidence.minimum_angle_degrees >= 25.0
+    corners = seeded.points[seeded.triangles]
+    assert np.sum(_signed_areas(corners)) == pytest.approx(4.0, rel=1e-12)
+    _segment_coverage(seeded, segments)
+    assert seeded.triangles.shape[0] < plain.triangles.shape[0]
+    assert seeded.work_evidence[0] < plain.work_evidence[0]
+    free = seeded.constraint_sources[points.shape[0] :] == -1
+    assert np.count_nonzero(free) > 0
+    for spacing in (-1.0, np.inf, np.nan):
+        with pytest.raises(ValueError, match="lattice_spacing"):
+            ConstrainedDelaunayTriangulation(
+                points, segments, lattice_spacing=spacing, **options
+            )
+
+
 def test_crossing_cdt_constraints_report_refusal_before_publication() -> None:
     points = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64

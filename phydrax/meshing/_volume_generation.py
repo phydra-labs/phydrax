@@ -32,8 +32,10 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
+from fractions import Fraction
+from itertools import product
 from time import monotonic
 from typing import final, NoReturn
 
@@ -44,7 +46,9 @@ import phydrax.discretization._cell_geometry as _owner_phydrax_discretization__c
 import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
 import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
 import phydrax.discretization._exact_plc_geometry as _owner_phydrax_discretization__exact_plc_geometry
+import phydrax.discretization._exact_rational_geometry as rational_geometry_owner
 import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._mapped_reference_domain as mapped_domain_owner
 import phydrax.meshing._association as _dependency_phydrax_meshing__association
 import phydrax.meshing._association_state as association_state_owner
 import phydrax.meshing._canonical as _dependency_phydrax_meshing__canonical
@@ -53,6 +57,7 @@ import phydrax.meshing._controls as _dependency_phydrax_meshing__controls
 import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
 import phydrax.meshing._host_banks as _dependency_phydrax_meshing__host_banks
 import phydrax.meshing._organization_records as _dependency_phydrax_meshing__organization
+import phydrax.meshing._result as result_owner
 import phydrax.meshing._sizing as _dependency_phydrax_meshing__sizing
 import phydrax.meshing._tetra_metric as _dependency_phydrax_meshing__tetra_metric
 import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
@@ -60,6 +65,7 @@ import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import (
     constrained_delaunay_2d,
+    current_native_execution_scope,
     current_native_host_workspace,
     exact_orient2d,
     exact_orient3d,
@@ -69,6 +75,8 @@ from .._meshcore import (
     NativeExecutionEvidence,
     NativeExecutionMemoryCounters,
     NativeExecutionScope,
+    NativeHostStorageWorkspace,
+    NativeScopeTicket,
     plc_source_constraints,
     PlcRecovery3D,
     PlcRecoveryFailure,
@@ -79,6 +87,7 @@ from .._meshcore import (
     TET_MESH_UNMET_REASONS,
     TetMesh3D,
     TetMeshArrays,
+    TetMeshBoundaryPolicy,
     TetMeshExudeCounters,
     TetMeshImproveCounters,
     TetMeshQuality,
@@ -125,6 +134,44 @@ class PlcSourceTriangleDim(Dim, minimum=1):
     """Triangulated source polygons, including internal sheets."""
 
 
+def _matches_canonical_declared_plc_domain(
+    complex_: PiecewiseLinearComplex,
+    source_id: str,
+    supplied: domain_coverage_owner.PiecewiseLinearDomain,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    /,
+) -> bool:
+    """Re-earn a complete source declaration, never portable mesh-proof authority."""
+    ticket = budget.ticket
+    if not isinstance(ticket, (NativeBatchTicket, NativeScopeTicket)) or ticket.settled:
+        raise ValueError("Canonical PLC declaration reconstruction requires its live paid native ledger.")
+    with budget.live_storage() as storage:
+        storage.set_bound(
+            65536 + 256 * (
+                complex_.vertices.shape[0] + complex_.polygon_vertices.size
+                + supplied.facets.size + supplied.facet_regions.size
+            )
+        )
+        with ticket.native_target():
+            canonical = declared_plc_domain(complex_, source_id)
+        budget.reserve(4 + len(canonical.region_ids))
+        matches = (
+            canonical.source_id == supplied.source_id
+            and canonical.source_revision == supplied.source_revision
+            and canonical.domain_id == supplied.domain_id
+            and canonical.region_ids == supplied.region_ids
+        )
+        for name in ("vertices", "facets", "facet_regions"):
+            actual, expected = getattr(supplied, name), getattr(canonical, name)
+            budget.reserve(actual.size + expected.size, actual.nbytes + expected.nbytes + 256)
+            matches = matches and (
+                actual.dtype == expected.dtype and actual.shape == expected.shape
+                and actual.tobytes(order="C") == expected.tobytes(order="C")
+            )
+        del canonical
+        return matches
+
+
 @final
 class PreparedPlcSource(StrictModule, NonTrainableState):
     """Immutable source-only PLC preparation bound to source, revision and frame.
@@ -156,7 +203,13 @@ class PreparedPlcSource(StrictModule, NonTrainableState):
         maximum_support_queries: int,
         execution_evidence: NativeExecutionEvidence | None = None,
         source_geometry_queries: int = 0,
+        source_domain: domain_coverage_owner.PiecewiseLinearDomain | None = None,
+        source_result: result_owner.CellMeshingResult | None = None,
+        publication_coverage: domain_coverage_owner.DomainCoverageCertificate | None = None,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget | None = None,
     ) -> None:
+        if publication_coverage is not None and source_result is None:
+            raise ValueError("Publication coverage requires the actual current PLC source result.")
         if not np.array_equal(constraints.points, complex_.vertices):
             raise ValueError(
                 "PreparedPlcSource.constraints must retain PLC point ordering; got reordered points"
@@ -171,8 +224,64 @@ class PreparedPlcSource(StrictModule, NonTrainableState):
                 "PreparedPlcSource.input_polygons must index PLC polygons; got out-of-range rows"
             )
         polygons.setflags(write=False)
+        if source_domain is None and source_result is not None:
+            certificate = source_result.certification
+            if certificate is None or not isinstance(
+                certificate.request.domain, domain_coverage_owner.PiecewiseLinearDomain
+            ):
+                raise ValueError("Prepared PLC source must retain its actual published declared domain.")
+            source_domain = certificate.request.domain
+        if source_domain is None:
+            source_domain = domain(complex_, constraints.input_triangles, polygons, source_id)
+        else:
+            if budget is None or source_result is None:
+                raise ValueError("Prepared PLC domain operands require their actual issued source and paid coordinate ledger.")
+            budget.reserve(
+                complex_.vertices.size + len(complex_.region_ids)
+                + len(source_result.associations)
+            )
+            certificate = source_result.certification
+            if (
+                source_result.coordinate_contract is not coordinate_contract
+                or certificate is None or not certificate.passed
+                or certificate.request.domain is not source_domain
+                or not source_result.associations
+                or any(
+                    association.source_id != source_id
+                    or association.source_revision != source_revision
+                    for association in source_result.associations
+                )
+                or certificate.request.cell_regions is None
+                or certificate.embedding is None
+                or not isinstance(certificate.coverage, domain_coverage_owner.DomainCoverageCertificate)
+                or source_domain.source_id != source_id
+                or source_domain.region_ids != complex_.region_ids
+                or source_domain.vertices.shape != complex_.vertices.shape
+                or source_domain.vertices.dtype != complex_.vertices.dtype
+                or source_domain.vertices.tobytes(order="C") != complex_.vertices.tobytes(order="C")
+            ):
+                raise ValueError("Prepared PLC domain operands must retain the actual issued domain owner and all current source coordinates and regions.")
+            region_bank = certificate.request.cell_regions
+            budget.reserve(region_bank.size, region_bank.nbytes + 256)
+            regions = np.asarray(region_bank, dtype=np.int64)
+            if publication_coverage is not None:
+                authenticated = domain_coverage_owner.authenticate_issued_domain_coverage(
+                    source_result.mesh, source_result.geometry, source_domain,
+                    regions, certificate.embedding, certificate.request.limits,
+                    certificate.coverage, publication_coverage, budget=budget,
+                )
+                if authenticated is not publication_coverage:
+                    raise ValueError("Prepared PLC domain operands require the actual full current issued publication coverage.")
+            elif not domain_coverage_owner.is_issued_domain_coverage(
+                source_result.mesh, source_result.geometry, source_domain,
+                regions, certificate.embedding,
+                certificate.request.limits, certificate.coverage, budget=budget,
+            ) and not _matches_canonical_declared_plc_domain(
+                complex_, source_id, source_domain, budget,
+            ):
+                raise ValueError("Prepared PLC domain operands require full current issued coverage or the complete canonical oriented source declaration.")
         transfer = _dependency_phydrax_meshing__association.PlcAssociationTransfer(
-            domain(complex_, constraints.input_triangles, polygons, source_id),
+            source_domain,
             coordinate_contract,
             source_revision,
             edge_vertices=constraints.plc_edges,
@@ -251,23 +360,61 @@ def prepare_plc_source(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     source_work_units: int = 0,
     source_geometry_queries: int = 0,
+    source_result: result_owner.CellMeshingResult | None = None,
+    publication_coverage: domain_coverage_owner.DomainCoverageCertificate | None = None,
+    coordinate_budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget | None = None,
 ) -> PreparedPlcSource:
     """Prepare rational source strata without recovering or refining a volume."""
-    remaining_work = _native_volume_remaining_work(limits, source_work_units, scope=scope)
-    remaining_queries = min(
-        limits.maximum_geometry_queries - source_geometry_queries,
-        scope.remaining().remaining_geometry_queries,
-    )
+    if publication_coverage is not None and source_result is None:
+        raise ValueError("Publication coverage requires the actual current PLC source result.")
+    source_domain = None
+    if source_result is not None:
+        certificate = source_result.certification
+        if (
+            coordinate_budget is None or certificate is None
+            or not isinstance(certificate.request.domain, domain_coverage_owner.PiecewiseLinearDomain)
+        ):
+            raise ValueError("Canonical PLC source preparation requires its actual declared domain and paid ledger.")
+        source_domain = certificate.request.domain
+    ticket = None if coordinate_budget is None else coordinate_budget.ticket
+    if isinstance(ticket, (NativeBatchTicket, NativeScopeTicket)) and not ticket.settled:
+        ticket_root, source_root = ticket.scope, scope
+        while ticket_root.parent is not None:
+            ticket_root = ticket_root.parent
+        while source_root.parent is not None:
+            source_root = source_root.parent
+        if ticket_root is not source_root:
+            raise ValueError("PLC source preparation must use the actual current native request's coordinate ledger.")
+        assert coordinate_budget is not None
+        remaining_work = min(
+            limits.maximum_work_units - source_work_units,
+            coordinate_budget.maximum_work_units - coordinate_budget.work_units,
+            ticket.remaining_work_units,
+        )
+        remaining_queries = min(
+            limits.maximum_geometry_queries - source_geometry_queries,
+            ticket.remaining_geometry_queries,
+        )
+        native_owner = ticket.native_target()
+    else:
+        remaining_work = _native_volume_remaining_work(limits, source_work_units, scope=scope)
+        remaining_queries = min(
+            limits.maximum_geometry_queries - source_geometry_queries,
+            scope.remaining().remaining_geometry_queries,
+        )
+        native_owner = nullcontext()
     if remaining_work <= 0 or remaining_queries <= 0:
         _exhausted(
             MeshingStageKind.SOURCE_INSPECTION,
             "Source preparation consumed the source-renewal work or query allowance.",
             None,
         )
-    with native_volume_execution_budget(
-        limits,
-        stage=MeshingStageKind.SOURCE_INSPECTION,
-    ) as budget:
+    with (
+        native_owner,
+        native_volume_execution_budget(
+            limits, stage=MeshingStageKind.SOURCE_INSPECTION,
+        ) as budget,
+    ):
         try:
             constraints = plc_source_constraints(
                 complex_.vertices,
@@ -291,6 +438,10 @@ def prepare_plc_source(
         maximum_support_queries=remaining_queries,
         execution_evidence=budget.evidence,
         source_geometry_queries=source_geometry_queries,
+        source_domain=source_domain,
+        source_result=source_result,
+        publication_coverage=publication_coverage,
+        budget=coordinate_budget,
     )
 
 
@@ -309,6 +460,9 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
     ``metric_optimization_passes`` bounds the shared statistical-goal
     split/collapse/reconnection/relocation epoch; it never changes physical
     controls or their compliance tolerances.
+    ``prepare_fixed_boundary_adaptation`` explicitly permits interior stellar
+    preparation for a subsequent fixed-boundary adaptation request; the default
+    generation schedule preserves the original carrier and entity capacities.
     """
 
     radius_edge_bound: float = eqx.field(static=True)
@@ -318,6 +472,7 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
     exudation_passes: int = eqx.field(static=True)
     exudation_weight_fraction: float = eqx.field(static=True)
     metric_optimization_passes: int = eqx.field(static=True)
+    prepare_fixed_boundary_adaptation: bool = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
     def __init__(
@@ -330,6 +485,7 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
         exudation_passes: int = 0,
         exudation_weight_fraction: float = 0.1,
         metric_optimization_passes: int = 16,
+        prepare_fixed_boundary_adaptation: bool = False,
     ) -> None:
         ratio = float(radius_edge_bound)
         angle = float(minimum_dihedral_degrees)
@@ -367,6 +523,11 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
         metric_passes = positive_integer(
             metric_optimization_passes, "NativeVolumeSchedule.metric_optimization_passes"
         )
+        if not isinstance(prepare_fixed_boundary_adaptation, (bool, np.bool_)):
+            raise TypeError(
+                "NativeVolumeSchedule.prepare_fixed_boundary_adaptation must be a bool"
+            )
+        fixed_adaptation = bool(prepare_fixed_boundary_adaptation)
         self.radius_edge_bound = ratio
         self.minimum_dihedral_degrees = angle
         self.refinement_rounds = rounds
@@ -374,6 +535,7 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
         self.exudation_passes = exudation
         self.exudation_weight_fraction = weight_fraction
         self.metric_optimization_passes = metric_passes
+        self.prepare_fixed_boundary_adaptation = fixed_adaptation
         self.schedule_id = canonical_fingerprint(
             {
                 "kind": "native-volume-schedule",
@@ -384,6 +546,7 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
                 "exudation_passes": exudation,
                 "exudation_weight_fraction": weight_fraction,
                 "metric_optimization_passes": metric_passes,
+                "prepare_fixed_boundary_adaptation": fixed_adaptation,
             }
         )
 
@@ -394,17 +557,18 @@ class VolumeConstruction:
 
     ``validity_policy_id`` identifies the determinant floor certified by native
     shape inspection or executed improvement/exudation. Publication audits
-    under that same policy. ``refinement`` and ``improvement`` are ``None``
-    when the initial zero-deviation source, shape, and statistical goals are proved
-    before those phases. ``exudation`` is ``None`` when not executed, and
-    ``exudation_weights`` its accepted power weights indexed by published mesh
-    vertices; later-created vertices carry zero. They are exudation evidence,
-    not a regular-triangulation certificate of the published mesh.
+    under that same policy. ``refinement`` and ``improvement`` contain only
+    executed native batched runs; a guarded hard-goal-first epoch retains its
+    actual proposal counts in ``metric_optimization`` and its soft-AIM outcome
+    in ``aim_requested``, ``aim_achieved`` and ``unmet``. A native improvement
+    run may perform mandatory floor repair before that epoch, without claiming
+    that the angular AIM was met. ``exudation`` is ``None`` when not executed;
+    its weights are bounded local evidence, not a global regularity certificate.
     """
 
     mesh: CellMesh
     cell_regions: np.ndarray
-    domain: domain_coverage_owner.PiecewiseLinearDomain
+    domain: domain_coverage_owner.PiecewiseLinearDomain | mapped_domain_owner.MappedReferenceDomain
     zones: tuple[_dependency_phydrax_meshing__organization.MeshZone, ...]
     patches: tuple[_dependency_phydrax_meshing__organization.MeshPatch, ...]
     labels: tuple[_dependency_phydrax_meshing__organization.MeshLabel, ...]
@@ -428,6 +592,10 @@ class VolumeConstruction:
     native_preparation_evidence: NativeExecutionRecord | None = None
     native_execution_record: NativeExecutionRecord | None = None
     geometry: _owner_phydrax_discretization__cell_geometry.CellGeometrySpec | None = None
+    aim_requested: tuple[tuple[str, float], ...] = ()
+    aim_achieved: tuple[tuple[str, float], ...] = ()
+    source_constraints: PlcSourceConstraints | None = None
+    source_input_points: np.ndarray | None = None
 
 
 @final
@@ -824,6 +992,8 @@ def _native_volume_resource_failure(
     started: float,
     stage: MeshingStageKind,
     /,
+    *,
+    root_maximum_work_units: int | None = None,
 ) -> _leaf_phydrax_meshing__failures.MeshingFailure:
     """Publish a resource refusal with earned cut phases and measured scope charges."""
     actual, status, provider_code = work.quantities, refusal.status, refusal.provider_code
@@ -839,6 +1009,8 @@ def _native_volume_resource_failure(
             failure = error.evidence
             requested = dict(requested_limits)
             requested.update(failure.requested)
+            if root_maximum_work_units is not None:
+                requested["maximum_work_units"] = root_maximum_work_units
             achieved = dict(failure.achieved)
             achieved.update(((f"native_scope:{name}", value) for name, value in actual))
             achieved["native_scope:wall_seconds"] = monotonic() - started
@@ -897,12 +1069,31 @@ def native_volume_execution_budget(
     operation_started: float | None = None,
     mesh: TetMesh3D | None = None,
     stage: MeshingStageKind = MeshingStageKind.VOLUME_FILL,
+    root_maximum_work_units: int | None = None,
 ) -> Iterator[NativeExecutionScope]:
     """Open a cumulative request; only its root imports anonymous source totals.
 
     Nested source metadata describes a prefix already accounted by the root.
     Ended phase evidence identities are imported separately by the preparation ledger.
     """
+    if root_maximum_work_units is not None:
+        if current_native_execution_scope() is not None:
+            raise ValueError("Mechanical work admission must own the execution root.")
+        if not 0 < root_maximum_work_units <= limits.maximum_work_units:
+            raise ValueError("Mechanical work admission must only lower the original work limit.")
+        limits = _dependency_phydrax_meshing__contracts.MeshingLimits(
+            maximum_vertices=limits.maximum_vertices,
+            maximum_edges=limits.maximum_edges,
+            maximum_faces=limits.maximum_faces,
+            maximum_cells=limits.maximum_cells,
+            maximum_connectivity_entries=limits.maximum_connectivity_entries,
+            maximum_data_bytes=limits.maximum_data_bytes,
+            maximum_work_units=root_maximum_work_units,
+            maximum_cavity_cells=limits.maximum_cavity_cells,
+            maximum_geometry_queries=limits.maximum_geometry_queries,
+            maximum_scratch_bytes=limits.maximum_scratch_bytes,
+            maximum_wall_seconds=limits.maximum_wall_seconds,
+        )
     source_work = nonnegative_integer(source_work_units, "source_work_units")
     source_queries = nonnegative_integer(
         source_geometry_queries, "source_geometry_queries"
@@ -979,6 +1170,7 @@ def native_volume_execution_budget(
             source_queries,
             started,
             stage,
+            root_maximum_work_units=root_maximum_work_units,
         )
         raise wrapped from error
 
@@ -1200,13 +1392,13 @@ def _satisfied_boundary_size_targets(
 
 def _uniform_background_goal(
     specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
     validity_policy: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy,
     /,
 ) -> _dependency_phydrax_meshing__tetra_metric.UniformSizeRemeshingGoal | None:
     """The closed admitted profile for in-place statistical size optimization.
 
-    Its proposals keep the publishing validity policy's determinant floor.
+    Only physical hard obligations belong here. Numerical refinement and
+    improvement AIMs are attempted separately without becoming admission floors.
     """
     if len(specification.size_controls) != 1:
         return None
@@ -1224,8 +1416,6 @@ def _uniform_background_goal(
         control,
         specification.size_compliance,
         validity_policy.relative_determinant_floor,
-        maximum_radius_edge=schedule.radius_edge_bound,
-        minimum_dihedral_degrees=schedule.minimum_dihedral_degrees,
     )
 
 
@@ -1274,6 +1464,23 @@ def native_volume_coordinate_budget(
             ) from error
 
 
+# Mandatory finishing after the metric epoch (source evidence, exact geometry,
+# organization and publication certification) is charged per published cell.
+# The guarded shape AIM search is soft and must never consume that reserve.
+_FINISHING_WORK_PER_CELL = 512
+
+
+def _guarded_aim_allowance(remaining: int, cells: int, /) -> int:
+    """Soft AIM search allowance that keeps an earned hard state publishable.
+
+    Evaluated after the mandatory AIM entry measurement with the epoch's
+    remaining work and current cell count. Only half of the unreserved work is
+    offered: every accepted AIM edit adds cells whose own finishing must still
+    fit inside the request allowance.
+    """
+    return max(0, (remaining - _FINISHING_WORK_PER_CELL * cells) // 2)
+
+
 def _optimize_uniform_background(
     state: TetMesh3D,
     specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
@@ -1286,12 +1493,18 @@ def _optimize_uniform_background(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     scope: NativeExecutionScope,
     declared_source: TetMeshSourceComplex | None,
+    source_evidence: TetMeshSourceEvidence | None,
     source_id: str,
     source_revision: str,
     initial_geometry: _owner_phydrax_discretization__cell_geometry.CellGeometrySpec
     | None = None,
+    aim_improvement_passes: int | None = None,
 ) -> _dependency_phydrax_meshing__tetra_metric.NativeTetraMetricOutcome:
-    """Schedule the existing native metric epoch without reconstructing sources."""
+    """Schedule the existing native metric epoch without reconstructing sources.
+
+    ``aim_improvement_passes`` requests the guarded soft shape-AIM search after
+    the hard goal; ``None`` runs the hard epoch alone.
+    """
     snapshot = state.arrays()
     control, policy = goal.control, goal.policy
     target = control.target_size
@@ -1316,10 +1529,20 @@ def _optimize_uniform_background(
         )
     limits = specification.limits
     remaining = _native_volume_remaining_work(limits, spent, scope=scope)
-    source_evidence = state.source_evidence()
+    shape_aims = (
+        None
+        if aim_improvement_passes is None
+        else _dependency_phydrax_meshing__tetra_metric.TetraShapeAims(
+            radius_edge_bound=schedule.radius_edge_bound,
+            minimum_dihedral_degrees=schedule.minimum_dihedral_degrees,
+            refinement_rounds=schedule.refinement_rounds,
+            improvement_passes=aim_improvement_passes,
+            search_allowance=_guarded_aim_allowance,
+        )
+    )
     with native_volume_coordinate_budget(limits, scope=scope) as budget:
         source_geometry = None
-        if source_evidence.achieved_bound > 0.0:
+        if source_evidence is not None and source_evidence.achieved_bound > 0.0:
             if declared_source is None:
                 raise RuntimeError(
                     "PlcCarrier.source must provide declared banks for bounded source ancestry; got None"
@@ -1391,6 +1614,7 @@ def _optimize_uniform_background(
             maximum_cavity_work=remaining,
             record_phase=record_phase,
             size_goal=goal,
+            shape_aims=shape_aims,
             maximum_optimizer_scratch_bytes=limits.maximum_scratch_bytes,
             scope=scope,
             initial_geometry=initial_geometry,
@@ -1680,6 +1904,988 @@ def facet_diagonals(
     return unique, polygons[interior][first]
 
 
+def _run_native_improvement(
+    state: TetMesh3D,
+    /,
+    *,
+    minimum_dihedral_degrees: float,
+    minimum_relative_determinant: float,
+    maximum_passes: int,
+    work_limit: int,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> TetMeshRun[TetMeshImproveCounters]:
+    state.measure_execution(record_phase is not None)
+    try:
+        improvement = state.improve(
+            min_dihedral_degrees=minimum_dihedral_degrees,
+            minimum_relative_determinant=minimum_relative_determinant,
+            max_passes=maximum_passes,
+            work_limit=work_limit,
+        )
+        if record_phase is not None:
+            seconds, measured = state.execution_times()
+            if measured[1]:
+                record_phase(
+                    NativeMeshingPhaseMeasurement(
+                        "improvement", float(seconds[1]), improvement.counters.work_units
+                    )
+                )
+        return improvement
+    finally:
+        state.measure_execution(False)
+
+
+# The native hard-size phase refines for size only: this finite bound never
+# rejects a representable cell, so no radius-edge criterion drives insertion.
+# The requested radius-edge and dihedral AIMs run later in the guarded epoch.
+_SIZE_ONLY_RADIUS_EDGE_BOUND = float(np.finfo(np.float64).max)
+
+
+def _uniform_edge_bounds(
+    goal: _dependency_phydrax_meshing__tetra_metric.UniformSizeRemeshingGoal, /
+) -> tuple[float, float, float]:
+    """Hard statistic interval and the longest admitted edge of a uniform goal.
+
+    Returns ``(lower, upper, longest)``: every requested size statistic must
+    lie in ``[lower, upper]``; ``longest`` is the declared maximum size plus
+    its tolerance, or ``upper`` when no maximum is declared.
+    """
+    control, policy = goal.control, goal.policy
+    target = control.target_size
+    lower = max(0.0, target - policy.tolerance(target))
+    upper = target + policy.tolerance(target)
+    longest = (
+        upper
+        if control.maximum_size is None
+        else control.maximum_size + policy.tolerance(control.maximum_size)
+    )
+    return lower, upper, longest
+
+
+def _closest_point_triangle_distances(
+    points: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray, /
+) -> np.ndarray:
+    """Euclidean point-triangle distances (rows, Voronoi-region classification)."""
+    ab, ac, ap = b - a, c - a, points - a
+    d1 = np.einsum("ij,ij->i", ab, ap)
+    d2 = np.einsum("ij,ij->i", ac, ap)
+    bp = points - b
+    d3 = np.einsum("ij,ij->i", ab, bp)
+    d4 = np.einsum("ij,ij->i", ac, bp)
+    cp = points - c
+    d5 = np.einsum("ij,ij->i", ab, cp)
+    d6 = np.einsum("ij,ij->i", ac, cp)
+    va = d3 * d6 - d5 * d4
+    vb = d5 * d2 - d1 * d6
+    vc = d1 * d4 - d3 * d2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denominator = 1.0 / (va + vb + vc)
+        closest = a + ab * (vb * denominator)[:, None] + ac * (vc * denominator)[:, None]
+        on_ab = (vc <= 0.0) & (d1 >= 0.0) & (d3 <= 0.0)
+        closest = np.where(on_ab[:, None], a + ab * (d1 / (d1 - d3))[:, None], closest)
+        on_ac = (vb <= 0.0) & (d2 >= 0.0) & (d6 <= 0.0)
+        closest = np.where(on_ac[:, None], a + ac * (d2 / (d2 - d6))[:, None], closest)
+        on_bc = (va <= 0.0) & (d4 - d3 >= 0.0) & (d5 - d6 >= 0.0)
+        closest = np.where(
+            on_bc[:, None],
+            b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)))[:, None],
+            closest,
+        )
+    closest = np.where(((d1 <= 0.0) & (d2 <= 0.0))[:, None], a, closest)
+    closest = np.where(((d3 >= 0.0) & (d4 <= d3))[:, None], b, closest)
+    closest = np.where(((d6 >= 0.0) & (d5 <= d6))[:, None], c, closest)
+    return np.linalg.norm(points - closest, axis=1)
+
+
+def _segment_segment_distances(
+    p1: np.ndarray, q1: np.ndarray, p2: np.ndarray, q2: np.ndarray, /
+) -> np.ndarray:
+    """Euclidean distances between rows of nondegenerate segments."""
+    d1, d2, r = q1 - p1, q2 - p2, p1 - p2
+    a = np.einsum("ij,ij->i", d1, d1)
+    e = np.einsum("ij,ij->i", d2, d2)
+    f = np.einsum("ij,ij->i", d2, r)
+    c = np.einsum("ij,ij->i", d1, r)
+    b = np.einsum("ij,ij->i", d1, d2)
+    denominator = a * e - b * b
+    with np.errstate(divide="ignore", invalid="ignore"):
+        s = np.where(denominator > 0.0, np.clip((b * f - c * e) / denominator, 0.0, 1.0), 0.0)
+        t = (b * s + f) / e
+        s = np.where(t < 0.0, np.clip(-c / a, 0.0, 1.0), np.where(t > 1.0, np.clip((b - c) / a, 0.0, 1.0), s))
+    t = np.clip(t, 0.0, 1.0)
+    return np.linalg.norm((p1 + d1 * s[:, None]) - (p2 + d2 * t[:, None]), axis=1)
+
+
+def _sweep_ranges(
+    lower: np.ndarray, upper: np.ndarray, queries_lower: np.ndarray, queries_upper: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Candidate row ranges of ``x`` intervals sorted by ``lower`` per query interval.
+
+    No interval longer than the longest one can start before ``queries_lower``
+    minus that length and still meet the query, so each range is exact up to
+    the end test applied by :func:`_sweep_pairs`.
+    """
+    span = float(np.max(upper - lower)) if lower.size else 0.0
+    start = np.searchsorted(lower, queries_lower - span, side="left")
+    stop = np.searchsorted(lower, queries_upper, side="right")
+    return start, np.maximum(stop, start)
+
+
+def _sweep_pairs(
+    start: np.ndarray, stop: np.ndarray, upper: np.ndarray, queries_lower: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Query and sorted-row index pairs of the ranges whose ends meet the query."""
+    counts = stop - start
+    queries = np.repeat(np.arange(start.shape[0]), counts)
+    rows = np.repeat(start, counts) + (
+        np.arange(queries.shape[0]) - np.repeat(np.cumsum(counts) - counts, counts)
+    )
+    keep = upper[rows] >= queries_lower[queries]
+    return queries[keep], rows[keep]
+
+
+def _source_features_separated(
+    carrier: PlcCarrier,
+    threshold: float,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> tuple[bool, int]:
+    """Whether distinct non-incident source features are at least ``threshold`` apart.
+
+    The candidates are vertex-vertex, vertex-polygon (vertex not on the
+    polygon) and PLC-edge pairs without a shared vertex; for polyhedral
+    sources these attain the minimum local feature size. Conforming Delaunay
+    size refinement resolves every narrower gap by encroachment, so it may
+    over-resolve a hard lower size statistic there. Returns the decision and
+    the charged host work.
+    """
+    points = np.asarray(carrier.complex.vertices, dtype=np.float64)
+    triangles = carrier.input_triangles
+    polygons = carrier.input_polygons
+    edges = carrier.plc_edges
+    count = points.shape[0]
+    corners = points[triangles]
+    triangle_lower, triangle_upper = corners.min(axis=1), corners.max(axis=1)
+    edge_lower = np.minimum(points[edges[:, 0]], points[edges[:, 1]])
+    edge_upper = np.maximum(points[edges[:, 0]], points[edges[:, 1]])
+    features = count + triangles.shape[0] + edges.shape[0]
+    before = scope.remaining().remaining_work_units
+    # Sorting and interval search of every feature box on the sweep axis.
+    search_work = 4 * features * max(1, features.bit_length())
+    with scope.batch(search_work, bytes_upper=96 * features) as ticket:
+        ticket.consume(search_work, managed_bytes=96 * features)
+        order = np.argsort(points[:, 0], kind="stable")
+        x = points[order, 0]
+        edge_order = np.argsort(edge_lower[:, 0], kind="stable")
+        sorted_lower, sorted_upper = edge_lower[edge_order, 0], edge_upper[edge_order, 0]
+        sweeps = (
+            (_sweep_ranges(x, x, x, x + threshold), x, x),
+            (
+                _sweep_ranges(
+                    x, x, triangle_lower[:, 0] - threshold, triangle_upper[:, 0] + threshold
+                ),
+                x,
+                triangle_lower[:, 0] - threshold,
+            ),
+            (
+                _sweep_ranges(
+                    sorted_lower,
+                    sorted_upper,
+                    sorted_lower - threshold,
+                    sorted_upper + threshold,
+                ),
+                sorted_upper,
+                sorted_lower - threshold,
+            ),
+        )
+        candidates = int(sum(int(np.sum(stop - start)) for (start, stop), _, _ in sweeps))
+    # Every sweep candidate costs one remaining-axis filter, and each
+    # surviving pair one exact Euclidean distance; the first gap narrower than
+    # the threshold decides, so later feature classes are not examined.
+    with scope.batch(9 * candidates, bytes_upper=64 * candidates) as ticket:
+        (vertex_ranges, vertex_upper, vertex_queries), triangle_sweep, edge_sweep = sweeps
+
+        def separated() -> bool:
+            # Distinct vertices.
+            first, second = _sweep_pairs(*vertex_ranges, vertex_upper, vertex_queries)
+            keep = first < second
+            first, second = order[first[keep]], order[second[keep]]
+            ticket.consume(9 * first.shape[0], managed_bytes=64 * candidates)
+            if first.size and float(
+                np.min(np.linalg.norm(points[first] - points[second], axis=1))
+            ) < threshold:
+                return False
+            # Vertices against polygon triangles that they do not bound.
+            (start, stop), upper, queries = triangle_sweep
+            rows, vertices = _sweep_pairs(start, stop, upper, queries)
+            vertices = order[vertices]
+            polygon_keys = np.unique(
+                np.repeat(polygons, 3).astype(np.int64) * count + triangles.reshape(-1)
+            )
+            near = (
+                np.all(points[vertices] >= triangle_lower[rows] - threshold, axis=1)
+                & np.all(points[vertices] <= triangle_upper[rows] + threshold, axis=1)
+                & ~np.isin(polygons[rows].astype(np.int64) * count + vertices, polygon_keys)
+            )
+            rows, vertices = rows[near], vertices[near]
+            ticket.consume(near.shape[0] + 8 * rows.shape[0])
+            if rows.size and float(
+                np.min(
+                    _closest_point_triangle_distances(
+                        points[vertices], corners[rows, 0], corners[rows, 1], corners[rows, 2]
+                    )
+                )
+            ) < threshold:
+                return False
+            # PLC edges without a shared vertex.
+            (start, stop), upper, queries = edge_sweep
+            first, second = _sweep_pairs(start, stop, upper, queries)
+            keep = first < second
+            first, second = edge_order[first[keep]], edge_order[second[keep]]
+            near = (
+                np.all(edge_lower[first] <= edge_upper[second] + threshold, axis=1)
+                & np.all(edge_lower[second] <= edge_upper[first] + threshold, axis=1)
+                & np.all(edges[first][:, :, None] != edges[second][:, None, :], axis=(1, 2))
+            )
+            first, second = first[near], second[near]
+            ticket.consume(near.shape[0] + 8 * first.shape[0])
+            return not first.size or float(
+                np.min(
+                    _segment_segment_distances(
+                        points[edges[first, 0]],
+                        points[edges[first, 1]],
+                        points[edges[second, 0]],
+                        points[edges[second, 1]],
+                    )
+                )
+            ) >= threshold
+
+        decision = separated()
+    return decision, before - scope.remaining().remaining_work_units
+
+
+def _hard_size_compliance(
+    state: TetMesh3D,
+    goal: _dependency_phydrax_meshing__tetra_metric.UniformSizeRemeshingGoal,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> tuple[list[tuple[str, float]], list[str]]:
+    """Measured size statistics and unmet hard size issues of the current carrier."""
+    # The coordinate phase reserves the whole remaining allowance, so the
+    # native snapshot is read before it is admitted.
+    snapshot = state.arrays()
+    with native_volume_coordinate_budget(limits, scope=scope) as budget:
+        _, achieved, issues = (
+            _dependency_phydrax_meshing__tetra_metric.physical_size_compliance(
+                snapshot, goal, budget=budget
+            )
+        )
+    return achieved, issues
+
+
+def _orthogonal_grid_witnesses(
+    source: TetMeshSourceComplex,
+    tables: PlcCarrierTables,
+    source_keys: tuple[tuple[int, ...], ...],
+    vertex_keys: dict[int, tuple[int, ...]],
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> TetMeshSourceComplex:
+    """Supply exactly representable source parameters for the native verifier."""
+    count, original = tables.points.shape[0], source.witness_strata.shape[0]
+    storage = current_native_host_workspace()
+    if storage is None:
+        raise RuntimeError("Grid source witnesses require their request workspace.")
+    scratch = 4096 + 128 * count + 1024 * (source.faces.shape[0] + source.segments.shape[0])
+    with scope.batch(scope.remaining().remaining_work_units, bytes_upper=scratch) as ticket:
+        ticket.consume(4 * count, managed_bytes=scratch)
+        strata = np.zeros((count,), dtype=np.int8)
+        entities = np.full((count,), -1, dtype=np.int32)
+        parameters = np.zeros((count, 2), dtype=np.float64)
+        strata[:original] = source.witness_strata
+        entities[:original] = source.witness_entities
+        parameters[:original] = source.witness_parameters
+        segment_rows: dict[int, list[int]] = {}
+        for row, group in enumerate(np.asarray(source.segment_group_rows).tolist()):
+            ticket.consume(1)
+            segment_rows.setdefault(int(source.segment_ids[group]), []).append(row)
+        segment_hints: dict[int, int] = {}
+        for edge, label in zip(tables.segments.tolist(), tables.segment_sources.tolist(), strict=True):
+            ticket.consume(2)
+            for vertex in edge:
+                if vertex >= original:
+                    segment_hints.setdefault(vertex, label)
+        source_segments = np.asarray(source.segments).tolist()
+        for vertex, label in segment_hints.items():
+            point = vertex_keys[vertex]
+            for row in segment_rows.get(label, ()):
+                ticket.consume(22)
+                a, b = (source_keys[index] for index in source_segments[row])
+                direction = tuple(y - x for x, y in zip(a, b, strict=True))
+                offset = tuple(y - x for x, y in zip(a, point, strict=True))
+                axis = next((index for index, value in enumerate(direction) if value), None)
+                if axis is None or any(
+                    value * direction[axis] != offset[axis] * slope
+                    for value, slope in zip(offset, direction, strict=True)
+                ):
+                    continue
+                fraction = Fraction(offset[axis], direction[axis])
+                numeric = float(fraction)
+                if not (0 <= fraction <= 1) or Fraction(numeric) != fraction:
+                    continue
+                strata[vertex], entities[vertex] = 1, row
+                parameters[vertex, 0] = numeric
+                break
+        triangle_rows: dict[tuple[int, int, int], list[tuple[int, tuple[int, ...]]]] = {}
+        for row, corners in enumerate(np.asarray(source.faces).tolist()):
+            ticket.consume(12)
+            points = tuple(source_keys[index] for index in corners)
+            axes = tuple(axis for axis in range(3) if len({point[axis] for point in points}) == 1)
+            if len(axes) != 1:
+                continue
+            axis = axes[0]
+            label = int(source.face_ids[int(source.face_group_rows[row])])
+            ticket.consume(7)
+            u, v = (axis + 1) % 3, (axis + 2) % 3
+            a, b, c = points
+            bu, bv, cu, cv = b[u] - a[u], b[v] - a[v], c[u] - a[u], c[v] - a[v]
+            frame = a[u], a[v], bu, bv, cu, cv, bu * cv - bv * cu
+            triangle_rows.setdefault((label, axis, points[0][axis]), []).append((row, frame))
+        hints: dict[int, tuple[int, int, int]] = {}
+        for face, label in zip(tables.faces.tolist(), tables.face_sources.tolist(), strict=True):
+            ticket.consume(6)
+            points = tuple(vertex_keys[vertex] for vertex in face)
+            axis = next(axis for axis in range(3) if len({point[axis] for point in points}) == 1)
+            for vertex in face:
+                if vertex >= original and vertex not in segment_hints:
+                    hints.setdefault(vertex, (label, axis, points[0][axis]))
+        for vertex, hint in hints.items():
+            point = vertex_keys[vertex]
+            axis = hint[1]
+            u, v = (axis + 1) % 3, (axis + 2) % 3
+            for row, (au, av, bu, bv, cu, cv, denominator) in triangle_rows.get(hint, ()):
+                ticket.consume(11)
+                du, dv = point[u] - au, point[v] - av
+                if denominator == 0:
+                    continue
+                first = Fraction(du * cv - dv * cu, denominator)
+                second = Fraction(bu * dv - bv * du, denominator)
+                if first < 0 or second < 0 or first + second > 1:
+                    continue
+                numeric = float(first), float(second)
+                if Fraction(numeric[0]) != first or Fraction(numeric[1]) != second:
+                    continue
+                strata[vertex], entities[vertex] = 2, row
+                parameters[vertex] = numeric
+                break
+        # A nonrepresentable parameter stays unclassified; it is not a
+        # rounded substitute. The native constructor completes and checks it.
+        declared = TetMeshSourceComplex(
+            source.points, source.faces, source.face_group_rows, source.face_tolerances,
+            source.segments, source.segment_group_rows, source.segment_tolerances,
+            strata, entities, parameters, source.face_ids, source.segment_ids,
+        )
+        storage.retain_owner(declared)
+        return declared
+
+
+def _orthogonal_plc_size_grid(
+    carrier: PlcCarrier,
+    protected: PlcProtectedCarrier,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    goal: _dependency_phydrax_meshing__tetra_metric.UniformSizeRemeshingGoal,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> tuple[PlcCarrier | None, PlcProtectedCarrier]:
+    """Construct a source-conforming dyadic grid of an orthogonal PLC.
+
+    Checkerboard five-tetrahedron cells share identical face diagonals. Cells
+    traversed by a declared body-diagonal curve use a face-conforming twelve
+    tetrahedron center star, retaining that curve as two exact edges. Source
+    recognition is not an acceptance proof: the native constructor and the
+    ordinary hard metric, source, embedding and coverage checks all still run.
+    Other geometry, nonrepresentable nodes and coarser requests retain native
+    refinement; every performed preparation visit remains on this request.
+    """
+    source, tables, complex_ = carrier.source, carrier.tables, carrier.complex
+    if (
+        source is None or tables is None or complex_.boundary != "conforming"
+        or complex_.geometry is not None
+        or np.any(source.face_tolerances != 0.0)
+        or np.any(source.segment_tolerances != 0.0)
+    ):
+        return None, protected
+    limits = specification.limits
+    if not _hard_size_compliance(carrier.state, goal, limits, scope=scope)[1]:
+        return carrier, protected
+    initial = carrier.state.arrays()
+    parent_storage = current_native_host_workspace()
+    if parent_storage is None:
+        raise RuntimeError("Orthogonal PLC construction requires its request workspace.")
+    before = scope.remaining().remaining_work_units
+    adopted: PlcCarrier | None = None
+    grid_cells = 0
+    cone_cells = 0
+    source_keys: tuple[tuple[int, ...], ...] = ()
+    vertex_keys: dict[int, tuple[int, ...]] = {}
+    corner_bits = tuple(product((0, 1), repeat=3))
+    face_bits = (
+        (0, -1, ((0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0))),
+        (0, 1, ((1, 0, 0), (1, 1, 0), (1, 1, 1), (1, 0, 1))),
+        (1, -1, ((0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1))),
+        (1, 1, ((0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0))),
+        (2, -1, ((0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 0, 0))),
+        (2, 1, ((0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))),
+    )
+    with measure_phase(record_phase, "refinement"), NativeHostStorageWorkspace(scope) as storage:
+        storage.set_bound(
+            16384 + 4096 * initial.points.shape[0]
+            + 1024 * complex_.polygon_vertices.shape[0]
+        )
+        allowance = scope.remaining().remaining_work_units
+        with scope.batch(allowance) as ticket:
+            def charge(visits: int) -> None:
+                ticket.consume(visits)
+
+            def build() -> PlcCarrierTables | None:
+                nonlocal grid_cells, cone_cells, source_keys, vertex_keys
+                charge(18 * initial.points.shape[0])
+                rational = tuple(
+                    tuple(Fraction(float(value)) for value in row) for row in initial.points
+                )
+                origin = tuple(min(row[axis] for row in rational) for axis in range(3))
+                differences = tuple(value - origin[axis] for row in rational for axis, value in enumerate(row))
+                powers = tuple(
+                    (value.numerator & -value.numerator).bit_length() - value.denominator.bit_length()
+                    for value in differences if value
+                )
+                if not powers:
+                    return None
+                step = Fraction(2) ** min(powers)
+                if Fraction(goal.control.target_size) > step:
+                    return None
+                lower, upper, longest = _uniform_edge_bounds(goal)
+                edge_limit = min(upper, longest) if "p95" in goal.policy.target_statistics else longest
+                while step > Fraction(upper) or 2 * step * step > Fraction(edge_limit) ** 2:
+                    charge(4)
+                    step /= 2
+                if step < Fraction(lower):
+                    return None
+
+                def lattice(row: tuple[Fraction, ...]) -> tuple[int, ...] | None:
+                    charge(9)
+                    indices = tuple((value - base) / step for value, base in zip(row, origin, strict=True))
+                    if any(value.denominator != 1 for value in indices):
+                        return None
+                    return tuple(value.numerator for value in indices)
+
+                keys = tuple(lattice(row) for row in rational)
+                if any(row is None for row in keys):
+                    return None
+                grid_keys = tuple(row for row in keys if row is not None)
+                if len(set(grid_keys)) != len(grid_keys):
+                    return None
+                shape = tuple(max(row[axis] for row in grid_keys) for axis in range(3))
+                potential = shape[0] * shape[1] * shape[2]
+                if min(shape) <= 0 or 5 * potential > limits.maximum_cells:
+                    return None
+                needed = storage.bound + 4096 * potential
+                if needed > storage.bound + scope.remaining().remaining_managed_bytes:
+                    return None
+                storage.set_bound(needed)
+                coordinate_axes: list[tuple[float, ...]] = []
+                for axis in range(3):
+                    charge(6 * (2 * shape[axis] + 1))
+                    coefficients = tuple(
+                        origin[axis] + step * Fraction(index, 2)
+                        for index in range(2 * shape[axis] + 1)
+                    )
+                    values = tuple(float(value) for value in coefficients)
+                    if any(Fraction(value) != exact for value, exact in zip(values, coefficients, strict=True)):
+                        return None
+                    coordinate_axes.append(values)
+                # (projected loop, facet label, positive/negative side, normal).
+                facets: dict[
+                    tuple[int, int],
+                    list[tuple[tuple[tuple[int, int], ...], int, tuple[int, int], int]],
+                ] = {}
+                polygon_vertices = np.asarray(complex_.polygon_vertices)
+                for polygon, label in enumerate(np.asarray(complex_.polygon_facets).tolist()):
+                    rows = polygon_vertices[
+                        int(complex_.polygon_offsets[polygon]):int(complex_.polygon_offsets[polygon + 1])
+                    ]
+                    loop = tuple(grid_keys[int(index)] for index in rows)
+                    charge(10 * len(loop))
+                    axes = tuple(axis for axis in range(3) if len({point[axis] for point in loop}) == 1)
+                    if len(axes) != 1:
+                        return None
+                    axis = axes[0]
+                    if any(
+                        sum(a != b for a, b in zip(first, second, strict=True)) != 1
+                        for first, second in zip(loop, (*loop[1:], loop[0]), strict=True)
+                    ):
+                        return None
+                    u, v = (axis + 1) % 3, (axis + 2) % 3
+                    projected = tuple((point[u], point[v]) for point in loop)
+                    area = sum(a * d - b * c for (a, b), (c, d) in zip(
+                        projected, (*projected[1:], projected[0]), strict=True
+                    ))
+                    if not area:
+                        return None
+                    sides = tuple(int(value) for value in complex_.facet_regions[label])
+                    facets.setdefault((axis, loop[0][axis]), []).append(
+                        (projected, label, (sides[0], sides[1]), 1 if area > 0 else -1)
+                    )
+
+
+                face_owners: dict[
+                    tuple[int, int, int, int],
+                    tuple[tuple[tuple[int, int], ...], int, tuple[int, int], int],
+                ] = {}
+                for (axis, plane), descriptions in facets.items():
+                    for description in descriptions:
+                        loop = description[0]
+                        # Integer orthogonal edges meet each unit-face center
+                        # at a half-integer ordinate. A scanline's ordered
+                        # vertical-edge crossings therefore describe exactly
+                        # the same even/odd membership as individual rays,
+                        # without revisiting every edge for every face.
+                        charge(6 * len(loop))
+                        vertical = tuple(
+                            (a, min(b, d), max(b, d))
+                            for (a, b), (c, d) in zip(
+                                loop, (*loop[1:], loop[0]), strict=True
+                            )
+                            if a == c
+                        )
+                        for second in range(min(row[1] for row in loop), max(row[1] for row in loop)):
+                            crossings: list[int] = []
+                            for first, lower, upper_bound in vertical:
+                                charge(3)
+                                if not lower <= second < upper_bound:
+                                    continue
+                                position = 0
+                                while position < len(crossings):
+                                    charge(1)
+                                    if crossings[position] >= first:
+                                        break
+                                    position += 1
+                                charge(1 + len(crossings) - position)
+                                crossings.insert(position, first)
+                            if len(crossings) % 2:
+                                return None
+                            for slot in range(0, len(crossings), 2):
+                                charge(2)
+                                for first in range(crossings[slot], crossings[slot + 1]):
+                                    charge(6)
+                                    key = axis, plane, first, second
+                                    if key in face_owners:
+                                        return None
+                                    face_owners[key] = description
+                occupied: dict[tuple[int, ...], int] = {}
+                x_planes = tuple(sorted(plane for axis, plane in facets if axis == 0))
+                for j, k in product(range(shape[1]), range(shape[2])):
+                    charge(len(x_planes))
+                    events = [
+                        (plane, description[2], description[3])
+                        for plane in x_planes
+                        if (description := face_owners.get((0, plane, j, k))) is not None
+                    ]
+                    cursor, region = 0, -1
+                    for i in range(shape[0] + 1):
+                        charge(1)
+                        while cursor < len(events) and events[cursor][0] == i:
+                            _, sides, normal = events[cursor]
+                            previous, following = (sides[1], sides[0]) if normal > 0 else sides
+                            if region != previous:
+                                return None
+                            region = following
+                            cursor += 1
+                        if i < shape[0] and region >= 0:
+                            occupied[i, j, k] = region
+                    if region != -1 or cursor != len(events):
+                        return None
+                grid_cells = len(occupied)
+                coned: set[tuple[int, ...]] = set()
+                curves: list[tuple[tuple[int, ...], tuple[int, ...], int]] = []
+                charge(3 * source.segments.shape[0])
+                for row, group in zip(
+                    np.asarray(source.segments).tolist(),
+                    np.asarray(source.segment_group_rows).tolist(), strict=True,
+                ):
+                    start, end = grid_keys[int(row[0])], grid_keys[int(row[1])]
+                    delta = tuple(b - a for a, b in zip(start, end, strict=True))
+                    spans = tuple(abs(value) for value in delta if value)
+                    if not spans or len(spans) not in (1, 3) or len(set(spans)) != 1:
+                        return None
+                    direction = tuple((value > 0) - (value < 0) for value in delta)
+                    current = start
+                    for _ in range(spans[0]):
+                        charge(6)
+                        following = tuple(a + b for a, b in zip(current, direction, strict=True))
+                        a = tuple(2 * value for value in current)
+                        b = tuple(2 * value for value in following)
+                        label = int(source.segment_ids[int(group)])
+                        if len(spans) == 3:
+                            cell = tuple(min(x, y) for x, y in zip(current, following, strict=True))
+                            if cell not in occupied:
+                                return None
+                            coned.add(cell)
+                            middle = tuple(2 * value + 1 for value in cell)
+                            curves.extend(((a, middle, label), (middle, b, label)))
+                        else:
+                            curves.append((a, b, label))
+                        current = following
+                cone_cells = len(coned)
+                if 5 * len(occupied) + 7 * len(coned) > limits.maximum_cells:
+                    return None
+                points = list(initial.points)
+                identities = {tuple(2 * value for value in row): index for index, row in enumerate(grid_keys)}
+                used_initial: set[int] = set()
+
+                def point(index: tuple[int, ...]) -> int:
+                    charge(1)
+                    found = identities.get(index)
+                    if found is not None:
+                        return found
+                    charge(8)
+                    numeric = tuple(coordinate_axes[axis][value] for axis, value in enumerate(index))
+                    found = len(points)
+                    identities[index] = found
+                    points.append(np.asarray(numeric, dtype=np.float64))
+                    return found
+
+                templates = []
+                for parity in (0, 1):
+                    central = tuple(index for index, corner in enumerate(corner_bits) if sum(corner) % 2 == parity)
+                    rows = [central]
+                    for index, corner in enumerate(corner_bits):
+                        if index in central:
+                            continue
+                        neighbors = tuple(index ^ mask for mask in (4, 2, 1))
+                        rows.append((index, *neighbors))
+                    charge(len(rows))
+                    # The central determinant is (-1)^parity * 2; a corner
+                    # star's determinant is product(1 - 2*bit). Translation
+                    # and the positive dyadic scale preserve these signs.
+                    templates.append(tuple(
+                        row if (parity == 0 if index == 0 else sum(corner_bits[row[0]]) % 2 == 0)
+                        else (row[1], row[0], *row[2:])
+                        for index, row in enumerate(rows)
+                    ))
+                tetrahedron_count = 5 * len(occupied) + 7 * len(coned)
+                tetrahedra = np.empty((tetrahedron_count, 4), dtype=np.int32)
+                tetrahedron_entries = tetrahedra.flat
+                regions = np.empty((tetrahedron_count,), dtype=np.int32)
+                output_row = 0
+                boundary: list[tuple[int, ...]] = []
+                labels: list[int] = []
+                for cell, region in sorted(occupied.items()):
+                    charge(20)
+                    corners = tuple(tuple(2 * (a + b) for a, b in zip(cell, bits, strict=True)) for bits in corner_bits)
+                    nodes = tuple(point(corner) for corner in corners)
+                    used_initial.update(node for node in nodes if node < initial.points.shape[0])
+                    center = point(tuple(2 * value + 1 for value in cell)) if cell in coned else -1
+                    if center < 0:
+                        for row in templates[sum(cell) % 2]:
+                            charge(5)
+                            for column, index in enumerate(row):
+                                tetrahedron_entries[4 * output_row + column] = nodes[index]
+                            regions[output_row] = region
+                            output_row += 1
+                    for axis, side, bits in face_bits:
+                        charge(3)
+                        neighbor = tuple(value + (side if index == axis else 0) for index, value in enumerate(cell))
+                        other = occupied.get(neighbor, -1)
+                        boundary_label = None
+                        if not (
+                            other >= 0
+                            and (other < region or (other == region and neighbor < cell))
+                        ):
+                            u, v = (axis + 1) % 3, (axis + 2) % 3
+                            plane = cell[axis] + int(side > 0)
+                            charge(1)
+                            description = face_owners.get((axis, plane, cell[u], cell[v]))
+                            if description is None:
+                                if other != region:
+                                    return None
+                            elif set(description[2]) != {region, other}:
+                                return None
+                            else:
+                                boundary_label = description[1]
+                        # Five-tetrahedron cells already own their complete
+                        # volume rows. Only a declared source face needs a
+                        # separate quad; center stars still need every face.
+                        if center < 0 and boundary_label is None:
+                            continue
+                        face = tuple(tuple(a + b for a, b in zip(cell, corner, strict=True)) for corner in bits)
+                        quad = tuple(point(tuple(2 * value for value in corner)) for corner in face)
+                        triangles = (
+                            ((quad[0], quad[1], quad[2]), (quad[0], quad[2], quad[3]))
+                            if sum(face[0]) % 2 == 0
+                            else ((quad[1], quad[2], quad[3]), (quad[1], quad[3], quad[0]))
+                        )
+                        if center >= 0:
+                            for triangle in triangles:
+                                charge(5)
+                                tetrahedron_entries[4 * output_row] = center
+                                for column, vertex in enumerate(triangle, start=1):
+                                    tetrahedron_entries[4 * output_row + column] = vertex
+                                regions[output_row] = region
+                                output_row += 1
+                        if boundary_label is not None:
+                            boundary.extend(triangles)
+                            labels.extend((boundary_label,) * 2)
+                if output_row != tetrahedron_count or len(used_initial) != initial.points.shape[0] or len(points) > limits.maximum_vertices:
+                    return None
+                segment_labels: dict[tuple[int, int], int] = {}
+                for start, end, label in curves:
+                    a, b = point(start), point(end)
+                    edge = min(a, b), max(a, b)
+                    if edge in segment_labels and segment_labels[edge] != label:
+                        return None
+                    segment_labels[edge] = label
+                charge(len(identities) + 12 * source.points.shape[0])
+                vertex_keys = {index: key for key, index in identities.items()}
+                source_lattice = tuple(lattice(tuple(Fraction(float(value)) for value in row)) for row in np.asarray(source.points).tolist())
+                if any(row is None for row in source_lattice):
+                    return None
+                source_keys = tuple(tuple(2 * value for value in row) for row in source_lattice if row is not None)
+                # Volume rows and regions were written once into their final
+                # typed banks. Only the remaining list-backed tables need a
+                # conversion visit; no second volume-table copy is performed.
+                charge(3 * len(points) + 4 * len(boundary) + 3 * len(segment_labels))
+                return PlcCarrierTables(
+                    np.asarray(points, dtype=np.float64),
+                    tetrahedra,
+                    regions,
+                    np.asarray(boundary, dtype=np.int32).reshape(-1, 3),
+                    np.asarray(labels, dtype=np.int32),
+                    np.asarray(tuple(segment_labels), dtype=np.int32).reshape(-1, 2),
+                    np.asarray(tuple(segment_labels.values()), dtype=np.int32),
+                    tables.boundary_policy,
+                    np.concatenate((tables.protection_radii, np.zeros(len(points) - tables.points.shape[0]))),
+                )
+
+            result = build()
+        if result is not None:
+            declared = _orthogonal_grid_witnesses(
+                source, result, source_keys, vertex_keys, scope=scope
+            )
+            parent_storage.retain_owner((result, declared))
+            storage.set_bound(16384)
+            state = _plc_carrier_state(result, limits, declared)
+            try:
+                if protected.protected_vertices:
+                    state.protect_vertices(np.unique(np.concatenate(protected.protected_vertices)))
+            except BaseException:
+                state.close()
+                raise
+            adopted = replace(carrier, state=state, source=declared, tables=result)
+            carrier.state.close()
+    work = before - scope.remaining().remaining_work_units
+    return adopted, replace(
+        protected,
+        construction_work_units=protected.construction_work_units + work,
+        construction_counters=(
+            *protected.construction_counters,
+            ("hard_size_grid_cells", grid_cells),
+            ("hard_size_grid_curve_cells", cone_cells),
+            ("hard_size_grid_adopted", int(adopted is not None)),
+            ("hard_size_grid_work_units", work),
+        ),
+    )
+
+
+def _refine_hard_size(
+    carrier: PlcCarrier,
+    protected: PlcProtectedCarrier,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    goal: _dependency_phydrax_meshing__tetra_metric.UniformSizeRemeshingGoal,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> tuple[TetMeshRun[TetMeshRefineCounters] | None, int]:
+    """Earn the hard edge bounds by native size-only Delaunay refinement.
+
+    A carrier that already meets every hard size bound is not refined: the
+    circumradius criterion below is only sufficient for the longest edge and
+    would split flat cells whose edges already comply. Otherwise a
+    circumradius at most half the longest admitted edge bounds every edge of
+    the refined mesh, so the declared maximum holds by construction. When a
+    requested statistic still exceeds its upper bound, one further monotone
+    refinement aims at the target size. Statistics below their lower bound
+    are left to the hard metric epoch, which also certifies the result.
+    Returns ``None`` as the run when no refinement was needed.
+    """
+    limits = specification.limits
+    state = carrier.state
+    spent = protected.construction_work_units
+    if not _hard_size_compliance(state, goal, limits, scope=scope)[1]:
+        return None, spent
+    _, upper, longest = _uniform_edge_bounds(goal)
+    target = goal.control.target_size
+    statistics = tuple(f":{name}_edge" for name in goal.policy.target_statistics)
+    radius = 0.5 * longest
+    insertions = limits.maximum_vertices - protected.initial.points.shape[0]
+    total: TetMeshRefineCounters | None = None
+    status = MeshcoreStatus.OK
+    for correction in (False, True):
+
+        def uniform(points: np.ndarray, /, size: float = radius) -> np.ndarray:
+            return np.full((points.shape[0],), size, dtype=np.float64)
+
+        run = state.refine(
+            radius_edge_bound=_SIZE_ONLY_RADIUS_EDGE_BOUND,
+            sizes=uniform,
+            max_insertions=insertions,
+            work_limit=_native_volume_remaining_work(limits, spent, scope=scope),
+            max_rounds=1,
+            record_native_phase=_native_phase_recorder(record_phase),
+        )
+        if run.status == MeshcoreStatus.CAPACITY_EXCEEDED:
+            _exhausted(
+                MeshingStageKind.VOLUME_FILL,
+                "Native hard-size refinement exceeded its declared budget.",
+                run,
+            )
+        counters = run.counters
+        spent += counters.work_units
+        insertions -= (
+            counters.circumcenter_insertions
+            + counters.subfacet_splits
+            + counters.subsegment_splits
+        )
+        total = counters if total is None else total.accumulated(counters)
+        status = run.status
+        if correction or insertions <= 0:
+            break
+        achieved = _hard_size_compliance(state, goal, limits, scope=scope)[0]
+        measured = max(
+            (value for name, value in achieved if name.endswith(statistics)), default=0.0
+        )
+        if measured <= upper:
+            break
+        radius *= target / measured
+    if total is None:
+        raise RuntimeError("The native hard-size phase must execute one refinement run.")
+    return TetMeshRun(status, total), spent
+
+
+def _trial_hard_size(
+    carrier: PlcCarrier,
+    protected: PlcProtectedCarrier,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    goal: _dependency_phydrax_meshing__tetra_metric.UniformSizeRemeshingGoal,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> tuple[
+    PlcCarrier | None, TetMeshRun[TetMeshRefineCounters] | None, PlcProtectedCarrier
+]:
+    """Run the native hard-size phase of a narrow source on an independent replica.
+
+    The replica is the same recovered carrier with the same protected
+    vertices. Its refinement is adopted only when the measured carrier meets
+    every hard size bound; otherwise it is discarded and the untouched carrier
+    keeps the metric route. Every unit spent by the trial stays charged and is
+    reported. Returns the adopted carrier (``None`` when discarded), its
+    refinement run, and the protected record with the trial evidence.
+    """
+    tables = carrier.tables
+    if tables is None:
+        return None, None, protected
+    limits = specification.limits
+    before = scope.remaining().remaining_work_units
+    replica = _plc_carrier_state(tables, limits, carrier.source)
+    trial: PlcCarrier | None = None
+    refinement: TetMeshRun[TetMeshRefineCounters] | None = None
+    try:
+        replica.set_work_limit(
+            _native_volume_remaining_work(
+                limits, protected.construction_work_units, scope=scope
+            )
+        )
+        if protected.protected_vertices:
+            replica.protect_vertices(
+                np.unique(np.concatenate(protected.protected_vertices))
+            )
+        candidate = replace(carrier, state=replica)
+        refinement, _ = _refine_hard_size(
+            candidate,
+            protected,
+            specification,
+            goal,
+            scope=scope,
+            record_phase=record_phase,
+        )
+        if (
+            refinement is not None
+            and not _hard_size_compliance(replica, goal, limits, scope=scope)[1]
+        ):
+            trial = candidate
+    finally:
+        if trial is None:
+            replica.close()
+    work = before - scope.remaining().remaining_work_units
+    protected = replace(
+        protected,
+        construction_counters=(
+            *protected.construction_counters,
+            ("hard_size_trial_work_units", work),
+            ("hard_size_trial_adopted", int(trial is not None)),
+        ),
+        construction_work_units=protected.construction_work_units + work,
+    )
+    return trial, refinement if trial is not None else None, protected
+
+
+def _repair_plc_validity(
+    carrier: PlcCarrier,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: NativeVolumeSchedule,
+    refinement: TetMeshRun[TetMeshRefineCounters] | None,
+    spent: int,
+    /,
+    *,
+    validity_policy: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy,
+    scope: NativeExecutionScope,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> PlcRefinement:
+    """Repair the mandatory determinant floor before metric-source preparation.
+
+    This is not an angular AIM run: the original requested angle is attempted
+    later by the guarded epoch. Passes consumed here come out of the same
+    improvement allowance, and all native work remains in the owning scope.
+    ``refinement`` is the preceding native hard-size phase, if any.
+    """
+    improvement = _run_native_improvement(
+        carrier.state,
+        minimum_dihedral_degrees=0.0,
+        minimum_relative_determinant=validity_policy.relative_determinant_floor,
+        maximum_passes=schedule.improvement_passes,
+        work_limit=_native_volume_remaining_work(specification.limits, spent, scope=scope),
+        record_phase=record_phase,
+    )
+    if improvement.status == MeshcoreStatus.CAPACITY_EXCEEDED:
+        _exhausted(
+            MeshingStageKind.OPTIMIZATION,
+            "Mandatory tetrahedral validity repair exceeded its declared budget.",
+            improvement,
+        )
+    return PlcRefinement(
+        refinement, improvement, None, None, spent + improvement.counters.work_units
+    )
+
+
 def _refine_and_improve(
     state: TetMesh3D,
     complex_: PiecewiseLinearComplex,
@@ -1734,26 +2940,14 @@ def _refine_and_improve(
             "Refinement consumed the work budget of improvement.",
             None,
         )
-    state.measure_execution(record_phase is not None)
-    try:
-        improvement = state.improve(
-            min_dihedral_degrees=schedule.minimum_dihedral_degrees,
-            minimum_relative_determinant=validity_policy.relative_determinant_floor,
-            max_passes=schedule.improvement_passes,
-            work_limit=_native_volume_remaining_work(limits, spent, scope=scope),
-        )
-        if record_phase is not None:
-            seconds, measured = state.execution_times()
-            if measured[1]:
-                record_phase(
-                    NativeMeshingPhaseMeasurement(
-                        "improvement",
-                        float(seconds[1]),
-                        improvement.counters.work_units,
-                    )
-                )
-    finally:
-        state.measure_execution(False)
+    improvement = _run_native_improvement(
+        state,
+        minimum_dihedral_degrees=schedule.minimum_dihedral_degrees,
+        minimum_relative_determinant=validity_policy.relative_determinant_floor,
+        maximum_passes=schedule.improvement_passes,
+        work_limit=_native_volume_remaining_work(limits, spent, scope=scope),
+        record_phase=record_phase,
+    )
     if improvement.status == MeshcoreStatus.CAPACITY_EXCEEDED:
         _exhausted(
             MeshingStageKind.OPTIMIZATION,
@@ -2145,10 +3339,15 @@ def _plc_entity_banks(
     canonical_edges = np.asarray(connectivity.edges, dtype=np.int64)[edge_rows]
     along = points[canonical_edges[:, 1]] - points[canonical_edges[:, 0]]
     on_curve = edge_dimensions == 1
+    source_points = (
+        complex_.vertices
+        if complex_.geometry is None
+        else np.asarray(complex_.geometry.coordinates, dtype=np.float64)
+    )
     source_direction = np.zeros_like(along)
     source_direction[on_curve] = (
-        complex_.vertices[plc_edges[edge_sources[on_curve], 1]]
-        - complex_.vertices[plc_edges[edge_sources[on_curve], 0]]
+        source_points[plc_edges[edge_sources[on_curve], 1]]
+        - source_points[plc_edges[edge_sources[on_curve], 0]]
     )
     edge_orientations = np.where(
         on_curve, np.where(np.sum(along * source_direction, axis=1) > 0.0, 1, -1), 0
@@ -2181,6 +3380,11 @@ def _plc_vertex_sources(
         context.cell_regions,
     )
     complex_ = context.carrier.complex
+    source_points = (
+        complex_.vertices
+        if complex_.geometry is None
+        else np.asarray(complex_.geometry.coordinates, dtype=np.float64)
+    )
     canonical_edges, edge_dimensions, edge_sources = (
         banks.canonical_edges,
         banks.edge_dimensions,
@@ -2208,7 +3412,10 @@ def _plc_vertex_sources(
     vertex_dimensions = np.empty((points.shape[0],), dtype=np.int64)
     vertex_sources = np.empty((points.shape[0],), dtype=np.int64)
     for vertex, original in enumerate(input_vertices.tolist()):
-        if original >= 0 and np.array_equal(points[vertex], complex_.vertices[original]):
+        # Native input rows retain their declared identity through the exact
+        # coefficient lift. Compare the published physical representative with
+        # that authored source row, never with the former execution view.
+        if original >= 0 and np.array_equal(points[vertex], source_points[original]):
             vertex_dimensions[vertex], vertex_sources[vertex] = 0, original
             continue
         owners = parents[vertex]
@@ -2548,6 +3755,7 @@ def generate_plc_volume(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     source_work_units: int = 0,
     certified_lattice: CertifiedSourceLattice | None = None,
+    source_domain: mapped_domain_owner.MappedReferenceDomain | None = None,
     scope: NativeExecutionScope,
 ) -> VolumeConstruction:
     """Recover and finish under one source allowance, including initialization.
@@ -2555,6 +3763,18 @@ def generate_plc_volume(
     ``validity_policy`` is the cell validity policy of the publishing audit; the
     native improvement repairs or reports every cell below its determinant floor.
     """
+    if complex_.geometry is not None and source_domain is None:
+        raise ValueError(
+            "generate_plc_volume.source_domain must declare the physical mapped source of exact PLC geometry; got no mapped reference domain"
+        )
+    if source_domain is not None and (
+        source_domain.source_id != source_id
+        or source_domain.source_revision != source_revision
+        or source_domain.region_ids != complex_.region_ids
+    ):
+        raise ValueError(
+            "generate_plc_volume.source_domain must retain the source, revision, and material identities; got a different mapped source"
+        )
 
     native_volume_checkpoint(
         specification.limits,
@@ -2577,6 +3797,8 @@ def generate_plc_volume(
             certified_lattice=certified_lattice,
             scope=execution,
         )
+    if source_domain is not None:
+        construction = replace(construction, domain=source_domain)
     return bind_volume_execution(
         construction, execution.completed_evidence(), source_work_units
     )
@@ -2640,6 +3862,136 @@ def bind_volume_execution(
             preparation_evidence=preparation_evidence,
         ),
     )
+
+
+def _extend_plc_unclassified_vertices(
+    source: TetMeshSourceComplex,
+    count: int,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> TetMeshSourceComplex:
+    """Append unclassified rows; the native constructor must certify new points."""
+    count = nonnegative_integer(count, "additional_vertices")
+    if not count:
+        return source
+    storage = current_native_host_workspace()
+    if storage is None:
+        raise RuntimeError("PLC vertex extension requires the active native host-storage owner.")
+    previous = source.witness_strata.size
+    total = previous + count
+    work, scratch = 4 * total, 21 * total
+    with scope.batch(work, bytes_upper=scratch) as ticket:
+        ticket.consume(work, managed_bytes=scratch)
+        strata = np.zeros(total, dtype=np.int8)
+        entities = np.full(total, -1, dtype=np.int32)
+        parameters = np.zeros((total, 2), dtype=np.float64)
+        strata[:previous] = source.witness_strata
+        entities[:previous] = source.witness_entities
+        parameters[:previous] = source.witness_parameters
+        extended = replace(
+            source,
+            witness_strata=strata,
+            witness_entities=entities,
+            witness_parameters=parameters,
+        )
+    storage.retain_owner(extended)
+    return extended
+
+
+def _fixed_boundary_interior_stars(
+    tables: PlcCarrierTables,
+    source: TetMeshSourceComplex,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> tuple[PlcCarrierTables, TetMeshSourceComplex, int, int]:
+    """Give edge-locked fixed cells interior edges without touching source facets.
+
+    A represented interior point replaces one parent by its four positive
+    vertex-replacement tetrahedra. All old constrained triangles, segments,
+    labels and source banks remain identical. This optional construction leaves
+    the original valid source intact when its extra vertices/cells cannot fit.
+    The native constructor validates any adopted partition and source witnesses.
+    """
+    if tables.boundary_policy != "fixed":
+        return tables, source, 0, 0
+    if (
+        tables.points.shape[0] >= limits.maximum_vertices
+        or tables.tetrahedra.shape[0] + 3 > limits.maximum_cells
+        or limits.maximum_cavity_cells < 5
+    ):
+        return tables, source, 0, 0
+    before = scope.remaining().remaining_work_units
+    cells, faces, segments = tables.tetrahedra, tables.faces, tables.segments
+    count, face_count, segment_count = cells.shape[0], faces.shape[0], segments.shape[0]
+    work = 18 * count + 9 * face_count + 2 * segment_count
+    scratch = 128 * (count + face_count + segment_count)
+    with scope.batch(work, bytes_upper=scratch) as ticket:
+        ticket.consume(work, managed_bytes=scratch)
+        pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)))
+        cell_edges = np.sort(cells[:, pairs], axis=2)
+        face_pairs = np.asarray(((0, 1), (0, 2), (1, 2)))
+        protected = np.concatenate((
+            np.sort(faces[:, face_pairs], axis=2).reshape((-1, 2)),
+            np.sort(segments, axis=1),
+        ))
+        stride = tables.points.shape[0]
+        protected_codes = np.unique(protected[:, 0] * stride + protected[:, 1])
+        edge_codes = cell_edges[:, :, 0] * stride + cell_edges[:, :, 1]
+        locked = np.flatnonzero(np.all(np.isin(edge_codes, protected_codes), axis=1))
+        del cell_edges, protected, protected_codes, edge_codes
+    selected = locked.size
+    if not selected:
+        return tables, source, 0, before - scope.remaining().remaining_work_units
+    vertices, target_cells = tables.points.shape[0] + selected, count + 3 * selected
+    if vertices > limits.maximum_vertices or target_cells > limits.maximum_cells:
+        return tables, source, 0, before - scope.remaining().remaining_work_units
+    work = 6 * tables.points.shape[0] + 8 * count + 64 * selected
+    scratch = 64 * tables.points.shape[0] + 128 * count + 1024 * selected
+    with scope.batch(work, bytes_upper=scratch, cavity_upper=5) as ticket:
+        ticket.consume(work, managed_bytes=scratch, cavity_cells=5)
+        corners = tables.points[cells[locked]]
+        # Scaling before summation avoids overflow of a finite convex average.
+        centers = np.sum(corners * 0.25, axis=1)
+        points = np.concatenate((tables.points, centers))
+        children = np.repeat(cells[locked], 4, axis=0)
+        children[np.arange(4 * selected), np.tile(np.arange(4), selected)] = np.repeat(
+            tables.points.shape[0] + np.arange(selected), 4
+        )
+        child_points = points[children]
+        parent_signs = exact_orient3d(
+            corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3]
+        )
+        child_signs = exact_orient3d(
+            child_points[:, 0], child_points[:, 1], child_points[:, 2], child_points[:, 3]
+        )
+        if np.any(parent_signs == 0) or np.any(child_signs != np.repeat(parent_signs, 4)):
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                "Fixed-boundary construction could not certify a strictly interior represented centroid.",
+                stage="fixed-boundary-interior-stars",
+            )
+        keep = np.ones(count, dtype=np.bool_)
+        keep[locked] = False
+        updated = PlcCarrierTables(
+            points,
+            np.concatenate((cells[keep], children)),
+            np.concatenate((
+                tables.tetrahedron_regions[keep],
+                np.repeat(tables.tetrahedron_regions[locked], 4),
+            )),
+            tables.faces, tables.face_sources, tables.segments, tables.segment_sources,
+            tables.boundary_policy,
+            np.concatenate((tables.protection_radii, np.zeros(selected))),
+        )
+        declared = _extend_plc_unclassified_vertices(source, selected, scope=scope)
+    storage = current_native_host_workspace()
+    if storage is None:
+        raise RuntimeError("PLC interior construction requires the active native host-storage owner.")
+    storage.retain_owner(updated)
+    return updated, declared, int(selected), before - scope.remaining().remaining_work_units
 
 
 def _construct_plc_volume(
@@ -2728,7 +4080,7 @@ def _construct_plc_volume(
         diagonal_polygons = np.empty((0,), dtype=np.int64)
     limits = specification.limits
     declared = _plc_source_complex(complex_, specification, recovery, diagonals)
-    state = TetMesh3D(
+    tables = PlcCarrierTables(
         recovery.points,
         recovery.tetrahedra,
         recovery.tetrahedron_regions,
@@ -2736,13 +4088,21 @@ def _construct_plc_volume(
         recovery.face_sources,
         segments,
         segment_sources,
-        boundary_policy=complex_.boundary,
-        protection_radii=recovery.protection_radii,
-        max_vertices=limits.maximum_vertices,
-        max_tetrahedra=limits.maximum_cells,
-        max_scratch_bytes=limits.maximum_scratch_bytes,
-        source=declared,
+        complex_.boundary,
+        recovery.protection_radii,
     )
+    interior_stars, interior_work = 0, 0
+    if complex_.boundary == "fixed" and schedule.prepare_fixed_boundary_adaptation:
+        with measure_phase(record_phase, "construction"):
+            tables, declared, interior_stars, interior_work = _fixed_boundary_interior_stars(
+                tables, declared, limits, scope=scope
+            )
+    if interior_work:
+        construction_counters += (
+            ("fixed_boundary_interior_stars", interior_stars),
+            ("fixed_boundary_interior_star_work_units", interior_work),
+        )
+    state = _plc_carrier_state(tables, limits, declared)
     construction_id = canonical_fingerprint(
         {"kind": "plc-recovery", "input": input_id, "counters": construction_counters}
     )
@@ -2751,7 +4111,7 @@ def _construct_plc_volume(
         _dependency_phydrax_meshing__trace.MeshingStageStatus.PASSED,
         input_ids=(input_id,),
         output_ids=(construction_id,),
-        created_count=recovery.tetrahedra.shape[0],
+        created_count=tables.tetrahedra.shape[0],
     )
     carrier = PlcCarrier(
         state,
@@ -2765,8 +4125,17 @@ def _construct_plc_volume(
         diagonal_polygons,
         stage,
         construction_counters,
-        source_work_units + recovery.counters.work_units,
+        source_work_units + recovery.counters.work_units + interior_work,
         declared,
+        tables=tables,
+        source_constraints=PlcSourceConstraints(
+            points=np.asarray(complex_.vertices, dtype=np.float64),
+            plc_edges=recovery.plc_edges,
+            input_triangles=recovery.input_triangles,
+            input_polygons=recovery.input_polygons,
+            counters=recovery.counters,
+            memory_counters=recovery.memory_counters,
+        ),
     )
     return _finish_plc_volume(
         carrier,
@@ -2789,7 +4158,7 @@ def _certified_unit_cell_eligible(
     """An explicit compiler certificate and the existing global HARD profile."""
     if lattice is None or complex_.boundary != "conforming":
         return False
-    goal = _uniform_background_goal(specification, schedule, validity_policy)
+    goal = _uniform_background_goal(specification, validity_policy)
     if goal is None:
         return False
     control = specification.size_controls[0]
@@ -2983,6 +4352,46 @@ def _construct_certified_unit_cell_carrier(
         declared,
         geometry=geometry,
         unit_cells=arrays,
+        source_constraints=constraints,
+    )
+
+
+@final
+class PlcCarrierTables(StrictModule):
+    """Native constructor tables of an unpublished PLC carrier."""
+
+    points: np.ndarray
+    tetrahedra: np.ndarray
+    tetrahedron_regions: np.ndarray
+    faces: np.ndarray
+    face_sources: np.ndarray
+    segments: np.ndarray
+    segment_sources: np.ndarray
+    boundary_policy: TetMeshBoundaryPolicy
+    protection_radii: np.ndarray
+
+
+def _plc_carrier_state(
+    tables: PlcCarrierTables,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    source: TetMeshSourceComplex | None,
+    /,
+) -> TetMesh3D:
+    """Construct the native carrier of recovered tables under the request caps."""
+    return TetMesh3D(
+        tables.points,
+        tables.tetrahedra,
+        tables.tetrahedron_regions,
+        tables.faces,
+        tables.face_sources,
+        tables.segments,
+        tables.segment_sources,
+        boundary_policy=tables.boundary_policy,
+        protection_radii=tables.protection_radii,
+        max_vertices=limits.maximum_vertices,
+        max_tetrahedra=limits.maximum_cells,
+        max_scratch_bytes=limits.maximum_scratch_bytes,
+        source=source,
     )
 
 
@@ -3005,6 +4414,8 @@ class PlcCarrier(StrictModule):
     source: TetMeshSourceComplex | None = None
     geometry: _owner_phydrax_discretization__cell_geometry.CellGeometrySpec | None = None
     unit_cells: UnitCellArrays | None = None
+    tables: PlcCarrierTables | None = None
+    source_constraints: PlcSourceConstraints | None = None
 
 
 @final
@@ -3050,6 +4461,9 @@ class PlcOptimizedCarrier(StrictModule):
         _dependency_phydrax_meshing__tetra_metric.MetricRemeshingEvidence | None
     )
     spent: int
+    aim_evidence: (
+        _dependency_phydrax_meshing__tetra_metric.NativeTetraAimEvidence | None
+    ) = None
 
 
 @final
@@ -3172,7 +4586,7 @@ def _protect_plc_carrier(
         for feature in specification.protected_features
         if feature.scope.entity_dimension == 0
     ]
-    size_goal = _uniform_background_goal(specification, schedule, validity_policy)
+    size_goal = _uniform_background_goal(specification, validity_policy)
     protection_work_start = state.work_units()
     state.set_work_limit(
         _native_volume_remaining_work(
@@ -3237,6 +4651,7 @@ def _optimize_plc_carrier(
     *,
     scope: NativeExecutionScope,
     record_phase: NativeMeshingPhaseRecorder | None,
+    hard_goal_first: bool,
 ) -> PlcOptimizedCarrier:
     """Run the statistical size epoch and capture native completion evidence."""
     state, complex_ = carrier.state, carrier.complex
@@ -3250,6 +4665,31 @@ def _optimize_plc_carrier(
         carrier.source_revision,
     )
     unmet_cells = state.unmet()
+    # Ordinary improvement passes already spent on mandatory validity repair
+    # come out of the requested AIM improvement passes.
+    aim_improvement_passes = (
+        max(
+            0,
+            schedule.improvement_passes
+            - (0 if improvement is None else improvement.counters.passes),
+        )
+        if hard_goal_first
+        else None
+    )
+    # A zero-deviation native source has no bounded-coordinate lift to build:
+    # the native constructor and each commit enforce its exact source rows.
+    # Do not re-run the full source witness audit merely to discover that its
+    # bound is zero. The final published state still issues that full proof.
+    source_evidence = (
+        state.source_evidence()
+        if size_goal is not None
+        and source is not None
+        and (
+            np.any(source.face_tolerances > 0.0)
+            or np.any(source.segment_tolerances > 0.0)
+        )
+        else None
+    )
     metric_outcome = (
         _optimize_uniform_background(
             state,
@@ -3261,9 +4701,11 @@ def _optimize_plc_carrier(
             record_phase=record_phase,
             scope=scope,
             declared_source=source,
+            source_evidence=source_evidence,
             source_id=source_id,
             source_revision=source_revision,
             initial_geometry=carrier.geometry,
+            aim_improvement_passes=aim_improvement_passes,
         )
         if size_goal is not None
         else None
@@ -3316,6 +4758,8 @@ def _optimize_plc_carrier(
                         )
                     ),
                     ("metric:passes", metric_optimization.passes),
+                    ("metric:minimum_metric_quality", metric_optimization.minimum_metric_quality),
+                    ("metric:out_of_range_edges", metric_optimization.out_of_range_edges),
                     ("metric:splits", metric_optimization.splits),
                     ("metric:collapses", metric_optimization.collapses),
                     ("metric:flips", metric_optimization.flips),
@@ -3344,10 +4788,59 @@ def _optimize_plc_carrier(
                 ),
             )
     arrays = metric_outcome.snapshot if metric_outcome is not None else state.arrays()
-    source_evidence = state.source_evidence()
+    # No committed native transaction means the same source witness bank still
+    # proves this exact carrier. Rejected proposals are not successor sources.
+    # A changed hard or AIM state must issue fresh native source evidence.
+    if source_evidence is None or (
+        metric_optimization is not None
+        and (
+            metric_optimization.splits
+            or metric_optimization.collapses
+            or metric_optimization.flips
+            or metric_optimization.relocations
+            or metric_optimization.compound_splits
+            or metric_optimization.expanded_insertions
+            or (
+                metric_outcome is not None
+                and metric_outcome.aim_evidence is not None
+                and metric_outcome.aim_evidence.accepted_operations
+            )
+        )
+    ):
+        source_evidence = state.source_evidence()
     quality = state.quality(sliver_degrees=schedule.minimum_dihedral_degrees)
+    aim_evidence = metric_outcome.aim_evidence if metric_outcome is not None else None
+    if (
+        hard_goal_first
+        and metric_optimization is not None
+        and metric_optimization.converged
+        and aim_evidence is None
+    ):
+        raise RuntimeError(
+            "The hard-goal-first epoch must return the requested guarded AIM outcome after earning the hard goal."
+        )
+    if aim_evidence is not None:
+        if not aim_evidence.measurement_complete:
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "The guarded AIM phase could not finish measuring its accepted state within the original allowance.",
+                stage=MeshingStageKind.OPTIMIZATION.value,
+                requested=(("maximum_work_units", specification.limits.maximum_work_units),),
+                achieved=(
+                    ("work_units", spent),
+                    ("aim:work_units", aim_evidence.work_units),
+                    ("aim:attempts", aim_evidence.attempts),
+                    ("aim:measurement_complete", 0.0),
+                ),
+            )
+        if aim_evidence.unmet is None:
+            raise RuntimeError("A complete guarded AIM measurement must include its current unmet bank.")
+        # The guarded epoch owns a complete bank for the current accepted
+        # topology. Never publish stale native unmet rows from an earlier run.
+        unmet_cells = aim_evidence.unmet
     return PlcOptimizedCarrier(
-        arrays, source_evidence, quality, unmet_cells, metric_optimization, spent
+        arrays, source_evidence, quality, unmet_cells, metric_optimization, spent,
+        aim_evidence,
     )
 
 
@@ -3419,6 +4912,134 @@ def _compact_plc_carrier(
     )
 
 
+def _authored_plc_geometry(
+    complex_: PiecewiseLinearComplex,
+    declared: TetMeshSourceComplex,
+    evidence: TetMeshSourceEvidence,
+    arrays: TetMeshArrays,
+    used: np.ndarray,
+    mesh: CellMesh,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _owner_phydrax_discretization__cell_geometry.CellGeometrySpec:
+    """Lift native row witnesses to the independently authored exact source.
+
+    Input vertices retain their declared coefficient rows. A constructed
+    constrained vertex uses its exact barycentric coordinates in the native
+    source entity, not rounded reported parameters. Applying those weights to
+    the authored rows supplies the physical vertex. Body vertices keep their
+    literal physical coordinates. Publication independently proves the resulting
+    cell maps, their embedding, and source-domain coverage.
+    """
+    source_geometry = complex_.geometry
+    if source_geometry is None or not isinstance(
+        source_geometry.exact_source,
+        rational_geometry_owner.ExactRationalCellGeometrySource,
+    ):
+        raise TypeError(
+            "authored_plc_geometry.source must retain canonical exact rational coefficient actions; got another geometry source"
+        )
+    source = source_geometry.exact_source
+    if source.parent.exact_source is not None:
+        raise ValueError(
+            "authored_plc_geometry.parent must retain the declared affine coefficient bank; got nested coordinate authority"
+        )
+    original_actions = source.action_rows()
+    frame = np.asarray(source.parent.coordinates, dtype=np.float64)
+    maximum_bits = 16 * (source.maximum_bits + 1078)
+    bank_bytes, scratch_bytes = (
+        _owner_phydrax_discretization__exact_plc_geometry.plc_storage_bounds(
+            used.size + frame.shape[0], maximum_bits
+        )
+    )
+    budget.reserve(0, bank_bytes + scratch_bytes)
+    parent_points = np.concatenate((frame, arrays.points[used]), axis=0)
+    parent = _owner_phydrax_discretization__cell_geometry.CellGeometrySpec.affine(
+        CellMesh.from_tetrahedra(
+            parent_points, np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+        ),
+        budget=budget,
+    )
+    actions = []
+    for row, vertex in enumerate(used.tolist()):
+        budget.reserve(1)
+        if vertex < complex_.vertices.shape[0]:
+            actions.append(original_actions[vertex])
+            continue
+        stratum, entity = (
+            int(evidence.witness_strata[vertex]),
+            int(evidence.witness_entities[vertex]),
+        )
+        if stratum == 0:
+            if arrays.vertex_dimension[vertex] != 3:
+                raise ValueError(
+                    "authored_plc_geometry.boundary must have an issued native source row; got an unconstrained boundary vertex"
+                )
+            actions.append(((frame.shape[0] + row, 1, 1),))
+            continue
+        if stratum not in (1, 2):
+            raise ValueError(
+                f"authored_plc_geometry.stratum must name a segment or facet; got {stratum}"
+            )
+        vertices = declared.segments[entity] if stratum == 1 else declared.faces[entity]
+        # A segment/triangle Gram solve has dimension at most two. The
+        # preadmitted fixed bound includes conversion, membership and solve;
+        # subsequent sparse products are charged for each actual entry.
+        budget.reserve(256)
+        carrier = tuple(Fraction(float(value)) for value in arrays.points[vertex])
+        corners = tuple(
+            tuple(Fraction(float(value)) for value in declared.points[index])
+            for index in vertices.tolist()
+        )
+        if not _owner_phydrax_discretization__exact_plc_geometry.in_entity(
+            carrier, corners
+        ):
+            raise ValueError(
+                "authored_plc_geometry.witness must lie exactly in its native source row; got an off-entity carrier"
+            )
+        parameters = _owner_phydrax_discretization__exact_plc_geometry._row_parameters(
+            carrier, corners
+        )
+        weights = (1 - sum(parameters, Fraction(0)), *parameters)
+        combined: dict[int, Fraction] = {}
+        for index, weight in zip(vertices.tolist(), weights, strict=True):
+            for position, numerator, denominator in original_actions[index]:
+                budget.reserve(2)
+                combined[position] = combined.get(position, Fraction(0)) + weight * Fraction(
+                    numerator, denominator
+                )
+        actions.append(
+            tuple(
+                (position, value.numerator, value.denominator)
+                for position, value in sorted(combined.items())
+                if value
+            )
+        )
+    elements = {
+        block.name: _owner_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+            block.cell_kind, 1
+        )
+        for block in mesh.blocks
+    }
+    routes = {block.name: block.vertices for block in mesh.blocks}
+    exact = rational_geometry_owner.ExactRationalCellGeometrySource(
+        parent,
+        tuple(actions),
+        rational_geometry_owner.rational_source_layouts(elements, routes),
+        maximum_work=budget.maximum_work_units,
+        maximum_bits=maximum_bits,
+        budget=budget,
+    )
+    return _owner_phydrax_discretization__cell_geometry.CellGeometrySpec(
+        elements,
+        routes,
+        exact.representatives(budget=budget),
+        exact_source=exact,
+        budget=budget,
+    )
+
+
 def _assemble_plc_volume(
     carrier: PlcCarrier,
     protected: PlcProtectedCarrier,
@@ -3453,6 +5074,32 @@ def _assemble_plc_volume(
         optimized.unmet_cells,
     )
     metric_optimization, spent = optimized.metric_optimization, optimized.spent
+    aim = optimized.aim_evidence
+    aim_requested: tuple[tuple[str, float], ...] = ()
+    aim_achieved: tuple[tuple[str, float], ...] = ()
+    if aim is not None:
+        radius, angle = aim.maximum_radius_edge, aim.minimum_dihedral_degrees
+        radius_count, angle_count = aim.radius_unmet_cells, aim.dihedral_unmet_cells
+        if radius is None or angle is None or radius_count is None or angle_count is None:
+            raise RuntimeError("A complete guarded AIM measurement must include every achieved shape value.")
+        aim_requested = (
+            ("aim:radius_edge_bound", aim.requested_radius_edge_bound),
+            ("aim:minimum_dihedral_degrees", aim.requested_minimum_dihedral_degrees),
+        )
+        aim_achieved = (
+            ("aim:maximum_radius_edge", radius),
+            ("aim:minimum_dihedral_degrees", angle),
+            ("aim:radius_unmet_cells", float(radius_count)),
+            ("aim:dihedral_unmet_cells", float(angle_count)),
+            ("aim:refinement_rounds", float(aim.refinement_rounds)),
+            ("aim:improvement_passes", float(aim.improvement_passes)),
+            ("aim:attempts", float(aim.attempts)),
+            ("aim:accepted_operations", float(aim.accepted_operations)),
+            ("aim:refused_proposals", float(aim.refused_proposals)),
+            ("aim:work_units", float(aim.work_units)),
+            ("aim:measurement_complete", float(aim.measurement_complete)),
+            (f"aim:termination:{aim.terminal_reason}", 1.0),
+        )
     refinement, improvement, exudation = runs.refinement, runs.improvement, runs.exudation
     points, tetrahedra = published.points, published.tetrahedra
     used, published_weights = published.used, published.published_weights
@@ -3475,6 +5122,21 @@ def _assemble_plc_volume(
             geometry = unit_cell_geometry(
                 carrier.unit_cells, mesh, vertex_rows=used, budget=budget
             )
+    elif complex_.geometry is not None:
+        if source is None:
+            raise ValueError(
+                "PlcCarrier.authored_geometry must retain native source row identities; got no declared source"
+            )
+        with native_volume_coordinate_budget(specification.limits, scope=scope) as budget:
+            geometry = _authored_plc_geometry(
+                complex_, source, source_evidence, arrays, used, mesh, budget=budget
+            )
+            mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(
+                CellMesh.from_tetrahedra(
+                    geometry.coordinates, tetrahedra, numeric_version=source_revision
+                )
+            )
+            geometry.resolve(mesh, budget=budget)
     cell_regions = np.asarray(arrays.tetrahedron_regions, dtype=np.int64)
     with measure_phase(record_phase, "organization"):
         organization = _organization(
@@ -3489,12 +5151,17 @@ def _assemble_plc_volume(
             and (improvement is None or improvement.status == MeshcoreStatus.OK)
             and (exudation is None or exudation.status == MeshcoreStatus.OK)
             and (metric_optimization is None or metric_optimization.converged)
+            and (aim is None or aim.terminal_reason == "satisfied")
             else _dependency_phydrax_meshing__trace.MeshingStageStatus.WARNING,
             input_ids=tuple(dict.fromkeys((input_id, *construction_stage.output_ids))),
-            output_ids=(
-                (mesh.mesh_id,)
-                if metric_optimization is None
-                else (mesh.mesh_id, metric_optimization.evidence_id)
+            output_ids=tuple(
+                dict.fromkeys(
+                    (
+                        mesh.mesh_id,
+                        *(() if metric_optimization is None else (metric_optimization.evidence_id,)),
+                        *(() if aim is None else (aim.state_binding,)),
+                    )
+                )
             ),
             created_count=mesh.blocks[0].vertices.shape[0],
         ),
@@ -3533,6 +5200,10 @@ def _assemble_plc_volume(
         exudation=exudation,
         exudation_weights=published_weights,
         geometry=geometry,
+        aim_requested=aim_requested,
+        aim_achieved=aim_achieved,
+        source_constraints=carrier.source_constraints,
+        source_input_points=None if carrier.tables is None else carrier.tables.points[:complex_.vertices.shape[0]],
     )
     return construction
 
@@ -3692,18 +5363,98 @@ def _finish_plc_volume(
         admitted, admission_work = _initial_plc_goal_admitted(
             carrier, protected, specification, schedule, validity_policy, scope=scope
         )
+        # Keep represented-coordinate carriers' existing immutable admission,
+        # and execute an explicitly requested weighted exudation stage on its
+        # existing route rather than silently omitting it from this epoch.
+        hard_goal_first = (
+            protected.size_goal is not None
+            and carrier.geometry is None
+            and schedule.exudation_passes == 0
+        )
         protected = replace(
             protected,
             construction_counters=(
                 *protected.construction_counters,
                 ("initial_goal_shape_certified", int(admitted)),
                 ("initial_goal_certification_work_units", admission_work),
+                ("hard_goal_first", int(hard_goal_first)),
             ),
             construction_work_units=protected.construction_work_units + admission_work,
         )
         if admitted:
             runs = PlcRefinement(
                 None, None, None, None, protected.construction_work_units
+            )
+        elif hard_goal_first:
+            goal = protected.size_goal
+            if goal is None:
+                raise RuntimeError("The hard-goal-first route requires its uniform size goal.")
+            # Conforming Delaunay size refinement resolves every source gap
+            # narrower than the hard lower size bound by encroachment, so it
+            # may over-resolve the lower statistic there. Such sources keep
+            # the metric route unless an independent native replica measures
+            # complete hard size compliance after the same refinement.
+            separated, separation_work = _source_features_separated(
+                carrier, _uniform_edge_bounds(goal)[0], scope=scope
+            )
+            protected = replace(
+                protected,
+                construction_counters=(
+                    *protected.construction_counters,
+                    ("source_separation_work_units", separation_work),
+                ),
+                construction_work_units=protected.construction_work_units
+                + separation_work,
+            )
+            refinement, spent = None, protected.construction_work_units
+            if separated:
+                partition, protected = _orthogonal_plc_size_grid(
+                    carrier,
+                    protected,
+                    specification,
+                    goal,
+                    scope=scope,
+                    record_phase=record_phase,
+                )
+                if partition is not None:
+                    carrier = partition
+                    spent = protected.construction_work_units
+                else:
+                    refinement, spent = _refine_hard_size(
+                        carrier, protected, specification, goal,
+                        scope=scope, record_phase=record_phase,
+                    )
+            else:
+                trial, refinement, protected = _trial_hard_size(
+                    carrier,
+                    protected,
+                    specification,
+                    goal,
+                    scope=scope,
+                    record_phase=record_phase,
+                )
+                if trial is not None:
+                    carrier.state.close()
+                    carrier = trial
+                spent = protected.construction_work_units
+            # The phase is reported only when its native refinement is
+            # retained by the published carrier.
+            protected = replace(
+                protected,
+                construction_counters=(
+                    *protected.construction_counters,
+                    ("hard_size_native_phase", int(refinement is not None)),
+                ),
+            )
+            runs = _repair_plc_validity(
+                carrier,
+                specification,
+                schedule,
+                refinement,
+                spent,
+                validity_policy=validity_policy,
+                scope=scope,
+                record_phase=record_phase,
             )
         else:
             if carrier.geometry is not None:
@@ -3733,6 +5484,16 @@ def _finish_plc_volume(
                 scope=scope,
                 record_phase=record_phase,
             )
+        if hard_goal_first and runs.improvement is not None:
+            protected = replace(
+                protected,
+                construction_counters=(
+                    *protected.construction_counters,
+                    ("hard_validity_repair_minimum_dihedral_degrees", 0),
+                    ("hard_validity_repair_passes", runs.improvement.counters.passes),
+                    ("hard_validity_repair_work_units", runs.improvement.counters.work_units),
+                ),
+            )
         native_volume_checkpoint(
             specification.limits, MeshingStageKind.OPTIMIZATION, scope=scope
         )
@@ -3744,6 +5505,7 @@ def _finish_plc_volume(
             schedule,
             scope=scope,
             record_phase=record_phase,
+            hard_goal_first=hard_goal_first,
         )
     finally:
         carrier.state.close()

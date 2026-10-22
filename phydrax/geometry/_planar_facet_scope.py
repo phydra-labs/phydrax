@@ -293,19 +293,23 @@ def _exact_support(
     selected: set[int],
     fragments: set[int],
 ) -> bool:
-    rows = tuple(
-        row
-        for row in coverage.facet_source_overlaps
-        if row[0] in selected or row[1] in fragments
+    overlaps = coverage.facet_source_overlaps
+    target_rows = np.isin(
+        overlaps.facets, np.fromiter(selected, dtype=np.int64, count=len(selected))
     )
-    if any(row[5:] != ("exact", "physical") for row in rows):
+    source_rows = np.isin(
+        overlaps.sources, np.fromiter(fragments, dtype=np.int64, count=len(fragments))
+    )
+    chosen = target_rows | source_rows
+    exact_physical = overlaps.semantic_mask("exact") & overlaps.space_mask("physical")
+    if np.any(chosen & ~exact_physical):
         return False
-    targets = {row[0] for row in rows if row[1] in fragments}
-    sources = {row[1] for row in rows if row[0] in selected}
+    targets = set(overlaps.facets[source_rows].tolist())
+    sources = set(overlaps.sources[target_rows].tolist())
     extra = sources - fragments
     missing = targets - selected
-    absent_targets = selected - {row[0] for row in rows}
-    absent_sources = fragments - {row[1] for row in rows}
+    absent_targets = selected - set(overlaps.facets[chosen].tolist())
+    absent_sources = fragments - set(overlaps.sources[chosen].tolist())
     if extra:
         state.add(
             "scope_extra_source_fragments", "violated", "source_facet", tuple(extra)
@@ -424,7 +428,7 @@ def _mapped_scope(
     if exceeded:
         state.add("scope_candidate_capacity", "unresolved", "mesh")
         return
-    facets = mesh_facets(mesh, budget=budget)
+    facets = mesh_facets(mesh, geometry=geometry, budget=budget)
     prepared = _prepare_scope_cells(mesh, geometry, budget=budget)
     covered = [Fraction(0) for _ in source]
     work = SubdivisionLedger(candidate_pairs=used)
@@ -510,7 +514,7 @@ def certify_planar_facet_source_scope(
     elif mesh.storage is not None:
         state.add("scope_owner_local_premise", "unresolved", "mesh")
     else:
-        facets = mesh_facets(mesh, budget=budget)
+        facets = mesh_facets(mesh, geometry=geometry, budget=budget)
         entities = facet_entity_ids(mesh, facets.rows)
         occurrences = {int(entity): index for index, entity in enumerate(entities)}
         if any(entity not in occurrences for entity in target):
@@ -519,7 +523,8 @@ def certify_planar_facet_source_scope(
             )
         selected = set(target)
         fragments = {row for _, rows in source_map for row in rows}
-        known = {row[0] for row in coverage.facet_source_overlaps if row[6] == "physical"}
+        physical = coverage.facet_source_overlaps.space_mask("physical")
+        known = set(coverage.facet_source_overlaps.facets[physical].tolist())
         if selected - known:
             state.add(
                 "scope_target_overlap_premise",
@@ -528,7 +533,7 @@ def certify_planar_facet_source_scope(
                 tuple(selected - known),
             )
         elif not _exact_support(state, coverage, selected, fragments):
-            if any(row[6] != "physical" for row in coverage.facet_source_overlaps):
+            if not np.all(physical):
                 state.add("scope_physical_overlap_premise", "unresolved", "mesh")
             else:
                 _mapped_scope(

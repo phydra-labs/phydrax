@@ -244,11 +244,36 @@ def bind_execution_group(spec: ExecutionGroupSpec) -> ExecutionGroup:
     return ExecutionGroup(spec, devices)
 
 
+def process_owner_devices() -> tuple[jax.Device, ...]:
+    """First device of every process, in process order: one owner per process."""
+    return tuple(
+        next(device for device in jax.devices() if device.process_index == rank)
+        for rank in range(jax.process_count())
+    )
+
+
+def owner_execution_mesh(devices: Sequence[jax.Device], /) -> Mesh:
+    """One-axis owner mesh shared by every owner epoch on these devices.
+
+    Initial generation, initial certification and adaptation epochs place their
+    owners on this one substrate: the root group's mesh when it is exactly these
+    devices, otherwise a ``parts`` axis over them. Equal-shaped owner programs
+    of later epochs therefore reuse earlier compilations.
+    """
+    chosen = tuple(devices)
+    root = ExecutionRuntime.current().root_group.mesh
+    if root.devices.ndim == 1 and tuple(root.devices.flat) == chosen:
+        return root
+    return Mesh(np.asarray(chosen, dtype=object), ("parts",))
+
+
 __all__ = (
     "ExecutionGroup",
     "ExecutionRuntime",
     "bind_execution_group",
     "discover_resource_inventory",
+    "owner_execution_mesh",
     "partition_execution_group_specs",
+    "process_owner_devices",
     "root_execution_group_spec",
 )

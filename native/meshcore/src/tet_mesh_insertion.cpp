@@ -46,11 +46,17 @@ int32_t TetMesh::locate(const double* p, int32_t start, int32_t& blocked_tet, in
 bool TetMesh::split_positions_admitted(int32_t a, int32_t b, const double* witness,
                                        const double* position, int32_t& source,
                                        bool& on_edge) const {
+  // An unconstrained edge may be split at the rounded carrier of an interior
+  // fraction: an interior vertex carries no source stratum, so only the
+  // staged cavity orientation (and any constrained face through the edge,
+  // whose plane must contain it) decides. Segments keep exact witnesses.
   if (!live_vertex(a) || !live_vertex(b) || a == b || !geometry::finite3(witness) ||
       !geometry::finite3(position) || !coordinate_in_domain(witness[0]) ||
       !coordinate_in_domain(witness[1]) || !coordinate_in_domain(witness[2]) ||
       !coordinate_in_domain(position[0]) || !coordinate_in_domain(position[1]) ||
-      !coordinate_in_domain(position[2]) || !geometry::collinear(point(a), point(b), witness)) {
+      !coordinate_in_domain(position[2]) ||
+      (!geometry::collinear(point(a), point(b), witness) &&
+       !(segment_source(a, b) < 0 && std::equal(witness, witness + 3, position)))) {
     return false;
   }
   int axis = 0;
@@ -64,7 +70,7 @@ bool TetMesh::split_positions_admitted(int32_t a, int32_t b, const double* witne
   if (!(low < witness[axis] && witness[axis] < high)) {
     return false;
   }
-  on_edge = witness == position || geometry::collinear(point(a), point(b), position);
+  on_edge = geometry::collinear(point(a), point(b), position);
   source = segment_source(a, b);
   return !(source >= 0 && !on_edge) &&
          !(on_edge && !(low < position[axis] && position[axis] < high));
@@ -74,6 +80,7 @@ Insertion TetMesh::prepare_edge_insertion(int32_t a, int32_t b, const double* wi
                                           const double* position, double source_fraction,
                                           std::size_t cell_limit, InsertKind& kind) try {
   const MemoryScope memory_scope(memory_owner_);
+  cancel_prepared_edit();
   int32_t source = -1;
   SourceWitness construction;
   bool bounded = false;
@@ -84,29 +91,70 @@ Insertion TetMesh::prepare_edge_insertion(int32_t a, int32_t b, const double* wi
     return Insertion::kCapacity;
   }
   NativeVector<int32_t> star;
-  NativeVector<int32_t> ring;
-  if (!edge_ring(a, b, star, ring)) {
+  const auto refused_star = [&](Insertion failure) {
+    // Keep the generic conflict-cavity route when it succeeds. An unchanged
+    // split point may instead use exactly the already admitted edge-star
+    // transaction of split_edge, followed by its authenticated source-row
+    // fallback. Relocation trials and resource failures never take this path.
+    if (failure != Insertion::kRefused || work_exhausted_ ||
+        !std::equal(witness, witness + 3, position)) {
+      return failure;
+    }
+    abandon();
+    if (bounded) {
+      return prepare_bounded_edge_star(a, b, position, source, construction, cell_limit);
+    }
+    const SourceWitness ordinary;
+    Insertion prepared = prepare_bounded_edge_star(
+        a, b, position, source, ordinary, cell_limit);
+    if (prepared != Insertion::kRefused || work_exhausted_ || !(source_fraction > 0.0)) {
+      return prepared;
+    }
+    double carrier[3];
+    SourceWitness authenticated;
+    prepared = construct_source_split(a, b, source_fraction, carrier, authenticated);
+    if (prepared != Insertion::kOk) {
+      return prepared;
+    }
+    if (!std::equal(carrier, carrier + 3, position)) {
+      return Insertion::kRefused;
+    }
+    // The old source-row split first offers this authenticated point to its
+    // bounded conflict preparation, then to the same protected edge star.
+    int32_t bounded_seed = -1;
+    prepared = select_edge_insertion_seed(a, b, position, source, true, star, kind, bounded_seed);
+    if (prepared == Insertion::kOk) {
+      prepared = prepare(position, bounded_seed, a, b, cell_limit, &authenticated);
+      if (prepared == Insertion::kOk) {
+        prepared = admit_cavity_protection(position);
+      }
+    }
+    if (prepared != Insertion::kRefused) {
+      return prepared;
+    }
+    abandon();
+    return prepare_bounded_edge_star(a, b, position, source, authenticated, cell_limit);
+  };
+  if (!edge_ring(a, b, star, scratch_ring_)) {
     return work_exhausted_ ? Insertion::kCapacity : Insertion::kRefused;
   }
   int32_t seed = -1;
   status = select_edge_insertion_seed(a, b, position, source, bounded, star, kind, seed);
-  if (status != Insertion::kOk) return status;
+  if (status != Insertion::kOk) return refused_star(status);
   int32_t blocked = -1;
   int blocked_slot = -1;
   const int32_t origin = bounded ? seed : locate(position, seed, blocked, blocked_slot);
   if (origin < 0) {
-    return work_exhausted_ ? Insertion::kCapacity : Insertion::kRefused;
+    return refused_star(work_exhausted_ ? Insertion::kCapacity : Insertion::kRefused);
   }
   status = prepare(position, origin, kind == InsertKind::kSubsegment ? a : -1,
                    kind == InsertKind::kSubsegment ? b : -1, cell_limit,
                    bounded ? &construction : nullptr);
   if (status != Insertion::kOk) {
     abandon();
-    return bounded && status == Insertion::kRefused
-               ? prepare_bounded_edge_star(a, b, position, source, construction, cell_limit)
-               : status;
+    return refused_star(status);
   }
-  return admit_cavity_protection(position);
+  return refused_star(admit_cavity_protection(position));
 
 } catch (const std::bad_alloc&) {
   abandon();
@@ -116,6 +164,7 @@ Insertion TetMesh::prepare_edge_insertion(int32_t a, int32_t b, const double* wi
 Insertion TetMesh::prepare(const double* p, int32_t origin, int32_t split_a, int32_t split_b,
                            std::size_t cell_limit, const SourceWitness* construction) try {
   const MemoryScope memory_scope(memory_owner_);
+  cancel_prepared_edit();
   pending_edge_star_ = false;
   pending_ = static_cast<int32_t>(vertex_count());
   pending_source_ = construction == nullptr ? SourceWitness{} : *construction;
@@ -140,24 +189,32 @@ Insertion TetMesh::prepare(const double* p, int32_t origin, int32_t split_a, int
   return Insertion::kCapacity;
 }
 
-Insertion TetMesh::commit(InsertKind kind, double size) try {
-  if (pending_edge_star_) {
-    pending_edge_star_ = false;
-    int32_t inserted = -1;
-    return split_edge_star(split_a_, split_b_, pending_point_, size,
-                           segment_source(split_a_, split_b_), true, &pending_source_, inserted);
+Insertion TetMesh::commit(InsertKind kind, double size) {
+  if (retained_edit_.current() &&
+      retained_edit_.binding_.operation == PreparedBinding::Operation::kInsertion) {
+    return commit_retained_insertion(kind, size);
   }
+  const Insertion staged = stage_insertion(kind);
+  return staged == Insertion::kOk ? commit_retained_insertion(kind, size) : staged;
+}
+
+Insertion TetMesh::stage_insertion(InsertKind kind) try {
   const MemoryScope memory_scope(memory_owner_);
   EditTransaction transaction(*this, crossed_);
+  if (pending_ != vertex_count() || !std::isfinite(pending_point_[0]) ||
+      !std::isfinite(pending_point_[1]) || !std::isfinite(pending_point_[2])) {
+    return Insertion::kRefused;
+  }
   if (vertex_count() >= max_vertices_) {
     return Insertion::kCapacity;
   }
   const int32_t p = pending_;
   SourceWitness witness;
-  const Insertion admitted = pending_witness(kind, witness);
+  const Insertion admitted = pending_edge_star_ ? Insertion::kOk : pending_witness(kind, witness);
   if (admitted != Insertion::kOk) {
     return admitted;
   }
+  if (pending_edge_star_) witness = pending_source_;
   pending_source_ = witness;
   NativeUnorderedMap<std::uint64_t, int32_t> staged_segments{
       NativeAllocator<std::pair<const std::uint64_t, int32_t>>(memory_owner_)};
@@ -178,35 +235,58 @@ Insertion TetMesh::commit(InsertKind kind, double size) try {
   reserve_for(sizes_, sizes_.size() + 1);
   reserve_for(vertex_tet_, vertex_tet_.size() + 1);
   reserve_for(vertex_stamp_, vertex_stamp_.size() + 1);
-  reserve_for(slot_reason_, complex_.tets.size() + boundary_.size());
+  const std::size_t proposed = pending_edge_star_ ? 2 * cavity_.size() : boundary_.size();
+  reserve_for(slot_reason_, complex_.tets.size() + proposed);
   edit_.begin(EditLimits{std::numeric_limits<std::size_t>::max(),
                          std::numeric_limits<std::size_t>::max(), max_tetrahedra_});
   for (int32_t t : cavity_) {
-    if (edit_.remove(t) != EditStatus::kOk) {
+    // A cavity or execution-allowance refusal is a resource refusal; a dead
+    // or repeated prepared slot contradicts the validated premise.
+    const EditStatus removed = edit_.remove(t);
+    if (removed == EditStatus::kBufferLimit) {
+      return Insertion::kCapacity;
+    }
+    if (removed != EditStatus::kOk) {
       return Insertion::kInternal;
     }
   }
-  transaction.retire_constraints();
   EditStatus status = EditStatus::kOk;
-  for (const BoundaryFacet& face : boundary_) {
-    Tetrahedron cone = tet(face.tet);
-    cone.v[face.slot] = p;
-    int32_t constraints[4];
-    for (int j = 0; j < 4; ++j) {
-      constraints[j] = j == face.slot ? complex_.constraint(face.tet, face.slot)
-                                      : new_face_source(cone.v, face.slot, j);
+  const auto add_child = [&](const int32_t* vertices, const int32_t* marks, int32_t region) {
+    if (status == EditStatus::kOk) status = edit_.add(vertices, marks, region);
+  };
+  if (pending_edge_star_) {
+    for (int32_t t : cavity_) {
+      const Tetrahedron& old = tet(t);
+      for (int endpoint : {split_a_, split_b_}) {
+        const int slot = vertex_slot(old, endpoint);
+        int32_t child[4] = {old.v[0], old.v[1], old.v[2], old.v[3]};
+        child[slot] = p;
+        int32_t marks[4];
+        for (int k = 0; k < 4; ++k) {
+          marks[k] = old.v[k] == (endpoint == split_a_ ? split_b_ : split_a_)
+                         ? kNoConstraint : complex_.constraint(t, k);
+        }
+        add_child(child, marks, complex_.region(t));
+      }
     }
-    status = edit_.add(cone.v, constraints, complex_.region(face.tet));
-    if (status != EditStatus::kOk) {
-      break;
+  } else {
+    for (const BoundaryFacet& face : boundary_) {
+      Tetrahedron cone = tet(face.tet);
+      cone.v[face.slot] = p;
+      int32_t constraints[4];
+      for (int j = 0; j < 4; ++j) {
+        constraints[j] = j == face.slot ? complex_.constraint(face.tet, face.slot)
+                                        : new_face_source(cone.v, face.slot, j);
+      }
+      add_child(cone.v, constraints, complex_.region(face.tet));
     }
   }
+  transaction.retire_constraints();
   if (status == EditStatus::kOk) {
     status = edit_.validate([&](const int32_t* v) { return positive(v); });
   }
-  if (status == EditStatus::kOk) {
-    status = edit_.commit();
-  }
+  // Keep the same validated owner for inspection and direct insertion. Marks
+  // are restored before returning, while the source witness remains pending.
   if (status != EditStatus::kOk) {
     edit_.rollback();
     if (status == EditStatus::kInternal) {
@@ -218,28 +298,105 @@ Insertion TetMesh::commit(InsertKind kind, double size) try {
                ? Insertion::kCapacity
                : Insertion::kRefused;
   }
+  transaction.retain();
+  PreparedReplacement prepared(*this, EditStatus::kOk);
+  prepared.binding_.operation = PreparedBinding::Operation::kInsertion;
+  prepared.binding_.kind = kind;
+  prepared.binding_.source = kind == InsertKind::kSubsegment
+                                 ? segment_source(split_a_, split_b_) : -1;
+  prepared.binding_.cavity_size = cavity_.size();
+  prepared.binding_.segments = std::move(staged_segments);
+  retained_edit_ = std::move(prepared);
+  return Insertion::kOk;
+} catch (const std::bad_alloc&) {
+  abandon();
+  return Insertion::kCapacity;
+}
+
+Insertion TetMesh::commit_retained_insertion(InsertKind kind, double size) try {
+  if (!retained_edit_.current() ||
+      retained_edit_.binding_.operation != PreparedBinding::Operation::kInsertion ||
+      retained_edit_.binding_.kind != kind || !std::isfinite(size) || size < 0.0) {
+    abandon();
+    return Insertion::kRefused;
+  }
+  auto prepared = std::move(retained_edit_);
+  EditTransaction transaction(*this, crossed_);
+  transaction.retire_constraints();
+  const EditStatus status =
+      native_execution_cavity(edit_.removed().size() + edit_.proposal().size())
+          ? edit_.commit() : EditStatus::kBufferLimit;
+  if (status != EditStatus::kOk) {
+    broken_ = broken_ || status == EditStatus::kInternal;
+    return status == EditStatus::kCellLimit || status == EditStatus::kSlotLimit ||
+                   status == EditStatus::kBufferLimit ? Insertion::kCapacity
+           : status == EditStatus::kInternal ? Insertion::kInternal : Insertion::kRefused;
+  }
+  prepared.owner_ = nullptr;
   transaction.release();
+  const int32_t p = pending_;
   points_.insert(points_.end(), pending_point_, pending_point_ + 3);
-  const int8_t dim = kind == InsertKind::kSubsegment                        ? 1
-                     : (kind == InsertKind::kSubfacet || !crossed_.empty()) ? 2
-                                                                            : 3;
+  const int8_t dim = kind == InsertKind::kSubsegment ? 1
+                    : (kind == InsertKind::kSubfacet || !crossed_.empty()) ? 2 : 3;
   dimension_.push_back(dim);
-  witnesses_.push_back(witness);
+  witnesses_.push_back(pending_source_);
   protection_.push_back(0.0);
   sizes_.push_back(size);
   vertex_tet_.push_back(-1);
   vertex_stamp_.push_back(0U);
   pending_ = kNoPending;
+  pending_edge_star_ = false;
   if (kind == InsertKind::kSubsegment) {
     segments_.erase(topology::undirected_edge(split_a_, split_b_));
-    segments_.insert(staged_segments.extract(topology::undirected_edge(split_a_, p)));
-    segments_.insert(staged_segments.extract(topology::undirected_edge(p, split_b_)));
+    segments_.insert(prepared.binding_.segments.extract(topology::undirected_edge(split_a_, p)));
+    segments_.insert(prepared.binding_.segments.extract(topology::undirected_edge(p, split_b_)));
   }
-  largest_cavity_ = std::max(largest_cavity_, cavity_.size());
+  largest_cavity_ = std::max(largest_cavity_, prepared.binding_.cavity_size);
   after_commit();
   return Insertion::kOk;
 } catch (const std::bad_alloc&) {
   return Insertion::kCapacity;
+}
+
+Insertion TetMesh::retain_edge_insertion(int32_t a, int32_t b, const double* witness,
+                                         const double* position, double fraction,
+                                         std::size_t cell_limit, InsertKind kind) {
+  const Insertion status = stage_insertion(kind);
+  if (status != Insertion::kOk) return status;
+  auto& binding = retained_edit_.binding_;
+  binding.first = a;
+  binding.second = b;
+  binding.cell_limit = cell_limit;
+  std::copy_n(point(a), 3, binding.endpoints.begin());
+  std::copy_n(point(b), 3, binding.endpoints.begin() + 3);
+  std::copy_n(witness, 3, binding.input.begin());
+  std::copy_n(position, 3, binding.input.begin() + 3);
+  binding.input[6] = fraction;
+  return Insertion::kOk;
+}
+
+bool TetMesh::reuse_edge_insertion(int32_t a, int32_t b, const double* witness,
+                                   const double* position, double fraction,
+                                   std::size_t cell_limit, InsertKind& kind) const noexcept {
+  const auto& binding = retained_edit_.binding_;
+  if (!retained_edit_.current() ||
+      binding.operation != PreparedBinding::Operation::kInsertion ||
+      binding.first != a || binding.second != b || binding.cell_limit != cell_limit ||
+      !live_vertex(a) || !live_vertex(b) ||
+      binding.source != (binding.kind == InsertKind::kSubsegment ? segment_source(a, b) : -1)) {
+    return false;
+  }
+  for (int k = 0; k < 6; ++k) {
+    const double value = point(k < 3 ? a : b)[k % 3];
+    if (std::bit_cast<uint64_t>(value) != std::bit_cast<uint64_t>(binding.endpoints[k])) return false;
+  }
+  for (int k = 0; k < 7; ++k) {
+    const double value = k < 3 ? witness[k] : k < 6 ? position[k - 3] : fraction;
+    if (!std::isfinite(value) ||
+        std::bit_cast<uint64_t>(value) != std::bit_cast<uint64_t>(binding.input[k])) return false;
+  }
+  kind = binding.kind;
+  return true;
 }
 
 Insertion TetMesh::split_edge(int32_t a, int32_t b, const double* position, double size,
@@ -300,8 +457,7 @@ Insertion TetMesh::split_edge_bounded(int32_t a, int32_t b, const double* positi
     return Insertion::kDeviation;
   }
   NativeVector<int32_t> star;
-  NativeVector<int32_t> ring;
-  if (!edge_ring(a, b, star, ring)) {
+  if (!edge_ring(a, b, star, scratch_ring_)) {
     return work_exhausted_ ? Insertion::kCapacity : Insertion::kRefused;
   }
   const Insertion admitted = admit_split_facets(a, b, witness, star);
@@ -405,8 +561,7 @@ Insertion TetMesh::edge_star_preparation(int32_t a, int32_t b, const double* pos
                                          NativeVector<int32_t>& star,
                                          NativeVector<Crossed>& retired, bool& constrained,
                                          SourceWitness& witness) {
-  NativeVector<int32_t> ring;
-  if (!edge_ring(a, b, star, ring)) {
+  if (!edge_ring(a, b, star, scratch_ring_)) {
     return work_exhausted_ ? Insertion::kCapacity : Insertion::kRefused;
   }
   constrained = source >= 0;
@@ -446,12 +601,19 @@ Insertion TetMesh::edge_star_preparation(int32_t a, int32_t b, const double* pos
 Insertion TetMesh::prepare_bounded_edge_star(int32_t a, int32_t b, const double* position,
                                              int32_t source, const SourceWitness& bounded,
                                              std::size_t cell_limit) {
+  cancel_prepared_edit();
   NativeVector<int32_t> star;
   NativeVector<Crossed> retired;
   bool constrained = false;
   SourceWitness witness;
-  const Insertion admitted = edge_star_preparation(a, b, position, source, true, &bounded, star,
-                                                   retired, constrained, witness);
+  // An empty proof denotes the original ordinary edge-star path: earn its
+  // exact source witness and surface-preservation checks here. A nonempty
+  // proof has already authenticated the identical source-row RNE carrier.
+  const SourceWitness* proof =
+      bounded.stratum == SourceStratum::kNone ? nullptr : &bounded;
+  const bool on_edge = proof != nullptr || geometry::collinear(point(a), point(b), position);
+  const Insertion admitted = edge_star_preparation(a, b, position, source, on_edge, proof,
+                                                   star, retired, constrained, witness);
   if (admitted != Insertion::kOk) {
     return admitted;
   }
@@ -475,7 +637,7 @@ Insertion TetMesh::prepare_bounded_edge_star(int32_t a, int32_t b, const double*
   crossed_ = std::move(retired);
   pending_ = static_cast<int32_t>(vertex_count());
   pending_source_ = witness;
-  pending_source_authored_ = true;
+  pending_source_authored_ = proof != nullptr;
   split_a_ = a;
   split_b_ = b;
   std::copy_n(position, 3, pending_point_);
@@ -487,6 +649,7 @@ Insertion TetMesh::split_edge_star(int32_t a, int32_t b, const double* position,
                                    int32_t source, bool on_edge, const SourceWitness* bounded,
                                    int32_t& inserted) try {
   const MemoryScope memory_scope(memory_owner_);
+  cancel_prepared_edit();
   NativeVector<int32_t> star;
   NativeVector<Crossed> retired;
   bool constrained = false;
@@ -736,6 +899,23 @@ bool TetMesh::conflicts(int32_t t, const double* p) const {
                             coordinates[4]) > 0;
 }
 
+bool TetMesh::vertex_conflicts(int32_t t, int32_t e) const {
+  const MemoryScope memory_scope(memory_owner_);
+  const int32_t* v = tet(t).v;
+  bool exact_source = witness(e).deviation > 0.0;
+  for (int k = 0; k < 4; ++k) exact_source = exact_source || witness(v[k]).deviation > 0.0;
+  if (!exact_source) {
+    return insphere(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(e)) > 0;
+  }
+  Expansion coordinates[5][3];
+  for (int k = 0; k < 4; ++k) {
+    if (!source_position(v[k], coordinates[k])) return false;
+  }
+  if (!source_position(e, coordinates[4])) return false;
+  return insphere_expansion(coordinates[0], coordinates[1], coordinates[2], coordinates[3],
+                            coordinates[4]) > 0;
+}
+
 bool TetMesh::contains(int32_t t, const double* p) const {
   const MemoryScope memory_scope(memory_owner_);
   for (int k = 0; k < 4; ++k) {
@@ -801,35 +981,106 @@ Insertion TetMesh::grow(int32_t origin) {
   return Insertion::kOk;
 }
 
+// Dropping a cell only adds unmarked neighbors, so the drop rule is monotone:
+// any order of drops reaches the same greatest star-shaped subset, and a cell
+// that must stay (the origin or a cell containing p) is dropped in some order
+// exactly when it is dropped in every order.  The first sweep is one pass of
+// the former full-pass fixpoint (the same cells, order and charge); later only
+// cells flagged next to a dropped one are examined again, each flagged cell
+// queued once and charged one unit per examination, instead of re-examining
+// the whole cavity until a pass changes nothing.
 Insertion TetMesh::shrink(int32_t origin) {
   const MemoryScope memory_scope(memory_owner_);
   const double* p = pending_point_;
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    if (!spend(static_cast<int64_t>(cavity_.size()))) {
+  const auto droppable = [&](int32_t t) {
+    const Tetrahedron& current = tet(t);
+    if (is_ghost(current)) {
+      const int ghost = vertex_slot(current, kGhostVertex);
+      if (!marked(current.n[ghost])) {
+        return true;
+      }
+      // A ghost cone is a surface triangle, not an unconstrained volume
+      // cell. Its finite face must remain star-shaped as well: a coplanar
+      // but disconnected source patch can have a conflicting finite cell
+      // without being visible from p across its boundary. Coning that patch
+      // would bridge a hole or reverse its boundary triangles.
+      int32_t face[3];
+      oriented_facet(current.v, ghost, face);
+      const auto projected_sign = [&](int axis) {
+        const int x = (axis + 1) % 3, y = (axis + 2) % 3;
+        const double a[2] = {point(face[0])[x], point(face[0])[y]};
+        const double b[2] = {point(face[1])[x], point(face[1])[y]};
+        const double c[2] = {point(face[2])[x], point(face[2])[y]};
+        return orient2d(a, b, c);
+      };
+      int axis = 0;
+      int sign = 0;
+      for (; axis < 3; ++axis) {
+        sign = projected_sign(axis);
+        if (sign != 0) break;
+      }
+      if (sign == 0) return true;
+      for (int k = 0; k < 4; ++k) {
+        if (k == ghost || marked(current.n[k])) continue;
+        for (int r = 0; r < 3; ++r) {
+          if (face[r] != current.v[k]) continue;
+          face[r] = pending_;
+          const int cone_sign = projected_sign(axis);
+          face[r] = current.v[k];
+          if (cone_sign != sign) return true;
+          break;
+        }
+      }
+      return false;
+    }
+    for (int k = 0; k < 4; ++k) {
+      if (!marked(current.n[k]) && orient_with(t, k, p) <= 0) {
+        return true;
+      }
+    }
+    return false;
+  };
+  // Examines marked cell t (settling any pending flag); false on refusal.
+  const auto examine = [&](int32_t t) {
+    Tetrahedron& current = complex_.tets[static_cast<std::size_t>(t)];
+    current.state = kInCavity;
+    if (!droppable(t)) {
+      return true;
+    }
+    if (t == origin || (!is_ghost(current) && contains(t, p))) {
+      return false;
+    }
+    unmark(t);
+    for (int32_t u : current.n) {
+      Tetrahedron& neighbor = complex_.tets[static_cast<std::size_t>(u)];
+      if (neighbor.stamp == stamp_ && neighbor.state == kInCavity) {
+        neighbor.state = kInCavityRecheck;
+        stack_.push_back(u);
+      }
+    }
+    return true;
+  };
+  stack_.clear();
+  if (!spend(static_cast<int64_t>(cavity_.size()))) {
+    return Insertion::kCapacity;
+  }
+  for (int32_t t : cavity_) {
+    if (marked(t) && !examine(t)) {
+      return Insertion::kRefused;
+    }
+  }
+  while (!stack_.empty()) {
+    const int32_t t = stack_.back();
+    stack_.pop_back();
+    const Tetrahedron& current = tet(t);
+    if (current.stamp != stamp_ || current.state != kInCavityRecheck) {
+      continue;  // examined again since it was flagged
+    }
+    if (!spend(1)) {
       return Insertion::kCapacity;
     }
-    for (int32_t t : cavity_) {
-      if (!marked(t)) {
-        continue;
-      }
-      const Tetrahedron& current = tet(t);
-      bool drop = false;
-      if (is_ghost(current)) {
-        drop = !marked(current.n[vertex_slot(current, kGhostVertex)]);
-      } else {
-        for (int k = 0; k < 4 && !drop; ++k) {
-          drop = !marked(current.n[k]) && orient_with(t, k, p) <= 0;
-        }
-      }
-      if (drop) {
-        if (t == origin || (!is_ghost(current) && contains(t, p))) {
-          return Insertion::kRefused;
-        }
-        unmark(t);
-        changed = true;
-      }
+    if (!examine(t)) {
+      return Insertion::kRefused;
     }
   }
   std::size_t kept = 0;
@@ -840,6 +1091,12 @@ Insertion TetMesh::shrink(int32_t origin) {
   }
   cavity_.resize(kept);
   return Insertion::kOk;
+}
+
+FaceKey TetMesh::crossed_face(std::size_t i) const {
+  int32_t f[3];
+  oriented_facet(tet(crossed_[i].tet).v, crossed_[i].slot, f);
+  return FaceKey::of(f[0], f[1], f[2]);
 }
 
 Insertion TetMesh::collect() {

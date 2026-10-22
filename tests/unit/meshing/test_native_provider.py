@@ -67,7 +67,10 @@ def test_native_implicit_route_publishes_closed_audited_surface_with_gradients()
     assert result.audit.passed
     assert result.associations[0].complete
     assert "wall_seconds" in result.runtime.enforced_limits
-    assert "cavity_cells" in result.runtime.unenforced_limits
+    # Fixed-lattice discovery and realization charge realized work; the route
+    # makes no cavity edits, so both limits are enforced.
+    assert {"work_units", "cavity_cells"} <= set(result.runtime.enforced_limits)
+    assert result.runtime.unenforced_limits == ()
     assert result.derivative_mode is M.MeshingDerivativeMode.FIXED_ROUTE_PIECEWISE
     assert jnp.isfinite(derivative)
     assert derivative != 0.0

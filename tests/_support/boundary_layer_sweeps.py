@@ -1,4 +1,4 @@
-"""Independent source and request builders for periodic, CAD, and exact-sweep layers."""
+"""Independent source and request builders for periodic, CAD, and affine-sweep layers."""
 
 from dataclasses import dataclass
 
@@ -98,7 +98,9 @@ def periodic_wall(
             shifts = points[:, :1].astype(np.int64)
         area = 1.0
     else:
-        raise ValueError("Unknown original periodicity")
+        raise ValueError(
+            f"layer_fixture.periodicity must select a supported pairing; got {periodicity!r}"
+        )
     rows = np.asarray(
         ((0, 1, 2, 3),) if quadrilateral else ((0, 1, 2), (0, 2, 3)), dtype=np.int64
     )

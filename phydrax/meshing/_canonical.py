@@ -66,6 +66,7 @@ from ._organization_records import (
     MeshAttributeProjection,
     MeshLabel,
     MeshPatch,
+    MeshPatchBank,
     MeshZone,
     RegionBoundaryEvidence,
     RegionMeshingEvidence,
@@ -257,6 +258,7 @@ def _periodic_rebuild(
         entity_global_ids=entity_ids,
         periodic_topology=candidate,
         numeric_version=lifted.numeric_version,
+        budget=budget,
     )
 
 
@@ -457,7 +459,7 @@ def _audit_certification_carrier(
     carrier: _CertificationCarrier,
     policy: CellMeshAuditPolicy | None,
     boundary: SurfaceModel | None,
-    patches: tuple[MeshPatch, ...],
+    patches: tuple[MeshPatch, ...] | MeshPatchBank,
     zones: tuple[MeshZone, ...],
     labels: tuple[MeshLabel, ...],
     attributes: tuple[MeshAttribute, ...],
@@ -635,7 +637,7 @@ def certify_cell_mesh(
     geometry: cell_geometry_owner.CellGeometrySpec | None = None,
     audit_policy: CellMeshAuditPolicy | None = None,
     boundary: SurfaceModel | None = None,
-    patches: tuple[MeshPatch, ...] = (),
+    patches: tuple[MeshPatch, ...] | MeshPatchBank = (),
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
     attributes: tuple[MeshAttribute, ...] = (),
@@ -715,6 +717,7 @@ def certify_cell_mesh(
         region_boundary_evidence=region_boundary_evidence,
         certification=verdict.report,
         surface_source=surface_source,
+        budget=budget,
     )
 
 
@@ -744,7 +747,7 @@ def _prepare_owner_local_scientific_source(
 
     match original:
         case initial_certification_owner.InitialCollectiveMeshEvidence():
-            original.require_passed()
+            type(original).require_passed(original)
             source_audit_id = original.evidence_id
             scientific_theorem_id = original.source_evidence_id
         case CellMeshingResult():
@@ -753,7 +756,7 @@ def _prepare_owner_local_scientific_source(
                 raise ValueError(
                     "owner_local_source.embedding must carry its prepared proof; got absent evidence"
                 )
-            embedding.binding.require(original.mesh, original.geometry)
+            type(embedding.binding).require(embedding.binding, original.mesh, original.geometry)
             if (
                 embedding.status != "certified"
                 or embedding.validity_certificate_id
@@ -777,7 +780,7 @@ def _prepare_owner_local_scientific_source(
             f"got source_mesh_id={collective_evidence.source_mesh_id!r}, "
             f"target_mesh_id={collective_evidence.mesh_id!r}, evidence_id={collective_evidence.evidence_id!r}"
         )
-    collective_evidence.require_passed()
+    type(collective_evidence).require_passed(collective_evidence)
     return _OwnerLocalScientificSource(
         source_audit_id=source_audit_id,
         scientific_theorem_id=scientific_theorem_id,
@@ -950,6 +953,7 @@ def certify_owner_local_cell_mesh(
         attribute_projections=attribute_projections,
         storage_binding=storage_binding,
         collective_certificates=collective_certificates,
+        budget=budget,
     )
 
 

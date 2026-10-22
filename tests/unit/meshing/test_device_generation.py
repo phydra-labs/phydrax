@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -181,6 +182,53 @@ def test_surface_generation_inserts_projected_geometry_and_preserves_feature_edg
     ) * 0.5
     assert np.all(area > 0)
     assert np.sum(area) == pytest.approx(0.5)
+
+
+def test_surface_reconnect_validation_refusal_is_work_limit_without_publication() -> None:
+    # The topology reservation fits, but the remaining native allowance cannot pay
+    # the reconnect's mandatory source validation (10 units for one triangle).
+    points = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0)), dtype=np.float64)
+    roomy = DeviceGenerationLayout(
+        vertex_capacity=8, cell_capacity=8, candidate_capacity=4, maximum_work_units=1000
+    )
+    source = prepare_device_generation(
+        roomy,
+        points=points,
+        cells=np.asarray(((0, 1, 2),), dtype=np.int32),
+        vertex_ids=np.asarray((10, 20, 30), dtype=np.int64),
+        cell_ids=np.asarray((100,), dtype=np.int64),
+        cell_classes=np.asarray((5,), dtype=np.int64),
+        target_sizes=np.asarray((0.5,), dtype=np.float64),
+        charts=points[:, :2].copy(),
+        normals=np.tile(np.asarray((0, 0, 1), dtype=np.float64), (3, 1)),
+        constrained=np.ones((1, 3), dtype=np.bool_),
+    )
+    batch = evaluate_device_generation_candidates(source)
+    count = int(np.asarray(batch.count))
+    assert count >= 1
+    # One source row plus two created triangles per candidate are reserved.
+    reserved = 1 + 2 * count
+    tight = DeviceGenerationLayout(
+        vertex_capacity=8,
+        cell_capacity=8,
+        candidate_capacity=4,
+        maximum_work_units=reserved + 5,
+    )
+    source = eqx.tree_at(lambda prepared: prepared.layout, source, tight)
+    chart_points = np.asarray(batch.charts)
+    update = execute_device_generation_round(
+        source,
+        candidates=batch,
+        surface_points=np.column_stack(
+            (chart_points, np.zeros((chart_points.shape[0],), dtype=np.float64))
+        ),
+        surface_normals=np.tile(
+            np.asarray((0, 0, 1), dtype=np.float64), (chart_points.shape[0], 1)
+        ),
+    )
+    assert update.evidence.status is DeviceGenerationStatus.WORK_LIMIT
+    assert update.prepared is source
+    assert update.evidence.accepted_vertices == 0
 
 
 def _adaptive(layout: AdaptiveSimplexLayout) -> AdaptiveSimplexState:
@@ -371,7 +419,9 @@ def test_uncertain_thin_tetra_rejects_rounded_degenerate_star_before_publication
 
 # Target cells retain their constrained source-chart identity across owners;
 # these scenarios exercise process-asymmetric publication.
-def _run_initial_scenario(scenario: str) -> list[dict[str, Any]]:
+def _run_initial_scenario(
+    scenario: str, arguments: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         coordinator = f"127.0.0.1:{listener.getsockname()[1]}"
@@ -380,7 +430,7 @@ def _run_initial_scenario(scenario: str) -> list[dict[str, Any]]:
         return run_on_forced_devices(
             "tests._support.distributed_meshing.device_generation",
             scenario,
-            (),
+            arguments,
             devices=1,
             env=gloo_rank_environment(coordinator, rank),
         )
@@ -604,3 +654,192 @@ def test_native_initial_storage_admits_independent_identical_buffers(
         np.testing.assert_array_equal(
             report["copied_coordinates"], report["target_coordinates"]
         )
+
+
+def test_generation_layout_neighborhood_depth_changes_its_static_signature() -> None:
+    controls = dict(
+        vertex_capacity=8, cell_capacity=8, candidate_capacity=4, maximum_work_units=1000
+    )
+    default = DeviceGenerationLayout(**controls)
+    deeper = DeviceGenerationLayout(**controls, neighborhood_depth=2)
+    assert default.neighborhood_depth == 1
+    assert deeper.neighborhood_depth == 2
+    assert jax.tree_util.tree_structure(default) != jax.tree_util.tree_structure(deeper)
+
+
+@pytest.mark.parametrize("depth", (0, -1))
+def test_generation_layout_rejects_nonpositive_neighborhood_depth(depth: int) -> None:
+    with pytest.raises(ValueError, match="neighborhood_depth"):
+        DeviceGenerationLayout(
+            vertex_capacity=8, cell_capacity=8, candidate_capacity=4,
+            maximum_work_units=1000, neighborhood_depth=depth,
+        )
+
+
+@pytest.fixture(scope="module")
+def live_publication_reports() -> list[dict[str, Any]]:
+    return _run_initial_scenario("initial_graph_live_publication")
+
+
+def test_native_two_rank_live_plc_consumes_actual_fully_proven_packed_object(
+    live_publication_reports: list[dict[str, Any]],
+) -> None:
+    assert len(live_publication_reports) == 2
+    for report in live_publication_reports:
+        live = report["live_publication"]
+        assert live["same_actual_packed_object"]
+        assert live["constructor_content_scans"] == 1
+        assert live["counts"] == dict(raw=1, packed=1, physical=1, plc=1, restore=0)
+        assert report["bytewise_fields_history_rng_clock"]
+        assert report["source_raw_unchanged"]
+        assert report["moved_cells"] > 0
+        assert report["published_cells"] == report["initial_cells"]
+    assert live_publication_reports[0]["target_result"] == live_publication_reports[1]["target_result"]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "foreign_evidence", "foreign_scope", "foreign_budget", "layout",
+        "evidence_epoch", "storage_epoch", "stored_content_id",
+        "storage_array_owner", "packed_array_owner", "packed_object",
+        "partitioned_layout", "raw_array_owner", "missing_epoch_bank",
+        "unissued_view", "direct_view_constructor", "arbitrary_caller_data",
+        "readonly_source_bytes", "expired_request",
+        "mesh_signature", "ambient_dimension", "current_constructor",
+        "empty_owners", "empty_bindings", "subclass_view",
+    ),
+)
+def test_native_two_rank_live_publication_refuses_rebound_or_unissued_inputs(
+    live_publication_reports: list[dict[str, Any]], corruption: str
+) -> None:
+    assert all(
+        report["live_publication"]["refusals"][corruption]
+        for report in live_publication_reports
+    )
+
+
+@pytest.fixture(scope="module")
+def initial_graph_migration_reports() -> list[dict[str, Any]]:
+    return _run_initial_scenario("initial_graph_migration")
+
+
+def test_native_initial_graph_migration_owns_genuine_initial_theorem(
+    initial_graph_migration_reports: list[dict[str, Any]],
+) -> None:
+    reports = initial_graph_migration_reports
+    for name in ("initial_evidence", "source_result", "target_result", "migration_record"):
+        assert reports[0][name] == reports[1][name]
+        assert reports[0][name]
+    assert reports[0]["target_result"] != reports[0]["source_result"]
+    assert all(report["initial_owned_cells"] > 0 for report in reports)
+    assert reports[0]["initial_owned_cells"] != reports[1]["initial_owned_cells"]
+    assert sum(report["initial_owned_cells"] for report in reports) == reports[0]["initial_cells"]
+    owned_ids = [identifier for report in reports for identifier in report["owned_ids"]]
+    assert len(owned_ids) == len(set(owned_ids)) == reports[0]["initial_cells"]
+    assert all(report["owned_ids"] for report in reports)
+    for report in reports:
+        assert report["published_cells"] == report["initial_cells"]
+        assert report["proposal_weights"] == [
+            len(owner["owned_ids"]) for owner in reports
+        ]
+        assert report["imbalance"] <= 1.05
+        assert report["moved_cells"] > 0
+        assert report["source_raw_unchanged"]
+
+
+def test_native_initial_graph_migration_preserves_actual_fields_rng_clock_and_history(
+    initial_graph_migration_reports: list[dict[str, Any]],
+) -> None:
+    assert all(
+        report["bytewise_fields_history_rng_clock"]
+        for report in initial_graph_migration_reports
+    )
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "source_mutation", "raw_mutation", "lost_cell", "missing_owner",
+        "graph_measurements", "physical_placement",
+    ),
+)
+def test_native_initial_graph_migration_refuses_changed_source_or_lost_ownership(
+    initial_graph_migration_reports: list[dict[str, Any]],
+    corruption: str,
+) -> None:
+    assert all(
+        report["refusals"][corruption] for report in initial_graph_migration_reports
+    )
+
+
+@pytest.mark.parametrize("corner_packets", (False, True), ids=("cells", "corners"))
+def test_native_initial_graph_migration_extracts_reordered_compact_fields(
+    corner_packets: bool,
+) -> None:
+    from tools.meshing_qualification.scenarios.distributed import (
+        _distributed_graph_compact_values,
+    )
+
+    base = 2**54
+    query = np.asarray((base + 3, base + 1, base + 2), dtype=np.int64)
+    if corner_packets:
+        ids = np.asarray(
+            ((base + 2, base + 1, base + 3), (base + 3, base + 2, base + 1)),
+            dtype=np.int64,
+        )
+    else:
+        ids = np.asarray((base + 2, base + 3, base + 1), dtype=np.int64)
+    values = np.stack(
+        (np.where(ids == base + 1, -0.0, 1.25), (ids - base).astype(np.float64)),
+        axis=-1,
+    )
+    expected = np.asarray(((1.25, 3.0), (-0.0, 1.0), (1.25, 2.0)))
+    actual = _distributed_graph_compact_values(ids, values, query)
+    assert actual.dtype == expected.dtype and actual.shape == expected.shape
+    assert actual.tobytes() == expected.tobytes()
+
+
+def test_native_initial_graph_migration_refuses_missing_compact_field_identity() -> None:
+    from tools.meshing_qualification.scenarios.distributed import (
+        _distributed_graph_compact_values,
+    )
+
+    with pytest.raises(ValueError, match="cover every published compact identity"):
+        _distributed_graph_compact_values(
+            np.asarray((11, 29), dtype=np.int64),
+            np.asarray((3.0, 7.0)),
+            np.asarray((11, 23, 29), dtype=np.int64),
+        )
+
+
+def test_native_initial_graph_migration_refuses_shared_corner_byte_conflict() -> None:
+    from tools.meshing_qualification.scenarios.distributed import (
+        _distributed_graph_compact_values,
+    )
+
+    with pytest.raises(ValueError, match="identical shared packet bytes"):
+        _distributed_graph_compact_values(
+            np.asarray(((11, 29, 31), (29, 37, 31)), dtype=np.int64),
+            np.asarray(((3.0, -0.0, 7.0), (0.0, 9.0, 7.0))),
+            np.asarray((11, 29, 31, 37), dtype=np.int64),
+        )
+
+
+@pytest.mark.parametrize("failed_owner", (0, 1))
+def test_native_migration_record_collective_reconstruction_refuses_and_recovers(
+    failed_owner: int,
+) -> None:
+    reports = _run_initial_scenario(
+        "initial_graph_collective_record_validation", (str(failed_owner),)
+    )
+    expected = {
+        "source", "workset", "state", "transport", "record",
+        "source-optional", "state-optional",
+    }
+    for report in reports:
+        assert set(report["collective_record_refusals"]) == expected
+        assert all(report["collective_record_refusals"].values())
+        assert report["bytewise_fields_history_rng_clock"]
+        assert report["source_raw_unchanged"]
+    assert reports[0]["migration_record"] == reports[1]["migration_record"]

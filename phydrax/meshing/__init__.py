@@ -74,6 +74,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "DeviceTetraMetricReport": "._device_tetra_metric",
     "DeviceTetraMetricState": "._device_tetra_metric",
     "DeviceTetraMetricUpdate": "._device_tetra_metric",
+    "DistributedPlanarConstruction": "._distributed_planar_generation",
     "EntityLineage": "._lineage_records",
     "EntityLineageAccounting": "._lineage_records",
     "EntityLineageKind": "._lineage_records",
@@ -91,6 +92,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "GeometryAssociationKind": "._association_state",
     "GeometryAssociationProvenance": "._association_state",
     "GeometryAssociationSourceBank": "._association_state",
+    "GeometryAssociationSourceIdentities": "._association_state",
     "GeometryRealizationMeshAdaptation": "._adaptation",
     "GeometrySourceEntityRole": "._association_state",
     "GmshHighOrderOptimization": ".providers._gmsh_options",
@@ -107,6 +109,8 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "HighOrderCurvingStatus": "._curving",
     "HoleSeed": "._controls",
     "ImplicitAssociationTransfer": "._implicit_association_transfer",
+    "InitialPlanarPremise": "._initial_certification",
+    "InitialSurfacePremise": "._initial_certification",
     "LayerSchedule": "._controls",
     "LearnedMeshProposer": "._proposals",
     "LevelSetEvidence": "._level_set",
@@ -160,6 +164,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "MeshPartitionKind": "._distribution",
     "MeshPartitionPolicy": "._distribution",
     "MeshPatch": "._organization_records",
+    "MeshPatchBank": "._organization_records",
     "MeshProposal": "._proposals",
     "MeshProposalFeatures": "._proposals",
     "MeshProposalProjection": "._proposals",
@@ -192,6 +197,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "MeshingProviderInfo": "._contracts",
     "MeshingRuntimeInfo": "._result",
     "MeshingScope": "._scope",
+    "MeshingScopeBank": "._scope",
     "MeshingSourceDescriptor": "._contracts",
     "MeshingSourceKind": "._contracts",
     "MeshingStageKind": "._trace",
@@ -215,6 +221,8 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "MixedAdaptationEvidence": "._mixed_adaptation",
     "MixedAdaptationHierarchy": "._mixed_adaptation",
     "MixedLayerColumns": "._mixed_adaptation",
+    "MixedRetiredEntityBank": "._mixed_adaptation",
+    "MixedSiblingBank": "._mixed_adaptation",
     "MmgAdaptationPlan": ".providers._mmg",
     "MmgAdaptationResult": ".providers._mmg",
     "MmgFieldTransfer": ".providers._mmg",
@@ -227,6 +235,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "MmgReferenceRetention": ".providers._mmg",
     "MmgSessionEvidence": ".providers._mmg",
     "MultiblockConstruction": "._multiblock",
+    "NativeCadVolumeSource": ".providers._native_cad_volume",
     "NativeCurveSchedule": ".providers._native_schedules",
     "NativeCurveSource": ".providers._native_sources",
     "NativeDesignSourceState": "._decision",
@@ -245,7 +254,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "NativeMeshingProvider": ".providers._native",
     "NativeMeshingRoute": ".providers",
     "NativeMeshingSession": ".providers._native_session",
-    "NativeMeshingSource": ".providers._native_sources",
+    "NativeMeshingSource": ".providers._native_source_type",
     "NativePeriodicSource": ".providers._native_periodic",
     "NativePlanarSource": ".providers._native_sources",
     "NativePlcSource": ".providers._native_sources",
@@ -299,6 +308,8 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "PlanarBandLayer": "._planar_bands",
     "PlanarBandPlan": "._planar_bands",
     "PlanarBandResult": "._planar_bands",
+    "PlanarTileComplex": "._distributed_planar_generation",
+    "PlanarTileSchedule": "._distributed_planar_generation",
     "PlcAssociationTransfer": "._association",
     "PoissonBoundaryCondition": ".providers._poisson",
     "PoissonProvider": ".providers._poisson",
@@ -309,6 +320,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "PreparedBoundaryAcceptance": "._certification",
     "PreparedDeviceGeneration": "._device_generation",
     "PreparedDeviceMetricAdaptation": "._device_metric",
+    "PreparedDistributedPlanarGeneration": "._distributed_planar_generation",
     "PreparedDistributedSurfaceGeneration": "._distributed_generation",
     "PreparedImplicitVolume": "._implicit_volume",
     "PreparedMeshAdaptation": "._adaptation",
@@ -424,6 +436,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "prepare_device_generation": "._device_generation",
     "prepare_device_metric_adaptation": "._device_metric",
     "prepare_device_tetra_metric": "._device_tetra_metric",
+    "prepare_distributed_planar_generation": "._distributed_planar_generation",
     "prepare_distributed_surface_generation": "._distributed_generation",
     "prepare_distribution_transition": "._distribution",
     "prepare_graph_restart_proposal": "._distribution_migration",
@@ -438,6 +451,7 @@ _DEFERRED_EXPORTS: dict[str, str] = {
     "prepare_overset_motion_rebind": "._overset",
     "prepare_ownerlocal_migration_state": "._distribution_migration",
     "prepare_partitioned_mesh_adaptation": "._device_adaptation",
+    "prepare_periodic_coarsening": "._periodic",
     "prepare_planar_bands": "._planar_bands",
     "project_hp_lineage": "._adaptation",
     "project_mesh_proposal": "._proposals",
@@ -519,6 +533,7 @@ if TYPE_CHECKING:
         GeometryAssociationKind as GeometryAssociationKind,
         GeometryAssociationProvenance as GeometryAssociationProvenance,
         GeometryAssociationSourceBank as GeometryAssociationSourceBank,
+        GeometryAssociationSourceIdentities as GeometryAssociationSourceIdentities,
         GeometrySourceEntityRole as GeometrySourceEntityRole,
     )
     from ._audit import (
@@ -677,6 +692,13 @@ if TYPE_CHECKING:
         prepare_distributed_surface_generation as prepare_distributed_surface_generation,
         PreparedDistributedSurfaceGeneration as PreparedDistributedSurfaceGeneration,
     )
+    from ._distributed_planar_generation import (
+        DistributedPlanarConstruction as DistributedPlanarConstruction,
+        PlanarTileComplex as PlanarTileComplex,
+        PlanarTileSchedule as PlanarTileSchedule,
+        prepare_distributed_planar_generation as prepare_distributed_planar_generation,
+        PreparedDistributedPlanarGeneration as PreparedDistributedPlanarGeneration,
+    )
     from ._distribution import (
         MeshDistribution as MeshDistribution,
         MeshDistributionTransition as MeshDistributionTransition,
@@ -704,6 +726,10 @@ if TYPE_CHECKING:
         ImplicitAssociationTransfer as ImplicitAssociationTransfer,
     )
     from ._implicit_volume import PreparedImplicitVolume as PreparedImplicitVolume
+    from ._initial_certification import (
+        InitialPlanarPremise as InitialPlanarPremise,
+        InitialSurfacePremise as InitialSurfacePremise,
+    )
     from ._interface_binding import (
         MeshInterfaceAttachment as MeshInterfaceAttachment,
         transition_interface_attachment as transition_interface_attachment,
@@ -783,6 +809,8 @@ if TYPE_CHECKING:
         MixedAdaptationEvidence as MixedAdaptationEvidence,
         MixedAdaptationHierarchy as MixedAdaptationHierarchy,
         MixedLayerColumns as MixedLayerColumns,
+        MixedRetiredEntityBank as MixedRetiredEntityBank,
+        MixedSiblingBank as MixedSiblingBank,
     )
     from ._motion import (
         advance_mesh_motion as advance_mesh_motion,
@@ -813,6 +841,7 @@ if TYPE_CHECKING:
         MeshAttributeRole as MeshAttributeRole,
         MeshLabel as MeshLabel,
         MeshPatch as MeshPatch,
+        MeshPatchBank as MeshPatchBank,
         MeshZone as MeshZone,
         MeshZoneRole as MeshZoneRole,
         RegionBoundaryEvidence as RegionBoundaryEvidence,
@@ -850,6 +879,7 @@ if TYPE_CHECKING:
         PeriodicPointOrbits as PeriodicPointOrbits,
         PeriodicQuotientEvidence as PeriodicQuotientEvidence,
         PeriodicRefinement as PeriodicRefinement,
+        prepare_periodic_coarsening as prepare_periodic_coarsening,
         publish_periodic_simplices as publish_periodic_simplices,
         refine_periodic_mesh as refine_periodic_mesh,
     )
@@ -910,6 +940,7 @@ if TYPE_CHECKING:
     from ._scope import (
         MeshingEntityKind as MeshingEntityKind,
         MeshingScope as MeshingScope,
+        MeshingScopeBank as MeshingScopeBank,
         resolve_mesh_scope as resolve_mesh_scope,
         ScopeResolutionReport as ScopeResolutionReport,
     )
@@ -1002,6 +1033,9 @@ if TYPE_CHECKING:
         NativeMeshingPlan as NativeMeshingPlan,
         NativeMeshingProvider as NativeMeshingProvider,
     )
+    from .providers._native_cad_volume import (
+        NativeCadVolumeSource as NativeCadVolumeSource,
+    )
     from .providers._native_options import NativeMeshingOptions as NativeMeshingOptions
     from .providers._native_periodic import (
         NativePeriodicSource as NativePeriodicSource,
@@ -1013,12 +1047,12 @@ if TYPE_CHECKING:
         NativeSurfaceSchedule as NativeSurfaceSchedule,
     )
     from .providers._native_session import NativeMeshingSession as NativeMeshingSession
+    from .providers._native_source_type import NativeMeshingSource as NativeMeshingSource
     from .providers._native_sources import (
         NativeCurveSource as NativeCurveSource,
         NativeImplicitSource as NativeImplicitSource,
         NativeLayerCoreSource as NativeLayerCoreSource,
         NativeMappedHexSource as NativeMappedHexSource,
-        NativeMeshingSource as NativeMeshingSource,
         NativePlanarSource as NativePlanarSource,
         NativePlcSource as NativePlcSource,
         NativePolyhedralSource as NativePolyhedralSource,
@@ -1128,6 +1162,7 @@ __all__ = [
     "DeviceTetraMetricReport",
     "DeviceTetraMetricState",
     "DeviceTetraMetricUpdate",
+    "DistributedPlanarConstruction",
     "EntityLineage",
     "EntityLineageAccounting",
     "EntityLineageKind",
@@ -1145,6 +1180,7 @@ __all__ = [
     "GeometryAssociationKind",
     "GeometryAssociationProvenance",
     "GeometryAssociationSourceBank",
+    "GeometryAssociationSourceIdentities",
     "GeometryRealizationMeshAdaptation",
     "GeometrySourceEntityRole",
     "GmshHighOrderOptimization",
@@ -1161,6 +1197,8 @@ __all__ = [
     "HighOrderCurvingStatus",
     "HoleSeed",
     "ImplicitAssociationTransfer",
+    "InitialPlanarPremise",
+    "InitialSurfacePremise",
     "LayerSchedule",
     "LearnedMeshProposer",
     "LevelSetEvidence",
@@ -1214,6 +1252,7 @@ __all__ = [
     "MeshPartitionKind",
     "MeshPartitionPolicy",
     "MeshPatch",
+    "MeshPatchBank",
     "MeshProposal",
     "MeshProposalFeatures",
     "MeshProposalProjection",
@@ -1246,6 +1285,7 @@ __all__ = [
     "MeshingProviderInfo",
     "MeshingRuntimeInfo",
     "MeshingScope",
+    "MeshingScopeBank",
     "MeshingSourceDescriptor",
     "MeshingSourceKind",
     "MeshingStageKind",
@@ -1269,6 +1309,8 @@ __all__ = [
     "MixedAdaptationEvidence",
     "MixedAdaptationHierarchy",
     "MixedLayerColumns",
+    "MixedRetiredEntityBank",
+    "MixedSiblingBank",
     "MmgAdaptationPlan",
     "MmgAdaptationResult",
     "MmgFieldTransfer",
@@ -1281,6 +1323,7 @@ __all__ = [
     "MmgReferenceRetention",
     "MmgSessionEvidence",
     "MultiblockConstruction",
+    "NativeCadVolumeSource",
     "NativeCurveSchedule",
     "NativeCurveSource",
     "NativeDesignSourceState",
@@ -1353,6 +1396,8 @@ __all__ = [
     "PlanarBandLayer",
     "PlanarBandPlan",
     "PlanarBandResult",
+    "PlanarTileComplex",
+    "PlanarTileSchedule",
     "PlcAssociationTransfer",
     "PoissonBoundaryCondition",
     "PoissonProvider",
@@ -1363,6 +1408,7 @@ __all__ = [
     "PreparedBoundaryAcceptance",
     "PreparedDeviceGeneration",
     "PreparedDeviceMetricAdaptation",
+    "PreparedDistributedPlanarGeneration",
     "PreparedDistributedSurfaceGeneration",
     "PreparedImplicitVolume",
     "PreparedMeshAdaptation",
@@ -1478,6 +1524,7 @@ __all__ = [
     "prepare_device_generation",
     "prepare_device_metric_adaptation",
     "prepare_device_tetra_metric",
+    "prepare_distributed_planar_generation",
     "prepare_distributed_surface_generation",
     "prepare_distribution_transition",
     "prepare_graph_restart_proposal",
@@ -1492,6 +1539,7 @@ __all__ = [
     "prepare_overset_motion_rebind",
     "prepare_ownerlocal_migration_state",
     "prepare_partitioned_mesh_adaptation",
+    "prepare_periodic_coarsening",
     "prepare_planar_bands",
     "project_hp_lineage",
     "project_mesh_proposal",

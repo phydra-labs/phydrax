@@ -24,6 +24,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import exact_orient3d
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...config import x64_enabled
 from ...exterior._form_type import FormType, FormValueSpec
 from ...geometry import _exact_polyhedral_geometry as exact_polyhedral_geometry_owner
 from ...linalg import (
@@ -66,6 +67,106 @@ class PolyhedralVEMEvidence3D(StrictModule, NonTrainableState):
     maximum_reproduction_defect: float = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
     face_triangulation_id: str = eqx.field(static=True)
+
+# The nonconstant part of the declared three-dimensional degree-one basis.
+_AFFINE_GRADIENT_BASIS = ("x", "y", "z")
+_STABILIZATION_LAW = "dofi-dofi-mean-nonzero-consistency-spectrum"
+
+_UNIT_ROUNDOFF = Fraction(1, 1 << 53)
+# A flushed input or result has magnitude below the least normal binary64.
+# Unlike half a subnormal ulp, this remains valid with backend FTZ and DAZ.
+_UNDERFLOW = Fraction(1, 1 << 1022)
+_MAXIMUM_FLOAT = Fraction(sys.float_info.max)
+
+
+def _gamma(count: int, /) -> Fraction:
+    """Return Higham's ``gamma_k = k u / (1 - k u)`` for binary64 roundoff."""
+    if count < 0 or count * _UNIT_ROUNDOFF >= 1:
+        raise ValueError("binary64 rounding proof requires 0 <= operation count < 2**53")
+    scaled = count * _UNIT_ROUNDOFF
+    return scaled / (1 - scaled)
+
+
+def _upper_float(value: Fraction, /) -> float:
+    """Return the least binary64 value not below a nonnegative rational."""
+    if value < 0 or value > _MAXIMUM_FLOAT:
+        raise ValueError("binary64 rounding proof requires a finite nonnegative bound")
+    rounded = float(value)
+    return rounded if Fraction(rounded) >= value else math.nextafter(rounded, math.inf)
+
+
+def _require_host_binary64() -> None:
+    """Admit the host arithmetic used for subtraction checks and ``math.fsum``.
+
+    These are arithmetic-mode premises, not measurements of the physical load.
+    In particular, binary64 storage alone does not establish gradual underflow:
+    the input and output probes respectively exclude DAZ and FTZ on the host.
+    Backend arithmetic needs neither premise; its bound allows both modes.
+    """
+    info = sys.float_info
+    tiny = float.fromhex("0x1p-1022")
+    smallest = float.fromhex("0x0.0000000000001p-1022")
+    one = float(1)
+    half = float.fromhex("0x1p-1")
+    unit = float.fromhex("0x1p-53")
+    if (
+        (info.radix, info.mant_dig, info.min_exp, info.max_exp) != (2, 53, -1021, 1024)
+        or one + unit != one
+        or one + 3 * unit != one + 4 * unit
+        or tiny * half != float.fromhex("0x0.8000000000000p-1022")
+        or smallest * one != float.fromhex("0x0.0000000000001p-1022")
+        or math.fsum((smallest, smallest)) != float.fromhex("0x0.0000000000002p-1022")
+    ):
+        raise ValueError(
+            "binary64 rounding proof requires round-to-nearest host arithmetic with gradual underflow"
+        )
+
+
+def _require_binary64_range(magnitude: Fraction, stage: str, /) -> None:
+    """Prove an exact magnitude and its rounding cannot overflow."""
+    if (
+        magnitude < 0
+        or (1 + _UNIT_ROUNDOFF) * magnitude + 4 * _UNDERFLOW > _MAXIMUM_FLOAT
+    ):
+        raise ValueError(
+            f"binary64 rounding proof cannot prove finite {stage}; got overflow range"
+        )
+
+
+class ZeroMeanLoadCompatibilityBound(StrictModule, NonTrainableState):
+    """A-priori all-stage bound for a binary64 zero-mean vertex-lumped load.
+
+    The exact reference is ``(density - sum(density*w)/sum(w))*w``. Rational
+    majorants cover any-order mean products/reductions, mean division, force
+    subtraction, load product/division (including a rounded reciprocal rewrite),
+    every bucket reduction AND its addition to the previous load, and host
+    ``math.fsum``. No assembled load or measured residual enters the proof.
+
+    Backend operations may flush subnormal inputs and outputs. With least
+    normal ``t`` and unit roundoff ``u``, addition/subtraction error is bounded
+    by ``u*abs(x+y) + 4*t``; product error includes
+    ``(1+u)*(t*(abs(x)+abs(y))+t*t)+t``. Thus no subnormal-preservation
+    assumption is made about JAX. The host's binary64 rounding/underflow mode is
+    checked separately. The final fsum allowance includes a possible extra
+    rounding (documented for extended-precision hosts), plus absolute underflow.
+
+    Every intermediate has a rational finite-range majorant, including absolute
+    partial sums and fsum's error-free-transform intermediates. The supplied
+    force must be the host-rounded subtraction bit for bit, and its mean must
+    lie within the independently derived mean-reduction error. A changed force,
+    changed/nonpositive weight, or physically incompatible mean is refused.
+    """
+
+    tolerance: float = eqx.field(static=True)
+    mean_subtraction_bound: float = eqx.field(static=True)
+    assembly_bound: float = eqx.field(static=True)
+    accumulation_bound: float = eqx.field(static=True)
+    mean: float = eqx.field(static=True)
+    mean_reduction_bound: float = eqx.field(static=True)
+    maximum_incidence: int = eqx.field(static=True)
+    cell_count: int = eqx.field(static=True)
+    inputs_id: str = eqx.field(static=True)
+    bound_id: str = eqx.field(static=True)
 
 
 class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
@@ -275,6 +376,197 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
                 self.operator.accumulation,
             )
         return result
+
+    def zero_mean_load_compatibility_bound(
+        self, density: ArrayLike, weights: ArrayLike, mean: float, force: ArrayLike, /
+    ) -> ZeroMeanLoadCompatibilityBound:
+        """Prove the rounding bound of ``assemble_cellwise_constant_load(force)``.
+
+        ``force`` must equal the binary64 ``density - mean`` bit for bit and
+        ``weights`` the admitted cell volumes; see
+        `ZeroMeanLoadCompatibilityBound` for the covered stages.
+        """
+        _require_host_binary64()
+        if not x64_enabled():
+            raise ValueError("binary64 rounding proof requires JAX float64 arithmetic")
+        count = self.mesh.connectivity.cell_count
+        arrays = tuple(
+            np.asarray(value)
+            for value in (density, weights, force, self.evidence.cell_volumes)
+        )
+        if any(
+            value.shape != (count,)
+            or value.dtype != np.float64
+            or not np.all(np.isfinite(value))
+            for value in arrays
+        ) or not math.isfinite(float(mean)):
+            raise ValueError(
+                "PreparedPolyhedralH1VirtualElement3D.zero_mean_load must use finite float64 per-cell density, weights and force; got incompatible inputs"
+            )
+        values, volumes, forcing, admitted = arrays
+        if not np.array_equal(volumes.view(np.uint64), admitted.view(np.uint64)) or np.any(
+            volumes <= 0
+        ):
+            raise ValueError(
+                "PreparedPolyhedralH1VirtualElement3D.zero_mean_load.weights must be the admitted positive cell volumes bit for bit; got other weights"
+            )
+        if self.operator.accumulation not in ("fast", "deterministic"):
+            raise ValueError(
+                "PreparedPolyhedralH1VirtualElement3D.zero_mean_load requires plain fast or deterministic accumulation; got "
+                f"{self.operator.accumulation!r}"
+            )
+        u, eta = _UNIT_ROUNDOFF, _UNDERFLOW
+        d = [Fraction(float(value)) for value in values]
+        w = [Fraction(float(value)) for value in volumes]
+        f = [Fraction(float(value)) for value in forcing]
+        m = Fraction(float(mean))
+        for value in d:
+            _require_binary64_range(abs(value - m), "density subtraction")
+        if not np.array_equal(
+            (values - np.float64(mean)).view(np.uint64), forcing.view(np.uint64)
+        ):
+            raise ValueError(
+                "PreparedPolyhedralH1VirtualElement3D.zero_mean_load.force must be the rounded density - mean; got another force"
+            )
+        exact_dot = sum((a * b for a, b in zip(d, w, strict=True)), Fraction(0))
+        exact_sum = sum(w, Fraction(0))
+        products = [abs(a * b) for a, b in zip(d, w, strict=True)]
+        product_error = sum(
+            (
+                u * abs(a * b)
+                + (1 + u) * (eta * (abs(a) + b) + eta * eta)
+                + eta
+                for a, b in zip(d, w, strict=True)
+            ),
+            Fraction(0),
+        )
+        for product in products:
+            _require_binary64_range(product, "mean product")
+        # Include initialization and a padded binary reduction tree. Fusing
+        # product/add pairs can only remove roundings from this majorant.
+        additions = 2 * count
+        gamma = _gamma(additions)
+        product_total = sum(products, Fraction(0)) + product_error
+        dot_error = product_error + gamma * product_total + (
+            1 + gamma
+        ) * 4 * additions * eta
+        sum_error = gamma * exact_sum + (1 + gamma) * 4 * additions * eta
+        # A subnormal denominator may be flushed by division. Require a
+        # normal positive interval, independently of the actual backend sum.
+        lower_sum = exact_sum - sum_error
+        if lower_sum < eta:
+            raise ValueError(
+                "PreparedPolyhedralH1VirtualElement3D.zero_mean_load.weights must prove a normal positive rounded total; got an unresolved sum"
+            )
+        _require_binary64_range(product_total + dot_error, "mean dot reduction")
+        _require_binary64_range(exact_sum + sum_error, "weight reduction")
+        quotient_error = (dot_error * exact_sum + abs(exact_dot) * sum_error) / (
+            lower_sum * exact_sum
+        )
+        quotient_magnitude = (abs(exact_dot) + dot_error + eta) / lower_sum
+        _require_binary64_range(quotient_magnitude, "mean division")
+        # The numerator can be DAZ; the denominator is proved normal above.
+        mean_error = quotient_error + eta / lower_sum + u * quotient_magnitude + eta
+        if abs(m - exact_dot / exact_sum) > mean_error:
+            raise ValueError(
+                "PreparedPolyhedralH1VirtualElement3D.zero_mean_load.mean must be the rounded weighted density mean; got a physically incompatible mean"
+            )
+        mean_bound = sum(
+            (
+                b * (mean_error + (u * abs(c) + 4 * eta) / (1 - u))
+                for b, c in zip(w, f, strict=True)
+            ),
+            Fraction(0),
+        )
+        gamma3 = _gamma(3)
+        incidence: dict[int, int] = {}
+        corner_bounds: dict[int, Fraction] = {}
+        assembly = Fraction(0)
+        bucket_count = len(self.operator.gathers)
+        for gather, indices in zip(self.operator.gathers, self.cell_indices, strict=True):
+            rows = np.asarray(gather, dtype=np.int64)
+            arity = rows.shape[1]
+            if not 1 <= arity <= 1 << 53:
+                raise ValueError(
+                    "binary64 rounding proof requires exactly represented positive arity"
+                )
+            for row_index, cell in enumerate(indices):
+                weighted = abs(f[cell] * w[cell])
+                # This covers direct division and multiplication by a rounded
+                # reciprocal, including reassociation and FTZ/DAZ at each stage.
+                underflow = 8 * eta * (1 + abs(f[cell]) + w[cell])
+                corner_error = gamma3 * weighted / arity + underflow
+                corner = weighted / arity + corner_error
+                _require_binary64_range(
+                    max(weighted, abs(f[cell]), w[cell]) + arity * corner_error,
+                    "load product/division",
+                )
+                assembly += arity * corner_error
+                for index in range(arity):
+                    dof = int(rows[row_index, index])
+                    incidence[dof] = incidence.get(dof, 0) + 1
+                    corner_bounds[dof] = corner_bounds.get(dof, Fraction(0)) + corner
+        accumulation = Fraction(0)
+        assembled_magnitude = Fraction(0)
+        for dof, magnitude in corner_bounds.items():
+            # Each bucket starts at zero, then scatter_local adds its grouped
+            # vector to result. Count zero additions too, including empty rows.
+            operations = incidence[dof] + bucket_count
+            gamma = _gamma(operations)
+            error = gamma * magnitude + (1 + gamma) * 4 * operations * eta
+            _require_binary64_range(magnitude + error, "scatter accumulation")
+            accumulation += error
+            assembled_magnitude += magnitude + error
+        # fsum uses hi=x+y, yr=hi-x, lo=y-yr; an absolute l1 majorant
+        # below max/4 leaves room for all three operations and tie correction.
+        if assembled_magnitude > _MAXIMUM_FLOAT / 4:
+            raise ValueError(
+                "binary64 rounding proof cannot prove finite final fsum; got overflow range"
+            )
+        before_sum = mean_bound + assembly + accumulation
+        # Two roundings, rather than claiming universally correctly rounded
+        # math.fsum on hosts that may double-round an intermediate addition.
+        final_sum = _gamma(2) * before_sum + 2 * eta
+        total = before_sum + final_sum
+        tolerance = _upper_float(total)
+        inputs_id = canonical_fingerprint(
+            {
+                "kind": "zero-mean-vertex-lumped-load-inputs",
+                "prepared": self.prepared_id,
+                "arrays": array_tree_fingerprint((values, volumes, forcing)),
+                "mean": float(mean),
+                "accumulation": self.operator.accumulation,
+                "gathers": array_tree_fingerprint(self.operator.gathers),
+                "cell_indices": self.cell_indices,
+                "dof_count": self.dof_count,
+            }
+        )
+        parts = (
+            _upper_float(mean_bound),
+            _upper_float(assembly),
+            _upper_float(accumulation),
+            _upper_float(mean_error),
+        )
+        return ZeroMeanLoadCompatibilityBound(
+            tolerance,
+            parts[0],
+            parts[1],
+            parts[2],
+            float(mean),
+            parts[3],
+            max(incidence.values(), default=0),
+            count,
+            inputs_id,
+            canonical_fingerprint(
+                {
+                    "kind": "binary64-zero-mean-load-compatibility-bound",
+                    "inputs": inputs_id,
+                    "accumulation": self.operator.accumulation,
+                    "tolerance": tolerance,
+                    "parts": parts,
+                }
+            ),
+        )
 
     def bind_scalar_diffusion(
         self, cell_coefficients: ArrayLike, /
@@ -537,7 +829,7 @@ def _cell_matrix(
         )
 
     exact_source = coordinates.dtype == object
-    gradients = np.zeros((3, vertices.size), dtype=object if exact_source else np.float64)
+    gradients = np.zeros((len(_AFFINE_GRADIENT_BASIS), vertices.size), dtype=object if exact_source else np.float64)
     volume = Fraction(0) if exact_source else 0.0
     face_start, face_stop = cell_face_offsets[cell_index : cell_index + 2]
     for face_index, sign in zip(
@@ -601,7 +893,11 @@ def _cell_matrix(
         )
     projector = monomials @ np.asarray(solve.value)
     kernel = np.eye(vertices.size) - projector
-    scale = float(np.trace(consistency) / max(vertices.size, 1))
+    # The consistency term has three nonzero affine-gradient modes. Its mean
+    # nonzero spectral scale stabilizes the complementary VEM modes. Dividing
+    # again by the number of boundary vertices artificially weakens coercivity
+    # when exact agglomeration retains a finer boundary subcomplex.
+    scale = float(np.trace(consistency) / len(_AFFINE_GRADIENT_BASIS))
     if not np.isfinite(scale) or scale <= 0.0:
         raise ValueError(
             f"PolyhedralVEM.stabilization_scale must be finite and positive; got {scale}"
@@ -771,6 +1067,8 @@ def prepare_polyhedral_h1_virtual_element_3d(
                 "kind": "polyhedral-h1-vem-operator",
                 "mesh": mesh.topology_id,
                 "degree": 1,
+                "stabilization": _STABILIZATION_LAW,
+                "affine_gradient_basis": _AFFINE_GRADIENT_BASIS,
                 "periodic": None if periodic is None else periodic.periodic_topology_id,
                 "gathers": array_tree_fingerprint(tuple(gathers)),
                 "matrices": array_tree_fingerprint(tuple(polynomial_matrices)),
@@ -781,6 +1079,8 @@ def prepare_polyhedral_h1_virtual_element_3d(
         {
             "kind": "polyhedral-h1-vem-evidence",
             "mesh": mesh.geometry_id,
+            "stabilization": _STABILIZATION_LAW,
+            "affine_gradient_basis": _AFFINE_GRADIENT_BASIS,
             "volumes": array_tree_fingerprint(volumes),
             "volume_errors": array_tree_fingerprint(volume_errors),
             "rank_margins": array_tree_fingerprint(rank_margins),

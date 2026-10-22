@@ -4,16 +4,25 @@
 
 """White-box contracts for quotient ancestry and face-work accounting."""
 
+import math
 from fractions import Fraction
 
 import numpy as np
 import pytest
 
-from phydrax.geometry.brep._boolean_arrangement import Arc, Cut
-from phydrax.geometry.brep._boolean_cells import _FaceCellWork, _quotient_workset
-from phydrax.geometry.brep._boolean_core import BRepBooleanFailure
+from phydrax.geometry._atlas import CurveTrimLoop, TrimDomain
+from phydrax.geometry.brep._boolean_arrangement import Arc, Arrangement, Cut, Piece
+from phydrax.geometry.brep._boolean_cells import (
+    _box_status,
+    _exact_loop,
+    _FaceCellWork,
+    _quotient_workset,
+)
+from phydrax.geometry.brep._boolean_core import BRepBooleanFailure, BRepBooleanPolicy
+from phydrax.geometry.brep._coordinate_request import coordinate_source_request
 from phydrax.geometry.brep._intersection_curve import CurveTrimSegment
-from phydrax.geometry.brep._patches import LineCurve
+from phydrax.geometry.brep._patches import CircleCurve, LineCurve
+from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
 
 
 def _arc(token: str, first: str, last: str) -> tuple[Arc, list[Cut]]:
@@ -102,3 +111,66 @@ def test_overlap_refusal_does_not_charge_unadmitted_work() -> None:
         )
     assert work.used == 9
     assert charges == [1] * 9
+
+
+def test_face_loop_and_classification_share_the_source_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    carrier = CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0)
+    trim = CurveTrimSegment(carrier, 0.0, 2 * math.pi)
+    arc = Arc(
+        token="circle",
+        owner=(0, 0),
+        trim=trim,
+        curve=None,
+        pcurve=carrier,
+        offset=0.0,
+        scale=2 * math.pi,
+        first_node="seam",
+        last_node="seam",
+        first_vertex="seam",
+        last_vertex="seam",
+        source_edge=None,
+        branch=None,
+    )
+    cuts = tuple(
+        Cut(value, value, value, "seam", "seam", None, None, np.zeros(3))
+        for value in (0.0, 1.0)
+    )
+    state = Arrangement(
+        (), "intersection", BRepBooleanPolicy(trim_resolution=0.25), ()
+    )
+    request = TrimRequestPreparations()
+    observed = []
+    with coordinate_source_request((trim,)) as budget:
+        for owner, name in (
+            (CurveTrimSegment, "__init__"),
+            (CurveTrimLoop, "__init__"),
+            (TrimDomain, "classify_boxes"),
+        ):
+            original = getattr(owner, name)
+
+            def checked_context(self, *args, _original=original, **kwargs):
+                assert kwargs["preparations"] is request
+                assert kwargs["budget"] is budget
+                observed.append(_original)
+                return _original(self, *args, **kwargs)
+
+            monkeypatch.setattr(owner, name, checked_context)
+        work = _FaceCellWork(256)
+        loop = _exact_loop(
+            (Piece(arc, cuts[0], cuts[1], 1),),
+            state,
+            work,
+            preparations=request,
+            budget=budget,
+        )
+        assert _box_status(
+            TrimDomain(loop),
+            np.asarray(((-0.1, -0.1), (0.1, 0.1))),
+            work,
+            preparations=request,
+            budget=budget,
+        ) == 1
+    assert len(observed) == 3
+    assert request.trim_source_arcs

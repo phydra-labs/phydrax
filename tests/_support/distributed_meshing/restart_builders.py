@@ -9,6 +9,7 @@ import jax
 import numpy as np
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits, DEFAULT_ARRAY_ARCHIVE_LIMITS
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellMesh
@@ -177,6 +178,7 @@ def native_source_state(
     *,
     source_array_bindings: dict[str, str] | None = None,
     source_logical_arrays: dict[str, jax.Array] | None = None,
+    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> MeshingCheckpointState:
     payload = checkpoint_state().to_payload()
     inputs = closure["certification_inputs"]
@@ -188,6 +190,7 @@ def native_source_state(
         source_owner_index=jax.process_index(),
         source_array_bindings=source_array_bindings,
         source_logical_arrays=source_logical_arrays,
+        limits=limits,
     )
     return MeshingCheckpointState(**payload)
 

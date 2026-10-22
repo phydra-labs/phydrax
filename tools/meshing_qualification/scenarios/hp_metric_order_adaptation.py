@@ -46,6 +46,7 @@ from phydrax.meshing import (
     SolverAwareDecision,
 )
 from tools.meshing_qualification._runtime import (
+    measured_peak_resident_bytes,
     peak_resident_bytes,
     QualificationFailure,
 )
@@ -587,7 +588,7 @@ def run(
             transfer_seconds=transfer_seconds,
             reanalysis_seconds=reanalysis_seconds,
             decision_seconds=decision_seconds,
-            peak_memory_bytes=peak_resident_bytes(),
+            peak_memory_bytes=measured_peak_resident_bytes(),
         )
         alternatives.append(
             SolverAwareCandidate(
@@ -919,7 +920,7 @@ def run_metric() -> dict[str, Any]:
         transfer_seconds=transfer_seconds,
         reanalysis_seconds=reanalysis_seconds,
         decision_seconds=perf_counter() - start,
-        peak_memory_bytes=peak_resident_bytes(),
+        peak_memory_bytes=measured_peak_resident_bytes(),
     )
     candidate = SolverAwareCandidate(
         AdaptationAction.METRIC, adaptation.result_id, feasibility, assessed, cost

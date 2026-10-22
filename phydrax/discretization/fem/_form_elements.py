@@ -51,6 +51,7 @@ from ._form_basis_types import (
     AbstractReferenceHybridFactors,
     AbstractReferenceTensorFactors,
     DofLabel,
+    EntityMomentCache,
     FormElementFamily,
 )
 
@@ -1702,11 +1703,13 @@ class FormBasis(AbstractReferenceFormBasis):
         *,
         entity_bases: tuple[tuple[AbstractReferenceFormBasis | None, ...], ...]
         | None = None,
+        cache: EntityMomentCache | None = None,
     ) -> Array:
         """Map shared entity moments to local element moments.
 
         Columns retain local entity-block positions and use their global entity
-        chart. The assembly transform preserves entity-block positions.
+        chart. The assembly transform preserves entity-block positions. A
+        caller-scoped ``cache`` reuses traces and blocks of equal entity charts.
         """
         expected = len(form_reference_vertices(self.dimension, self.family))
         if len(global_vertices) != expected or len(set(global_vertices)) != expected:
@@ -1725,24 +1728,24 @@ class FormBasis(AbstractReferenceFormBasis):
             raise ValueError(
                 "form_basis.entity_bases must identify every local entity; got incompatible entity counts"
             )
-        result = jnp.zeros(
-            (self.local_dof_count, self.local_dof_count), dtype=self.coefficients.dtype
+        cache = EntityMomentCache() if cache is None else cache
+        result = np.zeros(
+            (self.local_dof_count, self.local_dof_count),
+            dtype=np.dtype(self.coefficients.dtype),
         )
         for m, level in enumerate(self.entity_vertices):
             for entity_index, face in enumerate(level):
                 indices = entity_dof_indices(self.dof_labels, face)
                 if indices:
-                    block = self._entity_moment_transform(
+                    result[np.ix_(indices, indices)] = self._entity_moment_transform(
                         m,
                         face,
                         len(indices),
                         global_vertices,
                         None if entity_bases is None else entity_bases[m][entity_index],
+                        cache,
                     )
-                    result = result.at[
-                        jnp.asarray(indices)[:, None], jnp.asarray(indices)[None, :]
-                    ].set(block)
-        return result
+        return jnp.asarray(result)
 
     def _entity_moment_transform(
         self,
@@ -1751,14 +1754,19 @@ class FormBasis(AbstractReferenceFormBasis):
         count: int,
         global_vertices: tuple[int, ...],
         canonical: AbstractReferenceFormBasis | None,
-    ) -> Array:
+        cache: EntityMomentCache,
+    ) -> np.ndarray:
+        dtype = np.dtype(self.coefficients.dtype)
         if m == 0 or (self.family == "full" and self.order == 0):
-            return jnp.eye(count, dtype=self.coefficients.dtype)
+            return np.eye(count, dtype=dtype)
         if m == self.dimension and self.hybrid_factors is not None:
             # Interior moments belong to this cell's declared source chart; no
             # shared entity may replace that chart by coincident array width.
-            return jnp.eye(count, dtype=self.coefficients.dtype)
-        entity = self.entity_basis(face)
+            return np.eye(count, dtype=dtype)
+        entity = cache.entities.get((m, face))
+        if entity is None:
+            entity = self.entity_basis(face)
+            cache.entities[m, face] = entity
         reference = form_reference_vertices(entity.dimension, entity.family)
         interior = interior_dof_indices(entity.dof_labels, len(reference))
         if len(interior) != count:
@@ -1771,10 +1779,24 @@ class FormBasis(AbstractReferenceFormBasis):
             ids = _canonical_entity_ids(
                 self.family, self.dimension, m, face, global_vertices
             )
-        if canonical is None or canonical.basis_id == entity.basis_id:
-            full = entity.permutation_matrix(entity.canonical_permutation(ids))
-            return full[jnp.asarray(interior)[:, None], jnp.asarray(interior)[None, :]]
-        return _entity_basis_change(entity, canonical, ids, interior)
+        shared = (
+            None if canonical is None or canonical.basis_id == entity.basis_id else canonical
+        )
+        # Both transforms depend on the IDs only through this chart permutation.
+        chart = (entity if shared is None else shared).canonical_permutation(ids)
+        key = (m, face, chart, None if shared is None else shared.basis_id)
+        block = cache.blocks.get(key)
+        if block is not None:
+            return block
+        if shared is None:
+            full = entity.permutation_matrix(chart)
+            block = np.asarray(
+                full[jnp.asarray(interior)[:, None], jnp.asarray(interior)[None, :]]
+            )
+        else:
+            block = np.asarray(_entity_basis_change(entity, shared, ids, interior))
+        cache.blocks[key] = block
+        return block
 
 
 def _entity_basis_change(

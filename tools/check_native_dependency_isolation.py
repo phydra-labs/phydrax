@@ -20,17 +20,17 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import runpy
-import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import ModuleType
-from typing import Any, NoReturn
+from typing import Any, NamedTuple, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +78,57 @@ EXTERNAL_EXECUTABLES = frozenset(
         "vc_mesh",
     )
 )
+# Launch forms the process guard follows to the programs they execute. Any other
+# program is inspected by its invoked and resolved names only: its arguments are
+# data, and what an admitted program launches after it starts is not observed.
+# The guard keeps external engines out of this harness's evidence; it is not a
+# sandbox.
+_SHELLS = frozenset(("ash", "bash", "dash", "ksh", "mksh", "sh", "zsh"))
+_SHELL_LONG_OPTIONS = frozenset(
+    ("--login", "--noediting", "--noprofile", "--norc", "--posix", "--restricted")
+)
+# Launchers whose command grammars the guard does not parse: an engine named by
+# any argument word refuses the launch, and a shell or env among their arguments
+# is unsupported because its role cannot be read.
+_OPAQUE_LAUNCHERS = frozenset(
+    (
+        "busybox",
+        "chroot",
+        "chrt",
+        "doas",
+        "flock",
+        "ionice",
+        "mpiexec",
+        "mpirun",
+        "nice",
+        "nohup",
+        "nsenter",
+        "numactl",
+        "prlimit",
+        "runuser",
+        "setpriv",
+        "setsid",
+        "srun",
+        "stdbuf",
+        "strace",
+        "sudo",
+        "systemd-run",
+        "taskset",
+        "time",
+        "timeout",
+        "unshare",
+        "uv",
+        "uvx",
+        "valgrind",
+        "xargs",
+    )
+)
+_LAUNCH_FORMS = frozenset(("env", *_SHELLS, *_OPAQUE_LAUNCHERS))
+# Shell text whose words cannot be read literally: parameter, command, tilde
+# and brace expansion and globs can produce any program path at run time.
+_NONLITERAL_SHELL_TEXT = frozenset("$`*?[{~")
+_QUOTING = str.maketrans("", "", "'\"\\")
+_WORD_SEPARATOR = re.compile(r"[\s;&|()<>=]+")
 
 
 def _external(name: str, /) -> bool:
@@ -112,36 +163,235 @@ class _RefuseExternal(importlib.abc.MetaPathFinder):
         return None
 
 
+class _LaunchContext(NamedTuple):
+    """Directory and environment a launched program name resolves against."""
+
+    cwd: str
+    environment: dict[str, str]
+
+
+def _launch_refusal(form: str, /) -> RuntimeError:
+    return RuntimeError(
+        f"native_isolation.process.launch must use a supported inspectable form; got {form}"
+    )
+
+
+def _launch_text(value: object, /) -> str:
+    if isinstance(value, (str, bytes, os.PathLike)):
+        return os.fsdecode(value)
+    raise RuntimeError(
+        f"native_isolation.process.argument must be inspectable text; got {value!r}"
+    )
+
+
+def _launch_environment(environment: object, /) -> dict[str, str]:
+    source = os.environ if environment is None else environment
+    if not isinstance(source, Mapping):
+        raise RuntimeError(
+            f"native_isolation.process.environment must be an inspectable mapping; got {type(source).__name__}"
+        )
+    return {_launch_text(name): _launch_text(value) for name, value in source.items()}
+
+
+def _program_names(program: str, context: _LaunchContext, /) -> tuple[str, ...]:
+    """Return a program's invoked name, then the name of the file it resolves to.
+
+    Resolution follows the launch's search path and symbolic links, including
+    descriptor paths such as ``/proc/self/fd/N``.
+    """
+    if os.sep in program or (os.altsep is not None and os.altsep in program):
+        located = os.path.join(context.cwd, program)
+    else:
+        located = shutil.which(
+            program, path=os.pathsep.join(os.get_exec_path(context.environment))
+        )
+    names = (program,) if located is None else (program, os.path.realpath(located))
+    return tuple(Path(name).name.lower().removesuffix(".exe") for name in names)
+
+
+def _word_engines(text: str, context: _LaunchContext, /) -> set[str]:
+    """Return engines named by any word of text, each read as a possible program."""
+    return {
+        name
+        for word in _WORD_SEPARATOR.split(text.translate(_QUOTING))
+        if word
+        for name in _program_names(word, context)
+        if name in EXTERNAL_EXECUTABLES
+    }
+
+
+def _shell_text_engines(text: str, context: _LaunchContext, /) -> set[str]:
+    """Read shell command text conservatively: every literal word may run."""
+    nonliteral = sorted(_NONLITERAL_SHELL_TEXT.intersection(text))
+    if nonliteral:
+        raise _launch_refusal(
+            f"shell text with nonliteral words {nonliteral!r}: {text!r}"
+        )
+    return _word_engines(text, context)
+
+
+def _shell_engines(arguments: Sequence[str], context: _LaunchContext, /) -> set[str]:
+    """Read a POSIX shell's ``-c`` text; refuse shells reading unseen commands."""
+    command = False
+    index = 0
+    while index < len(arguments) and arguments[index][:1] in ("-", "+"):
+        argument = arguments[index]
+        index += 1
+        if argument in ("-", "--"):
+            break
+        if argument.startswith("--"):
+            if argument not in _SHELL_LONG_OPTIONS:
+                raise _launch_refusal(f"shell option {argument!r}")
+            continue
+        for option in argument[1:]:
+            if option in ("o", "O"):
+                index += 1
+            elif option == "c" and argument[0] == "-":
+                command = True
+            elif option == "s" or not option.isalpha():
+                raise _launch_refusal(f"shell option {argument!r}")
+    if index > len(arguments):
+        raise _launch_refusal("a shell option without its operand")
+    if index == len(arguments):
+        raise _launch_refusal(
+            "shell -c without command text"
+            if command
+            else "a shell reading commands from standard input"
+        )
+    if command:
+        return _shell_text_engines(arguments[index], context)
+    # A script operand is a program by name, like a directly executed script.
+    return {
+        name
+        for name in _program_names(arguments[index], context)
+        if name in EXTERNAL_EXECUTABLES
+    }
+
+
+def _env_engines(arguments: Sequence[str], context: _LaunchContext, /) -> set[str]:
+    """Follow ``env`` options and assignments to the command it executes."""
+    environment = dict(context.environment)
+    cwd = context.cwd
+    index = 0
+    while index < len(arguments) and arguments[index].startswith("-"):
+        argument = arguments[index]
+        index += 1
+        if argument == "--":
+            break
+        if argument == "-":
+            environment.clear()
+            continue
+        # An option with an operand: attached text, or None for the next argument.
+        operand: tuple[str, str | None] | None = None
+        if argument.startswith("--"):
+            name, separator, value = argument.partition("=")
+            if name in ("--unset", "--chdir"):
+                operand = (name, value if separator else None)
+            elif name == "--ignore-environment" and not separator:
+                environment.clear()
+            elif not (
+                (name in ("--null", "--debug") and not separator)
+                or name in ("--block-signal", "--default-signal", "--ignore-signal")
+            ):
+                raise _launch_refusal(f"env option {argument!r}")
+        else:
+            for position, option in enumerate(argument[1:], start=2):
+                if option == "i":
+                    environment.clear()
+                elif option in ("u", "C"):
+                    operand = (option, argument[position:] or None)
+                    break
+                elif option not in ("0", "v"):
+                    raise _launch_refusal(f"env option {argument!r}")
+        if operand is not None:
+            option, value = operand
+            if value is None:
+                if index == len(arguments):
+                    raise _launch_refusal(f"env option {argument!r} without its operand")
+                value = arguments[index]
+                index += 1
+            if option in ("u", "--unset"):
+                environment.pop(value, None)
+            else:
+                cwd = os.path.join(cwd, value)
+    while index < len(arguments) and "=" in arguments[index]:
+        name, _, value = arguments[index].partition("=")
+        environment[name] = value
+        index += 1
+    if index == len(arguments):
+        # Without a command, env reports its environment and runs no program.
+        return set()
+    command = arguments[index:]
+    return _launched_engines(command, command[0], _LaunchContext(cwd, environment))
+
+
+def _opaque_engines(arguments: Sequence[str], context: _LaunchContext, /) -> set[str]:
+    """Refuse engines named anywhere among an unparsed launcher's arguments."""
+    engines: set[str] = set()
+    for argument in arguments:
+        if any(
+            name == "env" or name in _SHELLS for name in _program_names(argument, context)
+        ):
+            raise _launch_refusal(
+                f"a shell or env behind an unparsed launcher: {argument!r}"
+            )
+        engines |= _word_engines(argument, context)
+    return engines
+
+
+def _launched_engines(
+    argv: Sequence[str], program: str, context: _LaunchContext, /
+) -> set[str]:
+    """Return the external engines one supported launch form executes."""
+    names = _program_names(program, context)
+    engines = {name for name in names if name in EXTERNAL_EXECUTABLES}
+    # A multi-call binary dispatches on its invoked name; an alias runs its target.
+    form = next((name for name in names if name in _LAUNCH_FORMS), None)
+    if engines or form is None:
+        return engines
+    if form == "env":
+        return _env_engines(argv[1:], context)
+    if form in _SHELLS:
+        return _shell_engines(argv[1:], context)
+    return _opaque_engines(argv[1:], context)
+
+
 def _refuse_external_process(event: str, arguments: tuple[object, ...], /) -> None:
-    """Audit native-worker launches, including explicit shell commands."""
+    """Refuse external engines in the launch forms this harness declares.
+
+    A direct program is checked by its invoked name and by the name of the file
+    it resolves to through the search path, symbolic links and descriptor paths.
+    ``env`` options and assignments are followed to their command; POSIX shell
+    ``-c`` and ``os.system`` text is read as literal words, each a possible
+    program; a declared opaque launcher refuses any engine word. Arguments of
+    any other program are data, and forms the guard cannot read are refused.
+    This guards the harness's evidence, not the host: an engine copied under
+    another name, or launched later by an admitted program, is not observed.
+    """
     if event not in ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn"):
         return
-    executable = arguments[0]
-    if isinstance(executable, bytes):
-        executable = os.fsdecode(executable)
-    if not isinstance(executable, str):
-        raise RuntimeError(
-            f"native_isolation.process.executable must be inspectable text; got event={event!r}, executable={executable!r}"
-        )
-    tokens = shlex.split(executable) if event == "os.system" else [executable]
-    if (
-        Path(executable).name in ("sh", "bash", "zsh")
-        and len(arguments) > 1
-        and isinstance(arguments[1], (tuple, list))
-    ):
+    executable = _launch_text(arguments[0])
+    if event == "os.system":
+        context = _LaunchContext(os.getcwd(), _launch_environment(None))
+        engines = _shell_text_engines(executable, context)
+    else:
         argv = arguments[1]
-        if "-c" in argv:
-            index = argv.index("-c") + 1
-            if index < len(argv) and isinstance(argv[index], str):
-                tokens.extend(shlex.split(argv[index]))
-    forbidden = [
-        token
-        for token in tokens
-        if Path(token).name.lower().removesuffix(".exe") in EXTERNAL_EXECUTABLES
-    ]
-    if forbidden:
+        if not isinstance(argv, (list, tuple)):
+            raise RuntimeError(
+                f"native_isolation.process.arguments must be an inspectable sequence; got event={event!r}, arguments={argv!r}"
+            )
+        popen = event == "subprocess.Popen"
+        cwd = arguments[2] if popen else None
+        context = _LaunchContext(
+            os.getcwd() if cwd is None else os.path.join(os.getcwd(), _launch_text(cwd)),
+            _launch_environment(arguments[3] if popen else arguments[2]),
+        )
+        engines = _launched_engines(
+            [_launch_text(value) for value in argv], executable, context
+        )
+    if engines:
         raise RuntimeError(
-            f"native_isolation.process.executable must exclude external engines; got {forbidden!r}"
+            f"native_isolation.process.executable must exclude external engines; got {sorted(engines)!r}"
         )
     print(
         json.dumps({"native_process_launch": {"event": event, "executable": executable}}),
@@ -436,17 +686,28 @@ def _stage_harness(site_packages: Path, /) -> dict[str, str]:
 def _stage_source_build_inputs(
     source_root: Path, site_packages: Path, /
 ) -> dict[str, str]:
-    """Authenticate authored build provenance, not the installed dependency resolution."""
+    """Authenticate authored build provenance, not the installed dependency resolution.
+
+    The wheel installs the package and, inside it, the native provider tree that
+    ``native_provider_source_path`` reads. Those bytes are compared where runtime
+    lookup reads them; a staged checkout copy would authenticate bytes nothing runs.
+    """
     from benchmarks._runtime import source_build_fingerprint, source_build_inputs
+    from phydrax.meshing.providers import native_provider_source_root
 
     source_root = source_root.resolve()
+    # A malformed or dual installed provider layout refuses before anything is
+    # staged beside the wheel-owned package.
+    native_provider_source_root(site_packages / "phydrax")
     expected = source_build_fingerprint(source_root)
-    # Installed Python package bytes remain owned by the authenticated wheel.
+    providers = native_provider_source_root(source_root / "phydrax")
+    # Installed package and provider bytes remain owned by the authenticated wheel.
     # Equality below checks their full inventory as well as their contents.
     inputs = [
         path.relative_to(source_root).as_posix()
-        for path in source_build_inputs(source_root)
+        for path in source_build_inputs(source_root).values()
         if not path.is_relative_to(source_root / "phydrax")
+        and (providers is None or not path.is_relative_to(providers))
     ]
     evidence = _copy_harness_inputs(source_root, site_packages, inputs)
     actual = source_build_fingerprint(site_packages)

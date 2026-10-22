@@ -322,3 +322,334 @@ def test_boundary_degree_evidence_requires_a_deciding_premise_for_violation() ->
             shell_exterior_degrees=(0,),
             maximum_degree=1,
         )
+
+
+def _actual_tet_trace_cells(mesh, geometry, budget):
+    from phydrax.discretization._coordinate_enclosure import (
+        coordinate_expressions, prepared_coordinate_source_bank,
+    )
+    from phydrax.geometry._embedding_cells import Cell, vertices
+
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    bank = prepared_coordinate_source_bank(geometry, budget=budget)
+    cells = []
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        for row, dofs in zip(np.asarray(block.vertices), np.asarray(route), strict=True):
+            coordinates = coordinate_expressions(
+                element, tuple(bank[int(dof)] for dof in dofs), budget=budget,
+            )
+            assert coordinates is not None
+            cells.append(Cell(
+                coordinates, "simplex", "tetrahedron", 3,
+                tuple(int(vertex) for vertex in row), vertices("tetrahedron"),
+            ))
+    return cells
+
+
+def test_actual_facet_proof_transports_connected_vertex_and_edge_stars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _boundary_degree_embedding as owner
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        cells = _actual_tet_trace_cells(mesh, geometry, budget)
+        legacy = owner._shared_entity_conformity(cells, budget=budget)
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=geometry, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert state.clean and witness is not None
+        assert witness.evidence_id and witness.pairs
+        restrictions = []
+        original = owner.restrict_chart_expressions
+
+        def observed(*args, **kwargs):
+            restrictions.append(args)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(owner, "restrict_chart_expressions", observed)
+        actual = owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=budget)
+        assert actual.mismatch is None and legacy.mismatch is None
+        assert actual.count == legacy.count > 0
+        assert actual.images == legacy.images
+        assert restrictions == []
+
+
+@pytest.mark.parametrize("fault", ("orientation", "vertex", "mid-edge", "face"))
+def test_facet_transport_requires_real_current_trace_identities(fault: str) -> None:
+    from dataclasses import replace
+    from fractions import Fraction
+    from phydrax.discretization._coordinate_enclosure import add, multiply, Polynomial
+    from phydrax.geometry import _boundary_degree_embedding as owner
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState, mesh_facets
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        cells = _actual_tet_trace_cells(mesh, geometry, budget)
+        facets = mesh_facets(mesh, geometry=geometry, budget=budget)
+        group = int(np.flatnonzero(facets.counts == 2)[0])
+        occurrences = np.flatnonzero(facets.group == group)
+        index = int(facets.cells[occurrences[1]])
+        cell = cells[index]
+        shared = tuple(int(vertex) for vertex in facets.rows[occurrences[0]] if vertex >= 0)
+        local = tuple(cell.vertices.index(vertex) for vertex in shared)
+        if fault == "orientation":
+            row = list(cell.vertices)
+            row[local[0]], row[local[1]] = row[local[1]], row[local[0]]
+            cells[index] = replace(cell, vertices=tuple(row))
+        else:
+            barycentric: tuple[Polynomial, ...] = (
+                {(0, 0, 0): Fraction(1), (1, 0, 0): Fraction(-1),
+                 (0, 1, 0): Fraction(-1), (0, 0, 1): Fraction(-1)},
+                {(1, 0, 0): Fraction(1)},
+                {(0, 1, 0): Fraction(1)},
+                {(0, 0, 1): Fraction(1)},
+            )
+            perturbation: Polynomial = {(0, 0, 0): Fraction(1, 8)}
+            if fault != "vertex":
+                for vertex in local[:2 if fault == "mid-edge" else 3]:
+                    perturbation = multiply(
+                        perturbation, barycentric[vertex], budget=budget,
+                    )
+            changed = add(cell.coordinates[0], perturbation, budget=budget)
+            cells[index] = replace(cell, coordinates=(changed, *cell.coordinates[1:]))
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=geometry, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert not state.clean and witness is None
+        assert any(finding.check == "mapped_trace_mismatch" for finding in state.findings)
+        if fault == "face":
+            # A face bubble vanishes on every edge and vertex: their agreement
+            # cannot substitute for the independently required facet theorem.
+            assert owner._shared_entity_conformity(cells, budget=budget).mismatch is None
+
+
+@pytest.mark.parametrize("fault", ("none", "vertex", "mid-edge"))
+def test_disconnected_entity_stars_keep_full_exact_component_comparisons(
+    monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    from dataclasses import replace
+    from fractions import Fraction
+    from phydrax.discretization._coordinate_enclosure import add, Polynomial
+    from phydrax.geometry import _boundary_degree_embedding as owner
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    points = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                         (0, -1, 0), (0, 0, -1)), dtype=np.float64)
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        points, np.asarray(((0, 1, 2, 3), (0, 1, 4, 5)), dtype=np.int64)
+    )
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        cells = _actual_tet_trace_cells(mesh, geometry, budget)
+        if fault != "none":
+            perturbation: Polynomial = (
+                {(0, 0, 0): Fraction(1, 8)} if fault == "vertex" else
+                {(1, 0, 0): Fraction(1, 8), (2, 0, 0): Fraction(-1, 8)}
+            )
+            changed = add(cells[1].coordinates[0], perturbation, budget=budget)
+            cells[1] = replace(cells[1], coordinates=(changed, *cells[1].coordinates[1:]))
+        legacy = owner._shared_entity_conformity(cells, budget=budget)
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=geometry, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert state.clean and witness is not None and not witness.pairs
+        observed = []
+        original = owner.restrict_chart_expressions
+
+        def restriction(*args, **kwargs):
+            observed.append(args)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(owner, "restrict_chart_expressions", restriction)
+        actual = owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=budget)
+        assert (actual.mismatch is None) == (legacy.mismatch is None) == (fault == "none")
+        assert actual.count == legacy.count and actual.images == legacy.images
+        if fault != "vertex":
+            assert observed
+
+
+def test_facet_proof_rejects_copies_changed_source_and_foreign_proof_context() -> None:
+    from dataclasses import replace
+    from fractions import Fraction
+    import pickle
+    from phydrax.geometry import _boundary_degree_embedding as owner
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState
+    from tests._support.coordinate_references import coordinate_reference_budget
+    from phydrax._resource_ticket import HostBatchTicket
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        cells = _actual_tet_trace_cells(mesh, geometry, budget)
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=geometry, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert witness is not None
+        with pytest.raises(TypeError, match="archive or proof"):
+            pickle.dumps(witness)
+        with pytest.raises(ValueError, match="actual current proof"):
+            owner._shared_entity_conformity_from_facets(state, mesh, cells, replace(witness), geometry=geometry, budget=budget)
+        with pytest.raises(ValueError, match="actual current proof"):
+            owner._shared_entity_conformity_from_facets(EmbeddingState([], []), mesh, cells, witness, geometry=geometry, budget=budget)
+        polynomial = cells[0].coordinates[0]
+        assert isinstance(polynomial, dict)
+        old = dict(polynomial)
+        polynomial[(0, 0, 0)] = polynomial.get((0, 0, 0), Fraction(0)) + Fraction(1, 8)
+        try:
+            with pytest.raises(ValueError, match="actual current proof"):
+                owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=budget)
+        finally:
+            polynomial.clear()
+            polynomial.update(old)
+        with coordinate_reference_budget() as foreign:
+            with pytest.raises(ValueError, match="actual current proof"):
+                owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=foreign)
+    foreign_ticket = HostBatchTicket(
+        budget.maximum_work_units, bytes_upper=budget.maximum_memory_bytes,
+    )
+    with budget.bind_ticket(foreign_ticket):
+        with pytest.raises(ValueError, match="actual current proof"):
+            owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=budget)
+    assert foreign_ticket.work_units == 0
+
+
+def test_facet_trace_witness_does_not_keep_its_proof_or_cells_alive() -> None:
+    import gc
+    import weakref
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        cells = _actual_tet_trace_cells(mesh, geometry, budget)
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=geometry, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert witness is not None
+        first = weakref.ref(cells[0])
+        state_ref = weakref.ref(state)
+        del cells, state
+        gc.collect()
+        assert first() is None and state_ref() is None
+
+
+@pytest.mark.parametrize("kind", ("rational", "nonstandard"))
+def test_unsupported_facet_transport_retains_full_polynomial_fallback(kind: str) -> None:
+    from dataclasses import replace
+    from fractions import Fraction
+    from phydrax.discretization._coordinate_enclosure import (
+        expression_reference_evaluate, RationalPolynomial,
+    )
+    from phydrax.geometry import _boundary_degree_embedding as owner
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        cells = _actual_tet_trace_cells(mesh, geometry, budget)
+        if kind == "rational":
+            cells = [
+                replace(cell, coordinates=tuple(
+                    RationalPolynomial(value, {(0, 0, 0): Fraction(1)})
+                    for value in cell.coordinates
+                ))
+                for cell in cells
+            ]
+        else:
+            cells = [
+                replace(cell, corner_images=tuple(tuple(
+                    expression_reference_evaluate(value, point, cell.domain, budget=budget)
+                    for value in cell.coordinates
+                ) for point in cell.reference_vertices))
+                for cell in cells
+            ]
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=geometry, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert state.clean and witness is None
+        assert owner._shared_entity_conformity(cells, budget=budget).mismatch is None
+
+
+def test_constructive_entity_proof_still_requires_actual_admission() -> None:
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+    from phydrax.geometry import _boundary_degree_embedding as owner
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        cells = _actual_tet_trace_cells(mesh, geometry, budget)
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=geometry, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert witness is not None
+        before = budget.work_units
+        with pytest.raises(CoordinateEnclosureResourceError):
+            with budget.bound_stage(0, budget.maximum_memory_bytes):
+                owner._shared_entity_conformity_from_facets(state, mesh, cells, witness, geometry=geometry, budget=budget)
+        assert budget.work_units == before
+
+
+def test_materialized_composed_geometry_keeps_full_entity_comparisons() -> None:
+    from phydrax.discretization._cell_geometry import PolynomialComposedCellGeometryElement
+    from phydrax.discretization.fem._reference_types import FiniteElementSpec
+    from phydrax.geometry import _boundary_degree_embedding as owner
+    from phydrax.geometry import _mapped_embedding as mapped
+    from phydrax.geometry._embedding_state import EmbeddingState
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    with coordinate_reference_budget() as budget:
+        source = geometry.elements[0]
+        assert isinstance(source, FiniteElementSpec)
+        chart = coordinate_lagrange_element("tetrahedron", 1)
+        chart_points = np.asarray(chart.reference_nodes, dtype=np.int64)
+        composed = PolynomialComposedCellGeometryElement(
+            source, chart, chart_points, np.ones_like(chart_points), budget=budget,
+        )
+        pulled = phx.discretization.CellGeometrySpec(
+            {geometry.block_names[0]: composed},
+            dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+            geometry.coordinates,
+        )
+        cells = _actual_tet_trace_cells(mesh, pulled, budget)
+        assert all(type(value) is dict for cell in cells for value in cell.coordinates)
+        state = EmbeddingState([], [])
+        witness = mapped.trace_continuity(
+            state, mesh, cells, geometry=pulled, budget=budget,
+            retain_facet_traces=True,
+        )
+        assert state.clean and witness is None
+        assert owner._shared_entity_conformity(cells, budget=budget).mismatch is None

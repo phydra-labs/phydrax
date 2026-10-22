@@ -794,3 +794,256 @@ def test_curved_chart_fv_rejects_stale_incomplete_and_mismatched_bindings(
             target_geometry=core.target_geometry,
             geometry_transition=replace(carrier, source_geometry_id="foreign"),
         )
+
+
+@pytest.mark.parametrize("embedded", (False, True), ids=("volume", "embedded"))
+def test_mapped_fv_rules_reuse_actual_preparation_against_independent_execution(
+    embedded: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _cell_geometry as geometry_owner
+    from phydrax.discretization.fem import _reference_rules as rules_owner
+    from phydrax.discretization.finite_volume import _unstructured as fv_owner
+    from tests._support.mapped_cells import rational_cylinder
+
+    if embedded:
+        original_mesh, original_geometry, _, _ = rational_cylinder()
+    else:
+        original_mesh, original_geometry = curved_fv_volume("hexahedron")
+    # Two distinct source banks in separate blocks exercise repeated volume
+    # rules as well as every face, without aliasing translated chart values.
+    block = original_mesh.blocks[0]
+    shift = np.zeros(original_mesh.coordinates.shape[1])
+    shift[0] = 2
+    points = np.asarray(original_mesh.coordinates)
+    coefficients = np.asarray(original_geometry.coordinates)
+    names = ("first", "second")
+    mesh = CellMesh(
+        np.concatenate((points, points + shift)),
+        tuple(
+            CellBlock(
+                name, block.cell_kind,
+                np.asarray(block.vertices) + index * len(points),
+                global_ids=np.asarray((17 + index,)),
+            )
+            for index, name in enumerate(names)
+        ),
+    )
+    geometry = CellGeometrySpec(
+        {name: original_geometry.elements[0] for name in names},
+        {
+            name: np.asarray(original_geometry.geometry_dofs[0]) + index * len(coefficients)
+            for index, name in enumerate(names)
+        },
+        np.concatenate((coefficients, coefficients + shift)),
+    )
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, (
+        fv_owner.PolygonalConnectivity, fv_owner.TetrahedralConnectivity,
+        fv_owner.HexahedralConnectivity, fv_owner.PolyhedralConnectivity,
+    ))
+    owner = fv_owner._owner_neighbor(connectivity, sum(block.cell_count for block in mesh.blocks))[0]
+    degree = max(
+        9 * fv_owner.imported_cell_geometry.require_scalar_coordinate_element(
+            element, "FV regression"
+        ).degree
+        for element in geometry.elements
+    )
+    build_calls: list[tuple[str, int]] = []
+    transfer_calls: list[tuple[str, int]] = []
+    original_host_rule = rules_owner.host_degree_aware_reference_rule
+    original_rule = rules_owner.degree_aware_reference_rule
+
+    def counted_host_rule(kind: str, order: int) -> tuple[np.ndarray, np.ndarray]:
+        build_calls.append((kind, order))
+        return original_host_rule(kind, order)
+
+    def counted_rule(kind: str, order: int) -> tuple[Array, Array]:
+        transfer_calls.append((kind, order))
+        return original_rule(kind, order)
+
+    monkeypatch.setattr(rules_owner, "host_degree_aware_reference_rule", counted_host_rule)
+    monkeypatch.setattr(rules_owner, "degree_aware_reference_rule", counted_rule)
+    with coordinate_reference_budget() as budget:
+        actual = fv_owner._mapped_fv_geometry(mesh, geometry, owner, budget=budget)
+    expected_kinds = (
+        {"quadrilateral", "interval"} if embedded else {"hexahedron", "quadrilateral"}
+    )
+    assert set(build_calls) == {(kind, degree) for kind in expected_kinds}
+    assert len(build_calls) == len(expected_kinds)
+    assert transfer_calls == build_calls
+    build_calls.clear()
+    transfer_calls.clear()
+
+    def independent_rule(kind: str, order: int) -> tuple[np.ndarray, np.ndarray]:
+        # The preceding execution built and transferred each rule independently
+        # for every block and every face, then used the full source element.
+        xi, weights = counted_rule(kind, order)
+        return np.asarray(xi), np.asarray(weights)
+
+    with monkeypatch.context() as patch, coordinate_reference_budget() as budget:
+        patch.setattr(geometry_owner, "coordinate_tabulation", lambda element: element)
+        oracle = fv_owner._evaluate_mapped_fv_geometry(
+            mesh, geometry, owner, independent_rule, budget=budget
+        )
+    assert len(build_calls) == len(mesh.blocks) + len(owner)
+    assert transfer_calls == build_calls
+    assert all(order == degree for _, order in build_calls)
+    for actual_operand, oracle_operand in zip(actual[:-1], oracle[:-1], strict=True):
+        left, right = np.asarray(actual_operand), np.asarray(oracle_operand)
+        assert left.shape == right.shape
+        assert left.dtype == right.dtype
+        np.testing.assert_array_equal(
+            np.ascontiguousarray(left).view(np.uint8),
+            np.ascontiguousarray(right).view(np.uint8),
+        )
+    assert actual.volume_exact == oracle.volume_exact
+    assert np.all(np.asarray(actual.cell_quadrature_weights)[
+        np.asarray(actual.cell_quadrature_valid)
+    ] > 0)
+    assert np.all(np.asarray(actual.face_quadrature_weights) > 0)
+    if not embedded:
+        np.testing.assert_allclose(
+            actual.cell_volumes, (1.05, 1.05), rtol=0, atol=MAPPED_MEASURE_ATOL
+        )
+        assert actual.volume_exact
+    # Both the physical point bank and all face orientation/closure operands
+    # above agree bitwise; distinct translated sources were not shared.
+    np.testing.assert_allclose(
+        np.asarray(actual.cell_centers)[1] - np.asarray(actual.cell_centers)[0],
+        shift, rtol=0, atol=MAPPED_MEASURE_ATOL,
+    )
+
+
+def test_mapped_fv_rule_memo_admits_live_storage_precision_and_real_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax import config as pxconfig
+    from phydrax.discretization.fem import _reference_rules as rules_owner
+    from tools.compile_counter import CompileCounter
+
+    calls: list[tuple[str, int]] = []
+    original = rules_owner.degree_aware_reference_rule
+
+    def counted(kind: str, degree: int) -> tuple[Array, Array]:
+        calls.append((kind, degree))
+        return original(kind, degree)
+
+    monkeypatch.setattr(rules_owner, "degree_aware_reference_rule", counted)
+    with coordinate_reference_budget() as budget:
+        before = budget.temporary_bytes_upper
+        with rules_owner._prepared_host_reference_rules(budget) as rules:
+            xi, weights = rules.rule("quadrilateral", 18)
+            stored, work = budget.temporary_bytes_upper, budget.work_units
+            assert stored >= before + xi.nbytes + weights.nbytes
+            assert not xi.flags.writeable and not weights.flags.writeable
+            with CompileCounter(capture_stack=True) as hit_compiles:
+                for _ in range(12):
+                    hit_points, hit_weights = rules.rule("quadrilateral", 18)
+                    assert hit_points is xi and hit_weights is weights
+            assert hit_compiles.count == 0
+            assert budget.temporary_bytes_upper == stored
+            assert budget.work_units == work
+            assert calls == [("quadrilateral", 18)]
+            rules.rule("quadrilateral", 19)
+            rules.rule("triangle", 18)
+            # Precision is part of the numerical contract even in the same
+            # preparation. Do not reuse rounded float32 operands as float64.
+            with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
+                low, low_weights = rules.rule("quadrilateral", 18)
+                assert low.dtype == low_weights.dtype == np.dtype(np.float32)
+                assert low is not xi
+                assert rules.rule("quadrilateral", 18)[0] is low
+            assert rules.rule("quadrilateral", 18)[0] is xi
+        assert budget.temporary_bytes_upper == before
+        assert calls == [
+            ("quadrilateral", 18), ("quadrilateral", 19),
+            ("triangle", 18), ("quadrilateral", 18),
+        ]
+        # No cache crosses the actual preparation's lifetime.
+        with rules_owner._prepared_host_reference_rules(budget) as rules:
+            assert rules.rule("quadrilateral", 18)[0] is not xi
+        assert len(calls) == 5
+
+
+def test_mapped_fv_rule_memo_refuses_before_numeric_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+    from phydrax.discretization.fem import _reference_rules as rules_owner
+
+    def forbidden(kind: str, degree: int) -> tuple[Array, Array]:
+        pytest.fail("An unadmitted quadrature rule reached its numerical builder")
+
+    monkeypatch.setattr(rules_owner, "degree_aware_reference_rule", forbidden)
+    ticket = HostBatchTicket(100_000, queries_upper=0, bytes_upper=8192)
+    budget = CoordinateEnclosureBudget(
+        ticket, maximum_work_units=100_000, maximum_memory_bytes=8192
+    )
+    with ticket, budget.activate():
+        with pytest.raises(CoordinateEnclosureResourceError) as refused:
+            with rules_owner._prepared_host_reference_rules(budget) as rules:
+                rules.rule("hexahedron", 18)
+        assert refused.value.resource == "polynomial_storage"
+        assert budget.work_units == 0
+        assert budget.temporary_bytes_upper == 0
+
+
+@pytest.mark.parametrize("readonly", (False, True), ids=("mutable", "readonly-toggled"))
+def test_mapped_fv_rule_reuse_reauthenticates_changed_source_and_private_outputs(
+    readonly: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _cell_geometry as geometry_owner
+    from phydrax.discretization.fem import _reference_rules as rules_owner
+    from phydrax.discretization.finite_volume import _unstructured as fv_owner
+
+    mesh, geometry = curved_fv_volume("hexahedron")
+    source = np.array(geometry.coordinates, copy=True)
+    source.flags.writeable = not readonly
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, (
+        fv_owner.HexahedralConnectivity, fv_owner.PolyhedralConnectivity,
+    ))
+    owner = fv_owner._owner_neighbor(connectivity, sum(block.cell_count for block in mesh.blocks))[0]
+    original = rules_owner.degree_aware_reference_rule
+    calls: list[tuple[str, int]] = []
+
+    def counted(kind: str, degree: int) -> tuple[Array, Array]:
+        calls.append((kind, degree))
+        return original(kind, degree)
+
+    monkeypatch.setattr(rules_owner, "degree_aware_reference_rule", counted)
+    with coordinate_reference_budget() as budget:
+        initial = fv_owner._mapped_fv_geometry(mesh, geometry, owner, budget=budget)
+        # Change the source through validated public constructors, including a
+        # caller bank made writable again; never mutate a StrictModule raw.
+        shift = np.asarray((0.25, 0.5, 0.75))
+        source.flags.writeable = True
+        source += shift
+        source.flags.writeable = not readonly
+        geometry = geometry.with_coordinates(source, budget=budget)
+        mesh = mesh.with_coordinates(
+            np.asarray(mesh.coordinates) + shift, numeric_version="translated-FV-source"
+        )
+        with pytest.raises(ValueError, match="read-only"):
+            np.asarray(initial.cell_quadrature_points)[:] = -123
+        public_copy = np.array(initial.cell_quadrature_points, copy=True)
+        public_copy[:] = -123
+        second = fv_owner._mapped_fv_geometry(mesh, geometry, owner, budget=budget)
+    assert len(calls) == 4
+    np.testing.assert_allclose(
+        second.cell_centers, np.asarray(initial.cell_centers) + np.asarray(shift),
+        rtol=0, atol=MAPPED_MEASURE_ATOL,
+    )
+    with monkeypatch.context() as patch, coordinate_reference_budget() as budget:
+        patch.setattr(geometry_owner, "coordinate_tabulation", lambda element: element)
+
+        def independent_rule(kind: str, degree: int) -> tuple[np.ndarray, np.ndarray]:
+            xi, weights = original(kind, degree)
+            return np.asarray(xi), np.asarray(weights)
+
+        oracle = fv_owner._evaluate_mapped_fv_geometry(
+            mesh, geometry, owner, independent_rule, budget=budget
+        )
+    for actual, expected in zip(second[:-1], oracle[:-1], strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    assert second.volume_exact == oracle.volume_exact

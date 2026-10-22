@@ -37,6 +37,8 @@ from phydrax.lifecycle import (
 )
 from phydrax.lifecycle._meshing_sources import validate_meshing_source_closure
 from phydrax.meshing import CellMeshingResult
+from phydrax.meshing._lineage import CellMeshTransition, identity_lineage
+from phydrax.meshing._lineage_records import MeshTransitionKind
 from tests._support.meshing_field_declarations import (
     NativeFieldScenario,
     prepare_native_field_scenario,
@@ -539,4 +541,23 @@ def test_accepted_field_epoch_refuses_duplicate_history_owners(
     with pytest.raises(ValueError, match=expected_refusal):
         validate_meshing_source_closure(
             duplicates[duplicate_role], limits=state.native.limits
+        )
+
+
+def test_accepted_epoch_refuses_bare_topology_transition(
+    published_field_epoch: PublishedFieldEpoch,
+) -> None:
+    state = published_field_epoch
+    carrier = state.native.carrier
+    transition = CellMeshTransition(
+        carrier.mesh.mesh_id,
+        carrier.mesh.topology_id,
+        carrier,
+        identity_lineage(carrier.mesh, carrier.mesh),
+        MeshTransitionKind.REFINE,
+    )
+    with pytest.raises(TypeError):
+        MeshingAcceptedEpoch(
+            carrier, (state.native.declaration,), state.native.fields,
+            transition=transition,
         )

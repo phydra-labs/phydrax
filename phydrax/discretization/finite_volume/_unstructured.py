@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from typing import assert_never, final, NamedTuple
 
@@ -741,6 +741,23 @@ def _mapped_fv_geometry(
 ) -> _MappedFiniteVolumeGeometry:
     """Evaluate the represented coordinate map; cell measures have certified bounds."""
 
+    with reference_rules_owner._prepared_host_reference_rules(budget) as rules:
+        return _evaluate_mapped_fv_geometry(
+            mesh, geometry, owner, rules.rule, budget=budget
+        )
+
+
+def _evaluate_mapped_fv_geometry(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    owner: np.ndarray,
+    reference_rule: Callable[[str, int], tuple[np.ndarray, np.ndarray]],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedFiniteVolumeGeometry:
+    """Evaluate current geometry; only source-independent rules may be shared."""
+
     volumes, errors, exact = mapped_measure_owner.certified_cell_measures(
         mesh, geometry, budget=budget
     )
@@ -758,11 +775,10 @@ def _mapped_fv_geometry(
     cell_points, cell_weights, centers = [], [], []
     degree = max(9 * element.degree for element in elements)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        tabulation = imported_cell_geometry.coordinate_tabulation(element)
         reference = imported_reference_cell.reference_cell_topology(block.cell_kind)
-        xi, weights = reference_rules_owner.degree_aware_reference_rule(
-            block.cell_kind, degree
-        )
-        values, gradients = element.tabulate(xi)
+        xi, weights = reference_rule(block.cell_kind, degree)
+        values, gradients = tabulation.tabulate(xi)
         values, gradients = np.asarray(values), np.asarray(gradients)
         for vertices, dofs in zip(
             np.asarray(block.vertices), np.asarray(route), strict=True
@@ -786,7 +802,7 @@ def _mapped_fv_geometry(
                 np.sum(points * measure_weights[:, None], axis=0)
                 / np.sum(measure_weights)
             )
-            cells.append((vertices, reference, element, local))
+            cells.append((vertices, reference, tabulation, local))
     match mesh.connectivity:
         case PolyhedralConnectivity() as connectivity:
             offsets = np.asarray(connectivity.face_vertex_offsets)
@@ -803,7 +819,7 @@ def _mapped_fv_geometry(
     face_points, face_weights, face_centers, area_vectors = [], [], [], []
     closure = np.zeros((len(cells), ambient), dtype=np.float64)
     for face, cell in zip(faces, owner, strict=True):
-        vertices, reference, element, local = cells[int(cell)]
+        vertices, reference, tabulation, local = cells[int(cell)]
         facet = next(
             f
             for f in reference.entities[mesh.topological_dimension - 1]
@@ -811,27 +827,25 @@ def _mapped_fv_geometry(
         )
         corners = np.asarray(reference.vertices)[list(facet)]
         if len(facet) == 2:
-            uv, w = reference_rules_owner.degree_aware_reference_rule("interval", degree)
+            uv, w = reference_rule("interval", degree)
             xi = corners[0] + np.asarray(uv)[:, :1] * (corners[1] - corners[0])
             tangent = np.broadcast_to((corners[1] - corners[0])[:, None], (len(w), 2, 1))
         elif len(facet) == 3:
-            uv, w = reference_rules_owner.degree_aware_reference_rule("triangle", degree)
+            uv, w = reference_rule("triangle", degree)
             tangent = np.broadcast_to(
                 np.stack((corners[1] - corners[0], corners[2] - corners[0]), axis=1),
                 (len(w), 3, 2),
             )
             xi = corners[0] + np.asarray(uv) @ tangent[0].T
         else:
-            uv, w = reference_rules_owner.degree_aware_reference_rule(
-                "quadrilateral", degree
-            )
+            uv, w = reference_rule("quadrilateral", degree)
             u, v = np.asarray(uv).T
             shape = np.stack(((1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v), axis=1)
             xi = shape @ corners
             du = np.stack((v - 1, 1 - v, v, -v), axis=1) @ corners
             dv = np.stack((u - 1, -u, u, 1 - u), axis=1) @ corners
             tangent = np.stack((du, dv), axis=2)
-        values, gradients = element.tabulate(xi)
+        values, gradients = tabulation.tabulate(xi)
         points = np.asarray(values) @ local
         jacobian = np.einsum("mD,qmd->qDd", local, np.asarray(gradients))
         physical = jacobian @ tangent

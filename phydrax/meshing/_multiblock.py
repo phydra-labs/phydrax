@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import prod
 
 import numpy as np
 
@@ -26,6 +27,10 @@ from phydrax.discretization._reference_cell_types import CellGeometryElement
 
 from .._meshcore import NativeExecutionScope
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
+from ..discretization._cell_mesh import (
+    cell_block_construction_bounds,
+    cell_mesh_construction_bounds,
+)
 from ..typing import checked
 from ._contracts import MeshingLimits
 
@@ -94,11 +99,15 @@ def _glued_geometry(
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> CellGeometrySpec:
     """Retain full source banks; corner-defined maps follow declared node gluing."""
-    with family_execution_owner.coordinate_phase(scope=scope, budget=budget):
+    with (
+        family_execution_owner.coordinate_phase(scope=scope, budget=budget),
+        scope.host_workspace() as workspace,
+    ):
         elements: dict[str, CellGeometryElement] = {}
         routes: dict[str, np.ndarray] = {}
         coordinates = []
         offset = 0
+        retained = 0
         records = tuple(block.geometry.restriction_source for block in blocks)
         authored = tuple(record for record in records if record is not None)
         if authored and (
@@ -130,6 +139,9 @@ def _glued_geometry(
             source_elements, source_routes, source_points = construction.geometry.resolve(
                 construction.mesh, budget=budget
             )
+            entries = sum(block.vertices.size for block in construction.mesh.blocks)
+            # Coordinate and route comparisons own one boolean temporary each.
+            workspace.set_bound(retained + max(source_points.size, entries) + 4096)
             corner_defined = (
                 construction.geometry.restriction_source is None
                 and np.array_equal(source_points, construction.mesh.coordinates)
@@ -147,6 +159,11 @@ def _glued_geometry(
                     )
                 )
             )
+            # Gathered corner coordinates and shifted routes stay live until the
+            # bank is assembled; a route conversion may own one more copy.
+            gathered = vertex_route.size * points.shape[1] if corner_defined else 0
+            retained += 8 * gathered + 8 * entries
+            workspace.set_bound(retained + 4096)
             # The interface tolerance explicitly permits identifying nearby corner
             # nodes. Only a map defined by those very corners follows that snapping;
             # authored higher-order/restricted maps retain every source coefficient.
@@ -229,115 +246,219 @@ def construct_glued_structured_blocks(
     for name, block in zip(names, ordered, strict=True):
         offsets[name] = total
         total += block.mesh.coordinates.shape[0]
-    points = _dependency_phydrax_meshing__host_banks.family_host_array(
-        (total, ordered[0].mesh.ambient_dimension), np.float64, scope=scope
-    )
-    for name, block in zip(names, ordered, strict=True):
-        start = offsets[name]
-        points[start : start + block.mesh.coordinates.shape[0]] = np.asarray(
-            block.mesh.coordinates, dtype=np.float64
-        )
-    parent = _dependency_phydrax_meshing__host_banks.family_host_array(
-        (total,), np.int64, scope=scope
-    )
-    parent[:] = np.arange(total, dtype=np.int64)
-
-    def root(index: int, /) -> int:
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = int(parent[index])
-        return index
-
-    occupied: set[tuple[str, int]] = set()
-    residual = 0.0
-    declared_pairs = []
-    for interface in sorted(interfaces, key=lambda i: i.control_id):
-        if interface.first_block not in by_name or interface.second_block not in by_name:
-            raise ValueError(
-                f"multiblock.interface.blocks must name declared blocks; got {interface.first_block!r} and {interface.second_block!r}"
-            )
-        endpoints = (
+    ambient = ordered[0].mesh.ambient_dimension
+    ordered_interfaces = tuple(sorted(interfaces, key=lambda i: i.control_id))
+    # Block and face node counts follow from the logical shapes. An undeclared
+    # block or face contributes nothing: its interface refuses before work.
+    extents = []
+    for interface in ordered_interfaces:
+        sides = []
+        for name, face in (
             (interface.first_block, interface.first_face),
             (interface.second_block, interface.second_face),
-        )
-        if endpoints[0] == endpoints[1] or any(
-            endpoint in occupied for endpoint in endpoints
         ):
-            raise ValueError(
-                f"multiblock.interface.faces must participate in one gluing each; got reused face endpoints {endpoints}"
-            )
-        occupied.update(endpoints)
-        left, right = _face_correspondence(
-            by_name[interface.first_block], by_name[interface.second_block], interface
-        )
-        left = left + offsets[interface.first_block]
-        right = right + offsets[interface.second_block]
-        error = float(
-            np.max(np.linalg.norm(points[left] - points[right], axis=-1), initial=0.0)
-        )
-        if error > interface.tolerance:
-            raise ValueError(
-                f"multiblock.interface.coordinates must agree within tolerance {interface.tolerance}; got incompatible coordinates for {interface.control_id}, residual {error}"
-            )
-        residual = max(residual, error)
-        declared_pairs.append((interface, left, right))
-        for a, b in zip(left.tolist(), right.tolist(), strict=True):
-            ra, rb = root(a), root(b)
-            parent[max(ra, rb)] = min(ra, rb)
-    roots = _dependency_phydrax_meshing__host_banks.family_host_array(
-        (total,), np.int64, scope=scope
+            shape = by_name[name].logical_shape if name in by_name else ()
+            nodes = prod(shape) if 0 <= face < 2 * len(shape) else 0
+            sides.append((nodes, nodes // shape[face // 2] if nodes else 0))
+        extents.append((sides[0], sides[1]))
+    pair_count = sum(first[1] for first, _ in extents)
+    largest = max((first[1] for first, _ in extents), default=0)
+    cell_blocks = tuple(
+        cell_block for block in ordered for cell_block in block.mesh.blocks
     )
-    for index in range(total):
-        roots[index] = root(index)
-    # A corner shared by several faces can acquire a representative through a
-    # different interface. Pairwise agreement alone does not bound that final
-    # displacement: tolerances may not accumulate around a block cycle.
-    for interface, left, right in declared_pairs:
-        displacement = max(
-            float(
-                np.max(
-                    np.linalg.norm(points[left] - points[roots[left]], axis=-1),
-                    initial=0.0,
-                )
-            ),
-            float(
-                np.max(
-                    np.linalg.norm(points[right] - points[roots[right]], axis=-1),
-                    initial=0.0,
-                )
-            ),
-        )
-        if displacement > interface.tolerance:
-            raise ValueError(
-                f"multiblock.interface.displacement must fit tolerance {interface.tolerance}; got final node displacement {displacement} for {interface.control_id}"
-            )
-        residual = max(residual, displacement)
-    representatives, inverse = np.unique(roots, return_inverse=True)
-    cells = []
-    cell_offset = 0
-    routes = []
-    for name, block in zip(names, ordered, strict=True):
-        offset = offsets[name]
-        route = inverse[offset : offset + block.mesh.coordinates.shape[0]]
-        routes.append((name, route.astype(np.int64)))
-        for cell_block in block.mesh.blocks:
-            rows = route[np.asarray(cell_block.vertices, dtype=np.int64)]
-            cells.append(
-                CellBlock(
-                    cell_block.name,
-                    cell_block.cell_kind,
-                    rows,
-                    global_ids=np.arange(
-                        cell_offset, cell_offset + cell_block.cell_count, dtype=np.int64
-                    ),
-                )
-            )
-            cell_offset += cell_block.cell_count
-    mesh = CellMesh(
-        points[representatives],
-        tuple(cells),
-        vertex_global_ids=np.arange(representatives.size, dtype=np.int64),
+    mesh_shapes = tuple(
+        (cell_block.cell_kind, cell_block.cell_count, cell_block.arity)
+        for cell_block in cell_blocks
     )
+    with scope.host_workspace() as workspace:
+        # The parent identity range is the assembly's one unpooled temporary.
+        workspace.set_bound(8 * total + 4096)
+        points = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (total, ambient), np.float64, scope=scope
+        )
+        for name, block in zip(names, ordered, strict=True):
+            start = offsets[name]
+            points[start : start + block.mesh.coordinates.shape[0]] = np.asarray(
+                block.mesh.coordinates, dtype=np.float64
+            )
+        parent = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (total,), np.int64, scope=scope
+        )
+        least = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (total,), np.int64, scope=scope
+        )
+        size = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (total,), np.int64, scope=scope
+        )
+        parent[:] = np.arange(total, dtype=np.int64)
+        np.copyto(least, parent)
+        size.fill(1)
+
+        def root(index: int, /) -> int:
+            while parent[index] != index:
+                parent[index] = parent[parent[index]]
+                index = int(parent[index])
+            return index
+
+        left_rows = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (pair_count,), np.int64, scope=scope
+        )
+        right_rows = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (pair_count,), np.int64, scope=scope
+        )
+        differences = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (largest, ambient), np.float64, scope=scope
+        )
+        distances = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (largest,), np.float64, scope=scope
+        )
+        occupied: set[tuple[str, int]] = set()
+        residual = 0.0
+        declared_pairs = []
+        start = 0
+        for interface, ((first_nodes, first_face), (second_nodes, second_face)) in zip(
+            ordered_interfaces, extents, strict=True
+        ):
+            if (
+                interface.first_block not in by_name
+                or interface.second_block not in by_name
+            ):
+                raise ValueError(
+                    f"multiblock.interface.blocks must name declared blocks; got {interface.first_block!r} and {interface.second_block!r}"
+                )
+            endpoints = (
+                (interface.first_block, interface.first_face),
+                (interface.second_block, interface.second_face),
+            )
+            if endpoints[0] == endpoints[1] or any(
+                endpoint in occupied for endpoint in endpoints
+            ):
+                raise ValueError(
+                    f"multiblock.interface.faces must participate in one gluing each; got reused face endpoints {endpoints}"
+                )
+            occupied.update(endpoints)
+            # Both identity ranges, both face row copies and the two coordinate
+            # gathers of the residual may coexist.
+            workspace.set_bound(
+                8 * (first_nodes + second_nodes + first_face + second_face)
+                + 16 * first_face * ambient
+                + 4096
+            )
+            first_ids, second_ids = _face_correspondence(
+                by_name[interface.first_block], by_name[interface.second_block], interface
+            )
+            count = first_ids.size
+            left = left_rows[start : start + count]
+            right = right_rows[start : start + count]
+            start += count
+            np.add(first_ids, offsets[interface.first_block], out=left)
+            np.add(second_ids, offsets[interface.second_block], out=right)
+            difference = differences[:count]
+            distance = distances[:count]
+            np.subtract(points[left], points[right], out=difference)
+            np.square(difference, out=difference)
+            np.sum(difference, axis=-1, out=distance)
+            np.sqrt(distance, out=distance)
+            error = float(np.max(distance, initial=0.0))
+            if error > interface.tolerance:
+                raise ValueError(
+                    f"multiblock.interface.coordinates must agree within tolerance {interface.tolerance}; got incompatible coordinates for {interface.control_id}, residual {error}"
+                )
+            residual = max(residual, error)
+            declared_pairs.append((interface, left, right))
+            for first_row, second_row in zip(left, right, strict=True):
+                first_root = root(int(first_row))
+                second_root = root(int(second_row))
+                if first_root != second_root:
+                    if size[first_root] < size[second_root]:
+                        first_root, second_root = second_root, first_root
+                    parent[second_root] = first_root
+                    size[first_root] += size[second_root]
+                    least[first_root] = min(least[first_root], least[second_root])
+        roots = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (total,), np.int64, scope=scope
+        )
+        for index in range(total):
+            roots[index] = least[root(index)]
+        # A corner shared by several faces can acquire a representative through a
+        # different interface. Pairwise agreement alone does not bound that final
+        # displacement: tolerances may not accumulate around a block cycle.
+        for interface, left, right in declared_pairs:
+            count = left.size
+            # One root gather and two coordinate gathers coexist per side.
+            workspace.set_bound(8 * count + 16 * count * ambient + 4096)
+            difference = differences[:count]
+            distance = distances[:count]
+            extremes = []
+            for rows in (left, right):
+                np.subtract(points[rows], points[roots[rows]], out=difference)
+                np.square(difference, out=difference)
+                np.sum(difference, axis=-1, out=distance)
+                np.sqrt(distance, out=distance)
+                extremes.append(float(np.max(distance, initial=0.0)))
+            displacement = max(extremes)
+            if displacement > interface.tolerance:
+                raise ValueError(
+                    f"multiblock.interface.displacement must fit tolerance {interface.tolerance}; got final node displacement {displacement} for {interface.control_id}"
+                )
+            residual = max(residual, displacement)
+        # Flattened input, sort permutation, sorted values, boundary masks,
+        # unique values, running counts and inverse rows.
+        workspace.set_bound(64 * total + 4096)
+        representatives, inverse = np.unique(roots, return_inverse=True)
+        # The representatives and inverse stay live; each cell block owns a
+        # converted row bank, a gathered row bank and an identity range, as do
+        # the representative coordinates and vertex identities.
+        assembly_bytes = (
+            16 * total
+            + sum(16 * block.vertices.size + 8 * block.cell_count for block in cell_blocks)
+            + 8 * representatives.size * (ambient + 1)
+            + 4096
+        )
+        workspace.set_bound(assembly_bytes)
+        cells = []
+        cell_offset = 0
+        routes = []
+        for name, block in zip(names, ordered, strict=True):
+            offset = offsets[name]
+            count = block.mesh.coordinates.shape[0]
+            route = _dependency_phydrax_meshing__host_banks.family_host_array(
+                (count,), np.int64, scope=scope
+            )
+            np.copyto(route, inverse[offset : offset + count])
+            routes.append((name, route))
+            for cell_block in block.mesh.blocks:
+                rows = route[np.asarray(cell_block.vertices, dtype=np.int64)]
+                workspace.set_bound(
+                    assembly_bytes
+                    + cell_block_construction_bounds(
+                        cell_block.cell_count, cell_block.arity
+                    )
+                )
+                cells.append(
+                    CellBlock(
+                        cell_block.name,
+                        cell_block.cell_kind,
+                        rows,
+                        global_ids=np.arange(
+                            cell_offset,
+                            cell_offset + cell_block.cell_count,
+                            dtype=np.int64,
+                        ),
+                    )
+                )
+                cell_offset += cell_block.cell_count
+        workspace.set_bound(
+            assembly_bytes
+            + cell_mesh_construction_bounds(
+                representatives.size, ambient, mesh_shapes
+            )
+        )
+        mesh = CellMesh(
+            points[representatives],
+            tuple(cells),
+            vertex_global_ids=np.arange(representatives.size, dtype=np.int64),
+        )
     geometry = _glued_geometry(
         ordered, tuple(routes), np.asarray(mesh.coordinates), scope=scope, budget=budget
     )

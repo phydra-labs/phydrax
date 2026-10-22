@@ -1243,13 +1243,41 @@ def callable_payload(
     }
 
 
+def _semantic_content_kind(payload: Any, /) -> str | None:
+    """Read the authored top-level kind from the normalized semantic mapping."""
+    if not isinstance(payload, dict) or payload.get("kind") != "mapping":
+        return None
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise ValueError(
+            "SemanticProvenance.content.items must contain normalized mapping entries; got a non-list"
+        )
+    declared = None
+    previous = ""
+    for item in items:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(
+                "SemanticProvenance.content.items must contain key/value pairs; got a malformed entry"
+            )
+        name = item[0]
+        if not isinstance(name, str) or name.strip() != name or name <= previous:
+            raise ValueError(
+                "SemanticProvenance.content.items must have unique whitespace-trimmed keys in strictly increasing order; got a malformed key sequence"
+            )
+        previous = name
+        if name == "kind":
+            declared = item[1] if isinstance(item[1], str) else None
+    return declared
+
+
 class SemanticProvenance(StrictModule):
-    """Content-addressed semantics with separately named external resources."""
+    """Content-addressed semantics with an authenticated dispatch kind and resources."""
 
     content_json: str = eqx.field(static=True)
     content_id: str = eqx.field(static=True)
     resource_ids: tuple[tuple[str, str], ...] = eqx.field(static=True)
     semantic_id: str = eqx.field(static=True)
+    content_kind: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -1267,6 +1295,7 @@ class SemanticProvenance(StrictModule):
         content_id = canonical_fingerprint(
             {"kind": "semantic-content", "payload": content_}
         )
+        content_kind = _semantic_content_kind(content_)
         self.content_json = content_json
         self.content_id = content_id
         self.resource_ids = resources
@@ -1277,6 +1306,7 @@ class SemanticProvenance(StrictModule):
                 "resource_ids": [list(record) for record in resources],
             }
         )
+        self.content_kind = content_kind
 
     @classmethod
     @checked
@@ -1315,6 +1345,10 @@ class SemanticProvenance(StrictModule):
         ):
             raise ValueError(
                 f"SemanticProvenance.semantic_id must match its content and resources; got {value.semantic_id!r}."
+            )
+        if value.content_kind != _semantic_content_kind(payload):
+            raise ValueError(
+                f"SemanticProvenance.content_kind must match the authored top-level kind; got {value.content_kind!r}"
             )
         return value
 

@@ -19,6 +19,7 @@ from ..._meshcore import NativeExecutionScope
 from ..._trainable import NonTrainableState
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._coordinate_budget import CoordinateEnclosureResourceError
+from ...geometry._domain_coverage import DomainCoverageCertificate
 from ...lifecycle import (
     CompositionRebind,
     CompositionRebindReceipt,
@@ -26,6 +27,9 @@ from ...lifecycle import (
     MeshingFieldStateRole,
     MeshingFiniteElementFieldDeclaration,
     prepare_meshing_field_index_binding,
+)
+from ...solver._finite_element_adaptivity import (
+    PreparedFiniteElementTopologyTransition,
 )
 from ...typing import checked
 from .._association import PlcAssociationTransfer
@@ -147,7 +151,12 @@ def prepare_envelope_association_transfer(
     limits: phx.meshing.MeshingLimits,
     /,
 ) -> PlcAssociationTransfer:
-    """Bind rational repaired-carrier identity tables in their source order."""
+    """Bind rational repaired-carrier identity tables in their source order.
+
+    The source-support proof is not duplicated here: adaptation preparation
+    proves ``source_associations`` for this transfer and result on its own
+    request ledger before any association is consumed.
+    """
     with NativeExecutionScope(limits.native_limits()) as scope:
         match source:
             case phx.meshing.NativePlcSource():
@@ -180,7 +189,6 @@ def prepare_envelope_association_transfer(
                 raise TypeError(
                     f"qualification.envelope_source must be a PLC or envelope source; got {type(source).__qualname__}"
                 )
-        transfer.source_associations(result)
     return transfer
 
 
@@ -215,10 +223,10 @@ def _envelope_certificates(
             {"certificate": certificate},
         )
     embedding, coverage = (certificate.embedding, certificate.coverage)
-    if embedding is None or coverage is None:
+    if embedding is None or not isinstance(coverage, DomainCoverageCertificate):
         raise failure_factory(
             "envelope.acceptance.certificates",
-            "retain embedding and domain coverage",
+            "retain embedding and exact repaired-domain coverage",
             {"coverage": coverage, "embedding": embedding},
         )
     if embedding.status != "certified" or coverage.status != "certified":
@@ -519,16 +527,20 @@ def envelope_solver_field_templates() -> tuple[
 
 
 def envelope_transport_field_templates(
-    cell_kind: str, /
+    cell_kind: str, /, *, solution_degree: int = 1
 ) -> tuple[tuple[str, phx.discretization.FiniteElementFieldSpec], ...]:
-    """Return the transported solution, material density, and accepted history."""
-    element = phx.discretization.lagrange_element(cell_kind, 1)
+    """Keep density P1 while matching solution and material-history degrees."""
     return tuple(
-        (role, phx.discretization.FiniteElementFieldSpec(name, element))
-        for role, name in (
-            ("transport:intensive", "u"),
-            ("transport:conservative-density", "density"),
-            ("transport:material-history", "history"),
+        (
+            role,
+            phx.discretization.FiniteElementFieldSpec(
+                name, phx.discretization.lagrange_element(cell_kind, degree)
+            ),
+        )
+        for role, name, degree in (
+            ("transport:intensive", "u", solution_degree),
+            ("transport:conservative-density", "density", 1),
+            ("transport:material-history", "history", solution_degree),
         )
     )
 
@@ -543,22 +555,27 @@ def prepare_envelope_accepted_epoch(
     *,
     part_name: str,
     transition: phx.meshing.MeshAdaptationResult | None = None,
+    transport_space: phx.discretization.FiniteElementDiscretization | None = None,
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
 ) -> MeshingAcceptedEpoch:
     """Bind transported solution, continuous density, and material history.
 
     The coefficient layouts and field templates are those used by the topology
     transaction. The scalar solve must use the same carrier and coordinate map.
+    A caller-retained transported-field owner is admitted only if it realizes
+    this plan bitwise.
     """
     fields = tuple(
         field
         for _, field in envelope_transport_field_templates(
-            result.mesh.blocks[0].cell_kind
+            result.mesh.blocks[0].cell_kind,
+            solution_degree=scalar_space.elements[0][0].degree,
         )
     )
     plan = phx.discretization.FiniteElementPlan(
-        result.mesh, fields, coordinate_spec=result.geometry
+        result.mesh, fields, coordinate_spec=result.geometry, budget=budget,
     )
-    owner = plan.prepare()
+    owner = plan.prepare(reuse_prepared=transport_space, budget=budget)
     if (
         scalar_space.mesh.mesh_id != result.mesh.mesh_id
         or scalar_space.numeric_version != owner.numeric_version
@@ -566,6 +583,7 @@ def prepare_envelope_accepted_epoch(
         != cell_geometry_id(result.geometry)
         or len(scalar_space.dof_maps) != 1
         or scalar_space.dof_maps[0].dof_map_id != owner.dof_maps[0].dof_map_id
+        or values.shape != (scalar_space.dof_maps[0].global_dof_count,)
     ):
         raise ValueError(
             "envelope.accepted_epoch.scalar_space must match the accepted scalar coefficient owner; got a foreign carrier, geometry, or layout"
@@ -633,17 +651,19 @@ def prepare_envelope_solver(
     failure_factory: Callable[[str, str, dict[str, object]], RuntimeError],
     source_coefficient: Callable[[jax.Array, object], jax.Array],
     dirichlet_values: Callable[[jax.Array], jax.Array],
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     phx.discretization.FiniteElementDiscretization,
     phx.equations.CompiledFiniteElementProblem,
     jax.Array,
 ]:
-    """Scalar H1 diffusion on the repaired domain, not the open sheet."""
+    """Prepare scalar H1 diffusion, sharing an explicit cold request budget."""
     space = phx.discretization.FiniteElementPlan(
         result.mesh,
         envelope_solver_field_templates()[0][1],
         coordinate_spec=result.geometry,
-    ).prepare()
+        budget=budget,
+    ).prepare(budget=budget)
     form = phx.equations.FiniteElementForm(
         "repaired-envelope-manufactured-diffusion",
         "u",
@@ -657,6 +677,13 @@ def prepare_envelope_solver(
                 ),
             ),
         ),
+        # Real unit diffusion uses the same scalar H1 trial/test space.
+        # The strong Dirichlet Galerkin restriction preserves symmetry;
+        # the source and inhomogeneous lift affect only the right-hand side.
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            evidence={"self_adjoint": "construction"},
+        ),
     )
     constraint = phx.discretization.dirichlet_constraint(space, "u")
     if constraint.free_dofs.size == 0:
@@ -666,7 +693,7 @@ def prepare_envelope_solver(
             {"constraint": constraint},
         )
     problem = phx.equations.compile_finite_element_problem(
-        form, space, constraint=constraint, dirichlet_values=dirichlet_values
+        form, space, constraint=constraint, dirichlet_values=dirichlet_values, budget=budget
     )
     return (space, problem, constraint.free_dofs)
 
@@ -675,6 +702,7 @@ class _EnvelopeFieldPhase(phx.StrictModule):
     fields: tuple[phx.discretization.FiniteElementFieldSpec, ...]
     source_fields: tuple[jax.Array, ...]
     accepted: phx.solver.FiniteElementAcceptedState
+    space: phx.discretization.FiniteElementDiscretization
 
 
 class _EnvelopeRollbackPhase(phx.StrictModule):
@@ -687,23 +715,42 @@ class _EnvelopeCommitPhase(phx.StrictModule):
     receipt: CompositionRebindReceipt
 
 
+def _envelope_transport_fields(
+    mesh: phx.discretization.CellMesh, /, *, solution_degree: int
+) -> tuple[phx.discretization.FiniteElementFieldSpec, ...]:
+    dimension = mesh.topological_dimension
+    if dimension not in (2, 3):
+        raise ValueError(
+            f"envelope.state_transport.mesh must use triangle or tetrahedron cells; got topological dimension {dimension}"
+        )
+    cell_kind = "triangle" if dimension == 2 else "tetrahedron"
+    return tuple(
+        field
+        for _, field in envelope_transport_field_templates(
+            cell_kind, solution_degree=solution_degree
+        )
+    )
+
+
 def _prepare_envelope_fields(
     result: phx.meshing.CellMeshingResult,
     problem: phx.equations.CompiledFiniteElementProblem,
     values: jax.Array,
     epoch: int,
     auxiliary: tuple[jax.Array, jax.Array] | None,
+    space: phx.discretization.FiniteElementDiscretization | None,
+    budget: phx.discretization.CoordinateEnclosureBudget | None,
 ) -> _EnvelopeFieldPhase:
-    dimension = result.mesh.topological_dimension
-    if dimension not in (2, 3):
-        raise ValueError(
-            f"envelope.state_transport.mesh must use triangle or tetrahedron cells; got topological dimension {dimension}"
-        )
-    cell_kind = "triangle" if dimension == 2 else "tetrahedron"
-    fields = tuple(field for _, field in envelope_transport_field_templates(cell_kind))
+    scalar_space = problem.discretization
+    if not isinstance(scalar_space, phx.discretization.FiniteElementDiscretization):
+        raise TypeError("envelope.state_transport.problem must retain its scalar FE space")
+    fields = _envelope_transport_fields(
+        result.mesh, solution_degree=scalar_space.elements[0][0].degree
+    )
+    # A caller-retained owner is admitted only if it realizes this plan bitwise.
     all_fields = phx.discretization.FiniteElementPlan(
-        result.mesh, fields, coordinate_spec=result.geometry
-    ).prepare()
+        result.mesh, fields, coordinate_spec=result.geometry, budget=budget
+    ).prepare(reuse_prepared=space, budget=budget)
     if auxiliary is None:
         auxiliary = (
             jnp.full((all_fields.field_spaces[1].layout.size,), 2.0, dtype=values.dtype),
@@ -720,13 +767,13 @@ def _prepare_envelope_fields(
         state_version=epoch,
     )
     return _EnvelopeFieldPhase(
-        fields=fields, source_fields=source_fields, accepted=accepted
+        fields=fields, source_fields=source_fields, accepted=accepted, space=all_fields
     )
 
 
 @final
-class _EnvelopeErrorGate(phx.StrictModule, NonTrainableState):
-    error: Callable[[phx.discretization.CellMesh, jax.Array], float]
+class _EnvelopeRollbackGate(phx.StrictModule, NonTrainableState):
+    """Force a rejected transaction independently of solution representability."""
 
     def __call__(
         self,
@@ -736,8 +783,8 @@ class _EnvelopeErrorGate(phx.StrictModule, NonTrainableState):
         lineage: object,
         context: object,
     ) -> bool:
-        del materials, lineage, context
-        return self.error(mesh, fields[0]) <= 0.0
+        del mesh, fields, materials, lineage, context
+        return False
 
 
 @final
@@ -764,16 +811,14 @@ def _check_envelope_rollback(
     result: phx.meshing.CellMeshingResult,
     adaptation: phx.meshing.MeshAdaptationResult,
     phase: _EnvelopeFieldPhase,
-    projection_policy: phx.geometry.CommonRefinementPolicy | None,
-    physical_error: Callable[[phx.discretization.CellMesh, jax.Array], float],
+    gate: phx.solver.FiniteElementTopologyTransaction,
+    preparation: PreparedFiniteElementTopologyTransition,
     failure_factory: Callable[[str, str, dict[str, object]], RuntimeError],
 ) -> _EnvelopeRollbackPhase:
-    fields, source_fields, accepted = phase.fields, phase.source_fields, phase.accepted
-    rejected = phx.solver.FiniteElementTopologyTransaction(
-        _EnvelopeErrorGate(error=physical_error),
-        fields=fields,
-        projection_policy=projection_policy,
-    ).execute(accepted, result.mesh, adaptation)
+    source_fields, accepted = phase.source_fields, phase.accepted
+    # The forced rejection applies the prepared operators and gates the
+    # candidate fields in its own transaction; it never reaches publication.
+    rejected = gate.execute(accepted, result.mesh, adaptation, preparation=preparation)
     if (
         bool(rejected.committed)
         or rejected.receipt is None
@@ -833,27 +878,70 @@ def transition_envelope_state(
     *,
     projection_policy: phx.geometry.CommonRefinementPolicy | None = None,
     failure_factory: Callable[[str, str, dict[str, object]], RuntimeError],
-    physical_error: Callable[[phx.discretization.CellMesh, jax.Array], float],
+    source_space: phx.discretization.FiniteElementDiscretization | None = None,
+    target_space: phx.discretization.FiniteElementDiscretization | None = None,
+    budget: phx.discretization.CoordinateEnclosureBudget | None = None,
+    solution_inventory: Callable[
+        [phx.discretization.FiniteElementDiscretization, jax.Array], float
+    ] | None = None,
 ) -> tuple[jax.Array, tuple[jax.Array, jax.Array], dict[str, object]]:
-    """Atomically carry solved, material-density and history fields without reseeding."""
-    phase = _prepare_envelope_fields(result, problem, values, epoch, auxiliary)
+    """Atomically carry solved, material-density and history fields without reseeding.
+
+    Optional transported-field spaces are caller-retained owners of the source
+    and target carriers; each is admitted only if it realizes its plan bitwise.
+    """
+    phase = _prepare_envelope_fields(
+        result, problem, values, epoch, auxiliary, source_space, budget
+    )
     fields, accepted = phase.fields, phase.accepted
     capture = _EnvelopeRebindCapture(records=[])
     rebinds = capture.records
-    rollback = _check_envelope_rollback(
-        result, adaptation, phase, projection_policy, physical_error, failure_factory
+    gate = phx.solver.FiniteElementTopologyTransaction(
+        _EnvelopeRollbackGate(),
+        fields=fields,
+        projection_policy=projection_policy,
     )
-    rejected = rollback.result
-    transaction = phx.solver.FiniteElementTopologyTransaction(
+    commit = phx.solver.FiniteElementTopologyTransaction(
         _finite_envelope_fields,
         fields=fields,
         composition_rebind=capture,
         projection_policy=projection_policy,
-    ).execute(accepted, result.mesh, adaptation)
-    committed = _check_envelope_commit(transaction, rebinds, failure_factory)
+    )
     target_fields = phx.discretization.FiniteElementPlan(
-        adaptation.target.mesh, fields, coordinate_spec=adaptation.target.geometry
-    ).prepare()
+        adaptation.target.mesh,
+        fields,
+        coordinate_spec=adaptation.target.geometry,
+        budget=budget,
+    ).prepare(reuse_prepared=target_space, budget=budget)
+    # Spaces and field operators are immutable: both transactions bind the same
+    # prepared transfer, while rejection and commit still execute separately.
+    gated = gate.prepare_transition(
+        accepted,
+        result.mesh,
+        adaptation,
+        source=phase.space,
+        target=target_fields,
+        budget=budget,
+    )
+    rollback = _check_envelope_rollback(
+        result, adaptation, phase, gate, gated, failure_factory
+    )
+    rejected = rollback.result
+    transaction = commit.execute(
+        accepted,
+        result.mesh,
+        adaptation,
+        preparation=commit.prepare_transition(
+            accepted,
+            result.mesh,
+            adaptation,
+            source=gated.source,
+            target=gated.target,
+            field_transfers=gated.transfers,
+            budget=budget,
+        ),
+    )
+    committed = _check_envelope_commit(transaction, rebinds, failure_factory)
     density_defect = float(jnp.max(jnp.abs(transaction.state.fields[1] - 2.0)))
     history_defect = float(
         jnp.max(
@@ -880,6 +968,14 @@ def transition_envelope_state(
             "field_names": [field.name for field in fields],
             "density_max_defect": density_defect,
             "history_max_defect": history_defect,
+            "solution_inventory": (
+                None
+                if solution_inventory is None
+                else {
+                    "source": solution_inventory(phase.space, values),
+                    "target": solution_inventory(target_fields, transaction.state.fields[0]),
+                }
+            ),
             "auxiliary_seed_origin": "authored-initial-fields"
             if epoch == 0
             else "actual-carried-fields",
@@ -895,12 +991,13 @@ def transition_envelope_state(
             ],
             "rollback": {
                 "passed": True,
-                "requested_l2_error": 0.0,
+                "gate": "forced-rejection",
                 "diagnostics": rejected.diagnostics,
                 "receipt_id": rollback.receipt.receipt_id,
                 "accepted_id": accepted.accepted_id,
                 "topology_id": rejected.mesh.topology_id,
                 "state_version": rejected.state.state_version,
+                "transfer_ids": [item.transfer_id for item in rejected.transfers],
             },
         },
     )

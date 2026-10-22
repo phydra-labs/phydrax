@@ -53,7 +53,7 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundarySamples,
 )
 
-from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
+from ..._bvh import prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -81,7 +81,11 @@ from ._discovery import (
     EDGE_AXIS,
     EDGE_LOWER,
     INCIDENT_CELL_OFFSETS,
+    _admitted_batch,
+    _EDGE_ROOT_MAXIMUM_STEPS,
+    _QEF_REGULARIZATION_LEVELS,
     isolate_roots,
+    metered_self_overlap_pairs,
     qef_vertices,
 )
 from ._enclosure import (
@@ -93,6 +97,7 @@ from ._enclosure import (
     field_bounds,
     query_budget,
 )
+from ._analytic_profile import AnalyticDiscoveryShape
 from ._policy import (
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurfacePolicy,
@@ -419,6 +424,7 @@ class _Work:
     source_id: str
     macrocharts: dict[int, ImplicitNormalFiberMacrochart]
     maximum_root_solves: int
+    analytic_shape: AnalyticDiscoveryShape | None
 
     def coordinates(self, integer: np.ndarray) -> np.ndarray:
         # The last lattice plane is the domain corner itself, so leaves tile the
@@ -526,6 +532,23 @@ def _rows(bounds: BoxBounds, rows: np.ndarray) -> BoxBounds:
         bounds.directional_lower[rows],
         bounds.directional_upper[rows],
     )
+
+
+def _excluded_slabs(domain: np.ndarray, box: np.ndarray) -> np.ndarray:
+    """Disjoint boxes that tile ``domain`` minus ``box`` exactly, one face at a time."""
+    lower, upper = domain[0].copy(), domain[1].copy()
+    slabs: list[np.ndarray] = []
+    for axis in range(_DIMENSION):
+        if box[0, axis] > lower[axis]:
+            slab = np.stack((lower, upper))
+            slab[1, axis] = box[0, axis]
+            slabs.append(slab)
+        if box[1, axis] < upper[axis]:
+            slab = np.stack((lower, upper))
+            slab[0, axis] = box[1, axis]
+            slabs.append(slab)
+        lower[axis], upper[axis] = box[0, axis], box[1, axis]
+    return np.asarray(slabs, dtype=np.float64).reshape((-1, 2, _DIMENSION))
 
 
 def _leaf_bounds(work: _Work, leaves: _Leaves) -> BoxBounds:
@@ -1229,7 +1252,11 @@ def _link_cycles(
 
 
 def _flatness(work: _Work, leaves: _Leaves, bounds: BoxBounds) -> np.ndarray:
-    """Leaf diagonal times the direction spread of the gradient enclosure."""
+    """Leaf diagonal times the direction spread of the gradient enclosure.
+
+    Exact sphere and full ring-torus kernels intersect the interval spread with
+    their analytic gradient-direction cone over the same leaf box.
+    """
     with np.errstate(divide="ignore", invalid="ignore"):
         middle = 0.5 * (bounds.gradient_lower + bounds.gradient_upper)
         radius = 0.5 * (bounds.gradient_upper - bounds.gradient_lower)
@@ -1239,6 +1266,14 @@ def _flatness(work: _Work, leaves: _Leaves, bounds: BoxBounds) -> np.ndarray:
             np.isfinite(radius_norm) & (middle_norm > radius_norm),
             radius_norm / middle_norm,
             1.0,
+        )
+    if work.analytic_shape is not None:
+        spread = np.minimum(
+            spread,
+            work.analytic_shape.gradient_spread(
+                work.coordinates(leaves.corners),
+                work.coordinates(leaves.corners + leaves.sizes[:, None]),
+            ),
         )
     diagonal = np.linalg.norm(leaves.sizes[:, None] * work.spacing[None], axis=1)
     return diagonal * spread
@@ -1293,6 +1328,15 @@ def _analyze(work: _Work, leaves: _Leaves) -> _Analysis:
         radius = 0.5 * (chart.directional_upper[:3] - chart.directional_lower[:3])
         norm, variation = np.linalg.norm(middle), np.linalg.norm(radius)
         spread = variation / norm if norm > variation else 1.0
+        if work.analytic_shape is not None:
+            spread = min(
+                spread,
+                float(
+                    work.analytic_shape.gradient_spread(
+                        chart.macro_box[:1], chart.macro_box[1:]
+                    )[0]
+                ),
+            )
         bound = np.linalg.norm(chart.macro_box[1] - chart.macro_box[0]) * spread
         participants = np.isin(leaves.code_starts, chart.incident_leaf_codes)
         flatness[participants] = np.maximum(flatness[participants], bound)
@@ -1368,6 +1412,9 @@ def _refine(work: _Work) -> tuple[_Analysis, int, int]:
     status = 0
     rounds = 0
     while True:
+        # One analysis visit per current leaf; box and point evaluations are
+        # charged as geometry queries by their enclosure owner.
+        consume_queries(work.budget, 0, work_units=int(leaves.levels.shape[0]))
         analysis = _analyze(work, leaves)
         rounds += 1
         if np.any((analysis.issues != 0) & (leaves.levels == work.depth)):
@@ -1455,25 +1502,35 @@ def _anchors(
     upper_values = consistent(
         work.bounds.field_values(upper_points, budget=work.budget), end_sign
     )
-    # The fixed solver bound is charged before its one device batch. Endpoint
-    # samples are charged by their owner; this covers the root/first-jet batch.
-    consume_queries(work.budget, 56 * active.size, work_units=active.size)
-    isolation = isolate_roots(
-        geometry.kernel,
-        geometry.state,
-        jnp.asarray(lower_points),
-        jnp.asarray(upper_points),
-        jnp.asarray(lower_values),
-        jnp.asarray(upper_values),
-        jnp.asarray(work.policy.root_tolerance, dtype=jnp.float64),
-    )
-    isolation.require_converged()
-    residuals = isolation.residuals
-    roots_ = np.asarray(isolation.points, dtype=np.float64)
-    _, gradients = field_and_gradient(
-        geometry.kernel, geometry.state, jnp.asarray(roots_)
-    )
-    gradients_ = np.asarray(gradients, dtype=np.float64)
+    # Endpoint samples are charged by their owner. The shared ITP batch stops
+    # at a data-dependent iteration and evaluates every lane per iteration plus
+    # one final residual; the first jet costs 1 + _DIMENSION per root. Admit
+    # the solver bound, then charge the realized iteration count.
+    lanes = int(active.size)
+    jet_queries = (1 + _DIMENSION) * lanes
+    with _admitted_batch(
+        work.budget, lanes, (_EDGE_ROOT_MAXIMUM_STEPS + 1) * lanes + jet_queries
+    ) as admitted:
+        isolation = isolate_roots(
+            geometry.kernel,
+            geometry.state,
+            jnp.asarray(lower_points),
+            jnp.asarray(upper_points),
+            jnp.asarray(lower_values),
+            jnp.asarray(upper_values),
+            jnp.asarray(work.policy.root_tolerance, dtype=jnp.float64),
+        )
+        diagnostics = isolation.native_result.nonlinear_result.diagnostics
+        iterations = int(jax.device_get(diagnostics.iterations))
+        root_queries = (iterations + 1) * lanes
+        admitted.consume(lanes, geometry_queries=root_queries + jet_queries)
+        isolation.require_converged()
+        residuals = isolation.residuals
+        roots_ = np.asarray(isolation.points, dtype=np.float64)
+        _, gradients = field_and_gradient(
+            geometry.kernel, geometry.state, jnp.asarray(roots_)
+        )
+        gradients_ = np.asarray(gradients, dtype=np.float64)
     norms = np.linalg.norm(gradients_, axis=1)
     regular = np.isfinite(norms) & (norms > 0.0)
     # A vanishing sampled gradient keeps the Hermite datum of the sign change:
@@ -1482,7 +1539,7 @@ def _anchors(
     normals = np.where(
         regular[:, None], gradients_ / np.where(regular, norms, 1.0)[:, None], fallback
     )
-    evaluations = 2 * active.size + (52 + 1 + _DIMENSION) * active.size
+    evaluations = 2 * lanes + root_queries + jet_queries
     return (
         roots_,
         normals,
@@ -1551,14 +1608,22 @@ def _closed_manifold(faces: np.ndarray, vertex_count: int) -> bool:
 
 
 def _intersections(
-    vertices: np.ndarray, faces: np.ndarray, policy: AdaptiveImplicitSurfacePolicy
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    policy: AdaptiveImplicitSurfacePolicy,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[bool, bool]:
-    """Whether the self-intersection check ran and found no intersecting pair."""
+    """Whether the self-intersection check ran and found no intersecting pair.
+
+    Every candidate AABB test and every compiled triangle-pair chunk (padding
+    lanes included) is charged as work before it runs; the scan stops at the
+    first intersecting chunk.
+    """
     triangles = vertices[faces]
     hierarchy = prepare_bvh(
         np.min(triangles, axis=1), np.max(triangles, axis=1), dtype=jnp.float64
     )
-    first, second = bvh_overlap_pairs_host(hierarchy, hierarchy, include_touching=True)
+    first, second = metered_self_overlap_pairs(hierarchy, budget)
     ordered = first < second
     first, second = first[ordered], second[ordered]
     shares = np.any(faces[first][:, :, None] == faces[second][:, None, :], axis=(1, 2))
@@ -1569,6 +1634,7 @@ def _intersections(
         rows = np.arange(start, start + _PAIR_CHUNK)
         # Pad with the last pair so one compiled chunk serves every call.
         rows = np.minimum(rows, first.size - 1)
+        consume_queries(budget, 0, work_units=_PAIR_CHUNK)
         hits = _intersecting_pairs(
             jnp.asarray(triangles[first[rows]]),
             jnp.asarray(triangles[second[rows]]),
@@ -1669,6 +1735,7 @@ def _extract(work: _Work, geometry: CompiledGeometry, analysis: _Analysis) -> _E
         cell_upper,
         policy.qef_regularization,
         policy.root_tolerance,
+        budget=work.budget,
     )
     # Polygon corners: the cycle of each incident leaf containing the edge.
     node_keys = analysis.node_leaf * edges.keys.shape[0] + analysis.node_edge
@@ -1700,7 +1767,9 @@ def _extract(work: _Work, geometry: CompiledGeometry, analysis: _Analysis) -> _E
     )
     if not np.all(area > policy.minimum_face_area):
         status |= int(AdaptiveImplicitSurfaceStatus.DEGENERATE_FACE)
-    checked, free = (False, False) if status else _intersections(vertices, faces, policy)
+    checked, free = (
+        (False, False) if status else _intersections(vertices, faces, policy, work.budget)
+    )
     if checked and not free:
         status |= int(AdaptiveImplicitSurfaceStatus.SELF_INTERSECTION)
     vertex_residual = float(
@@ -1909,11 +1978,12 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
             raise ValueError(
                 "ImplicitVolumeQuery.points must be finite; got nonfinite coordinates"
             )
+        # Leaves tile the refined box, the authored domain or its certified
+        # support; points outside it are evaluated by the bound source.
         resolution = 1 << self.maximum_level
-        extent = self.domain[1] - self.domain[0]
-        cells = np.floor((points_ - self.domain[0]) / extent * resolution).astype(
-            np.int64
-        )
+        origin = np.min(self.leaf_lower, axis=0)
+        extent = np.max(self.leaf_upper, axis=0) - origin
+        cells = np.floor((points_ - origin) / extent * resolution).astype(np.int64)
         inside = np.all((cells >= 0) & (cells < resolution), axis=1)
         codes = morton_encode_integer_host(
             np.where(inside[:, None], cells, 0), self.maximum_level
@@ -2540,6 +2610,7 @@ def _new_work(
     maximum_root_solves: int,
     *,
     budget: CoordinateEnclosureBudget,
+    analytic_shape: AnalyticDiscoveryShape | None,
 ) -> _Work:
     depth = policy.maximum_level
     return _Work(
@@ -2564,6 +2635,7 @@ def _new_work(
         source_id=source_id,
         macrocharts={},
         maximum_root_solves=maximum_root_solves,
+        analytic_shape=analytic_shape,
     )
 
 
@@ -2683,6 +2755,10 @@ def discover_adaptive_implicit_surface(
     # Non-interval boxes cost at most ten queries for each two evaluations
     # charged by the existing discovery policy. Root extraction is included
     # in maximum_evaluations and root work is bounded by maximum_root_solves.
+    # Each refinement round analyzes at most maximum_boxes leaves and adds at
+    # least seven, QEF solves at most _QEF_REGULARIZATION_LEVELS levels over at
+    # most maximum_evaluations cycles, and the self-intersection scan tests at
+    # most (2F - 1)**2 + F**2 boxes and the padded candidate-pair chunks.
     root_upper = (
         policy.maximum_evaluations if maximum_root_solves is None else maximum_root_solves
     )
@@ -2690,9 +2766,18 @@ def discover_adaptive_implicit_surface(
         raise ValueError(
             "AdaptiveImplicitDiscovery.maximum_root_solves must be a nonnegative integer; got an invalid capacity"
         )
+    faces_upper = policy.maximum_faces
+    pair_upper = -(-policy.maximum_intersection_pairs // _PAIR_CHUNK) * _PAIR_CHUNK
+    analysis_upper = (policy.maximum_boxes // 7 + 1) * policy.maximum_boxes
+    qef_upper = policy.maximum_evaluations * _QEF_REGULARIZATION_LEVELS
     with query_budget(
         budget,
-        work_upper=root_upper,
+        work_upper=root_upper
+        + analysis_upper
+        + qef_upper
+        + (2 * faces_upper - 1) ** 2
+        + faces_upper**2
+        + pair_upper,
         queries_upper=5 * policy.maximum_evaluations,
     ) as query:
         return _discover_adaptive_implicit_surface(
@@ -2733,7 +2818,42 @@ def _discover_adaptive_implicit_surface(
         raise ValueError(
             "AdaptiveImplicitDiscovery.maximum_root_solves must be a nonnegative integer; got an invalid capacity"
         )
-    work = _new_work(bounds, policy, domain_, source_id, root_capacity, budget=budget)
+    # Exact sphere and torus sources with rigorous value enclosures refine
+    # their padded support only. The rest of the authored domain joins the
+    # cover as slabs whose value enclosures must exclude zero; otherwise the
+    # whole domain is refined.
+    shape = AnalyticDiscoveryShape.from_geometry(geometry)
+    octree_box = (
+        domain_
+        if shape is None or not bounds.value_rigorous
+        else shape.computational_box(domain_)
+    )
+    slabs = _excluded_slabs(domain_, octree_box)
+    work = _new_work(
+        bounds,
+        policy,
+        octree_box,
+        source_id,
+        root_capacity,
+        budget=budget,
+        analytic_shape=shape,
+    )
+    slab_bounds = _empty_bounds()
+    if slabs.shape[0]:
+        slab_bounds = work.evaluate_boxes(slabs[:, 0], slabs[:, 1])
+        if not np.all((slab_bounds.value_lower > 0.0) | (slab_bounds.value_upper < 0.0)):
+            spent, exhausted = work.box_evaluations, work.isolation_exhausted
+            work = _new_work(
+                bounds,
+                policy,
+                domain_,
+                source_id,
+                root_capacity,
+                budget=budget,
+                analytic_shape=shape,
+            )
+            work.box_evaluations, work.isolation_exhausted = spent, exhausted
+            slabs, slab_bounds = slabs[:0], _empty_bounds()
     analysis, status, rounds = _refine(work)
     if work.isolation_exhausted:
         status |= int(AdaptiveImplicitSurfaceStatus.EVALUATION_BUDGET_EXHAUSTED)
@@ -2759,7 +2879,18 @@ def _discover_adaptive_implicit_surface(
         if extraction.status & unpublishable
         else TriangleMesh(extraction.vertices, extraction.faces, source_id=source_id)
     )
-    cover = _cover(geometry, bounds, analysis.bounds, boxes, domain_, source_id)
+    cover = _cover(
+        geometry,
+        bounds,
+        _merged(
+            analysis.bounds,
+            slab_bounds,
+            np.arange(boxes.shape[0] + slabs.shape[0], dtype=np.int64),
+        ),
+        np.concatenate((boxes, slabs), axis=0),
+        domain_,
+        source_id,
+    )
     topology = (
         CertifiedImplicitTopology(
             cover, mesh.topology.cell_complex_topology(), premise="directional_monotone"

@@ -23,7 +23,7 @@ from phydrax.discretization._cell_geometry_transition_types import (
 )
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._coordinate_enclosure import evaluate
-from phydrax.discretization._nested_reference import rooted_nested_reference_pairs
+from phydrax.discretization._nested_reference import prepare_nested_reference
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import form_element, prepare_nested_field_transfer
 from phydrax.discretization.fem._exact_form_moments import reference_arguments
@@ -77,9 +77,15 @@ def test_authored_six_quad_compatible_refine_complete_coarsen(
     mesh, geometry, root, controls = cylinder_source()
     fine_mesh, fine_geometry = six_quad_source(mesh, geometry, root, controls)
     parents = np.zeros(6, dtype=np.int64)
-    pairs, _ = rooted_nested_reference_pairs(
-        mesh, geometry, fine_mesh, fine_geometry, parent_cells=parents, budget=budget
-    )
+    pairs = prepare_nested_reference(
+        mesh,
+        geometry,
+        fine_mesh,
+        fine_geometry,
+        parent_cells=parents,
+        rooted=True,
+        budget=budget,
+    ).pairs
     vertices = reference_cell_topology("quadrilateral").vertices
     corners = np.asarray(
         [

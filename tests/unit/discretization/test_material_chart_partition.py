@@ -13,7 +13,11 @@ import pytest
 from numpy.typing import NDArray
 
 from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
-from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization import (
+    _surface_chart_deformation as deformation_owner,
+    CellBlock,
+    CellMesh,
+)
 from phydrax.discretization._cell_geometry import (
     CellGeometryRestrictionSource,
     CellGeometrySpec,
@@ -41,7 +45,7 @@ from phydrax.discretization._surface_chart_records import (
 )
 from phydrax.geometry import MeshingDomain
 from phydrax.geometry._embedding_state import MeshCertificateLimits
-from phydrax.meshing.qualification import folded_plates_surface
+from phydrax.meshing.qualification import capped_cylinder_surface, folded_plates_surface
 from tests._support.coordinate_references import coordinate_reference_budget
 
 
@@ -239,36 +243,60 @@ def test_material_partition_rejects_balanced_gap_and_double_cover() -> None:
             ),
             id="balanced-gap-and-overlap",
         ),
+        pytest.param(
+            np.asarray((((0.0, 0.0), (0.0, 1.0), (1.0, 0.0)),)),
+            None,
+            pytest.raises(ValueError, match=r"orientation=.*signed_area="),
+            id="opposite-authored-orientation",
+        ),
+        pytest.param(
+            np.asarray((((0.0, 0.0), (0.5, 0.0), (1.0, 0.0)),)),
+            None,
+            pytest.raises(ValueError, match=r"A material chart is singular"),
+            id="undeclared-collapsed-cell",
+        ),
     ],
 )
+@pytest.mark.parametrize("patch", (0, 1, 2))
 def test_restricted_partition_preserves_signed_area_and_boundary_chain(
     target_charts: NDArray[np.float64],
     visits: int | None,
     outcome: AbstractContextManager[object],
+    patch: int,
 ) -> None:
+    domain = capped_cylinder_surface().domain
+    source_charts = np.asarray(
+        (((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),), dtype=np.float64
+    )
+    if domain.patches[patch].reversed:
+        source_charts = source_charts[:, [0, 2, 1]]
+        target_charts = target_charts[:, [0, 2, 1]]
     source = SurfaceChartWitness(
         geometry_id="source-geometry",
         topology_id="source-topology",
-        domain_id="material-domain",
+        domain_id=domain.domain_id,
         cell_global_ids=np.asarray((17,), dtype=np.int64),
-        patches=np.asarray((0,), dtype=np.int32),
-        charts=np.asarray((((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),), dtype=np.float64),
-        geometry_entity_ids=("patch",),
-        occurrence_paths=(("surface",),),
+        patches=np.asarray((patch,), dtype=np.int32),
+        charts=source_charts,
+        geometry_entity_ids=(domain.entity_id(2, patch),),
+        occurrence_paths=(domain.source_occurrences[2][patch],),
     )
     count = target_charts.shape[0]
     target = SurfaceChartWitness(
         geometry_id="target-geometry",
         topology_id="target-topology",
-        domain_id="material-domain",
+        domain_id=domain.domain_id,
         cell_global_ids=np.arange(23, 23 + count, dtype=np.int64),
-        patches=np.zeros(count, dtype=np.int32),
+        patches=np.full(count, patch, dtype=np.int32),
         charts=target_charts,
-        geometry_entity_ids=("patch",) * count,
-        occurrence_paths=(("surface",),) * count,
+        geometry_entity_ids=(domain.entity_id(2, patch),) * count,
+        occurrence_paths=(domain.source_occurrences[2][patch],) * count,
     )
-    with outcome:
-        assert _exact_chart_partition_proof(source, target) == visits
+    with coordinate_reference_budget() as budget, outcome:
+        assert (
+            _exact_chart_partition_proof(source, target, domain=domain, budget=budget)
+            == visits
+        )
 
 
 class _FoldedEndpointCase(NamedTuple):
@@ -432,8 +460,24 @@ def _folded_endpoint_case(
 @pytest.mark.parametrize("restricted", [False, True], ids=["independent", "restricted"])
 def test_retained_surface_certificates_accept_two_patch_target_contracts(
     restricted: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     policy, limits = CellValidityPolicy(), MeshCertificateLimits()
+    partition_calls: list[bool] = []
+
+    def partition_proof(
+        source: SurfaceChartWitness,
+        target: SurfaceChartWitness,
+        *,
+        domain: MeshingDomain,
+        budget: CoordinateEnclosureBudget,
+    ) -> int:
+        partition_calls.append(True)
+        return _exact_chart_partition_proof(source, target, domain=domain, budget=budget)
+
+    monkeypatch.setattr(
+        deformation_owner, "_exact_chart_partition_proof", partition_proof
+    )
     with coordinate_reference_budget(limits) as budget:
         case = _folded_endpoint_case(restricted, budget)
         source = certify_chart_endpoint(
@@ -464,6 +508,7 @@ def test_retained_surface_certificates_accept_two_patch_target_contracts(
     assert result.embeddings[0] is source.embedding
     assert result.target_validity.all_certified
     assert result.embeddings[1].status == "certified"
+    assert len(partition_calls) == int(restricted)
     # Each child has physical area 1/4, hence squared Jacobian determinant 1/4.
     assert np.all(np.asarray(result.target_validity.determinant_lower) <= 0.25)
     assert np.all(np.asarray(result.target_validity.determinant_lower) > 0.0)

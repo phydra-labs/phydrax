@@ -260,7 +260,9 @@ def test_affine_chord_proof_refuses_forged_source_or_endpoint_evidence(
                     start_upper=np.asarray((100.0, 0.0)),
                 )
             case _:
-                raise AssertionError(f"unexpected regression case {forgery!r}")
+                raise AssertionError(
+                    f"atlas_fixture.forgery must name a supported regression case; got {forgery!r}"
+                )
 
     monkeypatch.setattr(NormalizedTrimCurve, "affine_chord_evidence", forged)
     with coordinate_source_request((curve,)) as budget:
@@ -368,7 +370,9 @@ def _spline_evidence_curve(family: str, scale: float, /) -> BSplineCurve:
             knots = np.asarray((1.0, 2.0, 4.0, 5.0))
             degree = 1
         case _:
-            raise AssertionError(f"unexpected spline family {family!r}")
+            raise AssertionError(
+                f"atlas_fixture.family must name a supported spline family; got {family!r}"
+            )
     return BSplineCurve(controls, weights, knots, degree)
 
 
@@ -424,7 +428,9 @@ def test_atlas_affine_spline_capability_requires_exact_source_predicate(
                 assert evidence is None
                 assert not admitted
             case _:
-                raise AssertionError(f"unexpected spline family {family!r}")
+                raise AssertionError(
+                    f"atlas_fixture.family must name a supported spline family; got {family!r}"
+                )
 
 
 @pytest.mark.parametrize(
@@ -493,7 +499,7 @@ def _charged_implicit_circle_domain() -> TrimDomain:
             pass
         case _:
             raise AssertionError(
-                "implicit circle must retain its spline generating surface"
+                "atlas_fixture.circle_surface must retain its spline generating surface; got another patch family"
             )
     pcurve = branch.p_curve("second")
     first, last = pcurve.parameter_interval
@@ -529,7 +535,7 @@ def _interior_arc_probe(loop: CurveTrimLoop, /) -> np.ndarray:
             assert np.all(query[1] >= lower) and np.all(query[0] <= upper)
             return query
     raise AssertionError(
-        "implicit circle must have an arc-interior probe outside junction bands"
+        "atlas_fixture.circle_probe must lie inside an arc outside junction bands; got no separated probe"
     )
 
 
@@ -539,7 +545,9 @@ def test_implicit_trim_containment_refuses_exhausted_caller_budget() -> None:
         case CurveTrimLoop() as loop:
             query = _interior_arc_probe(loop)
         case _:
-            raise AssertionError("implicit circle must retain its source-curve trim loop")
+            raise AssertionError(
+                "atlas_fixture.trim_loop must retain its source curve; got another loop kind"
+            )
     with HostBatchTicket(0, bytes_upper=0) as ticket:
         budget = CoordinateEnclosureBudget(
             ticket, maximum_work_units=0, maximum_memory_bytes=0

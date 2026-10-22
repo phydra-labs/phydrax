@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from fractions import Fraction
 from typing import Protocol
 
@@ -14,7 +15,10 @@ from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
-from phydrax.geometry._embedding_cells import reference_constraints
+from phydrax.geometry._embedding_cells import (
+    reference_constraints,
+    vanishing_reference_constraints,
+)
 from phydrax.geometry._embedding_state import MeshCertificateLimits
 from phydrax.geometry._planar_primitives import reserve_fraction_work
 from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
@@ -26,7 +30,10 @@ from ..discretization._cell_geometry import (
     CellGeometrySpec,
     equivalent_coordinate_root,
 )
-from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._cell_geometry_validity import (
+    _ConstructedTensorGrid,
+    cell_geometry_id,
+)
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._reference_cell_types import CellGeometryElement
@@ -91,7 +98,7 @@ def mapped_reference_associations(
     budget: CoordinateEnclosureBudget,
 ) -> tuple[GeometryAssociation, ...]:
     """Classify whole chart images against their mixed source-root strata."""
-    limits = MeshCertificateLimits()
+    limits = MeshCertificateLimits(maximum_scratch_bytes=budget.maximum_memory_bytes)
     ledger = budget
     work_start = ledger.work_units
     try:
@@ -136,10 +143,14 @@ class _MappedRoot(Protocol):
 
 class _RootChart(StrictModule):
     coordinates: tuple[algebra.Polynomial, ...]
-    constraints: tuple[algebra.Polynomial, ...]
     points: tuple[tuple[Fraction, ...], ...]
+    # Root reference vertices on each ``reference_constraints`` facet.
+    facet_vertices: tuple[frozenset[int], ...]
     corners: tuple[tuple[Fraction, ...], ...]
     cell: plc_mapped_support_owner.CellMap
+    # The chart is multi-affine on a box cell: its restriction to every edge
+    # and face is determined by ``corners``.
+    multi_affine: bool
 
 
 class _RootStratum(StrictModule):
@@ -152,7 +163,7 @@ class _ChartOrientation(StrictModule):
 
 
 type _ReferenceTemplates = dict[
-    str, tuple[tuple[algebra.Polynomial, ...], tuple[tuple[Fraction, ...], ...]]
+    str, tuple[tuple[tuple[Fraction, ...], ...], tuple[frozenset[int], ...]]
 ]
 type _CoordinateChains = dict[
     tuple[tuple[str, str], tuple[str, str]], tuple[algebra.Polynomial, ...]
@@ -256,10 +267,18 @@ def _prepare_root_chart(
             tuple(Fraction(float(value)) for value in position)
             for position in reference_cell_topology(root.kind).vertices
         )
-        template = (root_constraints, root_points)
+        facet_vertices = tuple(
+            frozenset(
+                vertex
+                for vertex, point in enumerate(root_points)
+                if algebra.evaluate(constraint, point, budget=budget) == 0
+            )
+            for constraint in root_constraints
+        )
+        template = (root_points, facet_vertices)
         reference_templates[root.kind] = template
         ledger.retain_basis((root.kind, template))
-    root_constraints, root_points = template
+    root_points, facet_vertices = template
     corners = tuple(
         tuple(
             algebra.require_rational_reference_scalar(
@@ -282,51 +301,90 @@ def _prepare_root_chart(
         root.cell_id,
         root.vertices,
     )
-    return _RootChart(coordinates, root_constraints, root_points, corners, chart_cell)
+    # Box charts with at most linear dependence on each reference axis.
+    ledger.reserve(sum(len(value) for value in coordinates))
+    multi_affine = cell_kind == "hexahedron" and all(
+        exponent <= 1 for value in coordinates for index in value for exponent in index
+    )
+    return _RootChart(
+        coordinates, root_points, facet_vertices, corners, chart_cell, multi_affine
+    )
 
 
-def _identify_root_stratum(
+def _chart_vanishing_facets(
     local_charts: tuple[
         tuple[tuple[algebra.Expression, ...], algebra.BernsteinDomain], ...
     ],
     root: _MappedRoot,
-    root_points: tuple[tuple[Fraction, ...], ...],
-    root_constraints: tuple[algebra.Polynomial, ...],
-    root_lookup: tuple[dict[tuple[int, ...], int], ...],
     degree: int,
     *,
     budget: CoordinateEnclosureBudget,
-) -> _RootStratum:
-    """Return the root stratum whose facet equations vanish on every entity chart."""
-    fixed: set[int] | None = None
+) -> frozenset[int]:
+    """Return the root facets whose equations vanish on every entity chart."""
+    fixed: frozenset[int] | None = None
     for chart, _ in local_charts:
         if any(isinstance(value, algebra.RationalPolynomial) for value in chart):
             raise ValueError(
                 f"MappedReferenceAssociation.entity_chart must contain polynomials; got expression types {tuple(type(value).__name__ for value in chart)!r}"
             )
-        polynomials = tuple(
-            value for value in chart if not isinstance(value, algebra.RationalPolynomial)
+        vanishing = vanishing_reference_constraints(
+            chart, root.kind, degree, budget=budget
         )
-        vanishing = {
-            facet
-            for facet, constraint in enumerate(
-                reference_constraints(polynomials, root.kind, degree, budget=budget)
-            )
-            if not constraint
-        }
         fixed = vanishing if fixed is None else fixed & vanishing
     if fixed is None:
         raise RuntimeError(
             f"MappedReferenceAssociation.entity_charts must provide facet equations; got chart count {len(local_charts)}"
         )
+    return fixed
+
+
+def _corner_vanishing_facets(
+    corners: tuple[tuple[Fraction, ...], ...],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> frozenset[int]:
+    """Return the box-root facets vanishing on a multi-affine entity restriction.
+
+    A multi-affine chart restricted to a cell edge or face is multi-affine in
+    that entity's free parameters, so ``x_i`` (or ``1 - x_i``) vanishes on the
+    whole entity exactly when it vanishes at every entity corner.
+    """
+    ambient = len(corners[0])
+    budget.reserve(2 * ambient * len(corners))
+    return frozenset(
+        (
+            *(
+                axis
+                for axis in range(ambient)
+                if all(corner[axis] == 0 for corner in corners)
+            ),
+            *(
+                ambient + axis
+                for axis in range(ambient)
+                if all(corner[axis] == 1 for corner in corners)
+            ),
+        )
+    )
+
+
+def _identify_root_stratum(
+    fixed: frozenset[int],
+    root: _MappedRoot,
+    facet_vertices: tuple[frozenset[int], ...],
+    root_lookup: tuple[dict[tuple[int, ...], int], ...],
+    degree: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _RootStratum:
+    """Return the root stratum on every facet that vanishes on the entity."""
+    # The root's facet/vertex incidence is the exact zero set of its facet
+    # equations at its reference vertices, earned once per root kind.
+    budget.reserve(len(fixed) * len(root.vertices))
     source_key = tuple(
         sorted(
             root.vertices[vertex]
-            for vertex, point in enumerate(root_points)
-            if all(
-                algebra.evaluate(root_constraints[facet], point, budget=budget) == 0
-                for facet in fixed
-            )
+            for vertex in range(len(root.vertices))
+            if all(vertex in facet_vertices[facet] for facet in fixed)
         )
     )
     source = next(
@@ -461,7 +519,7 @@ def _assemble_mapped_associations(
     domain: MappedReferenceDomain,
     mesh: CellMesh,
     root_mesh: CellMesh,
-    choices: list[list[set[tuple[int, int, int]]]],
+    choices: Iterable[list[set[tuple[int, int, int]]]],
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _MappedAssociationResult:
@@ -538,7 +596,24 @@ def _classify_mapped_entity(
         prepared.coordinates,
         prepared.cell,
     )
-    root_constraints, root_points = prepared.constraints, prepared.points
+    root_points, facet_vertices = prepared.points, prepared.facet_vertices
+    # A multi-affine box chart decides its box-root strata on exact entity
+    # corners; only entities on a root stratum of their own dimension need
+    # charts, for their orientation.
+    stratum: _RootStratum | None = None
+    if degree in (1, 2) and prepared.multi_affine and root.kind == "hexahedron":
+        stratum = _identify_root_stratum(
+            _corner_vanishing_facets(
+                tuple(corners[index] for index in local), budget=budget
+            ),
+            root,
+            facet_vertices,
+            root_lookup,
+            degree,
+            budget=budget,
+        )
+        if stratum.degree != degree:
+            return _MappedEntityClaim((stratum.degree, stratum.row, 0))
     if degree == 0:
         local_charts = (
             (
@@ -564,15 +639,15 @@ def _classify_mapped_entity(
         raise ValueError(
             f"MappedReferenceAssociation.entity_charts must cover the target entity; got dimension {degree}, row {target_row}, chart count {len(local_charts)}"
         )
-    stratum = _identify_root_stratum(
-        local_charts,
-        root,
-        root_points,
-        root_constraints,
-        root_lookup,
-        degree,
-        budget=budget,
-    )
+    if stratum is None:
+        stratum = _identify_root_stratum(
+            _chart_vanishing_facets(local_charts, root, degree, budget=budget),
+            root,
+            facet_vertices,
+            root_lookup,
+            degree,
+            budget=budget,
+        )
     source_degree, source_row = stratum.degree, stratum.row
     orientation = _resolve_chart_orientation(
         source_degree,
@@ -645,17 +720,15 @@ def _mapped_reference_associations(
     for root in local_roots.values():
         ledger.retain_basis((root.vertices, root.controls, root.polynomial))
         ledger.reserve(1, 256)
-        root_identities[root.cell_id] = algebra.element_identity(root.element)
+        root_identities[root.cell_id] = algebra.element_identity(root.element, budget=budget)
     ledger.retain_basis(tuple(root_identities.items()))
     chains: dict[
         tuple[tuple[str, str], tuple[str, str]], tuple[algebra.Polynomial, ...]
     ] = {}
-    reference_templates: dict[
-        str, tuple[tuple[algebra.Polynomial, ...], tuple[tuple[Fraction, ...], ...]]
-    ] = {}
+    reference_templates: _ReferenceTemplates = {}
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         topology = reference_cell_topology(block.cell_kind)
-        element_identity = algebra.element_identity(element)
+        element_identity = algebra.element_identity(element, budget=budget)
         ledger.retain_basis(element_identity)
         parents = np.asarray(record.block_parent_cell_ids[block.name], dtype=np.int64)
         parent_vertices = np.asarray(
@@ -719,4 +792,187 @@ def _mapped_reference_associations(
                             choices[degree][target_row].add(candidate)
     return _assemble_mapped_associations(
         domain, mesh, root_mesh, choices, budget=budget
+    ).associations
+
+
+def _tensor_reference_associations(
+    domain: MappedReferenceDomain,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    construction: _ConstructedTensorGrid,
+    *,
+    maximum_support_queries: int,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[GeometryAssociation, ...]:
+    with (
+        budget.measurement(), budget.activate(), budget.temporary_scope(),
+        budget.bound_stage(maximum_support_queries, budget.maximum_memory_bytes),
+    ):
+        return _classify_tensor_reference(
+            domain, mesh, geometry, construction,
+            maximum_support_queries=maximum_support_queries, budget=budget,
+        )
+
+
+def _classify_tensor_reference(
+    domain: MappedReferenceDomain,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    construction: _ConstructedTensorGrid,
+    *,
+    maximum_support_queries: int,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[GeometryAssociation, ...]:
+    """Consume exact tensor inputs, not a retained association verdict."""
+    construction.consume(
+        domain.reference_mesh, domain.source_geometry, mesh, geometry,
+        construction.theorem, budget,
+    )
+    theorem = construction.theorem
+    counts = np.asarray(theorem.counts, dtype=np.int64)
+    order = np.asarray(theorem.order, dtype=np.int64)
+    parents = np.asarray(construction.parents, dtype=np.int64)
+    cells = sum(block.cell_count for block in mesh.blocks)
+    budget.reserve(cells, 4096 + 128 * cells)
+    if (
+        counts.ndim != 2 or counts.shape[1] != 3 or np.any(counts <= 0)
+        or order.shape != (cells,) or parents.shape != (cells,)
+        or not np.array_equal(np.sort(order), np.arange(cells))
+    ):
+        raise ValueError("MappedReferenceAssociation.tensor_order must cover every child exactly once")
+    offsets = np.concatenate(([0], np.cumsum(np.prod(counts, axis=1))))
+    if offsets[-1] != cells:
+        raise ValueError("MappedReferenceAssociation.tensor_coverage must cover all roots")
+    expected_parents = np.searchsorted(offsets[1:], order, side="right")
+    if not np.array_equal(parents, expected_parents):
+        raise ValueError("MappedReferenceAssociation.tensor_parent must agree with C-order")
+    record = geometry.restriction_source
+    if (
+        record is None
+        or record.source_geometry_id != cell_geometry_id(domain.source_geometry)
+        or record.source_topology_id != domain.reference_mesh.topology_id
+    ):
+        raise ValueError("MappedReferenceAssociation.restriction_source must bind current roots")
+    root_mesh = domain.reference_mesh
+    roots = source_roots(domain, budget=budget)
+    root_ids = np.concatenate([np.asarray(block.global_ids) for block in root_mesh.blocks])
+    if len(root_ids) != len(counts):
+        raise ValueError("MappedReferenceAssociation.tensor_coverage must cover every source root")
+    actual_parents = np.concatenate([
+        np.asarray(record.block_parent_cell_ids[block.name]) for block in mesh.blocks
+    ])
+    if not np.array_equal(actual_parents, root_ids[parents]):
+        raise ValueError("MappedReferenceAssociation.tensor_parent must bind current target parents")
+    root_entities = tuple(
+        plc_mapped_support_owner.plc_mapped_vertices(root_mesh, degree) for degree in range(4)
+    )
+    target_entities = tuple(
+        plc_mapped_support_owner.plc_mapped_vertices(mesh, degree) for degree in range(4)
+    )
+    root_vertices = np.asarray(root_mesh.vertex_global_ids)
+    target_vertices = np.asarray(mesh.vertex_global_ids)
+    row_count = sum(len(rows) for rows in target_entities)
+    # A fixed bound accounts for the dictionaries and candidate sets without
+    # recursively walking their integer keys as a polynomial basis.
+    budget.reserve(row_count, 4096 + 1024 * max(len(rows) for rows in target_entities))
+    root_lookup = tuple({
+        tuple(sorted(root_vertices[row[row >= 0]].tolist())): index
+        for index, row in enumerate(rows)
+    } for rows in root_entities)
+    topology = reference_cell_topology("hexahedron")
+    vertices = np.asarray(topology.vertices, dtype=np.int64)
+
+    query_count = 0
+    orientations: dict[tuple[int, tuple[int, ...], tuple[int, ...]], int] = {}
+
+    def candidates() -> Iterable[list[set[tuple[int, int, int]]]]:
+        nonlocal query_count
+        for degree, local_entities in enumerate(topology.entities):
+            rows = target_entities[degree]
+            target_lookup = {
+                tuple(sorted(target_vertices[row[row >= 0]].tolist())): index
+                for index, row in enumerate(rows)
+            }
+            choices: list[set[tuple[int, int, int]]] = [set() for _ in rows]
+            seen: set[tuple[int, int]] = set()
+            cursor = 0
+            for block in mesh.blocks:
+                if block.cell_kind != "hexahedron":
+                    raise ValueError("MappedReferenceAssociation.tensor_cells must be hexahedra")
+                parent_vertices = np.asarray(record.block_parent_vertex_ids[block.name])
+                for local_row, cell in enumerate(np.asarray(block.vertices)):
+                    parent = int(parents[cursor])
+                    root = roots[int(root_ids[parent])]
+                    if tuple(int(value) for value in parent_vertices[local_row] if value >= 0) != root.vertices:
+                        raise ValueError("MappedReferenceAssociation.tensor_parent must retain ordered root vertices")
+                    position = np.asarray(np.unravel_index(
+                        int(order[cursor] - offsets[parent]), tuple(counts[parent]),
+                    ))
+                    corners = position + vertices
+                    for local in local_entities:
+                        target_row = target_lookup[
+                            tuple(sorted(target_vertices[cell[list(local)]].tolist()))
+                        ]
+                        claim = (parent, target_row)
+                        if claim in seen:
+                            continue
+                        seen.add(claim)
+                        query_count += 1
+                        if query_count > maximum_support_queries:
+                            raise MeshingFailure(
+                                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                                "MappedReferenceAssociation.support_queries must admit unique tensor claims",
+                                stage="mapped-source-association",
+                            )
+                        budget.reserve_geometry_queries(1)
+                        budget.reserve(1)
+                        points = corners[list(local)]
+                        lower = np.all(points == 0, axis=0)
+                        upper = np.all(points == counts[parent], axis=0)
+                        selected = np.all(
+                            (~lower | (vertices == 0)) & (~upper | (vertices == 1)), axis=1
+                        )
+                        key = tuple(sorted(root.vertices[index] for index in np.flatnonzero(selected)))
+                        source = next(
+                            ((d, lookup[key]) for d, lookup in enumerate(root_lookup) if key in lookup),
+                            None,
+                        )
+                        if source is None or source[0] < degree:
+                            raise ValueError("MappedReferenceAssociation.source_stratum must contain target entity")
+                        source_degree, source_row = source
+                        orientation = 0
+                        if source_degree == degree and degree in (1, 2):
+                            source_rows = root_entities[degree][source_row]
+                            source_points = vertices[[
+                                root.vertices.index(int(identifier))
+                                for identifier in root_vertices[source_rows[source_rows >= 0]]
+                            ]]
+                            entity = target_entities[degree][target_row]
+                            ordered = corners[[
+                                int(np.flatnonzero(cell == vertex)[0])
+                                for vertex in entity[entity >= 0]
+                            ]]
+                            # Positive diagonal tensor scaling preserves sign;
+                            # the unchanged rational orientation owner validates
+                            # each distinct ordered root/entity direction.
+                            directions = ordered - ordered[0]
+                            orientation_key = (
+                                degree, tuple(int(n) for n in source_points.flat),
+                                tuple(int(n) for n in directions.flat),
+                            )
+                            orientation = orientations.get(orientation_key, 0)
+                            if orientation == 0:
+                                orientation = _chart_orientation(
+                                    tuple(tuple(Fraction(int(n)) for n in point) for point in source_points),
+                                    tuple(tuple(Fraction(int(n)) for n in point) for point in directions),
+                                    degree, budget=budget,
+                                )
+                                orientations[orientation_key] = orientation
+                        choices[target_row].add((source_degree, source_row, orientation))
+                    cursor += 1
+            yield choices
+            # Assembly has consumed this degree; do not overlap candidate banks.
+            del choices, target_lookup, seen
+    return _assemble_mapped_associations(
+        domain, mesh, root_mesh, candidates(), budget=budget,
     ).associations

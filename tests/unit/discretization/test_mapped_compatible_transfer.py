@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -11,6 +13,7 @@ from numpy.typing import NDArray
 
 from phydrax import config as pxconfig
 from phydrax.discretization import (
+    CellBlock,
     CellGeometrySpec,
     CellMesh,
     FiniteElementFieldSpec,
@@ -36,6 +39,7 @@ from phydrax.discretization.fem._exact_form_moments import (
 )
 from phydrax.discretization.fem._form_elements import FormBasis
 from phydrax.discretization.fem._generic import FiniteElementTransferDiscretization
+from phydrax.discretization.fem._mapped_form_transfer import PreparationWork
 from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 from phydrax.exterior._form_type import FormProxy, FormTwist
 from phydrax.meshing._mixed_adaptation import adapt_mixed_mesh
@@ -436,6 +440,59 @@ def test_hdiv_raw_commuting_moment_fault_is_certified(
         )
 
 
+@pytest.mark.parametrize("width", (6, 54))
+def test_exact_signed_permutation_orientation_uses_its_actual_sparse_action(
+    width: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    columns = np.roll(np.arange(width), 2)
+    signs = np.where(np.arange(width) % 2, -1.0, 1.0)
+    transform = np.zeros((width, width), dtype=np.float64)
+    transform[np.arange(width), columns] = signs
+    moments = np.arange(width * 3, dtype=np.float64).reshape(width, 3) / 8.0
+    expected = np.linalg.solve(transform, moments)
+
+    def refuse_dense_factor(*args: object, **kwargs: object) -> object:
+        raise AssertionError("An exact signed permutation requested a dense SVD.")
+
+    monkeypatch.setattr(np.linalg, "svd", refuse_dense_factor)
+    with coordinate_reference_budget() as budget:
+        work = PreparationWork(100_000_000, 256_000_000, budget=budget)
+        actual = work.orientation_solve(transform, moments)
+        factor = work.factor_matrix(transform)
+        assert factor.permutation is not None
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(factor.apply(actual), moments)
+        assert work.condition == 1.0
+        assert work.minimum_rank == width
+        assert work.solve_defect == 0.0
+        previous = budget.work_units
+        np.testing.assert_array_equal(work.orientation_solve(transform, moments), expected)
+        assert budget.work_units > previous
+
+
+@pytest.mark.parametrize("perturbation", ("scale", "extra-entry", "singular"))
+def test_orientation_fast_path_requires_an_exact_full_signed_permutation(
+    perturbation: str,
+) -> None:
+    transform = np.eye(3, dtype=np.float64)
+    if perturbation == "scale":
+        transform[0, 0] = np.nextafter(1.0, 2.0)
+    elif perturbation == "extra-entry":
+        transform[0, 1] = np.nextafter(0.0, 1.0)
+    else:
+        transform[1] = transform[0]
+    moments = np.arange(6, dtype=np.float64).reshape(3, 2)
+    with coordinate_reference_budget() as budget:
+        work = PreparationWork(100_000_000, 256_000_000, budget=budget)
+        if perturbation == "singular":
+            with pytest.raises(ValueError, match="full rank"):
+                work.orientation_solve(transform, moments)
+        else:
+            actual = work.orientation_solve(transform, moments)
+            assert work.factor_matrix(transform).permutation is None
+            np.testing.assert_array_equal(actual, np.linalg.solve(transform, moments))
+
+
 @pytest.mark.parametrize("resource", ("work", "storage"))
 def test_mapped_compatible_resource_refusal_preserves_source(resource: str) -> None:
     mesh, geometry = periodic_template_source("tetrahedron", True)
@@ -466,3 +523,69 @@ def test_mapped_compatible_resource_refusal_preserves_source(resource: str) -> N
     assert refusal.value.requested > refusal.value.limit
     assert refusal.value.completed == 0
     np.testing.assert_array_equal(geometry.coordinates, before)
+
+
+def test_divergence_inventory_tabulation_is_local_to_the_actual_basis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.meshing.qualification import layer_core_divergence_content
+
+    corners = np.asarray(reference_cell_topology("hexahedron").vertices)
+    points, cells, indices = [], [], {}
+    for shift in (0.0, 1.0):
+        cell = []
+        for point in corners + np.asarray((shift, 0.0, 0.0)):
+            key = tuple(point)
+            if key not in indices:
+                indices[key] = len(points)
+                points.append(point)
+            cell.append(indices[key])
+        cells.append(cell)
+    mesh = CellMesh(
+        np.asarray(points),
+        (CellBlock("hexes", "hexahedron", np.asarray(cells, dtype=np.int64)),),
+    )
+    element = form_element(
+        "hexahedron", 2, 2, family="tensor-trimmed", twist="twisted", proxy="flux"
+    )
+    space = FiniteElementPlan(
+        mesh, FiniteElementFieldSpec("flux", element),
+        coordinate_spec=CellGeometrySpec.affine(mesh),
+    ).prepare()
+    values = np.arange(space.dof_maps[0].global_dof_count * 2, dtype=np.float64)
+    values = values.reshape(-1, 2) / 7.0
+    quadrature_points, weights = degree_aware_reference_rule("hexahedron", 8)
+    divergence = np.trace(
+        np.asarray(element.tabulate(quadrature_points)[1]), axis1=-2, axis2=-1
+    )
+
+    def inventory(payload: NDArray[np.float64]) -> NDArray[np.float64]:
+        total = np.zeros(2)
+        for route, transform in zip(
+            np.asarray(space.dof_maps[0].cell_dofs[0]),
+            np.asarray(space.dof_maps[0].cell_transforms[0]),
+            strict=True,
+        ):
+            total += np.einsum(
+                "q,qn,np->p", np.asarray(weights), divergence, transform @ payload[route]
+            )
+        return total
+
+    expected = inventory(values)
+    calls = []
+    original = FiniteElementSpec.tabulate
+
+    def observed(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(id(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FiniteElementSpec, "tabulate", observed)
+    np.testing.assert_array_equal(layer_core_divergence_content(space, values), expected)
+    assert calls == [id(space.elements[0][0])]
+    # No process/global memo survives into an independently invoked inventory.
+    changed = values.copy()
+    changed[0, 0] += 1.0
+    np.testing.assert_array_equal(
+        layer_core_divergence_content(space, changed), inventory(changed)
+    )
+    assert len(calls) == 2

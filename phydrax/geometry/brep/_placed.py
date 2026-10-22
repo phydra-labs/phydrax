@@ -462,11 +462,17 @@ class PlacedCurve(AbstractCurve):
         /,
         *,
         order: int = 1,
+        endpoint_roots: tuple[
+            intersection_curve_owner.RootEndpoint | None,
+            intersection_curve_owner.RootEndpoint | None,
+        ]
+        | None = None,
         preparations: TrimRequestPreparations | None = None,
         budget: CoordinateEnclosureBudget | None = None,
         restriction_bank: BernsteinRestrictionBank | None = None,
         meridian_jets: list[MeridianOverlaps] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Rotate definition jets; only a coupled branch takes extension roots."""
         if preparations is None:
             preparations = TrimRequestPreparations()
         if budget is None:
@@ -481,20 +487,39 @@ class PlacedCurve(AbstractCurve):
                     first,
                     last,
                     order=order,
+                    endpoint_roots=endpoint_roots,
                     preparations=preparations,
                     restriction_bank=restriction_bank,
                     meridian_jets=meridian_jets,
                     budget=budget,
                 )
-        low, high = self.definition.derivative_bounds(
-            first,
-            last,
-            order=order,
-            preparations=preparations,
-            budget=budget,
-            restriction_bank=restriction_bank,
-            meridian_jets=meridian_jets,
-        )
+        match self.definition:
+            case intersection_curve_owner.IntersectionCurve() as branch:
+                low, high = branch.derivative_bounds(
+                    first,
+                    last,
+                    order=order,
+                    endpoint_roots=endpoint_roots,
+                    preparations=preparations,
+                    budget=budget,
+                    restriction_bank=restriction_bank,
+                    meridian_jets=meridian_jets,
+                )
+            case definition:
+                if endpoint_roots is not None:
+                    raise ValueError(
+                        "PlacedCurve.endpoint_roots must bind a coupled intersection branch; "
+                        f"got {type(definition).__name__}"
+                    )
+                low, high = definition.derivative_bounds(
+                    first,
+                    last,
+                    order=order,
+                    preparations=preparations,
+                    budget=budget,
+                    restriction_bank=restriction_bank,
+                    meridian_jets=meridian_jets,
+                )
         return source_transform_bounds(np.asarray(self.rotation), low, high)
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, replace
 from fractions import Fraction
+from typing import Protocol, Self
 
 import numpy as np
 
@@ -34,6 +35,7 @@ from ..discretization._coordinate_enclosure import (
     expression_scale,
     expression_sum,
     ExpressionComposition as ArgumentComposition,
+    RationalPolynomial,
 )
 from ..discretization._exact_algebraic_geometry import (
     RadicalElement,
@@ -116,6 +118,85 @@ class Cell:
             ),
             corner_images=None,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceMapEnclosures:
+    """Outward enclosures of one surface map on N closed reference subtriangles.
+
+    ``image`` bounds are shaped (N,3); ``jacobian`` and ``orientation`` are
+    (N,3,2) in the ORIGINAL standard-simplex coordinates. Unrequested parts are
+    ``None``; ``orientation`` accompanies every ``jacobian``.
+    """
+
+    image: tuple[np.ndarray, np.ndarray] | None
+    jacobian: tuple[np.ndarray, np.ndarray] | None
+    orientation: tuple[np.ndarray, np.ndarray] | None
+
+
+class IntervalSurfaceMap(Protocol):
+    """Authenticated closed representative of an authored source triangle.
+
+    Maps may be continuous piecewise-C1 and Lipschitz, rather than globally C1.
+    Every reference line restriction must be absolutely continuous. Bounds
+    include removable coordinate singularities; Jacobian bounds enclose all
+    one-sided jets and the directional derivatives almost everywhere on every
+    such segment, including segments along chart interfaces. Derivatives use
+    the original reference coordinates, even when a reference is a child.
+    ``authored_deviation_bound`` bounds the pointwise distance to the raw
+    authored face under the same full chart correspondence, in both directions.
+    The orientation jets enclose the hull of raw authored and
+    completed-representative first jets. Ordinary bounds/jets and trace IDs
+    describe only the continuous closed representative, never a rounded proxy.
+    A trace ID authenticates the entire ordered native trace, not its samples.
+    ``map_id`` binds raw source, completion, deviation and every prerequisite.
+    The ``enclosures`` classmethod encloses every (3,2) reference row of each
+    (map, (N,3,2) references) request independently; batching shares native
+    evaluations across rows and maps but never interpolates bounds between rows.
+    """
+
+    @property
+    def map_id(self) -> str: ...
+
+    @property
+    def authored_deviation_bound(self) -> float: ...
+
+    @classmethod
+    def enclosures(
+        cls,
+        requests: list[tuple[Self, np.ndarray]],
+        /,
+        *,
+        image: bool,
+        jacobian: bool,
+        budget: CoordinateEnclosureBudget,
+    ) -> list[SurfaceMapEnclosures]: ...
+
+    def trace_identity(self, local_vertices: tuple[int, ...], /) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalBoundaryCell:
+    """Request-local source and exact target maps on the same oriented triangle."""
+
+    source: IntervalSurfaceMap
+    target: tuple[Expression, ...]
+    vertices: tuple[int, int, int]
+    anchor: np.ndarray
+    entity: int
+    orientation: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalBoundaryHomotopy:
+    """A complete continuous proof, or a refusal without partial proof identity."""
+
+    complete: bool
+    distance_upper: float
+    reason: str
+    entities: tuple[int, ...]
+    piece_count: int
+    proof_id: str | None
 
 
 type Chart = tuple[np.ndarray, np.ndarray]
@@ -424,6 +505,48 @@ def reference_constraints(
             for value in coordinates
         ),
     )
+
+
+def vanishing_reference_constraints(
+    coordinates: tuple[Expression, ...],
+    kind: str,
+    dimension: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> frozenset[int]:
+    """Indices of ``reference_constraints`` that vanish identically.
+
+    Box facets are ``x_i`` and ``1 - x_i``: the first is the zero polynomial
+    exactly when ``x_i`` is, the second exactly when ``x_i`` is the constant
+    one, so the box decision never forms the facet polynomials.
+    """
+    polynomials = tuple(
+        value for value in coordinates if not isinstance(value, RationalPolynomial)
+    )
+    if (
+        kind in ("triangle", "tetrahedron", "prism", "pyramid")
+        or kind.startswith("simplex:")
+        or len(polynomials) != len(coordinates)
+    ):
+        return frozenset(
+            facet
+            for facet, constraint in enumerate(
+                reference_constraints(coordinates, kind, dimension, budget=budget)
+            )
+            if not constraint
+        )
+    budget.reserve(sum(len(value) for value in polynomials))
+    origin = (0,) * dimension
+    lower = (axis for axis, value in enumerate(polynomials) if not value)
+    upper = (
+        len(polynomials) + axis
+        for axis, value in enumerate(polynomials)
+        if value.get(origin) == 1
+        and not any(
+            coefficient for index, coefficient in value.items() if index != origin
+        )
+    )
+    return frozenset((*lower, *upper))
 
 
 def _turn(

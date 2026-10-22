@@ -382,6 +382,90 @@ void test_recycled_row_scratch_has_one_bound_per_chunk() {
   }
 }
 
+// Scratch arenas recycle per participant slot: many chunks admit a bounded
+// number of arenas, independent of the requested parallelism, with identical
+// outputs and execution evidence.
+void test_recycled_arenas_scale_with_slots_not_chunks() {
+  constexpr std::size_t count = 64 * 200;
+  const uint64_t arena = native_parallel_allocation_bytes(1024 * sizeof(double), alignof(double));
+  // Room for 64 slots, far below one arena per chunk (200 chunks).
+  const std::size_t limit = static_cast<std::size_t>(80 * (arena + 4096));
+  std::array<uint64_t, PHX_MC_EXECUTION_MEMORY_VALUES> reference_memory{};
+  for (uint32_t threads : {1u, 8u, 32u}) {
+    auto owner = std::make_shared<BoundedMemoryResource>(limit);
+    NativeExecutionScope execution(0, 0, 0, limit, INFINITY, owner);
+    ParallelRequest request;
+    request.parallelism = threads;
+    request.chunk_size = 64;
+    request.arena_bytes_per_chunk = arena;
+    std::vector<uint64_t> output(count);
+    PHX_CHECK(
+        parallel_for(count, request, [&](std::size_t begin, std::size_t end, ChunkContext& chunk) {
+          std::pmr::vector<double> scratch(1024, 0.5, &chunk.arena);
+          for (std::size_t i = begin; i < end; ++i) {
+            output[i] = std::bit_cast<uint64_t>(scratch[i % 1024] * static_cast<double>(i));
+          }
+        }) == PHX_MC_OK);
+    for (std::size_t i = 0; i < count; ++i) {
+      PHX_CHECK(output[i] == std::bit_cast<uint64_t>(0.5 * static_cast<double>(i)));
+    }
+    const auto memory = execution.memory_evidence();
+    if (threads == 1) reference_memory = memory;
+    PHX_CHECK(memory == reference_memory);
+    PHX_CHECK(owner->peak_bytes() <= limit);
+    PHX_CHECK(owner->live_bytes() == 0 && !execution.has_live_batches());
+  }
+}
+
+// A nested region runs serially and recycles one arena: more than 64 inner
+// chunks fit an outer chunk arena that holds a single inner arena.
+void test_nested_region_recycles_one_arena() {
+  constexpr std::size_t outer_count = 3;
+  constexpr std::size_t inner_count = 100;
+  const uint64_t inner_arena =
+      native_parallel_allocation_bytes(256 * sizeof(double), alignof(double));
+  Work reference_work{};
+  std::array<uint64_t, PHX_MC_EXECUTION_MEMORY_VALUES> reference_memory{};
+  for (uint32_t threads : {1u, 3u}) {
+    auto owner = std::make_shared<BoundedMemoryResource>(memory_limit);
+    NativeExecutionScope execution(0, 0, 0, memory_limit, INFINITY, owner);
+    ParallelRequest outer;
+    outer.parallelism = threads;
+    outer.chunk_size = 1;
+    // Room for one inner arena and its storage, far below 64 of them.
+    outer.arena_bytes_per_chunk = 2 * inner_arena + 4096;
+    std::array<std::array<uint64_t, inner_count>, outer_count> output{};
+    std::array<int32_t, outer_count> statuses{};
+    PHX_CHECK(parallel_for(outer_count, outer, [&](std::size_t begin, std::size_t, ChunkContext&) {
+                ParallelRequest inner;
+                inner.parallelism = 64;
+                inner.chunk_size = 1;
+                inner.arena_bytes_per_chunk = inner_arena;
+                statuses[begin] = parallel_for(
+                    inner_count, inner, [&](std::size_t row, std::size_t, ChunkContext& nested) {
+                      std::pmr::vector<double> scratch(256, 0.25, &nested.arena);
+                      output[begin][row] =
+                          std::bit_cast<uint64_t>(scratch[255] * static_cast<double>(row + begin));
+                    });
+              }) == PHX_MC_OK);
+    for (std::size_t chunk = 0; chunk < outer_count; ++chunk) {
+      PHX_CHECK(statuses[chunk] == PHX_MC_OK);
+      for (std::size_t row = 0; row < inner_count; ++row) {
+        PHX_CHECK(output[chunk][row] ==
+                  std::bit_cast<uint64_t>(0.25 * static_cast<double>(row + chunk)));
+      }
+    }
+    const Work work = execution.evidence();
+    const auto memory = execution.memory_evidence();
+    if (threads == 1) {
+      reference_work = work;
+      reference_memory = memory;
+    }
+    PHX_CHECK(work == reference_work && memory == reference_memory);
+    PHX_CHECK(owner->live_bytes() == 0 && !execution.has_live_batches());
+  }
+}
+
 void test_resource_admission_before_launch() {
   Work reference{};
   for (uint32_t threads : {1u, 2u, 7u, 64u}) {
@@ -696,6 +780,8 @@ int main() {
   test_outputs_statuses_counters_and_ordered_reduction();
   test_workers_are_reused_across_regions();
   test_recycled_row_scratch_has_one_bound_per_chunk();
+  test_recycled_arenas_scale_with_slots_not_chunks();
+  test_nested_region_recycles_one_arena();
   test_resource_admission_before_launch();
   test_unused_reservation_release_after_expected_failure();
   test_lowest_exception_after_all_chunks_join();

@@ -26,6 +26,8 @@
 namespace phx::mc {
 namespace {
 using Clock = std::chrono::steady_clock;
+// Participants of one region; recycled chunk arenas are admitted per slot.
+constexpr std::size_t kMaximumArenaSlots = 64;
 thread_local uint32_t policy_parallelism = 1;
 thread_local Clock::time_point policy_deadline = Clock::time_point::max();
 thread_local std::size_t region_depth = 0;
@@ -112,7 +114,9 @@ struct Job final {
   const void* body_context;
   parallel_detail::BorrowedBody body;
   std::span<const NativeChunkAllowance> allowances;
+  // One arena per chunk, or one recycled arena per participant slot.
   std::span<const MemoryOwner> owners;
+  bool recycled;
   std::span<NativeChunkEvidence> evidence;
   std::span<std::exception_ptr> failures;
   Clock::time_point deadline;
@@ -128,14 +132,15 @@ struct Job final {
     return false;
   }
 
-  void evaluate(std::size_t index) noexcept {
+  void evaluate(std::size_t index, std::size_t slot) noexcept {
+    const MemoryOwner& owner = owners[recycled ? slot : index];
     try {
       ChunkLifetime lifetime(request);
-      NativeDetachedExecution detached(allowances[index], owners[index]);
+      NativeDetachedExecution detached(allowances[index], owner);
       try {
         const std::size_t begin = index * request.chunk_size;
         const std::size_t end = begin + std::min(request.chunk_size, count - begin);
-        ChunkContext chunk{index, detached.execution(), *owners[index]};
+        ChunkContext chunk{index, detached.execution(), *owner};
         const int32_t status = body(body_context, begin, end, chunk);
         if (detached.execution().status() != PHX_MC_OK) {
           throw std::logic_error(
@@ -148,7 +153,7 @@ struct Job final {
             "parallel_for.chunk allowance must cover local execution; got ExecutionRefusal"));
       } catch (const std::bad_alloc&) {
         evidence[index] = detached.evidence(PHX_MC_INTERNAL_ERROR, false);
-        if (owners[index]->refusals() != 0) {
+        if (evidence[index].memory.refusals != 0) {
           failures[index] = std::make_exception_ptr(std::logic_error(
               "parallel_for.chunk arena must cover local allocations; got a bound defect"));
         } else {
@@ -163,16 +168,29 @@ struct Job final {
       evidence[index].completed = false;
       failures[index] = std::current_exception();
     }
+    // A recycled arena must be empty again so the next chunk starts from the
+    // identical state; retained scratch is a caller contract defect.
+    if (recycled && owner->live_bytes() != 0 && !failures[index]) {
+      evidence[index].status = PHX_MC_INTERNAL_ERROR;
+      failures[index] = std::make_exception_ptr(std::logic_error(
+          "parallel_for.chunk arena must be released by its chunk; got retained scratch"));
+    }
   }
 
-  void run() noexcept {
+  // Participant `slot` (0 for the caller) owns recycled arena `slot`.
+  void run(std::size_t slot) noexcept {
     for (;;) {
       // Cancellation never interrupts an item or a logical chunk.
       if (boundary_timeout()) return;
       const std::size_t index = next.fetch_add(1, std::memory_order_relaxed);
       if (index >= allowances.size()) return;
       if (boundary_timeout()) return;
-      evaluate(index);
+      evaluate(index, slot);
+      if (recycled && owners[slot]->live_bytes() != 0) {
+        // A defective slot is never reused; remaining chunks stay unstarted.
+        cancelled.store(true, std::memory_order_release);
+        return;
+      }
       if (boundary_timeout()) return;
     }
   }
@@ -205,7 +223,7 @@ class WorkerPool final {
 
   void run(Job& job, std::size_t worker_count) {
     if (worker_count == 0) {
-      job.run();
+      job.run(0);
       return;
     }
     {
@@ -215,6 +233,7 @@ class WorkerPool final {
       while (workers_.size() < worker_count) {
         workers_.emplace_back();
         Worker* const state = &workers_.back();
+        state->slot = workers_.size();
         try {
           state->thread = std::jthread([this, state] { worker(*state); });
         } catch (...) {
@@ -228,7 +247,7 @@ class WorkerPool final {
     // Only participating workers wake; a historical larger request does not
     // make small batches contend with every parked thread.
     for (std::size_t index = 0; index < worker_count; ++index) workers_[index].ready.release();
-    job.run();
+    job.run(0);
     std::unique_lock lock(work_mutex_);
     joined_.wait(lock, [this] { return pending_ == 0; });
     job_ = nullptr;
@@ -255,6 +274,7 @@ class WorkerPool final {
  private:
   struct Worker {
     std::binary_semaphore ready{0};
+    std::size_t slot = 0;  // worker i participates as slot i + 1
     std::jthread thread;
   };
   void worker(Worker& state) noexcept {
@@ -264,7 +284,7 @@ class WorkerPool final {
       if (stopping_) return;
       Job* const job = job_;
       lock.unlock();
-      job->run();
+      job->run(state.slot);
       lock.lock();
       --pending_;
       if (pending_ == 0) joined_.notify_one();
@@ -370,6 +390,7 @@ NativeParallelPolicy::~NativeParallelPolicy() {
 }
 
 uint32_t current_parallelism() noexcept { return policy_parallelism; }
+Clock::time_point current_parallel_deadline() noexcept { return policy_deadline; }
 double current_parallel_lease_seconds() noexcept {
   if (policy_deadline == Clock::time_point::max()) return INFINITY;
   return std::max(0.0, std::chrono::duration<double>(policy_deadline - Clock::now()).count());
@@ -388,27 +409,40 @@ int32_t parallel_detail::parallel_for_erased(std::size_t count, ParallelRequest 
       return PHX_MC_CAPACITY_EXCEEDED;
     allowances[index].bytes = request.arena_bytes_per_chunk;
   }
-  NativeParallelBatch batch(allowances);
+  // Scratch-only chunks recycle one arena per participant slot; chunks whose
+  // outputs retain their arena keep one arena per chunk. A nested region runs
+  // serially on the caller and recycles a single arena. A top-level slot count
+  // depends only on the chunk count, so admission and execution evidence are
+  // identical for every requested parallelism; participants never exceed it.
+  const bool recycled = !request.outputs_retain_arena;
+  const std::size_t slots = !recycled         ? chunks
+                            : region_depth != 0 ? 1
+                                                : std::min(chunks, kMaximumArenaSlots);
+  const std::size_t threads =
+      region_depth != 0 ? 1 : std::min<std::size_t>(request.parallelism, slots);
+  NativeParallelBatch batch(allowances, recycled ? slots : 0);
   if (batch.status() != PHX_MC_OK) return batch.status();
   std::vector<MemoryOwner> owners;
-  owners.reserve(chunks);
-  for (std::size_t index = 0; index < chunks; ++index) owners.push_back(batch.chunk_owner(index));
+  owners.reserve(batch.arena_count());
+  for (std::size_t index = 0; index < batch.arena_count(); ++index) {
+    owners.push_back(batch.arena_owner(index));
+  }
   std::vector<NativeChunkEvidence> evidence(chunks);
   for (NativeChunkEvidence& chunk : evidence) chunk.status = PHX_MC_TIMEOUT;
   std::vector<std::exception_ptr> failures(chunks);
   const Clock::time_point now = Clock::now();
   const Clock::time_point deadline =
       std::min(policy_deadline, deadline_after(batch.remaining_wall_seconds(), now));
-  Job job{count, request, context, body, allowances, owners, evidence, failures, deadline};
+  Job job{count,    request,  context,  body, allowances, owners,
+          recycled, evidence, failures, deadline};
   if (region_depth != 0) {
-    job.run();
+    job.run(0);
   } else {
     WorkerPool& pool = process_pool();
     const Clock::time_point lease_deadline =
         std::min(deadline, deadline_after(request.lease_seconds, now));
     PoolLease lease(pool, lease_deadline);
     if (lease) {
-      const std::size_t threads = std::min<std::size_t>(request.parallelism, chunks);
       pool.run(job, threads - 1);
     } else {
       job.cancelled.store(true, std::memory_order_release);

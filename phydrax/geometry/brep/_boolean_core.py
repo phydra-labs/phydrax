@@ -19,18 +19,22 @@ import numpy as np
 from ..._strict import StrictModule
 from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...typing import checked, parse
+from .._atlas import AbstractTrimCurve
 from .._cad_revision import (
     AssociationGraph,
     CADOccurrence,
     CADRevision,
 )
 from ._constructors import assemble_brep_model, BRepTessellationPolicy
-from ._intersection import ParametricIntersectionPolicy
+from ._coordinate_request import coordinate_source_request
+from ._intersection import NativePeriodEndpoint, ParametricIntersectionPolicy
+from ._intersection_curve import AffinePCurve, CurveTrimSegment, PeriodicPCurve
 from ._model import BRepGeometry, BRepModel
 from ._patches import AbstractCurve, LineCurve, PlanePatch
 from ._placed_affine import exact_line_descriptor, exact_plane_descriptor
 from ._request_preparations import TrimRequestPreparations
 from ._sewing import BRepSewingPolicy, sew_brep, shells
+from ._trim_helpers import PeriodOffset, period_scalar_bounds
 
 
 BRepBooleanOperation: TypeAlias = Literal["union", "intersection", "difference"]
@@ -149,6 +153,279 @@ class BRepBooleanResult(StrictModule):
     @property
     def empty(self) -> bool:
         return self.model.topology.num_solids == 0
+
+
+type ChartScalar = Fraction | PeriodOffset
+
+
+def chart_add(first: ChartScalar, second: ChartScalar) -> ChartScalar:
+    left = first if isinstance(first, PeriodOffset) else PeriodOffset(first, Fraction(0))
+    right = (
+        second if isinstance(second, PeriodOffset) else PeriodOffset(second, Fraction(0))
+    )
+    value = left + right
+    if not isinstance(value, (Fraction, PeriodOffset)):
+        raise TypeError(
+            f"face_cells.chart_sum must be a Fraction or PeriodOffset; got {type(value).__name__}"
+        )
+    return value
+
+
+def chart_scale(value: ChartScalar, factor: Fraction) -> ChartScalar:
+    source = (
+        value if isinstance(value, PeriodOffset) else PeriodOffset(value, Fraction(0))
+    )
+    result = source * factor
+    if not isinstance(result, (Fraction, PeriodOffset)):
+        raise TypeError(
+            f"face_cells.chart_product must be a Fraction or PeriodOffset; got {type(result).__name__}"
+        )
+    return result
+
+
+def chart_parts(value: ChartScalar) -> tuple[Fraction, Fraction]:
+    return (
+        (value, Fraction(0))
+        if isinstance(value, Fraction)
+        else (value.rational, value.turns)
+    )
+
+
+def line_chart_coefficients(
+    curve: AbstractCurve | AbstractTrimCurve,
+) -> tuple[tuple[ChartScalar, ...], tuple[Fraction, ...]] | None:
+    """Exact ``origin + t * direction`` UV coefficients in Q + Q*(2*pi), or None."""
+    if isinstance(curve, LineCurve):
+        return (
+            tuple(Fraction(float(value)) for value in np.asarray(curve.origin)),
+            tuple(Fraction(float(value)) for value in np.asarray(curve.direction)),
+        )
+    if isinstance(curve, PeriodicPCurve):
+        child = line_chart_coefficients(curve.source_curve)
+        if child is None:
+            return None
+        origin, direction = child
+        return (
+            tuple(
+                chart_add(value, PeriodOffset(Fraction(0), Fraction(shift)))
+                for value, shift in zip(origin, curve.period_shifts, strict=True)
+            ),
+            direction,
+        )
+    if isinstance(curve, AffinePCurve):
+        child = line_chart_coefficients(curve.curve)
+        if child is None:
+            return None
+        origin, direction = child
+        transformed = []
+        for row in range(2):
+            value: ChartScalar = curve.offset[row]
+            for column in range(2):
+                value = chart_add(
+                    value, chart_scale(origin[column], curve.matrix[row][column])
+                )
+            transformed.append(value)
+        return (
+            tuple(transformed),
+            tuple(
+                sum((curve.matrix[i][j] * direction[j] for j in range(2)), Fraction(0))
+                for i in range(2)
+            ),
+        )
+    return None
+
+
+def _chart_sign(value: ChartScalar, /) -> int | None:
+    """Exact sign of ``q + t * 2 pi``; None only when directed bounds straddle zero."""
+    rational, turns = chart_parts(value)
+    if not turns:
+        return (rational > 0) - (rational < 0)
+    # A nonzero turn coefficient never cancels a rational: pi is irrational.
+    lower, upper = period_scalar_bounds(value)
+    if lower > 0.0:
+        return 1
+    if upper < 0.0:
+        return -1
+    return None
+
+
+def _coedge_trim(
+    geometry: BRepGeometry,
+    coedge: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> CurveTrimSegment:
+    edge = geometry.coedge_edges[coedge]
+    first, last = (float(value) for value in np.asarray(geometry.edge_ranges)[edge])
+    first_root, last_root = geometry.coedge_endpoint_roots[coedge]
+    return CurveTrimSegment(
+        geometry.pcurves[coedge],
+        first,
+        last,
+        reversed=geometry.coedge_senses[coedge] < 0,
+        first_root=first_root,
+        last_root=last_root,
+        preparations=preparations,
+        budget=budget,
+    )
+
+
+def _coedge_axis_values(
+    geometry: BRepGeometry, coedge: int, axis: int, /
+) -> tuple[ChartScalar, ChartScalar] | None:
+    """Exact chart coordinates of an affine p-curve at its authored endpoints."""
+    coefficients = line_chart_coefficients(geometry.pcurves[coedge])
+    if coefficients is None:
+        return None
+    origin, direction = coefficients
+    edge = geometry.coedge_edges[coedge]
+    values: list[ChartScalar] = []
+    for value, root in zip(
+        np.asarray(geometry.edge_ranges)[edge],
+        geometry.coedge_endpoint_roots[coedge],
+        strict=True,
+    ):
+        match root:
+            case None:
+                parameter: ChartScalar = Fraction(float(value))
+            case NativePeriodEndpoint():
+                parameter = root.exact_parameter
+            case _:
+                return None
+        values.append(chart_add(origin[axis], chart_scale(parameter, direction[axis])))
+    return values[0], values[1]
+
+
+def _full_period_seam(
+    geometry: BRepGeometry,
+    face: int,
+    axis: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> Fraction | None:
+    """Prove the face trim spans exactly one native turn from an authored seam.
+
+    The premise is the face's own topology: one edge used by two opposite
+    coedges whose exact affine p-curves are one isoline in two native period
+    gauges differing by one turn, and every trim coedge on the closed strip
+    between those gauges. Endpoint coordinates use authored native-period
+    roots; other carriers need a certified enclosure strictly inside the strip.
+    Box widths, near-period extents and numerical tolerances never prove it.
+    """
+    coedges = tuple(coedge for loop in geometry.face_loops[face] for coedge in loop)
+    uses: dict[int, list[int]] = {}
+    for coedge in coedges:
+        uses.setdefault(geometry.coedge_edges[coedge], []).append(coedge)
+    turn = PeriodOffset(Fraction(0), Fraction(1))
+    seams: set[ChartScalar] = set()
+    other = 1 - axis
+    for pair in uses.values():
+        if (
+            len(pair) != 2
+            or geometry.coedge_senses[pair[0]] == geometry.coedge_senses[pair[1]]
+        ):
+            continue
+        first_line = line_chart_coefficients(geometry.pcurves[pair[0]])
+        second_line = line_chart_coefficients(geometry.pcurves[pair[1]])
+        if first_line is None or second_line is None:
+            continue
+        (first_origin, first_direction), (second_origin, second_direction) = (
+            first_line,
+            second_line,
+        )
+        if (
+            first_direction != second_direction
+            or first_direction[axis] != 0
+            or first_direction[other] == 0
+            or first_origin[other] != second_origin[other]
+        ):
+            continue
+        difference = chart_add(
+            second_origin[axis], chart_scale(first_origin[axis], Fraction(-1))
+        )
+        if difference == turn:
+            seams.add(first_origin[axis])
+        elif difference == -turn:
+            seams.add(second_origin[axis])
+    if len(seams) != 1:
+        return None
+    seam = next(iter(seams))
+    if not isinstance(seam, Fraction) or Fraction(float(seam)) != seam:
+        return None
+    end = chart_add(seam, turn)
+    lower_bounds, upper_bounds = period_scalar_bounds(seam), period_scalar_bounds(end)
+    for coedge in coedges:
+        values = _coedge_axis_values(geometry, coedge, axis)
+        if values is not None:
+            # An affine coordinate attains its range at the authored endpoints.
+            if any(
+                _chart_sign(chart_add(value, chart_scale(seam, Fraction(-1))))
+                not in (0, 1)
+                or _chart_sign(chart_add(end, chart_scale(value, Fraction(-1))))
+                not in (0, 1)
+                for value in values
+            ):
+                return None
+            continue
+        box = np.asarray(
+            _coedge_trim(
+                geometry, coedge, preparations=preparations, budget=budget
+            ).enclosure(
+                0.0, 1.0, preparations=preparations, budget=budget
+            ),
+            dtype=np.float64,
+        )
+        if not (box[0, axis] >= lower_bounds[1] and box[1, axis] <= upper_bounds[0]):
+            return None
+    return seam
+
+
+@checked
+def boolean_face_chart_box(
+    model: BRepModel,
+    face: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> np.ndarray:
+    """Source face parameter box with proved full native turns in their seam chart.
+
+    ``parameter_bounds`` remains the model's outward box. A periodic axis is
+    replaced by the fundamental chart ``[seam, seam + period]`` only when
+    ``_full_period_seam`` proves the face trim spans that turn and the declared
+    box contains it; otherwise the declared box is returned unchanged.
+    """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request((model, face)) as budget:
+            return boolean_face_chart_box(
+                model, face, preparations=preparations, budget=budget
+            )
+    box = np.array(np.asarray(model.parameter_bounds, dtype=np.float64)[face])
+    geometry = model.geometry
+    if geometry is None:
+        return box
+    patch = model.patches[face]
+    symbols = patch.native_period_symbols()
+    for axis, period in enumerate(patch.periods):
+        if period is None or symbols[axis] != "two_pi":
+            continue
+        seam = _full_period_seam(
+            geometry, face, axis, preparations=preparations, budget=budget
+        )
+        if seam is None:
+            continue
+        lower = float(seam)
+        upper = lower + float(period)
+        if box[0, axis] <= lower and upper <= box[1, axis]:
+            box[0, axis], box[1, axis] = lower, upper
+    return box
 
 
 class _Rectangle(StrictModule):

@@ -15,9 +15,11 @@ from jax import Array
 
 import phydrax.geometry.implicit._realization as realization_owner
 
-from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
+from ..._bvh import bvh_overlap_pair_blocks, PackedBVH
+from ..._resource_ticket import BatchTicket
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...discretization._tensor_support import PreparedTensorGrid
 from ...ein import contract
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
@@ -27,11 +29,14 @@ from .._certificate import FieldRegularity, SignReliability, ZeroSetAccuracy
 from .._contracts import CompiledGeometry, GeometryKernel, GeometryKind
 from ..design._schema import DesignState
 from ..simplicial import TriangleTopology
+from ._enclosure import consume_queries, query_budget
 from ._policy import ImplicitSurfacePolicy
 from ._projection import field_and_gradient, ImplicitPointProjectionPlan
 
 
 _EDGE_ROOT_METHOD = ITP()
+# One shared ITP batch runs at most this many iterations over every lane.
+_EDGE_ROOT_MAXIMUM_STEPS = 51
 
 _DEFAULT_SURFACE_POLICY = ImplicitSurfacePolicy()
 
@@ -271,7 +276,12 @@ def isolate_roots(
         return kernel.boundary_field(state, lower_points + parameter[:, None] * direction)
 
     result = _EDGE_ROOT_METHOD.solve_batched(
-        field, lower_values, upper_values, tolerance, lower_points
+        field,
+        lower_values,
+        upper_values,
+        tolerance,
+        lower_points,
+        maximum_steps=_EDGE_ROOT_MAXIMUM_STEPS,
     )
     points = lower_points + result.root[:, None] * direction
     return RootIsolationResult(points, jnp.abs(result.value), result)
@@ -353,8 +363,14 @@ def qef_vertices(
     cell_upper: np.ndarray,
     regularization: float,
     tolerance: float,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Batched regularized QEF vertices with bounded regularization escalation."""
+    """Batched regularized QEF vertices with bounded regularization escalation.
+
+    The ``_QEF_REGULARIZATION_LEVELS`` levels are admitted up front; each level
+    that runs charges one solve per vertex before it is dispatched.
+    """
 
     norms = np.linalg.norm(gradients, axis=-1)
     if np.any(norms <= 0.0) or not np.all(np.isfinite(norms)):
@@ -377,32 +393,35 @@ def qef_vertices(
             mask,
         )
     )
+    vertex_count = int(cell_lower.shape[0])
     vertices = np.zeros_like(cell_lower)
-    selected_regularization = np.full((cell_lower.shape[0],), np.nan, dtype=np.float64)
-    done = np.zeros((cell_lower.shape[0],), dtype=np.bool_)
+    selected_regularization = np.full((vertex_count,), np.nan, dtype=np.float64)
+    done = np.zeros((vertex_count,), dtype=np.bool_)
     identity = np.eye(3, dtype=np.float64)
     # Every level solves every vertex system so one batch shape serves all
     # levels; each vertex keeps its first in-cell solution.
-    for level in range(_QEF_REGULARIZATION_LEVELS):
-        weight = regularization * 10.0**level
-        solved = solve_small_linear(
-            _QEF_SOLVE_PLAN,
-            normal_matrix + (weight * count)[:, None, None] * identity[None, :, :],
-            right_hand_side,
-        )
-        value = mass + np.asarray(solved.value)
-        accepted = (
-            ~done
-            & np.asarray(solved.successful)
-            & np.all(np.isfinite(value), axis=1)
-            & np.all(value >= cell_lower - tolerance, axis=1)
-            & np.all(value <= cell_upper + tolerance, axis=1)
-        )
-        vertices[accepted] = value[accepted]
-        selected_regularization[accepted] = weight
-        done |= accepted
-        if np.all(done):
-            return vertices, selected_regularization
+    with _admitted_batch(budget, vertex_count * _QEF_REGULARIZATION_LEVELS, 0) as admitted:
+        for level in range(_QEF_REGULARIZATION_LEVELS):
+            admitted.consume(vertex_count)
+            weight = regularization * 10.0**level
+            solved = solve_small_linear(
+                _QEF_SOLVE_PLAN,
+                normal_matrix + (weight * count)[:, None, None] * identity[None, :, :],
+                right_hand_side,
+            )
+            value = mass + np.asarray(solved.value)
+            accepted = (
+                ~done
+                & np.asarray(solved.successful)
+                & np.all(np.isfinite(value), axis=1)
+                & np.all(value >= cell_lower - tolerance, axis=1)
+                & np.all(value <= cell_upper + tolerance, axis=1)
+            )
+            vertices[accepted] = value[accepted]
+            selected_regularization[accepted] = weight
+            done |= accepted
+            if np.all(done):
+                return vertices, selected_regularization
     raise ValueError(
         "ImplicitQEF.vertex must remain inside its discovery cell under the bounded regularization schedule; got an out-of-cell vertex"
     )
@@ -415,6 +434,7 @@ def _dual_faces(
     dual: _DualVertices,
     base_vertices: np.ndarray,
     policy: ImplicitSurfacePolicy,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Split every crossing's dual quad into two field-oriented triangles."""
 
@@ -467,6 +487,8 @@ def _dual_faces(
         raise ValueError(
             f"ImplicitSurfaceDiscovery.triangle_areas must be finite and exceed minimum_face_area {policy.minimum_face_area}; got a nonfinite or undersized triangle"
         )
+    # One fixed-shape field-and-gradient query per face centroid.
+    consume_queries(budget, faces.shape[0])
     _, gradients = field_and_gradient(
         geometry.kernel,
         geometry.state,
@@ -483,11 +505,139 @@ def _dual_faces(
     return np.where(flip[:, None], faces[:, (0, 2, 1)], faces).astype(np.int32)
 
 
+def metered_self_overlap_pairs(
+    hierarchy: PackedBVH,
+    budget: CoordinateEnclosureBudget,
+    /,
+    *,
+    absolute_tolerance: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Touching self-overlap pairs of ``hierarchy``, sorted as `bvh_overlap_pairs_host`.
+
+    Every node and item AABB-test batch, rejected tests included, is charged
+    to ``budget`` as work before it is evaluated. A self query on ``F`` items
+    tests at most ``(2F - 1)**2`` node pairs and ``F**2`` item pairs.
+    """
+    blocks = list(
+        bvh_overlap_pair_blocks(
+            hierarchy,
+            hierarchy,
+            include_touching=True,
+            absolute_tolerance=absolute_tolerance,
+            visit=lambda count: consume_queries(budget, 0, work_units=count),
+        )
+    )
+    if not blocks:
+        empty = np.empty((0,), dtype=np.int64)
+        return empty, empty.copy()
+    first = np.concatenate([block[0] for block in blocks])
+    second = np.concatenate([block[1] for block in blocks])
+    order = np.lexsort((second, first))
+    return first[order], second[order]
+
+
+def _lattice_overlap_pairs(
+    lower_cell: np.ndarray,
+    upper_cell: np.ndarray,
+    axes: tuple[np.ndarray, np.ndarray, np.ndarray],
+    box_min: np.ndarray,
+    box_max: np.ndarray,
+    padding: float,
+    tolerance: float,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Unordered touching overlaps of lattice-cell boxes, sorted by (first, second).
+
+    Box ``i`` spans lattice cells ``lower_cell[i] .. upper_cell[i]`` widened by
+    ``tolerance``; overlap is the `bvh_overlap_pairs_host` touching predicate
+    with absolute tolerance ``padding``. Boxes separated on an axis by at least
+    ``reach`` whole cells are disjoint under that predicate with rounding
+    margin, so only bucketed lattice-window candidates are tested exactly; the
+    result equals the BVH self query restricted to ``first < second``.
+
+    Charged work is one unit per exact box-overlap predicate, charged before
+    the tests run, matching the per-AABB-test convention of the BVH query;
+    bucketing and window lookups are uncharged host passes.
+    """
+    count = int(lower_cell.shape[0])
+    shape = tuple(int(coordinates.size) - 1 for coordinates in axes)
+    reach = []
+    for coordinates, cells in zip(axes, shape, strict=True):
+        unit = np.finfo(np.float64).eps * (
+            1.0 + float(np.max(np.abs(coordinates))) + tolerance
+        )
+        separation = 2.0 * (padding + 2.0 * tolerance) + 4.0 * unit
+        k = 1
+        while k < cells and float(np.min(coordinates[k:] - coordinates[:-k])) < separation:
+            k += 1
+        reach.append(k)
+    span = upper_cell - lower_cell
+    span_max = np.max(span, axis=0) if count else np.zeros((3,), dtype=np.int64)
+    cell_count = shape[0] * shape[1] * shape[2]
+    key = (lower_cell[:, 0] * shape[1] + lower_cell[:, 1]) * shape[2] + lower_cell[:, 2]
+    offsets = np.zeros((cell_count + 1,), dtype=np.int64)
+    offsets[1:] = np.cumsum(np.bincount(key, minlength=cell_count))
+    order = np.argsort(key, kind="stable")
+    position = np.empty((count,), dtype=np.int64)
+    position[order] = np.arange(count, dtype=np.int64)
+
+    # Each unordered pair is found once, from the box whose bucket comes first:
+    # rows (dx, dy) with dx > 0, or dx == 0 and dy >= 0, over the z window.
+    dx = np.arange(span_max[0] + reach[0] + 1, dtype=np.int64)
+    dy = np.arange(-(span_max[1] + reach[1]), span_max[1] + reach[1] + 1, dtype=np.int64)
+    row_dx, row_dy = (value.reshape((-1,)) for value in np.meshgrid(dx, dy, indexing="ij"))
+    box = np.repeat(np.arange(count, dtype=np.int64), row_dx.size)
+    row_dx = np.tile(row_dx, count)
+    row_dy = np.tile(row_dy, count)
+    x = lower_cell[box, 0] + row_dx
+    y = lower_cell[box, 1] + row_dy
+    visited = (
+        (row_dx <= span[box, 0] + reach[0])
+        & (row_dy <= span[box, 1] + reach[1])
+        & ((row_dx > 0) | (row_dy >= 0))
+        & (x < shape[0])
+        & (y >= 0)
+        & (y < shape[1])
+    )
+    box, row_dx, row_dy, x, y = (
+        value[visited] for value in (box, row_dx, row_dy, x, y)
+    )
+    z_lower = np.maximum(lower_cell[box, 2] - span_max[2] - reach[2], 0)
+    z_upper = np.minimum(upper_cell[box, 2] + reach[2], shape[2] - 1)
+    column = (x * shape[1] + y) * shape[2]
+    start = offsets[column + z_lower]
+    end = offsets[column + z_upper + 1]
+    own_row = (row_dx == 0) & (row_dy == 0)
+    start = np.where(own_row, np.maximum(start, position[box] + 1), start)
+    lengths = np.maximum(end - start, 0)
+    total = int(np.sum(lengths))
+    consume_queries(budget, 0, work_units=total)
+    first_slot = np.cumsum(lengths) - lengths
+    slots = (
+        np.arange(total, dtype=np.int64)
+        - np.repeat(first_slot, lengths)
+        + np.repeat(start, lengths)
+    )
+    first = np.repeat(box, lengths)
+    second = order[slots]
+    extent = np.minimum(box_max[first], box_max[second]) - np.maximum(
+        box_min[first], box_min[second]
+    )
+    hit = np.all(extent >= -padding, axis=-1)
+    first, second = first[hit], second[hit]
+    first, second = np.minimum(first, second), np.maximum(first, second)
+    sorted_rows = np.lexsort((second, first))
+    return first[sorted_rows], second[sorted_rows]
+
+
 def _intersection_candidates(
     faces: np.ndarray,
+    vertex_cell: np.ndarray,
+    axes: tuple[np.ndarray, np.ndarray, np.ndarray],
     cell_lower: np.ndarray,
     cell_upper: np.ndarray,
     policy: ImplicitSurfacePolicy,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Enumerate all self-intersection candidates for every accepted realization.
 
@@ -496,7 +646,7 @@ def _intersection_candidates(
     cells. The intersection predicate accepts parametric slack root_tolerance,
     which reaches at most root_tolerance times twice that box diagonal beyond the
     triangle. Face pairs whose padded boxes are disjoint therefore can never be
-    reported as intersecting, and the BVH overlap set contains every intersecting pair for this test.
+    reported as intersecting, and the box overlap set contains every intersecting pair for this test.
     """
 
     tolerance = policy.projection.root_tolerance
@@ -504,16 +654,18 @@ def _intersection_candidates(
     box_max = np.max(cell_upper[faces], axis=1) + tolerance
     diagonal = float(np.max(np.linalg.norm(box_max - box_min, axis=1)))
     padding = tolerance * (1.0 + 2.0 * diagonal)
-    hierarchy = prepare_bvh(box_min, box_max, dtype=jnp.float64)
-    first, second = bvh_overlap_pairs_host(
-        hierarchy,
-        hierarchy,
-        include_touching=True,
-        absolute_tolerance=padding,
+    corner_cells = vertex_cell[faces]
+    first, second = _lattice_overlap_pairs(
+        np.min(corner_cells, axis=1),
+        np.max(corner_cells, axis=1),
+        axes,
+        box_min,
+        box_max,
+        padding,
+        tolerance,
+        budget,
     )
-    ordered = first < second
-    first = first[ordered]
-    second = second[ordered]
+    # Pairs arrive with first < second.
     shares_vertex = np.any(
         faces[first][:, :, None] == faces[second][:, None, :], axis=(1, 2)
     )
@@ -525,6 +677,84 @@ def _intersection_candidates(
     return pairs.astype(np.int32)
 
 
+def _realization_counts(
+    lattice: int, anchors: int, steps: int, vertices: int, faces: int, pairs: int, /
+) -> tuple[int, int]:
+    """Work and geometry queries of one fixed-shape realization of these sizes."""
+    work = anchors * steps + vertices + faces + pairs
+    return work, lattice + anchors * (steps + 1)
+
+
+def implicit_realization_operations(
+    plan: realization_owner.ImplicitSurfacePlan, /, *, retained_proof: bool = False
+) -> tuple[int, int]:
+    """Return the exact work and geometry queries of one fixed-shape realization.
+
+    ``ImplicitSurfacePlan.realize`` has no data-dependent control flow: the
+    projection runs ``maximum_steps`` iterations over every anchor, and every
+    vertex, face and candidate pair is evaluated. Queries: one lattice field
+    sample per grid point and one field-and-gradient evaluation per anchor for
+    every projection step plus the final evaluation. Work: one projection step
+    per anchor and step, one dense QEF solve per vertex, one area/orientation
+    evaluation per face and one triangle test per candidate pair.
+    With the exact-state retained proof, only projection and QEF coordinates
+    are recomputed; no lattice, face or intersection predicate is repeated.
+    """
+    return _realization_counts(
+        0 if retained_proof else int(plan.grid_points.shape[0]),
+        int(plan.projection.anchors.shape[0]),
+        int(plan.policy.projection.maximum_steps),
+        int(plan.base_vertices.shape[0]),
+        0 if retained_proof else int(plan.faces.shape[0]),
+        0 if retained_proof else int(plan.intersection_pairs.shape[0]),
+    )
+
+
+def _discovery_upper(policy: ImplicitSurfacePolicy, /) -> tuple[int, int]:
+    """Policy-capacity work and query bound of one fixed-lattice discovery.
+
+    Lattice samples, at most ``_EDGE_ROOT_MAXIMUM_STEPS`` shared ITP iterations
+    plus the final residual per crossing, one anchor and one face gradient, at
+    most ``_QEF_REGULARIZATION_LEVELS`` QEF levels per vertex, at most
+    ``F (F - 1) / 2`` exact candidate box tests, and the base realization of
+    `implicit_realization_operations` at policy capacity.
+    """
+    lattice, crossings = policy.maximum_lattice_points, policy.maximum_crossings
+    vertices, faces = policy.maximum_vertices, policy.maximum_faces
+    steps = policy.projection.maximum_steps
+    work = (
+        crossings * _EDGE_ROOT_MAXIMUM_STEPS
+        + vertices * _QEF_REGULARIZATION_LEVELS
+        + crossings * steps
+        + vertices
+        + faces
+        + policy.maximum_intersection_pairs
+        + faces * (faces - 1) // 2
+    )
+    queries = (
+        lattice
+        + crossings * (_EDGE_ROOT_MAXIMUM_STEPS + 1)
+        + crossings
+        + faces
+        + lattice
+        + crossings * (steps + 1)
+    )
+    return work, queries
+
+
+def _admitted_batch(
+    budget: CoordinateEnclosureBudget, work_upper: int, queries_upper: int, /
+) -> BatchTicket:
+    """Admit a conditional batch at its upper bound; the caller consumes actuals."""
+    ticket = budget.ticket
+    if (
+        work_upper > ticket.remaining_work_units
+        or queries_upper > ticket.remaining_geometry_queries
+    ):
+        ticket.refuse(work_upper, queries_upper=queries_upper)
+    return ticket.batch(work_upper, queries_upper=queries_upper)
+
+
 @checked
 def discover_implicit_surface(
     geometry: CompiledGeometry,
@@ -533,9 +763,35 @@ def discover_implicit_surface(
     *,
     policy: ImplicitSurfacePolicy = _DEFAULT_SURFACE_POLICY,
     source_id: str,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> realization_owner.ImplicitSurfacePlan:
-    """Discover a closed manifold dual surface and freeze its topology."""
+    """Discover a closed manifold dual surface and freeze its topology.
 
+    Every lattice sample, ITP root iteration, anchor and face gradient, QEF
+    regularization level and the base realization is charged to ``budget``.
+    Fixed-shape stages are charged before dispatch; the conditional ITP and
+    QEF stages are admitted at their upper bound and charge the realized
+    iteration and level counts. Without a budget an input-bounded host request
+    admits the policy capacity.
+    """
+    work_upper, queries_upper = _discovery_upper(policy)
+    with query_budget(
+        budget, work_upper=work_upper, queries_upper=queries_upper
+    ) as ledger:
+        return _discover_implicit_surface(
+            geometry, grid, policy=policy, source_id=source_id, budget=ledger
+        )
+
+
+def _discover_implicit_surface(
+    geometry: CompiledGeometry,
+    grid: PreparedTensorGrid,
+    /,
+    *,
+    policy: ImplicitSurfacePolicy,
+    source_id: str,
+    budget: CoordinateEnclosureBudget,
+) -> realization_owner.ImplicitSurfacePlan:
     _validate_discovery_inputs(geometry, grid, policy, source_id)
     axes = tuple(
         np.asarray(axis.point_coordinates, dtype=np.float64)
@@ -551,6 +807,7 @@ def discover_implicit_surface(
             f"ImplicitSurfaceDiscovery.lattice must fit maximum_lattice_points {policy.maximum_lattice_points}; got shape {shape}"
         )
     lattice_points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+    consume_queries(budget, int(np.prod(shape, dtype=np.int64)))
     values = np.asarray(
         geometry.boundary_field(jnp.asarray(lattice_points.reshape((-1, 3))))
     ).reshape(shape)
@@ -569,15 +826,28 @@ def discover_implicit_surface(
     upper_key = tuple((crossings.lower + np.eye(3, dtype=np.int64)[crossings.axis]).T)
     lower_points = lattice_points[lower_key]
     upper_points = lattice_points[upper_key]
-    isolation = isolate_roots(
-        geometry.kernel,
-        geometry.state,
-        jnp.asarray(lower_points),
-        jnp.asarray(upper_points),
-        jnp.asarray(values[lower_key]),
-        jnp.asarray(values[upper_key]),
-        jnp.asarray(policy.projection.root_tolerance, dtype=jnp.float64),
-    )
+    lanes = int(crossings.lower.shape[0])
+    # The shared batch stops at a data-dependent iteration; every iteration and
+    # the final residual evaluate all lanes. Admit the bound, charge the actual.
+    with _admitted_batch(
+        budget,
+        lanes * _EDGE_ROOT_MAXIMUM_STEPS,
+        lanes * (_EDGE_ROOT_MAXIMUM_STEPS + 1),
+    ) as admitted:
+        isolation = isolate_roots(
+            geometry.kernel,
+            geometry.state,
+            jnp.asarray(lower_points),
+            jnp.asarray(upper_points),
+            jnp.asarray(values[lower_key]),
+            jnp.asarray(values[upper_key]),
+            jnp.asarray(policy.projection.root_tolerance, dtype=jnp.float64),
+        )
+        diagnostics = isolation.native_result.nonlinear_result.diagnostics
+        iterations = int(jax.device_get(diagnostics.iterations))
+        admitted.consume(
+            lanes * iterations, geometry_queries=lanes * (iterations + 1)
+        )
     anchors = np.asarray(isolation.points)
     residuals = isolation.residuals
     if np.any(np.asarray(residuals) > policy.projection.root_tolerance):
@@ -597,11 +867,13 @@ def discover_implicit_surface(
     cell_upper = np.stack(
         [axis_coordinates[axis][dual.cell[:, axis] + 1] for axis in range(3)], axis=1
     )
+    consume_queries(budget, int(anchors.shape[0]))
     _, anchor_gradients = field_and_gradient(
         geometry.kernel,
         geometry.state,
         jnp.asarray(anchors),
     )
+    anchor_gradients = np.asarray(anchor_gradients)
     base_vertices, qef_regularization = qef_vertices(
         anchors,
         np.asarray(anchor_gradients),
@@ -611,15 +883,18 @@ def discover_implicit_surface(
         cell_upper,
         policy.qef_regularization,
         policy.projection.root_tolerance,
+        budget=budget,
     )
-    faces = _dual_faces(geometry, inside, crossings, dual, base_vertices, policy)
+    faces = _dual_faces(geometry, inside, crossings, dual, base_vertices, policy, budget)
     # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces, num_vertices=base_vertices.shape[0])
     if not topology.watertight:
         raise ValueError(
             "ImplicitSurfaceDiscovery.topology must be watertight; got an open surface"
         )
-    pairs = _intersection_candidates(faces, cell_lower, cell_upper, policy)
+    pairs = _intersection_candidates(
+        faces, dual.cell, axis_coordinates, cell_lower, cell_upper, policy, budget
+    )
     base_triangles = base_vertices[faces]
     base_face_normals = np.cross(
         base_triangles[:, 1] - base_triangles[:, 0],
@@ -633,8 +908,17 @@ def discover_implicit_surface(
         policy=policy.projection,
         source_id=f"{source_id}:anchors",
     )
-
-    plan = realization_owner.ImplicitSurfacePlan(
+    # The plan realizes and retains the discovery state once at construction.
+    work, queries = _realization_counts(
+        int(lattice_points.size // 3),
+        int(anchors.shape[0]),
+        int(policy.projection.maximum_steps),
+        int(base_vertices.shape[0]),
+        int(faces.shape[0]),
+        int(pairs.shape[0]),
+    )
+    consume_queries(budget, queries, work_units=work)
+    return realization_owner.ImplicitSurfacePlan(
         geometry=geometry,
         grid_points=lattice_points.reshape((-1, 3)),
         inside_pattern=inside.reshape((-1,)),
@@ -651,13 +935,8 @@ def discover_implicit_surface(
         policy=policy,
         source_id=source_id,
         topology_id=topology.cell_complex_topology().topology_id,
+        initial_state=geometry.state,
     )
-    base = plan.realize(geometry.state)
-    if not bool(np.asarray(base.accepted)):
-        raise ValueError(
-            "ImplicitSurfaceDiscovery.base.accepted must be true; got rejected runtime evidence"
-        )
-    return plan
 
 
 __all__ = ["discover_implicit_surface"]

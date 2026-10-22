@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -36,9 +37,11 @@ from ._coordinate_enclosure import (
 )
 from ._reference_cell import reference_cell_topology
 from ._simplicial_locator import (
+    AbstractNewtonInverse,
     AbstractPreparedNewtonCellLocator,
     cell_map_vertices,
     is_affine_simplex_element,
+    mapped_physical_points,
     owned_locator_coordinate_preparation,
     SimplicialLocationPolicy,
     vertex_star_routes,
@@ -225,6 +228,80 @@ def _mapped_cell_bounds(
     return lower, upper
 
 
+def _mapped_reference_seeds(cell_kind: str, dimension: int, dtype: jnp.dtype, /) -> Array:
+    """Return the chart center followed by the target reference vertices."""
+    topology = reference_cell_topology(cell_kind)
+    vertices = jnp.asarray(topology.vertices, dtype=dtype)
+    if cell_kind in ("triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
+        center = jnp.full((dimension,), 1.0 / (dimension + 1), dtype=dtype)
+    elif cell_kind == "prism":
+        center = jnp.asarray((1.0 / 3.0, 1.0 / 3.0, 0.5), dtype=dtype)
+    elif cell_kind == "pyramid":
+        center = jnp.asarray((0.5, 0.5, 0.25), dtype=dtype)
+    else:
+        center = jnp.full((dimension,), 0.5, dtype=dtype)
+    # Target-reference vertices exist even when source coefficient routes
+    # are parent DOFs and a restricted element has no reference_nodes.
+    return jnp.concatenate((center[None], vertices), axis=0)
+
+
+@final
+class MappedNewtonInverse(AbstractNewtonInverse):
+    """Identity-free inverse with simplex, tensor, prism or pyramid charts."""
+
+    def reference_seeds(self, dtype: jnp.dtype, /) -> Array:
+        return _mapped_reference_seeds(self.cell_kind, self.dimension, dtype)
+
+    def contains_reference(self, reference: Array, /) -> Array:
+        return (
+            reference_margin(self.cell_kind, reference)
+            >= -self.policy.reference_tolerance
+        )
+
+    def reference_weights(self, reference: Array, /) -> Array:
+        kind = self.cell_kind
+        if kind in ("triangle", "tetrahedron") or kind.startswith("simplex:"):
+            return super().reference_weights(reference)
+        if kind == "prism":
+            triangle = jnp.concatenate(
+                ((1.0 - jnp.sum(reference[:, :2], axis=-1))[:, None], reference[:, :2]),
+                axis=-1,
+            )
+            return jnp.concatenate(
+                (
+                    triangle * (1.0 - reference[:, 2, None]),
+                    triangle * reference[:, 2, None],
+                ),
+                axis=-1,
+            )
+        vertices = jnp.asarray(
+            reference_cell_topology(kind).vertices, dtype=reference.dtype
+        )
+        if kind == "pyramid":
+            height = reference[:, 2]
+            collapse = 1.0 - height
+            safe = jnp.where(collapse != 0.0, collapse, 1.0)
+            chart = (reference[:, :2] - 0.5 * height[:, None]) / safe[:, None]
+            base = (
+                jnp.prod(
+                    jnp.where(
+                        vertices[None, :4, :2] == 1.0,
+                        chart[:, None, :],
+                        1.0 - chart[:, None, :],
+                    ),
+                    axis=-1,
+                )
+                * collapse[:, None]
+            )
+            return jnp.concatenate((base, height[:, None]), axis=-1)
+        return jnp.prod(
+            jnp.where(
+                vertices[None] == 1.0, reference[:, None], 1.0 - reference[:, None]
+            ),
+            axis=-1,
+        )
+
+
 class PreparedMappedCellLocator(AbstractPreparedNewtonCellLocator):
     """Prepare coordinate-map inverses on simplex, tensor, hybrid, or child cells.
 
@@ -283,12 +360,17 @@ class PreparedMappedCellLocator(AbstractPreparedNewtonCellLocator):
             star_valid = np.zeros(star_cells.shape, dtype=np.bool_)
         self.vertex_star_cells = jnp.asarray(star_cells)
         self.vertex_star_valid = jnp.asarray(star_valid)
-        center = self.reference_seeds(values.dtype)[0]
-        self.centroids = cell_map.evaluate(
+        center = _mapped_reference_seeds(
+            cell_map.coordinate_element.cell_kind,
+            cell_map.reference_dimension,
+            values.dtype,
+        )[0]
+        self.centroids = mapped_physical_points(
+            cell_map.numerical,
             values,
             jnp.arange(cell_map.cell_count),
             jnp.broadcast_to(center, (cell_map.cell_count, cell_map.reference_dimension)),
-        ).physical_points
+        )
         self.cell_lower, self.cell_upper = lower_jax, upper_jax
         self.bvh = prepare_bvh(
             np.asarray(lower_jax),
@@ -315,70 +397,15 @@ class PreparedMappedCellLocator(AbstractPreparedNewtonCellLocator):
             }
         )
 
-    def reference_seeds(self, dtype: jnp.dtype, /) -> Array:
-        kind = self.cell_map.coordinate_element.cell_kind
-        topology = reference_cell_topology(kind)
-        vertices = jnp.asarray(topology.vertices, dtype=dtype)
-        if kind in ("triangle", "tetrahedron") or kind.startswith("simplex:"):
-            center = jnp.full((self.dimension,), 1.0 / (self.dimension + 1), dtype=dtype)
-        elif kind == "prism":
-            center = jnp.asarray((1.0 / 3.0, 1.0 / 3.0, 0.5), dtype=dtype)
-        elif kind == "pyramid":
-            center = jnp.asarray((0.5, 0.5, 0.25), dtype=dtype)
-        else:
-            center = jnp.full((self.dimension,), 0.5, dtype=dtype)
-        # Target-reference vertices exist even when source coefficient routes
-        # are parent DOFs and a restricted element has no reference_nodes.
-        return jnp.concatenate((center[None], vertices), axis=0)
-
-    def contains_reference(self, reference: Array, /) -> Array:
-        return (
-            reference_margin(self.cell_map.coordinate_element.cell_kind, reference)
-            >= -self.policy.reference_tolerance
-        )
-
-    def reference_weights(self, reference: Array, /) -> Array:
-        kind = self.cell_map.coordinate_element.cell_kind
-        if kind in ("triangle", "tetrahedron") or kind.startswith("simplex:"):
-            return super().reference_weights(reference)
-        if kind == "prism":
-            triangle = jnp.concatenate(
-                ((1.0 - jnp.sum(reference[:, :2], axis=-1))[:, None], reference[:, :2]),
-                axis=-1,
-            )
-            return jnp.concatenate(
-                (
-                    triangle * (1.0 - reference[:, 2, None]),
-                    triangle * reference[:, 2, None],
-                ),
-                axis=-1,
-            )
-        vertices = jnp.asarray(
-            reference_cell_topology(kind).vertices, dtype=reference.dtype
-        )
-        if kind == "pyramid":
-            height = reference[:, 2]
-            collapse = 1.0 - height
-            safe = jnp.where(collapse != 0.0, collapse, 1.0)
-            chart = (reference[:, :2] - 0.5 * height[:, None]) / safe[:, None]
-            base = (
-                jnp.prod(
-                    jnp.where(
-                        vertices[None, :4, :2] == 1.0,
-                        chart[:, None, :],
-                        1.0 - chart[:, None, :],
-                    ),
-                    axis=-1,
-                )
-                * collapse[:, None]
-            )
-            return jnp.concatenate((base, height[:, None]), axis=-1)
-        return jnp.prod(
-            jnp.where(
-                vertices[None] == 1.0, reference[:, None], 1.0 - reference[:, None]
-            ),
-            axis=-1,
+    def numerical_inverse(self) -> MappedNewtonInverse:
+        return MappedNewtonInverse(
+            self.cell_map.numerical,
+            self.coordinates,
+            self.bvh,
+            self.policy,
+            self.cell_map.coordinate_element.cell_kind,
+            is_affine_simplex_element(self.cell_map.coordinate_element),
         )
 
 
-__all__ = ["PreparedMappedCellLocator", "reference_margin"]
+__all__ = ["MappedNewtonInverse", "PreparedMappedCellLocator", "reference_margin"]

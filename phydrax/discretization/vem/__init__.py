@@ -25,6 +25,7 @@ from ._polyhedral import (
     PolyhedralVEMEvidence3D,
     prepare_polyhedral_h1_virtual_element_3d,
     PreparedPolyhedralH1VirtualElement3D,
+    ZeroMeanLoadCompatibilityBound,
 )
 from ._precision import VirtualElementPrecisionPolicy, VirtualElementResourceBudget
 from ._projection import (
@@ -84,6 +85,7 @@ __all__ = [
     "VirtualElementSpec",
     "VirtualElementStabilizationEvidence",
     "VirtualElementStabilizationPolicy",
+    "ZeroMeanLoadCompatibilityBound",
     "VirtualElementTraceKind",
     "conforming_h1_virtual_element",
     "conforming_hcurl_virtual_element",

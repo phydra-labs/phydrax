@@ -14,9 +14,11 @@ from ...discretization._cell_complex import (
     PolygonalConnectivity,
     TetrahedralConnectivity,
 )
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
+    PreparedLocalRegion,
 )
 from ...discretization.fem import FiniteElementDiscretization
 from ...discretization.fem._high_order import ReferenceNodalFamily
@@ -465,9 +467,27 @@ def compile_workset_program(
     *,
     local_kernel: str = "auto",
     realization: str = "sparse",
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> WorksetProgram:
+    """Prepare numerical worksets under the caller's original host allowance.
+
+    Actions in this compilation share already prepared FE regions only for the
+    same immutable domain owner, ordered fields and kernel mode, with sufficient
+    derivative capability. Numerical tables are independent of action physics;
+    coefficients, kernels and all capability checks remain action-specific.
+    The provider, its runtime and the actual budget are fixed call arguments;
+    no preparation survives this call or crosses a request boundary.
+    """
+    if budget is not None and not isinstance(discretization, FiniteElementDiscretization):
+        raise TypeError(
+            "compile_workset_program.budget requires a finite-element local provider with explicit coordinate admission; got an unsupported provider"
+        )
     worksets = []
     common_action_indices = set()
+    prepared_regions: dict[
+        tuple[int, tuple[str, ...], str],
+        tuple[IntegrationDomain, int, tuple[PreparedLocalRegion, ...]],
+    ] = {}
     for action_index, action in enumerate(form.actions):
         descriptor = _descriptor(action)
         domain = _domain_for_action(action, discretization)
@@ -505,18 +525,6 @@ def compile_workset_program(
                         discretization.field_index(field)
                     ]
                 )
-                and all(
-                    len(
-                        {
-                            element.local_dof_count
-                            for element in discretization.elements[
-                                discretization.field_index(field)
-                            ]
-                        }
-                    )
-                    == 1
-                    for field in fields
-                )
             )
         )
         if not use_common:
@@ -539,12 +547,29 @@ def compile_workset_program(
             requested_operator_realization=str(realization),
         )
         mode = selection.kernel_mode
-        regions = discretization.prepare_local_regions(
-            domain,
-            field_names=fields,
-            maximum_derivative_order=derivative_order,
-            kernel_mode=mode,
-        )
+        if isinstance(discretization, FiniteElementDiscretization):
+            key = (id(domain), fields, mode)
+            prepared = prepared_regions.get(key)
+            if prepared is not None and prepared[1] >= derivative_order:
+                regions = prepared[2]
+            else:
+                regions = discretization.prepare_local_regions(
+                    domain,
+                    field_names=fields,
+                    maximum_derivative_order=derivative_order,
+                    kernel_mode=mode,
+                    budget=budget,
+                )
+                # Retain the actual domain, not only its ID: immutable numerical
+                # leaves cannot be replaced by a same-labelled foreign owner.
+                prepared_regions[key] = (domain, derivative_order, regions)
+        else:
+            regions = discretization.prepare_local_regions(
+                domain,
+                field_names=fields,
+                maximum_derivative_order=derivative_order,
+                kernel_mode=mode,
+            )
         if not regions:
             raise ValueError(
                 "Local provider returned no regions for the requested domain."
@@ -558,10 +583,15 @@ def compile_workset_program(
                 or any(
                     reference.maximum_derivative_order < derivative_order
                     or mode not in reference.kernel_modes
-                    or reference.local_width != binding.local_width
+                    or reference.local_width != gather.shape[1]
+                    or (
+                        reference.local_width > binding.local_width
+                        if isinstance(discretization, FiniteElementDiscretization)
+                        else reference.local_width != binding.local_width
+                    )
                     or reference.realization_id != selection.reference_realization_id
-                    for reference, binding in zip(
-                        region.reference_actions, bindings, strict=True
+                    for reference, binding, gather in zip(
+                        region.reference_actions, bindings, region.field_gathers, strict=True
                     )
                 )
             ):
@@ -630,6 +660,10 @@ def compile_workset_program(
         common_action_indices.add(action_index)
     if len(common_action_indices) == len(form.actions):
         return WorksetProgram(ir, worksets)
+    if budget is not None:
+        raise TypeError(
+            "compile_workset_program.budget requires explicitly admitted prepared-local cell actions; got an unsupported legacy action route"
+        )
     if not isinstance(discretization, FiniteElementDiscretization):
         raise ValueError(
             "Non-cell, pairwise, and prepared-operator actions require finite elements."

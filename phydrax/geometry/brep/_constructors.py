@@ -26,9 +26,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jax import Array
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint, tree_content_equal
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -44,13 +45,21 @@ from ...discretization._coordinate_budget import (
 from ...discretization._exact_algebraic_geometry import rational_coefficient
 from ...typing import checked, ConvertibleToArray
 from .._atlas import AbstractTrimCurve, CurveTrimLoop, TrimDomain
-from .._interval_enclosure import prepare_interval_function
 from .._planar_primitives import rational_points, reserve_fraction_work
 from .._rational import fraction_down, fraction_up, rational_cross_2d, rational_vector
-from ._carrier_pieces import AffineTrimChordEvidence, carrier_payload
+from ._carrier_pieces import (
+    admit_carrier_fingerprint,
+    AffineTrimChordEvidence,
+    carrier_payload,
+)
 from ._conic_gaps import endpoint_gap_bounds
 from ._coordinate_request import coordinate_source_request
-from ._intersection import intersect_curve_ranges, NativePeriodEndpoint, RootEndpoint
+from ._intersection import (
+    intersect_curve_ranges,
+    NativePeriodEndpoint,
+    original_curve_surface_root_preparation,
+    RootEndpoint,
+)
 from ._intersection_curve import (
     affine_curve_coefficients,
     AffinePCurve,
@@ -60,7 +69,6 @@ from ._intersection_curve import (
     exact_line_pcurve,
     IntersectionPCurve,
     PeriodicPCurve,
-    surface_pieces_for_box,
 )
 from ._intersection_kernel import point_times_interval
 from ._model import (
@@ -83,20 +91,19 @@ from ._patches import (
     BSplineCurve,
     CircleCurve,
     closure_tangent_continuous,
-    coefficient_enclosures,
     ConePatch,
     convex_meridian_offset,
     CylinderPatch,
     EllipseCurve,
     ExtrusionSurface,
     LineCurve,
-    meridian_value_bounds,
     MeridianOverlaps,
     OffsetSurface,
     PlanePatch,
     RevolutionSurface,
     sphere_source_equivalence,
     SpherePatch,
+    surface_value_bounds,
     SurfaceIsoparametricCurve,
     TorusPatch,
 )
@@ -3555,6 +3562,33 @@ class NormalizedTrimCurve(AbstractTrimCurve):
             )
         )
 
+    def enclosures(
+        self,
+        intervals: npt.ArrayLike,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        """Normalize each independently enclosed row with the scalar rounding order."""
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self, intervals)) as budget:
+                return self.enclosures(
+                    intervals, preparations=preparations, budget=budget
+                )
+        boxes = self.curve.enclosures(intervals, preparations=preparations, budget=budget)
+        lower = np.nextafter(boxes[:, 0] - np.asarray(self.lower), -np.inf)
+        upper = np.nextafter(boxes[:, 1] - np.asarray(self.lower), np.inf)
+        return np.stack(
+            (
+                np.nextafter(lower / np.asarray(self.extent), -np.inf),
+                np.nextafter(upper / np.asarray(self.extent), np.inf),
+            ),
+            axis=1,
+        )
+
     def derivative_bounds(
         self,
         first: float,
@@ -3666,8 +3700,11 @@ def brep_trim_curve(
     *,
     parameter_bounds: np.ndarray | None = None,
     budget: CoordinateEnclosureBudget | None = None,
+    preparations: TrimRequestPreparations | None = None,
 ) -> AbstractTrimCurve:
     """One source-rooted coedge carrier; no chord-cover allocation or scheduling."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
     if budget is None:
         with coordinate_source_request(
             (
@@ -3677,7 +3714,12 @@ def brep_trim_curve(
             )
         ) as budget:
             return brep_trim_curve(
-                geometry, coedge, patch, parameter_bounds=parameter_bounds, budget=budget
+                geometry,
+                coedge,
+                patch,
+                parameter_bounds=parameter_bounds,
+                budget=budget,
+                preparations=preparations,
             )
     if not 0 <= coedge < len(geometry.coedge_edges):
         raise ValueError(
@@ -3692,15 +3734,19 @@ def brep_trim_curve(
     first, last = np.asarray(geometry.edge_ranges)[edge]
     first_root, last_root = geometry.coedge_endpoint_roots[coedge]
     start, end = (0, 1) if geometry.coedge_senses[coedge] > 0 else (1, 0)
-    segment = CurveTrimSegment(
-        geometry.pcurves[coedge],
-        float(first),
-        float(last),
-        reversed=geometry.coedge_senses[coedge] < 0,
-        first_root=first_root,
-        last_root=last_root,
-        budget=budget,
-    )
+    with original_curve_surface_root_preparation(
+        (first_root, last_root), preparations=preparations
+    ):
+        segment = CurveTrimSegment(
+            geometry.pcurves[coedge],
+            float(first),
+            float(last),
+            reversed=geometry.coedge_senses[coedge] < 0,
+            first_root=first_root,
+            last_root=last_root,
+            budget=budget,
+            preparations=preparations,
+        )
     return NormalizedTrimCurve(
         segment,
         jnp.asarray(lower, dtype=jnp.float64),
@@ -3711,6 +3757,77 @@ def brep_trim_curve(
         geometry.coedge_endpoint_roots[coedge][start],
         geometry.coedge_endpoint_roots[coedge][end],
     )
+
+
+def _prepared_brep_trim_loop(
+    curves: tuple[AbstractTrimCurve, ...],
+    *,
+    tolerance: float,
+    maximum_arcs: int,
+    relative_closure_tolerance: float,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> CurveTrimLoop:
+    """Reuse only a complete loop bound to its full source data and exact policy.
+
+    The certified cover is a deterministic function of the curves and both
+    tolerances; ``maximum_arcs`` only refuses covers that exceed it. The cache
+    key therefore omits the cap, and a retained cover is reused only when its
+    arc count fits this request's cap (a larger one refuses identically on rebuild).
+    """
+    budget.ticket.checkpoint()
+
+    def build() -> CurveTrimLoop:
+        return CurveTrimLoop(
+            curves,
+            tolerance=tolerance,
+            maximum_arcs=maximum_arcs,
+            relative_closure_tolerance=relative_closure_tolerance,
+            preparations=preparations,
+            budget=budget,
+        )
+
+    # Invalid policies keep the constructor's existing validation order.
+    if (
+        isinstance(tolerance, bool)
+        or not np.isfinite(tolerance)
+        or tolerance <= 0
+        or isinstance(relative_closure_tolerance, bool)
+        or not np.isfinite(relative_closure_tolerance)
+        or relative_closure_tolerance < 0
+        or not isinstance(maximum_arcs, int)
+        or isinstance(maximum_arcs, bool)
+        or maximum_arcs < len(curves)
+    ):
+        return build()
+    with budget.temporary_scope():
+        budget.reserve(0, 256 + 128 * len(curves))
+        sources = []
+        for curve in curves:
+            with budget.temporary_scope():
+                budget.reserve(0, 65536)
+                admit_carrier_fingerprint(curve, budget)
+                sources.append(canonical_fingerprint(carrier_payload(curve)))
+        key = canonical_fingerprint(
+            {
+                "curves": sources,
+                "tolerance": tolerance,
+                "relative_closure_tolerance": relative_closure_tolerance,
+            }
+        )
+        cached = budget.brep_trim_loop_cache.get(key)
+        if (
+            cached is not None
+            and cached.tolerance == tolerance
+            and cached.relative_closure_tolerance == relative_closure_tolerance
+            and cached.chords.shape[0] <= maximum_arcs
+            and tree_content_equal(curves, cached.curves)
+        ):
+            return cached
+        result = build()
+        budget.retain_basis((key, result))
+        budget.brep_trim_loop_cache[key] = result
+        return result
 
 
 @checked
@@ -3725,8 +3842,11 @@ def brep_trim_domain(
     parameter_bounds: np.ndarray | None = None,
     relative_closure_tolerance: float = 1.0e-9,
     budget: CoordinateEnclosureBudget | None = None,
+    preparations: TrimRequestPreparations | None = None,
 ) -> TrimDomain:
     """Build rooted loops in raw UV, or one explicitly normalized chart."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
     if budget is None:
         with coordinate_source_request(
             (
@@ -3744,23 +3864,31 @@ def brep_trim_domain(
                 parameter_bounds=parameter_bounds,
                 relative_closure_tolerance=relative_closure_tolerance,
                 budget=budget,
+                preparations=preparations,
             )
     if not 0 <= face < len(geometry.face_loops):
         raise ValueError(f"brep_trim_domain.face must index a face loop; got {face}")
     loops = []
     for loop in geometry.face_loops[face]:
-        curves = [
+        curves = tuple(
             brep_trim_curve(
-                geometry, coedge, patch, parameter_bounds=parameter_bounds, budget=budget
+                geometry,
+                coedge,
+                patch,
+                parameter_bounds=parameter_bounds,
+                budget=budget,
+                preparations=preparations,
             )
             for coedge in loop
-        ]
+        )
         loops.append(
-            CurveTrimLoop(
+            _prepared_brep_trim_loop(
                 curves,
                 tolerance=tolerance,
                 maximum_arcs=maximum_arcs,
                 relative_closure_tolerance=relative_closure_tolerance,
+                preparations=preparations,
+                budget=budget,
             )
         )
     return TrimDomain(loops[0], loops[1:])
@@ -3897,6 +4025,7 @@ def _publish(
                 maximum_arcs=policy.maximum_triangles * 3,
                 parameter_bounds=face.box,
                 budget=budget,
+                preparations=preparations,
             )
             for index, face in enumerate(builder.faces)
         ),
@@ -4534,63 +4663,6 @@ def _offset_face_gluing(
     return (glued[0], glued[1]), bool(poles)
 
 
-def _source_value_bounds(
-    patch: AbstractSurfacePatch,
-    boxes: np.ndarray,
-    /,
-    *,
-    budget: CoordinateEnclosureBudget,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Batched source-piece interval enclosures of values over ``(B, 2, 2)`` boxes.
-
-    Uses the source-piece split and interval programs grouped by
-    piece structure as ``derivative_bounds_batch`` does; chart-global
-    ``bounding_box`` conveniences (a revolution encloses its whole annulus)
-    cannot separate cells.
-    """
-
-    # A revolution or its offset rotates batched meridian (or parallel
-    # meridian) hulls; generic interval AD of the normalized offset normal
-    # cannot separate cells.
-    swept = meridian_value_bounds(patch, boxes, budget=budget)
-    if swept is not None:
-        return swept
-    lower = np.full((boxes.shape[0], 3), np.inf)
-    upper = np.full((boxes.shape[0], 3), -np.inf)
-    groups: dict[
-        tuple[object, ...],
-        tuple[AbstractSurfacePatch, list[tuple[int, np.ndarray, np.ndarray]]],
-    ] = {}
-    for row, box in enumerate(boxes):
-        for piece in surface_pieces_for_box(patch, box, budget=budget):
-            leaves, structure = jax.tree_util.tree_flatten(piece.evaluator)
-            key = (
-                structure,
-                *(
-                    (value.dtype.str, value.shape, value.tobytes())
-                    for value in (np.asarray(leaf) for leaf in leaves)
-                ),
-            )
-            groups.setdefault(key, (piece.evaluator, []))[1].append(
-                (row, piece.lower, piece.upper)
-            )
-    for evaluator, members in groups.values():
-        prepared = prepare_interval_function(
-            evaluator.evaluate,
-            2,
-            batch_capacity=min(len(members), 1024),
-            constant_bounds=coefficient_enclosures(evaluator),
-        )
-        rows = np.asarray([row for row, _, _ in members], dtype=np.int64)
-        piece_lower, piece_upper = prepared.evaluate(
-            np.stack([value for _, value, _ in members]),
-            np.stack([value for _, _, value in members]),
-        )
-        np.minimum.at(lower, rows, piece_lower)
-        np.maximum.at(upper, rows, piece_upper)
-    return lower, upper
-
-
 class _OffsetChart(StrictModule):
     base: AbstractSurfacePatch
     offset: OffsetSurface
@@ -4702,8 +4774,8 @@ def _offset_cells_certified(
                         interval_jacobian_full_rank(*hull) or _projected_full_rank(*hull)
                     ):
                         return False
-        source_low, source_high = _source_value_bounds(base, boxes, budget=budget)
-        image_low, image_high = _source_value_bounds(offset, boxes, budget=budget)
+        source_low, source_high = surface_value_bounds(base, boxes, budget=budget)
+        image_low, image_high = surface_value_bounds(offset, boxes, budget=budget)
         lows.append(np.minimum(source_low, image_low))
         highs.append(np.maximum(source_high, image_high))
         owners.append(np.full(boxes.shape[0], face))

@@ -304,6 +304,19 @@ Mesh certificate checks
     "conclusion": "The certified embedded source union supplies the identical root-union premise without repeating root contact subdivision. Missing or unequal source authority retains the full root-union proof.",
     "citation": {"kind": "definition", "reference": "Restriction of an embedding to a subset", "locator": "authenticated root-union implication", "url": ""},
     "failure_statuses": []
+  },
+  {
+    "owner": "phydrax.geometry._restricted_embedding.nested_parent_partition",
+    "checks": ["restriction_parent_partition"],
+    "premises": [
+      {"tag": "X", "statement": "The imported source embedding is authenticated as in root-union reuse, is certified with boundary contacts on an affine scope, and binds positive source validity; the source carries no restriction of its own."},
+      {"tag": "X", "statement": "Every target simplex is an exact degree-one barycentric chart of a declared source parent with matching ordered corner identities, nonnegative rows and positive determinant; each parent's child determinants sum to one."},
+      {"tag": "X", "statement": "Either parent-local facet pairing, outward source-facet containment and exact per-facet normalized measure one are proved explicitly, or an equal immutable source coefficient bank, identical cardinal roots and exact parent routes bind all child maps, a clean positive global chain cancels every paired full physical facet, and all unpaired facets are outward on source-global boundary facets with exact normalized boundary measure one. Source-parent interiors are connected."},
+      {"tag": "X", "statement": "Exact target vertex images equal their source barycentric-key images, by direct evaluation or by the bound shared bank and canonical whole-route corner coherence. Keys and target vertices correspond one to one. Every source edge/facet interior point belongs to its complete source star, explicitly or through the parent-local facet proof; these closed-cell obligations exclude contacts invisible to almost-everywhere volume multiplicity."}
+    ],
+    "conclusion": "By the degree-one argument the children tile each parent with disjoint interiors and the target tiles the embedded source conformingly, so every target boundary contact is a shared entity of a conforming subdivision of the certified source boundary. Any absent or failed premise retains the full pairwise boundary-contact proof.",
+    "citation": {"kind": "definition", "reference": "Brouwer degree of an oriented simplicial chain", "locator": "constant degree off the chain boundary; exact parent partition", "url": ""},
+    "failure_statuses": []
   }
 ]
 End mesh certificate checks
@@ -313,9 +326,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from fractions import Fraction
-from typing import cast
+from itertools import combinations
+from collections.abc import Iterable
+from typing import cast, final, Literal
 
 import numpy as np
+from jax import Array
 
 import phydrax.discretization._cell_geometry_predecessor as predecessor_owner
 import phydrax.discretization._cell_mesh as cell_mesh_owner
@@ -327,20 +343,30 @@ import phydrax.geometry._mapped_coverage as mapped_coverage_owner
 from phydrax._strict import StrictModule
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.geometry._embedding_cells import bounds, Cell, domain, vertices
-from phydrax.geometry._embedding_state import EmbeddingState, MeshCertificateLimits
+from phydrax.geometry._embedding_state import (
+    EmbeddingState,
+    MeshCertificateLimits,
+)
 from phydrax.typing import checked
 
 from ..discretization._cell_geometry import (
+    BarycentricCellGeometryElement,
     CellGeometryRestrictionSource,
     CellGeometrySpec,
     coordinate_lagrange_element,
+    exact_barycentric_action,
     PolynomialComposedCellGeometryElement,
     RationalComposedCellGeometryElement,
     RestrictedCellGeometryElement,
+    require_p1_cardinal_source,
 )
 from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
-from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateLiveStorage,
+)
 from ..discretization._coordinate_enclosure import (
+    _polynomial_representation_key,
     affine_arguments,
     constant,
     coordinate_expressions,
@@ -357,7 +383,9 @@ from ..discretization._coordinate_enclosure import (
     expression_sequence_equal,
     expression_sum,
     multi_affine_coordinates,
+    PolynomialRepresentationKey,
     prepared_coordinate_source_bank,
+    prepared_coordinate_vertex_images,
     RationalPolynomial,
     restrict_chart_expressions,
 )
@@ -368,9 +396,10 @@ from ..discretization._exact_algebraic_geometry import (
     reserve_algebraic_work,
 )
 from ..discretization._reference_cell import reference_cell_topology
+from ..discretization.fem._reference_types import FiniteElementSpec
 from ._embedding_cells import inside_reference, reference_constraints
 from ._mapped_embedding import (
-    injective,
+    root_injective,
     pair_decision,
     straight_boundary_images,
     tensor_component_injectivity,
@@ -735,7 +764,7 @@ def _bind_restriction_parent(
     else:
         # Each root is proved once; its single-cell workspace is released
         # and only the source records used by the root cell are retained.
-        with ledger.temporary_scope():
+        with ledger.polynomial_preparation_scope():
             prepared = multi_affine_coordinates(source, local, budget=budget)
             polynomials: tuple[Expression, ...] | None
             if prepared is None:
@@ -762,7 +791,7 @@ def _bind_restriction_parent(
                 vertices(source_kind),
                 corner_images,
             )
-            reason = injective(root, limits, state, budget=budget)
+            reason = root_injective(root, source, local, limits, state, budget=budget)
         ledger.retain_basis(root.coordinates)
         ledger.retain_basis(root.vertices)
         ledger.retain_basis(local)
@@ -1110,10 +1139,65 @@ def _prepare_restricted_children(
     return _RestrictionCells(parents, children)
 
 
+type _RestrictionChartKey = (
+    tuple[str, str, int, CoordinateSourceBank, bytes]
+    | tuple[str, str, int, tuple[tuple[PolynomialRepresentationKey, ...], ...]]
+)
+type _RestrictionContactKey = tuple[
+    _RestrictionChartKey, _RestrictionChartKey, str, str,
+    tuple[tuple[int, int], ...],
+]
+
+
 class _RestrictionChartCache(StrictModule):
-    bounds: dict[int, tuple[np.ndarray, np.ndarray]]
-    points: dict[int, _Triangle2]
-    separated: set[tuple[int, int, str, str, tuple[tuple[int, int], ...]]]
+    identities: dict[int, _RestrictionChartKey]
+    bounds: dict[_RestrictionChartKey, tuple[np.ndarray, np.ndarray]]
+    points: dict[_RestrictionChartKey, _Triangle2]
+    separated: dict[_RestrictionContactKey, tuple[int, tuple[str, ...]]]
+    live: CoordinateLiveStorage
+
+
+def _restriction_chart_key(
+    chart: Cell, cache: _RestrictionChartCache
+) -> _RestrictionChartKey:
+    identifier = id(chart.coordinates)
+    if identifier in cache.identities:
+        return cache.identities[identifier]
+    # _prepare_restriction_block authenticates these complete multi-affine
+    # reference maps, not interpolated images of an arbitrary curved map.
+    corners = chart.corner_images
+    if corners is not None and chart.kind in ("quadrilateral", "hexahedron"):
+        count = sum(map(len, corners))
+        cache.live.set_bound(cache.live.bound + 512 + count, work=count)
+        kinds = bytes(isinstance(value, RadicalElement) for row in corners for value in row)
+        key: _RestrictionChartKey = (
+            chart.kind, chart.domain, chart.dimension, corners, kinds
+        )
+    else:
+        # A pyramid's rational chart is not determined by its corners. Snapshot
+        # every actual numerator/denominator coefficient instead; equal full
+        # source actions can share the contact proof across separately authored
+        # blocks without replacing the rational law by a corner interpolant.
+        terms = sum(
+            len(value.numerator) + len(value.denominator)
+            if isinstance(value, RationalPolynomial) else len(value)
+            for value in chart.coordinates
+        )
+        cache.live.set_bound(cache.live.bound + 1024 + 128 * terms, work=terms)
+        parts = tuple(
+            (value.numerator, value.denominator)
+            if isinstance(value, RationalPolynomial) else (value,)
+            for value in chart.coordinates
+        )
+        key = (
+            chart.kind, chart.domain, chart.dimension,
+            tuple(
+                tuple(_polynomial_representation_key(polynomial) for polynomial in component)
+                for component in parts
+            ),
+        )
+    cache.identities[identifier] = key
+    return key
 
 
 def _prepare_restriction_chart_cache(
@@ -1124,9 +1208,12 @@ def _prepare_restriction_chart_cache(
     budget, ledger = request.budget, request.budget
     chart_bounds, chart_points = cache.bounds, cache.points
     for _, chart in members:
-        chart_key = id(chart.coordinates)
+        chart_key = _restriction_chart_key(chart, cache)
         if chart_key not in chart_bounds:
-            with ledger.temporary_scope():
+            cache.live.set_bound(
+                cache.live.bound + 512 + 16 * chart.dimension, work=1
+            )
+            with ledger.polynomial_preparation_scope():
                 chart_bounds[chart_key] = bounds(
                     chart,
                     np.zeros((chart.dimension,), dtype=np.float64),
@@ -1134,24 +1221,19 @@ def _prepare_restriction_chart_cache(
                     budget=budget,
                 )
         if chart_key not in chart_points:
-            with ledger.temporary_scope():
+            with ledger.polynomial_preparation_scope():
                 prepared_points = _affine_triangle_chart_points(chart, budget=budget)
-            if prepared_points is not None:
-                ledger.retain_basis(prepared_points)
-                chart_points[chart_key] = prepared_points
+                if prepared_points is not None:
+                    cache.live.set_bound(
+                        cache.live.bound + ledger.live_object_storage_upper(prepared_points)
+                    )
+                    chart_points[chart_key] = prepared_points
 
 
 def _certify_restriction_children(
     request: _RestrictedRequest, prepared: _RestrictionCells
 ) -> None:
-    state, mesh, cell_ids, limits, budget = (
-        request.state,
-        request.mesh,
-        request.cell_ids,
-        request.limits,
-        request.budget,
-    )
-    ledger = budget
+    state, mesh, budget = request.state, request.mesh, request.budget
     children = prepared.children
     # Injective root maps transfer reference contacts to their physical images,
     # including pyramid apex identifications.
@@ -1174,15 +1256,31 @@ def _certify_restriction_children(
         shared_charts=True,
         budget=budget,
     )
-    # A block shares its chart expressions. Bounds and separation with a shared
-    # corner-incidence pattern can be reused across its repeated parent maps.
-    cache = _RestrictionChartCache({}, {}, set())
+    with budget.live_storage() as live:
+        live.set_bound(2048)
+        cache = _RestrictionChartCache({}, {}, {}, {}, live)
+        _certify_restriction_child_pairs(request, children, cache)
+
+
+def _certify_restriction_child_pairs(
+    request: _RestrictedRequest,
+    children: dict[int, list[tuple[int, Cell]]],
+    cache: _RestrictionChartCache,
+) -> None:
+    state, cell_ids, limits, budget = (
+        request.state, request.cell_ids, request.limits, request.budget
+    )
+    ledger = budget
+    # Equal authenticated box-corner banks define the same complete reference
+    # map even when separately authored blocks own different expression tuples.
     chart_bounds, chart_points, separated = cache.bounds, cache.points, cache.separated
     for members in children.values():
         if len(members) <= 1:
             continue
         _prepare_restriction_chart_cache(request, members, cache)
-        boxes = [chart_bounds[id(chart.coordinates)] for _, chart in members]
+        boxes = [
+            chart_bounds[cache.identities[id(chart.coordinates)]] for _, chart in members
+        ]
         lower = np.stack([value[0] for value in boxes])
         upper = np.stack([value[1] for value in boxes])
         a_rows, b_rows, exceeded = embedding_state_owner.candidate_pairs(
@@ -1200,18 +1298,31 @@ def _certify_restriction_children(
                     for vertex in set(first.vertices).intersection(second.vertices)
                 )
             )
-            key = (
-                id(first.coordinates),
-                id(second.coordinates),
+            key: _RestrictionContactKey = (
+                cache.identities[id(first.coordinates)],
+                cache.identities[id(second.coordinates)],
                 first.kind,
                 second.kind,
                 pattern,
             )
-            if key in separated:
+            proof = separated.get(key)
+            if proof is not None:
+                work, cached_checks = proof
+                if work > limits.maximum_subdivision_pieces - state.subdivision_pieces:
+                    state.add(
+                        "mapped_intersection_piece_budget", "unresolved", "cell",
+                        cell_ids[[target_a, target_b]],
+                    )
+                    continue
+                state.subdivision_pieces += work
+                for check in cached_checks:
+                    if check not in state.checks:
+                        state.checks.append(check)
                 continue
-            with ledger.temporary_scope():
-                first_points = chart_points.get(id(first.coordinates))
-                second_points = chart_points.get(id(second.coordinates))
+            checks: list[str] = []
+            with ledger.polynomial_preparation_scope():
+                first_points = chart_points.get(key[0])
+                second_points = chart_points.get(key[1])
                 decision = _affine_triangle_chart_decision(
                     first,
                     second,
@@ -1228,7 +1339,7 @@ def _certify_restriction_children(
                         second,
                         limits,
                         limits.maximum_subdivision_pieces - state.subdivision_pieces,
-                        checks=state.checks,
+                        checks=checks,
                         budget=budget,
                     )
                     decision = (
@@ -1240,8 +1351,15 @@ def _certify_restriction_children(
                 else:
                     work = 0
             state.subdivision_pieces += work
+            for check in checks:
+                if check not in state.checks:
+                    state.checks.append(check)
             if decision == "separated":
-                separated.add(key)
+                cache.live.set_bound(
+                    cache.live.bound + 1024 + 128 * len(pattern) + 16 * len(checks),
+                    work=1,
+                )
+                separated[key] = work, tuple(checks)
             elif decision == "overlap":
                 state.add(
                     "restriction_reference_overlap",
@@ -1303,56 +1421,93 @@ def _prepare_restriction_root_pairs(
     return _RestrictionRootPairs(affine_root_points, atlas_labels, a_rows, b_rows)
 
 
+type RootImportRefusal = Literal[
+    "absent", "partial_proof", "policy", "topology", "content", "binding"
+]
+"""Typed reason a certified predecessor root theorem is not imported."""
+
+
+_RESOURCE_LIMIT_FIELDS = frozenset(("maximum_work_units", "maximum_scratch_bytes"))
+
+
+def _theorem_limits(
+    original: MeshCertificateLimits | None,
+    bound_id: str,
+    current: MeshCertificateLimits,
+    /,
+) -> MeshCertificateLimits | None:
+    """Return the limits that admitted a theorem importable under ``current``.
+
+    Only the work and scratch resource caps may differ: every other scientific
+    limit must be equal, and the carried original limits must be exactly the
+    limits the certificate bound. The original object, not ``current``,
+    rebuilds the binding so the imported certificate and limits IDs persist.
+    """
+    if bound_id == current.limits_id:
+        return current
+    if original is None or original.limits_id != bound_id:
+        return None
+    differing = {
+        name
+        for name in (
+            "maximum_candidate_pairs",
+            "maximum_ray_tests",
+            "maximum_source_samples",
+            "maximum_distance_evaluations",
+            "maximum_subdivision_depth",
+            "maximum_subdivision_pieces",
+            "maximum_bernstein_nodes",
+            "maximum_periodic_images",
+            "maximum_work_units",
+            "maximum_scratch_bytes",
+        )
+        if getattr(original, name) != getattr(current, name)
+    }
+    return original if differing <= _RESOURCE_LIMIT_FIELDS else None
+
+
 def _authenticated_restriction_predecessor(
     request: _RestrictedRequest,
 ) -> (
     tuple[CellGeometryPredecessor, global_embedding_owner.GlobalEmbeddingCertificate]
-    | None
+    | RootImportRefusal
 ):
-    """Authenticate the request-bound predecessor before importing its root theorem."""
+    """Authenticate the request-bound predecessor before importing its root theorem.
+
+    Only a complete certified theorem with fully certified validity is
+    imported. Its original limits may differ from this request's limits only in
+    work/scratch caps; current work and retained bytes are charged here.
+    """
     predecessor = request.predecessor
     if predecessor is None or predecessor.source_embedding is None:
-        return None
+        return "absent"
     source = predecessor.source_embedding
     if (
         source.status != "certified"
+        or source.findings
         or not predecessor.source_validity.all_certified
-        or source.binding.limits_id != request.limits.limits_id
-        or source.binding.junction_vertices
+    ):
+        return "partial_proof"
+    limits = _theorem_limits(
+        predecessor.source_limits, source.binding.limits_id, request.limits
+    )
+    if limits is None:
+        return "policy"
+    if (
+        source.binding.junction_vertices
         or predecessor.source_mesh.periodic_topology is not None
         or request.mesh.periodic_topology is not None
     ):
-        return None
-    meshes = predecessor.source_mesh, request.mesh
-    geometries = predecessor.source_geometry, request.geometry
-    request.budget.reserve(
-        sum(mesh.coordinates.size for mesh in meshes)
-        + sum(
-            block.vertices.size + block.global_ids.size
-            for mesh in meshes
-            for block in mesh.blocks
-        )
-        + sum(geometry.coordinates.size for geometry in geometries)
-        + sum(route.size for geometry in geometries for route in geometry.geometry_dofs)
-        + len(source.evaluated_checks)
-        + len(source.findings),
-        2048,
-    )
-    if predecessor.content_id != predecessor_owner._predecessor_content_id(
-        predecessor.source_mesh,
-        predecessor.source_geometry,
-        predecessor.source_validity,
-        source,
-        request.mesh,
-        request.geometry,
-        predecessor.source_rows,
+        return "topology"
+    if not predecessor_owner._predecessor_content_is_bound(
+        predecessor, request.mesh, request.geometry, budget=request.budget
     ):
-        return None
+        return "content"
     binding = MeshCertificateBinding(
         predecessor.source_mesh,
         predecessor.source_geometry,
         source.binding.coordinate_scope,
-        request.limits,
+        limits,
         source_id=source.binding.source_id,
         source_revision=source.binding.source_revision,
         junction_vertices=source.binding.junction_vertices,
@@ -1362,7 +1517,7 @@ def _authenticated_restriction_predecessor(
         or binding.geometry_id != predecessor.source_validity.geometry_id
         or source.validity_certificate_id != predecessor.source_validity.certificate_id
     ):
-        return None
+        return "binding"
     rebuilt = global_embedding_owner.GlobalEmbeddingCertificate(
         binding,
         predecessor.source_validity.certificate_id,
@@ -1382,13 +1537,16 @@ def _authenticated_restriction_predecessor(
         restriction_root_embedding=source.restriction_root_embedding,
     )
     if rebuilt.certificate_id != source.certificate_id:
-        return None
+        return "binding"
     source.binding.require(predecessor.source_mesh, predecessor.source_geometry)
     rebuilt = global_embedding_owner.GlobalEmbeddingCertificate.from_stored_fields(
-        rebuilt
+        rebuilt, budget=request.budget
     )
     predecessor.source_validity.require_bound(
         predecessor.source_geometry, mesh=predecessor.source_mesh
+    )
+    predecessor_owner._earn_predecessor_content(
+        predecessor, request.mesh, request.geometry, request.budget
     )
     return predecessor, rebuilt
 
@@ -1400,11 +1558,13 @@ def _reuse_restriction_root_embedding(
 ) -> bool:
     """Import a certified root union after comparing source maps coefficientwise."""
     authenticated = _authenticated_restriction_predecessor(request)
-    if authenticated is None:
+    if isinstance(authenticated, str):
         return False
     predecessor, certificate = authenticated
     if certificate.binding.geometry_id != source_geometry_id:
-        return False
+        return _reuse_chained_root_embedding(
+            request, prepared, source_geometry_id, predecessor, certificate
+        )
     mesh, geometry, budget = (
         predecessor.source_mesh,
         predecessor.source_geometry,
@@ -1445,6 +1605,72 @@ def _reuse_restriction_root_embedding(
         ):
             return False
     request.state.imported_root_embedding_certificate_id = certificate.certificate_id
+    request.state.checks.append("mapped_restriction_root_embedding_reuse")
+    return True
+
+
+def _reuse_chained_root_embedding(
+    request: _RestrictedRequest,
+    prepared: _RestrictionCells,
+    source_geometry_id: str,
+    predecessor: CellGeometryPredecessor,
+    certificate: global_embedding_owner.GlobalEmbeddingCertificate,
+) -> bool:
+    """Import the root union a restricted predecessor already imported.
+
+    The authenticated predecessor is itself a restriction of the same root
+    geometry and its certificate binds the imported root-union theorem. Every
+    target root must carry the predecessor's identical root element, ordered
+    root corners and source control bank, so both denote the same root maps;
+    child-domain and child-contact proofs remain this certificate's own.
+    """
+    imported = certificate.restriction_root_embedding
+    record = predecessor.source_geometry.restriction_source
+    target_record = request.geometry.restriction_source
+    if (
+        imported is None
+        or record is None
+        or target_record is None
+        or record.source_geometry_id != source_geometry_id
+        or record.source_topology_id != target_record.source_topology_id
+    ):
+        return False
+    mesh, geometry, budget = (
+        predecessor.source_mesh,
+        predecessor.source_geometry,
+        request.budget,
+    )
+    count = sum(block.cell_count for block in mesh.blocks)
+    budget.reserve(count, 128 + 96 * count)
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    values = geometry.source_coordinates(budget=budget)
+    parent_cells = record.block_parent_cell_ids
+    parent_vertices = record.block_parent_vertex_ids
+    roots: dict[int, tuple[str, tuple[int, ...], CoordinateSourceBank]] = {}
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        source, _ = coordinate_reference_chain(element, budget=budget)
+        rows = np.asarray(route, dtype=np.int64).tolist()
+        identifiers = np.asarray(parent_cells[block.name], dtype=np.int64).tolist()
+        corners = np.asarray(parent_vertices[block.name], dtype=np.int64).tolist()
+        for row, parent_id, source_vertices in zip(
+            rows, identifiers, corners, strict=True
+        ):
+            if parent_id in roots:
+                continue
+            budget.reserve(len(row) + len(source_vertices))
+            roots[parent_id] = (
+                source.element_id,
+                tuple(value for value in source_vertices if value >= 0),
+                tuple(values[index] for index in row),
+            )
+    for identifier, root in prepared.parents.items():
+        known = roots.get(identifier)
+        budget.reserve(len(root.cell.vertices) + sum(len(point) for point in root.local))
+        if known is None or known != (root.element_id, root.cell.vertices, root.local):
+            return False
+    request.state.imported_root_embedding_certificate_id = (
+        imported.imported_certificate_id
+    )
     request.state.checks.append("mapped_restriction_root_embedding_reuse")
     return True
 
@@ -1920,3 +2146,798 @@ def _root_atlas_labels(
     if not state.clean:
         return absent
     return tensor_component_injectivity(state, view, cells, limits, budget=budget)
+
+
+type NestedPartitionRefusal = Literal[
+    "absent",
+    "partial_proof",
+    "policy",
+    "topology",
+    "content",
+    "binding",
+    "source",
+    "kind",
+    "chart",
+    "parent",
+    "containment",
+    "orientation",
+    "volume",
+    "pairing",
+    "boundary",
+    "facet_measure",
+    "vertex",
+    "star",
+]
+"""Typed reason an exact nested parent partition is not admitted."""
+
+
+@final
+class _NestedChildren(StrictModule):
+    """Exact barycentric child charts and their parent rows in target cell order."""
+
+    corners: np.ndarray
+    parents: np.ndarray
+    blocks: np.ndarray
+    weights: tuple[tuple[tuple[Fraction, ...], ...], ...]
+    determinants: tuple[Fraction, ...]
+
+
+def _simplex_kind(dimension: int, /) -> str:
+    return "triangle" if dimension == 2 else "tetrahedron"
+
+
+def _exact_determinant(rows: list[list[Fraction]], /) -> Fraction:
+    """Fraction-exact Gaussian elimination of one small square matrix."""
+    matrix = [list(row) for row in rows]
+    size = len(matrix)
+    determinant = Fraction(1)
+    for column in range(size):
+        pivot = next(
+            (row for row in range(column, size) if matrix[row][column] != 0), None
+        )
+        if pivot is None:
+            return Fraction(0)
+        if pivot != column:
+            matrix[column], matrix[pivot] = matrix[pivot], matrix[column]
+            determinant = -determinant
+        determinant *= matrix[column][column]
+        for row in range(column + 1, size):
+            factor = matrix[row][column] / matrix[column][column]
+            if factor:
+                for entry in range(column, size):
+                    matrix[row][entry] -= factor * matrix[column][entry]
+    return determinant
+
+
+def _nested_children(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    record: CellGeometryRestrictionSource,
+    source_rows: dict[int, int],
+    source_corners: np.ndarray,
+    source_vertex_ids: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _NestedChildren | NestedPartitionRefusal:
+    """Read one exact barycentric chart per target block and bind parent corners.
+
+    A degree-one composed chart lists the parent reference coordinates of
+    every child corner. Its barycentric rows are exact rationals; the parent
+    rows must name source cells whose ordered corner identities match the
+    record. Positions are verified separately against exact vertex images.
+    """
+    dimension = mesh.topological_dimension
+    width = dimension + 1
+    kind = _simplex_kind(dimension)
+    elements = dict(zip(geometry.block_names, geometry.elements, strict=True))
+    parent_cells = record.block_parent_cell_ids
+    parent_vertices = record.block_parent_vertex_ids
+    corners: list[np.ndarray] = []
+    parents: list[np.ndarray] = []
+    blocks: list[np.ndarray] = []
+    weights: list[tuple[tuple[Fraction, ...], ...]] = []
+    determinants: list[Fraction] = []
+    for index, block in enumerate(mesh.blocks):
+        element = elements.get(block.name)
+        if (
+            block.cell_kind != kind
+            or element is None
+            or block.name not in parent_cells
+            or element.cell_kind != kind
+        ):
+            return "chart"
+        if not isinstance(
+            element,
+            (BarycentricCellGeometryElement, PolynomialComposedCellGeometryElement, FiniteElementSpec),
+        ) or element.degree != 1:
+            return "chart"
+        budget.reserve(4 * width * width, 256 + 64 * width * width)
+        rows = []
+        if isinstance(element, BarycentricCellGeometryElement):
+            rows = list(exact_barycentric_action(element))
+            parent_element = element.source_element
+            while isinstance(parent_element, BarycentricCellGeometryElement):
+                action = exact_barycentric_action(parent_element)
+                budget.reserve(width**3, 64 * width * width)
+                rows = [
+                    tuple(
+                        sum((weight * action[index][axis]
+                             for index, weight in enumerate(row)), Fraction(0))
+                        for axis in range(width)
+                    )
+                    for row in rows
+                ]
+                parent_element = parent_element.source_element
+        elif isinstance(element, PolynomialComposedCellGeometryElement):
+            if (
+                element.chart_element.cell_kind != kind
+                or element.chart_element.degree != 1
+                or len(element.chart_coefficients) != width
+            ):
+                return "chart"
+            for coefficients in element.chart_coefficients:
+                if len(coefficients) != dimension:
+                    return "chart"
+                reference = tuple(Fraction(a, b) for a, b in coefficients)
+                rows.append((1 - sum(reference, Fraction(0)), *reference))
+        elif isinstance(element, FiniteElementSpec):
+            try:
+                require_p1_cardinal_source(element)
+            except ValueError:
+                return "chart"
+            rows = [
+                tuple(Fraction(int(row == column)) for column in range(width))
+                for row in range(width)
+            ]
+        else:
+            return "chart"
+        if any(len(row) != width or sum(row, Fraction(0)) != 1 for row in rows):
+            return "chart"
+        if any(value < 0 for row in rows for value in row):
+            return "containment"
+        determinant = _exact_determinant(
+            [[row[axis] - rows[0][axis] for axis in range(1, width)] for row in rows[1:]]
+        )
+        if determinant <= 0:
+            return "orientation"
+        identifiers = np.asarray(parent_cells[block.name], dtype=np.int64)
+        declared = np.asarray(parent_vertices[block.name], dtype=np.int64)
+        budget.reserve(identifiers.size * (width + 2), 64 + 16 * identifiers.size * width)
+        rows_of_parent = np.asarray(
+            [source_rows.get(int(value), -1) for value in identifiers.tolist()],
+            dtype=np.int64,
+        )
+        if (
+            np.any(rows_of_parent < 0)
+            or declared.shape != (identifiers.size, width)
+            or not np.array_equal(
+                declared, source_vertex_ids[source_corners[rows_of_parent]]
+            )
+        ):
+            return "parent"
+        corners.append(np.asarray(block.vertices, dtype=np.int64))
+        parents.append(rows_of_parent)
+        blocks.append(np.full((identifiers.size,), index, dtype=np.int64))
+        weights.append(tuple(rows))
+        determinants.append(determinant)
+    return _NestedChildren(
+        np.concatenate(corners),
+        np.concatenate(parents),
+        np.concatenate(blocks),
+        tuple(weights),
+        tuple(determinants),
+    )
+
+
+def _exact_point(values: Iterable[object], /) -> tuple[Fraction, ...] | None:
+    """Exact rational coordinates of one bound image; radicals are not admitted."""
+    point = []
+    for value in values:
+        match value:
+            case Fraction():
+                point.append(value)
+            case float() | np.floating() | int() | np.integer():
+                point.append(Fraction(float(value)))
+            case _:
+                return None
+    return tuple(point)
+
+
+def _nested_vertices(
+    children: _NestedChildren,
+    points: np.ndarray,
+    source_points: CoordinateSourceBank,
+    source_corners: np.ndarray,
+    source_vertex_ids: np.ndarray,
+    target_vertex_ids: np.ndarray,
+    dimension: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> dict[tuple[tuple[int, Fraction], ...], set[int]] | NestedPartitionRefusal:
+    """Bind every child corner to one exact source barycentric key and image.
+
+    Equal keys denote one point, and distinct keys of an embedded simplicial
+    source denote distinct points, so key-to-vertex injectivity in both
+    directions is global vertex identity. Each key's exact image is the
+    parent's affine combination of its exact source corners.
+    """
+    width = dimension + 1
+    count = children.corners.shape[0]
+    budget.reserve(count * width * (width + 2), 256 + 96 * count * width)
+    key_vertex: dict[tuple[tuple[int, Fraction], ...], int] = {}
+    vertex_key: dict[int, tuple[tuple[int, Fraction], ...]] = {}
+    parents_of: dict[tuple[tuple[int, Fraction], ...], set[int]] = {}
+    for block, rows in enumerate(children.weights):
+        selected = np.flatnonzero(children.blocks == block)
+        parent_rows = children.parents[selected]
+        parent_ids = source_vertex_ids[source_corners[parent_rows]]
+        for corner, weight in enumerate(rows):
+            support = [index for index, value in enumerate(weight) if value]
+            vertices = children.corners[selected, corner].tolist()
+            for parent, identifiers, vertex in zip(
+                parent_rows.tolist(), parent_ids[:, support].tolist(), vertices, strict=True
+            ):
+                key = tuple(
+                    sorted(zip(identifiers, (weight[index] for index in support), strict=True))
+                )
+                known = key_vertex.setdefault(key, vertex)
+                previous = vertex_key.setdefault(vertex, key)
+                if known != vertex or previous != key:
+                    return "vertex"
+                parents_of.setdefault(key, set()).add(parent)
+    source_rows = {int(value): row for row, value in enumerate(source_vertex_ids.tolist())}
+    bits = 1
+    exact_source: dict[int, tuple[Fraction, ...]] = {}
+    for identifier in {identifier for key in key_vertex for identifier, _ in key}:
+        corner = _exact_point(source_points[source_rows[identifier]])
+        if corner is None:
+            return "vertex"
+        exact_source[identifier] = corner
+        bits = max(
+            bits,
+            *(value.numerator.bit_length() + value.denominator.bit_length()
+              for value in corner),
+        )
+    uniform_keys = {
+        key for key in key_vertex
+        if len(key) > 1 and all(weight == Fraction(1, len(key)) for _, weight in key)
+    }
+    arithmetic = sum(
+        0 if len(key) == 1
+        else dimension * (len(key) + 1) if key in uniform_keys
+        else 2 * dimension * len(key)
+        for key in key_vertex
+    )
+    budget.reserve(arithmetic * max(1, bits // 32))
+    for key, vertex in key_vertex.items():
+        target = _exact_point(points[vertex])
+        if target is None:
+            return "vertex"
+        if len(key) == 1:
+            # Identity rows reuse the authenticated source point itself.
+            image = exact_source[key[0][0]]
+        elif key in uniform_keys:
+            # Midpoints/centroids need one sum and one division, not a product
+            # and addition for every weighted term.
+            image = tuple(
+                sum((exact_source[identifier][axis] for identifier, _ in key), Fraction(0))
+                / len(key)
+                for axis in range(dimension)
+            )
+        else:
+            image = tuple(
+                sum((weight * exact_source[identifier][axis]
+                     for identifier, weight in key), Fraction(0))
+                for axis in range(dimension)
+            )
+        if tuple(image) != target:
+            return "vertex"
+        if len(key) == 1 and int(target_vertex_ids[vertex]) != key[0][0]:
+            return "vertex"
+    return parents_of
+
+
+def _nested_shared_root_bank(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    points: np.ndarray,
+    children: _NestedChildren,
+    predecessor: CellGeometryPredecessor,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Bind every chart to the same immutable P1 source coefficient bank.
+
+    Equal carriers alone are insufficient: the scientific source owner,
+    cardinal root element, exact coefficient bank and every parent route must
+    agree. The canonical coordinate scope separately earns shared-corner
+    coherence for the complete current target geometry.
+    """
+    source_mesh, source_geometry = predecessor.source_mesh, predecessor.source_geometry
+    if (
+        not isinstance(source_geometry.coordinates, Array)
+        or not isinstance(geometry.coordinates, Array)
+        or source_geometry.exact_source is not geometry.exact_source
+        or source_geometry.periodic_source is not None
+        or geometry.periodic_source is not None
+    ):
+        return False
+    source_elements, source_routes, _ = source_geometry.resolve(
+        source_mesh, exact_source_prepared=True, budget=budget
+    )
+    target_elements, target_routes, _ = geometry.resolve(
+        mesh, exact_source_prepared=True, budget=budget
+    )
+    root = source_elements[0]
+    if not isinstance(root, FiniteElementSpec) or root.degree != 1:
+        return False
+    if any(element is not root for element in source_elements):
+        return False
+    require_p1_cardinal_source(root)
+    for element in target_elements:
+        while isinstance(element, BarycentricCellGeometryElement):
+            element = element.source_element
+        if isinstance(element, PolynomialComposedCellGeometryElement):
+            # _nested_children reads this single exact P1 chart. More general
+            # composed roots keep the full point-wise partition proof.
+            if element.source_element is not root:
+                return False
+            element = element.source_element
+        if element is not root:
+            return False
+    source_bank = prepared_coordinate_source_bank(source_geometry, budget=budget)
+    target_bank = prepared_coordinate_source_bank(geometry, budget=budget)
+    if source_bank is not target_bank:
+        budget.reserve(sum(len(row) for row in source_bank))
+        if source_bank != target_bank:
+            return False
+    source_rows = np.concatenate([np.asarray(route, dtype=np.int64) for route in source_routes])
+    target_rows = np.concatenate([np.asarray(route, dtype=np.int64) for route in target_routes])
+    width = mesh.topological_dimension + 1
+    if (
+        source_rows.shape != (sum(block.cell_count for block in source_mesh.blocks), width)
+        or target_rows.shape != (children.parents.size, width)
+    ):
+        return False
+    budget.reserve(target_rows.size, target_rows.nbytes)
+    if not np.array_equal(target_rows, source_rows[children.parents]):
+        return False
+    scope = global_embedding_owner.coordinate_scope(mesh, geometry, budget=budget)
+    if scope.coordinate_scope != "affine":
+        return False
+    bound_points = prepared_coordinate_vertex_images(
+        mesh, geometry,
+        mismatch="Nested partition maps must agree on every shared target vertex.",
+        budget=budget,
+    )
+    if bound_points is None or len(bound_points) != points.shape[0]:
+        return False
+    budget.reserve(points.size)
+    for point, bound in zip(points, bound_points, strict=True):
+        if bound is None or _exact_point(point) != bound:
+            return False
+    return True
+
+
+def _bound_nested_vertex_keys(
+    children: _NestedChildren,
+    source_corners: np.ndarray,
+    source_vertex_ids: np.ndarray,
+    target_vertex_ids: np.ndarray,
+    dimension: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> dict[tuple[tuple[int, Fraction], ...], set[int]] | NestedPartitionRefusal:
+    """Bind one key per vertex after whole-route map equality was earned.
+
+    The shared root-bank proof makes each occurrence's affine image exact;
+    canonical scope coherence and source embedding imply equal keys for all
+    occurrences of one target vertex. Only injectivity and lower-dimensional
+    source-star incidence remain to be checked here.
+    """
+    width = dimension + 1
+    flat = children.corners.reshape(-1)
+    vertices, first = np.unique(flat, return_index=True)
+    budget.reserve(flat.size + vertices.size * (width + 2), 256 + 160 * vertices.size)
+    key_vertex: dict[tuple[tuple[int, Fraction], ...], int] = {}
+    vertex_key: dict[int, tuple[tuple[int, Fraction], ...]] = {}
+    parents_of: dict[tuple[tuple[int, Fraction], ...], set[int]] = {}
+    lower = np.zeros(target_vertex_ids.size, dtype=np.bool_)
+    for vertex, occurrence in zip(vertices.tolist(), first.tolist(), strict=True):
+        row, corner = divmod(occurrence, width)
+        parent = int(children.parents[row])
+        weights = children.weights[int(children.blocks[row])][corner]
+        identifiers = source_vertex_ids[source_corners[parent]]
+        key = tuple(sorted(
+            (int(identifier), weight)
+            for identifier, weight in zip(identifiers, weights, strict=True) if weight
+        ))
+        if key in key_vertex and key_vertex[key] != vertex:
+            return "vertex"
+        if len(key) == 1 and int(target_vertex_ids[vertex]) != key[0][0]:
+            return "vertex"
+        key_vertex[key], vertex_key[vertex] = vertex, key
+        parents_of[key] = {parent}
+        if 1 < len(key) <= dimension:
+            lower[vertex] = True
+            parents_of[key] = set()
+    selected = np.flatnonzero(lower[flat])
+    if selected.size:
+        budget.reserve(flat.size + 2 * selected.size, 128 + 48 * selected.size)
+        pairs = np.unique(np.column_stack((
+            flat[selected], children.parents[selected // width]
+        )), axis=0)
+        for vertex, parent in pairs.tolist():
+            parents_of[vertex_key[vertex]].add(parent)
+    return parents_of
+
+
+def _nested_complete_source_stars(
+    used: dict[tuple[tuple[int, Fraction], ...], set[int]],
+    source_corners: np.ndarray,
+    source_vertex_ids: np.ndarray,
+    dimension: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Every source edge/facet interior point is used by its complete source star."""
+    width = dimension + 1
+    for size in range(2, width):
+        local = np.asarray(tuple(combinations(range(width), size)), dtype=np.int64)
+        rows = np.sort(source_vertex_ids[source_corners[:, local]], axis=2).reshape(-1, size)
+        budget.reserve(rows.size + len(used), 128 + 48 * rows.shape[0])
+        unique, counts = np.unique(rows, axis=0, return_counts=True)
+        stars = {
+            tuple(map(int, row)): int(count)
+            for row, count in zip(unique.tolist(), counts.tolist(), strict=True)
+        }
+        for key, parents in used.items():
+            if len(key) == size and stars.get(tuple(identifier for identifier, _ in key)) != len(parents):
+                return False
+    return True
+
+
+def _nested_closed_chain(
+    state: EmbeddingState,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    children: _NestedChildren,
+    predecessor: CellGeometryPredecessor,
+    source_corners: np.ndarray,
+    source_vertex_ids: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> NestedPartitionRefusal | None:
+    """Prove the contained positive chain has multiplicity one.
+
+    Full physical facets cancel by the already earned global pairing and
+    whole-route image coherence. Every remaining facet is outward on a
+    source-global boundary facet and those facets cover each source boundary
+    facet with exact normalized mass one. Thus the indicator chain has zero
+    distributional derivative in each connected source-parent interior; its
+    previously checked parent mass fixes its integer multiplicity to one.
+    Vertex injectivity and complete source edge/facet stars preserve closed-cell
+    contacts, including separate source fans touching only in lower dimension.
+    """
+    if not state.clean or not state.closed_cell_orientation or "facet_pairing" not in state.checks:
+        return "partial_proof"
+    dimension, width = mesh.topological_dimension, mesh.topological_dimension + 1
+    used = _bound_nested_vertex_keys(
+        children, source_corners, source_vertex_ids,
+        np.asarray(mesh.vertex_global_ids, dtype=np.int64), dimension, budget=budget,
+    )
+    if isinstance(used, str):
+        return used
+    if not _nested_complete_source_stars(
+        used, source_corners, source_vertex_ids, dimension, budget=budget
+    ):
+        return "star"
+    source_facets = embedding_state_owner.mesh_facets(
+        predecessor.source_mesh, geometry=predecessor.source_geometry, budget=budget
+    )
+    source_single = np.flatnonzero(source_facets.boundary)
+    source_owners = source_facets.cells[source_single]
+    source_missing = np.sum(source_corners[source_owners], axis=1) - np.sum(
+        np.where(source_facets.rows[source_single] >= 0, source_facets.rows[source_single], 0),
+        axis=1,
+    )
+    source_excluded = np.argmax(
+        source_corners[source_owners] == source_missing[:, None], axis=1
+    )
+    source_boundary = np.zeros((source_corners.shape[0], width), dtype=np.bool_)
+    source_boundary[source_owners, source_excluded] = True
+    facets = embedding_state_owner.mesh_facets(mesh, geometry=geometry, budget=budget)
+    single = np.flatnonzero(facets.boundary)
+    owners = facets.cells[single]
+    missing = np.sum(children.corners[owners], axis=1) - np.sum(
+        np.where(facets.rows[single] >= 0, facets.rows[single], 0), axis=1
+    )
+    excluded = np.argmax(children.corners[owners] == missing[:, None], axis=1)
+    budget.reserve(
+        2 * source_facets.cells.size + source_single.size * (width + 1)
+        + single.size * (width + 2),
+        512 + source_boundary.nbytes + 128 * (source_single.size + single.size),
+    )
+    patterns = np.unique(np.column_stack((children.blocks[owners], excluded)), axis=0)
+    axes: dict[tuple[int, int], int] = {}
+    ratios: dict[tuple[int, int], Fraction] = {}
+    for block, corner in patterns.tolist():
+        chart = children.weights[block]
+        face = [chart[row] for row in range(width) if row != corner]
+        zero = [axis for axis in range(width) if all(row[axis] == 0 for row in face)]
+        if len(zero) != 1:
+            return "boundary"
+        axis = zero[0]
+        columns = [column for column in range(width) if column != axis][1:]
+        budget.reserve(4 * width * width, 128 * width * width)
+        ratio = _exact_determinant([
+            [row[column] - face[0][column] for column in columns] for row in face[1:]
+        ])
+        if (-1) ** (corner + axis) * ratio <= 0:
+            return "orientation"
+        axes[block, corner], ratios[block, corner] = axis, abs(ratio)
+    mass = [Fraction(0)] * (source_corners.shape[0] * width)
+    for owner, corner in zip(owners.tolist(), excluded.tolist(), strict=True):
+        parent, block = int(children.parents[owner]), int(children.blocks[owner])
+        axis = axes[block, corner]
+        if not source_boundary[parent, axis]:
+            return "boundary"
+        mass[parent * width + axis] += ratios[block, corner]
+    if any(mass[int(index)] != 1 for index in np.flatnonzero(source_boundary.reshape(-1))):
+        return "facet_measure"
+    return None
+
+
+def nested_parent_partition(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    points: np.ndarray,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    state: EmbeddingState,
+    budget: CoordinateEnclosureBudget,
+    predecessor: CellGeometryPredecessor | None,
+) -> global_embedding_owner.GlobalEmbeddingCertificate | NestedPartitionRefusal:
+    """Prove that affine simplex children exactly partition a certified source.
+
+    ``points`` are the exact target vertex images bound by the coordinate
+    scope proof. Returns the authenticated source certificate whose boundary
+    contact theorem then transfers to the target boundary, or a refusal.
+
+    Premises, all decided here: the source certificate and positive validity
+    are authenticated and bound; every target block is one exact degree-one
+    barycentric chart in a source parent whose ordered corner identities match;
+    chart rows are nonnegative with positive determinant; each source cell's
+    child determinants sum to one; every child facet inside its parent is
+    shared by exactly two children of that parent with opposite orientation;
+    every other child facet lies on one parent facet with that facet's
+    orientation and the children's facet measures sum to each parent facet's;
+    unpaired child facets lie on source boundary facets; exact vertex images
+    equal the parent's affine image of their barycentric keys, keys and
+    vertices correspond one to one, and a vertex interior to a source edge is
+    used by every source cell of that edge. By the degree-one argument the
+    children tile each parent with disjoint interiors, the target tiles the
+    embedded source conformingly, and the target boundary is a conforming
+    subdivision of the certified source boundary.
+
+    The strict shared-bank route proves the same partition through a positive
+    closed chain: canonical whole-route coherence cancels paired physical
+    facets, every unpaired facet is outward on a source-global boundary facet,
+    and boundary measures cover those source facets exactly once. The indicator
+    chain is constant on each source-parent interior and its exact mass fixes
+    multiplicity one. Vertex-key injectivity and complete source edge/facet stars
+    supply the lower-dimensional and closed-cell contact obligations.
+    """
+    record = geometry.restriction_source
+    if predecessor is None or record is None:
+        return "absent"
+    dimension = mesh.topological_dimension
+    if dimension not in (2, 3) or mesh.ambient_dimension != dimension:
+        return "kind"
+    request = _RestrictedRequest(
+        state,
+        mesh,
+        geometry,
+        global_embedding_owner.cell_global_ids(mesh),
+        limits,
+        budget,
+        predecessor,
+    )
+    authenticated = _authenticated_restriction_predecessor(request)
+    if isinstance(authenticated, str):
+        return authenticated
+    predecessor, certificate = authenticated
+    source_mesh, source_geometry = predecessor.source_mesh, predecessor.source_geometry
+    if (
+        source_geometry.restriction_source is not None
+        or certificate.binding.coordinate_scope != "affine"
+        or "boundary_contact" not in certificate.evaluated_checks
+        or certificate.binding.geometry_id != record.source_geometry_id
+        or source_mesh.topology_id != record.source_topology_id
+        or source_mesh.topological_dimension != dimension
+    ):
+        return "source"
+    kind = _simplex_kind(dimension)
+    width = dimension + 1
+    if any(block.cell_kind != kind for block in source_mesh.blocks):
+        return "kind"
+    source_corners = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in source_mesh.blocks]
+    )
+    source_cell_ids = global_embedding_owner.cell_global_ids(source_mesh)
+    source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
+    budget.reserve(source_cell_ids.size * (width + 1), 256 + 64 * source_cell_ids.size)
+    source_rows = {int(value): row for row, value in enumerate(source_cell_ids.tolist())}
+    children = _nested_children(
+        mesh,
+        geometry,
+        record,
+        source_rows,
+        source_corners,
+        source_vertex_ids,
+        budget=budget,
+    )
+    if isinstance(children, str):
+        return children
+    # Each source cell: child determinants sum to its own measure.
+    # Exact accumulation needs no sorted (parent, chart) bank: duplicates,
+    # including invalid duplicate children, contribute their full mass directly.
+    budget.reserve(3 * children.parents.size)
+    volumes = [Fraction(0)] * source_cell_ids.size
+    for parent, block in zip(children.parents, children.blocks, strict=True):
+        volumes[int(parent)] += children.determinants[int(block)]
+    if any(value != 1 for value in volumes):
+        return "volume"
+    if _nested_shared_root_bank(
+        mesh, geometry, points, children, predecessor, budget=budget
+    ):
+        if _nested_closed_chain(
+            state, mesh, geometry, children, predecessor, source_corners,
+            source_vertex_ids, budget=budget,
+        ) is None:
+            return certificate
+    # Reuse this request's canonical oriented-facet bank and the already earned
+    # global pairing/orientation proof. Only parent-relative pairing is new.
+    if "facet_pairing" not in state.checks:
+        return "partial_proof"
+    facets = embedding_state_owner.mesh_facets(
+        mesh, geometry=geometry, budget=budget
+    )
+    count = children.corners.shape[0]
+    occurrences = count * width
+    if facets.cells.size != occurrences:
+        return "binding"
+    budget.reserve(occurrences * (width + 2), 256 + 64 * occurrences)
+    owners = facets.cells
+    missing = np.sum(children.corners[owners], axis=1) - np.sum(
+        np.where(facets.rows >= 0, facets.rows, 0), axis=1
+    )
+    excluded = np.argmax(children.corners[owners] == missing[:, None], axis=1)
+    keep = np.arange(width)[None, :] != np.arange(width)[:, None]
+    local = np.stack([np.arange(width)[mask] for mask in keep])
+    on_parent = np.full((len(children.weights), width), -1, dtype=np.int64)
+    facet_ratio: dict[tuple[int, int], Fraction] = {}
+    for block, chart in enumerate(children.weights):
+        for corner in range(width):
+            facet_rows = [chart[index] for index in range(width) if index != corner]
+            zero = [
+                axis
+                for axis in range(width)
+                if all(row[axis] == 0 for row in facet_rows)
+            ]
+            if len(zero) > 1:
+                return "orientation"
+            if zero:
+                axis = zero[0]
+                # Affine coordinates of the child facet in the parent facet's
+                # barycentric frame: drop the excluded and the first column.
+                columns = [entry for entry in range(width) if entry != axis][1:]
+                ratio = _exact_determinant(
+                    [
+                        [row[entry] - facet_rows[0][entry] for entry in columns]
+                        for row in facet_rows[1:]
+                    ]
+                )
+                # Child facet orientation relative to the parent facet's.
+                if (-1) ** (corner + axis) * ratio <= 0:
+                    return "orientation"
+                on_parent[block, corner] = axis
+                facet_ratio[(block, corner)] = abs(ratio)
+    parent_facet = on_parent[children.blocks[owners], excluded]
+    parents = children.parents[owners]
+    group, counts, order = facets.group, facets.counts, facets.order
+    if np.any(counts > 2):
+        return "pairing"
+    paired = counts[group[order]] == 2
+    first = order[paired][0::2]
+    second = order[paired][1::2]
+    interior = (parent_facet[first] < 0) | (parent_facet[second] < 0)
+    if np.any(
+        interior
+        & (
+            (parent_facet[first] >= 0)
+            | (parent_facet[second] >= 0)
+            | (parents[first] != parents[second])
+        )
+    ) or np.any(~interior & (parents[first] == parents[second])):
+        return "pairing"
+    single = order[counts[group[order]] == 1]
+    if np.any(parent_facet[single] < 0):
+        return "boundary"
+    # Unpaired child facets must lie on facets of the source boundary.
+    source_rows_all = np.repeat(np.arange(source_cell_ids.size), width)
+    source_excluded = np.tile(np.arange(width), source_cell_ids.size)
+    source_keys = np.sort(
+        source_vertex_ids[source_corners[source_rows_all[:, None], local[source_excluded]]],
+        axis=1,
+    )
+    _, source_group, source_counts = np.unique(
+        source_keys, axis=0, return_inverse=True, return_counts=True
+    )
+    source_boundary = (source_counts[source_group.reshape(-1)] == 1).reshape(
+        source_cell_ids.size, width
+    )
+    if not np.all(source_boundary[parents[single], parent_facet[single]]):
+        return "boundary"
+    # Parent facets are covered once by their children's facets.
+    on_facet = np.flatnonzero(parent_facet >= 0)
+    facet_codes, facet_times = np.unique(
+        np.stack(
+            (
+                parents[on_facet] * width + parent_facet[on_facet],
+                children.blocks[owners[on_facet]] * width + excluded[on_facet],
+            ),
+            axis=1,
+        ),
+        axis=0,
+        return_counts=True,
+    )
+    budget.reserve(facet_codes.shape[0] * 4)
+    measures = [Fraction(0)] * (source_cell_ids.size * width)
+    for (facet, code), times in zip(facet_codes.tolist(), facet_times.tolist(), strict=True):
+        measures[facet] += times * facet_ratio[divmod(code, width)]
+    if any(value != 1 for value in measures):
+        return "facet_measure"
+    scope = global_embedding_owner.coordinate_scope(
+        source_mesh, source_geometry, budget=budget
+    )
+    if scope.coordinate_scope != "affine":
+        return "source"
+    used = _nested_vertices(
+        children,
+        points,
+        scope.source_values,
+        source_corners,
+        source_vertex_ids,
+        np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+        dimension,
+        budget=budget,
+    )
+    if isinstance(used, str):
+        return used
+    if dimension == 3:
+        # A vertex interior to a source edge subdivides it in every cell of
+        # the edge star; facet pairing then matches the edge subdivisions.
+        edge_rows = np.asarray(
+            [(a, b) for a in range(width) for b in range(a + 1, width)], dtype=np.int64
+        )
+        edges = np.sort(source_vertex_ids[source_corners[:, edge_rows]], axis=2).reshape(
+            -1, 2
+        )
+        unique_edges, star = np.unique(edges, axis=0, return_counts=True)
+        stars = {
+            (int(a), int(b)): int(size)
+            for (a, b), size in zip(unique_edges.tolist(), star.tolist(), strict=True)
+        }
+        budget.reserve(len(used) + edges.shape[0])
+        for key, owners_of_key in used.items():
+            if len(key) == 2 and stars[(key[0][0], key[1][0])] != len(owners_of_key):
+                return "star"
+    return certificate

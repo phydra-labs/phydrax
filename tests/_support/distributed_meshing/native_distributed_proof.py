@@ -1,34 +1,46 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from jax.sharding import NamedSharding, PartitionSpec
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._fingerprint import logical_array_value_collection_digest, tree_content_equal
 from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
 from phydrax.discretization._adaptive_simplex import (
     adaptive_simplex_state,
     AdaptiveSimplexLayout,
     AdaptiveSimplexParts,
     AdaptiveSimplexState,
+    AdaptiveSimplexStatus,
     coarsen_adaptive_simplex_parts,
     refine_adaptive_simplex_parts,
 )
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    write_meshing_source_closure,
+)
 from phydrax.meshing._collective_geometry import build_collective_geometry_witness
 from phydrax.meshing._collective_organization import build_collective_organization_witness
 from phydrax.meshing._device_adaptation import canonical_rows
 from phydrax.meshing._distribution import (
     compiled_bisection_checks,
     expand_partitioned_simplex_neighborhood,
+    expand_simplex_neighborhood_workset,
+    simplex_neighborhood_seed,
     SimplexNeighborhoodWorkset,
 )
+from phydrax.meshing._distribution_migration import validate_simplex_predecessor_witness
 from phydrax.meshing._entity_keys import facet_packets
 from phydrax.meshing.providers._native_publication import (
     NativeCertificationRequest,
@@ -74,7 +86,219 @@ _CONTRACT_KEYS = (
 )
 
 
-def predecessor_forest_proof(coordinate_kind: str) -> dict[str, Any]:
+def _dense_predecessor_oracle(
+    state: AdaptiveSimplexState, initial: AdaptiveSimplexState
+) -> tuple[np.ndarray, np.ndarray]:
+    """Evaluate the former dense predicate independently of production labels."""
+    active = np.asarray(state.mesh.cell_active)
+    initial_active = np.asarray(initial.mesh.cell_active)
+    parents = np.asarray(state.parents) // 2
+    cells = active.size
+
+    def nearest(slot: int, selected: np.ndarray) -> int:
+        for _ in range(cells):
+            if selected[slot]:
+                return slot
+            slot = int(parents[slot])
+            if slot < 0:
+                return -1
+        raise AssertionError("genuine predecessor forest must have acyclic parents")
+
+    roots = np.asarray([nearest(row, initial_active) for row in range(cells)])
+    ancestors = np.asarray([nearest(row, active) for row in range(cells)])
+    lanes = np.arange(cells)
+    support = (
+        (
+            (roots[:, None] == lanes[None, :])
+            | ((roots[:, None] < 0) & (lanes[:, None] == ancestors[None, :]))
+        )
+        & initial_active[None, :]
+        & active[:, None]
+    )
+    return support, np.where(support, np.asarray(initial.mesh.cell_ids)[None, :], -1)
+
+
+def _assert_seed_multisets(
+    state: AdaptiveSimplexState,
+    initial: AdaptiveSimplexState,
+    flags: jax.Array,
+    rank: int,
+    width: int,
+) -> SimplexNeighborhoodWorkset:
+    support, dense = _dense_predecessor_oracle(state, initial)
+    seed = simplex_neighborhood_seed(
+        state, initial, flags, jnp.asarray(rank, jnp.int32), 32, source_width=width
+    )
+    active = np.asarray(state.mesh.cell_active)
+    slots = np.flatnonzero(active)
+    slots = slots[np.argsort(np.asarray(state.mesh.cell_ids)[slots], kind="stable")]
+    actual = np.asarray(seed.source_cell_ids)
+    for row, slot in enumerate(slots):
+        # Cardinality, not ID sign or uniqueness, defines the selected prefix.
+        expected = np.sort(dense[slot, support[slot]], kind="stable")
+        np.testing.assert_array_equal(actual[row, : expected.size], expected)
+        np.testing.assert_array_equal(actual[row, expected.size :], -1)
+    np.testing.assert_array_equal(actual[len(slots) :], -1)
+    return seed
+
+
+def _compact_predecessor_contract(
+    parts: AdaptiveSimplexParts,
+    source: AdaptiveSimplexState,
+    first: AdaptiveSimplexState,
+    second: AdaptiveSimplexState,
+    coarse: AdaptiveSimplexState,
+    exterior: jax.Array,
+    first_exterior: jax.Array,
+    archive_path: str,
+) -> dict[str, Any]:
+    widths = []
+    coarsened_work = None
+    for state, initial, flags in (
+        (source, source, exterior),
+        (first, source, exterior),
+        (second, first, first_exterior),
+        (coarse, first, first_exterior),
+    ):
+        local = [
+            (
+                jax.tree_util.tree_map(lambda value: value[rank], state),
+                jax.tree_util.tree_map(lambda value: value[rank], initial),
+            )
+            for rank in range(2)
+        ]
+        expected_width = max(
+            1,
+            *(int(_dense_predecessor_oracle(current, before)[0].sum(axis=1).max())
+              for current, before in local),
+        )
+        work = expand_partitioned_simplex_neighborhood(
+            parts, state, initial, flags,
+            halo_width=1, cell_capacity=32, vertex_capacity=32,
+        )
+        assert work.source_cell_ids.shape == (2, 32, expected_width)
+        np.testing.assert_array_equal(work.status, 0)
+        widths.append(expected_width)
+        by_id = {}
+        for rank, (current, before) in enumerate(local):
+            seed = _assert_seed_multisets(current, before, flags[rank], rank, expected_width)
+            np.testing.assert_array_equal(seed.status, 0)
+            for row in np.flatnonzero(np.asarray(seed.cell_valid)):
+                by_id[int(seed.cell_ids[row])] = np.asarray(seed.source_cell_ids[row])
+        for rank, row in np.argwhere(np.asarray(work.cell_valid)):
+            np.testing.assert_array_equal(
+                work.source_cell_ids[rank, row], by_id[int(work.cell_ids[rank, row])]
+            )
+        coarsened_work = work
+    assert widths == [1, 1, 1, 2]
+    assert coarsened_work is not None
+    validate_simplex_predecessor_witness(parts, coarse, first, coarsened_work)
+    forged_width = eqx.tree_at(
+        lambda value: value.source_cell_ids,
+        coarsened_work,
+        coarsened_work.source_cell_ids[..., :1],
+    )
+    np.testing.assert_array_equal(forged_width.status, 0)
+    with pytest.raises(ValueError, match="predecessor"):
+        validate_simplex_predecessor_witness(parts, coarse, first, forged_width)
+    rank, row = np.argwhere(np.asarray(coarsened_work.cell_valid))[0]
+    for identifier in (-7, int(coarsened_work.source_cell_ids[rank, row, 1])):
+        malformed = eqx.tree_at(
+            lambda value: value.source_cell_ids,
+            coarsened_work,
+            coarsened_work.source_cell_ids.at[rank, row, 0].set(identifier),
+        )
+        np.testing.assert_array_equal(malformed.status, 0)
+        with pytest.raises(ValueError, match="predecessor"):
+            validate_simplex_predecessor_witness(parts, coarse, first, malformed)
+
+    # The same actual coarsening support at K-1 must refuse on every rank,
+    # including a rank with no local undersized row.
+    forged = jax.tree_util.tree_map(
+        lambda *values: jnp.stack(values),
+        *(
+            simplex_neighborhood_seed(
+                jax.tree_util.tree_map(
+                    lambda value: value[rank], coarse if rank == 0 else first
+                ),
+                jax.tree_util.tree_map(lambda value: value[rank], first),
+                first_exterior[rank], jnp.asarray(rank, jnp.int32), 32,
+                source_width=1,
+            )
+            for rank in range(2)
+        ),
+    )
+    assert int(forged.status[0]) & int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    assert int(forged.status[1]) == 0
+    refused = expand_simplex_neighborhood_workset(
+        parts, forged, halo_width=1, vertex_capacity=32
+    )
+    assert np.all(
+        np.asarray(refused.status) & int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    )
+
+    local_current = jax.tree_util.tree_map(lambda value: value[0], coarse)
+    local_initial = jax.tree_util.tree_map(lambda value: value[0], first)
+    active_slots = np.flatnonzero(np.asarray(local_initial.mesh.cell_active))
+    assert active_slots.size == 2
+    for identifiers in ((41, 41), (-7, 41), (np.iinfo(np.int64).max, 41)):
+        malformed = eqx.tree_at(
+            lambda value: value.mesh.cell_ids, local_initial,
+            local_initial.mesh.cell_ids.at[active_slots].set(jnp.asarray(identifiers)),
+        )
+        _assert_seed_multisets(
+            local_current, malformed, first_exterior[0], 0, 2
+        )
+    unsupported = eqx.tree_at(
+        lambda value: value.mesh.cell_active,
+        local_initial,
+        jnp.zeros_like(local_initial.mesh.cell_active),
+    )
+    missing = simplex_neighborhood_seed(
+        local_current, unsupported, first_exterior[0], jnp.asarray(0, jnp.int32),
+        32, source_width=1,
+    )
+    assert int(missing.status) & int(AdaptiveSimplexStatus.INVALID_GEOMETRY)
+
+    # A representation change is an honest identity change, never an entity edit.
+    dense_shape = eqx.tree_at(
+        lambda value: value.source_cell_ids,
+        coarsened_work,
+        jnp.pad(coarsened_work.source_cell_ids, ((0, 0), (0, 0), (0, 30)),
+                constant_values=-1),
+    )
+    compact_id = logical_array_value_collection_digest(coarsened_work.arrays())
+    dense_id = logical_array_value_collection_digest(dense_shape.arrays())
+    assert compact_id != dense_id
+    for name, value in coarsened_work.arrays().items():
+        if name != "source_cell_ids":
+            other = dense_shape.arrays()[name]
+            assert value.dtype == other.dtype and value.shape == other.shape
+            assert np.asarray(value).tobytes() == np.asarray(other).tobytes()
+    receipt = write_meshing_source_closure(
+        Path(archive_path), coarsened_work, limits=ArrayArchiveLimits()
+    )
+    restored = read_meshing_source_closure(
+        Path(archive_path), expected_content_id=receipt.content_id,
+        limits=ArrayArchiveLimits(),
+    )
+    assert tree_content_equal(coarsened_work, restored)
+    assert logical_array_value_collection_digest(restored.arrays()) == compact_id
+    return {
+        "widths": widths,
+        "dense_oracle_complete": True,
+        "duplicates_negative_and_max_preserved": True,
+        "undersized_collective_refused": True,
+        "forged_zero_status_width_refused": True,
+        "malformed_and_duplicate_witness_refused": True,
+        "unsupported_refused": True,
+        "representation_id_changed": compact_id != dense_id,
+        "entity_and_affine_bytes_unchanged": True,
+        "canonical_archive_roundtrip": True,
+    }
+
+
+def predecessor_forest_proof(coordinate_kind: str, archive_path: str) -> dict[str, Any]:
     checks: dict[str, Any] = _new_checks(_CONTRACT_KEYS)
     points = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     rounded = coordinate_kind == "rounded"
@@ -207,6 +431,9 @@ def predecessor_forest_proof(coordinate_kind: str) -> dict[str, Any]:
     )
     work = packets(coarse, first, first_exterior)
     checks.setdefault("proof_74", []).append(bool(np.all(np.asarray(work.status) == 0)))
+    checks["compact_predecessors"] = _compact_predecessor_contract(
+        parts, source, first, second, coarse, exterior, first_exterior, archive_path
+    )
     for rank in range(2):
         for lane in np.flatnonzero(np.asarray(work.cell_valid[rank])):
             identifier = int(work.cell_ids[rank, lane])

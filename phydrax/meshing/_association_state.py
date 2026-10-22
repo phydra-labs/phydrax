@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
@@ -95,87 +96,226 @@ def _require_source_identity(
 ) -> None:
     if type(entry) is not tuple or len(entry) != 3:
         raise TypeError(
-            "GeometryAssociationSourceBank.entries must contain identity triples; got another row"
+            "GeometryAssociationSourceIdentities.entries must contain identity triples; got another row"
         )
     name, role, path = entry
     if type(name) is not str or not name or name != name.strip():
         raise ValueError(
-            "GeometryAssociationSourceBank.entries must retain nonempty trimmed source IDs; got an invalid name"
+            "GeometryAssociationSourceIdentities.entries must retain nonempty trimmed source IDs; got an invalid name"
         )
     match role:
         case None | GeometrySourceEntityRole():
             pass
         case _:
             raise TypeError(
-                "GeometryAssociationSourceBank.entries must retain declared source roles; got another role type"
+                "GeometryAssociationSourceIdentities.entries must retain declared source roles; got another role type"
             )
     if not indexed_roles and role is not None:
         raise ValueError(
-            "GeometryAssociationSourceBank.indexed_roles must declare retained roles; got a role on an absent role bank"
+            "GeometryAssociationSourceIdentities.indexed_roles must declare retained roles; got a role on an absent role bank"
         )
     if type(path) is not tuple or any(
         type(value) is not str or not value or value != value.strip() for value in path
     ):
         raise ValueError(
-            "GeometryAssociationSourceBank.entries must retain occurrence-name tuples; got an invalid path"
+            "GeometryAssociationSourceIdentities.entries must retain occurrence-name tuples; got an invalid path"
         )
 
 
-def _require_source_bank_shape(
-    entries: object, row_indices: object, indexed_roles: object, /
-) -> None:
-    if type(entries) is not tuple or type(row_indices) is not tuple:
+def _require_source_identities(entries: object, indexed_roles: object, /) -> None:
+    if type(entries) is not tuple:
         raise TypeError(
-            "GeometryAssociationSourceBank.metadata must use immutable tuples; got another bank or route representation"
+            "GeometryAssociationSourceIdentities.entries must be an immutable tuple; got another identity representation"
         )
     if type(indexed_roles) is not bool:
         raise TypeError(
-            "GeometryAssociationSourceBank.indexed_roles must be a bool; got another role declaration"
+            "GeometryAssociationSourceIdentities.indexed_roles must be a bool; got another role declaration"
         )
-
-
-def _require_source_bank(
-    entries: tuple[AssociationSourceIdentity, ...],
-    row_indices: tuple[int, ...],
-    indexed_roles: bool,
-    /,
-) -> None:
-    _require_source_bank_shape(entries, row_indices, indexed_roles)
     for entry in entries:
         _require_source_identity(entry, indexed_roles)
     if tuple(sorted(set(entries), key=_source_identity_key)) != entries:
         raise ValueError(
-            "GeometryAssociationSourceBank.entries must be sorted and unique; got duplicate or unordered identities"
+            "GeometryAssociationSourceIdentities.entries must be sorted and unique; got duplicate or unordered identities"
         )
-    if any(
-        type(index) is not int or not 0 <= index < len(entries) for index in row_indices
-    ) or set(row_indices) != set(range(len(entries))):
+
+
+_SOURCE_IDENTITY_RECORD_FIELDS = frozenset(
+    {
+        "entity_id_prefix",
+        "entity_id_suffixes",
+        "role_values",
+        "role_codes",
+        "occurrence_paths",
+        "occurrence_path_codes",
+        "indexed_roles",
+    }
+)
+
+
+@final
+@dataclass(frozen=True, slots=True, init=False)
+class GeometryAssociationSourceIdentities:
+    """Sorted unique named source identities of one association source bank.
+
+    Archives encode the identities losslessly: ``entity_id_prefix`` is the
+    longest common prefix of the entry IDs and each entry ID is that prefix
+    followed by its ``entity_id_suffixes`` member. No ID format is assumed.
+    Roles and occurrence paths are codes into sorted dictionaries of the values
+    present (role code ``-1`` is an absent role). Decoding refuses any payload
+    that is not this canonical encoding of its decoded identities.
+    """
+
+    entries: tuple[AssociationSourceIdentity, ...]
+    indexed_roles: bool
+
+    def __init__(
+        self, entries: tuple[AssociationSourceIdentity, ...], indexed_roles: bool
+    ) -> None:
+        _require_source_identities(entries, indexed_roles)
+        # This array-free frozen dataclass is not a StrictModule. Assign only
+        # after every metadata invariant has been checked.
+        object.__setattr__(self, "entries", entries)
+        object.__setattr__(self, "indexed_roles", indexed_roles)
+
+    def to_record(self) -> Mapping[str, Any]:
+        """Return the canonical shared-prefix identity dictionary."""
+        _require_source_identities(self.entries, self.indexed_roles)
+        names = tuple(entry[0] for entry in self.entries)
+        # Entries sort by ID first, so the extremes bound every shared prefix.
+        prefix = os.path.commonprefix((names[0], names[-1])) if names else ""
+        role_values = tuple(
+            sorted({entry[1].value for entry in self.entries if entry[1] is not None})
+        )
+        role_codes = {value: code for code, value in enumerate(role_values)}
+        paths = tuple(sorted({entry[2] for entry in self.entries}))
+        path_codes = {path: code for code, path in enumerate(paths)}
+        return {
+            "entity_id_prefix": prefix,
+            "entity_id_suffixes": tuple(name[len(prefix) :] for name in names),
+            "role_values": role_values,
+            "role_codes": tuple(
+                -1 if entry[1] is None else role_codes[entry[1].value]
+                for entry in self.entries
+            ),
+            "occurrence_paths": paths,
+            "occurrence_path_codes": tuple(path_codes[entry[2]] for entry in self.entries),
+            "indexed_roles": self.indexed_roles,
+        }
+
+    @classmethod
+    def from_record(
+        cls: type[GeometryAssociationSourceIdentities], payload: Mapping[str, Any], /
+    ) -> GeometryAssociationSourceIdentities:
+        """Restore identities through full validation and canonical re-encoding."""
+        if (
+            set(payload) != _SOURCE_IDENTITY_RECORD_FIELDS
+            or type(payload["entity_id_prefix"]) is not str
+            or any(
+                type(payload[name]) is not tuple
+                for name in _SOURCE_IDENTITY_RECORD_FIELDS
+                - {"entity_id_prefix", "indexed_roles"}
+            )
+        ):
+            raise ValueError(
+                "GeometryAssociationSourceIdentities.payload must contain an immutable shared-prefix identity dictionary; got invalid fields"
+            )
+        prefix = payload["entity_id_prefix"]
+        suffixes = payload["entity_id_suffixes"]
+        role_values = payload["role_values"]
+        role_codes = payload["role_codes"]
+        paths = payload["occurrence_paths"]
+        path_codes = payload["occurrence_path_codes"]
+        if len(role_codes) != len(suffixes) or len(path_codes) != len(suffixes):
+            raise ValueError(
+                "GeometryAssociationSourceIdentities.payload must align every identity column; got differing lengths"
+            )
+        if (
+            any(type(suffix) is not str for suffix in suffixes)
+            or any(type(value) is not str for value in role_values)
+            or any(type(code) is not int for code in (*role_codes, *path_codes))
+        ):
+            raise TypeError(
+                "GeometryAssociationSourceIdentities.payload must contain text suffixes, role values and integer codes; got another wire type"
+            )
+        declared_roles = {role.value: role for role in GeometrySourceEntityRole}
+        if any(value not in declared_roles for value in role_values):
+            raise ValueError(
+                "GeometryAssociationSourceIdentities.role_values must name declared source roles; got an unknown role value"
+            )
+        if any(not -1 <= code < len(role_values) for code in role_codes) or any(
+            not 0 <= code < len(paths) for code in path_codes
+        ):
+            raise ValueError(
+                "GeometryAssociationSourceIdentities.codes must address their dictionaries; got an out-of-range code"
+            )
+        identities = cls(
+            tuple(
+                (
+                    prefix + suffix,
+                    None if role == -1 else declared_roles[role_values[role]],
+                    paths[path],
+                )
+                for suffix, role, path in zip(suffixes, role_codes, path_codes, strict=True)
+            ),
+            payload["indexed_roles"],
+        )
+        if identities.to_record() != dict(payload):
+            raise ValueError(
+                "GeometryAssociationSourceIdentities.payload must be the canonical encoding of its identities; got a noncanonical prefix split, dictionary order or unused dictionary value"
+            )
+        return identities
+
+
+def _require_source_bank_shape(identities: object, row_indices: object, /) -> None:
+    if type(identities) is not GeometryAssociationSourceIdentities:
+        raise TypeError(
+            "GeometryAssociationSourceBank.identities must be GeometryAssociationSourceIdentities; got another identity owner"
+        )
+    if (
+        type(row_indices) is not np.ndarray
+        or row_indices.dtype != np.int64
+        or row_indices.ndim != 1
+    ):
+        raise TypeError(
+            "GeometryAssociationSourceBank.row_indices must be a one-dimensional int64 host array; got another route representation"
+        )
+
+
+def _require_source_bank(
+    identities: GeometryAssociationSourceIdentities, row_indices: np.ndarray, /
+) -> None:
+    _require_source_bank_shape(identities, row_indices)
+    _require_source_identities(identities.entries, identities.indexed_roles)
+    count = len(identities.entries)
+    if (
+        row_indices.size
+        and (int(row_indices.min()) < 0 or int(row_indices.max()) >= count)
+    ) or np.count_nonzero(np.bincount(row_indices, minlength=count)) != count:
         raise ValueError(
             "GeometryAssociationSourceBank.row_indices must cover every declared identity in range; got an unused or undeclared identity"
         )
 
 
 @final
-@dataclass(frozen=True, slots=True, init=False)
-class GeometryAssociationSourceBank:
-    """Store named source identities once with their ordered semantic row routes."""
+class GeometryAssociationSourceBank(StrictModule, NonTrainableState):
+    """Store named source identities once with their ordered semantic row routes.
 
-    entries: tuple[AssociationSourceIdentity, ...]
-    row_indices: tuple[int, ...]
-    indexed_roles: bool
+    ``row_indices`` is a read-only C-contiguous int64 host array: row ``r``
+    names ``identities.entries[row_indices[r]]``. Routes lie in range and use
+    every identity.
+    """
+
+    identities: GeometryAssociationSourceIdentities = eqx.field(static=True)
+    row_indices: np.ndarray
 
     def __init__(
-        self,
-        entries: tuple[AssociationSourceIdentity, ...],
-        row_indices: tuple[int, ...],
-        indexed_roles: bool,
+        self, identities: GeometryAssociationSourceIdentities, row_indices: np.ndarray
     ) -> None:
-        _require_source_bank(entries, row_indices, indexed_roles)
-        # This array-free frozen dataclass is not a StrictModule. Assign only
-        # after every metadata invariant has been checked.
-        object.__setattr__(self, "entries", entries)
-        object.__setattr__(self, "row_indices", row_indices)
-        object.__setattr__(self, "indexed_roles", indexed_roles)
+        _require_source_bank(identities, row_indices)
+        routes = np.array(row_indices, dtype=np.int64, order="C", copy=True)
+        routes.setflags(write=False)
+        self.identities = identities
+        self.row_indices = routes
 
     @classmethod
     def from_rows(
@@ -194,29 +334,46 @@ class GeometryAssociationSourceBank:
         )
         entries = tuple(sorted(set(rows), key=_source_identity_key))
         positions = {value: index for index, value in enumerate(entries)}
-        return cls(entries, tuple(positions[value] for value in rows), roles is not None)
+        # Positions are bounded by the entry count, so they fit int64.
+        return cls(
+            GeometryAssociationSourceIdentities(entries, roles is not None),
+            np.fromiter(
+                (positions[value] for value in rows), dtype=np.int64, count=len(rows)
+            ),
+        )
+
+    @property
+    def entries(self) -> tuple[AssociationSourceIdentity, ...]:
+        return self.identities.entries
+
+    @property
+    def indexed_roles(self) -> bool:
+        return self.identities.indexed_roles
 
     def entity_id(self, row: SupportsIndex, /) -> str:
-        return self.entries[self.row_indices[row]][0]
+        return self.identities.entries[int(self.row_indices[row])][0]
 
     def role(self, row: SupportsIndex, /) -> GeometrySourceEntityRole | None:
-        return self.entries[self.row_indices[row]][1]
+        return self.identities.entries[int(self.row_indices[row])][1]
 
     def occurrence_path(self, row: SupportsIndex, /) -> tuple[str, ...]:
-        return self.entries[self.row_indices[row]][2]
+        return self.identities.entries[int(self.row_indices[row])][2]
 
     def entity_ids(self) -> tuple[str, ...]:
-        return tuple(self.entity_id(row) for row in range(len(self.row_indices)))
+        entries = self.identities.entries
+        return tuple(entries[index][0] for index in self.row_indices.tolist())
 
     def roles(self) -> tuple[GeometrySourceEntityRole | None, ...] | None:
+        entries = self.identities.entries
         return (
-            tuple(self.role(row) for row in range(len(self.row_indices)))
-            if self.indexed_roles
+            tuple(entries[index][1] for index in self.row_indices.tolist())
+            if self.identities.indexed_roles
             else None
         )
 
     def occurrence_paths(self) -> tuple[tuple[str, ...], ...]:
-        return tuple(self.occurrence_path(row) for row in range(len(self.row_indices)))
+        entries = self.identities.entries
+        return tuple(entries[index][2] for index in self.row_indices.tolist())
 
     def row_columns(
         self,
@@ -226,80 +383,15 @@ class GeometryAssociationSourceBank:
         tuple[tuple[str, ...], ...],
     ]:
         """Expand aligned pointer columns, borrowing immutable entry values."""
-        entries, routes = self.entries, self.row_indices
+        entries, routes = self.identities.entries, self.row_indices.tolist()
         return (
             tuple(entries[index][0] for index in routes),
             (
                 tuple(entries[index][1] for index in routes)
-                if self.indexed_roles
+                if self.identities.indexed_roles
                 else None
             ),
             tuple(entries[index][2] for index in routes),
-        )
-
-    def to_record(self) -> Mapping[str, Any]:
-        """Return explicit identity columns and ordered row routes."""
-        _require_source_bank(self.entries, self.row_indices, self.indexed_roles)
-        return {
-            "entity_ids": tuple(entry[0] for entry in self.entries),
-            "entity_roles": tuple(
-                None if entry[1] is None else entry[1].value for entry in self.entries
-            ),
-            "occurrence_paths": tuple(entry[2] for entry in self.entries),
-            "row_indices": self.row_indices,
-            "indexed_roles": self.indexed_roles,
-        }
-
-    @classmethod
-    def from_record(
-        cls: type[GeometryAssociationSourceBank], payload: Mapping[str, Any], /
-    ) -> GeometryAssociationSourceBank:
-        """Restore identity columns through full bank validation."""
-        if set(payload) != {
-            "entity_ids",
-            "entity_roles",
-            "occurrence_paths",
-            "row_indices",
-            "indexed_roles",
-        } or any(
-            type(payload[name]) is not tuple
-            for name in (
-                "entity_ids",
-                "entity_roles",
-                "occurrence_paths",
-                "row_indices",
-            )
-        ):
-            raise ValueError(
-                "GeometryAssociationSourceBank.payload must contain immutable identity columns and row routes; got invalid fields"
-            )
-        identifiers = payload["entity_ids"]
-        roles = payload["entity_roles"]
-        paths = payload["occurrence_paths"]
-        if len(identifiers) != len(roles) or len(identifiers) != len(paths):
-            raise ValueError(
-                "GeometryAssociationSourceBank.payload must align every identity column; got differing lengths"
-            )
-        if any(role is not None and type(role) is not str for role in roles):
-            raise TypeError(
-                "GeometryAssociationSourceBank.entity_roles must contain role values or None; got another wire type"
-            )
-        declared_roles = {role.value: role for role in GeometrySourceEntityRole}
-        if any(role is not None and role not in declared_roles for role in roles):
-            raise ValueError(
-                "GeometryAssociationSourceBank.entity_roles must name declared source roles; got an unknown role value"
-            )
-        return cls(
-            tuple(
-                (
-                    identifier,
-                    None if role is None else declared_roles[role],
-                    path,
-                )
-                for identifier, role, path in zip(identifiers, roles, paths, strict=True)
-            ),
-            payload["row_indices"],
-            payload["indexed_roles"],
         )
 
 
@@ -465,8 +557,14 @@ class GeometryAssociation(StrictModule, NonTrainableState):
     unresolved status and paired absent indices.
 
     Curve and mapped-reference rows omit indexed constructor inputs and store
-    paired ``-1`` banks. Stored-field replay selects those absent inputs from
-    ``association_kind`` and authenticates every retained field, including the
+    paired ``-1`` banks. Unindexed piecewise-linear and surface rows store the
+    same paired ``-1`` banks. Piecewise-linear presence is the source bank's
+    ``indexed_roles`` declaration. A surface bank is indexed exactly when one
+    row names a stratum: after resolved-row validation, explicit surface banks
+    that are paired ``-1`` on every row take the absent representation and
+    identity. ``indexed_source_strata`` reports these constructor-enforced
+    invariants; stored-field replay and lineage rebuilds pass strata only when
+    it holds. Replay authenticates every retained field, including the
     sentinel banks, against the constructor result.
     """
 
@@ -475,7 +573,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     target_entity_set_id: str = eqx.field(static=True)
     target_global_ids: Array
-    source_entities: GeometryAssociationSourceBank = eqx.field(static=True)
+    source_entities: GeometryAssociationSourceBank
     residuals: Array
     resolved: Array
     ambiguous: Array
@@ -638,7 +736,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                     if roles is not None
                     or (
                         association_kind is GeometryAssociationKind.SURFACE
-                        and source_dimensions is not None
+                        and bool(np.any(dimensions >= 0))
                     )
                     else {}
                 ),
@@ -685,9 +783,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 budget.retain_owner(rebuilt, temporary_storage_credit=storage)
                 return rebuilt
         _require_source_bank(
-            value.source_entities.entries,
-            value.source_entities.row_indices,
-            value.source_entities.indexed_roles,
+            value.source_entities.identities, value.source_entities.row_indices
         )
         return cls._replay_stored_fields(value)
 
@@ -700,22 +796,11 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             raise TypeError(
                 f"stored_fields.GeometryAssociation.association_kind must be GeometryAssociationKind; got {kind!r}"
             )
-        dimensions: Array | None
-        indices: Array | None
-        match kind:
-            case GeometryAssociationKind.CURVE | GeometryAssociationKind.MAPPED_REFERENCE:
-                dimensions = None
-                indices = None
-            case (
-                GeometryAssociationKind.BREP
-                | GeometryAssociationKind.SURFACE
-                | GeometryAssociationKind.PIECEWISE_LINEAR
-                | GeometryAssociationKind.IMPLICIT
-            ):
-                dimensions = value.source_dimensions
-                indices = value.source_indices
-            case _:
-                assert_never(kind)
+        dimensions, indices = (
+            (value.source_dimensions, value.source_indices)
+            if value.indexed_source_strata
+            else (None, None)
+        )
         sources, roles, paths = value.source_entities.row_columns()
         rebuilt = cls(
             kind,
@@ -747,6 +832,25 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                     f"stored_fields.GeometryAssociation.{member.name} must match reconstructed retained content; got changed {member.name}"
                 )
         return rebuilt
+
+    @property
+    def indexed_source_strata(self) -> bool:
+        """Whether stored source strata are constructor inputs, not placeholders.
+
+        Piecewise-linear rows declare indexing through their role bank. The
+        constructor stores a surface bank without any indexed row as absent.
+        """
+        match self.association_kind:
+            case GeometryAssociationKind.CURVE | GeometryAssociationKind.MAPPED_REFERENCE:
+                return False
+            case GeometryAssociationKind.PIECEWISE_LINEAR:
+                return self.source_entities.indexed_roles
+            case GeometryAssociationKind.SURFACE:
+                return bool(np.any(np.asarray(self.source_dimensions) >= 0))
+            case GeometryAssociationKind.BREP | GeometryAssociationKind.IMPLICIT:
+                return True
+            case _:
+                assert_never(self.association_kind)
 
     @property
     def complete(self) -> bool:
@@ -817,7 +921,7 @@ def _association_reconstruction_admission(
 ) -> Iterator[CoordinateLiveStorage]:
     """Admit replay's shared entry graph, pointer columns and buffers."""
     bank = value.source_entities
-    _require_source_bank_shape(bank.entries, bank.row_indices, bank.indexed_roles)
+    _require_source_bank_shape(bank.identities, bank.row_indices)
     with budget.temporary_scope(), budget.live_storage() as storage:
         storage.set_bound(512, work=1)
         metadata = budget.live_object_storage_upper(value)
@@ -826,7 +930,7 @@ def _association_reconstruction_admission(
             for member in fields(value)
             if isinstance(item := getattr(value, member.name), (Array, np.ndarray))
         )
-        rows, keys = len(bank.row_indices), len(bank.entries)
+        rows, keys = bank.row_indices.size, len(bank.identities.entries)
         array_bytes = sum(max(array.nbytes, 8 * array.size) for array in arrays)
         # Valid retained numeric owners have ten banks. Malformed alternate
         # representations still need bounded normalization before owner refusal.
@@ -842,21 +946,22 @@ def _association_reconstruction_admission(
         )
         # This is the same validation as the unbudgeted entry point, performed
         # once before indexing. Row columns borrow names/roles/path tuples.
-        _require_source_bank(bank.entries, bank.row_indices, bank.indexed_roles)
-        text_lengths: list[int] = []
-        path_lengths: list[int] = []
-        for name, role, path in bank.entries:
+        _require_source_bank(bank.identities, bank.row_indices)
+        text_lengths = np.empty(keys, dtype=np.int64)
+        path_lengths = np.empty(keys, dtype=np.int64)
+        for key, (name, role, path) in enumerate(bank.identities.entries):
             budget.reserve(1 + len(path))
-            text_lengths.append(
+            text_lengths[key] = (
                 len(name)
                 + (0 if role is None else len(role.value))
                 + sum(len(part) for part in path)
                 + 2 * len(path)
                 + 16
             )
-            path_lengths.append(len(path))
-        expanded_text = sum(text_lengths[index] for index in bank.row_indices)
-        path_visits = sum(path_lengths[index] for index in bank.row_indices)
+            path_lengths[key] = len(path)
+        visits = np.bincount(bank.row_indices, minlength=keys)
+        expanded_text = int(visits @ text_lengths)
+        path_visits = int(visits @ path_lengths)
         # Unicode/UTF-8 serialization and generated identity text are buffers,
         # not new deep Python entry graphs for each route.
         revision_width = (
@@ -1155,6 +1260,10 @@ def association_source_entities(
                 raise ValueError(
                     f"GeometryAssociation.surface_dimensions must identify corners, curves, or patches in [0, 2]; got {dimensions_!r}"
                 )
+            if not np.any(dimensions_ >= 0):
+                # Paired -1 rows name no stratum; the unindexed placeholder
+                # keeps one representation for absent and explicit inputs.
+                return np.full((count,), -1, np.int8), np.full((count,), -1, np.int32)
         case GeometryAssociationKind.CURVE | GeometryAssociationKind.MAPPED_REFERENCE:
             raise ValueError(
                 f"GeometryAssociation.indexed_strata must be absent for this representation; got kind {kind!r}, dimensions {dimensions!r}, indices {indices!r}"

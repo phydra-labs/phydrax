@@ -29,7 +29,7 @@ def mapped_source_corner_coordinates(
 ) -> np.ndarray:
     """Validate rational physical corner agreement across independent root maps."""
 
-    elements, routes, _ = source_geometry.resolve(reference_mesh)
+    elements, routes, _ = source_geometry.resolve(reference_mesh, budget=budget)
     values = source_geometry.source_coordinates(budget=budget)
     ids = np.asarray(reference_mesh.vertex_global_ids, dtype=np.int64)
     positions: dict[int, tuple[Fraction, ...]] = {}

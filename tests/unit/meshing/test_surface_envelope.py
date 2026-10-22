@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import (
     asdict,
     dataclass,
@@ -19,27 +21,49 @@ import pytest
 from jax import Array, tree_util
 
 import phydrax as phx
-from phydrax._fingerprint import canonical_fingerprint, canonical_json
+from phydrax._fingerprint import canonical_fingerprint, canonical_json, tree_content_equal
 from phydrax._identity import SemanticProvenance
-from phydrax._meshcore import exact_orient3d, MeshcoreError, MeshcoreStatus
+from phydrax._meshcore import (
+    exact_orient3d,
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeBatchTicket,
+    NativeExecutionScope,
+)
 from phydrax._model._structure import _restore_dataclass, restore_registered_fields
 from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
-from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._domain_coverage import (
+    DomainCoverageCertificate,
+    PiecewiseLinearDomain,
+)
 from phydrax.geometry.surface._model import SurfaceModel
 from phydrax.lifecycle._meshing_source_records import register_meshing_source_types
 from phydrax.lifecycle._meshing_sources import (
+    _require_registered_envelope,
+    read_meshing_source_closure,
+    register_meshing_source_artifacts,
     write_meshing_source_closure,
 )
+from phydrax.meshing._adaptation import (
+    _bind_plc_source_proofs,
+    _PlcSourceProofs,
+    _preparation_execution_limits,
+    adaptation_phase,
+)
+from phydrax.meshing._measurements import NativeExecutionImports, NativeExecutionRecord
+from phydrax.meshing._native_preparation import native_preparation_ledger
+from phydrax.meshing._plc_mapped_support import MappedPlcSupportProof
 from phydrax.meshing._surface_envelope import (
     _admit_surface_envelope_geometry_replay,
     _admit_surface_envelope_record,
     _authenticate_surface_envelope_repair,
     _carry_surface_envelope_repair,
     _certified_surface_envelope_domain,
+    _classify_surface_envelope_repair_payload,
     _decode_surface_envelope_repair,
     _repair_provenance_mapping,
     _require_surface_envelope_repair_metrics,
@@ -48,6 +72,7 @@ from phydrax.meshing._surface_envelope import (
     _surface_envelope_policy_payload,
     _surface_envelope_repair_payload,
     _surface_envelope_repair_stage,
+    _surface_envelope_requested,
     _topology,
     _validate_surface_envelope_evidence_fields,
     EnvelopeFeaturePermission,
@@ -96,6 +121,8 @@ _VOLUME_ABSOLUTE_ACCEPTANCE = 1.0e-14
 # The affine density/history contract uses the same 1e-12 acceptance bound as
 # the moved envelope state-transition qualification.
 _AFFINE_FIELD_ACCEPTANCE = 1.0e-12
+# The LF17 consumer target: independently integrated P1-minus-|x|^2 L2 error.
+_CORPUS_TARGET_L2_ERROR = 0.05
 
 
 def _changed_stored_fields[T](value: T, /, **changes: Any) -> T:
@@ -129,6 +156,7 @@ def _changed_stored_fields[T](value: T, /, **changes: Any) -> T:
 def _carry_repair_with_request_budget(
     source: M.CellMeshingResult,
     target: M.CellMeshingResult,
+    anchor: NativeSurfaceEnvelopeSource | None,
     /,
     *,
     limits: M.MeshingLimits,
@@ -144,7 +172,44 @@ def _carry_repair_with_request_budget(
             maximum_memory_bytes=limits.maximum_scratch_bytes,
         )
         with budget.measurement(), budget.activate():
-            return _carry_surface_envelope_repair(source, target, budget=budget)
+            return _carry_surface_envelope_repair(source, target, anchor, budget=budget)
+
+
+def _rebuilt_result(
+    result: M.CellMeshingResult, /, **changes: Any
+) -> M.CellMeshingResult:
+    """Publish changed fields canonically, so result identity is recomputed."""
+    values = {
+        member.name: getattr(result, member.name)
+        for member in dataclass_fields(result)
+        if member.name not in ("result_id", "stored_content_id")
+    }
+    values.update(changes)
+    positional = (
+        "mesh",
+        "geometry",
+        "coordinate_contract",
+        "audit",
+        "quality",
+        "compliance",
+        "trace",
+        "provider",
+        "runtime",
+        "derivative_mode",
+        "provenance",
+    )
+    arguments = tuple(values.pop(name) for name in positional)
+    return M.CellMeshingResult(*arguments, **values)
+
+
+def _repair_metric_names(source: NativeSurfaceEnvelopeSource, /) -> frozenset[str]:
+    return frozenset(
+        name
+        for name, _ in (
+            *_surface_envelope_requested(source.envelope.policy),
+            *_surface_envelope_achieved(source.envelope.evidence),
+        )
+    )
 
 
 @pytest.mark.parametrize("change", ("duplicate", "unordered"))
@@ -230,6 +295,177 @@ def test_dirty_duplicate_reversed_and_degenerate_faces_remain_visible() -> None:
     assert envelope.evidence.repaired_topology.degenerate_faces == 0
     assert envelope.evidence.repaired_topology.duplicate_faces == 0
     assert np.array_equal(dirty.triangles, faces)
+
+
+# Nonwatertight positive corpus of the declared repair domain: any finite soup
+# under explicit sampled unsigned-distance thickening. Each case keeps its
+# defect visible in source evidence; none infers an intended dirty-shell
+# interior.
+_DEFECTIVE_SOUP_CORPUS: dict[
+    str, tuple[tuple[tuple[float, float, float], ...], tuple[tuple[int, int, int], ...]]
+] = {
+    "nonmanifold-fan": (
+        (
+            (0.0, 0.0, 0.0),
+            (0.2, 0.0, 0.0),
+            (0.1, 0.15, 0.0),
+            (0.1, -0.1, 0.1),
+            (0.1, -0.1, -0.1),
+        ),
+        ((0, 1, 2), (1, 0, 3), (0, 1, 4)),
+    ),
+    "self-intersecting": (
+        (
+            (0.0, 0.0, 0.0),
+            (0.2, 0.0, 0.0),
+            (0.0, 0.2, 0.0),
+            (0.05, -0.05, -0.1),
+            (0.05, 0.15, -0.1),
+            (0.05, 0.05, 0.1),
+        ),
+        ((0, 1, 2), (3, 4, 5)),
+    ),
+    "open-inconsistent-shell": (
+        ((0.0, 0.0, 0.0), (0.2, 0.0, 0.0), (0.0, 0.2, 0.0), (0.0, 0.0, 0.2)),
+        # A tetrahedral shell without one face and with one face reversed.
+        ((0, 2, 1), (0, 1, 3), (0, 2, 3)),
+    ),
+}
+
+
+def _point_triangle_distances(points: np.ndarray, triangle: np.ndarray) -> np.ndarray:
+    """Independent closest-point distances to one nondegenerate triangle."""
+    a, b, c = triangle
+    ab, ac, bc = b - a, c - a, c - b
+    d1, d2 = (points - a) @ ab, (points - a) @ ac
+    d3, d4 = (points - b) @ ab, (points - b) @ ac
+    d5, d6 = (points - c) @ ab, (points - c) @ ac
+    va, vb, vc = d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denominator = va + vb + vc
+        closest = a + (vb / denominator)[:, None] * ab + (vc / denominator)[:, None] * ac
+        # Ericson's Voronoi regions, lowest precedence first: edge BC, edge AC,
+        # vertex C, edge AB, vertex B, vertex A; later masks override.
+        regions = (
+            (
+                (va <= 0) & (d4 - d3 >= 0) & (d5 - d6 >= 0),
+                b + ((d4 - d3) / ((d4 - d3) + (d5 - d6)))[:, None] * bc,
+            ),
+            ((vb <= 0) & (d2 >= 0) & (d6 <= 0), a + (d2 / (d2 - d6))[:, None] * ac),
+            ((d6 >= 0) & (d5 <= d6), np.broadcast_to(c, points.shape)),
+            ((vc <= 0) & (d1 >= 0) & (d3 <= 0), a + (d1 / (d1 - d3))[:, None] * ab),
+            ((d3 >= 0) & (d4 <= d3), np.broadcast_to(b, points.shape)),
+            ((d1 <= 0) & (d2 <= 0), np.broadcast_to(a, points.shape)),
+        )
+        for mask, image in regions:
+            closest = np.where(mask[:, None], image, closest)
+    return np.linalg.norm(points - closest, axis=1)
+
+
+@pytest.mark.parametrize("case", tuple(_DEFECTIVE_SOUP_CORPUS))
+def test_defective_soup_corpus_repairs_meshes_and_solves(case: str) -> None:
+    vertices, faces = _DEFECTIVE_SOUP_CORPUS[case]
+    soup = RawTriangleSoup(
+        np.asarray(vertices, dtype=np.float64),
+        np.asarray(faces, dtype=np.int64),
+        envelope_metadata(),
+    )
+    envelope = wrap_surface_envelope(soup, envelope_policy())
+    evidence = envelope.evidence
+    original, repaired = evidence.source_topology, evidence.repaired_topology
+    match case:
+        case "nonmanifold-fan":
+            assert original.nonmanifold_edges == 1
+        case "self-intersecting":
+            assert original.components == 2
+        case "open-inconsistent-shell":
+            assert original.boundary_edges == 3
+    assert (
+        repaired.boundary_edges,
+        repaired.nonmanifold_edges,
+        repaired.degenerate_faces,
+        repaired.duplicate_faces,
+        repaired.components,
+    ) == (0, 0, 0, 0, 1)
+    assert 0.0 < evidence.source_inclusion_margin
+    assert (
+        max(evidence.source_to_repaired_upper, evidence.repaired_to_source_upper)
+        <= envelope.policy.maximum_deviation
+    )
+    # Independent vertex-sampled check of both directed repaired-surface bounds.
+    source_points = np.asarray(soup.vertices, dtype=np.float64)
+    surface = np.asarray(envelope.repaired.mesh.coordinates, dtype=np.float64)
+    distances = np.min(
+        [
+            _point_triangle_distances(surface, source_points[np.asarray(face)])
+            for face in faces
+        ],
+        axis=0,
+    )
+    # Binary64 evaluation of this oracle may differ from exact distance by a
+    # few rounding units of the offset scale.
+    slack = 64.0 * np.finfo(np.float64).eps * envelope.policy.offset
+    assert np.all(distances <= evidence.repaired_to_source_upper + slack)
+    assert np.all(distances >= evidence.source_inclusion_margin - slack)
+
+    source = NativeSurfaceEnvelopeSource(envelope, "wrapped-solid")
+    specification = envelope_specification(source)
+    result = (
+        NativeMeshingProvider(
+            M.NativeMeshingOptions(
+                "surface_envelope_tetrahedral",
+                volume_schedule=NativeVolumeSchedule(
+                    refinement_rounds=1,
+                    improvement_passes=1,
+                    minimum_dihedral_degrees=0.0,
+                ),
+            )
+        )
+        .plan(source, specification, coordinate_contract=_SI)
+        .execute()
+    )
+    acceptance = validate_envelope_acceptance(
+        source,
+        result,
+        limits=specification.limits,
+        failure_factory=envelope_failure,
+        measure_cells=tetrahedron_measures,
+    )
+    assert acceptance["passed"] is True
+    # Every authored source vertex lies inside a published tetrahedron.
+    points = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    cells = np.concatenate([np.asarray(block.vertices) for block in result.mesh.blocks])
+    corners = points[cells]
+    frames = np.swapaxes(corners[:, 1:] - corners[:, :1], 1, 2)
+    offsets = source_points[:, None, :] - corners[None, :, 0, :]
+    weights = np.einsum("cij,pcj->pci", np.linalg.inv(frames), offsets)
+    inside = (np.min(weights, axis=-1) >= -1.0e-12) & (
+        np.sum(weights, axis=-1) <= 1.0 + 1.0e-12
+    )
+    assert np.all(np.any(inside, axis=1))
+
+    space, problem, _ = prepare_envelope_solver(
+        result,
+        failure_factory=envelope_failure,
+        source_coefficient=quadratic_source,
+        dirichlet_values=quadratic_value,
+    )
+    system, rhs = problem.linear_system()
+    assert system.operator.properties.certifies("self_adjoint")
+    # Independent bilinear reciprocity checks the actual constrained action,
+    # not merely the metadata used for Krylov dispatch.
+    ordinals = np.arange(system.operator.source.size, dtype=np.float64)
+    first = np.sin(ordinals + 0.5)
+    second = np.cos(0.73 * ordinals + 0.1)
+    forward = float(np.vdot(first, np.asarray(system.operator.mv(second))))
+    reverse = float(np.vdot(second, np.asarray(system.operator.mv(first))))
+    assert abs(forward - reverse) <= 1.0e-12 * max(1.0, abs(forward), abs(reverse))
+    solved = phx.linalg.solve(system, rhs)
+    assert bool(np.all(np.asarray(solved.successful)))
+    assert solved.provenance.method == "minres"
+    values = problem.expand(solved.value)
+    assert values.shape == (space.dof_maps[0].global_dof_count,)
+    assert quadratic_l2_error(result.mesh, values) <= _CORPUS_TARGET_L2_ERROR
 
 
 @pytest.mark.parametrize(
@@ -510,6 +746,39 @@ def envelope_publication(request: pytest.FixtureRequest) -> _EnvelopePublication
     )
 
 
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_registration_preserves_extraction_segment_namespace(
+    envelope_publication: _EnvelopePublication,
+) -> None:
+    publication = envelope_publication
+    register_meshing_source_artifacts()
+    _require_registered_envelope(
+        publication.source,
+        publication.specification,
+        publication.result,
+        limits=phx.ArrayArchiveLimits(),
+    )
+    exact = publication.result.geometry.exact_source
+    assert isinstance(exact, phx.discretization.ExactPlcCellGeometrySource)
+    # Equal unoriented edge sets are insufficient: segment IDs address rows.
+    changed = eqx.tree_at(
+        lambda result: result.geometry.exact_source,
+        publication.result,
+        eqx.tree_at(
+            lambda source: source.source_segments,
+            exact,
+            np.asarray(exact.source_segments)[::-1].copy(),
+        ),
+    )
+    with pytest.raises(ValueError, match="source_segments bank"):
+        _require_registered_envelope(
+            publication.source,
+            publication.specification,
+            changed,
+            limits=phx.ArrayArchiveLimits(),
+        )
+
+
 def test_envelope_specification_binds_repaired_identity_and_exact_requested_limits(
     envelope_publication: _EnvelopePublication,
 ) -> None:
@@ -621,6 +890,7 @@ def test_envelope_publication_retains_repair_provenance(
     assert source.envelope.source.metadata.source_revision in transition.input_ids
     assert source.source_revision in transition.output_ids
     payload = dict(json.loads(result.provenance.content_json)["items"])
+    assert payload["specification"] == envelope_publication.specification.specification_id
     policy = dict(payload["wrapping_policy"]["items"])
     evidence = dict(payload["wrapping_evidence"]["items"])
     original_topology = dict(evidence["source_topology"]["items"])
@@ -725,9 +995,9 @@ def test_envelope_acceptance_refuses_missing_repair_ancestry(
 
 
 @pytest.fixture(scope="module")
-def envelope_adaptation(
+def envelope_preparation(
     envelope_publication: _EnvelopePublication,
-) -> M.MeshAdaptationResult:
+) -> M.PreparedMeshAdaptation:
     source, result, specification = (
         envelope_publication.source,
         envelope_publication.result,
@@ -738,28 +1008,414 @@ def envelope_adaptation(
         result,
         specification.limits,
     )
-    adaptation = M.execute_mesh_adaptation(
-        M.prepare_mesh_adaptation(
-            result,
-            M.MarkedMeshAdaptation(
-                np.concatenate(
-                    [np.asarray(block.global_ids) for block in result.mesh.blocks]
-                ),
-                np.empty((0,), dtype=np.int64),
+    return M.prepare_mesh_adaptation(
+        result,
+        M.MarkedMeshAdaptation(
+            np.concatenate(
+                [np.asarray(block.global_ids) for block in result.mesh.blocks]
             ),
-            policy=M.MeshAdaptationPolicy(
-                M.MeshAdaptationRoute.NATIVE_MIXED,
-                limits=specification.limits,
-                association_transfer=association_transfer,
-                audit_policy=M.CellMeshAuditPolicy(
-                    require_complete_association=True,
-                    watertight_boundary=M.CellMeshAuditDisposition.REJECT,
-                ),
+            np.empty((0,), dtype=np.int64),
+        ),
+        policy=M.MeshAdaptationPolicy(
+            M.MeshAdaptationRoute.NATIVE_MIXED,
+            limits=specification.limits,
+            association_transfer=association_transfer,
+            audit_policy=M.CellMeshAuditPolicy(
+                require_complete_association=True,
+                watertight_boundary=M.CellMeshAuditDisposition.REJECT,
             ),
-        )
+            envelope_source=source,
+        ),
     )
+
+
+@pytest.fixture(scope="module")
+def envelope_adaptation(
+    envelope_preparation: M.PreparedMeshAdaptation,
+) -> M.MeshAdaptationResult:
+    adaptation = M.execute_mesh_adaptation(envelope_preparation)
     assert adaptation.status.converged
     return adaptation
+
+
+@contextmanager
+def _execution_ledger(
+    limits: M.MeshingLimits,
+    *,
+    prepared: M.PreparedMeshAdaptation | None = None,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Use production's preparation debit and completed-source history semantics."""
+    native_limits = (
+        limits.native_limits()
+        if prepared is None
+        else _preparation_execution_limits(prepared)[0]
+    )
+    with NativeExecutionScope(native_limits) as scope:
+        if prepared is not None and prepared.source.execution_evidence is not None:
+            native_preparation_ledger(scope).record_history(
+                scope, prepared.source.execution_evidence
+            )
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        with (
+            budget.retained_storage(lambda amount: scope.batch(0, bytes_upper=amount)),
+            adaptation_phase(scope, budget),
+        ):
+            yield budget
+
+
+def test_envelope_preparation_carries_issued_ledger_free_source_proof(
+    envelope_preparation: M.PreparedMeshAdaptation,
+) -> None:
+    attached = envelope_preparation.plc_source_proofs
+    assert attached is not None
+    assert attached.owner_id == envelope_preparation.prepared_id
+    (proof,) = attached.proofs
+    assert isinstance(proof, MappedPlcSupportProof)
+    assert not hasattr(proof, "ledger")
+    assert proof.mesh is envelope_preparation.source.mesh
+    assert 0 < proof.preparation_work_units <= proof.preparation_ticket_work
+    assert proof.retained_bytes > 0
+    restored = M.PreparedMeshAdaptation.from_stored_fields(envelope_preparation)
+    assert restored.plc_source_proofs is attached
+    # The stored form is detached: a restored preparation re-prepares.
+    detached = _PlcSourceProofs.from_record(attached.to_record())
+    assert detached.proofs == () and detached == attached
+    with pytest.raises(ValueError, match="detached empty form"):
+        _PlcSourceProofs.from_record({"proofs": 1})
+    with pytest.raises(TypeError, match="process-local"):
+        proof.__reduce__()
+
+
+def test_envelope_source_proof_binds_once_and_continues_its_allowance(
+    envelope_preparation: M.PreparedMeshAdaptation,
+) -> None:
+    original = envelope_preparation
+    # Explicitly exercise the mapped fallback without the whole-request receipt.
+    prepared = M.PreparedMeshAdaptation(
+        original.source,
+        original.request,
+        original.policy,
+        original.constraints,
+        plc_source_proofs=original.plc_source_proofs,
+    )
+    transfer = prepared.policy.association_transfer
+    assert isinstance(transfer, M.PlcAssociationTransfer)
+    assert prepared.plc_source_proofs is not None
+    (proof,) = prepared.plc_source_proofs.proofs
+    assert isinstance(proof, MappedPlcSupportProof)
+    limit = proof.prepared.request.limits.maximum_work_units
+    with _execution_ledger(prepared.policy.limits) as budget:
+        start, queries = budget.work_units, budget.ticket.geometry_queries
+        views = _bind_plc_source_proofs(prepared, budget=budget)
+        assert views is not None
+        (view,) = views
+        assert view.proof is proof and view.ledger is budget
+        # The preparation's own support work is imported once, not reset.
+        assert budget.work_units - start >= proof.preparation_work_units
+        assert budget.ticket.geometry_queries - queries >= proof.preparation_queries
+        assert view.work_start == budget.work_units
+        assert view.work_allowance == limit - proof.preparation_work_units
+        bound = budget.work_units
+        transfer.source_associations(
+            prepared.source, _prepared_source=[view], budget=budget
+        )
+        # Reuse authenticates the proof without re-preparing the support.
+        assert budget.work_units - bound < proof.preparation_work_units
+    with _execution_ledger(prepared.policy.limits) as other:
+        with pytest.raises(ValueError, match="bound to this request ledger"):
+            transfer.source_associations(
+                prepared.source, _prepared_source=[view], budget=other
+            )
+
+
+def test_envelope_source_proof_receipt_does_not_double_charge_preparation(
+    envelope_preparation: M.PreparedMeshAdaptation,
+) -> None:
+    prepared = envelope_preparation
+    preparation = prepared.preparation_evidence
+    assert preparation is not None
+    assert prepared.plc_source_proofs is not None
+    (proof,) = prepared.plc_source_proofs.proofs
+    assert isinstance(proof, MappedPlcSupportProof)
+    transfer = prepared.policy.association_transfer
+    assert isinstance(transfer, M.PlcAssociationTransfer)
+    with _execution_ledger(prepared.policy.limits) as fallback:
+        start = (
+            fallback.work_units,
+            fallback.ticket.work_units,
+            fallback.ticket.geometry_queries,
+        )
+        transfer.bind_source_proof(prepared.source, proof, budget=fallback)
+        replayed = (
+            fallback.work_units - start[0],
+            fallback.ticket.work_units - start[1],
+            fallback.ticket.geometry_queries - start[2],
+        )
+    with _execution_ledger(prepared.policy.limits, prepared=prepared) as budget:
+        start = (
+            budget.work_units,
+            budget.ticket.work_units,
+            budget.ticket.geometry_queries,
+        )
+        views = _bind_plc_source_proofs(prepared, budget=budget)
+        assert views is not None
+        (view,) = views
+        # Authentication is identical; only the already-debited charges differ.
+        assert replayed[0] - (budget.work_units - start[0]) == (
+            proof.preparation_work_units
+        )
+        assert replayed[1] - (budget.ticket.work_units - start[1]) == (
+            proof.preparation_ticket_work
+        )
+        assert replayed[2] - (budget.ticket.geometry_queries - start[2]) == (
+            proof.preparation_queries
+        )
+        assert view.work_allowance == (
+            proof.prepared.request.limits.maximum_work_units
+            - proof.preparation_work_units
+        )
+        assert isinstance(budget.ticket, NativeBatchTicket)
+        scope = budget.ticket.scope
+        assert scope.limits.maximum_work_units == (
+            prepared.policy.limits.maximum_work_units
+            - int(np.asarray(preparation.total_work_units))
+        )
+        assert scope.limits.maximum_geometry_queries == (
+            prepared.policy.limits.maximum_geometry_queries
+            - int(np.asarray(preparation.total_geometry_queries))
+        )
+        imports = NativeExecutionImports(scope, preparation=preparation)
+    history = prepared.source.execution_evidence
+    assert history is not None
+    receipt = NativeExecutionRecord(
+        imports.evidence(),
+        imports=imports,
+        owner_id=prepared.prepared_id,
+        preparation_evidence=preparation,
+        history_evidence=(history,),
+    )
+    assert receipt.imported_preparation_hex() == ()
+    assert receipt.history_evidence[0] is history
+    assert int(np.asarray(receipt.total_work_units)) == (
+        int(np.asarray(receipt.work_counters.construction_work))
+        + int(np.asarray(preparation.total_work_units))
+    )
+    assert int(np.asarray(receipt.total_geometry_queries)) == (
+        int(np.asarray(receipt.work_counters.source_queries))
+        + int(np.asarray(preparation.total_geometry_queries))
+    )
+
+
+def test_envelope_source_proof_refuses_forged_or_foreign_bindings(
+    envelope_preparation: M.PreparedMeshAdaptation,
+) -> None:
+    prepared = envelope_preparation
+    transfer = prepared.policy.association_transfer
+    assert isinstance(transfer, M.PlcAssociationTransfer)
+    assert prepared.plc_source_proofs is not None
+    (proof,) = prepared.plc_source_proofs.proofs
+    assert isinstance(proof, MappedPlcSupportProof)
+    with _execution_ledger(prepared.policy.limits) as budget:
+        # Field replacement cannot carry another preparation's charges.
+        forged = replace(proof, preparation_work_units=0, preparation_ticket_work=0)
+        with pytest.raises(ValueError, match="stale or foreign proof"):
+            transfer.bind_source_proof(prepared.source, forged, budget=budget)
+        # Reassigning an issued proof's field breaks its issuance seal.
+        images = proof.vertex_images
+        object.__setattr__(proof, "vertex_images", images[:-1] + images[-1:])
+        try:
+            if proof.vertex_images is not images:
+                with pytest.raises(ValueError, match="stale or foreign proof"):
+                    transfer.bind_source_proof(prepared.source, proof, budget=budget)
+        finally:
+            object.__setattr__(proof, "vertex_images", images)
+        # A source whose carrier coordinates were changed is not the earned one.
+        corrupted = eqx.tree_at(
+            lambda value: value.mesh.coordinates,
+            prepared.source,
+            prepared.source.mesh.coordinates.at[0, 0].add(1.0e-3),
+        )
+        with pytest.raises(ValueError, match="stale or foreign proof"):
+            transfer.bind_source_proof(corrupted, proof, budget=budget)
+        foreign = eqx.tree_at(
+            lambda value: value.plc_source_proofs,
+            prepared,
+            _PlcSourceProofs("foreign-preparation", (proof,)),
+        )
+        with pytest.raises(ValueError, match="plc_source_proofs must bind"):
+            _bind_plc_source_proofs(foreign, budget=budget)
+        detached = eqx.tree_at(
+            lambda value: value.plc_source_proofs,
+            prepared,
+            _PlcSourceProofs.from_record({}),
+        )
+        assert _bind_plc_source_proofs(detached, budget=budget) is None
+
+
+@pytest.mark.parametrize("change", ("unissued-attachment", "same-owner-receipt"))
+def test_envelope_source_proof_requires_its_exact_earning_receipt(
+    envelope_preparation: M.PreparedMeshAdaptation, change: str
+) -> None:
+    prepared = envelope_preparation
+    attached = prepared.plc_source_proofs
+    preparation = prepared.preparation_evidence
+    assert attached is not None and preparation is not None
+    if change == "unissued-attachment":
+        attached = _PlcSourceProofs(attached.owner_id, attached.proofs)
+    else:
+        # A real, valid ended record with the same owner did not earn this proof.
+        with NativeExecutionScope(prepared.policy.limits.native_limits()) as scope:
+            with scope.batch(1) as ticket:
+                ticket.consume(1)
+        preparation = NativeExecutionRecord(
+            scope.completed_evidence(), owner_id=prepared.prepared_id
+        )
+    changed = M.PreparedMeshAdaptation(
+        prepared.source,
+        prepared.request,
+        prepared.policy,
+        prepared.constraints,
+        plc_source_proofs=attached,
+        preparation_evidence=preparation,
+    )
+    with _execution_ledger(changed.policy.limits, prepared=changed) as budget:
+        before = budget.work_units, budget.ticket.geometry_queries
+        with pytest.raises(ValueError, match="exact earning preparation receipt"):
+            _bind_plc_source_proofs(changed, budget=budget)
+        assert (budget.work_units, budget.ticket.geometry_queries) == before
+
+
+def test_envelope_preparation_archive_detaches_live_source_proofs(
+    envelope_preparation: M.PreparedMeshAdaptation, tmp_path: Path
+) -> None:
+    receipt = write_meshing_source_closure(
+        tmp_path / "prepared-envelope", envelope_preparation
+    )
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert isinstance(restored, M.PreparedMeshAdaptation)
+    assert restored.prepared_id == envelope_preparation.prepared_id
+    assert restored.plc_source_proofs is not None
+    # Restoration keeps historical receipts, but live support must be earned again.
+    assert restored.plc_source_proofs.proofs == ()
+    assert restored.preparation_evidence is not None
+    assert envelope_preparation.preparation_evidence is not None
+    assert restored.preparation_evidence.receipt_hex() == (
+        envelope_preparation.preparation_evidence.receipt_hex()
+    )
+
+
+def _without_repair_history(
+    source: NativeSurfaceEnvelopeSource, result: M.CellMeshingResult, /
+) -> M.CellMeshingResult:
+    """Canonically republish a result with only its envelope history removed."""
+    reserved = _repair_metric_names(source)
+    return _rebuilt_result(
+        result,
+        compliance=M.MeshingComplianceReport(
+            result.compliance.specification_id,
+            issues=result.compliance.issues,
+            requested=tuple(
+                item for item in result.compliance.requested if item[0] not in reserved
+            ),
+            achieved=tuple(
+                item for item in result.compliance.achieved if item[0] not in reserved
+            ),
+        ),
+        trace=M.MeshingTrace(result.trace.stages[1:], binding=result.trace.binding),
+        provenance=SemanticProvenance(
+            {"kind": "certified-repaired-plc-target", "source": result.result_id},
+            resource_ids=result.provenance.resource_ids,
+        ),
+    )
+
+
+@pytest.fixture(scope="module")
+def fresh_carry_target(envelope_publication: _EnvelopePublication) -> M.CellMeshingResult:
+    """Certified repaired-PLC publication before any repair inventory is carried.
+
+    Geometry, audit, associations, certificates and request limits are the
+    real publication's; only its envelope history and metrics are absent.
+    """
+    return _without_repair_history(
+        envelope_publication.source, envelope_publication.result
+    )
+
+
+@pytest.fixture(scope="module")
+def foreign_envelope_source() -> NativeSurfaceEnvelopeSource:
+    """A truly wrapped envelope of a different (dirty) authored soup."""
+    sheet = envelope_sheet()
+    return NativeSurfaceEnvelopeSource(
+        wrap_surface_envelope(
+            RawTriangleSoup(
+                sheet.vertices,
+                np.array([[0, 1, 2], [2, 1, 0], [0, 0, 1]], dtype=np.int64),
+                sheet.metadata,
+                feature_edges=sheet.feature_edges,
+            ),
+            envelope_policy(),
+        ),
+        "wrapped-solid",
+    )
+
+
+def _rehashed_false_bound(
+    source: NativeSurfaceEnvelopeSource, result: M.CellMeshingResult, /
+) -> M.CellMeshingResult:
+    """Canonically republish internally consistent but unauthored bound history."""
+    evidence = source.envelope.evidence
+    forged = replace(
+        evidence, source_to_repaired_upper=evidence.source_inclusion_margin / 2.0
+    )
+    forged = replace(
+        forged,
+        evidence_id=_surface_envelope_evidence_id(
+            forged, source.envelope.repaired.mesh.coordinates.shape[0]
+        ),
+    )
+    content = _repair_provenance_content(source, result)
+    content["wrapping_evidence"] = asdict(forged)
+    content["envelope"] = canonical_fingerprint(
+        {
+            "kind": "surface-envelope",
+            "evidence": forged.evidence_id,
+            "realization": source.envelope.repaired.realization_id,
+            "carrier": source.envelope.carrier_id,
+        }
+    )
+    reserved = _repair_metric_names(source)
+    return _rebuilt_result(
+        result,
+        provenance=SemanticProvenance(
+            content, resource_ids=result.provenance.resource_ids
+        ),
+        compliance=M.MeshingComplianceReport(
+            result.compliance.specification_id,
+            issues=result.compliance.issues,
+            requested=result.compliance.requested,
+            achieved=(
+                *(item for item in result.compliance.achieved if item[0] not in reserved),
+                *_surface_envelope_achieved(forged),
+            ),
+        ),
+        trace=M.MeshingTrace(
+            (
+                _surface_envelope_repair_stage(
+                    forged, source.source_id, source.source_revision
+                ),
+                *result.trace.stages[1:],
+            ),
+            binding=result.trace.binding,
+        ),
+    )
 
 
 @_REPAIR_AUTHENTICATION_CASE
@@ -791,6 +1447,52 @@ def test_envelope_adaptation_retains_authenticated_repair_not_mesh_statistics(
     assert target.trace.stages[0] == initial.trace.stages[0]
     assert envelope_adaptation.transition is not None
     assert envelope_adaptation.transition.target.result_id == target.result_id
+    # The ended mixed-route settlement record reaches both consumer-visible targets.
+    route_evidence = envelope_adaptation.evidence
+    assert isinstance(route_evidence, M.MixedAdaptationEvidence)
+    receipt = route_evidence.execution_evidence
+    assert receipt is not None
+    assert receipt.owner_id == envelope_adaptation.prepared_id
+    assert target.execution_evidence is receipt
+    preparation = receipt.preparation_evidence
+    assert preparation is not None
+    assert preparation.owner_id == envelope_adaptation.prepared_id
+    assert len(receipt.history_evidence) == 1
+    assert receipt.history_evidence[0] is initial.execution_evidence
+    assert receipt.history_evidence[0] is not preparation
+    assert int(np.asarray(receipt.total_work_units)) == (
+        int(np.asarray(receipt.work_counters.construction_work))
+        + int(np.asarray(preparation.total_work_units))
+    )
+    assert int(np.asarray(receipt.total_work_units)) <= (
+        envelope_publication.specification.limits.maximum_work_units
+    )
+    assert int(np.asarray(receipt.total_geometry_queries)) == (
+        int(np.asarray(receipt.work_counters.source_queries))
+        + int(np.asarray(preparation.total_geometry_queries))
+    )
+    assert int(np.asarray(receipt.total_geometry_queries)) <= (
+        envelope_publication.specification.limits.maximum_geometry_queries
+    )
+    # The transition view is a rebuilt module carrying the same ended record.
+    assert tree_content_equal(
+        envelope_adaptation.transition.target.execution_evidence, receipt
+    )
+    # Template cavities and PLC support queries are admitted on the request.
+    assert target.runtime.unenforced_limits == ()
+    assert {
+        "vertices",
+        "edges",
+        "faces",
+        "cells",
+        "connectivity_entries",
+        "data_bytes",
+        "work_units",
+        "cavity_cells",
+        "geometry_queries",
+        "scratch_bytes",
+        "wall_seconds",
+    } <= set(target.runtime.enforced_limits)
     payload = dict(json.loads(target.provenance.content_json)["items"])
     assert payload["kind"] == "native-adapted-surface-envelope-volume"
     assert payload["source"] == initial.result_id
@@ -817,16 +1519,50 @@ def _repair_provenance_content(
         "wrapping_policy": _surface_envelope_policy_payload(source.envelope.policy),
         "exact_repaired_volume": retained["exact_repaired_volume"],
     }
-    for name in ("plan", "source", "repair_provenance"):
+    for name in ("plan", "specification", "source", "repair_provenance"):
         if name in retained:
             content[name] = retained[name]
     return content
 
 
+def test_envelope_repair_provenance_binds_actual_generation_specification(
+    envelope_publication: _EnvelopePublication,
+) -> None:
+    source, result = envelope_publication.source, envelope_publication.result
+    content = _repair_provenance_content(source, result)
+    content["specification"] = "foreign-specification"
+    encoded = json.loads(SemanticProvenance(content).content_json)
+    with pytest.raises(ValueError, match=r"repair_provenance\.specification must match"):
+        _classify_surface_envelope_repair_payload(result, encoded)
+
+
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_repair_carry_from_unchanged_authored_source_succeeds(
+    envelope_publication: _EnvelopePublication,
+    fresh_carry_target: M.CellMeshingResult,
+) -> None:
+    source, initial = envelope_publication.source, envelope_publication.result
+    limits = envelope_publication.specification.limits
+    carried = _carry_repair_with_request_budget(
+        initial, fresh_carry_target, source, limits=limits
+    )
+    payload = dict(json.loads(carried.provenance.content_json)["items"])
+    assert payload["kind"] == "native-adapted-surface-envelope-volume"
+    assert payload["source"] == initial.result_id
+    assert payload["envelope"] == source.envelope.envelope_id
+    assert validate_envelope_acceptance(
+        source,
+        carried,
+        limits=limits,
+        failure_factory=envelope_failure,
+        measure_cells=tetrahedron_measures,
+    )["passed"]
+
+
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_repair_carry_refuses_tampered_semantic_payload(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
 ) -> None:
     initial = envelope_publication.result
     provenance = _changed_stored_fields(
@@ -839,17 +1575,28 @@ def test_envelope_repair_carry_refuses_tampered_semantic_payload(
     with pytest.raises(ValueError, match=r"SemanticProvenance.semantic_id"):
         _carry_repair_with_request_budget(
             tampered,
-            envelope_adaptation.target,
+            fresh_carry_target,
+            envelope_publication.source,
             limits=envelope_publication.specification.limits,
         )
 
 
-@pytest.mark.parametrize("change", ("source", "evidence", "policy"))
+@pytest.mark.parametrize(
+    "change,refusal",
+    (
+        # The changed authored identity derives foreign repaired source bindings.
+        ("source", r"repair_provenance\.associations must match"),
+        ("evidence", r"repair_provenance\.evidence must authenticate"),
+        # The changed offset no longer reproduces the native outward bounds.
+        ("policy", r"repair_provenance\.bounds must retain"),
+    ),
+)
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_repair_carry_refuses_rehashed_foreign_provenance(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
     change: str,
+    refusal: str,
 ) -> None:
     source, initial = envelope_publication.source, envelope_publication.result
     evidence = source.envelope.evidence
@@ -867,10 +1614,11 @@ def test_envelope_repair_carry_refuses_rehashed_foreign_provenance(
     content["wrapping_policy"] = policy
     provenance = SemanticProvenance(content)
     foreign = eqx.tree_at(lambda value: value.provenance, initial, provenance)
-    with pytest.raises(ValueError, match=r"SurfaceEnvelope.repair_provenance"):
+    with pytest.raises(ValueError, match=refusal):
         _carry_repair_with_request_budget(
             foreign,
-            envelope_adaptation.target,
+            fresh_carry_target,
+            source,
             limits=envelope_publication.specification.limits,
         )
     with pytest.raises(RuntimeError, match="envelope.acceptance.repair_provenance"):
@@ -883,14 +1631,25 @@ def test_envelope_repair_carry_refuses_rehashed_foreign_provenance(
         )
 
 
-@pytest.mark.parametrize("change", ("certificate", "coverage", "association"))
+@pytest.mark.parametrize(
+    "change,refusal",
+    (
+        ("certificate", r"repair_provenance\.certification must independently certify"),
+        (
+            "coverage",
+            r"DomainCoverage|stored_fields|repair_provenance\.(certificates|domain)",
+        ),
+        ("association", r"GeometryAssociation|repair_provenance\.associations"),
+    ),
+)
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_repair_carry_refuses_uncertified_or_foreign_target(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
     change: str,
+    refusal: str,
 ) -> None:
-    target = envelope_adaptation.target
+    target = fresh_carry_target
     if change == "certificate":
         target = eqx.tree_at(lambda value: value.certification, target, None)
     elif change == "coverage":
@@ -910,10 +1669,11 @@ def test_envelope_repair_carry_refuses_uncertified_or_foreign_target(
             target,
             (association, *target.associations[1:]),
         )
-    with pytest.raises(ValueError, match=r"repair_provenance|GeometryAssociation"):
+    with pytest.raises(ValueError, match=refusal):
         _carry_repair_with_request_budget(
             envelope_publication.result,
             target,
+            envelope_publication.source,
             limits=envelope_publication.specification.limits,
         )
 
@@ -957,6 +1717,7 @@ def test_envelope_adaptation_preparation_refuses_replaced_repair_owner(
     "owner,name,change",
     (
         ("initial", "plan", "missing"),
+        ("initial", "specification", "missing"),
         ("initial", "exact_repaired_volume", "missing"),
         ("adapted", "source", "missing"),
         ("adapted", "repair_provenance", "missing"),
@@ -964,6 +1725,7 @@ def test_envelope_adaptation_preparation_refuses_replaced_repair_owner(
         ("initial", "envelope", "empty"),
         ("adapted", "preserved_carrier", "nonstring"),
         ("initial", "plan", "noncanonical"),
+        ("initial", "specification", "noncanonical"),
         ("adapted", "source", "nonstring"),
     ),
 )
@@ -971,6 +1733,7 @@ def test_envelope_adaptation_preparation_refuses_replaced_repair_owner(
 def test_envelope_repair_carry_requires_complete_owner_history(
     envelope_publication: _EnvelopePublication,
     envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
     owner: str,
     name: str,
     change: str,
@@ -991,10 +1754,16 @@ def test_envelope_repair_carry_requires_complete_owner_history(
     changed = eqx.tree_at(
         lambda value: value.provenance, result, SemanticProvenance(content)
     )
-    with pytest.raises((TypeError, ValueError), match=r"repair_provenance"):
+    refusal = (
+        r"repair_provenance\.fields must retain"
+        if change == "missing"
+        else rf"repair_provenance\.{name} must be"
+    )
+    with pytest.raises((TypeError, ValueError), match=refusal):
         _carry_repair_with_request_budget(
             changed,
-            envelope_adaptation.target,
+            fresh_carry_target,
+            envelope_publication.source,
             limits=envelope_publication.specification.limits,
         )
 
@@ -1002,7 +1771,7 @@ def test_envelope_repair_carry_requires_complete_owner_history(
 @_REPAIR_AUTHENTICATION_CASE
 def test_non_envelope_dispatch_preserves_unrelated_repair_records(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
 ) -> None:
     initial = envelope_publication.result
     generic = eqx.tree_at(
@@ -1032,14 +1801,236 @@ def test_non_envelope_dispatch_preserves_unrelated_repair_records(
             ),
         ),
     )
+    limits = envelope_publication.specification.limits
     assert (
         _carry_repair_with_request_budget(
-            generic,
-            envelope_adaptation.target,
-            limits=envelope_publication.specification.limits,
+            generic, fresh_carry_target, None, limits=limits
         )
-        is envelope_adaptation.target
+        is fresh_carry_target
     )
+    # An envelope anchor cannot authorize a source without envelope history.
+    with pytest.raises(
+        ValueError, match=r"envelope_source must anchor retained surface-envelope"
+    ):
+        _carry_repair_with_request_budget(
+            generic, fresh_carry_target, envelope_publication.source, limits=limits
+        )
+
+
+@pytest.mark.parametrize("forgery", ("bound", "carrier"))
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_repair_carry_refuses_self_consistent_unauthored_history(
+    envelope_publication: _EnvelopePublication,
+    fresh_carry_target: M.CellMeshingResult,
+    forgery: str,
+) -> None:
+    source, initial = envelope_publication.source, envelope_publication.result
+    if forgery == "bound":
+        forged = _rehashed_false_bound(source, initial)
+    else:
+        content = _repair_provenance_content(source, initial)
+        content["preserved_carrier"] = "foreign-carrier"
+        forged = _rebuilt_result(
+            initial,
+            provenance=SemanticProvenance(
+                content, resource_ids=initial.provenance.resource_ids
+            ),
+        )
+    assert forged.result_id != initial.result_id
+    # Deterministic republication succeeds; only the independent author refuses.
+    assert M.CellMeshingResult.from_stored_fields(forged).result_id == forged.result_id
+    limits = envelope_publication.specification.limits
+    authored = r"repair_provenance must match the retained authored envelope"
+    with pytest.raises(ValueError, match=authored):
+        _carry_repair_with_request_budget(
+            forged, fresh_carry_target, source, limits=limits
+        )
+    with pytest.raises(ValueError, match=r"envelope_source must supply"):
+        _carry_repair_with_request_budget(forged, fresh_carry_target, None, limits=limits)
+
+
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_adaptation_preparation_requires_its_authored_envelope(
+    envelope_publication: _EnvelopePublication,
+    envelope_adaptation: M.MeshAdaptationResult,
+) -> None:
+    source, initial = envelope_publication.source, envelope_publication.result
+    request, policy = envelope_adaptation.request, envelope_adaptation.policy
+    assert policy.envelope_source is source
+    with pytest.raises(
+        ValueError, match=r"repair_provenance must match the retained authored envelope"
+    ):
+        M.prepare_mesh_adaptation(
+            _rehashed_false_bound(source, initial), request, policy=policy
+        )
+    unanchored = M.MeshAdaptationPolicy(
+        policy.route,
+        limits=policy.limits,
+        association_transfer=policy.association_transfer,
+        audit_policy=policy.audit_policy,
+    )
+    assert unanchored.policy_id != policy.policy_id
+    with pytest.raises(ValueError, match=r"envelope_source must supply"):
+        M.prepare_mesh_adaptation(initial, request, policy=unanchored)
+
+
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_adaptation_policy_binds_one_authored_envelope(
+    envelope_publication: _EnvelopePublication,
+    envelope_adaptation: M.MeshAdaptationResult,
+    foreign_envelope_source: NativeSurfaceEnvelopeSource,
+) -> None:
+    source, initial = envelope_publication.source, envelope_publication.result
+    policy = envelope_adaptation.policy
+    other = foreign_envelope_source
+    assert other.source_id != source.source_id
+    with pytest.raises(ValueError, match=r"association_transfer must transfer"):
+        M.MeshAdaptationPolicy(
+            policy.route,
+            limits=policy.limits,
+            association_transfer=policy.association_transfer,
+            envelope_source=other,
+        )
+    foreign = M.MeshAdaptationPolicy(
+        policy.route, limits=policy.limits, envelope_source=other
+    )
+    with pytest.raises(
+        ValueError, match=r"repair_provenance must match the retained authored envelope"
+    ):
+        M.prepare_mesh_adaptation(initial, envelope_adaptation.request, policy=foreign)
+    # A self-consistent forgery: the changed bound has a recomputed evidence ID,
+    # so every derived identity agrees; only the native rewrap refuses it.
+    envelope = source.envelope
+    evidence = replace(
+        envelope.evidence,
+        source_to_repaired_upper=envelope.evidence.source_inclusion_margin / 2.0,
+    )
+    evidence = replace(
+        evidence,
+        evidence_id=_surface_envelope_evidence_id(
+            evidence, envelope.repaired.mesh.coordinates.shape[0]
+        ),
+    )
+    forged = NativeSurfaceEnvelopeSource(
+        SurfaceEnvelope(
+            envelope.source,
+            envelope.policy,
+            envelope.repaired,
+            evidence,
+            envelope.carrier_vertices,
+            envelope.carrier_tetrahedra,
+        ),
+        "wrapped-solid",
+    )
+    with pytest.raises(
+        ValueError, match=r"SurfaceEnvelope\.anchor must reproduce from the native wrap"
+    ):
+        M.MeshAdaptationPolicy(
+            policy.route,
+            limits=policy.limits,
+            association_transfer=policy.association_transfer,
+            envelope_source=forged,
+        )
+
+
+@pytest.mark.parametrize(
+    "route",
+    (
+        M.MeshAdaptationRoute.NATIVE_GEOMETRY_REALIZATION,
+        M.MeshAdaptationRoute.HP,
+        M.MeshAdaptationRoute.MMG,
+        M.MeshAdaptationRoute.OMEGA_H,
+    ),
+)
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_anchor_refuses_routes_that_bypass_repair_carry(
+    envelope_publication: _EnvelopePublication,
+    route: M.MeshAdaptationRoute,
+) -> None:
+    # The real anchor is admitted on carrying routes (the adaptation
+    # fixture); these routes certify targets without carrying history.
+    with pytest.raises(
+        ValueError, match=r"envelope_source must use a native route that carries"
+    ):
+        M.MeshAdaptationPolicy(route, envelope_source=envelope_publication.source)
+
+
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_anchor_authentication_is_governed_by_the_request(
+    envelope_publication: _EnvelopePublication,
+) -> None:
+    # The default request admits the rewrap (adaptation fixture); a one-unit
+    # work allowance refuses it although the envelope policy's own maxima fit.
+    with pytest.raises(MeshcoreError) as refused:
+        M.MeshAdaptationPolicy(
+            M.MeshAdaptationRoute.NATIVE_MIXED,
+            limits=M.MeshingLimits(maximum_work_units=1),
+            envelope_source=envelope_publication.source,
+        )
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+
+
+@pytest.mark.parametrize("change", ("forged", "stripped"))
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_adaptation_replay_refuses_changed_carried_history(
+    envelope_publication: _EnvelopePublication,
+    envelope_adaptation: M.MeshAdaptationResult,
+    change: str,
+) -> None:
+    replayed = M.MeshAdaptationResult.from_stored_fields(envelope_adaptation)
+    assert replayed.result_id == envelope_adaptation.result_id
+    source, target = envelope_publication.source, envelope_adaptation.target
+    if change == "forged":
+        changed_target = _rehashed_false_bound(source, target)
+        refusal = r"repair_provenance must match the retained authored envelope"
+    else:
+        # An anchored transition that dropped its repair history.
+        changed_target = _without_repair_history(source, target)
+        refusal = r"repair_provenance must retain its declared envelope owner"
+    M.CellMeshingResult.from_stored_fields(changed_target)
+    changed = eqx.tree_at(lambda value: value.target, envelope_adaptation, changed_target)
+    with pytest.raises(ValueError, match=refusal):
+        M.MeshAdaptationResult.from_stored_fields(changed)
+
+
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_adaptation_policy_archive_restores_its_authored_anchor(
+    tmp_path: Path,
+    envelope_publication: _EnvelopePublication,
+    envelope_adaptation: M.MeshAdaptationResult,
+    foreign_envelope_source: NativeSurfaceEnvelopeSource,
+) -> None:
+    # Default archive caps stay unchanged; the larger accepted-epoch recipe
+    # remains the approved manifest limitation and is not exercised here.
+    policy = envelope_adaptation.policy
+    receipt = write_meshing_source_closure(tmp_path / "anchored-policy", policy)
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert isinstance(restored, M.MeshAdaptationPolicy)
+    assert restored.policy_id == policy.policy_id
+    assert restored.envelope_source is not None
+    assert restored.envelope_source.binding_id == envelope_publication.source.binding_id
+    prepared = M.prepare_mesh_adaptation(
+        envelope_publication.result, envelope_adaptation.request, policy=restored
+    )
+    assert prepared.prepared_id == envelope_adaptation.prepared_id
+    stored = M.PreparedMeshAdaptation.from_stored_fields(prepared)
+    assert stored.prepared_id == prepared.prepared_id
+    # The public constructor can pair this history with another real anchor.
+    paired = M.PreparedMeshAdaptation(
+        prepared.source,
+        prepared.request,
+        M.MeshAdaptationPolicy(
+            policy.route, limits=policy.limits, envelope_source=foreign_envelope_source
+        ),
+        prepared.constraints,
+    )
+    authored = r"repair_provenance must match the retained authored envelope"
+    with pytest.raises(ValueError, match=authored):
+        M.PreparedMeshAdaptation.from_stored_fields(paired)
+    with pytest.raises(ValueError, match=authored):
+        M.execute_mesh_adaptation(paired)
 
 
 @pytest.mark.parametrize("side", ("source", "target"))
@@ -1050,11 +2041,11 @@ def test_non_envelope_dispatch_preserves_unrelated_repair_records(
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_repair_carry_authenticates_retained_certificates(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
     side: str,
     change: str,
 ) -> None:
-    source, target = envelope_publication.result, envelope_adaptation.target
+    source, target = envelope_publication.result, fresh_carry_target
     result = source if side == "source" else target
     report = result.certification
     assert report is not None
@@ -1066,6 +2057,7 @@ def test_envelope_repair_carry_authenticates_retained_certificates(
         report = eqx.tree_at(lambda value: value.embedding, report, embedding)
     else:
         coverage = report.coverage
+        assert isinstance(coverage, DomainCoverageCertificate)
         match change:
             case "coverage-id":
                 coverage = _changed_stored_fields(
@@ -1093,11 +2085,16 @@ def test_envelope_repair_carry_authenticates_retained_certificates(
         source = changed
     else:
         target = changed
+    # Excludes the target-inventory refusal: the unchanged pair carries.
     with pytest.raises(
-        ValueError, match=r"GlobalEmbeddingCertificate|DomainCoverage|repair_provenance"
+        ValueError,
+        match=r"GlobalEmbeddingCertificate|DomainCoverage|stored_fields|repair_provenance\.(certificates|certification|domain|limits)",
     ):
         _carry_repair_with_request_budget(
-            source, target, limits=envelope_publication.specification.limits
+            source,
+            target,
+            envelope_publication.source,
+            limits=envelope_publication.specification.limits,
         )
 
 
@@ -1106,11 +2103,11 @@ def test_envelope_repair_carry_authenticates_retained_certificates(
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_repair_carry_authenticates_association_content(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
     side: str,
     change: str,
 ) -> None:
-    source, target = envelope_publication.result, envelope_adaptation.target
+    source, target = envelope_publication.result, fresh_carry_target
     result = source if side == "source" else target
     association = result.associations[0]
     association = (
@@ -1131,7 +2128,10 @@ def test_envelope_repair_carry_authenticates_association_content(
         target = changed
     with pytest.raises(ValueError, match=r"GeometryAssociation"):
         _carry_repair_with_request_budget(
-            source, target, limits=envelope_publication.specification.limits
+            source,
+            target,
+            envelope_publication.source,
+            limits=envelope_publication.specification.limits,
         )
 
 
@@ -1139,7 +2139,7 @@ def test_envelope_repair_carry_authenticates_association_content(
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_repair_carry_refuses_rehashed_false_repaired_topology(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
     count: str,
 ) -> None:
     source, initial = envelope_publication.source, envelope_publication.result
@@ -1189,10 +2189,13 @@ def test_envelope_repair_carry_refuses_rehashed_false_repaired_topology(
             ),
         ),
     )
-    with pytest.raises(ValueError, match=r"repair_provenance.evidence"):
+    with pytest.raises(
+        ValueError, match=r"repair_provenance\.evidence must authenticate"
+    ):
         _carry_repair_with_request_budget(
             changed,
-            envelope_adaptation.target,
+            fresh_carry_target,
+            source,
             limits=envelope_publication.specification.limits,
         )
 
@@ -1204,7 +2207,7 @@ def test_envelope_repair_carry_refuses_rehashed_false_repaired_topology(
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_repair_carry_refuses_noncanonical_owner_records(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
     change: str,
 ) -> None:
     source, initial = envelope_publication.source, envelope_publication.result
@@ -1245,7 +2248,8 @@ def test_envelope_repair_carry_refuses_noncanonical_owner_records(
     with pytest.raises(ValueError, match=r"repair_provenance.representation"):
         _carry_repair_with_request_budget(
             changed,
-            envelope_adaptation.target,
+            fresh_carry_target,
+            source,
             limits=envelope_publication.specification.limits,
         )
     with pytest.raises(RuntimeError, match="envelope.acceptance.repair_provenance"):
@@ -1849,7 +2853,7 @@ def test_envelope_repair_authentication_refuses_unused_domain_vertices(
 @_REPAIR_AUTHENTICATION_CASE
 def test_envelope_carry_refuses_rehashed_counter_with_matching_trace_and_metrics(
     envelope_publication: _EnvelopePublication,
-    envelope_adaptation: M.MeshAdaptationResult,
+    fresh_carry_target: M.CellMeshingResult,
 ) -> None:
     source, initial = envelope_publication.source, envelope_publication.result
     evidence = replace(source.envelope.evidence, grid_samples=-1)
@@ -1885,12 +2889,84 @@ def test_envelope_carry_refuses_rehashed_counter_with_matching_trace_and_metrics
     with pytest.raises(ValueError, match="repair_provenance.grid_samples"):
         _carry_repair_with_request_budget(
             changed,
-            envelope_adaptation.target,
+            fresh_carry_target,
+            source,
             limits=envelope_publication.specification.limits,
         )
 
 
+@pytest.mark.parametrize("solution_degree", (1, 2), ids=("p1", "quadratic-h1"))
 def test_envelope_adaptation_transfers_fields_and_rolls_back_rejection(
+    envelope_publication: _EnvelopePublication,
+    envelope_adaptation: M.MeshAdaptationResult,
+    solution_degree: int,
+) -> None:
+    result = envelope_publication.result
+    if solution_degree == 1:
+        space, problem, _ = prepare_envelope_solver(
+            result,
+            failure_factory=envelope_failure,
+            source_coefficient=quadratic_source,
+            dirichlet_values=quadratic_value,
+        )
+        values = space.dof_maps[0].dof_coordinates[:, 0]
+        assert quadratic_l2_error(result.mesh, values) > 0.0
+    else:
+        from tools.meshing_qualification._physics import (
+            _physical_error,
+            _prepare_corpus_solver,
+        )
+
+        space, problem, _ = _prepare_corpus_solver(
+            result, material_x=False, solution_degree=solution_degree
+        )
+        values = np.sum(np.asarray(space.dof_maps[0].dof_coordinates) ** 2, axis=-1)
+        assert _physical_error(result.mesh, values, space=space) < _AFFINE_FIELD_ACCEPTANCE
+    # Representable exact fields must still exercise the explicit rollback probe.
+    carried, auxiliary, transfer = transition_envelope_state(
+        result,
+        envelope_adaptation,
+        problem,
+        values,
+        0,
+        failure_factory=envelope_failure,
+    )
+    assert transfer["field_names"] == ["u", "density", "history"]
+    rollback = transfer["rollback"]
+    if not isinstance(rollback, dict):
+        raise TypeError(
+            "transfer.rollback must be a dictionary record; got a non-dictionary value."
+        )
+    assert rollback["passed"]
+    assert rollback["gate"] == "forced-rejection"
+    field_transfers = transfer["field_transfers"]
+    if not isinstance(field_transfers, list):
+        raise TypeError(
+            "transfer.field_transfers must be a list record; got a non-list value."
+        )
+    # The forced rejection probed exactly the operators the commit published.
+    assert rollback["transfer_ids"] == [item["transfer_id"] for item in field_transfers]
+    assert np.all(np.asarray(auxiliary[0]) == 2.0)
+    history_defect = transfer["history_max_defect"]
+    if not isinstance(history_defect, (int, float)):
+        raise TypeError(
+            "transfer.history_max_defect must be numeric; got a nonnumeric value."
+        )
+    assert history_defect <= _AFFINE_FIELD_ACCEPTANCE
+    assert auxiliary[0].shape == (envelope_adaptation.target.mesh.coordinates.shape[0],)
+    if solution_degree == 2:
+        target_space, _, _ = _prepare_corpus_solver(
+            envelope_adaptation.target, material_x=False, solution_degree=solution_degree
+        )
+        assert auxiliary[1].shape == (target_space.dof_maps[0].global_dof_count,)
+        assert (
+            _physical_error(envelope_adaptation.target.mesh, carried, space=target_space)
+            < _AFFINE_FIELD_ACCEPTANCE
+        )
+
+
+@_REPAIR_AUTHENTICATION_CASE
+def test_envelope_state_transition_refuses_a_foreign_transport_owner(
     envelope_publication: _EnvelopePublication,
     envelope_adaptation: M.MeshAdaptationResult,
 ) -> None:
@@ -1901,33 +2977,17 @@ def test_envelope_adaptation_transfers_fields_and_rolls_back_rejection(
         source_coefficient=quadratic_source,
         dirichlet_values=quadratic_value,
     )
-    values = space.dof_maps[0].dof_coordinates[:, 0]
-    # Linear x cannot equal |x|^2 on a positive-volume simplex; the analytic L2
-    # moment oracle establishes a nonzero error before testing the zero gate.
-    assert quadratic_l2_error(result.mesh, values) > 0.0
-    _, auxiliary, transfer = transition_envelope_state(
-        result,
-        envelope_adaptation,
-        problem,
-        values,
-        0,
-        failure_factory=envelope_failure,
-        physical_error=quadratic_l2_error,
-    )
-    assert transfer["field_names"] == ["u", "density", "history"]
-    rollback = transfer["rollback"]
-    if not isinstance(rollback, dict):
-        raise TypeError(
-            "transfer.rollback must be a dictionary record; got a non-dictionary value."
+    # The scalar solve owner is not the transported u/density/history layout.
+    with pytest.raises(ValueError, match=r"FiniteElementDiscretization\.plan"):
+        transition_envelope_state(
+            result,
+            envelope_adaptation,
+            problem,
+            space.dof_maps[0].dof_coordinates[:, 0],
+            0,
+            failure_factory=envelope_failure,
+            source_space=space,
         )
-    assert rollback["passed"]
-    assert np.all(np.asarray(auxiliary[0]) == 2.0)
-    history_defect = transfer["history_max_defect"]
-    if not isinstance(history_defect, (int, float)):
-        raise TypeError(
-            "transfer.history_max_defect must be numeric; got a nonnumeric value."
-        )
-    assert history_defect <= _AFFINE_FIELD_ACCEPTANCE
 
 
 @pytest.mark.parametrize("bound", ("work", "queries", "bytes", "clock"))
@@ -2095,3 +3155,117 @@ def test_envelope_geometry_replay_holds_metadata_and_maximum_bank_buffer(
                 assert budget.temporary_bytes_upper == prefix + metadata + maximum_buffer
             assert budget.temporary_bytes_upper == prefix
         assert budget.temporary_bytes_upper == 0
+
+
+@pytest.mark.parametrize("receipt", (False, True), ids=("full-proof-import", "paid-receipt"))
+def test_envelope_validated_source_classes_reuse_only_paid_immutable_proof(
+    envelope_preparation: M.PreparedMeshAdaptation,
+    monkeypatch: pytest.MonkeyPatch,
+    receipt: bool,
+) -> None:
+    from phydrax.meshing._plc_mapped_support import validated_mapped_source_classes
+
+    prepared = envelope_preparation
+    transfer = prepared.policy.association_transfer
+    assert isinstance(transfer, M.PlcAssociationTransfer)
+    assert prepared.plc_source_proofs is not None
+    (proof,) = prepared.plc_source_proofs.proofs
+    assert isinstance(proof, MappedPlcSupportProof)
+    classification = proof.source_classification
+    assert classification is not None
+    assert classification.source is prepared.source
+    assert classification.transfer is transfer
+    for level in classification.classes:
+        for array in level:
+            with pytest.raises(ValueError):
+                array.setflags(write=True)
+    with _execution_ledger(
+        prepared.policy.limits, prepared=prepared if receipt else None
+    ) as budget:
+        if receipt:
+            views = _bind_plc_source_proofs(prepared, budget=budget)
+            assert views is not None
+            (view,) = views
+        else:
+            view = transfer.bind_source_proof(prepared.source, proof, budget=budget)
+            views = [view]
+
+        def refuse_reclassification(*args: object, **kwargs: object) -> None:
+            raise AssertionError("Paid immutable source classification was recomputed.")
+
+        monkeypatch.setattr(
+            M.PlcAssociationTransfer, "_certify_source_classification",
+            refuse_reclassification,
+        )
+        classes = transfer.classes(
+            prepared.source, _prepared_source=views, budget=budget
+        )
+        assert classes is classification.classes
+        # Replacing a view does not forge payment, even with the same proof and ledger.
+        assert validated_mapped_source_classes(
+            replace(view), prepared.source, transfer, budget=budget
+        ) is None
+
+
+def test_envelope_source_classification_checks_full_mutable_association_content(
+    envelope_preparation: M.PreparedMeshAdaptation,
+) -> None:
+    from phydrax.meshing._plc_mapped_support import validated_mapped_source_classes
+
+    prepared = envelope_preparation
+    transfer = prepared.policy.association_transfer
+    assert isinstance(transfer, M.PlcAssociationTransfer)
+    assert prepared.plc_source_proofs is not None
+    (proof,) = prepared.plc_source_proofs.proofs
+    assert isinstance(proof, MappedPlcSupportProof)
+    association = prepared.source.associations[0]
+    bank = association.source_entities
+    original = bank.row_indices
+    mutable = np.array(original, copy=True)
+    mutable.setflags(write=False)
+    with _execution_ledger(prepared.policy.limits) as budget:
+        view = transfer.bind_source_proof(prepared.source, proof, budget=budget)
+        views = [view]
+        object.__setattr__(bank, "row_indices", mutable)
+        try:
+            # Equal contents on a new owner earn a new classification via real validation.
+            assert validated_mapped_source_classes(
+                view, prepared.source, transfer, budget=budget
+            ) is None
+            transfer.classes(prepared.source, _prepared_source=views, budget=budget)
+            earned = views[0]
+            assert validated_mapped_source_classes(
+                earned, prepared.source, transfer, budget=budget
+            ) is not None
+            mutable.setflags(write=True)
+            mutable[0] = -1
+            # The owner is unchanged, so only a full current-content check catches this.
+            assert validated_mapped_source_classes(
+                earned, prepared.source, transfer, budget=budget
+            ) is None
+        finally:
+            object.__setattr__(bank, "row_indices", original)
+
+
+def test_envelope_source_classification_refuses_nested_bank_reassignment(
+    envelope_preparation: M.PreparedMeshAdaptation,
+) -> None:
+    prepared = envelope_preparation
+    transfer = prepared.policy.association_transfer
+    assert isinstance(transfer, M.PlcAssociationTransfer)
+    assert prepared.plc_source_proofs is not None
+    (proof,) = prepared.plc_source_proofs.proofs
+    assert isinstance(proof, MappedPlcSupportProof)
+    classification = proof.source_classification
+    assert classification is not None
+    original = classification.classes[0].dimensions
+    substituted = np.array(original, copy=True)
+    level = classification.classes[0]._replace(dimensions=substituted)
+    classes = classification.classes
+    object.__setattr__(classification, "classes", (level, *classes[1:]))
+    try:
+        with _execution_ledger(prepared.policy.limits) as budget:
+            with pytest.raises(ValueError, match="stale or foreign proof"):
+                transfer.bind_source_proof(prepared.source, proof, budget=budget)
+    finally:
+        object.__setattr__(classification, "classes", classes)

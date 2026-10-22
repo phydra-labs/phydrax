@@ -101,8 +101,9 @@ from ._local_metric import (
     validate_classification,
     validate_mesh,
 )
-from ._measurements import NativeExecutionRecord
+from ._measurements import NativeExecutionImports, NativeExecutionRecord
 from ._metric import metric_edge_lengths
+from ._native_preparation import debit_request_preparation, native_preparation_ledger
 
 
 if TYPE_CHECKING:
@@ -532,12 +533,15 @@ class PreparedDeviceMetricAdaptation(StrictModule, NonTrainableState):
     resolved protection and organization), ``layout`` the static compile
     identity, and ``state`` the initial device state; `adapt_device_metric` may
     run on it any number of times before `commit_device_metric_adaptation`.
+    ``preparation_evidence`` is this request's ended preparation phase (owned
+    by ``adaptation``); the commit charges it once against the same allowance.
     """
 
     adaptation: PreparedMeshAdaptation
     layout: DeviceMetricLayout
     state: DeviceMetricState
     anchor: _Anchor
+    preparation_evidence: NativeExecutionRecord | None
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -547,11 +551,21 @@ class PreparedDeviceMetricAdaptation(StrictModule, NonTrainableState):
         state: DeviceMetricState,
         anchor: _Anchor,
         /,
+        *,
+        preparation_evidence: NativeExecutionRecord | None = None,
     ) -> None:
+        if preparation_evidence is not None:
+            preparation_evidence.require_valid()
+            if preparation_evidence.owner_id != adaptation.prepared_id:
+                raise ValueError(
+                    "PreparedDeviceMetricAdaptation.preparation_evidence.owner_id must bind "
+                    f"its adaptation; got {preparation_evidence.owner_id!r}"
+                )
         self.adaptation = adaptation
         self.layout = layout
         self.state = state
         self.anchor = anchor
+        self.preparation_evidence = preparation_evidence
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-device-metric-adaptation",
@@ -2314,7 +2328,28 @@ def prepare_device_metric_adaptation(
         )
         with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
             adaptation = prepare_mesh_adaptation(source, request, policy=policy)
-            return _prepared_metric(adaptation, scope=scope, budget=budget)
+            metric = _prepared_metric(adaptation, scope=scope, budget=budget)
+        # The nested host preparation is chained; raw counters keep device work.
+        imports = NativeExecutionImports(
+            scope, preparation=adaptation.preparation_evidence
+        )
+    preparation = NativeExecutionRecord(
+        imports.evidence(),
+        preparation_evidence=adaptation.preparation_evidence,
+        owner_id=adaptation.prepared_id,
+        imports=imports,
+    )
+    parent = scope.parent
+    if parent is not None:
+        # Nested preparation work already counts in the enclosing request.
+        native_preparation_ledger(parent).remember_receipt(parent, preparation)
+    return PreparedDeviceMetricAdaptation(
+        metric.adaptation,
+        metric.layout,
+        metric.state,
+        metric.anchor,
+        preparation_evidence=preparation,
+    )
 
 
 # ------------------------------------------------------------------ commit
@@ -2489,7 +2524,18 @@ def commit_device_metric_adaptation(
         raise TypeError("prepared must be PreparedDeviceMetricAdaptation.")
     _check_state(prepared.layout, state)
     limits = prepared.adaptation.policy.limits
-    with NativeExecutionScope(limits.native_limits()) as scope:
+    preparation = prepared.preparation_evidence
+    native_limits = limits.native_limits()
+    if preparation is not None:
+        # Lazy: volume generation imports adaptation, which imports this module.
+        from ._volume_generation import require_native_preparation_allowance
+
+        require_native_preparation_allowance(limits, preparation)
+        native_limits = debit_request_preparation(native_limits, preparation)
+    history = prepared.adaptation.source.execution_evidence
+    with NativeExecutionScope(native_limits) as scope:
+        if history is not None:
+            native_preparation_ledger(scope).record_history(scope, history)
         started = scope.operation_started
         host = jax.device_get(state)
         ticket = scope.batch(0)
@@ -2505,7 +2551,10 @@ def commit_device_metric_adaptation(
         outcome = outcome._replace(
             target=outcome.target.with_execution_evidence(
                 NativeExecutionRecord(
-                    scope.evidence, owner_id=prepared.adaptation.prepared_id
+                    scope.evidence,
+                    preparation_evidence=preparation,
+                    history_evidence=() if history is None else (history,),
+                    owner_id=prepared.adaptation.prepared_id,
                 )
             )
         )

@@ -25,6 +25,8 @@ from .._cell_geometry import (
     RestrictedCellGeometryElement,
     ScalarCoordinateElement,
     SplineCellGeometryElement,
+    ScalarCoordinateTabulation,
+    coordinate_tabulation,
 )
 from .._cell_mesh import CellMesh
 from .._coordinate_budget import CoordinateEnclosureBudget
@@ -100,6 +102,99 @@ def _whole_support_routes(
     cell_count = sum(mesh_block.cell_count for mesh_block in discretization.mesh.blocks)
     block_ids = tuple(mesh_block.block_id for mesh_block in discretization.mesh.blocks)
     return coordinate_dofs, cell_count, block_ids
+
+
+class NumericalFiniteElementCellMap(StrictModule, NonTrainableState):
+    """Identity-free coordinate-map numerics of one prepared block or support.
+
+    It retains only the coordinate element, routes, precision and shape metadata
+    that `evaluate` reads. Compiled consumers keyed by this module are shared by
+    prepared maps of equal numerical structure; topology, layout and source
+    identities stay on `PreparedFiniteElementCellMap`.
+    """
+
+    coordinate_element: ScalarCoordinateTabulation
+    coordinate_dofs: Array
+    precision_policy: FiniteElementPrecisionPolicy
+    cell_count: int = eqx.field(static=True)
+    coordinate_count: int = eqx.field(static=True)
+    reference_dimension: int = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
+
+    def evaluate(
+        self,
+        coordinates: ArrayLike,
+        cell_indices: ArrayLike,
+        reference_points: ArrayLike,
+        /,
+    ) -> FiniteElementCellMapEvaluation:
+        """Evaluate paired cell/reference rows with explicit validity margins."""
+
+        coordinate_values = jnp.asarray(coordinates)
+        if coordinate_values.shape != (
+            self.coordinate_count,
+            self.ambient_dimension,
+        ):
+            raise ValueError(
+                "cell_map.coordinates must preserve the prepared coordinate shape; got a different shape"
+            )
+        indices = jnp.asarray(cell_indices)
+        points = jnp.asarray(reference_points)
+        if indices.ndim != 1 or not jnp.issubdtype(indices.dtype, jnp.integer):
+            raise ValueError(
+                "cell_map.cell_indices must be a rank-1 integer array; got an incompatible rank or dtype"
+            )
+        if points.shape != (indices.shape[0], self.reference_dimension):
+            raise ValueError(
+                "cell_map.reference_points must have shape (cell_indices.size, reference_dimension); got a different shape"
+            )
+        index_valid = (indices >= 0) & (indices < self.cell_count)
+        safe_indices = jnp.clip(indices, 0, self.cell_count - 1)
+        routes = self.coordinate_dofs[safe_indices]
+        (
+            physical_points,
+            jacobian,
+            metric,
+            _,
+            inverse_jacobian,
+            _,
+            measure,
+            determinant,
+        ) = evaluate_coordinate_map(
+            self.coordinate_element,
+            routes,
+            coordinate_values,
+            points,
+            precision_policy=self.precision_policy,
+            paired=True,
+        )
+        metric_evidence = verify_dense_properties(metric, policy=_CELL_METRIC_PROPERTIES)
+        minimum_metric_eigenvalue = metric_evidence.eigenvalues[..., 0]
+        if self.reference_dimension == self.ambient_dimension:
+            validity_margin = jnp.minimum(minimum_metric_eigenvalue, determinant)
+        else:
+            validity_margin = jnp.minimum(minimum_metric_eigenvalue, measure)
+        finite = (
+            jnp.all(jnp.isfinite(physical_points), axis=-1)
+            & jnp.all(jnp.isfinite(jacobian), axis=(-2, -1))
+            & jnp.all(jnp.isfinite(inverse_jacobian), axis=(-2, -1))
+            & jnp.isfinite(determinant)
+            & jnp.isfinite(measure)
+            & jnp.isfinite(validity_margin)
+        )
+        valid = (
+            index_valid & finite & metric_evidence.successful & (validity_margin > 0.0)
+        )
+        return FiniteElementCellMapEvaluation(
+            physical_points=physical_points,
+            jacobian=jacobian,
+            inverse_jacobian=inverse_jacobian,
+            determinant=determinant,
+            measure=measure,
+            minimum_metric_eigenvalue=minimum_metric_eigenvalue,
+            validity_margin=validity_margin,
+            valid=valid,
+        )
 
 
 class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
@@ -193,6 +288,19 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         source = self.coordinate_spec.with_coordinates(values, budget=budget)
         return source.source_coordinates(budget=budget)
 
+    @property
+    def numerical(self) -> NumericalFiniteElementCellMap:
+        """Return the identity-free numerics evaluated by this map."""
+        return NumericalFiniteElementCellMap(
+            coordinate_tabulation(self.coordinate_element),
+            self.coordinate_dofs,
+            self.precision_policy,
+            self.cell_count,
+            self.coordinate_count,
+            self.reference_dimension,
+            self.ambient_dimension,
+        )
+
     def evaluate(
         self,
         coordinates: ArrayLike,
@@ -201,72 +309,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         /,
     ) -> FiniteElementCellMapEvaluation:
         """Evaluate paired cell/reference rows with explicit validity margins."""
-
-        coordinate_values = jnp.asarray(coordinates)
-        if coordinate_values.shape != (
-            self.coordinate_count,
-            self.ambient_dimension,
-        ):
-            raise ValueError(
-                "cell_map.coordinates must preserve the prepared coordinate shape; got a different shape"
-            )
-        indices = jnp.asarray(cell_indices)
-        points = jnp.asarray(reference_points)
-        if indices.ndim != 1 or not jnp.issubdtype(indices.dtype, jnp.integer):
-            raise ValueError(
-                "cell_map.cell_indices must be a rank-1 integer array; got an incompatible rank or dtype"
-            )
-        if points.shape != (indices.shape[0], self.reference_dimension):
-            raise ValueError(
-                "cell_map.reference_points must have shape (cell_indices.size, reference_dimension); got a different shape"
-            )
-        index_valid = (indices >= 0) & (indices < self.cell_count)
-        safe_indices = jnp.clip(indices, 0, self.cell_count - 1)
-        routes = self.coordinate_dofs[safe_indices]
-        (
-            physical_points,
-            jacobian,
-            metric,
-            _,
-            inverse_jacobian,
-            _,
-            measure,
-            determinant,
-        ) = evaluate_coordinate_map(
-            self.coordinate_element,
-            routes,
-            coordinate_values,
-            points,
-            precision_policy=self.precision_policy,
-            paired=True,
-        )
-        metric_evidence = verify_dense_properties(metric, policy=_CELL_METRIC_PROPERTIES)
-        minimum_metric_eigenvalue = metric_evidence.eigenvalues[..., 0]
-        if self.reference_dimension == self.ambient_dimension:
-            validity_margin = jnp.minimum(minimum_metric_eigenvalue, determinant)
-        else:
-            validity_margin = jnp.minimum(minimum_metric_eigenvalue, measure)
-        finite = (
-            jnp.all(jnp.isfinite(physical_points), axis=-1)
-            & jnp.all(jnp.isfinite(jacobian), axis=(-2, -1))
-            & jnp.all(jnp.isfinite(inverse_jacobian), axis=(-2, -1))
-            & jnp.isfinite(determinant)
-            & jnp.isfinite(measure)
-            & jnp.isfinite(validity_margin)
-        )
-        valid = (
-            index_valid & finite & metric_evidence.successful & (validity_margin > 0.0)
-        )
-        return FiniteElementCellMapEvaluation(
-            physical_points=physical_points,
-            jacobian=jacobian,
-            inverse_jacobian=inverse_jacobian,
-            determinant=determinant,
-            measure=measure,
-            minimum_metric_eigenvalue=minimum_metric_eigenvalue,
-            validity_margin=validity_margin,
-            valid=valid,
-        )
+        return self.numerical.evaluate(coordinates, cell_indices, reference_points)
 
 
 @checked
@@ -282,6 +325,7 @@ def prepare_finite_element_cell_map(
 
 __all__ = [
     "FiniteElementCellMapEvaluation",
+    "NumericalFiniteElementCellMap",
     "PreparedFiniteElementCellMap",
     "prepare_finite_element_cell_map",
 ]

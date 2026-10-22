@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import contextlib
+import warnings
+from collections.abc import Iterator
 from fractions import Fraction
 
 import equinox as eqx
@@ -19,8 +22,11 @@ from phydrax._interpolation import (
 )
 from phydrax.geometry._interval_enclosure import (
     device_interval_evaluation_error,
+    interval_divide,
     interval_dot,
+    interval_dot_general,
     interval_midpoint_radius,
+    interval_multiply,
     IntervalExtensionError,
     prepare_interval_function,
 )
@@ -91,12 +97,274 @@ def test_ordered_interval_dot_contains_rational_reference() -> None:
     assert Fraction(float(lower)) <= reference <= Fraction(float(upper))
 
 
+@pytest.mark.parametrize("dtype", (np.float32, np.float64), ids=("float32", "float64"))
+def test_interval_division_encloses_reciprocal_overflow_without_warnings(
+    dtype: type[np.float32] | type[np.float64],
+) -> None:
+    threshold = np.ldexp(dtype(1), -np.finfo(dtype).maxexp)
+    smallest = np.nextafter(dtype(0), dtype(1))
+    safe_neighbor = np.nextafter(threshold, dtype(np.inf))
+    values = np.asarray(
+        (
+            smallest,
+            threshold,
+            safe_neighbor,
+            -smallest,
+            -threshold,
+            -safe_neighbor,
+            np.finfo(dtype).max,
+            -np.finfo(dtype).max,
+        ),
+        dtype=dtype,
+    )
+    ones = np.ones_like(values)
+    with np.errstate(over="raise", divide="raise", invalid="raise"):
+        lower, upper = interval_divide((ones, ones), (values, values))
+    lower, upper = np.asarray(lower), np.asarray(upper)
+    assert lower.shape == upper.shape == values.shape
+    assert lower.dtype == upper.dtype == values.dtype
+    for index, value in enumerate(values):
+        reference = Fraction(1) / Fraction(float(value))
+        low, high = float(lower[index]), float(upper[index])
+        if np.isfinite(low):
+            assert Fraction(low) <= reference, index
+        else:
+            assert low == -np.inf, index
+        if np.isfinite(high):
+            assert reference <= Fraction(high), index
+        else:
+            assert high == np.inf, index
+    assert np.isfinite(lower[2]) and np.isfinite(upper[2])
+    assert np.isfinite(lower[5]) and np.isfinite(upper[5])
+
+
+def test_interval_division_zero_crossing_retains_unbounded_scalar_hull() -> None:
+    one = np.asarray(1.0, dtype=np.float64)
+    with np.errstate(over="raise", divide="raise", invalid="raise"):
+        lower, upper = interval_divide((one, one), (-one, one))
+    assert lower.shape == upper.shape == ()
+    assert lower == -np.inf
+    assert upper == np.inf
+
+
+@pytest.mark.parametrize("dtype", (np.float32, np.float64), ids=("float32", "float64"))
+def test_interval_zero_times_unbounded_is_tight_without_invalid_arithmetic(
+    dtype: type[np.float32] | type[np.float64],
+) -> None:
+    zero = np.asarray(0.0, dtype=dtype)
+    infinity = np.asarray(np.inf, dtype=dtype)
+    with np.errstate(invalid="raise"):
+        lower, upper = interval_multiply((zero, zero), (-infinity, infinity))
+    assert lower.dtype == upper.dtype == zero.dtype
+    assert np.isfinite(lower) and np.isfinite(upper)
+    assert lower <= 0 <= upper
+    np.testing.assert_allclose(lower, zero, atol=np.finfo(dtype).eps, rtol=0)
+    np.testing.assert_allclose(upper, zero, atol=np.finfo(dtype).eps, rtol=0)
+
+
+def test_interval_product_does_not_replace_invalid_operands_with_zero() -> None:
+    invalid = np.asarray(np.nan, dtype=np.float64)
+    one = np.asarray(1.0, dtype=np.float64)
+    with np.errstate(invalid="raise"):
+        lower, upper = interval_multiply((invalid, invalid), (one, one))
+    assert np.isnan(lower)
+    assert np.isnan(upper)
+
+
 def test_midpoint_radius_contains_both_endpoints() -> None:
     lower = np.asarray((-3.0, 0.25), dtype=np.float64)
     upper = np.asarray((5.0, 0.75), dtype=np.float64)
     middle, radius = interval_midpoint_radius((lower, upper))
     assert np.all(np.subtract(middle, radius) <= lower)
     assert np.all(upper <= np.add(middle, radius))
+
+
+@contextlib.contextmanager
+def _promoted_floating_errors() -> Iterator[None]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with np.errstate(over="raise", divide="raise", invalid="raise"):
+            yield
+
+
+def _fraction_dot_hull(
+    first: tuple[np.ndarray, np.ndarray], second: tuple[np.ndarray, np.ndarray]
+) -> tuple[Fraction, Fraction]:
+    """Unrounded real range of a dot product of independent interval factors."""
+    low = high = Fraction(0)
+    for first_low, first_high, second_low, second_high in zip(
+        *first, *second, strict=True
+    ):
+        products = [
+            Fraction(float(left)) * Fraction(float(right))
+            for left in (first_low, first_high)
+            for right in (second_low, second_high)
+        ]
+        low += min(products)
+        high += max(products)
+    return low, high
+
+
+def _assert_encloses(
+    lower: np.ndarray | np.floating,
+    upper: np.ndarray | np.floating,
+    low: Fraction,
+    high: Fraction,
+) -> None:
+    assert not np.isnan(lower) and not np.isnan(upper)
+    assert lower == -np.inf or Fraction(float(lower)) <= low
+    assert upper == np.inf or high <= Fraction(float(upper))
+
+
+@pytest.mark.parametrize("dtype", (np.float32, np.float64), ids=("float32", "float64"))
+def test_midpoint_radius_uses_extended_real_semantics_without_warnings(
+    dtype: type[np.float32] | type[np.float64],
+) -> None:
+    largest = np.finfo(dtype).max
+    infinity, invalid = dtype(np.inf), dtype(np.nan)
+    lower = np.asarray(
+        (-3, 0.25, 0.75 * largest, -largest, -largest, 2, -infinity, -infinity)
+        + (infinity, invalid, 1),
+        dtype=dtype,
+    )
+    upper = np.asarray(
+        (5, 0.75, largest, -0.5 * largest, largest, infinity, 4, infinity)
+        + (infinity, 1, invalid),
+        dtype=dtype,
+    )
+    with _promoted_floating_errors():
+        middle, radius = interval_midpoint_radius((lower, upper))
+    middle, radius = np.asarray(middle), np.asarray(radius)
+    assert middle.dtype == radius.dtype == np.dtype(dtype)
+    assert middle.shape == radius.shape == lower.shape
+    # Normal finite intervals keep the source expression bit for bit.
+    source_middle = 0.5 * np.add(lower[:2], upper[:2])
+    np.testing.assert_array_equal(middle[:2], source_middle)
+    np.testing.assert_array_equal(
+        radius[:2],
+        np.nextafter(
+            np.maximum(source_middle - lower[:2], upper[:2] - source_middle), np.inf
+        ),
+    )
+    # Same-sign sums beyond the largest float are halved first; the midpoint is
+    # the correctly rounded real midpoint and the finite radius covers both
+    # endpoints.
+    for index in (0, 1, 2, 3):
+        low, high = Fraction(float(lower[index])), Fraction(float(upper[index]))
+        centre, spread = Fraction(float(middle[index])), Fraction(float(radius[index]))
+        assert np.isfinite(radius[index])
+        # Round-to-nearest: within half an ulp of the real midpoint.
+        ulp = Fraction(float(np.abs(np.spacing(middle[index]))))
+        assert abs(centre - (low + high) / 2) <= ulp / 2
+        assert centre - spread <= low and high <= centre + spread
+    # A radius beyond the largest finite value is unbounded, never finite.
+    assert middle[4] == 0 and radius[4] == np.inf
+    np.testing.assert_array_equal(middle[5:9], np.asarray((2, 4, 0, 0), dtype=dtype))
+    assert np.all(radius[5:9] == np.inf)
+    assert np.all(np.isnan(middle[9:])) and np.all(np.isnan(radius[9:]))
+
+
+def test_midpoint_radius_retains_scalar_carrier() -> None:
+    bound = np.float64(0.5)
+    middle, radius = interval_midpoint_radius((bound, np.float64(np.inf)))
+    assert type(middle) is np.float64 and type(radius) is np.float64
+    assert middle == bound and radius == np.inf
+
+
+@pytest.mark.parametrize("dtype", (np.float32, np.float64), ids=("float32", "float64"))
+def test_dot_general_encloses_halved_midpoints_and_refuses_overflow_certificates(
+    dtype: type[np.float32] | type[np.float64],
+) -> None:
+    largest = np.finfo(dtype).max
+    vector = (((0,), (0,)), ((), ()))
+    first = (
+        np.asarray((0.75 * largest, 0.5 * largest), dtype=dtype),
+        np.asarray((largest, 0.75 * largest), dtype=dtype),
+    )
+    second = (
+        np.asarray((0.25, 0.25), dtype=dtype),
+        np.asarray((0.25, 0.5), dtype=dtype),
+    )
+    with _promoted_floating_errors():
+        lower, upper = interval_dot_general(first, second, vector)
+    lower, upper = np.asarray(lower), np.asarray(upper)
+    assert lower.dtype == upper.dtype == np.dtype(dtype)
+    assert np.isfinite(lower) and np.isfinite(upper)
+    _assert_encloses(lower, upper, *_fraction_dot_hull(first, second))
+
+    for factor, scale in (((largest,), (2,)), ((0.9 * largest,), (0.5, 1.2))):
+        point = np.asarray(factor, dtype=dtype)
+        operand = (
+            np.asarray(scale[:1], dtype=dtype),
+            np.asarray(scale[-1:], dtype=dtype),
+        )
+        with _promoted_floating_errors():
+            lower, upper = interval_dot_general((point, point), operand, vector)
+        lower, upper = np.asarray(lower), np.asarray(upper)
+        # The real-valued upper bound exceeds the largest float: only +inf
+        # encloses it.
+        assert upper == np.inf
+        _assert_encloses(lower, upper, *_fraction_dot_hull((point, point), operand))
+
+
+@pytest.mark.parametrize("dtype", (np.float32, np.float64), ids=("float32", "float64"))
+def test_dot_general_zero_times_unbounded_and_invalid_operands_stay_sound(
+    dtype: type[np.float32] | type[np.float64],
+) -> None:
+    infinity = dtype(np.inf)
+    column = np.asarray(((0,), (3,), (np.nan,)), dtype=dtype)
+    row = (
+        np.asarray(((-infinity, 1, 2),), dtype=dtype),
+        np.asarray(((infinity, 2, infinity),), dtype=dtype),
+    )
+    outer = (((1,), (0,)), ((), ()))
+    with _promoted_floating_errors():
+        lower, upper = interval_dot_general((column, column), row, outer)
+    lower, upper = np.asarray(lower), np.asarray(upper)
+    assert lower.shape == upper.shape == (3, 3)
+    assert lower.dtype == upper.dtype == np.dtype(dtype)
+    assert not np.any(np.isnan(lower)) and not np.any(np.isnan(upper))
+    for i in range(2):
+        _assert_encloses(
+            lower[i, 1],
+            upper[i, 1],
+            *_fraction_dot_hull((column[i], column[i]), (row[0][:, 1], row[1][:, 1])),
+        )
+    # Bounded factors keep finite bounds beside an unbounded factor; zero times
+    # an unbounded factor never produces NaN. The outward radius of a point
+    # factor is positive, so its product with an infinite radius is unbounded.
+    assert np.all(np.isfinite(lower[:2, 1])) and np.all(np.isfinite(upper[:2, 1]))
+    assert lower[0, 1] <= 0 <= upper[0, 1]
+    assert np.all(lower[:2, ::2] == -np.inf) and np.all(upper[:2, ::2] == np.inf)
+    # NaN operands carry no information: the invalid row is the unbounded hull.
+    assert np.all(lower[2] == -np.inf) and np.all(upper[2] == np.inf)
+
+
+def test_prepared_contraction_handles_unbounded_and_large_factors() -> None:
+    def function(point: Array) -> Array:
+        weights = jnp.asarray(((0.25, 0.25), (1.0, 0.0)), dtype=jnp.float64)
+        return weights @ jnp.stack((point[0], 1.0 / point[1]))
+
+    largest = np.finfo(np.float64).max
+    prepared = prepare_interval_function(function, 2, batch_capacity=2)
+    lower = np.asarray(((0.5 * largest, 1.0), (0.5 * largest, -1.0)), dtype=np.float64)
+    upper = np.asarray(((0.75 * largest, 2.0), (0.75 * largest, 1.0)), dtype=np.float64)
+    with _promoted_floating_errors():
+        output_lower, output_upper = prepared.evaluate(lower, upper)
+    low, high = Fraction(float(lower[0, 0])), Fraction(float(upper[0, 0]))
+    reciprocal = (Fraction(1, 2), Fraction(1))
+    assert np.all(np.isfinite(output_lower[0])) and np.all(np.isfinite(output_upper[0]))
+    _assert_encloses(
+        output_lower[0, 0],
+        output_upper[0, 0],
+        (low + reciprocal[0]) / 4,
+        (high + reciprocal[1]) / 4,
+    )
+    _assert_encloses(output_lower[0, 1], output_upper[0, 1], low, high)
+    # A reciprocal over a zero-crossing box is unbounded; the contraction must
+    # not turn it into a finite certificate or into NaN.
+    assert output_lower[1, 0] == -np.inf and output_upper[1, 0] == np.inf
+    _assert_encloses(output_lower[1, 1], output_upper[1, 1], low, high)
 
 
 def test_device_error_encloses_affine_rational_rounding() -> None:

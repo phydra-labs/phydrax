@@ -12,14 +12,16 @@ import pytest
 
 import phydrax as phx
 from phydrax._meshcore import MeshcoreStatus, NativeExecutionScope
+from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry._embedding_state import MeshCertificateLimits
+from phydrax.geometry._source_boundary_records import SourceBoundarySamples
 from phydrax.geometry.design._schema import ParameterId
 from phydrax.geometry.implicit._analytic_profile import (
     AnalyticBoundaryCoverCapacityError,
     AnalyticImplicitProfile,
 )
-from phydrax.geometry.implicit._enclosure import INTERVAL_PROGRAMS
+from phydrax.geometry.implicit._enclosure import BOX_CHUNK, INTERVAL_PROGRAMS
 from phydrax.geometry.implicit._projection_cover import (
     compute_implicit_projection_cover,
     implicit_facet_projection_bounds,
@@ -118,6 +120,183 @@ def test_analytic_atlas_cover_contains_independent_dense_source_probes(
     for chunk in np.array_split(probes, 8):
         separation = np.linalg.norm(chunk[:, None] - cover.points[None], axis=2)
         assert np.all(np.min(separation - cover.covering_radius[None], axis=1) <= 0.0)
+
+
+@pytest.mark.parametrize(
+    ("radius", "capacity"),
+    ((0.5, 128), (0.2, 512), (0.05, 5000), (1.0e-100, 8)),
+)
+def test_torus_cover_ticket_bounds_enclose_actual_early_exit_schedule(
+    monkeypatch: pytest.MonkeyPatch, radius: float, capacity: int
+) -> None:
+    profile = AnalyticImplicitProfile(
+        phx.geometry.Torus((0.0, 0.0, 0.0), 0.6, 1.0).compile(coordinate_unit=METER),
+        phx.SpatialCoordinateContract.si(),
+    )
+    rows_seen: list[int] = []
+    grids_seen: list[int] = []
+    achieved: list[float] = []
+    row_grid = AnalyticImplicitProfile._torus_row_grid
+    sample_grid = AnalyticImplicitProfile._sample_grid
+
+    def counted_rows(
+        self: AnalyticImplicitProfile,
+        spacing: float,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[np.ndarray, int]:
+        rows, second = row_grid(self, spacing, budget=budget)
+        rows_seen.append(second)
+        assert second <= capacity
+        return rows, second
+
+    def counted_samples(
+        self: AnalyticImplicitProfile,
+        first: int | np.ndarray,
+        second: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> SourceBoundarySamples:
+        count = first * second if isinstance(first, int) else int(np.sum(first))
+        grids_seen.append(count)
+        assert count <= capacity
+        samples = sample_grid(self, first, second, budget=budget)
+        achieved.append(float(np.max(samples.covering_radius)))
+        return samples
+
+    monkeypatch.setattr(AnalyticImplicitProfile, "_torus_row_grid", counted_rows)
+    monkeypatch.setattr(AnalyticImplicitProfile, "_sample_grid", counted_samples)
+    work, queries = profile._torus_cover_ticket_bounds(radius, capacity)
+    with HostBatchTicket(work, queries_upper=queries, bytes_upper=88 * capacity) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=work, maximum_memory_bytes=88 * capacity
+        )
+        with budget.activate():
+            if radius < 1.0e-50:
+                with pytest.raises(AnalyticBoundaryCoverCapacityError):
+                    profile.boundary_cover(radius, capacity, budget=budget)
+            else:
+                cover = profile.boundary_cover(radius, capacity, budget=budget)
+                assert cover.complete and np.max(cover.covering_radius) <= radius
+    assert ticket.work_units == (
+        sum(9 * (second + 1) for second in rows_seen)
+        + sum(1 + (count + BOX_CHUNK - 1) // BOX_CHUNK for count in grids_seen)
+    )
+    assert ticket.geometry_queries == 1 + sum(3 * count + 1 for count in grids_seen)
+    assert ticket.work_units <= work and ticket.geometry_queries <= queries
+    if radius < 1.0e-50:
+        # Even an astronomically fine request goes straight to the original
+        # capacity fallback, without allocating an oversized probe grid.
+        assert not rows_seen and len(grids_seen) == 1
+    else:
+        # These covers exit before exhausting all capacity-admitted trials.
+        assert ticket.geometry_queries < queries
+        first_accepted = next(
+            index for index, value in enumerate(achieved) if value <= radius
+        )
+        assert len(grids_seen) - first_accepted - 1 <= 3
+
+
+@pytest.mark.parametrize("second_count", (8, 9))
+def test_torus_cover_cutoff_charges_rejected_row_probes_before_fallback(
+    second_count: int,
+) -> None:
+    profile = AnalyticImplicitProfile(
+        phx.geometry.Torus(
+            (0.0122801, -0.0070861, 0.0172886), 0.371, 1.113
+        ).compile(coordinate_unit=METER),
+        phx.SpatialCoordinateContract.si(),
+    )
+    capacity = 8
+    circumference = 2.0 * float(np.nextafter(np.pi, np.inf)) * profile.radius
+    # Put ceil(circumference / spacing) immediately inside/outside the
+    # preflight cutoff. The admitted row grid still has too many total cells.
+    requested = circumference / (np.sqrt(2.0) * (second_count - 0.5))
+    work, queries = profile._torus_cover_ticket_bounds(requested, capacity)
+    first, second = profile._budget_grid(capacity)
+    fallback_count = first * second
+    with HostBatchTicket(work, queries_upper=queries, bytes_upper=88 * capacity) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=work, maximum_memory_bytes=88 * capacity
+        )
+        with budget.activate():
+            with pytest.raises(AnalyticBoundaryCoverCapacityError) as failure:
+                profile.boundary_cover(requested, capacity, budget=budget)
+    assert failure.value.maximum_samples == capacity
+    assert failure.value.achieved_radius > requested
+    probe_work = 9 * (second_count + 1) if second_count <= capacity else 0
+    assert ticket.work_units == (
+        probe_work + 1 + (fallback_count + BOX_CHUNK - 1) // BOX_CHUNK
+    )
+    assert ticket.geometry_queries == 2 + 3 * fallback_count
+    assert ticket.work_units <= work and ticket.geometry_queries <= queries
+
+
+@NATIVE
+@pytest.mark.parametrize("resource", ("work", "queries"))
+def test_torus_cover_exact_cumulative_parent_budget_and_last_unit_refusal(
+    resource: str,
+) -> None:
+    from phydrax._meshcore import MeshcoreError
+
+    profile = AnalyticImplicitProfile(
+        phx.geometry.Torus((0.0, 0.0, 0.0), 0.6, 1.0).compile(coordinate_unit=METER),
+        phx.SpatialCoordinateContract.si(),
+    )
+
+    def run(work: int, queries: int, *, refuse: bool = False) -> tuple[int, int]:
+        limits = MeshingLimits(
+            maximum_work_units=work,
+            maximum_geometry_queries=queries,
+            maximum_scratch_bytes=8 * 1024**2,
+            maximum_wall_seconds=120.0,
+        )
+        published: list[int] = []
+        execution = NativeExecutionScope(limits.native_limits())
+
+        def consume() -> None:
+            with execution:
+                with execution.batch(
+                    work, queries_upper=queries, bytes_upper=limits.maximum_scratch_bytes
+                ) as ticket:
+                    budget = CoordinateEnclosureBudget(
+                        ticket,
+                        maximum_work_units=work,
+                        maximum_memory_bytes=limits.maximum_scratch_bytes,
+                    )
+                    with budget.activate():
+                        # Existing work and both complete covers share this
+                        # original request; no trial gets a helper allowance.
+                        ticket.consume(17, geometry_queries=19)
+                        for _ in range(2):
+                            cover = profile.boundary_cover(0.2, 512, budget=budget)
+                            assert cover.complete
+                            published.append(cover.points.shape[0])
+
+        if refuse:
+            with pytest.raises(MeshcoreError) as failure:
+                consume()
+            assert failure.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+            assert len(published) == 1
+        else:
+            consume()
+            assert len(published) == 2 and published[0] == published[1]
+        assert execution.evidence is not None
+        consumed = (
+            execution.evidence.externally_charged_work,
+            execution.evidence.externally_charged_geometry_queries,
+        )
+        assert consumed[0] <= work and consumed[1] <= queries
+        return consumed
+
+    measured = run(5_120_000, 5_120_000)
+    assert measured[0] > 17 and measured[1] > 19
+    assert run(*measured) == measured
+    smaller = list(measured)
+    smaller[0 if resource == "work" else 1] -= 1
+    run(*smaller, refuse=True)
 
 
 def test_profile_refuses_changed_radius_with_unchanged_source_metadata() -> None:
@@ -299,7 +478,12 @@ def test_continuous_facet_bounds_do_not_substitute_axis_box_or_vertex_samples(
     tolerance: float,
     source_budget: CoordinateEnclosureBudget,
 ) -> None:
-    """One physical facet may need proof subdivision, not smaller mesh edges."""
+    """One physical facet may need proof subdivision, not smaller mesh edges.
+
+    The whole-facet axis box misses the tolerance; the exact sphere range of
+    the facet itself certifies 0.02 without subdivision, while 0.001 still
+    subdivides and refuses.
+    """
     profile = AnalyticImplicitProfile(
         phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(coordinate_unit=METER),
         phx.SpatialCoordinateContract.si(),
@@ -315,7 +499,7 @@ def test_continuous_facet_bounds_do_not_substitute_axis_box_or_vertex_samples(
     deviation, oriented, queries = implicit_facet_projection_bounds(
         triangles, profile, tolerance, MeshCertificateLimits(), budget=source_budget
     )
-    assert queries > 1
+    assert queries == 1 if tolerance == 0.02 else queries > 1
     assert before - source_budget.ticket.remaining_geometry_queries == 2 * queries
     np.testing.assert_array_equal(triangles, original)
     barycentric = np.asarray(

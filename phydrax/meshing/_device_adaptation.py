@@ -27,12 +27,12 @@ from __future__ import annotations
 import fractions as _owner_fractions
 import hashlib
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from functools import partial
 from itertools import combinations
 from math import prod
-from typing import Any, assert_never, final, NamedTuple, TypeVar
+from typing import Any, assert_never, final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -78,19 +78,25 @@ import phydrax.meshing._lineage_records as _dependency_phydrax_meshing__lineage_
 import phydrax.meshing._mesh_part as mesh_part_owner
 import phydrax.meshing._organization as _dependency_phydrax_meshing__organization
 import phydrax.meshing._organization_records as _dependency_phydrax_meshing__organization_records
+import phydrax.meshing._plc_planar_support as plc_planar_support_owner
 import phydrax.meshing._publication_lowering as _dependency_phydrax_meshing__publication_lowering
 import phydrax.meshing._restart_distribution as _owner_phydrax_meshing__restart_distribution
 import phydrax.meshing._result as _dependency_phydrax_meshing__result
 import phydrax.meshing._scope as _dependency_phydrax_meshing__scope
 import phydrax.meshing._topology_edit as _dependency_phydrax_meshing__topology_edit
 from phydrax.discretization._reference_cell_types import CellBlock
+from phydrax.meshing._collective_failure import (
+    agreed_local as _agreed_local,
+    agreed_local_step as _agreed_local_step,
+)
 
-from .._execution_array import _project_local_leading_axes
-from .._execution_runtime import ExecutionRuntime
+from .._execution_array import _place_process_local_array, _project_local_leading_axes
+from .._execution_runtime import owner_execution_mesh
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
     canonical_json,
+    logical_array_payloads,
     logical_array_value_collection_digest,
 )
 from .._meshcore import (
@@ -104,7 +110,8 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked
 from ._entity_keys import key_positions
-from ._measurements import NativeExecutionRecord
+from ._measurements import NativeExecutionImports, NativeExecutionRecord
+from ._migration_execution import MigrationParts, partition_map
 
 
 # Bisection-tree paths are int64 bit strings below their root.
@@ -452,7 +459,7 @@ def _run_prepared_simplex(
             raise ValueError(
                 "device_adaptation.run_prepared_simplex.initial_evidence must provide its native initial certification; got an absent or incompatible value"
             )
-        initial_evidence.require_passed()
+        type(initial_evidence).require_passed(initial_evidence)
     source = bisection_host.prepared_source(mesh)
     empty = np.zeros((0,), dtype=np.int64)
     request = bisection_host.prepared_request(
@@ -471,12 +478,23 @@ def _run_prepared_simplex(
         raise TypeError(
             "device_adaptation.run_prepared_simplex.adaptation must provide its marked request; got an absent or incompatible value"
         )
+    if (
+        adaptation.request.refinement_generations != 1
+        or adaptation.request.refinement_target_cells is not None
+    ):
+        raise ValueError(
+            "device_adaptation.run_prepared_simplex.request must request one refinement generation without a target cell count; got host-only refinement controls"
+        )
     hierarchy = adaptation.request.hierarchy
     if hierarchy is not None and not isinstance(
         hierarchy, _dependency_phydrax_meshing__bisection.BisectionHierarchy
     ):
         raise TypeError(
             "device_adaptation.run_prepared_simplex.hierarchy must provide its bisection hierarchy; got an absent or incompatible value"
+        )
+    if hierarchy is not None and hierarchy.refinement_rule != "maubach":
+        raise ValueError(
+            "device_adaptation.run_prepared_simplex.hierarchy must use maubach refinement; got another refinement rule"
         )
     start = bisection_host.prepared_start(
         source,
@@ -608,15 +626,22 @@ def _run_prepared_simplex(
             raise ValueError(
                 "device_adaptation.run_prepared_simplex.evidence must provide global identity banks; got an absent or incompatible value"
             )
-        issuers = jnp.asarray(
-            (
-                jnp.max(evidence.entity_ids[0]) + 1,
-                jnp.max(evidence.entity_ids[-1]) + 1,
-            ),
-            dtype=jnp.int64,
+        # The issuers are global maxima; the prepared state stays this owner's
+        # host-local array rather than a replicated value with local cursors.
+        issuers = np.asarray(
+            jax.device_get(
+                jnp.stack(
+                    (
+                        jnp.max(evidence.entity_ids[0]) + 1,
+                        jnp.max(evidence.entity_ids[-1]) + 1,
+                    )
+                ).astype(jnp.int64)
+            )
         )
         state = eqx.tree_at(
-            lambda value: value.cursors, state, state.cursors.at[2:].set(issuers)
+            lambda value: value.cursors,
+            state,
+            state.cursors.at[2:].set(jnp.asarray(issuers)),
         )
     origins = forest["origins"]
     roots = np.where(origins != forest["ids"], origins, -1)
@@ -655,6 +680,10 @@ def prepare_adaptive_simplex(
         raise ValueError(
             "device_adaptation.prepare_adaptive_simplex.policy must use the DEVICE_BISECTION route; got adaptive simplex epochs require the device_bisection route"
         )
+    if hierarchy is not None and hierarchy.refinement_rule != "maubach":
+        raise ValueError(
+            "device_adaptation.prepare_adaptive_simplex.hierarchy must use maubach refinement; got another refinement rule"
+        )
     limits = policy.limits
     allowance = bisection_host.UniformAllowance.from_limits(limits)
     with (
@@ -673,6 +702,11 @@ def prepare_adaptive_simplex(
             budget.ticket.native_target(),
         ):
             prepared = _run_prepared_simplex(adaptation, scope=scope, budget=budget)
+        # The nested host preparation is this request's own chained phase; its
+        # live overlap leaves only the device preparation in the raw counters.
+        imports = NativeExecutionImports(
+            scope, preparation=adaptation.preparation_evidence
+        )
     if scope.evidence is None:
         return prepared
     return PreparedAdaptiveSimplex(
@@ -681,7 +715,10 @@ def prepare_adaptive_simplex(
         prepared.state,
         prepared.anchor,
         execution_evidence=NativeExecutionRecord(
-            scope.evidence, owner_id=adaptation.prepared_id
+            imports.evidence(),
+            preparation_evidence=adaptation.preparation_evidence,
+            owner_id=adaptation.prepared_id,
+            imports=imports,
         ),
     )
 
@@ -1220,8 +1257,8 @@ def _retained_scientific_block_authority(
     original = _scientific_preparation_source(prepared.adaptation)
     match original:
         case _owner_phydrax_meshing__initial_certification.InitialCollectiveMeshEvidence():
-            # Initial surface publication has one declared surface cell block;
-            # authored patch incidence is retained in its organization banks.
+            # Initial publication has one declared premise cell block;
+            # authored source incidence is retained in its organization banks.
             return identifiers, np.zeros(identifiers.shape, dtype=np.int32)
         case _dependency_phydrax_meshing__result.CellMeshingResult():
             authority = {
@@ -1467,6 +1504,7 @@ def _committed(
         front,
         prior=prior,
         source_authority=source_authority,
+        refinement_rule="maubach",
     )
     evidence = _dependency_phydrax_meshing__bisection.BisectionEvidence(
         requested_refinements=int(
@@ -1892,7 +1930,7 @@ def retained_partition_states(
         raise ValueError(
             "device_adaptation.retained_partition_states.evidence must match its accepted collective proof; got mismatched retained source identity"
         )
-    evidence.require_passed()
+    type(evidence).require_passed(evidence)
     return restore_partitioned_mesh_state(storage, evidence)
 
 
@@ -1927,18 +1965,6 @@ def _run_validate_partitioned_mesh_evidence(
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> None:
-    if evidence.migration_record is not None:
-        # Admit device handles only for explicit replay, never for persisted records.
-        parts = evidence.migration_record.source.placement.rebind()
-        sharding = jax.sharding.NamedSharding(parts.mesh, jax.sharding.PartitionSpec())
-
-        def place(value: Any) -> Any:
-            return (
-                jax.device_put(value, sharding) if isinstance(value, jax.Array) else value
-            )
-
-        storage, evidence = jax.tree.map(place, (storage, evidence))
-        budget.retain_basis((storage, evidence))
     layout, states, _ = restore_partitioned_mesh_state(storage, evidence)
     if layout.signature_id != evidence.layout.signature_id:
         raise ValueError(
@@ -2012,21 +2038,44 @@ def _require_migration_source_roots(
     before = migration.source_partitioned
     source = before.prepared.adaptation.source
     if source.mesh.storage is None:
-        # The retained routing banks are device leaves; validation reads them on host.
-        entities, slot_origins = jax.device_get(
-            (before.source_entities, before.slot_origins)
-        )
+        # Reconstruct genuine host-authored routing from its serial source;
+        # saved rank banks stay on device and are consumed one local owner at a time.
+        entities = source_entity_tables(before.prepared.adaptation)
         _validate_initial_partition_source(
             before.prepared,
             before.parts.part_count,
             before.states,
             before.source_exterior,
             entities,
-            slot_origins,
+            before.slot_origins,
             layout=before.layout,
             scope=scope,
             budget=budget,
         )
+    elif isinstance(
+        source.collective_evidence,
+        _owner_phydrax_meshing__initial_certification.InitialCollectiveMeshEvidence,
+    ):
+        # The initial theorem owns the source mesh. Reprove every raw forest
+        # obligation, not an unused second published view of that source.
+        prepared, _, _ = (
+            _dependency_phydrax_meshing__result._prove_collective_raw_source(
+                before, migration.saved_states, scope=scope, budget=budget
+            )
+        )
+        if prepared.preparation.source.result_id != prepared.source.result_id:
+            raise ValueError(
+                "device_adaptation.validate_restored_initial_source.source must match its accepted source; got mismatched restored preparation"
+            )
+        _validate_initial_source_roots(
+            source.collective_evidence, prepared.initial, prepared.exterior
+        )
+        if tuple(block.block_id for block in prepared.raw_blocks) != tuple(
+            block.block_id for block in source.mesh.blocks
+        ):
+            raise ValueError(
+                "device_adaptation.validate_restored_initial_source.tuple must match their native source declaration; got mismatched restored initial raw banks"
+            )
     else:
         prior = _dependency_phydrax_meshing__result.CollectiveMeshEvidence(
             before, migration.saved_states, scope=scope, budget=budget
@@ -2050,7 +2099,14 @@ def _validate_restored_initial_source(
             "device_adaptation.validate_restored_initial_source.source must match its accepted source; got mismatched restored preparation"
         )
     if evidence.migration_record is not None:
-        migration = evidence.migration_record.replay(scope=scope, budget=budget)
+        from ..lifecycle._restart_topology import TopologyRestartPolicy
+
+        # Reprove the retained logical epoch, not a new physical restart state.
+        migration = evidence.migration_record.replay(
+            scope=scope,
+            budget=budget,
+            policy=TopologyRestartPolicy(allow_topology_change=True),
+        )
         _require_migration_source_roots(migration, scope=scope, budget=budget)
         return
     if "placement/requested_target_owners" in dict(evidence.logical_arrays):
@@ -2169,59 +2225,73 @@ def _validate_restored_initial_source(
         )
 
 
-def _validate_initial_source_roots(
-    evidence: _owner_phydrax_meshing__initial_certification.InitialCollectiveMeshEvidence,
-    initial: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+@jax.jit
+def _initial_source_root_values(
+    cell_ids: jax.Array,
+    cell_active: jax.Array,
+    vertex_ids: jax.Array,
+    cells: jax.Array,
+    coordinates: jax.Array,
+    vertex_active: jax.Array,
+    parents: jax.Array,
+    children: jax.Array,
+    retired: jax.Array,
+    generations: jax.Array,
     exterior: jax.Array,
+    source_cell_ids: jax.Array,
+    source_cell_owners: jax.Array,
+    source_cell_vertices: jax.Array,
+    source_cell_count: int,
+    source_vertex_ids: jax.Array,
+    source_coordinates: jax.Array,
+    source_facet_keys: jax.Array,
+    source_physical: jax.Array,
     /,
-) -> None:
-    """Consume native coordinates, cells, owners and physical facets."""
-    evidence.require_current()
-    arrays = dict(evidence.logical_arrays)
-    mesh = initial.mesh
-    count = mesh.cell_ids.shape[0]
+) -> jax.Array:
+    """Evaluate every native-root predicate using numerical operands only."""
+    count = cell_ids.shape[0]
     table = jnp.where(
-        evidence.entity_ids[-1] >= 0, evidence.entity_ids[-1], jnp.iinfo(jnp.int64).max
+        source_cell_ids >= 0, source_cell_ids, jnp.iinfo(jnp.int64).max
     )
-    rows = jnp.minimum(jnp.searchsorted(table, mesh.cell_ids), table.shape[0] - 1)
-    corners = jax.vmap(lambda part: part.mesh.vertex_ids[part.mesh.cells])(initial)
-    source_corners = arrays["cell_vertices"][rows]
-    source_owners = evidence.entity_owners[-1][rows]
+    rows = jnp.minimum(jnp.searchsorted(table, cell_ids), table.shape[0] - 1)
+    corners = jax.vmap(lambda ids, slots: ids[slots])(vertex_ids, cells)
+    source_corners = source_cell_vertices[rows]
+    source_owners = source_cell_owners[rows]
     rank = jnp.arange(count, dtype=jnp.int32)[:, None]
     valid = jnp.all(
-        ~mesh.cell_active
+        ~cell_active
         | (
-            (table[rows] == mesh.cell_ids)
+            (table[rows] == cell_ids)
             & (source_owners == rank)
             & jnp.all(corners == source_corners, axis=-1)
         )
     )
-    valid &= jnp.sum(mesh.cell_active) == evidence.global_entity_counts[-1]
+    valid &= jnp.sum(cell_active) == source_cell_count
     vertex_table = jnp.where(
-        evidence.entity_ids[0] >= 0, evidence.entity_ids[0], jnp.iinfo(jnp.int64).max
+        source_vertex_ids >= 0, source_vertex_ids, jnp.iinfo(jnp.int64).max
     )
     positions = jnp.minimum(
-        jnp.searchsorted(vertex_table, mesh.vertex_ids), vertex_table.shape[0] - 1
+        jnp.searchsorted(vertex_table, vertex_ids), vertex_table.shape[0] - 1
     )
     valid &= jnp.all(
-        ~mesh.vertex_active
+        ~vertex_active
         | (
-            (vertex_table[positions] == mesh.vertex_ids)
-            & jnp.all(mesh.coordinates == arrays["coordinates"][positions], axis=-1)
+            (vertex_table[positions] == vertex_ids)
+            & jnp.all(coordinates == source_coordinates[positions], axis=-1)
         )
     )
-    allocated = mesh.cell_ids >= 0
+    allocated = cell_ids >= 0
     valid &= jnp.all(
         ~allocated
         | (
-            mesh.cell_active
-            & (initial.parents < 0)
-            & jnp.all(initial.children < 0, axis=-1)
-            & ~initial.retired
-            & (initial.generations == 0)
+            cell_active
+            & (parents < 0)
+            & jnp.all(children < 0, axis=-1)
+            & ~retired
+            & (generations == 0)
         )
     )
-    width = mesh.cells.shape[-1]
+    width = cells.shape[-1]
     columns = jnp.asarray(
         tuple(
             tuple(index for index in range(width) if index != opposite)
@@ -2231,14 +2301,48 @@ def _validate_initial_source_roots(
     )
     facets = jnp.sort(corners[:, :, columns], axis=-1)
     facet_keys = jnp.where(
-        evidence.entity_keys[-2] >= 0, evidence.entity_keys[-2], jnp.iinfo(jnp.int64).max
+        source_facet_keys >= 0, source_facet_keys, jnp.iinfo(jnp.int64).max
     )
     facet_rows = key_positions(facet_keys, facets.reshape((-1, width - 1))).reshape(
-        mesh.cells.shape
+        cells.shape
     )
-    physical = arrays["initial/edge_physical"][jnp.maximum(facet_rows, 0)]
+    physical = source_physical[jnp.maximum(facet_rows, 0)]
     valid &= jnp.all(
-        ~mesh.cell_active[..., None] | ((facet_rows >= 0) & (exterior == physical))
+        ~cell_active[..., None] | ((facet_rows >= 0) & (exterior == physical))
+    )
+    return valid
+
+
+def _validate_initial_source_roots(
+    evidence: _owner_phydrax_meshing__initial_certification.InitialCollectiveMeshEvidence,
+    initial: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    exterior: jax.Array,
+    /,
+) -> None:
+    """Re-earn native coordinates, cells, owners and physical facets."""
+    evidence.require_current()
+    arrays = dict(evidence.logical_arrays)
+    mesh = initial.mesh
+    valid = _initial_source_root_values(
+        mesh.cell_ids,
+        mesh.cell_active,
+        mesh.vertex_ids,
+        mesh.cells,
+        mesh.coordinates,
+        mesh.vertex_active,
+        initial.parents,
+        initial.children,
+        initial.retired,
+        initial.generations,
+        exterior,
+        evidence.entity_ids[-1],
+        evidence.entity_owners[-1],
+        arrays["cell_vertices"],
+        evidence.global_entity_counts[-1],
+        evidence.entity_ids[0],
+        arrays["coordinates"],
+        evidence.entity_keys[-2],
+        arrays["initial/edge_physical"],
     )
     if not bool(jax.device_get(valid)):
         raise ValueError(
@@ -2246,9 +2350,19 @@ def _validate_initial_source_roots(
         )
 
 
+@jax.jit
+def _partitioned_solver_owners_valid(
+    cell_active: jax.Array, solver_cell_owners: jax.Array, part_count: int, /
+) -> jax.Array:
+    """Reduce the original solver-owner range predicate without host banks."""
+    return jnp.all(
+        ~cell_active | ((solver_cell_owners >= 0) & (solver_cell_owners < part_count))
+    )
+
+
 def _partitioned_solver_owners(
     prepared: PreparedAdaptiveSimplex,
-    parts: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts,
+    parts: MigrationParts,
     states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
     solver_cell_owners: jax.Array | None,
     /,
@@ -2266,9 +2380,8 @@ def _partitioned_solver_owners(
     # States may be global arrays spanning other processes; reduce on device.
     if not bool(
         jax.device_get(
-            jnp.all(
-                ~states.mesh.cell_active
-                | ((solver_cell_owners >= 0) & (solver_cell_owners < parts.part_count))
+            _partitioned_solver_owners_valid(
+                states.mesh.cell_active, solver_cell_owners, parts.part_count
             )
         )
     ):
@@ -2281,7 +2394,7 @@ def _partitioned_solver_owners(
 def _validate_partitioned_source(
     prepared: PreparedAdaptiveSimplex,
     layout: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexLayout,
-    parts: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts,
+    parts: MigrationParts,
     states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
     source_exterior: jax.Array,
     entities: tuple[
@@ -2333,7 +2446,7 @@ def _validate_partitioned_source(
             migration.states,
             states,
             source_exterior,
-            np.asarray(slot_origins, dtype=np.int64),
+            slot_origins,
         )
         if rebalance_proposal is None:
             raise ValueError(
@@ -2355,7 +2468,7 @@ class PartitionedAdaptiveSimplex(StrictModule, NonTrainableState):
 
     prepared: PreparedAdaptiveSimplex
     layout: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexLayout
-    parts: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts
+    parts: MigrationParts
     states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState
     source_exterior: jax.Array
     source_entities: tuple[tuple[jax.Array, jax.Array, jax.Array], ...]
@@ -2394,7 +2507,7 @@ class PartitionedAdaptiveSimplex(StrictModule, NonTrainableState):
         self,
         prepared: PreparedAdaptiveSimplex,
         layout: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexLayout,
-        parts: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts,
+        parts: MigrationParts,
         states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
         source_exterior: jax.Array,
         slot_origins: np.ndarray | jax.Array,
@@ -2564,7 +2677,18 @@ class PartitionedAdaptiveSimplex(StrictModule, NonTrainableState):
             _dependency_phydrax_meshing__association.PlcAssociationTransfer,
         ):
             scientific = _scientific_preparation_source(prepared.adaptation)
-            if (
+            if isinstance(
+                scientific,
+                _owner_phydrax_meshing__initial_certification.InitialCollectiveMeshEvidence,
+            ):
+                # Native planar roots own their domain theorem rather than a
+                # copied serial certificate. Reuse the transfer's canonical
+                # source admission: it authenticates the original premise and
+                # still requires target certificates for every adapted epoch.
+                prepared.adaptation.policy.association_transfer.source_associations(
+                    prepared.adaptation.source, budget=budget
+                )
+            elif (
                 not isinstance(
                     scientific, _dependency_phydrax_meshing__result.CellMeshingResult
                 )
@@ -2600,6 +2724,19 @@ class PartitionedAdaptiveSimplex(StrictModule, NonTrainableState):
             }
         )
 
+    def execution_parts(
+        self,
+    ) -> _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts:
+        """Require actual execution owners rather than historical logical ranks."""
+        if not isinstance(
+            self.parts,
+            _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts,
+        ):
+            raise ValueError(
+                "partitioned.parts must provide live execution owners; got logical historical owners"
+            )
+        return self.parts
+
     def cell_marks(self, cell_ids: np.ndarray | jax.Array, /) -> jax.Array:
         """Per-part slot masks of the prepared cells descending from source cells."""
 
@@ -2613,14 +2750,11 @@ def _adaptive_execution_parts(
     *,
     neighbor_pairs: tuple[tuple[int, int], ...],
 ) -> _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts:
-    """Reuse a compatible declared root axis for internally placed adaptive owners."""
-    mesh = ExecutionRuntime.current().root_group.mesh
-    if mesh.devices.ndim == 1 and tuple(mesh.devices.flat) == chosen:
-        return _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts(
-            chosen, axis_name=mesh.axis_names[0], neighbor_pairs=neighbor_pairs
-        )
+    """Place internally placed adaptive owners on the canonical owner mesh."""
     return _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts(
-        chosen, neighbor_pairs=neighbor_pairs
+        chosen,
+        axis_name=owner_execution_mesh(chosen).axis_names[0],
+        neighbor_pairs=neighbor_pairs,
     )
 
 
@@ -2893,7 +3027,14 @@ def prepare_partitioned_mesh_adaptation(
     prepared: _dependency_phydrax_meshing__adaptation.PreparedMeshAdaptation, /
 ) -> PartitionedAdaptiveSimplex:
     limits = prepared.policy.limits
-    allowance = bisection_host.UniformAllowance.from_limits(limits)
+    # The ended host preparation is this request's own phase: its totals are
+    # debited once from the original allowance and chained below.
+    preparation = prepared.preparation_evidence
+    allowance = (
+        bisection_host.UniformAllowance.from_limits(limits)
+        if preparation is None
+        else _phase_allowance(prepared, preparation)
+    )
     with (
         bisection_host.uniform_execution(allowance) as scope,
         device_coordinate_budget(limits, scope=scope) as budget,
@@ -2905,7 +3046,11 @@ def prepare_partitioned_mesh_adaptation(
         return partitioned
     return _bind_partitioned_preparation_receipt(
         partitioned,
-        NativeExecutionRecord(scope.evidence, owner_id=prepared.prepared_id),
+        NativeExecutionRecord(
+            scope.evidence,
+            preparation_evidence=preparation,
+            owner_id=prepared.prepared_id,
+        ),
         scope=scope,
         budget=budget,
     )
@@ -2958,6 +3103,23 @@ def _prepare_partitioned_mesh_adaptation(
     ):
         raise ValueError(
             "device_adaptation.prepare_partitioned_mesh_adaptation.prepared must provide a marked DEVICE_BISECTION request; got an absent or incompatible value"
+        )
+    if (
+        prepared.request.refinement_generations != 1
+        or prepared.request.refinement_target_cells is not None
+    ):
+        raise ValueError(
+            "device_adaptation.prepare_partitioned_mesh_adaptation.request must request one refinement generation without a target cell count; got host-only refinement controls"
+        )
+    hierarchy = prepared.request.hierarchy
+    if hierarchy is not None and (
+        not isinstance(
+            hierarchy, _dependency_phydrax_meshing__bisection.BisectionHierarchy
+        )
+        or hierarchy.refinement_rule != "maubach"
+    ):
+        raise ValueError(
+            "device_adaptation.prepare_partitioned_mesh_adaptation.hierarchy must use maubach refinement; got another refinement rule"
         )
     distribution = prepared.policy.distribution
     device = prepared.policy.device_policy
@@ -3445,8 +3607,7 @@ def _authenticate_mixed_root_request(
         budget=budget,
     )
     hosts = tuple(
-        _host_epoch(_addressable_part_state(retained, part))
-        for part in range(storage.partition_count)
+        _host_part_epoch(retained, part) for part in range(storage.partition_count)
     )
     restored_tuples = np.empty((restored.size, source.dimension + 1), dtype=np.int64)
     restored_tags = np.empty(restored.size, dtype=np.int64)
@@ -4596,37 +4757,86 @@ def _source_simplex_on_states(
     return PreparedAdaptiveSimplex(prepared, layout, local_state, anchor)
 
 
+@jax.jit
+def _restart_publication_values(
+    logical_ids: jax.Array,
+    logical_cells: jax.Array,
+    facet_table: jax.Array,
+    cell_count: int,
+    facet_count: int,
+    target_ids: jax.Array,
+    active: jax.Array,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    dimension = logical_cells.shape[-1] - 1
+    width = dimension + 1
+    sentinel = jnp.iinfo(jnp.int64).max
+    id_table = jnp.where(jnp.arange(logical_ids.shape[0]) < cell_count, logical_ids, sentinel)
+    rows = jnp.searchsorted(id_table, target_ids)
+    safe_rows = jnp.minimum(rows, id_table.shape[0] - 1)
+    cells_present = jnp.all(
+        ~active | ((rows < id_table.shape[0]) & (id_table[safe_rows] == target_ids))
+    )
+    columns = jnp.asarray(
+        tuple(
+            tuple(column for column in range(width) if column != opposite)
+            for opposite in range(width)
+        ),
+        dtype=jnp.int32,
+    )
+    logical_keys = jnp.sort(logical_cells[:, columns], axis=2).reshape((-1, dimension))
+    logical_valid = jnp.repeat(jnp.arange(logical_cells.shape[0]) < cell_count, width)
+    searchable = jnp.where(
+        jnp.arange(facet_table.shape[0])[:, None] < facet_count, facet_table, sentinel
+    )
+    facet_rows = key_positions(searchable, logical_keys)
+    incidence = (
+        jnp.zeros((facet_table.shape[0],), dtype=jnp.int32)
+        .at[jnp.maximum(facet_rows, 0)]
+        .add(logical_valid.astype(jnp.int32))
+    )
+    target_keys = jnp.sort(logical_cells[safe_rows][..., columns], axis=-1).reshape(
+        (-1, dimension)
+    )
+    target_rows = key_positions(searchable, target_keys).reshape((*target_ids.shape, width))
+    facets_present = jnp.all(~active[..., None] | (target_rows >= 0))
+    exterior = active[..., None] & (incidence[jnp.maximum(target_rows, 0)] == 1)
+    return exterior, jnp.where(active, target_ids, -1), cells_present, facets_present
+
+
 @checked
 def commit_partitioned_mesh_restart(
     repack: _owner_phydrax_meshing__restart_distribution.SimplexRestartRepack,
     prepared: _dependency_phydrax_meshing__adaptation.PreparedMeshAdaptation,
     /,
+    *,
+    proof: _owner_phydrax_meshing__restart_distribution.SimplexRestartRepackProof,
+    historical_sources: tuple[_dependency_phydrax_meshing__result.CellMeshingResult, ...] | None = None,
 ) -> _dependency_phydrax_meshing__result.PartitionedMeshAdaptationResult:
-    """Publish an independently validated changed-count accepted source epoch."""
+    """Publish a changed-count epoch using its admitted immutable numerical proof."""
 
-    if (
-        repack.source_result is None
-        or prepared.source.result_id != repack.source_result.result_id
-    ):
-        raise ValueError(
-            "device_adaptation.commit_partitioned_mesh_restart.repack must bind the saved accepted source result; got an incompatible value"
-        )
-    if not isinstance(
-        prepared.request, _dependency_phydrax_meshing__adaptation.MarkedMeshAdaptation
-    ) or (
-        prepared.request.refine_cell_ids.size or prepared.request.coarsen_cell_ids.size
-    ):
-        raise ValueError(
-            "device_adaptation.commit_partitioned_mesh_restart.prepared must provide its placement-only marked request; got an absent or incompatible value"
-        )
-    policy = prepared.policy.partition_policy
-    if policy is None or policy.part_count != repack.parts.part_count:
-        raise ValueError(
-            "device_adaptation.commit_partitioned_mesh_restart.policy must satisfy the requested owner count; got an incompatible value"
-        )
-
-    proof = _owner_phydrax_meshing__restart_distribution.SimplexRestartRepackProof(repack)
-    parts = repack.execution_parts()
+    with _agreed_local_step():
+        if (
+            repack.source_result is None
+            or prepared.source.result_id != repack.source_result.result_id
+        ):
+            raise ValueError(
+                "device_adaptation.commit_partitioned_mesh_restart.repack must bind the saved accepted source result; got an incompatible value"
+            )
+        if not isinstance(
+            prepared.request, _dependency_phydrax_meshing__adaptation.MarkedMeshAdaptation
+        ) or (
+            prepared.request.refine_cell_ids.size or prepared.request.coarsen_cell_ids.size
+        ):
+            raise ValueError(
+                "device_adaptation.commit_partitioned_mesh_restart.prepared must provide its placement-only marked request; got an absent or incompatible value"
+            )
+        policy = prepared.policy.partition_policy
+        if policy is None or policy.part_count != repack.parts.part_count:
+            raise ValueError(
+                "device_adaptation.commit_partitioned_mesh_restart.policy must satisfy the requested owner count; got an incompatible value"
+            )
+        type(proof).require_receipt(proof, repack)
+    parts = type(repack).execution_parts(repack)
     source = repack.source_result
     storage = source.mesh.storage
     evidence = source.collective_evidence
@@ -4639,64 +4849,25 @@ def commit_partitioned_mesh_restart(
     validate_partitioned_mesh_evidence(storage, evidence)
     source_arrays = dict(storage.logical_arrays)
     dimension = repack.layout.dimension
-    width = dimension + 1
-    cell_count = storage.global_entity_counts[-1]
-    logical_ids = source_arrays["cell_global_ids"]
-    id_table = jnp.where(
-        jnp.arange(logical_ids.shape[0]) < cell_count,
-        logical_ids,
-        jnp.iinfo(jnp.int64).max,
+    exterior, origins, cells_present, facets_present = _restart_publication_values(
+        source_arrays["cell_global_ids"],
+        source_arrays["cell_vertices"],
+        source_arrays[f"entity_vertices_{dimension - 1}"],
+        storage.global_entity_counts[-1],
+        storage.global_entity_counts[dimension - 1],
+        repack.states.mesh.cell_ids,
+        repack.states.mesh.cell_active,
     )
-    rows = jnp.searchsorted(id_table, repack.states.mesh.cell_ids)
-    safe_rows = jnp.minimum(rows, id_table.shape[0] - 1)
-    active = repack.states.mesh.cell_active
-    if not bool(
-        jax.device_get(
-            jnp.all(
-                ~active
-                | (
-                    (rows < id_table.shape[0])
-                    & (id_table[safe_rows] == repack.states.mesh.cell_ids)
-                )
+    cells_present, facets_present = jax.device_get((cells_present, facets_present))
+    with _agreed_local_step():
+        if not bool(cells_present):
+            raise ValueError(
+                "device_adaptation.commit_partitioned_mesh_restart.active must exist in the accepted logical topology; got restart active records are absent from the accepted logical topology"
             )
-        )
-    ):
-        raise ValueError(
-            "device_adaptation.commit_partitioned_mesh_restart.active must exist in the accepted logical topology; got restart active records are absent from the accepted logical topology"
-        )
-    columns = jnp.asarray(
-        tuple(
-            tuple(column for column in range(width) if column != opposite)
-            for opposite in range(width)
-        ),
-        dtype=jnp.int32,
-    )
-    logical_cells = source_arrays["cell_vertices"]
-    logical_keys = jnp.sort(logical_cells[:, columns], axis=2).reshape((-1, dimension))
-    logical_valid = jnp.repeat(jnp.arange(logical_cells.shape[0]) < cell_count, width)
-    facet_table = source_arrays[f"entity_vertices_{dimension - 1}"]
-    facet_count = storage.global_entity_counts[dimension - 1]
-    searchable_facets = jnp.where(
-        jnp.arange(facet_table.shape[0])[:, None] < facet_count,
-        facet_table,
-        jnp.iinfo(jnp.int64).max,
-    )
-    logical_facet_rows = key_positions(searchable_facets, logical_keys)
-    incidence = (
-        jnp.zeros((facet_table.shape[0],), dtype=jnp.int32)
-        .at[jnp.maximum(logical_facet_rows, 0)]
-        .add(logical_valid.astype(jnp.int32))
-    )
-    target_cells = logical_cells[safe_rows]
-    target_keys = jnp.sort(target_cells[..., columns], axis=-1).reshape((-1, dimension))
-    target_facet_rows = key_positions(searchable_facets, target_keys).reshape(
-        (*repack.states.mesh.cell_ids.shape, width)
-    )
-    if not bool(jax.device_get(jnp.all(~active[..., None] | (target_facet_rows >= 0)))):
-        raise ValueError(
-            "device_adaptation.commit_partitioned_mesh_restart.target_facet_rows must reference facets present in the accepted logical topology; got restart cells reference a facet absent from accepted logical topology"
-        )
-    exterior = active[..., None] & (incidence[jnp.maximum(target_facet_rows, 0)] == 1)
+        if not bool(facets_present):
+            raise ValueError(
+                "device_adaptation.commit_partitioned_mesh_restart.target_facet_rows must reference facets present in the accepted logical topology; got restart cells reference a facet absent from accepted logical topology"
+            )
     exterior = jax.device_put(exterior, repack.states.mesh.cell_ids.sharding)
     arrays: dict[str, jax.Array] = {
         "placement/requested_target_owners": repack.requested_target_owners,
@@ -4711,6 +4882,8 @@ def commit_partitioned_mesh_restart(
         "placement/saved_counters": repack.saved_counters,
         "placement/initial_solver_cell_owners": repack.solver_cell_owners,
         "placement/status": repack.status,
+        "placement/invalid_reason_masks": repack.invalid_reason_masks,
+        "placement/duplicate_record_conflicts": repack.duplicate_record_conflicts,
         "placement/cells_before": repack.cells_before,
         "placement/cells_after": repack.cells_after,
         "placement/vertices_before": repack.vertices_before,
@@ -4765,7 +4938,7 @@ def commit_partitioned_mesh_restart(
             parts,
             repack.states,
             exterior,
-            jnp.where(repack.states.mesh.cell_active, repack.states.mesh.cell_ids, -1),
+            origins,
             solver_cell_owners=repack.solver_cell_owners,
             placement_arrays=tuple(sorted(arrays.items())),
             restart_repack=repack,
@@ -4780,7 +4953,10 @@ def commit_partitioned_mesh_restart(
             scope=scope,
             budget=budget,
         )
-    return commit_partitioned_adaptive_simplex(partitioned, repack.states)
+    return commit_partitioned_adaptive_simplex(
+        partitioned, repack.states,
+        historical_sources=(prepared.source,) if historical_sources is None else historical_sources,
+    )
 
 
 def _restart_receipt_from_evidence(
@@ -4859,6 +5035,8 @@ def _restart_receipt_from_evidence(
         arrays["placement/initial_solver_cell_owners"],
         arrays["placement/saved_solver_cell_owners"],
         arrays["placement/cell_migration_counts"],
+        arrays["placement/invalid_reason_masks"],
+        arrays["placement/duplicate_record_conflicts"],
         graph,
     )
 
@@ -4867,6 +5045,7 @@ def _restart_receipt_from_evidence(
 def execute_partitioned_mesh_adaptation(
     partitioned: PartitionedAdaptiveSimplex, /
 ) -> _dependency_phydrax_meshing__result.PartitionedMeshAdaptationResult:
+    _require_live_partitioned_execution(partitioned)
     preparation = partitioned.prepared.adaptation
     receipt = partitioned.execution_evidence
     if receipt is None:
@@ -4945,6 +5124,7 @@ def _execute_partitioned_mesh_adaptation(
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _dependency_phydrax_meshing__result.PartitionedMeshAdaptationResult:
     """Execute the admitted marked request and publish addressable results."""
+    parts = type(partitioned).execution_parts(partitioned)
     request = partitioned.prepared.adaptation.request
     if not isinstance(
         request, _dependency_phydrax_meshing__adaptation.MarkedMeshAdaptation
@@ -4960,13 +5140,13 @@ def _execute_partitioned_mesh_adaptation(
     )
     refined = _dependency_phydrax_discretization__adaptive_simplex.refine_adaptive_simplex_parts(
         partitioned.layout,
-        partitioned.parts,
+        parts,
         partitioned.states,
         refine_marks,
     )
     coarsened = _dependency_phydrax_discretization__adaptive_simplex.coarsen_adaptive_simplex_parts(
         partitioned.layout,
-        partitioned.parts,
+        parts,
         refined.state,
         partitioned.cell_marks(request.coarsen_cell_ids),
     )
@@ -5258,7 +5438,7 @@ def _validate_initial_partition_source(
         first = 0 if selection.start is None else selection.start
         last = partition_count if selection.stop is None else selection.stop
         for part in range(first, last):
-            host = _host_epoch(_addressable_part_state(states, part))
+            host = _host_part_epoch(states, part)
             slots = np.flatnonzero(slot_owner == part)
             piece = _part_arrays(base, prepared, slots)
             expected = _host_epoch(_owned_part_state(layout, base, slots, piece))
@@ -5270,7 +5450,7 @@ def _validate_initial_partition_source(
                     "device_adaptation.validate_initial_partition_source.any must match the accepted source; got mismatched initial owner families or constraints"
                 )
             received_origins = (
-                np.asarray(jax.device_get(_addressable_part_array(origins, part)))
+                _host_part_array(origins, part)
                 if isinstance(origins, jax.Array)
                 else origins[part]
             )
@@ -5283,9 +5463,7 @@ def _validate_initial_partition_source(
                 raise ValueError(
                     "device_adaptation.validate_initial_partition_source.received_origins must match their source family; got mismatched initial owner origins"
                 )
-            received_exterior = np.asarray(
-                jax.device_get(_addressable_part_array(exterior, part))
-            )
+            received_exterior = _host_part_array(exterior, part)
             if not np.array_equal(
                 received_exterior[: slots.size], authoritative_exterior[slots]
             ) or np.any(received_exterior[slots.size :]):
@@ -5325,7 +5503,7 @@ def source_entity_tables(
             raise ValueError(
                 "device_adaptation.source_entity_tables.evidence must provide its collective numerical evidence; got an absent or incompatible value"
             )
-        evidence.require_passed()
+        type(evidence).require_passed(evidence)
         return tuple(
             (keys[:count], identifiers[:count], owners[:count])
             for keys, identifiers, owners, count in zip(
@@ -5436,12 +5614,45 @@ def source_solver_cell_owners(
     )
     if forest is not None:
         born = states.mesh.cell_active & ~accepted
-        origins, accepted_origins = _source_solver_owner_values(
-            jnp.asarray(forest.anchor.cell_ids),
-            jnp.asarray(forest.anchor.slot_origins),
-            cell_ids,
-            born,
-        )
+        anchor_ids = np.asarray(forest.anchor.cell_ids, dtype=np.int64)
+        anchor_origins = np.asarray(forest.anchor.slot_origins, dtype=np.int64)
+        if cell_ids.is_fully_addressable:
+            origins, accepted_origins = _source_solver_owner_values(
+                jnp.asarray(anchor_ids), jnp.asarray(anchor_origins), cell_ids, born
+            )
+        else:
+            # Each process's prepared forest covers only its own parts; place
+            # it as those parts' rows instead of a replicated host-local table.
+            width = max(
+                int(
+                    np.max(
+                        multihost_utils.process_allgather(np.int64(anchor_ids.size))
+                    )
+                ),
+                1,
+            )
+            padded_ids = np.full((width,), np.iinfo(np.int64).max, dtype=np.int64)
+            padded_origins = np.full((width,), -1, dtype=np.int64)
+            padded_ids[: anchor_ids.size] = anchor_ids
+            padded_origins[: anchor_origins.size] = anchor_origins
+            shape = (cell_ids.shape[0], width)
+
+            def placed(row: np.ndarray, /) -> jax.Array:
+                def addressable(index: tuple[slice, ...] | None) -> np.ndarray:
+                    if index is None:
+                        raise ValueError(
+                            "device_adaptation.source_solver_cell_owners.index must provide its concrete addressable parts; got an absent or incompatible value"
+                        )
+                    parts = len(range(*index[0].indices(shape[0])))
+                    return np.broadcast_to(row, (parts, width))
+
+                return jax.make_array_from_callback(
+                    shape, cell_ids.sharding, addressable
+                )
+
+            origins, accepted_origins = jax.vmap(_source_solver_owner_values)(
+                placed(padded_ids), placed(padded_origins), cell_ids, born
+            )
         inherited, accepted_inherited = _source_solver_owner_values(
             identifiers, ownership, origins, born
         )
@@ -5638,6 +5849,24 @@ class _LocalCommit(NamedTuple):
     cell_exterior: np.ndarray | None = None
 
 
+def _host_part_array(value: jax.Array, partition_index: int, /) -> np.ndarray:
+    """Read an owning shard before selecting its host-only part metadata."""
+    data, local_index, _ = _addressable_part_payload(value, partition_index)
+    return np.asarray(jax.device_get(data))[local_index]
+
+
+def _host_part_epoch(
+    states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    partition_index: int,
+    /,
+) -> _HostEpoch:
+    """Snapshot one local part without compiling device indexing kernels."""
+    host = jax.tree_util.tree_map(
+        lambda value: _host_part_array(value, partition_index), states
+    )
+    return _host_epoch(host)
+
+
 def _addressable_part_state(
     states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
     partition_index: int,
@@ -5672,6 +5901,19 @@ def _addressable_part_array(value: jax.Array, partition_index: int, /) -> jax.Ar
     return data[local_index]
 
 
+@jax.jit
+def _ordered_entity_table(
+    keys: jax.Array, identifiers: jax.Array, owners: jax.Array, /
+) -> tuple[jax.Array, jax.Array]:
+    """Lexicographic source keys with their stable IDs and owners as int64 lanes."""
+    keys = keys.astype(jnp.int64)
+    order = jnp.lexsort(keys.T[::-1])
+    values = jnp.stack(
+        (identifiers[order].astype(jnp.int64), owners[order].astype(jnp.int64)), axis=1
+    )
+    return keys[order], values
+
+
 def _source_entity_values(
     entities: tuple[
         tuple[np.ndarray | jax.Array, np.ndarray | jax.Array, np.ndarray | jax.Array], ...
@@ -5680,20 +5922,31 @@ def _source_entity_values(
     queries: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Lower only the requested source entities from globally logical routing."""
-    keys, identifiers, owners = entities[degree]
-    table = jnp.asarray(keys, dtype=jnp.int64)
-    order = jnp.lexsort(table.T[::-1])
-    positions = key_positions(table[order], jnp.asarray(queries, dtype=jnp.int64))
-    if bool(jax.device_get(jnp.any(positions < 0))):
-        raise ValueError(
-            "device_adaptation.source_entity_values.positions must exist in the accepted logical topology; got a local source entity is absent from accepted logical topology"
+    """Lower only the requested source entities from globally logical routing.
+
+    This process's keys travel in fixed semantic packets; the logical source
+    tables stay sharded and no closure-shaped query enters a collective.
+    """
+    table, values, query = _agreed_local(
+        lambda: (
+            *_ordered_entity_table(
+                *(jnp.asarray(value) for value in entities[degree])
+            ),
+            np.asarray(queries, dtype=np.int64),
         )
-    rows = order[positions]
-    return (
-        np.asarray(jax.device_get(jnp.asarray(identifiers)[rows]), dtype=np.int64),
-        np.asarray(jax.device_get(jnp.asarray(owners)[rows]), dtype=np.int32),
     )
+    found, present = _dependency_phydrax_meshing__scope.local_logical_lookup(
+        table, values, query
+    )
+
+    def accepted() -> tuple[np.ndarray, np.ndarray]:
+        if not np.all(present):
+            raise ValueError(
+                "device_adaptation.source_entity_values.positions must exist in the accepted logical topology; got a local source entity is absent from accepted logical topology"
+            )
+        return found[:, 0], found[:, 1].astype(np.int32)
+
+    return _agreed_local(accepted)
 
 
 def _source_closure(
@@ -5706,9 +5959,13 @@ def _source_closure(
 ) -> bisection_host.Source:
     """Lower only the active predecessor cells consumed by one local closure."""
 
-    accepted = partitioned.prepared.adaptation.source
-    cell_ids = np.unique(root_ids[root_ids >= 0])
-    storage = accepted.mesh.storage
+    accepted, cell_ids, storage = _agreed_local(
+        lambda: (
+            partitioned.prepared.adaptation.source,
+            np.unique(root_ids[root_ids >= 0]),
+            partitioned.prepared.adaptation.source.mesh.storage,
+        )
+    )
     if accepted.mesh.periodic_topology is not None:
         cell_ids = (
             _owner_phydrax_meshing__collective_geometry.periodic_source_closure_cells(
@@ -5720,57 +5977,88 @@ def _source_closure(
             )
         )
     if storage is None:
-        original = partitioned.prepared.anchor.source
-        rows = np.searchsorted(original.cells.ids, cell_ids)
-        if np.any(rows >= original.cells.ids.size) or not np.array_equal(
-            original.cells.ids[rows], cell_ids
-        ):
-            raise ValueError(
-                "device_adaptation.source_closure.rows must reference existing accepted source cells; got neighborhood ancestry references absent accepted source cells"
-            )
-        corners = original.vertex_ids[original.cells.rows[rows]]
-        identifiers = np.unique(corners)
-        points = original.coordinates[np.searchsorted(original.vertex_ids, identifiers)]
+        def resident_cells() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            original = partitioned.prepared.anchor.source
+            rows = np.searchsorted(original.cells.ids, cell_ids)
+            if np.any(rows >= original.cells.ids.size) or not np.array_equal(
+                original.cells.ids[rows], cell_ids
+            ):
+                raise ValueError(
+                    "device_adaptation.source_closure.rows must reference existing accepted source cells; got neighborhood ancestry references absent accepted source cells"
+                )
+            corners = original.vertex_ids[original.cells.rows[rows]]
+            identifiers = np.unique(corners)
+            points = original.coordinates[np.searchsorted(original.vertex_ids, identifiers)]
+            return corners, identifiers, points
+
+        corners, identifiers, points = _agreed_local(resident_cells)
     else:
-        arrays = dict(storage.logical_arrays)
+        arrays, cell_keys, cell_values = _agreed_local(
+            lambda: (
+                dict(storage.logical_arrays),
+                dict(storage.logical_arrays)["cell_global_ids"],
+                dict(storage.logical_arrays)["cell_vertices"],
+            )
+        )
+        # Trimming a globally sharded capacity can redistribute its shards.
+        # Finish local admission before executing either placed slice.
+        cell_keys = cell_keys[: storage.global_entity_counts[-1]]
+        cell_values = cell_values[: storage.global_entity_counts[-1]]
         corners, present = _dependency_phydrax_meshing__scope.local_logical_lookup(
-            arrays["cell_global_ids"][: storage.global_entity_counts[-1]],
-            arrays["cell_vertices"][: storage.global_entity_counts[-1]],
-            cell_ids,
+            cell_keys, cell_values, cell_ids
         )
-        if not np.all(present):
-            raise ValueError(
-                "device_adaptation.source_closure.present must reference existing accepted logical cells; got neighborhood ancestry references absent accepted logical source cells"
+
+        def vertex_query() -> tuple[np.ndarray, jax.Array, jax.Array]:
+            if not np.all(present):
+                raise ValueError(
+                    "device_adaptation.source_closure.present must reference existing accepted logical cells; got neighborhood ancestry references absent accepted logical source cells"
+                )
+            return (
+                np.unique(corners),
+                arrays["vertex_global_ids"],
+                arrays["coordinates"],
             )
-        identifiers = np.unique(corners)
+
+        identifiers, vertex_keys, vertex_values = _agreed_local(vertex_query)
+        vertex_keys = vertex_keys[: storage.global_entity_counts[0]]
+        vertex_values = vertex_values[: storage.global_entity_counts[0]]
         points, present = _dependency_phydrax_meshing__scope.local_logical_lookup(
-            arrays["vertex_global_ids"][: storage.global_entity_counts[0]],
-            arrays["coordinates"][: storage.global_entity_counts[0]],
-            identifiers,
+            vertex_keys, vertex_values, identifiers
         )
-        if not np.all(present):
-            raise ValueError(
-                "device_adaptation.source_closure.present must reference existing source vertices; got accepted logical cell ancestry references absent source vertices"
-            )
-    block = accepted.mesh.blocks[0]
-    cells = np.searchsorted(identifiers, corners).astype(np.int32)
-    blocks = (CellBlock(block.name, block.cell_kind, cells, global_ids=cell_ids),)
-    probe = _dependency_phydrax_discretization__cell_mesh.CellMesh(
-        points, blocks, vertex_global_ids=identifiers
-    )
+
+        def accepted_vertices() -> None:
+            if not np.all(present):
+                raise ValueError(
+                    "device_adaptation.source_closure.present must reference existing source vertices; got accepted logical cell ancestry references absent source vertices"
+                )
+
+        _agreed_local(accepted_vertices)
+
+    def source_probe() -> tuple[tuple[CellBlock, ...], tuple[np.ndarray, ...]]:
+        block = accepted.mesh.blocks[0]
+        cells = np.searchsorted(identifiers, corners).astype(np.int32)
+        blocks = (CellBlock(block.name, block.cell_kind, cells, global_ids=cell_ids),)
+        probe = _dependency_phydrax_discretization__cell_mesh.CellMesh(
+            points, blocks, vertex_global_ids=identifiers
+        )
+        queries = tuple(
+            entity_keys_owner.entity_keys(probe, degree)
+            for degree in range(1, accepted.mesh.topological_dimension)
+        )
+        return blocks, queries
+
+    blocks, queries = _agreed_local(source_probe)
     entity_ids = {
-        degree: _source_entity_values(
-            partitioned.source_entities,
-            degree,
-            entity_keys_owner.entity_keys(probe, degree),
-        )[0]
-        for degree in range(1, accepted.mesh.topological_dimension)
+        degree: _source_entity_values(partitioned.source_entities, degree, query)[0]
+        for degree, query in enumerate(queries, start=1)
     }
-    mesh = _dependency_phydrax_discretization__cell_mesh.CellMesh(
-        points,
-        blocks,
-        vertex_global_ids=identifiers,
-        entity_global_ids=entity_ids,
+    mesh = _agreed_local(
+        lambda: _dependency_phydrax_discretization__cell_mesh.CellMesh(
+            points,
+            blocks,
+            vertex_global_ids=identifiers,
+            entity_global_ids=entity_ids,
+        )
     )
     if accepted.mesh.periodic_topology is not None:
         periodic = (
@@ -5785,7 +6073,56 @@ def _source_closure(
             entity_global_ids=entity_ids,
             periodic_topology=periodic,
         )
-    return bisection_host.prepared_source(mesh)
+    return _agreed_local(lambda: bisection_host.prepared_source(mesh))
+
+
+@jax.jit
+def _routed_vertex_table(
+    vertex_ids: jax.Array, active: jax.Array, values: jax.Array, /
+) -> tuple[jax.Array, jax.Array]:
+    """Capacity-shaped sorted vertex keys and their retained per-vertex rows.
+
+    Inactive capacity rows sort last as the int64 sentinel, so every process
+    compiles one program for the uniformly shaped sharded state of each epoch.
+    """
+    keys, order, count = _canonical_row_values(
+        vertex_ids.reshape((-1, 1)), active.reshape((-1,))
+    )
+    prefix = jnp.arange(keys.shape[0]) < count
+    table = jnp.where(prefix[:, None], keys, jnp.iinfo(jnp.int64).max)
+    return table, values.reshape((keys.shape[0], -1))[order]
+
+
+def _routed_vertex_values(
+    states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    values: jax.Array,
+    vertex_ids: np.ndarray,
+    message: str,
+    /,
+) -> np.ndarray:
+    """Retained int64 rows of this process's ``vertex_ids`` in the sharded state.
+
+    Queries travel in the fixed-capacity semantic-ID packets of
+    ``local_logical_lookup``; no global vertex bank is materialized on a host.
+    """
+    table, rows, query = _agreed_local(
+        lambda: (
+            *_routed_vertex_table(
+                states.mesh.vertex_ids, states.mesh.vertex_active, values
+            ),
+            np.asarray(vertex_ids, dtype=np.int64).reshape((-1, 1)),
+        )
+    )
+    found, present = _dependency_phydrax_meshing__scope.local_logical_lookup(
+        table, rows, query
+    )
+
+    def accepted() -> np.ndarray:
+        if not np.all(present):
+            raise ValueError(message)
+        return found
+
+    return _agreed_local(accepted)
 
 
 def _predecessor_reverse_supports(
@@ -5797,108 +6134,113 @@ def _predecessor_reverse_supports(
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compose the retained midpoint DAG for vertices removed by this epoch."""
-    lineage = partitioned.prepared.anchor.start.uniform_refinement
-    if lineage is not None:
-        support_ids, support_weights, valid = jax.vmap(
-            lambda state: (
-                _owner_phydrax_meshing__collective_organization.original_vertex_ancestry(
-                    state, lineage
-                )
-            ),
-        )(partitioned.states)
-        if not bool(jax.device_get(jnp.all(valid))):
-            raise ValueError(
-                "device_adaptation.predecessor_reverse_supports.valid must retain its full barycentric source support; got missing its full barycentric source support"
-            )
-        table = partitioned.states.mesh.vertex_ids.reshape((-1, 1))
-        keys, order, count = canonical_rows(
-            table,
-            partitioned.states.mesh.vertex_active.reshape(-1),
-        )
-        positions = key_positions(keys[:count], jnp.asarray(source.vertex_ids[:, None]))
-        if bool(jax.device_get(jnp.any(positions < 0))):
-            raise ValueError(
-                "device_adaptation.predecessor_reverse_supports.positions must retain a retained predecessor vertex; got missing a retained predecessor vertex"
-            )
-        selected = order[positions]
-        width = source.dimension + 1
-        bisection_host.uniform_count(
-            source.vertex_ids.size * width,
-            source.vertex_ids.size * width * 16,
-            budget=budget,
-        )
-        ids = np.array(
-            jax.device_get(support_ids.reshape((-1, width))[selected]),
-            dtype=np.int64,
-            copy=True,
-        )
-        weights = np.array(
-            jax.device_get(support_weights.reshape((-1, width))[selected]),
-            dtype=np.float64,
-            copy=True,
-        )
+    """Compose the retained midpoint DAG for vertices removed by this epoch.
+
+    Only removed vertices need retained predecessor rows; they are routed by
+    stable ID from the uniformly shaped sharded states of every process.
+    """
+    with _agreed_local_step():
         present = np.isin(source.vertex_ids, target_vertices)
-        ids[present] = -1
-        weights[present] = 0.0
-        ids[present, 0] = source.vertex_ids[present]
-        weights[present, 0] = 1.0
-        rows = entity_keys_owner.key_rows(
-            source.vertex_ids[:, None], np.maximum(ids, 0).reshape((-1, 1))
-        ).reshape(ids.shape)
-        rows = np.where(weights != 0.0, rows, -1)
-        if np.any((weights != 0.0) & (rows < 0)):
-            raise ValueError(
-                "device_adaptation.predecessor_reverse_supports.weights must retain an scientific vertex; got missing an scientific vertex"
+        removed = np.flatnonzero(~present)
+        lineage = partitioned.prepared.anchor.start.uniform_refinement
+    if lineage is not None:
+        with _agreed_local_step():
+            support_ids, support_weights, valid = jax.vmap(
+                lambda state: (
+                    _owner_phydrax_meshing__collective_organization.original_vertex_ancestry(
+                        state, lineage
+                    )
+                ),
+            )(partitioned.states)
+            if not bool(jax.device_get(jnp.all(valid))):
+                raise ValueError(
+                    "device_adaptation.predecessor_reverse_supports.valid must retain its full barycentric source support; got missing its full barycentric source support"
+                )
+            width = source.dimension + 1
+            bisection_host.uniform_count(
+                source.vertex_ids.size * width,
+                source.vertex_ids.size * width * 16,
+                budget=budget,
             )
-        return rows, weights
-    initial = partitioned.states
-    vertices = initial.mesh.vertex_ids.shape[1]
-    parents = initial.vertex_parents
-    identifiers = jnp.take_along_axis(
-        initial.mesh.vertex_ids,
-        jnp.clip(parents.reshape((parents.shape[0], -1)), 0, vertices - 1),
-        axis=1,
-    ).reshape(parents.shape)
-    identifiers = jnp.where(parents >= 0, identifiers, -1)
-    table = initial.mesh.vertex_ids.reshape((-1, 1))
-    valid = initial.mesh.vertex_active.reshape((-1,))
-    keys, order, count = canonical_rows(table, valid)
-    positions = key_positions(
-        keys[:count], jnp.asarray(source.vertex_ids[:, None], dtype=jnp.int64)
-    )
-    if bool(jax.device_get(jnp.any(positions < 0))):
-        raise ValueError(
-            "device_adaptation.predecessor_reverse_supports.positions must exist in the retained predecessor state; got source closure vertices are absent from retained predecessor state"
+        # Weights travel bit-exactly as int64 lanes beside their support IDs.
+        routed = _routed_vertex_values(
+            partitioned.states,
+            jnp.concatenate(
+                (
+                    support_ids.astype(jnp.int64),
+                    jax.lax.bitcast_convert_type(
+                        support_weights.astype(jnp.float64), jnp.int64
+                    ),
+                ),
+                axis=-1,
+            ),
+            source.vertex_ids[removed],
+            "device_adaptation.predecessor_reverse_supports.positions must retain a retained predecessor vertex; got missing a retained predecessor vertex",
         )
-    selected = order[positions]
-    parent_ids = np.asarray(
-        jax.device_get(identifiers.reshape((-1, 2))[selected]), dtype=np.int64
+        with _agreed_local_step():
+            ids = np.full((source.vertex_ids.size, width), -1, dtype=np.int64)
+            weights = np.zeros((source.vertex_ids.size, width), dtype=np.float64)
+            ids[removed] = routed[:, :width]
+            weights[removed] = np.ascontiguousarray(routed[:, width:]).view(np.float64)
+            ids[present, 0] = source.vertex_ids[present]
+            weights[present, 0] = 1.0
+            rows = entity_keys_owner.key_rows(
+                source.vertex_ids[:, None], np.maximum(ids, 0).reshape((-1, 1))
+            ).reshape(ids.shape)
+            rows = np.where(weights != 0.0, rows, -1)
+            if np.any((weights != 0.0) & (rows < 0)):
+                raise ValueError(
+                    "device_adaptation.predecessor_reverse_supports.weights must retain an scientific vertex; got missing an scientific vertex"
+                )
+            return rows, weights
+    with _agreed_local_step():
+        initial = partitioned.states
+        vertices = initial.mesh.vertex_ids.shape[1]
+        parents = initial.vertex_parents
+        identifiers = jnp.take_along_axis(
+            initial.mesh.vertex_ids,
+            jnp.clip(parents.reshape((parents.shape[0], -1)), 0, vertices - 1),
+            axis=1,
+        ).reshape(parents.shape)
+        identifiers = jnp.where(parents >= 0, identifiers, -1)
+    routed = _routed_vertex_values(
+        initial,
+        jnp.concatenate(
+            (
+                identifiers.astype(jnp.int64),
+                initial.vertex_levels.astype(jnp.int64)[..., None],
+            ),
+            axis=-1,
+        ),
+        source.vertex_ids[removed],
+        "device_adaptation.predecessor_reverse_supports.positions must exist in the retained predecessor state; got source closure vertices are absent from retained predecessor state",
     )
-    levels = np.asarray(
-        jax.device_get(initial.vertex_levels.reshape((-1,))[selected]), dtype=np.int64
-    )
-    removed = np.flatnonzero(~np.isin(source.vertex_ids, target_vertices))
-    steps = []
-    for level in np.sort(np.unique(levels[removed]))[::-1]:
-        slots = removed[levels[removed] == level]
-        references = entity_keys_owner.key_rows(
-            source.vertex_ids[:, None], parent_ids[slots].reshape((-1, 1))
-        ).reshape((-1, 2))
-        if np.any(references < 0):
-            raise ValueError(
-                "device_adaptation.predecessor_reverse_supports.references must provide its accepted midpoint support; got missing its accepted midpoint support"
-            )
-        steps.append((slots, references[:, 0], references[:, 1]))
-    return bisection_host.reverse_supports(
-        steps, source.vertex_ids.size, source.dimension
-    )
+    with _agreed_local_step():
+        parent_ids = np.full((source.vertex_ids.size, 2), -1, dtype=np.int64)
+        levels = np.full((source.vertex_ids.size,), -1, dtype=np.int64)
+        parent_ids[removed] = routed[:, :2]
+        levels[removed] = routed[:, 2]
+        steps = []
+        for level in np.sort(np.unique(levels[removed]))[::-1]:
+            slots = removed[levels[removed] == level]
+            references = entity_keys_owner.key_rows(
+                source.vertex_ids[:, None], parent_ids[slots].reshape((-1, 1))
+            ).reshape((-1, 2))
+            if np.any(references < 0):
+                raise ValueError(
+                    "device_adaptation.predecessor_reverse_supports.references must provide its accepted midpoint support; got missing its accepted midpoint support"
+                )
+            steps.append((slots, references[:, 0], references[:, 1]))
+        return bisection_host.reverse_supports(
+            steps, source.vertex_ids.size, source.dimension
+        )
 
 
 def _neighborhood_commit(
     partitioned: PartitionedAdaptiveSimplex,
     local: _LocalCommit,
     neighborhood: _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset,
+    logical: _LogicalPublication,
     /,
     *,
     scope: NativeExecutionScope,
@@ -5907,177 +6249,179 @@ def _neighborhood_commit(
     """Bind received ghost packets to source-supported lineage and geometry."""
 
     def host(value: jax.Array) -> np.ndarray:
-        return np.asarray(
-            jax.device_get(_addressable_part_array(value, local.partition_index))
-        )
+        return _host_part_array(value, local.partition_index)
 
-    valid = host(neighborhood.cell_valid).astype(np.bool_)
-    cell_ids = host(neighborhood.cell_ids)[valid]
-    order = np.argsort(cell_ids, kind="stable")
-    cell_ids = cell_ids[order]
-    global_rows = host(neighborhood.cell_vertices)[valid][order]
-    corners = host(neighborhood.cell_coordinates)[valid][order]
-    roots = host(neighborhood.root_cell_ids)[valid][order]
-    predecessor_cells = host(neighborhood.source_cell_ids)[valid][order]
-    supports = host(neighborhood.source_vertex_ids)[valid][order]
-    coefficients = host(neighborhood.source_weights)[valid][order]
-    exterior = host(neighborhood.cell_exterior)[valid][order]
+    with _agreed_local_step():
+        valid = host(neighborhood.cell_valid).astype(np.bool_)
+        cell_ids = host(neighborhood.cell_ids)[valid]
+        order = np.argsort(cell_ids, kind="stable")
+        cell_ids = cell_ids[order]
+        global_rows = host(neighborhood.cell_vertices)[valid][order]
+        corners = host(neighborhood.cell_coordinates)[valid][order]
+        roots = host(neighborhood.root_cell_ids)[valid][order]
+        predecessor_cells = host(neighborhood.source_cell_ids)[valid][order]
+        supports = host(neighborhood.source_vertex_ids)[valid][order]
+        coefficients = host(neighborhood.source_weights)[valid][order]
+        exterior = host(neighborhood.cell_exterior)[valid][order]
     source = _source_closure(
         partitioned, predecessor_cells.reshape((-1,)), scope=scope, budget=budget
     )
-    dimension = source.dimension
-    width = dimension + 1
-    vertices, first = np.unique(global_rows.reshape((-1,)), return_index=True)
-    points = corners.reshape((-1, corners.shape[-1]))[first]
-    stencil_sources = supports.reshape((-1, width))[first]
-    stencil_weights = coefficients.reshape((-1, width))[first]
-    stencil_valid = (stencil_sources >= 0) & (stencil_weights > 0.0)
-    stencil_sources = np.where(stencil_valid, stencil_sources, -1)
-    new = ~np.isin(vertices, source.vertex_ids)
-    issued = vertices[new]
-    all_ids = np.concatenate((source.vertex_ids, issued))
-    compact = np.empty(vertices.shape, dtype=np.int64)
-    compact[~new] = np.searchsorted(source.vertex_ids, vertices[~new])
-    compact[new] = source.vertex_ids.size + np.arange(issued.size, dtype=np.int64)
-    target_rows = np.searchsorted(vertices, global_rows)
-    split_sources = np.where(
-        stencil_valid[new],
-        np.searchsorted(source.vertex_ids, np.maximum(stencil_sources[new], 0)),
-        -1,
+    with _agreed_local_step():
+        dimension = source.dimension
+        width = dimension + 1
+        vertices, first = np.unique(global_rows.reshape((-1,)), return_index=True)
+        points = corners.reshape((-1, corners.shape[-1]))[first]
+        stencil_sources = supports.reshape((-1, width))[first]
+        stencil_weights = coefficients.reshape((-1, width))[first]
+        stencil_valid = (stencil_sources >= 0) & (stencil_weights > 0.0)
+        stencil_sources = np.where(stencil_valid, stencil_sources, -1)
+        new = ~np.isin(vertices, source.vertex_ids)
+        issued = vertices[new]
+        all_ids = np.concatenate((source.vertex_ids, issued))
+        compact = np.empty(vertices.shape, dtype=np.int64)
+        compact[~new] = np.searchsorted(source.vertex_ids, vertices[~new])
+        compact[new] = source.vertex_ids.size + np.arange(issued.size, dtype=np.int64)
+        target_rows = np.searchsorted(vertices, global_rows)
+        split_sources = np.where(
+            stencil_valid[new],
+            np.searchsorted(source.vertex_ids, np.maximum(stencil_sources[new], 0)),
+            -1,
+        )
+        empty = np.zeros((0,), dtype=np.int64)
+        empty_cells = source.cells._replace(
+            ids=empty,
+            rows=np.zeros((0, width), dtype=np.int64),
+            tuples=np.zeros((0, width), dtype=np.int64),
+            tags=empty,
+            blocks=empty,
+            origins=empty,
+            generations=empty,
+        )
+        removed_rows, target_columns = np.nonzero(
+            (predecessor_cells >= 0) & (roots[:, None] < 0)
+        )
+        removed_ids = predecessor_cells[removed_rows, target_columns]
+        link_targets = cell_ids[removed_rows]
+        # A predecessor vertex resident in this closure survives; any other one is
+        # routed by stable ID to the accepted logical vertex inventory. Fixed
+        # semantic packets keep one collective program shape on every process.
+        inventory = logical.entity_keys[0]
+        absent = np.flatnonzero(~np.isin(source.vertex_ids, vertices))
+    routed, _ = _dependency_phydrax_meshing__scope.local_logical_lookup(
+        jnp.where(inventory >= 0, inventory, jnp.iinfo(jnp.int64).max),
+        None,
+        source.vertex_ids[absent].astype(np.int64).reshape((-1, 1)),
     )
-    empty = np.zeros((0,), dtype=np.int64)
-    empty_cells = source.cells._replace(
-        ids=empty,
-        rows=np.zeros((0, width), dtype=np.int64),
-        tuples=np.zeros((0, width), dtype=np.int64),
-        tags=empty,
-        blocks=empty,
-        origins=empty,
-        generations=empty,
-    )
-    removed_rows, target_columns = np.nonzero(
-        (predecessor_cells >= 0) & (roots[:, None] < 0)
-    )
-    removed_ids = predecessor_cells[removed_rows, target_columns]
-    link_targets = cell_ids[removed_rows]
-    global_vertices = jnp.where(
-        neighborhood.cell_valid[..., None], neighborhood.cell_vertices, -1
-    ).reshape((-1,))
-    globally_present = np.asarray(
-        jax.device_get(
-            jnp.isin(
-                jnp.asarray(source.vertex_ids),
-                global_vertices,
-            )
-        ),
-        dtype=np.bool_,
-    )
-    surviving_predecessor_vertices = source.vertex_ids[globally_present]
+    with _agreed_local_step():
+        globally_present = np.ones(source.vertex_ids.shape, dtype=np.bool_)
+        globally_present[absent] = routed
+        surviving_predecessor_vertices = source.vertex_ids[globally_present]
     reverse_sources, reverse_weights = _predecessor_reverse_supports(
         partitioned, source, surviving_predecessor_vertices, scope=scope, budget=budget
     )
-    coarsening = bisection_host.Coarsening(
-        empty_cells,
-        removed_ids,
-        link_targets,
-        empty,
-        np.flatnonzero(~globally_present),
-        reverse_sources,
-        reverse_weights,
-        0,
-        empty,
-    )
-    cells = bisection_host.Cells(
-        cell_ids,
-        compact[target_rows],
-        compact[target_rows],
-        np.zeros(cell_ids.shape, dtype=np.int64),
-        np.zeros(cell_ids.shape, dtype=np.int64),
-        np.where(roots >= 0, roots, cell_ids),
-        np.zeros(cell_ids.shape, dtype=np.int64),
-    )
-    tables = tuple(
-        (
-            bisection_host.simplex_keys(source.cells.rows, degree + 1),
-            bisection_host.simplex_keys(cells.rows, degree + 1),
+    with _agreed_local_step():
+        coarsening = bisection_host.Coarsening(
+            empty_cells,
+            removed_ids,
+            link_targets,
+            empty,
+            np.flatnonzero(~globally_present),
+            reverse_sources,
+            reverse_weights,
+            0,
+            empty,
         )
-        for degree in range(1, dimension)
-    )
-    start = partitioned.prepared.anchor.start
-    relations = bisection_host.relations(
-        source,
-        start,
-        cells,
-        (split_sources, stencil_weights[new]),
-        coarsening,
-        tables,
-    )
-    synthetic = np.concatenate(
-        (source.vertex_ids, start.next_vertex + np.arange(issued.size, dtype=np.int64))
-    )
+        cells = bisection_host.Cells(
+            cell_ids,
+            compact[target_rows],
+            compact[target_rows],
+            np.zeros(cell_ids.shape, dtype=np.int64),
+            np.zeros(cell_ids.shape, dtype=np.int64),
+            np.where(roots >= 0, roots, cell_ids),
+            np.zeros(cell_ids.shape, dtype=np.int64),
+        )
+        tables = tuple(
+            (
+                bisection_host.simplex_keys(source.cells.rows, degree + 1),
+                bisection_host.simplex_keys(cells.rows, degree + 1),
+            )
+            for degree in range(1, dimension)
+        )
+        start = partitioned.prepared.anchor.start
+        relations = bisection_host.relations(
+            source,
+            start,
+            cells,
+            (split_sources, stencil_weights[new]),
+            coarsening,
+            tables,
+        )
+        synthetic = np.concatenate(
+            (source.vertex_ids, start.next_vertex + np.arange(issued.size, dtype=np.int64))
+        )
 
-    def actual(keys: np.ndarray) -> np.ndarray:
-        return all_ids[np.searchsorted(synthetic, keys)]
+        def actual(keys: np.ndarray) -> np.ndarray:
+            return all_ids[np.searchsorted(synthetic, keys)]
 
-    relations = tuple(
-        relation._replace(
-            source_keys=actual(relation.source_keys),
-            target_keys=actual(relation.target_keys),
+        relations = tuple(
+            relation._replace(
+                source_keys=actual(relation.source_keys),
+                target_keys=actual(relation.target_keys),
+            )
+            if relation.dimension < dimension
+            else relation
+            for relation in relations
         )
-        if relation.dimension < dimension
-        else relation
-        for relation in relations
-    )
-    refined = roots >= 0
-    root_rows = np.searchsorted(source.cells.ids, roots[refined])
-    parent_corners = source.vertex_ids[source.cells.rows[root_rows]]
-    witnesses = transition_types_owner.NestedReferenceWitnesses(
-        cell_ids[refined],
-        roots[refined],
-        _dependency_phydrax_meshing__topology_edit.nested_reference_vertices(
-            stencil_sources[target_rows[refined]],
-            stencil_weights[target_rows[refined]],
-            parent_corners,
-        ),
-    )
-    removed_source_rows = np.searchsorted(source.cells.ids, removed_ids)
-    merged_target_rows = np.searchsorted(cell_ids, link_targets)
-    reverse_ids = np.where(
-        reverse_sources >= 0, source.vertex_ids[np.maximum(reverse_sources, 0)], -1
-    )
-    coarsened_witnesses = transition_types_owner.NestedReferenceWitnesses(
-        removed_ids,
-        link_targets,
-        _dependency_phydrax_meshing__topology_edit.nested_reference_vertices(
-            reverse_ids[source.cells.rows[removed_source_rows]],
-            reverse_weights[source.cells.rows[removed_source_rows]],
-            global_rows[merged_target_rows],
-        ),
-    )
-    block = local.committed.edit.blocks[0]
-    if not isinstance(
-        block, _dependency_phydrax_meshing__topology_edit.TopologyEditBlock
-    ):
-        raise ValueError(
-            "device_adaptation.neighborhood_commit.block must provide a fixed-family topology edit; got an absent or incompatible value"
+        refined = roots >= 0
+        root_rows = np.searchsorted(source.cells.ids, roots[refined])
+        parent_corners = source.vertex_ids[source.cells.rows[root_rows]]
+        witnesses = transition_types_owner.NestedReferenceWitnesses(
+            cell_ids[refined],
+            roots[refined],
+            _dependency_phydrax_meshing__topology_edit.nested_reference_vertices(
+                stencil_sources[target_rows[refined]],
+                stencil_weights[target_rows[refined]],
+                parent_corners,
+            ),
         )
-    edit = local.committed.edit._replace(
-        coordinates=points,
-        vertex_global_ids=vertices,
-        blocks=(block._replace(cells=target_rows.astype(np.int32), cell_ids=cell_ids),),
-        stencil_sources=stencil_sources,
-        stencil_weights=stencil_weights,
-        stencil_valid=stencil_valid,
-        relations=relations,
-        refinement=witnesses,
-        coarsening=coarsened_witnesses,
-    )
-    return _LocalCommit(
-        local.partition_index,
-        source.mesh,
-        local.committed._replace(edit=edit),
-        exterior,
-    )
+        removed_source_rows = np.searchsorted(source.cells.ids, removed_ids)
+        merged_target_rows = np.searchsorted(cell_ids, link_targets)
+        reverse_ids = np.where(
+            reverse_sources >= 0, source.vertex_ids[np.maximum(reverse_sources, 0)], -1
+        )
+        coarsened_witnesses = transition_types_owner.NestedReferenceWitnesses(
+            removed_ids,
+            link_targets,
+            _dependency_phydrax_meshing__topology_edit.nested_reference_vertices(
+                reverse_ids[source.cells.rows[removed_source_rows]],
+                reverse_weights[source.cells.rows[removed_source_rows]],
+                global_rows[merged_target_rows],
+            ),
+        )
+        block = local.committed.edit.blocks[0]
+        if not isinstance(
+            block, _dependency_phydrax_meshing__topology_edit.TopologyEditBlock
+        ):
+            raise ValueError(
+                "device_adaptation.neighborhood_commit.block must provide a fixed-family topology edit; got an absent or incompatible value"
+            )
+        edit = local.committed.edit._replace(
+            coordinates=points,
+            vertex_global_ids=vertices,
+            blocks=(block._replace(cells=target_rows.astype(np.int32), cell_ids=cell_ids),),
+            stencil_sources=stencil_sources,
+            stencil_weights=stencil_weights,
+            stencil_valid=stencil_valid,
+            relations=relations,
+            refinement=witnesses,
+            coarsening=coarsened_witnesses,
+        )
+        return _LocalCommit(
+            local.partition_index,
+            source.mesh,
+            local.committed._replace(edit=edit),
+            exterior,
+        )
 
 
 def _local_anchor(
@@ -6093,132 +6437,134 @@ def _local_anchor(
 ) -> _Anchor:
     """Lower the source closure while retaining every scientific entity ID."""
 
-    global_source = original.source.mesh
-    declarations = (
-        original.source_blocks
-        if original.source_blocks is not None
-        else tuple(global_source.blocks)
-    )
-    vertex_count, cell_count = (int(value) for value in initial.cursors[:2])
-    vertices = initial.vertex_ids[:vertex_count]
-    active = np.flatnonzero(initial.cell_active[:cell_count])
-    rows = initial.cells[active]
-    raw_groups = np.unique(initial.blocks[active])
-    if np.any(raw_groups < 0) or np.any(raw_groups >= len(declarations)):
-        raise ValueError(
-            "device_adaptation.local_anchor.raw_groups must provide its declared presentation bank; got missing its declared presentation bank"
+    with _agreed_local_step():
+        global_source = original.source.mesh
+        declarations = (
+            original.source_blocks
+            if original.source_blocks is not None
+            else tuple(global_source.blocks)
         )
-    block_indices = np.full(len(declarations), -1, dtype=np.int64)
-    blocks = []
-    for local_group, raw_group in enumerate(raw_groups):
-        definition = declarations[int(raw_group)]
-        selected = active[initial.blocks[active] == raw_group]
-        blocks.append(
-            CellBlock(
-                definition.name,
-                definition.cell_kind,
-                initial.cells[selected],
-                global_ids=initial.cell_ids[selected],
+        vertex_count, cell_count = (int(value) for value in initial.cursors[:2])
+        vertices = initial.vertex_ids[:vertex_count]
+        active = np.flatnonzero(initial.cell_active[:cell_count])
+        rows = initial.cells[active]
+        raw_groups = np.unique(initial.blocks[active])
+        if np.any(raw_groups < 0) or np.any(raw_groups >= len(declarations)):
+            raise ValueError(
+                "device_adaptation.local_anchor.raw_groups must provide its declared presentation bank; got missing its declared presentation bank"
             )
+        block_indices = np.full(len(declarations), -1, dtype=np.int64)
+        blocks = []
+        for local_group, raw_group in enumerate(raw_groups):
+            definition = declarations[int(raw_group)]
+            selected = active[initial.blocks[active] == raw_group]
+            blocks.append(
+                CellBlock(
+                    definition.name,
+                    definition.cell_kind,
+                    initial.cells[selected],
+                    global_ids=initial.cell_ids[selected],
+                )
+            )
+            block_indices[raw_group] = local_group
+        probe = _dependency_phydrax_discretization__cell_mesh.CellMesh(
+            initial.coordinates[:vertex_count], tuple(blocks), vertex_global_ids=vertices
         )
-        block_indices[raw_group] = local_group
-    probe = _dependency_phydrax_discretization__cell_mesh.CellMesh(
-        initial.coordinates[:vertex_count], tuple(blocks), vertex_global_ids=vertices
-    )
+        queries = tuple(
+            entity_keys_owner.entity_keys(probe, degree)
+            for degree in range(1, global_source.topological_dimension)
+        )
     entity_ids = {
-        degree: _source_entity_values(
-            entities,
-            degree,
-            entity_keys_owner.entity_keys(probe, degree),
-        )[0]
-        for degree in range(1, global_source.topological_dimension)
+        degree: _source_entity_values(entities, degree, query)[0]
+        for degree, query in enumerate(queries, start=1)
     }
-    mesh = _dependency_phydrax_discretization__cell_mesh.CellMesh(
-        initial.coordinates[:vertex_count],
-        probe.blocks,
-        vertex_global_ids=vertices,
-        entity_global_ids=entity_ids,
-    )
-    source = bisection_host.prepared_source(mesh)
-    cells = bisection_host.Cells(
-        initial.cell_ids[active],
-        rows,
-        initial.tuples[active],
-        initial.tags[active],
-        block_indices[initial.blocks[active]],
-        initial.cell_ids[active],
-        initial.generations[active],
-    )
-    dimension = source.dimension
-    empty = np.zeros((0,), dtype=np.int64)
-    growth = bisection_host.Growth(
-        np.zeros((0, dimension + 1), dtype=np.int64),
-        np.zeros((0, dimension + 1), dtype=np.float64),
-        empty,
-    )
-    record_slots = np.flatnonzero(
-        ~initial.cell_active[:cell_count] & ~initial.retired[:cell_count]
-    )
-    if np.any(initial.blocks[record_slots] < 0) or np.any(
-        initial.blocks[record_slots] >= block_indices.size
-    ):
-        raise ValueError(
-            "device_adaptation.local_anchor.record_slots must provide its declared presentation bank; got missing its declared presentation bank"
+    with _agreed_local_step():
+        mesh = _dependency_phydrax_discretization__cell_mesh.CellMesh(
+            initial.coordinates[:vertex_count],
+            probe.blocks,
+            vertex_global_ids=vertices,
+            entity_global_ids=entity_ids,
         )
-    if np.any(block_indices[initial.blocks[record_slots]] < 0):
-        raise ValueError(
-            "device_adaptation.local_anchor.block_indices must provide a resident descendant presentation bank; got missing a resident descendant presentation bank"
+        source = bisection_host.prepared_source(mesh)
+        cells = bisection_host.Cells(
+            initial.cell_ids[active],
+            rows,
+            initial.tuples[active],
+            initial.tags[active],
+            block_indices[initial.blocks[active]],
+            initial.cell_ids[active],
+            initial.generations[active],
         )
-    records = bisection_host.Records(
-        initial.cell_ids[record_slots],
-        block_indices[initial.blocks[record_slots]],
-        initial.cells[record_slots],
-        initial.tuples[record_slots],
-        initial.tags[record_slots],
-        initial.cell_ids[initial.children[record_slots]],
-        initial.bisection_vertices[record_slots],
-    )
-    front = bisection_host.Front(
-        cells,
-        growth,
-        np.zeros((0, 2), dtype=np.int64),
-        empty,
-        vertex_count,
-        int(initial.cursors[3]),
-    )
-    start = bisection_host.Start(
-        front,
-        records,
-        np.zeros((active.size,), dtype=np.bool_),
-        int(initial.cursors[2]),
-        original.start.compatible,
-        original.start.incompatible,
-        False,
-        _owned_retired_entities(
-            source,
-            tuple(original.source.vertex_ids[keys] for keys, _ in original.start.retired),
-            tuple(ids for _, ids in original.start.retired),
-        ),
-        _owned_uniform_refinement(
-            original.start.uniform_refinement,
-            cells.ids,
+        dimension = source.dimension
+        empty = np.zeros((0,), dtype=np.int64)
+        growth = bisection_host.Growth(
+            np.zeros((0, dimension + 1), dtype=np.int64),
+            np.zeros((0, dimension + 1), dtype=np.float64),
+            empty,
+        )
+        record_slots = np.flatnonzero(
+            ~initial.cell_active[:cell_count] & ~initial.retired[:cell_count]
+        )
+        if np.any(initial.blocks[record_slots] < 0) or np.any(
+            initial.blocks[record_slots] >= block_indices.size
+        ):
+            raise ValueError(
+                "device_adaptation.local_anchor.record_slots must provide its declared presentation bank; got missing its declared presentation bank"
+            )
+        if np.any(block_indices[initial.blocks[record_slots]] < 0):
+            raise ValueError(
+                "device_adaptation.local_anchor.block_indices must provide a resident descendant presentation bank; got missing a resident descendant presentation bank"
+            )
+        records = bisection_host.Records(
+            initial.cell_ids[record_slots],
+            block_indices[initial.blocks[record_slots]],
+            initial.cells[record_slots],
+            initial.tuples[record_slots],
+            initial.tags[record_slots],
+            initial.cell_ids[initial.children[record_slots]],
+            initial.bisection_vertices[record_slots],
+        )
+        front = bisection_host.Front(
+            cells,
+            growth,
+            np.zeros((0, 2), dtype=np.int64),
+            empty,
+            vertex_count,
+            int(initial.cursors[3]),
+        )
+        start = bisection_host.Start(
+            front,
             records,
-            scope=scope,
-            budget=budget,
-        ),
-    )
-    ids = initial.cell_ids[:cell_count]
-    origins = np.where(initial.cell_active[:cell_count], ids, -1)
-    return _Anchor(
-        source,
-        start,
-        ids,
-        origins,
-        np.full(ids.shape, -1, dtype=np.int64),
-        active,
-        block_indices,
-        tuple(blocks),
-    )
+            np.zeros((active.size,), dtype=np.bool_),
+            int(initial.cursors[2]),
+            original.start.compatible,
+            original.start.incompatible,
+            False,
+            _owned_retired_entities(
+                source,
+                tuple(original.source.vertex_ids[keys] for keys, _ in original.start.retired),
+                tuple(ids for _, ids in original.start.retired),
+            ),
+            _owned_uniform_refinement(
+                original.start.uniform_refinement,
+                cells.ids,
+                records,
+                scope=scope,
+                budget=budget,
+            ),
+        )
+        ids = initial.cell_ids[:cell_count]
+        origins = np.where(initial.cell_active[:cell_count], ids, -1)
+        return _Anchor(
+            source,
+            start,
+            ids,
+            origins,
+            np.full(ids.shape, -1, dtype=np.int64),
+            active,
+            block_indices,
+            tuple(blocks),
+        )
 
 
 def _rebind_issued_vertices(
@@ -6275,6 +6621,7 @@ def _rebind_issued_vertices(
         identifiers(hierarchy.ordered_vertices),
         hierarchy.tags,
         hierarchy.generations,
+        refinement_rule=hierarchy.refinement_rule,
         scientific_cell_ids=hierarchy.scientific_cell_ids,
         scientific_block_ids=hierarchy.scientific_block_ids,
         record_parent_ids=hierarchy.record_parent_ids,
@@ -6386,10 +6733,9 @@ def require_partitioned_exact_restrictions(
 ) -> tuple[jax.Array, jax.Array]:
     """Consume native decisions and retain every resolved source-sample residual."""
 
-    failure: _leaf_phydrax_meshing__failures.MeshingFailure | None = None
     valid_packets: dict[int, np.ndarray] = {}
     sign_packets: dict[int, np.ndarray] = {}
-    try:
+    with _agreed_local_step(stage="distributed-affine-witness"):
         with budget.measurement():
             for shard in states.mesh.cell_ids.addressable_shards:
                 selection = shard.index[0]
@@ -6404,9 +6750,8 @@ def require_partitioned_exact_restrictions(
                     else selection.stop
                 )
                 for part in range(first, last):
-                    host = _host_epoch(_addressable_part_state(states, part))
-                    cursor = _addressable_part_array(initial_states.cursors, part)
-                    initial_vertices = int(jax.device_get(cursor[0]))
+                    host = _host_part_epoch(states, part)
+                    initial_vertices = int(_host_part_array(initial_states.cursors, part)[0])
                     _dependency_phydrax_meshing__device_status.require_committed_status(
                         host.flags,
                         host.coordinates,
@@ -6425,19 +6770,6 @@ def require_partitioned_exact_restrictions(
                     packet[initial_vertices:count] = signs
                     valid_packets[part] = valid
                     sign_packets[part] = packet
-    except _leaf_phydrax_meshing__failures.MeshingFailure as error:
-        failure = error
-    except ValueError as error:
-        failure = _leaf_phydrax_meshing__failures.MeshingFailure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.LINEAGE_FAILED,
-            str(error),
-            stage="distributed-affine-witness",
-        )
-    collective_failure_owner.collective_failure_barrier(
-        failure,
-        message="An owning process rejected the exact topology, lineage, or geometry resolution of the distributed epoch; no part was published.",
-        stage="distributed-device-commit",
-    )
     sharding = states.mesh.cell_ids.sharding
 
     def placed(packets: dict[int, np.ndarray], shape: tuple[int, ...]) -> jax.Array:
@@ -6603,20 +6935,13 @@ def _run_physical_packed_publication_states(
         first = 0 if selection.start is None else selection.start
         last = states.mesh.cell_ids.shape[0] if selection.stop is None else selection.stop
         for part in range(first, last):
-            state = _addressable_part_state(states, part)
-            host = _host_epoch(state)
-            root_ids = np.asarray(
-                jax.device_get(_addressable_part_array(roots, part)), dtype=np.int64
-            )
-            action_counts = np.asarray(
-                jax.device_get(_addressable_part_array(counts, part)), dtype=np.int32
-            )
-            actions = np.asarray(
-                jax.device_get(_addressable_part_array(stacks, part)), dtype=np.float64
-            )
+            host = _host_part_epoch(states, part)
+            root_ids = np.asarray(_host_part_array(roots, part), dtype=np.int64)
+            action_counts = np.asarray(_host_part_array(counts, part), dtype=np.int32)
+            actions = np.asarray(_host_part_array(stacks, part), dtype=np.float64)
             bisection_host.uniform_count(
-                state.mesh.coordinates.size + actions.size,
-                state.mesh.coordinates.size * 8
+                host.coordinates.size + actions.size,
+                host.coordinates.size * 8
                 + actions.nbytes
                 + root_ids.nbytes
                 + action_counts.nbytes,
@@ -7226,11 +7551,122 @@ def _restore_packed_predecessors(
             )
         values["root_cell_ids"][row] = -1
         values["source_cell_ids"][row] = -1
-        values["source_cell_ids"][row, : predecessor.size] = predecessor
+        values["source_cell_ids"][row, : predecessor.size] = np.sort(
+            predecessor, kind="stable"
+        )
         values["source_vertex_ids"][row] = -1
         values["source_weights"][row] = 0.0
         values["source_vertex_ids"][row, :, 0] = values["cell_vertices"][row]
         values["source_weights"][row, :, 0] = 1.0
+
+
+@eqx.filter_jit
+def _prepare_packed_simplex_predecessors(
+    parts: MigrationParts,
+    states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    initial_states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    published_states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    parent_ids: jax.Array,
+    child_ids: jax.Array,
+    capacity: int,
+    /,
+) -> tuple[tuple[jax.Array, jax.Array, jax.Array], jax.Array]:
+    """Prepare complete raw and restored support before allocating any packet.
+
+    The published unmatched-parent predicate and baseline ancestry are exactly
+    those used by restoration below. Only the collective scalar maximum leaves
+    the device; every numerical source and lineage bank is an explicit operand.
+    """
+    spec = jax.sharding.PartitionSpec(parts.axis_name)
+    replicated = jax.sharding.PartitionSpec()
+
+    def local(
+        state_block: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+        initial_block: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+        published_block: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+        parents: jax.Array,
+        children: jax.Array,
+    ) -> tuple[tuple[jax.Array, ...], jax.Array]:
+        state = jax.tree.map(lambda value: value[0], state_block)
+        initial = jax.tree.map(lambda value: value[0], initial_block)
+        published = jax.tree.map(lambda value: value[0], published_block)
+        support = _owner_phydrax_meshing__distribution._simplex_predecessor_support(
+            state, initial
+        )
+        maximum = jnp.maximum(jnp.max(support[2]), 1)
+        cells = initial.mesh.cell_ids.shape[0]
+        roots = jnp.arange(cells, dtype=jnp.int32)
+
+        def ancestor(slot: jax.Array, values: jax.Array) -> jax.Array:
+            parent = initial.parents[slot] // 2
+            return values.at[slot].set(
+                jnp.where(parent >= 0, values[jnp.maximum(parent, 0)], values[slot])
+            )
+
+        roots = jax.lax.fori_loop(
+            0, initial.cursors[1].astype(jnp.int32), ancestor, roots
+        )
+        root_ids = initial.mesh.cell_ids[roots]
+        raw_ids = jnp.sort(
+            jnp.where(
+                state.mesh.cell_active,
+                state.mesh.cell_ids,
+                jnp.iinfo(jnp.int64).max,
+            ),
+            stable=True,
+        )[:capacity]
+        raw_ids = jnp.pad(
+            raw_ids,
+            ((0, max(0, capacity - raw_ids.shape[0])),),
+            constant_values=jnp.iinfo(jnp.int64).max,
+        )
+        positions = jnp.minimum(
+            jnp.searchsorted(raw_ids, published.mesh.cell_ids), capacity - 1
+        )
+        unmatched = published.mesh.cell_active & (
+            raw_ids[positions] != published.mesh.cell_ids
+        )
+        sorted_children = jnp.sort(children, axis=1)
+
+        def restored_count(slot: jax.Array, previous: jax.Array) -> jax.Array:
+            parent = jnp.searchsorted(parents, published.mesh.cell_ids[slot])
+            safe_parent = jnp.minimum(parent, parents.shape[0] - 1)
+            selected = (
+                unmatched[slot]
+                & (parent < parents.shape[0])
+                & (parents[safe_parent] == published.mesh.cell_ids[slot])
+            )
+
+            def count(_: None) -> jax.Array:
+                child_row = sorted_children[safe_parent]
+                positions = jnp.minimum(
+                    jnp.searchsorted(child_row, root_ids), child_row.shape[0] - 1
+                )
+                # Membership counts source slots, not unique IDs or child keys.
+                return jnp.sum(
+                    initial.mesh.cell_active & (child_row[positions] == root_ids),
+                    dtype=jnp.int32,
+                )
+
+            count = jax.lax.cond(
+                selected, count, lambda _: jnp.asarray(0, dtype=jnp.int32), None
+            )
+            return jnp.maximum(previous, count)
+
+        if parents.shape[0] and children.shape[1]:
+            maximum = jax.lax.fori_loop(
+                0, published.mesh.cell_ids.shape[0], restored_count, maximum
+            )
+        maximum = jax.lax.pmax(maximum, parts.axis_name)
+        return tuple(value[None] for value in support), maximum
+
+    return partition_map(
+        local,
+        parts=parts,
+        in_specs=(spec, spec, spec, replicated, replicated),
+        out_specs=(spec, replicated),
+        check_vma=False,
+    )(states, initial_states, published_states, parent_ids, child_ids)
 
 
 # Predecessor restoration is host-only; packet transfers and collective placement retain their order.
@@ -7244,147 +7680,181 @@ def _packed_neighborhood(
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset:
 
-    lineage = evidence.uniform_refinement
-    if lineage is None:
-        raise ValueError(
-            "device_adaptation.packed_neighborhood.lineage must provide its retained uniform source provenance; got an absent or incompatible value"
-        )
-    published = _collective_publication_state(evidence)
-    arrays = dict(evidence.logical_arrays)
-    parent_ids = np.asarray(lineage.parent_ids)
-    child_ids = np.asarray(lineage.child_ids)
-    capacity = partitioned.layout.cell_capacity
-    prepared_uniform = partitioned.prepared.anchor.start.uniform
-    if prepared_uniform:
-        sibling_parent = {
-            int(child): int(parent)
-            for parent, children in zip(parent_ids, child_ids, strict=True)
-            for child in children
-        }
-    packets: dict[
-        int, _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset
-    ] = {}
-    for shard in compiled.mesh.cell_ids.addressable_shards:
-        selection = shard.index[0]
-        if not isinstance(selection, slice):
+    with _agreed_local_step():
+        lineage = evidence.uniform_refinement
+        if lineage is None:
             raise ValueError(
-                "device_adaptation.packed_neighborhood.selection must provide explicit addressable part rectangles; got an absent or incompatible value"
+                "device_adaptation.packed_neighborhood.lineage must provide its retained uniform source provenance; got an absent or incompatible value"
             )
-        first = 0 if selection.start is None else selection.start
-        last = (
-            compiled.mesh.cell_ids.shape[0] if selection.stop is None else selection.stop
-        )
-        for part in range(first, last):
-            raw = _addressable_part_state(compiled, part)
-            initial = _addressable_part_state(partitioned.states, part)
-            seed = _owner_phydrax_meshing__distribution.simplex_neighborhood_seed(
-                raw,
-                initial,
-                _addressable_part_array(partitioned.source_exterior, part),
-                jnp.asarray(part, dtype=jnp.int32),
-                capacity,
-            )
-            seed_leaves = tuple(seed.arrays().values())
-            bisection_host.uniform_count(
-                sum(value.size for value in seed_leaves),
-                sum(value.size * value.dtype.itemsize for value in seed_leaves),
-                budget=budget,
-            )
-            host = jax.device_get(seed)
-            values = {
-                name: np.array(value, copy=True) for name, value in host.arrays().items()
+        published = _collective_publication_state(evidence)
+        arrays = dict(evidence.logical_arrays)
+        parent_ids = np.asarray(lineage.parent_ids)
+        child_ids = np.asarray(lineage.child_ids)
+        capacity = partitioned.layout.cell_capacity
+        prepared_uniform = partitioned.prepared.anchor.start.uniform
+        if prepared_uniform:
+            sibling_parent = {
+                int(child): int(parent)
+                for parent, children in zip(parent_ids, child_ids, strict=True)
+                for child in children
             }
-            final_arrays = _host_epoch(_addressable_part_state(published, part))
-            baseline = _host_epoch(initial)
-            slots = np.flatnonzero(final_arrays.cell_active)
-            order = slots[np.argsort(final_arrays.cell_ids[slots], kind="stable")]
-            ids = final_arrays.cell_ids[order]
-            raw_ids = np.asarray(host.cell_ids)
-            positions = np.searchsorted(raw_ids, ids)
-            safe = np.minimum(positions, capacity - 1)
-            matched = raw_ids[safe] == ids
-            for name, value in host.arrays().items():
-                if name != "status":
-                    values[name][: ids.size] = np.asarray(value)[safe]
-            values["cell_ids"][:] = np.iinfo(np.int64).max
-            values["cell_ids"][: ids.size] = ids
-            values["cell_valid"][:] = False
-            values["cell_valid"][: ids.size] = True
-            values["cell_vertices"][: ids.size] = final_arrays.vertex_ids[
-                final_arrays.cells[order]
-            ]
-            values["cell_coordinates"][: ids.size] = final_arrays.coordinates[
-                final_arrays.cells[order]
-            ]
-            values["cell_classes"][: ids.size] = final_arrays.cell_classes[order]
-            values["cell_owner"][: ids.size] = part
-            boundary = np.asarray(
-                jax.device_get(
-                    _addressable_part_array(arrays["epoch/source_exterior"], part)
+        support, maximum = _prepare_packed_simplex_predecessors(
+            partitioned.parts,
+            compiled,
+            partitioned.states,
+            published,
+            jnp.asarray(parent_ids),
+            jnp.asarray(child_ids),
+            capacity,
+        )
+        source_width = int(jax.device_get(maximum))
+        packets: dict[
+            int, _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset
+        ] = {}
+        for shard in compiled.mesh.cell_ids.addressable_shards:
+            selection = shard.index[0]
+            if not isinstance(selection, slice):
+                raise ValueError(
+                    "device_adaptation.packed_neighborhood.selection must provide explicit addressable part rectangles; got an absent or incompatible value"
                 )
+            first = 0 if selection.start is None else selection.start
+            last = (
+                compiled.mesh.cell_ids.shape[0] if selection.stop is None else selection.stop
             )
-            values["cell_exterior"][: ids.size] = boundary[order]
-            _restore_packed_predecessors(
-                baseline, values, matched, ids, parent_ids, child_ids
-            )
-            if prepared_uniform:
-                phase = _bind_packed_uniform_support(
-                    partitioned=partitioned,
-                    raw=raw,
-                    lineage=lineage,
-                    parent_ids=parent_ids,
-                    sibling_parent=sibling_parent,
-                    matched=matched,
-                    values=values,
-                    ids=ids,
+            for part in range(first, last):
+                raw = _addressable_part_state(compiled, part)
+                initial = _addressable_part_state(partitioned.states, part)
+                seed = _owner_phydrax_meshing__distribution._simplex_neighborhood_seed(
+                    raw,
+                    initial,
+                    _addressable_part_array(partitioned.source_exterior, part),
+                    jnp.asarray(part, dtype=jnp.int32),
+                    capacity,
+                    (
+                        _addressable_part_array(support[0], part),
+                        _addressable_part_array(support[1], part),
+                        _addressable_part_array(support[2], part),
+                    ),
+                    source_width,
+                )
+                seed_leaves = tuple(seed.arrays().values())
+                bisection_host.uniform_count(
+                    sum(value.size for value in seed_leaves),
+                    sum(value.size * value.dtype.itemsize for value in seed_leaves),
                     budget=budget,
                 )
-                values = phase.values
-            packets[part] = (
-                _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset(
-                    *(
-                        jnp.asarray(values[name])
-                        for name in _dependency_phydrax_meshing__distribution_migration.WORKSET_FIELDS
+                host = jax.device_get(seed)
+                values = {
+                    name: np.array(value, copy=True) for name, value in host.arrays().items()
+                }
+                final_arrays = _host_part_epoch(published, part)
+                baseline = _host_epoch(initial)
+                slots = np.flatnonzero(final_arrays.cell_active)
+                order = slots[np.argsort(final_arrays.cell_ids[slots], kind="stable")]
+                ids = final_arrays.cell_ids[order]
+                raw_ids = np.asarray(host.cell_ids)
+                positions = np.searchsorted(raw_ids, ids)
+                safe = np.minimum(positions, capacity - 1)
+                matched = raw_ids[safe] == ids
+                for name, value in host.arrays().items():
+                    if name != "status":
+                        values[name][: ids.size] = np.asarray(value)[safe]
+                values["cell_ids"][:] = np.iinfo(np.int64).max
+                values["cell_ids"][: ids.size] = ids
+                values["cell_valid"][:] = False
+                values["cell_valid"][: ids.size] = True
+                values["cell_vertices"][: ids.size] = final_arrays.vertex_ids[
+                    final_arrays.cells[order]
+                ]
+                values["cell_coordinates"][: ids.size] = final_arrays.coordinates[
+                    final_arrays.cells[order]
+                ]
+                values["cell_classes"][: ids.size] = final_arrays.cell_classes[order]
+                values["cell_owner"][: ids.size] = part
+                boundary = _host_part_array(arrays["epoch/source_exterior"], part)
+                # The epoch source bank retains baseline flags on raw rows;
+                # only restored parents receive new flags there. Matched rows
+                # must instead consume the seed's subdivision-proved CURRENT
+                # exterior, transported by opposite-vertex SCI after packing.
+                opposite_matches = (
+                    np.asarray(host.cell_vertices)[safe, :, None]
+                    == values["cell_vertices"][: ids.size, None, :]
+                )
+                if np.any(
+                    matched[:, None] & (np.sum(opposite_matches, axis=1) != 1)
+                ):
+                    raise ValueError(
+                        "device_adaptation.packed_neighborhood.exterior must bind matched raw facets by current scientific vertex IDs; got changed published corners"
+                    )
+                raw_boundary = np.take_along_axis(
+                    np.asarray(host.cell_exterior)[safe],
+                    np.argmax(opposite_matches, axis=1),
+                    axis=1,
+                )
+                values["cell_exterior"][: ids.size] = np.where(
+                    matched[:, None], raw_boundary, boundary[order]
+                )
+                _restore_packed_predecessors(
+                    baseline, values, matched, ids, parent_ids, child_ids
+                )
+                if prepared_uniform:
+                    phase = _bind_packed_uniform_support(
+                        partitioned=partitioned,
+                        raw=raw,
+                        lineage=lineage,
+                        parent_ids=parent_ids,
+                        sibling_parent=sibling_parent,
+                        matched=matched,
+                        values=values,
+                        ids=ids,
+                        budget=budget,
+                    )
+                    values = phase.values
+                packets[part] = (
+                    _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset(
+                        *(
+                            jnp.asarray(values[name])
+                            for name in _dependency_phydrax_meshing__distribution_migration.WORKSET_FIELDS
+                        )
                     )
                 )
-            )
 
-    def place(value: jax.Array, blocks: dict[int, jax.Array]) -> jax.Array:
-        shape = (partitioned.parts.part_count, *value.shape)
+        def place(value: jax.Array, blocks: dict[int, jax.Array]) -> jax.Array:
+            shape = (partitioned.parts.part_count, *value.shape)
 
-        def addressable(index: tuple[slice, ...] | None) -> np.ndarray:
-            if index is None:
-                raise ValueError(
-                    "device_adaptation.addressable.index must provide concrete addressable packet slices; got an absent or incompatible value"
+            def addressable(index: tuple[slice, ...] | None) -> np.ndarray:
+                if index is None:
+                    raise ValueError(
+                        "device_adaptation.addressable.index must provide concrete addressable packet slices; got an absent or incompatible value"
+                    )
+                leading = index[0]
+                first = 0 if leading.start is None else leading.start
+                last = shape[0] if leading.stop is None else leading.stop
+                return np.stack(
+                    tuple(
+                        np.asarray(jax.device_get(blocks[part]))[index[1:]]
+                        for part in range(first, last)
+                    )
                 )
-            leading = index[0]
-            first = 0 if leading.start is None else leading.start
-            last = shape[0] if leading.stop is None else leading.stop
-            return np.stack(
-                tuple(
-                    np.asarray(jax.device_get(blocks[part]))[index[1:]]
-                    for part in range(first, last)
+
+            return jax.make_array_from_callback(
+                shape, compiled.mesh.cell_ids.sharding, addressable
+            )
+
+        exemplar = next(iter(packets.values()))
+        workset = _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset(
+            *(
+                place(
+                    value, {part: packet.arrays()[name] for part, packet in packets.items()}
                 )
+                for name, value in exemplar.arrays().items()
             )
-
-        return jax.make_array_from_callback(
-            shape, compiled.mesh.cell_ids.sharding, addressable
         )
-
-    exemplar = next(iter(packets.values()))
-    workset = _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset(
-        *(
-            place(
-                value, {part: packet.arrays()[name] for part, packet in packets.items()}
+        distribution = partitioned.prepared.adaptation.policy.distribution
+        if distribution is None:
+            raise ValueError(
+                "device_adaptation.packed_neighborhood.distribution must retain its accepted ownership policy; got missing its accepted ownership policy"
             )
-            for name, value in exemplar.arrays().items()
-        )
-    )
-    distribution = partitioned.prepared.adaptation.policy.distribution
-    if distribution is None:
-        raise ValueError(
-            "device_adaptation.packed_neighborhood.distribution must retain its accepted ownership policy; got missing its accepted ownership policy"
-        )
     return _owner_phydrax_meshing__distribution.expand_simplex_neighborhood_workset(
         partitioned.parts,
         workset,
@@ -7400,20 +7870,23 @@ def _addressable_commits(
     *,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    restart_solver_forest: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState | None = None,
 ) -> tuple[_LocalCommit, ...]:
     """Prepare owner-local topology and lineage records for the received closure."""
 
-    anchor = partitioned.prepared.anchor
-    premise = _scientific_preparation_source(partitioned.prepared.adaptation)
-    seed_entities = partitioned.source_entities
+    with _agreed_local_step():
+        anchor = partitioned.prepared.anchor
+        premise = _scientific_preparation_source(partitioned.prepared.adaptation)
+        seed_entities = partitioned.source_entities
     if anchor.start.uniform or anchor.start.front.growth.levels.size:
-        lineage = anchor.start.uniform_refinement
-        if not anchor.start.uniform or lineage is None:
-            raise _leaf_phydrax_meshing__failures.MeshingFailure(
-                _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SPECIFICATION,
-                "device_adaptation.addressable_commits.lineage must provide its uniform source law; got an absent or incompatible value",
-                stage="distributed-device-commit",
-            )
+        with _agreed_local_step():
+            lineage = anchor.start.uniform_refinement
+            if not anchor.start.uniform or lineage is None:
+                raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SPECIFICATION,
+                    "device_adaptation.addressable_commits.lineage must provide its uniform source law; got an absent or incompatible value",
+                    stage="distributed-device-commit",
+                )
         seed = logical_publication(
             partitioned.prepared.adaptation.source,
             partitioned.states,
@@ -7428,48 +7901,55 @@ def _addressable_commits(
             scope=scope,
             budget=budget,
         )
-        seed_entities = tuple(
-            (keys[:count], identifiers[:count], owners[:count])
-            for keys, identifiers, owners, count in zip(
-                seed.entity_keys,
-                seed.entity_ids,
-                seed.entity_owners,
-                seed.counts,
-                strict=True,
+        with _agreed_local_step():
+            seed_entities = tuple(
+                (keys[:count], identifiers[:count], owners[:count])
+                for keys, identifiers, owners, count in zip(
+                    seed.entity_keys,
+                    seed.entity_ids,
+                    seed.entity_owners,
+                    seed.counts,
+                    strict=True,
+                )
             )
-        )
-    if (
-        isinstance(premise, _dependency_phydrax_meshing__result.CellMeshingResult)
-        and len(premise.mesh.blocks) != 1
-    ):
-        raise _leaf_phydrax_meshing__failures.MeshingFailure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SPECIFICATION,
-            "device_adaptation.addressable_commits.source_binding must provide a single simplex coordinate block; got an absent or incompatible value",
-            stage="distributed-device-commit",
-        )
-    initial_states = partitioned.states
-    if partitioned.migration is not None:
-        states = partitioned.migration.solver_forest
-        initial_states = partitioned.migration.solver_initial_states
-    commits = []
+    with _agreed_local_step():
+        if (
+            isinstance(premise, _dependency_phydrax_meshing__result.CellMeshingResult)
+            and len(premise.mesh.blocks) != 1
+        ):
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SPECIFICATION,
+                "device_adaptation.addressable_commits.source_binding must provide a single simplex coordinate block; got an absent or incompatible value",
+                stage="distributed-device-commit",
+            )
+        initial_states = partitioned.states
+        if partitioned.migration is not None:
+            states = partitioned.migration.solver_forest
+            initial_states = partitioned.migration.solver_initial_states
+        elif restart_solver_forest is not None:
+            if partitioned.restart_repack is None:
+                raise ValueError("solver-family restart view requires an accepted restart receipt")
+            states = initial_states = restart_solver_forest
+        commits = []
     for shard in states.mesh.cell_ids.addressable_shards:
-        selection = shard.index[0]
-        if not isinstance(selection, slice):
-            raise ValueError(
-                "device_adaptation.addressable_commits.selection must satisfy the declared source, topology, and ownership constraints; got adaptive part shards require a leading partition slice"
-            )
-        first = 0 if selection.start is None else selection.start
-        last = states.mesh.cell_ids.shape[0] if selection.stop is None else selection.stop
+        with _agreed_local_step():
+            selection = shard.index[0]
+            if not isinstance(selection, slice):
+                raise ValueError(
+                    "device_adaptation.addressable_commits.selection must satisfy the declared source, topology, and ownership constraints; got adaptive part shards require a leading partition slice"
+                )
+            first = 0 if selection.start is None else selection.start
+            last = states.mesh.cell_ids.shape[0] if selection.stop is None else selection.stop
         for part in range(first, last):
-            local = _addressable_part_state(states, part)
-            initial = _host_epoch(_addressable_part_state(initial_states, part))
-            host = _host_epoch(local)
-            _dependency_phydrax_meshing__device_status.require_committed_status(
-                host.flags,
-                host.coordinates,
-                host.cells[host.cell_active],
-                _dependency_phydrax_meshing__device_status.DeviceEpoch.BISECTION,
-            )
+            with _agreed_local_step():
+                initial = _host_part_epoch(initial_states, part)
+                host = _host_part_epoch(states, part)
+                _dependency_phydrax_meshing__device_status.require_committed_status(
+                    host.flags,
+                    host.coordinates,
+                    host.cells[host.cell_active],
+                    _dependency_phydrax_meshing__device_status.DeviceEpoch.BISECTION,
+                )
             local_anchor = _local_anchor(
                 partitioned.prepared.anchor,
                 seed_entities,
@@ -7477,16 +7957,17 @@ def _addressable_commits(
                 scope=scope,
                 budget=budget,
             )
-            prepared = PreparedAdaptiveSimplex(
-                partitioned.prepared.adaptation,
-                partitioned.layout,
-                _addressable_part_state(initial_states, part),
-                local_anchor,
-            )
-            committed = _rebind_issued_vertices(
-                _committed(prepared, host, scope=scope, budget=budget), local_anchor, host
-            )
-            commits.append(_LocalCommit(part, local_anchor.source.mesh, committed))
+            with _agreed_local_step():
+                prepared = PreparedAdaptiveSimplex(
+                    partitioned.prepared.adaptation,
+                    partitioned.layout,
+                    _addressable_part_state(initial_states, part),
+                    local_anchor,
+                )
+                committed = _rebind_issued_vertices(
+                    _committed(prepared, host, scope=scope, budget=budget), local_anchor, host
+                )
+                commits.append(_LocalCommit(part, local_anchor.source.mesh, committed))
     return tuple(commits)
 
 
@@ -7561,6 +8042,24 @@ def canonical_rows(
     return rows, order, int(jax.device_get(count))
 
 
+@partial(jax.jit, static_argnames=("degree",))
+def _logical_entity_values(
+    cell_rows: jax.Array,
+    cells: int,
+    cell_owners: jax.Array,
+    *,
+    degree: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Fuse occurrence routing with the unchanged canonical unique-row recipe."""
+    columns = jnp.asarray(
+        tuple(combinations(range(cell_rows.shape[1]), degree + 1)), dtype=jnp.int32
+    )
+    keys = jnp.sort(cell_rows[:, columns], axis=2).reshape((-1, degree + 1))
+    valid = jnp.repeat(jnp.arange(cell_rows.shape[0]) < cells, columns.shape[0])
+    table, order, count = _canonical_row_values(keys, valid)
+    return table, jnp.repeat(cell_owners, columns.shape[0])[order], count
+
+
 @partial(jax.jit, static_argnames=("partition_count",))
 def _inherited_entity_values(
     table: jax.Array,
@@ -7624,6 +8123,19 @@ def _inherited_entity_ids(
             identifiers = jnp.asarray(
                 source.mesh.entity_set(degree).entity_ids, dtype=jnp.int64
             )
+            # A restored dense source owns committed process-local buffers.
+            # Its complete ledger is a replicated operand of the current
+            # collective lookup, not an old execution-device placement.
+            placement = table.sharding
+            if isinstance(placement, jax.sharding.NamedSharding):
+                replicated = jax.sharding.NamedSharding(
+                    placement.mesh, jax.sharding.PartitionSpec()
+                )
+                keys, identifiers = (
+                    _place_process_local_array(value, replicated)
+                    if value.is_fully_addressable else value
+                    for value in (keys, identifiers)
+                )
         else:
             evidence = source.collective_evidence
             keys = evidence.entity_keys[degree][: evidence.global_entity_counts[degree]]
@@ -7696,63 +8208,9 @@ def _logical_array_tree_fingerprint(
     digest.update(len(metadata).to_bytes(8, "big"))
     digest.update(metadata)
     digest.update(byte_count.to_bytes(8, "big"))
-    intervals: dict[tuple[int, int], jax.Device] = {}
-    for device, index in value.sharding.devices_indices_map(value.shape).items():
-        if (
-            len(index) != value.ndim
-            or not isinstance(index[0], slice)
-            or any(
-                not isinstance(entry, slice) or entry.indices(size) != (0, size, 1)
-                for entry, size in zip(index[1:], value.shape[1:], strict=True)
-            )
-        ):
-            raise ValueError(
-                "device_adaptation.logical_array_tree_fingerprint.any must provide contiguous leading-axis shards; got an absent or incompatible value"
-            )
-        start, stop, step = index[0].indices(value.shape[0])
-        if step != 1:
-            raise ValueError(
-                "device_adaptation.logical_array_tree_fingerprint.step must admit strided shards; got an incompatible value"
-            )
-        key = (start, stop)
-        previous = intervals.get(key)
-        if previous is None or (device.process_index, device.id) < (
-            previous.process_index,
-            previous.id,
-        ):
-            intervals[key] = device
-    cursor = 0
-    for start, stop in sorted(intervals):
-        if start != cursor or stop < start:
-            raise ValueError(
-                "device_adaptation.logical_array_tree_fingerprint.start must cover the leading axis without overlaps or gaps; got logical topology shards overlap or leave leading-axis coverage gaps"
-            )
-        cursor = stop
-    if cursor != value.shape[0]:
-        raise ValueError(
-            "device_adaptation.logical_array_tree_fingerprint.cursor must cover the logical topology without gaps; got logical topology shards leave incomplete global coverage"
-        )
-    local = {shard.device: shard.data for shard in value.addressable_shards}
-    trailing = prod(value.shape[1:])
-    chunk_elements = max(1, (1 << 20) // dtype.itemsize)
-    for (start, end), device in sorted(intervals.items()):
-        stop = min(end, logical_shape[0])
-        count = max(0, stop - start) * trailing
-        source = device.process_index == jax.process_index()
-        for first in range(0, count, chunk_elements):
-            last = min(first + chunk_elements, count)
-            if source:
-                shard = local.get(device)
-                if shard is None:
-                    raise ValueError(
-                        "device_adaptation.logical_array_tree_fingerprint.shard must have an addressable payload; got the topology shard owner has no addressable payload"
-                    )
-                payload = np.asarray(shard.reshape(-1)[first:last])
-            else:
-                payload = np.empty((last - first,), dtype=dtype)
-            if jax.process_count() > 1 and not value.is_fully_addressable:
-                payload = multihost_utils.broadcast_one_to_all(payload, is_source=source)
-            digest.update(np.ascontiguousarray(payload).tobytes(order="C"))
+    # Every process consumes the same bounded gather rounds of the selected shards.
+    for payload in logical_array_payloads(value, tuple(logical_shape)):
+        digest.update(payload)
     return {
         "signature": [
             {
@@ -7819,7 +8277,7 @@ def _presentation_roots(
     element = _owner_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
         "triangle", 1
     )
-    return (("surface", "triangle", element.element_id),)
+    return ((premise.premise.block_name, "triangle", element.element_id),)
 
 
 def _declaration_presentations(
@@ -8114,6 +8572,25 @@ def _prepare_presentation_sources(
     return _PresentationSources(roots, declaration_presentations, uniform_actions)
 
 
+@jax.jit
+def _presentation_group_values(
+    table: jax.Array,
+    group_by_row: jax.Array,
+    keys: jax.Array,
+    cell_order: jax.Array,
+    cells: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Join and count presentation groups with dynamic epoch contents/counts."""
+    positions = key_positions(table, keys)
+    slot_groups = jnp.where(positions >= 0, group_by_row[jnp.maximum(positions, 0)], -1)
+    groups = slot_groups[cell_order]
+    prefix = jnp.arange(cell_order.shape[0]) < cells
+    counts = jnp.zeros(group_by_row.shape, dtype=jnp.int64).at[
+        jnp.maximum(groups, 0)
+    ].add((prefix & (groups >= 0)).astype(jnp.int64))
+    return groups, prefix, counts
+
+
 def _logical_presentation(
     accepted_source: _dependency_phydrax_meshing__result.CellMeshingResult,
     premise: _dependency_phydrax_meshing__result.CellMeshingResult
@@ -8176,8 +8653,21 @@ def _logical_presentation(
         return np.stack(tuple(packets[part] for part in range(first, last)))[index[1:]]
 
     key_shape = (*states.mesh.cell_ids.shape, 33)
+    # The canonical cell order declares this computation's actual execution
+    # mesh. Restored source states may still be single-device arrays; that
+    # storage choice must not pin newly generated presentation operands there.
+    presentation_sharding = states.mesh.cell_ids.sharding
+    if isinstance(cell_order.sharding, jax.sharding.NamedSharding):
+        execution_mesh = cell_order.sharding.mesh
+        if len(execution_mesh.axis_names) != 1:
+            raise ValueError(
+                "device_adaptation.logical_presentation.mesh must declare one physical owner axis; got incompatible execution axes"
+            )
+        presentation_sharding = jax.sharding.NamedSharding(
+            execution_mesh, jax.sharding.PartitionSpec(execution_mesh.axis_names[0])
+        )
     placed = jax.make_array_from_callback(
-        key_shape, states.mesh.cell_ids.sharding, addressable
+        key_shape, presentation_sharding, addressable
     )
     flat = placed.reshape((-1, 33))
     active = states.mesh.cell_active.reshape(-1)
@@ -8205,23 +8695,17 @@ def _logical_presentation(
     kinds = tuple(record[1] for record in records)
     table = np.asarray([record[2] for record in records], dtype=np.int64)
     key_order = np.lexsort(table.T[::-1])
-    table_array = jnp.asarray(table[key_order], dtype=jnp.int64)
-    group_by_row = jnp.asarray(key_order, dtype=jnp.int64)
-    sharding = placed.sharding
-    if isinstance(sharding, jax.sharding.NamedSharding):
-        replicated = jax.sharding.NamedSharding(
-            sharding.mesh, jax.sharding.PartitionSpec()
+    metadata_sharding = placed.sharding
+    if isinstance(metadata_sharding, jax.sharding.NamedSharding):
+        metadata_sharding = jax.sharding.NamedSharding(
+            metadata_sharding.mesh, jax.sharding.PartitionSpec()
         )
-        table_array = jax.device_put(table_array, replicated)
-        group_by_row = jax.device_put(group_by_row, replicated)
-    positions = key_positions(table_array, flat)
-    slot_groups = jnp.where(positions >= 0, group_by_row[jnp.maximum(positions, 0)], -1)
-    groups = slot_groups[cell_order]
-    prefix = jnp.arange(cell_keys.shape[0]) < cells
-    counts = tuple(
-        int(jax.device_get(jnp.sum(prefix & (groups == group), dtype=jnp.int64)))
-        for group in range(len(names))
+    table_array = jax.device_put(table[key_order], metadata_sharding)
+    group_by_row = jax.device_put(key_order, metadata_sharding)
+    groups, prefix, group_counts = _presentation_group_values(
+        table_array, group_by_row, flat, cell_order, cells
     )
+    counts = tuple(int(value) for value in np.asarray(jax.device_get(group_counts)))
     if any(group_count <= 0 for group_count in counts) or sum(counts) != cells:
         raise ValueError(
             "device_adaptation.logical_presentation.any must retain an active target cell; got missing an active target cell"
@@ -8235,7 +8719,7 @@ def _logical_presentation(
                 continue
             identifiers = np.asarray(block.global_ids, dtype=np.int64)
             order = np.argsort(identifiers, kind="stable")
-            sorted_ids = jnp.asarray(identifiers[order], dtype=jnp.int64)
+            sorted_ids = jax.device_put(identifiers[order], metadata_sharding)
             positions = jnp.searchsorted(sorted_ids, cell_keys[:, 0])
             safe = jnp.minimum(positions, sorted_ids.shape[0] - 1)
             member = prefix & (groups == group)
@@ -8245,7 +8729,7 @@ def _logical_presentation(
                 raise ValueError(
                     "device_adaptation.logical_presentation.member must exclude a foreign source cell; got an unchanged presentation block contains a foreign source cell"
                 )
-            rows = jnp.asarray(order, dtype=jnp.int64)[safe]
+            rows = jax.device_put(order, metadata_sharding)[safe]
             within = jnp.where(member, rows, within)
     _, presentation_order, ordered_count = canonical_rows(
         jnp.stack((groups, within), axis=1), prefix
@@ -8257,59 +8741,6 @@ def _logical_presentation(
     return _LogicalPresentation(names, kinds, groups, counts, presentation_order)
 
 
-@jax.jit
-def _logical_boundary_masks(
-    cell_rows: jax.Array,
-    cells: int,
-    entity_tables: tuple[jax.Array, ...],
-    counts: tuple[int, ...],
-    /,
-) -> tuple[jax.Array, ...]:
-    dimension = cell_rows.shape[1] - 1
-    columns = jnp.asarray(
-        tuple(
-            tuple(column for column in range(dimension + 1) if column != opposite)
-            for opposite in range(dimension + 1)
-        ),
-        dtype=jnp.int32,
-    )
-    cell_valid = jnp.arange(cell_rows.shape[0]) < cells
-    facet_keys = jnp.sort(cell_rows[:, columns], axis=2).reshape((-1, dimension))
-    facet_valid = jnp.repeat(cell_valid, dimension + 1)
-    facet_table = jnp.where(
-        entity_tables[-2] >= 0,
-        entity_tables[-2],
-        jnp.iinfo(jnp.int64).max,
-    )
-    facet_rows = key_positions(facet_table, facet_keys)
-    incidence = (
-        jnp.zeros((facet_table.shape[0],), dtype=jnp.int32)
-        .at[jnp.maximum(facet_rows, 0)]
-        .add(facet_valid.astype(jnp.int32))
-    )
-    facet_boundary = (jnp.arange(facet_table.shape[0]) < counts[-2]) & (incidence == 1)
-    masks = []
-    for degree in range(dimension - 1):
-        local = np.asarray(
-            tuple(combinations(range(dimension), degree + 1)), dtype=np.int32
-        )
-        keys = entity_tables[-2][:, local].reshape((-1, degree + 1))
-        valid = jnp.repeat(facet_boundary, local.shape[0])
-        table = jnp.where(
-            entity_tables[degree] >= 0,
-            entity_tables[degree],
-            jnp.iinfo(jnp.int64).max,
-        )
-        rows = key_positions(table, keys)
-        membership = (
-            jnp.zeros((table.shape[0],), dtype=jnp.int32)
-            .at[jnp.maximum(rows, 0)]
-            .add(valid.astype(jnp.int32))
-        )
-        masks.append((jnp.arange(table.shape[0]) < counts[degree]) & (membership > 0))
-    masks.append(facet_boundary)
-    masks.append(jnp.zeros((cell_rows.shape[0],), dtype=jnp.bool_))
-    return tuple(masks)
 
 
 @jax.jit
@@ -8534,7 +8965,7 @@ def _logical_multiblock_topology_id(
             }
         )
     top_ids, top_rows = _multiblock_top_values(cell_keys, cell_rows, presentation.order)
-    canonical_boundary_masks = _logical_boundary_masks(
+    canonical_boundary_masks = _dependency_phydrax_meshing__publication_lowering.logical_boundary_masks(
         cell_rows, counts[-1], entity_tables, counts
     )
     entity_orders = _logical_entity_orders(top_rows, counts[-1], entity_tables, counts)
@@ -8900,12 +9331,10 @@ def logical_publication(
     )
     source = accepted_source.mesh
     for degree in range(1, width - 1):
-        columns = np.asarray(
-            tuple(combinations(range(width), degree + 1)), dtype=np.int32
+        table, routing, numerical_count = _logical_entity_values(
+            cell_rows, cells, cell_owners, degree=degree
         )
-        keys = jnp.sort(cell_rows[:, columns], axis=2).reshape((-1, degree + 1))
-        valid = jnp.repeat(jnp.arange(cell_keys.shape[0]) < cells, columns.shape[0])
-        table, order, count = canonical_rows(keys, valid)
+        count = int(jax.device_get(numerical_count))
         ids, retired_keys, retired_ids = _inherited_entity_ids(
             accepted_source,
             degree,
@@ -8916,7 +9345,6 @@ def logical_publication(
         )
         arrays[f"epoch/retired_entity_keys_{degree}"] = retired_keys
         arrays[f"epoch/retired_entity_ids_{degree}"] = retired_ids
-        routing = jnp.repeat(cell_owners, columns.shape[0])[order]
         entity_tables.append(table)
         entity_ids.append(ids)
         entity_owners.append(routing)
@@ -9115,7 +9543,7 @@ def _prepare_collective_geometry_roots(
     else:
         roots.append(
             (
-                "surface",
+                original.premise.block_name,
                 "triangle",
                 _owner_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
                     "triangle", 1
@@ -9252,22 +9680,22 @@ def _lower_collective_coefficient_actions(
         else np.asarray(uniform_refinement.parent_ids, dtype=np.int64)
     )
     for root_name, root_kind, root_element in roots:
-        table = arrays[f"geometry/cell_ids/{root_name}"]
-        table = jnp.where(table >= 0, table, jnp.iinfo(jnp.int64).max)
-        positions = key_positions(
-            table[:, None], jnp.asarray(target_ids[:, None], dtype=jnp.int64)
-        )
-        found = np.asarray(jax.device_get(positions), dtype=np.int64)
+        # These are the already projected, process-addressable closure banks.
+        # Their consumers below author host coefficient recipes, so do the
+        # integer joins and gathers on that owning host, not in eager XLA.
+        table = np.asarray(jax.device_get(arrays[f"geometry/cell_ids/{root_name}"]))
+        table = np.where(table >= 0, table, np.iinfo(np.int64).max)
+        found = entity_keys_owner.key_rows(table[:, None], target_ids[:, None])
         selected = np.flatnonzero(found >= 0)
-        positions = jnp.asarray(found[selected], dtype=jnp.int64)
+        positions = found[selected]
         actions = np.asarray(
-            jax.device_get(arrays[f"geometry/action_weights/{root_name}"][positions]),
+            jax.device_get(arrays[f"geometry/action_weights/{root_name}"]),
             dtype=np.float64,
-        )
+        )[positions]
         action_counts = np.asarray(
-            jax.device_get(arrays[f"geometry/action_counts/{root_name}"][positions]),
+            jax.device_get(arrays[f"geometry/action_counts/{root_name}"]),
             dtype=np.int32,
-        )
+        )[positions]
         if (
             actions.ndim != 4
             or actions.shape[2:]
@@ -9280,17 +9708,17 @@ def _lower_collective_coefficient_actions(
                 "device_adaptation.lower_collective_coefficient_actions.actions must retain their source columns or declared depth; got missing their source columns or declared depth"
             )
         coefficient_routes = np.asarray(
-            jax.device_get(arrays[f"geometry/routes/{root_name}"][positions]),
+            jax.device_get(arrays[f"geometry/routes/{root_name}"]),
             dtype=np.int64,
-        )
+        )[positions]
         parents = np.asarray(
-            jax.device_get(arrays[f"geometry/parent_cell_ids/{root_name}"][positions]),
+            jax.device_get(arrays[f"geometry/parent_cell_ids/{root_name}"]),
             dtype=np.int64,
-        )
+        )[positions]
         corners = np.asarray(
-            jax.device_get(arrays[f"geometry/parent_vertex_ids/{root_name}"][positions]),
+            jax.device_get(arrays[f"geometry/parent_vertex_ids/{root_name}"]),
             dtype=np.int64,
-        )
+        )[positions]
         for index, target in enumerate(selected):
             stack = actions[index, : action_counts[index]]
             uniform = False
@@ -9414,23 +9842,23 @@ def _lower_collective_geometry(
     coordinate_ids = np.unique(
         np.concatenate(tuple(np.asarray(routes[name]).reshape(-1) for name in names))
     )
-    coordinate_table = arrays["geometry/coordinate_ids"]
-    positions = key_positions(
-        jnp.where(coordinate_table >= 0, coordinate_table, jnp.iinfo(jnp.int64).max)[
-            :, None
-        ],
-        jnp.asarray(coordinate_ids[:, None], dtype=jnp.int64),
+    coordinate_table = np.asarray(jax.device_get(arrays["geometry/coordinate_ids"]))
+    positions = entity_keys_owner.key_rows(
+        np.where(
+            coordinate_table >= 0, coordinate_table, np.iinfo(np.int64).max
+        )[:, None],
+        coordinate_ids[:, None],
     )
-    if bool(jax.device_get(jnp.any(positions < 0))):
+    if np.any(positions < 0):
         raise ValueError(
             "device_adaptation.lower_collective_geometry.positions must reference existing coordinate DOFs; got a scientific source chart references an absent coordinate dof"
         )
     coordinates = np.asarray(
-        jax.device_get(arrays["geometry/coordinates"][positions]), dtype=np.float64
-    )
+        jax.device_get(arrays["geometry/coordinates"]), dtype=np.float64
+    )[positions]
     owners = np.asarray(
-        jax.device_get(arrays["geometry/coordinate_owners"][positions]), dtype=np.int32
-    )
+        jax.device_get(arrays["geometry/coordinate_owners"]), dtype=np.int32
+    )[positions]
     phase = _lower_collective_exact_source(
         original=original,
         coordinate_ids=coordinate_ids,
@@ -9506,10 +9934,11 @@ def _published_cell_mesh(
         raise ValueError(
             "device_adaptation.published_cell_mesh.projection must provide its consumed fixed-capacity entity projection; got an absent or incompatible value"
         )
-    projection.require_source(logical.arrays)
-    projected = dict(projection.addressable_arrays(local.partition_index))
+    type(projection).require_source(projection, logical.arrays)
+    projected = dict(type(projection).addressable_arrays(projection, local.partition_index))
     ids = []
     owners = []
+    boundary_entities = []
     for degree in range(probe.topological_dimension + 1):
         valid = np.asarray(
             jax.device_get(projected[f"entity/{degree}/valid"]), dtype=np.bool_
@@ -9531,6 +9960,12 @@ def _published_cell_mesh(
         )[valid]
         ids.append(identifiers[positions])
         owners.append(ownership[positions])
+        boundary_entities.append(
+            np.asarray(
+                jax.device_get(projected[f"entity/{degree}/physical_boundary"]),
+                dtype=np.bool_,
+            )[valid][positions]
+        )
         if degree == 0:
             coordinates = np.asarray(
                 jax.device_get(projected["coordinates"]), dtype=np.float64
@@ -9592,6 +10027,7 @@ def _published_cell_mesh(
         logical_coordinate_geometry_id=evidence.coordinate_geometry_id,
         geometry_projection=logical.geometry_projection,
         local_physical_boundary_facets=physical,
+        local_physical_boundary_entities=boundary_entities,
         local_neighborhood_complete=complete,
         neighborhood_depth=(
             partitioned.prepared.adaptation.policy.distribution.halo_width
@@ -9620,38 +10056,45 @@ def _local_entity_lineage(
 ) -> _dependency_phydrax_meshing__lineage_records.EntityLineage:
     """Shard owned creation/deletion without declaring absent ghost rows deleted."""
 
-    record = _dependency_phydrax_meshing__topology_edit.entity_lineage(
-        local.source, mesh, relation
-    )
-    degree = record.dimension
-    deleted = np.asarray(record.deleted_source_ids, dtype=np.int64)
-    if deleted.size:
+    with _agreed_local_step():
+        record = _dependency_phydrax_meshing__topology_edit.entity_lineage(
+            local.source, mesh, relation
+        )
+        degree = record.dimension
+        deleted = np.asarray(record.deleted_source_ids, dtype=np.int64)
+        # Every process enters the routed owner lookup, including with no deletion.
         keys = entity_keys_owner.entity_keys(local.source, degree)
         local_ids = np.asarray(local.source.entity_set(degree).entity_ids, dtype=np.int64)
         rows = entity_keys_owner.key_rows(local_ids[:, None], deleted[:, None])
-        _, source_owner = _source_entity_values(
-            partitioned.source_entities, degree, keys[rows]
-        )
-        deleted = deleted[source_owner == local.partition_index]
-    storage = mesh.storage
-    if storage is None:
-        raise ValueError(
-            "device_adaptation.local_entity_lineage.storage must provide accepted owner-local storage; got an absent or incompatible value"
-        )
-    target_ids = np.asarray(storage.entity_global_ids[degree], dtype=np.int64)
-    target_owned = np.asarray(storage.entity_owned[degree], dtype=np.bool_)
-    created = np.asarray(record.created_target_ids, dtype=np.int64)
-    created = created[np.isin(created, target_ids[target_owned])]
-    return _dependency_phydrax_meshing__lineage_records.EntityLineage(
-        degree,
-        partitioned.prepared.adaptation.source.mesh.entity_set(degree).entity_set_id,
-        mesh.entity_set(degree).entity_set_id,
-        record.source_global_ids,
-        record.target_global_ids,
-        record.relation_kinds,
-        created_target_ids=created,
-        deleted_source_ids=deleted,
+        if np.any(rows < 0):
+            raise ValueError(
+                "device_adaptation.local_entity_lineage.deleted_source_ids must reference the consumed source closure; got an absent source entity"
+            )
+        source_queries = np.asarray(keys)[rows]
+    _, source_owner = _source_entity_values(
+        partitioned.source_entities, degree, source_queries
     )
+    with _agreed_local_step():
+        deleted = deleted[source_owner == local.partition_index]
+        storage = mesh.storage
+        if storage is None:
+            raise ValueError(
+                "device_adaptation.local_entity_lineage.storage must provide accepted owner-local storage; got an absent or incompatible value"
+            )
+        target_ids = np.asarray(storage.entity_global_ids[degree], dtype=np.int64)
+        target_owned = np.asarray(storage.entity_owned[degree], dtype=np.bool_)
+        created = np.asarray(record.created_target_ids, dtype=np.int64)
+        created = created[np.isin(created, target_ids[target_owned])]
+        return _dependency_phydrax_meshing__lineage_records.EntityLineage(
+            degree,
+            partitioned.prepared.adaptation.source.mesh.entity_set(degree).entity_set_id,
+            mesh.entity_set(degree).entity_set_id,
+            record.source_global_ids,
+            record.target_global_ids,
+            record.relation_kinds,
+            created_target_ids=created,
+            deleted_source_ids=deleted,
+        )
 
 
 class _LocalTarget(NamedTuple):
@@ -9672,25 +10115,28 @@ def _local_target(
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _LocalTarget:
     """Lower one owner-local target carrier and its lineage."""
-    prepared = partitioned.prepared.adaptation
-    mesh = _published_cell_mesh(
-        local, logical, evidence, partitioned, scope=scope, budget=budget
-    )
-    lineage = _dependency_phydrax_meshing__lineage_records.MeshLineage(
-        prepared.source.mesh.topology_id,
-        mesh.topology_id,
-        tuple(
-            _local_entity_lineage(partitioned, local, mesh, relation)
-            for relation in local.committed.edit.relations
-        ),
-    )
-    if mesh.storage is None:
-        raise ValueError(
-            "device_adaptation.local_target.mesh must retain its coordinate-map storage; got missing its coordinate-map storage"
+    mesh = _agreed_local(
+        lambda: _published_cell_mesh(
+            local, logical, evidence, partitioned, scope=scope, budget=budget
         )
-    return _LocalTarget(
-        local, mesh, lineage, mesh.storage.restore_geometry(budget=budget)
     )
+    records = tuple(
+        _local_entity_lineage(partitioned, local, mesh, relation)
+        for relation in local.committed.edit.relations
+    )
+    with _agreed_local_step():
+        lineage = _dependency_phydrax_meshing__lineage_records.MeshLineage(
+            partitioned.prepared.adaptation.source.mesh.topology_id,
+            mesh.topology_id,
+            records,
+        )
+        if mesh.storage is None:
+            raise ValueError(
+                "device_adaptation.local_target.mesh must retain its coordinate-map storage; got missing its coordinate-map storage"
+            )
+        return _LocalTarget(
+            local, mesh, lineage, mesh.storage.restore_geometry(budget=budget)
+        )
 
 
 def _collective_plc_premises(
@@ -9699,6 +10145,7 @@ def _collective_plc_premises(
     evidence: _dependency_phydrax_meshing__result.CollectiveMeshEvidence,
     /,
     *,
+    publication: _dependency_phydrax_meshing__result._LiveCollectivePublication,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> (
@@ -9719,43 +10166,33 @@ def _collective_plc_premises(
         _dependency_phydrax_meshing__association.PlcAssociationTransfer,
     ):
         return None
-    original = _scientific_preparation_source(prepared)
-    if (
-        not isinstance(original, _dependency_phydrax_meshing__result.CellMeshingResult)
-        or original.certification is None
-    ):
-        raise ValueError(
-            "device_adaptation.collective_plc_premises.source must provide the serial embedding and domain-coverage certificates; got an absent or incompatible value"
+    with _agreed_local_step():
+        original = _scientific_preparation_source(prepared)
+        domain = prepared.policy.association_transfer.domain
+        storage = target.mesh.storage
+        if storage is None:
+            raise ValueError(
+                "device_adaptation.collective_plc_premises.storage must retain its coordinate-map storage; got missing its coordinate-map storage"
+            )
+        if (
+            type(publication) is not _dependency_phydrax_meshing__result._LiveCollectivePublication
+            or getattr(publication, "_partitioned", None) is not partitioned
+        ):
+            raise ValueError(
+                "device_adaptation.collective_plc_premises.publication must be the "
+                "actual freshly constructed collective publication"
+            )
+        states = (
+            _dependency_phydrax_meshing__result._LiveCollectivePublication.require_states(
+                publication, storage, evidence, scope=scope, budget=budget
+            )
         )
-    certification = original.certification
-    domain = certification.request.domain
-    if (
-        certification.embedding is None
-        or certification.coverage is None
-        or not isinstance(
-            domain, _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
-        )
-        or certification.request.cell_regions is None
-    ):
-        raise ValueError(
-            "device_adaptation.collective_plc_premises.certification must provide the serial embedding and domain-coverage certificates; got an absent or incompatible value"
-        )
-    storage = target.mesh.storage
-    if storage is None:
-        raise ValueError(
-            "device_adaptation.collective_plc_premises.storage must retain its coordinate-map storage; got missing its coordinate-map storage"
-        )
-    _, states, _ = restore_partitioned_mesh_state(storage, evidence)
     _, embedding, coverage = (
         _dependency_phydrax_geometry__collective_domain_coverage.certify_collective_premises(
             target.mesh,
             target.geometry,
             domain,
-            original.mesh,
-            original.geometry,
-            certification.embedding,
-            certification.coverage,
-            np.asarray(certification.request.cell_regions),
+            original,
             states,
             evidence.initial_states,
             logical_arrays=storage.logical_arrays,
@@ -9767,7 +10204,7 @@ def _collective_plc_premises(
 
 
 @final
-class _CertifiedLocalTarget(StrictModule):
+class _CertifiedLocalTarget(NamedTuple):
     """Certified owner-local target with organization, associations, and renewed region evidence."""
 
     target: _dependency_phydrax_meshing__result.CellMeshingResult
@@ -9788,89 +10225,174 @@ def _certify_local_adaptation_target(
     ]
     | None,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    historical_sources: tuple[_dependency_phydrax_meshing__result.CellMeshingResult, ...] | None = None,
 ) -> _CertifiedLocalTarget:
     """Certified owner-local target with organization, associations, and renewed region evidence."""
-    patches, zones, labels, attributes = (
-        _dependency_phydrax_meshing__organization.lower_mesh_organization(
-            original,
-            mesh,
-            dict(logical.arrays),
+    with _agreed_local_step():
+        patches, zones, labels, attributes = (
+            _dependency_phydrax_meshing__organization.lower_mesh_organization(
+                original,
+                mesh,
+                dict(logical.arrays),
+                scope_projections=logical.scope_projections,
+                attribute_projections=logical.attribute_projections,
+            )
+        )
+        region_boundaries = (
+            _dependency_phydrax_meshing__adaptation.region_boundary_transition(
+                prepared.source, mesh, lineage, patches, zones, labels
+            )
+        )
+        region_evidence = None
+        if prepared.source.region_evidence is not None:
+            renewal = _owner_phydrax_meshing__compartments.revalidate_region_evidence(
+                prepared.source,
+                mesh,
+                geometry,
+                zones,
+                patches,
+                lineage=lineage,
+                limits=prepared.policy.limits,
+                budget=budget,
+            )
+            zones, patches, region_evidence = (
+                renewal.zones,
+                renewal.patches,
+                renewal.region_evidence,
+            )
+        associations = ()
+        transfer = prepared.policy.association_transfer
+
+    def certify(
+        associations: tuple[_dependency_phydrax_meshing__association.GeometryAssociation, ...],
+    ) -> _dependency_phydrax_meshing__result.CellMeshingResult:
+        return _dependency_phydrax_meshing__canonical.certify_owner_local_cell_mesh(
+            mesh, prepared.source, evidence,
+            audit_policy=prepared.policy.audit_policy, geometry=geometry,
+            patches=patches, zones=zones, labels=labels, attributes=attributes,
+            associations=associations, region_evidence=region_evidence,
+            region_boundary_evidence=region_boundaries,
             scope_projections=logical.scope_projections,
             attribute_projections=logical.attribute_projections,
+            storage_binding=logical.storage_binding,
+            collective_certificates=premises, budget=budget,
         )
-    )
-    region_boundaries = (
-        _dependency_phydrax_meshing__adaptation.region_boundary_transition(
-            prepared.source, mesh, lineage, patches, zones, labels
-        )
-    )
-    region_evidence = None
-    if prepared.source.region_evidence is not None:
-        renewal = _owner_phydrax_meshing__compartments.revalidate_region_evidence(
-            prepared.source,
-            mesh,
-            geometry,
-            zones,
-            patches,
-            lineage=lineage,
-            limits=prepared.policy.limits,
-        )
-        zones, patches, region_evidence = (
-            renewal.zones,
-            renewal.patches,
-            renewal.region_evidence,
-        )
-    associations = ()
+
     if prepared.source.associations:
-        transfer = prepared.policy.association_transfer
         match transfer:
             case _dependency_phydrax_meshing__association.PlcAssociationTransfer():
-                if premises is None:
-                    raise ValueError(
-                        "device_adaptation.certify_local_adaptation_target.premises must provide its collective target premises; got an absent or incompatible value"
+                with _agreed_local_step():
+                    if premises is None:
+                        raise ValueError(
+                            "device_adaptation.certify_local_adaptation_target.premises must provide its collective target premises; got an absent or incompatible value"
+                        )
+                query_source = prepared.source
+                support_lineage = lineage
+                if historical_sources is not None:
+                    restored_associations = plc_planar_support_owner.restart_planar_associations(
+                        transfer, historical_sources, prepared.source, mesh, evidence,
+                        budget=budget,
                     )
-                associations = transfer.propagate(
-                    prepared.source,
-                    lineage,
+                    with _agreed_local_step():
+                        query_source = certify(restored_associations)
+                        plc_planar_support_owner.planar_classes(
+                            transfer, query_source, budget=budget
+                        )
+                    support_lineage = plc_planar_support_owner.restart_planar_lineage(
+                        prepared.source, lineage, query_source.mesh, mesh,
+                    )
+                associations = type(transfer).propagate(
+                    transfer, query_source,
+                    support_lineage,
                     mesh,
                     geometry=geometry,
                     embedding=premises[0],
                     coverage=premises[1],
+                    budget=budget,
                 )
             case _dependency_phydrax_meshing__association.BRepAssociationTransfer():
-                associations = transfer.propagate(prepared.source, lineage, mesh)
-            case _dependency_phydrax_meshing__association.SurfaceAssociationTransfer():
-                if logical.surface_transfer is None:
-                    raise ValueError(
-                        "device_adaptation.certify_local_adaptation_target.logical must provide its collective source receipts; got an absent or incompatible value"
+                with _agreed_local_step():
+                    associations = type(transfer).propagate(
+                        transfer, prepared.source, lineage, mesh, budget=budget
                     )
-                associations = logical.surface_transfer.propagate(
-                    prepared.source, lineage, mesh, geometry=geometry
-                )
+            case _dependency_phydrax_meshing__association.SurfaceAssociationTransfer():
+                with _agreed_local_step():
+                    if logical.surface_transfer is None:
+                        raise ValueError(
+                            "device_adaptation.certify_local_adaptation_target.logical must provide its collective source receipts; got an absent or incompatible value"
+                        )
+                    associations = type(logical.surface_transfer).propagate(
+                        logical.surface_transfer, prepared.source, lineage, mesh, geometry=geometry
+                    )
             case _:
-                raise ValueError(
-                    "device_adaptation.certify_local_adaptation_target.prepared must provide its association transfer; got an absent or incompatible value"
-                )
-    target = _dependency_phydrax_meshing__canonical.certify_owner_local_cell_mesh(
-        mesh,
-        prepared.source,
-        evidence,
-        audit_policy=prepared.policy.audit_policy,
-        geometry=geometry,
-        patches=patches,
-        zones=zones,
-        labels=labels,
-        attributes=attributes,
-        associations=associations,
-        region_evidence=region_evidence,
-        region_boundary_evidence=region_boundaries,
-        scope_projections=logical.scope_projections,
-        attribute_projections=logical.attribute_projections,
-        storage_binding=logical.storage_binding,
-        collective_certificates=premises,
-        budget=budget,
+                with _agreed_local_step():
+                    raise ValueError(
+                        "device_adaptation.certify_local_adaptation_target.prepared must provide its association transfer; got an absent or incompatible value"
+                    )
+    with _agreed_local_step():
+        target = certify(associations)
+        return _CertifiedLocalTarget(target)
+
+
+def _transfer_source_order(
+    closure_ids: np.ndarray, sources: np.ndarray, valid: np.ndarray, /
+) -> np.ndarray:
+    """Accepted closure vertex IDs, then valid stencil sources beyond it by stable ID."""
+    referenced = np.unique(
+        np.asarray(sources, dtype=np.int64)[np.asarray(valid, dtype=np.bool_)]
     )
-    return _CertifiedLocalTarget(target)
+    return np.concatenate(
+        (closure_ids, np.setdiff1d(referenced, closure_ids, assume_unique=True))
+    )
+
+
+@checked
+def partitioned_transfer_sources(
+    result: _dependency_phydrax_meshing__adaptation.MeshAdaptationResult, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Stencil sources read beyond the accepted closure, with their accepted owners.
+
+    ``result.transfer`` reads the accepted predecessor closure rows first, then
+    these stable IDs, whose values must come from these accepted owners.
+    Collective: every process enters one fixed-capacity owner lookup per
+    result, in the same order, and all processes agree on any refusal.
+    """
+    source = result.source
+    evidence = source.collective_evidence
+    stencil, transfer = result.stencil, result.transfer
+    if evidence is None or stencil is None or transfer is None:
+        raise ValueError(
+            "device_adaptation.partitioned_transfer_sources.result must be a collective topology transfer; got no collective source, stencil, or transfer"
+        )
+    closure_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    references, valid = jax.device_get((stencil.source_global_ids, stencil.valid))
+    extension = _transfer_source_order(closure_ids, references, valid)[
+        closure_ids.size :
+    ]
+    count = evidence.global_entity_counts[0]
+    table = jnp.asarray(evidence.entity_ids[0][:count], dtype=jnp.int64)
+    order = jnp.argsort(table, stable=True)
+    owners, present = _dependency_phydrax_meshing__scope.local_logical_lookup(
+        table[order],
+        jnp.asarray(evidence.entity_owners[0][:count], dtype=jnp.int32)[order],
+        extension,
+    )
+    failure = None
+    if transfer.source_size != closure_ids.size + extension.size or not np.all(
+        present
+    ):
+        failure = _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.TRANSFER_FAILED,
+            "device_adaptation.partitioned_transfer_sources.transfer must read the accepted closure and owned predecessor vertices; got an unowned or misaligned transfer source",
+            stage="distributed-field-transfer",
+        )
+    collective_failure_owner.collective_failure_barrier(
+        failure,
+        message="A process could not bind its topology transfer sources to accepted "
+        "predecessor owners; no field was transferred.",
+        stage="distributed-field-transfer",
+    )
+    return extension, np.asarray(owners, dtype=np.int32)
 
 
 def _local_adaptation_result(
@@ -9888,14 +10410,18 @@ def _local_adaptation_result(
     *,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    historical_sources: tuple[_dependency_phydrax_meshing__result.CellMeshingResult, ...] = (),
 ) -> _dependency_phydrax_meshing__adaptation.MeshAdaptationResult:
     """Bind one certified local publication to the existing transition owners."""
 
-    prepared = partitioned.prepared.adaptation
-    local, mesh, lineage, geometry = staged
-    committed = local.committed
-    edit = committed.edit
-    original = _scientific_preparation_source(prepared)
+    with _agreed_local_step():
+        prepared = partitioned.prepared.adaptation
+        local, mesh, lineage, geometry = staged
+        committed = local.committed
+        edit = committed.edit
+        original = _scientific_preparation_source(prepared)
+    # Certification ends in owner-local audits; every process agrees on them
+    # before any process enters the transfer and distribution collectives.
     phase = _certify_local_adaptation_target(
         prepared=prepared,
         original=original,
@@ -9906,43 +10432,73 @@ def _local_adaptation_result(
         evidence=evidence,
         premises=premises,
         budget=budget,
+        historical_sources=historical_sources if partitioned.restart_repack is not None else None,
     )
-    target = phase.target
-    stencil = _dependency_phydrax_meshing__lineage_records.VertexInterpolationStencil(
-        prepared.source.mesh.entity_set(0).entity_set_id,
-        mesh.entity_set(0).entity_set_id,
-        mesh.vertex_global_ids,
-        edit.stencil_sources,
-        edit.stencil_weights,
-        edit.stencil_valid,
-        preserves_constants=True,
-    )
-    kind = (
-        _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH
-        if committed.refined and committed.coarsened
-        else _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REFINE
-        if committed.refined
-        else _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.COARSEN
-        if committed.coarsened
-        else _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.PARTITION
-    )
-    transition = _dependency_phydrax_meshing__lineage.CellMeshTransition(
-        prepared.source.mesh.mesh_id,
-        prepared.source.mesh.topology_id,
-        target,
-        lineage,
-        kind,
-        vertex_stencil=stencil,
-        parents=edit.refinement,
-    )
-    transfer = stencil.as_transfer(
-        local.source.vertex_global_ids,
-        source_topology_id=prepared.source.mesh.topology_id,
-        target_topology_id=mesh.topology_id,
-        preserves_linear=True,
-        source_coordinates=local.source.coordinates,
-        target_coordinates=mesh.coordinates,
-    )
+    with _agreed_local_step():
+        target = phase.target
+        stencil = _dependency_phydrax_meshing__lineage_records.VertexInterpolationStencil(
+            prepared.source.mesh.entity_set(0).entity_set_id,
+            mesh.entity_set(0).entity_set_id,
+            mesh.vertex_global_ids,
+            edit.stencil_sources,
+            edit.stencil_weights,
+            edit.stencil_valid,
+            preserves_constants=True,
+        )
+        kind = (
+            _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH
+            if committed.refined and committed.coarsened
+            else _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REFINE
+            if committed.refined
+            else _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.COARSEN
+            if committed.coarsened
+            else _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.PARTITION
+        )
+        transition = _dependency_phydrax_meshing__lineage.CellMeshTransition(
+            prepared.source.mesh.mesh_id,
+            prepared.source.mesh.topology_id,
+            target,
+            lineage,
+            kind,
+            vertex_stencil=stencil,
+            parents=edit.refinement,
+        )
+        # Field values live on the accepted predecessor's published closure. A
+        # coarser target halo can reach predecessor vertices beyond that closure;
+        # those stencil sources follow it by stable ID and are resolved from their
+        # accepted owners (``partitioned_transfer_sources``), never extrapolated.
+        closure = prepared.source.mesh
+
+    def bind_transfer() -> _dependency_phydrax_meshing__lineage_records.FiniteElementTopologyTransfer:
+        closure_ids = np.asarray(closure.vertex_global_ids, dtype=np.int64)
+        source_ids = _transfer_source_order(
+            closure_ids, edit.stencil_sources, edit.stencil_valid
+        )
+        extension = source_ids[closure_ids.size :]
+        resident = np.asarray(local.source.vertex_global_ids, dtype=np.int64)
+        resident_order = np.argsort(resident, kind="stable")
+        positions = np.minimum(
+            np.searchsorted(resident[resident_order], extension), resident.size - 1
+        )
+        if np.any(resident[resident_order][positions] != extension):
+            raise ValueError(
+                "device_adaptation.local_adaptation_result.stencil_sources must lie in the consumed predecessor closure; got a source vertex outside every consumed predecessor cell"
+            )
+        return stencil.as_transfer(
+            source_ids,
+            source_topology_id=closure.topology_id,
+            target_topology_id=mesh.topology_id,
+            preserves_linear=True,
+            source_coordinates=np.concatenate(
+                (
+                    np.asarray(closure.coordinates),
+                    np.asarray(local.source.coordinates)[resident_order[positions]],
+                )
+            ),
+            target_coordinates=mesh.coordinates,
+        )
+
+    transfer = _agreed_local(bind_transfer)
     status = (
         _dependency_phydrax_meshing__adaptation.MeshAdaptationStatus.PASS_LIMIT
         if committed.pass_limited
@@ -9951,70 +10507,78 @@ def _local_adaptation_result(
         else _dependency_phydrax_meshing__adaptation.MeshAdaptationStatus.COMPLETE
     )
 
-    hierarchy = bisection_host.rebind_bisection_presentation_blocks(
-        committed.hierarchy, target, scope=scope, budget=budget
-    )
-    outcome = _dependency_phydrax_meshing__adaptation.RouteOutcome(
-        status,
-        target,
-        transition,
-        lineage,
-        stencil,
-        transfer,
-        None,
-        committed.evidence,
-        hierarchy,
-    )
-    elapsed = time.monotonic() - started
-    source_distribution = prepared.policy.distribution
-    partition_policy = prepared.policy.partition_policy
-    if source_distribution is None or partition_policy is None:
-        raise ValueError(
-            "device_adaptation.local_adaptation_result.source_distribution must provide the prepared distribution policy; got an absent or incompatible value"
+    hierarchy = _agreed_local(
+        lambda: bisection_host.rebind_bisection_presentation_blocks(
+            committed.hierarchy, target, scope=scope, budget=budget
         )
-    source_evidence = prepared.source.collective_evidence
-    if source_evidence is None:
-        source_ids = partitioned.source_entities[mesh.topological_dimension][1]
-        source_owners = partitioned.source_entities[mesh.topological_dimension][2]
-        source_count = source_ids.shape[0]
-    else:
-        source_ids = source_evidence.entity_ids[-1]
-        source_owners = source_evidence.entity_owners[-1]
-        source_count = source_evidence.global_entity_counts[-1]
-    cells = lineage.entity_lineage(mesh.topological_dimension)
-    source_table = jnp.asarray(source_ids[:source_count], dtype=jnp.int64)
-    source_order = jnp.argsort(source_table, stable=True)
+    )
+    with _agreed_local_step():
+        outcome = _dependency_phydrax_meshing__adaptation.RouteOutcome(
+            status,
+            target,
+            transition,
+            lineage,
+            stencil,
+            transfer,
+            None,
+            committed.evidence,
+            hierarchy,
+        )
+        elapsed = time.monotonic() - started
+        source_distribution = prepared.policy.distribution
+        partition_policy = prepared.policy.partition_policy
+        if source_distribution is None or partition_policy is None:
+            raise ValueError(
+                "device_adaptation.local_adaptation_result.source_distribution must provide the prepared distribution policy; got an absent or incompatible value"
+            )
+        source_evidence = prepared.source.collective_evidence
+        if source_evidence is None:
+            source_ids = partitioned.source_entities[mesh.topological_dimension][1]
+            source_owners = partitioned.source_entities[mesh.topological_dimension][2]
+            source_count = source_ids.shape[0]
+        else:
+            source_ids = source_evidence.entity_ids[-1]
+            source_owners = source_evidence.entity_owners[-1]
+            source_count = source_evidence.global_entity_counts[-1]
+        cells = lineage.entity_lineage(mesh.topological_dimension)
+        source_table = jnp.asarray(source_ids[:source_count], dtype=jnp.int64)
+        source_order = jnp.argsort(source_table, stable=True)
     source_rows, defined = _dependency_phydrax_meshing__scope.local_logical_lookup(
         source_table[source_order],
         source_order,
         np.asarray(cells.source_global_ids, dtype=np.int64),
     )
-    if not np.all(defined):
-        raise ValueError(
-            "device_adaptation.local_adaptation_result.defined must exist in the accepted predecessor; got a cell lineage occurrence is absent from the accepted predecessor"
+
+    with _agreed_local_step():
+        if not np.all(defined):
+            raise ValueError(
+                "device_adaptation.local_adaptation_result.defined must exist in the accepted predecessor; got a cell lineage occurrence is absent from the accepted predecessor"
+            )
+        target_part = mesh_part_owner.MeshPart(source_distribution.part.name, target)
+        target_rows = _dependency_phydrax_meshing__distribution.rows_of(
+            np.asarray(mesh.entity_set(mesh.topological_dimension).entity_ids),
+            cells.target_global_ids,
         )
     distribution = _dependency_phydrax_meshing__distribution.prepare_owner_local_distribution_transition(
         source_distribution,
-        mesh_part_owner.MeshPart(source_distribution.part.name, target),
+        target_part,
         lineage,
         source_rows,
-        _dependency_phydrax_meshing__distribution.rows_of(
-            np.asarray(mesh.entity_set(mesh.topological_dimension).entity_ids),
-            cells.target_global_ids,
-        ),
+        target_rows,
         source_ids,
         source_owners,
         policy=partition_policy,
         restart_repack=partitioned.restart_repack,
         restart_proof=logical.restart_proof,
     )
-    return _dependency_phydrax_meshing__adaptation.MeshAdaptationResult(
-        prepared,
-        outcome,
-        _dependency_phydrax_meshing__adaptation.compliance(prepared, outcome, elapsed),
-        distribution,
-        elapsed,
-    )
+    with _agreed_local_step():
+        return _dependency_phydrax_meshing__adaptation.MeshAdaptationResult(
+            prepared,
+            outcome,
+            _dependency_phydrax_meshing__adaptation.compliance(prepared, outcome, elapsed),
+            distribution,
+            elapsed,
+        )
 
 
 def host_process_status_union(statuses: jax.Array, /) -> int:
@@ -10071,6 +10635,19 @@ def _collective_identity_rows(
     return np.unique(rows[rows[:, 0] >= 0], axis=0)
 
 
+@jax.jit
+def _ordered_entity_set_values(
+    identifiers: tuple[jax.Array, ...],
+    masks: tuple[jax.Array, ...],
+    orders: tuple[jax.Array, ...],
+) -> tuple[tuple[jax.Array, jax.Array, jax.Array], ...]:
+    """Prepare the existing serial entity-set fingerprint leaves together."""
+    return tuple(
+        (ids[order], mask[order], jnp.ones(order.shape, dtype=jnp.bool_))
+        for ids, mask, order in zip(identifiers, masks, orders, strict=True)
+    )
+
+
 def _collective_entity_set_ids(
     evidence: _dependency_phydrax_meshing__result.CollectiveMeshEvidence, /
 ) -> tuple[str, ...]:
@@ -10079,7 +10656,9 @@ def _collective_entity_set_ids(
     arrays = dict(evidence.logical_arrays)
     rows = arrays["cell_vertices"]
     counts = evidence.global_entity_counts
-    masks = _logical_boundary_masks(rows, counts[-1], evidence.entity_keys, counts)
+    masks = _dependency_phydrax_meshing__publication_lowering.logical_boundary_masks(
+        rows, counts[-1], evidence.entity_keys, counts
+    )
     presentation_order = arrays["presentation/cell_order"]
     orders = _logical_entity_orders(
         rows[presentation_order], counts[-1], evidence.entity_keys, counts
@@ -10089,12 +10668,13 @@ def _collective_entity_set_ids(
         if dimension == 2
         else ("vertices", "edges", "faces", "cells")
     )
+    ordered = _ordered_entity_set_values(
+        evidence.entity_ids, masks, (*orders[:-1], presentation_order)
+    )
     result = []
-    for degree, (ids, mask, count) in enumerate(
-        zip(evidence.entity_ids, masks, counts, strict=True)
+    for degree, ((ids, mask, active), count) in enumerate(
+        zip(ordered, counts, strict=True)
     ):
-        order = presentation_order if degree == dimension else orders[degree]
-        ids, mask = ids[order], mask[order]
         subset = canonical_fingerprint(
             {
                 "kind": "entity-subset",
@@ -10110,7 +10690,7 @@ def _collective_entity_set_ids(
                     "intrinsic_dimension": degree,
                     "entity_ids": _logical_array_tree_fingerprint(ids, (count,)),
                     "active_mask": _logical_array_tree_fingerprint(
-                        jnp.ones(ids.shape, dtype=jnp.bool_), (count,)
+                        active, (count,)
                     ),
                     "subsets": [subset],
                 }
@@ -10305,6 +10885,7 @@ def _collective_adaptation_hierarchy(
         active_rows[:, 1 : 1 + width],
         active_rows[:, -2],
         active_rows[:, -1],
+        refinement_rule="maubach",
         record_parent_ids=parent_rows[:, 0],
         record_parent_blocks=parent_rows[:, 1],
         record_parent_rows=parent_rows[:, 2 : 2 + width],
@@ -10322,18 +10903,87 @@ def _collective_adaptation_hierarchy(
     )
 
 
+@checked
+def repartition_partitioned_mesh_adaptation(
+    partitioned: PartitionedAdaptiveSimplex,
+    states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    migration_state: _owner_phydrax_meshing__distribution_migration.OwnerLocalMigrationState,
+    proposal: _owner_phydrax_meshing__distribution.PartitionedRebalanceProposal,
+    /,
+) -> PartitionedAdaptiveSimplex:
+    """Prepare a placement-only epoch from actual source roots and field packets.
+
+    Unlike saved-forest restart, this route also admits a native initial source:
+    the canonical migration proves its prepared roots against the initial
+    theorem and retains the complete migration record for independent replay.
+    No adaptation, physical aging, or replacement source evidence is implied.
+    """
+    _require_live_partitioned_execution(partitioned)
+    preparation = partitioned.prepared.adaptation
+    request = preparation.request
+    policy = preparation.policy.partition_policy
+    with _agreed_local_step():
+        if not isinstance(
+            request, _dependency_phydrax_meshing__adaptation.MarkedMeshAdaptation
+        ) or (request.refine_cell_ids.size or request.coarsen_cell_ids.size):
+            raise ValueError(
+                "partitioned_repartition.request must be placement-only; got adaptation marks"
+            )
+        if policy is None or policy.policy_id != proposal.policy.policy_id:
+            raise ValueError(
+                "partitioned_repartition.proposal must bind the prepared partition policy; got different controls"
+            )
+        if proposal.workset is not migration_state.workset:
+            raise ValueError(
+                "partitioned_repartition.proposal must bind the actual field workset; got different source packets"
+            )
+        if partitioned.migration is not None:
+            raise ValueError(
+                "partitioned_repartition.source must precede migration; got an already migrated preparation"
+            )
+    receipt = partitioned.execution_evidence
+    if receipt is None:
+        receipt = partitioned.prepared.execution_evidence
+    allowance = _phase_allowance(preparation, receipt)
+    with (
+        bisection_host.uniform_execution(allowance) as scope,
+        device_coordinate_budget(preparation.policy.limits, scope=scope) as budget,
+        bisection_host.uniform_budget(allowance, scope=scope, budget=budget),
+        budget.ticket.native_target(),
+    ):
+        _retain_preparation(partitioned, scope=scope, budget=budget)
+        budget.retain_basis((states, migration_state, proposal))
+        moved = _migrate_partitioned_epoch(
+            partitioned, states, migration_state, proposal, scope=scope, budget=budget
+        )
+    if scope.evidence is None:
+        return moved
+    return _bind_partitioned_preparation_receipt(
+        moved,
+        NativeExecutionRecord(
+            scope.evidence,
+            preparation_evidence=receipt,
+            owner_id=preparation.prepared_id,
+        ),
+        scope=scope,
+        budget=budget,
+    )
+
+
 def _rebalance_partitioned_epoch(
     partitioned: PartitionedAdaptiveSimplex,
     states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
     evidence: _dependency_phydrax_meshing__result.CollectiveMeshEvidence,
     /,
     *,
+    publication: _dependency_phydrax_meshing__result._LiveCollectivePublication,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
     PartitionedAdaptiveSimplex,
     _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
     _dependency_phydrax_meshing__result.CollectiveMeshEvidence,
+    _dependency_phydrax_meshing__result._LiveCollectivePublication,
 ]:
     """Migrate an imbalanced accepted raw epoch before owner-local publication."""
 
@@ -10342,6 +10992,16 @@ def _rebalance_partitioned_epoch(
         raise ValueError(
             "partitioned_publication.policy must retain its partition policy; got none"
         )
+    if partitioned.restart_repack is not None:
+        # An explicit restart already executed its declared (possibly weighted)
+        # ownership proposal. Unweighted adaptation balancing must not replace
+        # that accepted transaction or discard its proof and retained histories.
+        with _agreed_local_step():
+            proof = partitioned.restart_proof
+            if proof is None:
+                raise ValueError("restart publication must retain its owning repack proof")
+            type(proof).require_receipt(proof, partitioned.restart_repack)
+        return partitioned, states, evidence, publication
     count = evidence.global_entity_counts[-1]
     owners = evidence.entity_owners[-1][:count]
     weights = jnp.bincount(owners, length=policy.part_count).astype(jnp.float64)
@@ -10349,11 +11009,25 @@ def _rebalance_partitioned_epoch(
         jnp.max(weights) / jnp.mean(weights) <= policy.maximum_imbalance
     )
     if bool(jax.device_get(balanced)):
-        return partitioned, states, evidence
+        return partitioned, states, evidence, publication
     if partitioned.migration is not None:
         raise ValueError(
             "partitioned_migration.imbalance must meet the declared bound; got an unbalanced migrated epoch"
         )
+    match policy.kind:
+        case (
+            _owner_phydrax_meshing__distribution.MeshPartitionKind.MORTON
+            | _owner_phydrax_meshing__distribution.MeshPartitionKind.HILBERT
+            | _owner_phydrax_meshing__distribution.MeshPartitionKind.GRAPH
+        ):
+            pass
+        case (
+            _owner_phydrax_meshing__distribution.MeshPartitionKind.PROVIDER
+            | _owner_phydrax_meshing__distribution.MeshPartitionKind.METIS
+        ):
+            raise ValueError("automatic adaptation balancing requires a native planner-owned route")
+        case _:
+            assert_never(policy.kind)
     bisection_host.uniform_count(
         states.mesh.cell_ids.size + states.mesh.vertex_ids.size,
         states.mesh.cell_ids.size * 8,
@@ -10377,27 +11051,79 @@ def _rebalance_partitioned_epoch(
             partitioned, migration_state, policy
         )
     )
+    moved = _migrate_partitioned_epoch(
+        partitioned, states, migration_state, proposal, scope=scope, budget=budget
+    )
+    migration = moved.migration
+    if migration is None:
+        raise ValueError(
+            "partitioned_migration.record must retain its owning transport; got none"
+        )
+    publication = _dependency_phydrax_meshing__result._build_collective_mesh_evidence(
+        moved, migration.states, scope=scope, budget=budget
+    )
+    accepted = publication.evidence
+    if accepted.topology_id != evidence.topology_id:
+        raise ValueError(
+            "partitioned_migration.topology must preserve the adapted scientific topology; got changed identity"
+        )
+    return moved, migration.states, accepted, publication
+
+
+def _migration_placement_arrays(
+    retained: tuple[tuple[str, jax.Array], ...],
+    proposal: tuple[tuple[str, jax.Array], ...],
+    initial_solver_owners: jax.Array,
+    /,
+) -> tuple[tuple[str, jax.Array], ...]:
+    """Merge named current placement banks without comparing numerical payloads.
+
+    Migration owns the new initial solver placement. Its predecessor remains in
+    the restart receipt, not as a second entry under the same current-bank name.
+    """
+    arrays: dict[str, jax.Array] = {}
+    for name, value in retained:
+        if not name or name.strip() != name or name in arrays:
+            raise ValueError("migration.retained placement names must be canonical and unique")
+        arrays[name] = value
+    for name, value in proposal:
+        if (
+            not name.startswith("rebalance/")
+            or not name.removeprefix("rebalance/")
+            or name.strip() != name
+            or name in arrays
+        ):
+            raise ValueError("migration.proposal names must be canonical, unique, and disjoint from retained banks")
+        arrays[name] = value
+    arrays["placement/initial_solver_cell_owners"] = initial_solver_owners
+    return tuple(sorted(arrays.items(), key=lambda item: item[0]))
+
+
+def _migrate_partitioned_epoch(
+    partitioned: PartitionedAdaptiveSimplex,
+    states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    migration_state: _owner_phydrax_meshing__distribution_migration.OwnerLocalMigrationState,
+    proposal: _owner_phydrax_meshing__distribution.PartitionedRebalanceProposal,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> PartitionedAdaptiveSimplex:
+    """Share the owning transport and source proof across explicit and automatic placement."""
     migration = _owner_phydrax_meshing__distribution_migration.migrate_partitioned_epoch(
         partitioned, states, migration_state, proposal.requested_target_owners
     )
-    placement = tuple(
-        sorted(
-            (
-                *partitioned.placement_arrays,
-                (
-                    "placement/initial_solver_cell_owners",
-                    migration.initial_solver_cell_owners,
-                ),
-                *(
-                    (f"rebalance/{name}", value)
-                    for name, value in _owner_phydrax_meshing__distribution.partitioned_rebalance_proposal_arrays(
-                        proposal
-                    ).items()
-                ),
-            )
-        )
+    placement = _migration_placement_arrays(
+        partitioned.placement_arrays,
+        tuple(
+            (f"rebalance/{name}", value)
+            for name, value in _owner_phydrax_meshing__distribution.partitioned_rebalance_proposal_arrays(
+                proposal
+            ).items()
+        ),
+        migration.initial_solver_cell_owners,
     )
-    moved = PartitionedAdaptiveSimplex(
+    return PartitionedAdaptiveSimplex(
         partitioned.prepared,
         partitioned.layout,
         migration.parts,
@@ -10414,14 +11140,28 @@ def _rebalance_partitioned_epoch(
         scope=scope,
         budget=budget,
     )
-    accepted = _dependency_phydrax_meshing__result.CollectiveMeshEvidence(
-        moved, migration.states, scope=scope, budget=budget
-    )
-    if accepted.topology_id != evidence.topology_id:
+
+
+@jax.jit
+def _partitioned_counter_values(
+    baseline: jax.Array, counters: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Admit monotone counters and charge the exact new bisection delta."""
+    valid = jnp.all(baseline >= 0) & jnp.all(counters >= baseline)
+    index = _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexCounter.BISECTIONS
+    work = jnp.sum(counters[:, index] - baseline[:, index], dtype=jnp.int64)
+    return valid, work
+
+
+def _require_live_partitioned_execution(partitioned: PartitionedAdaptiveSimplex) -> None:
+    """Historical logical rows are evidence inputs, never live publication owners."""
+    if not isinstance(
+        partitioned.parts,
+        _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexParts,
+    ):
         raise ValueError(
-            "partitioned_migration.topology must preserve the adapted scientific topology; got changed identity"
+            "partitioned_adaptation.parts must bind live physical owners; got historical logical migration execution"
         )
-    return moved, migration.states, accepted
 
 
 @checked
@@ -10429,7 +11169,10 @@ def commit_partitioned_adaptive_simplex(
     partitioned: PartitionedAdaptiveSimplex,
     states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
     /,
+    *,
+    historical_sources: tuple[_dependency_phydrax_meshing__result.CellMeshingResult, ...] = (),
 ) -> _dependency_phydrax_meshing__result.PartitionedMeshAdaptationResult:
+    _require_live_partitioned_execution(partitioned)
     preparation = partitioned.prepared.adaptation
     receipt = partitioned.execution_evidence
     if receipt is None:
@@ -10444,27 +11187,16 @@ def commit_partitioned_adaptive_simplex(
             _retain_preparation(partitioned, scope=scope, budget=budget)
             budget.retain_basis((states,))
         baseline = partitioned.states.counters
-        if baseline.shape != states.counters.shape or not bool(
-            jax.device_get(jnp.all(baseline >= 0) & jnp.all(states.counters >= baseline))
-        ):
+        if baseline.shape != states.counters.shape:
             raise ValueError(
                 "device_adaptation.commit_partitioned_adaptive_simplex.baseline must retain their prepared-source baseline; got missing their prepared-source baseline"
             )
-        work = int(
-            jax.device_get(
-                jnp.sum(
-                    states.counters[
-                        :,
-                        _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexCounter.BISECTIONS,
-                    ]
-                    - baseline[
-                        :,
-                        _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexCounter.BISECTIONS,
-                    ],
-                    dtype=jnp.int64,
-                )
+        valid, numerical_work = _partitioned_counter_values(baseline, states.counters)
+        if not bool(jax.device_get(valid)):
+            raise ValueError(
+                "device_adaptation.commit_partitioned_adaptive_simplex.baseline must retain their prepared-source baseline; got missing their prepared-source baseline"
             )
-        )
+        work = int(jax.device_get(numerical_work))
         with scope.batch(work) as ticket:
             ticket.consume(work)
         with (
@@ -10472,7 +11204,8 @@ def commit_partitioned_adaptive_simplex(
             budget.ticket.native_target(),
         ):
             results = _run_partitioned_adaptive_simplex_commit(
-                partitioned, states, scope=scope, budget=budget
+                partitioned, states, scope=scope, budget=budget,
+                historical_sources=historical_sources,
             )
     if scope.evidence is None:
         return results
@@ -10485,11 +11218,29 @@ def commit_partitioned_adaptive_simplex(
 
 
 @final
-class _CommittedNeighborhood(StrictModule):
+class _CommittedNeighborhood(NamedTuple):
     """Validated closure coordinates and logical publication arrays for the accepted epoch."""
 
     logical: _LogicalPublication
     neighborhood: _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset
+
+
+@jax.jit
+def _canonical_neighborhood_coordinate_values(
+    vertex_keys: jax.Array,
+    coordinates: jax.Array,
+    cell_vertices: jax.Array,
+    cell_valid: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
+    """Gather exact accepted coordinate bytes and retain active-closure admission."""
+    table = jnp.where(vertex_keys >= 0, vertex_keys, jnp.iinfo(jnp.int64).max)
+    rows = key_positions(table, cell_vertices.reshape((-1, 1)))
+    valid = jnp.repeat(cell_valid, cell_vertices.shape[-1])
+    missing = jnp.any(valid & (rows < 0))
+    values = coordinates[jnp.maximum(rows, 0)].reshape(
+        (*cell_vertices.shape, coordinates.shape[-1])
+    )
+    return values, missing
 
 
 def _prepare_committed_neighborhood(
@@ -10498,23 +11249,29 @@ def _prepare_committed_neighborhood(
     evidence: _dependency_phydrax_meshing__result.CollectiveMeshEvidence,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    restart_neighborhood: _dependency_phydrax_meshing__distribution.SimplexNeighborhoodWorkset | None = None,
 ) -> _CommittedNeighborhood:
     """Validated closure coordinates and logical publication arrays for the accepted epoch."""
-    logical = _LogicalPublication(
-        evidence.logical_arrays,
-        evidence.global_entity_counts,
-        evidence.entity_keys,
-        evidence.entity_ids,
-        evidence.entity_owners,
-        evidence.topology_id,
-        evidence.geometry_id,
-    )
-    distribution = partitioned.prepared.adaptation.policy.distribution
-    if distribution is None:
-        raise ValueError(
-            "device_adaptation.prepare_committed_neighborhood.distribution must retain its prepared ownership; got missing its prepared ownership"
+    with _agreed_local_step():
+        logical = _LogicalPublication(
+            evidence.logical_arrays,
+            evidence.global_entity_counts,
+            evidence.entity_keys,
+            evidence.entity_ids,
+            evidence.entity_owners,
+            evidence.topology_id,
+            evidence.geometry_id,
         )
-    if partitioned.migration is not None:
+        distribution = partitioned.prepared.adaptation.policy.distribution
+        if distribution is None:
+            raise ValueError(
+                "device_adaptation.prepare_committed_neighborhood.distribution must retain its prepared ownership; got missing its prepared ownership"
+            )
+    if restart_neighborhood is not None:
+        if partitioned.restart_repack is None:
+            raise ValueError("solver restart neighborhood requires an accepted restart receipt")
+        neighborhood = restart_neighborhood
+    elif partitioned.migration is not None:
         neighborhood = partitioned.migration.solver_neighborhood
     elif evidence.uniform_refinement is None:
         neighborhood = _dependency_phydrax_meshing__distribution.expand_partitioned_simplex_neighborhood(
@@ -10530,61 +11287,54 @@ def _prepare_committed_neighborhood(
         neighborhood = _packed_neighborhood(
             partitioned, states, evidence, scope=scope, budget=budget
         )
-    neighborhood_flags = host_process_status_union(neighborhood.status)
-    _dependency_phydrax_meshing__device_status.require_applied_status(
-        neighborhood_flags,
-        _dependency_phydrax_meshing__device_status.DeviceEpoch.BISECTION,
-    )
-    coordinate_table = jnp.where(
-        logical.entity_keys[0] >= 0,
-        logical.entity_keys[0],
-        jnp.iinfo(jnp.int64).max,
-    )
-    coordinate_rows = key_positions(
-        coordinate_table,
-        neighborhood.cell_vertices.reshape((-1, 1)),
-    )
-    closure_vertices = jnp.repeat(
-        neighborhood.cell_valid, neighborhood.cell_vertices.shape[-1]
-    )
-    if bool(jax.device_get(jnp.any(closure_vertices & (coordinate_rows < 0)))):
-        raise ValueError(
-            "device_adaptation.prepare_committed_neighborhood.closure_vertices must exist in accepted coordinate ownership; got a closure vertex is absent from accepted logical coordinate ownership"
+    with _agreed_local_step():
+        neighborhood_flags = host_process_status_union(neighborhood.status)
+        _dependency_phydrax_meshing__device_status.require_applied_status(
+            neighborhood_flags,
+            _dependency_phydrax_meshing__device_status.DeviceEpoch.BISECTION,
         )
-    canonical_coordinates = dict(logical.arrays)["coordinates"][
-        jnp.maximum(coordinate_rows, 0)
-    ].reshape(neighborhood.cell_coordinates.shape)
-    neighborhood = eqx.tree_at(
-        lambda work: work.cell_coordinates,
-        neighborhood,
-        canonical_coordinates,
-    )
-    logical = logical._replace(
-        arrays=tuple(
-            sorted(
-                (
-                    *logical.arrays,
-                    ("closure/cell_ids", neighborhood.cell_ids),
-                    ("closure/cell_vertices", neighborhood.cell_vertices),
-                    ("closure/cell_coordinates", neighborhood.cell_coordinates),
-                    ("closure/cell_classes", neighborhood.cell_classes),
-                    ("closure/status", neighborhood.status),
-                    ("closure/cell_exterior", neighborhood.cell_exterior),
-                    ("closure/cell_valid", neighborhood.cell_valid),
-                    ("closure/cell_owner", neighborhood.cell_owner),
-                    ("closure/root_cell_ids", neighborhood.root_cell_ids),
-                    ("closure/source_cell_ids", neighborhood.source_cell_ids),
-                    ("closure/source_vertex_ids", neighborhood.source_vertex_ids),
-                    ("closure/source_weights", neighborhood.source_weights),
+    with _agreed_local_step():
+        canonical_coordinates, missing = _canonical_neighborhood_coordinate_values(
+            logical.entity_keys[0],
+            dict(logical.arrays)["coordinates"],
+            neighborhood.cell_vertices,
+            neighborhood.cell_valid,
+        )
+        if bool(jax.device_get(missing)):
+            raise ValueError(
+                "device_adaptation.prepare_committed_neighborhood.closure_vertices must exist in accepted coordinate ownership; got a closure vertex is absent from accepted logical coordinate ownership"
+            )
+        neighborhood = eqx.tree_at(
+            lambda work: work.cell_coordinates,
+            neighborhood,
+            canonical_coordinates,
+        )
+        logical = logical._replace(
+            arrays=tuple(
+                sorted(
+                    (
+                        *logical.arrays,
+                        ("closure/cell_ids", neighborhood.cell_ids),
+                        ("closure/cell_vertices", neighborhood.cell_vertices),
+                        ("closure/cell_coordinates", neighborhood.cell_coordinates),
+                        ("closure/cell_classes", neighborhood.cell_classes),
+                        ("closure/status", neighborhood.status),
+                        ("closure/cell_exterior", neighborhood.cell_exterior),
+                        ("closure/cell_valid", neighborhood.cell_valid),
+                        ("closure/cell_owner", neighborhood.cell_owner),
+                        ("closure/root_cell_ids", neighborhood.root_cell_ids),
+                        ("closure/source_cell_ids", neighborhood.source_cell_ids),
+                        ("closure/source_vertex_ids", neighborhood.source_vertex_ids),
+                        ("closure/source_weights", neighborhood.source_weights),
+                    )
                 )
             )
         )
-    )
-    return _CommittedNeighborhood(logical, neighborhood)
+        return _CommittedNeighborhood(logical, neighborhood)
 
 
 @final
-class _CommittedPublication(StrictModule):
+class _CommittedPublication(NamedTuple):
     """Consumed geometry, organization, storage, and association projections for local publication."""
 
     logical: _LogicalPublication
@@ -10599,14 +11349,13 @@ def _lower_committed_publication(
     logical: _LogicalPublication,
 ) -> _CommittedPublication:
     """Consumed geometry, organization, storage, and association projections for local publication."""
-    projection = (
-        _dependency_phydrax_meshing__publication_lowering.PreparedPublicationLowering(
-            original,
-            evidence,
-            neighborhood,
-            vertex_capacity=partitioned.layout.vertex_capacity,
-        ).execute()
+    lowering = _dependency_phydrax_meshing__publication_lowering.PreparedPublicationLowering(
+        original,
+        evidence,
+        neighborhood,
+        vertex_capacity=partitioned.layout.vertex_capacity,
     )
+    projection = lowering.execute()
     scopes = _dependency_phydrax_meshing__organization.prepare_mesh_organization_scopes(
         original,
         evidence,
@@ -10629,16 +11378,17 @@ def _lower_committed_publication(
         )
         else None
     )
-    logical = logical._replace(
-        geometry_projection=projection.geometry,
-        publication_projection=projection,
-        scope_projections=scopes,
-        attribute_projections=attributes,
-        restart_proof=partitioned.restart_proof,
-        storage_binding=storage_binding,
-        surface_transfer=surface_transfer,
-    )
-    return _CommittedPublication(logical)
+    with _agreed_local_step():
+        logical = logical._replace(
+            geometry_projection=projection.geometry,
+            publication_projection=projection,
+            scope_projections=scopes,
+            attribute_projections=attributes,
+            restart_proof=partitioned.restart_proof,
+            storage_binding=storage_binding,
+            surface_transfer=surface_transfer,
+        )
+        return _CommittedPublication(logical)
 
 
 def _run_partitioned_adaptive_simplex_commit(
@@ -10648,6 +11398,7 @@ def _run_partitioned_adaptive_simplex_commit(
     *,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    historical_sources: tuple[_dependency_phydrax_meshing__result.CellMeshingResult, ...] = (),
 ) -> _dependency_phydrax_meshing__result.PartitionedMeshAdaptationResult:
     """Collectively publish every process-addressable accepted refinement closure.
 
@@ -10657,67 +11408,82 @@ def _run_partitioned_adaptive_simplex_commit(
     constructor. The tuple contains only this process's addressable partitions.
     """
 
-    if states.mesh.cells.shape[:2] != (
-        partitioned.parts.part_count,
-        partitioned.layout.cell_capacity,
-    ):
-        raise ValueError(
-            "device_adaptation.run_partitioned_adaptive_simplex_commit.states must be the stacked part states of this epoch; got an incompatible value"
-        )
-    started = time.monotonic()
+    _require_live_partitioned_execution(partitioned)
+    with _agreed_local_step():
+        if states.mesh.cells.shape[:2] != (
+            partitioned.parts.part_count,
+            partitioned.layout.cell_capacity,
+        ):
+            raise ValueError(
+                "device_adaptation.run_partitioned_adaptive_simplex_commit.states must be the stacked part states of this epoch; got an incompatible value"
+            )
+        started = time.monotonic()
     flags = host_process_status_union(states.status_flags)
-    _dependency_phydrax_meshing__device_status.require_applied_status(
-        flags, _dependency_phydrax_meshing__device_status.DeviceEpoch.BISECTION
-    )
-    source = partitioned.prepared.adaptation.source
-    original = _scientific_preparation_source(partitioned.prepared.adaptation)
-    if (
-        partitioned.source_witness is None
-        or source.boundary is not None
-        or source.mesh.periodic_topology is not None
-    ):
-        raise _leaf_phydrax_meshing__failures.MeshingFailure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SPECIFICATION,
-            "device_adaptation.run_partitioned_adaptive_simplex_commit.partitioned must provide source-map support and a nonperiodic, explicitly bound source boundary model; got an absent or incompatible value",
-            stage="distributed-device-commit",
+    with _agreed_local_step():
+        _dependency_phydrax_meshing__device_status.require_applied_status(
+            flags, _dependency_phydrax_meshing__device_status.DeviceEpoch.BISECTION
         )
-    evidence = _dependency_phydrax_meshing__result.CollectiveMeshEvidence(
+        source = partitioned.prepared.adaptation.source
+        original = _scientific_preparation_source(partitioned.prepared.adaptation)
+        if (
+            partitioned.source_witness is None
+            or source.boundary is not None
+            or source.mesh.periodic_topology is not None
+        ):
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SPECIFICATION,
+                "device_adaptation.run_partitioned_adaptive_simplex_commit.partitioned must provide source-map support and a nonperiodic, explicitly bound source boundary model; got an absent or incompatible value",
+                stage="distributed-device-commit",
+            )
+    publication = _dependency_phydrax_meshing__result._build_collective_mesh_evidence(
         partitioned, states, scope=scope, budget=budget
     )
-    limits = partitioned.prepared.adaptation.policy.limits
-    counts = evidence.global_entity_counts
-    resources = (
-        ("vertices", counts[0], limits.maximum_vertices),
-        ("cells", counts[-1], limits.maximum_cells),
-        (
-            "connectivity_entries",
-            counts[-1] * len(counts),
-            limits.maximum_connectivity_entries,
-        ),
-    )
-    if any(actual > maximum for _, actual, maximum in resources):
-        raise _leaf_phydrax_meshing__failures.MeshingFailure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "device_adaptation.run_partitioned_adaptive_simplex_commit.any must stay within the declared capacity; got accepted logical topology exceeds the requested global resource controls",
-            stage="distributed-device-commit",
-            requested=tuple(
-                (f"maximum_{name}", maximum) for name, _, maximum in resources
+    evidence = publication.evidence
+    with _agreed_local_step():
+        limits = partitioned.prepared.adaptation.policy.limits
+        counts = evidence.global_entity_counts
+        resources = (
+            ("vertices", counts[0], limits.maximum_vertices),
+            ("cells", counts[-1], limits.maximum_cells),
+            (
+                "connectivity_entries",
+                counts[-1] * len(counts),
+                limits.maximum_connectivity_entries,
             ),
-            achieved=tuple((name, actual) for name, actual, _ in resources),
         )
-    partitioned, states, evidence = _rebalance_partitioned_epoch(
-        partitioned, states, evidence, scope=scope, budget=budget
+        if any(actual > maximum for _, actual, maximum in resources):
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "device_adaptation.run_partitioned_adaptive_simplex_commit.any must stay within the declared capacity; got accepted logical topology exceeds the requested global resource controls",
+                stage="distributed-device-commit",
+                requested=tuple(
+                    (f"maximum_{name}", maximum) for name, _, maximum in resources
+                ),
+                achieved=tuple((name, actual) for name, actual, _ in resources),
+            )
+    partitioned, states, evidence, publication = _rebalance_partitioned_epoch(
+        partitioned, states, evidence, publication=publication, scope=scope, budget=budget
     )
-    local = _collective_local_phase(
-        lambda: _addressable_commits(partitioned, states, scope=scope, budget=budget),
-        budget=budget,
-    )
+    restart_neighborhood = None
+    restart_solver_forest = None
+    if partitioned.restart_repack is not None:
+        restart_neighborhood, restart_solver_forest = (
+            _owner_phydrax_meshing__distribution_migration.restart_solver_family_view(
+                partitioned, states,
+            )
+        )
+    with budget.measurement():
+        local = _addressable_commits(
+            partitioned, states, scope=scope, budget=budget,
+            restart_solver_forest=restart_solver_forest,
+        )
     phase = _prepare_committed_neighborhood(
         partitioned=partitioned,
         states=states,
         evidence=evidence,
         scope=scope,
         budget=budget,
+        restart_neighborhood=restart_neighborhood,
     )
     logical = phase.logical
     neighborhood = phase.neighborhood
@@ -10729,12 +11495,14 @@ def _run_partitioned_adaptive_simplex_commit(
         logical=logical,
     )
     logical = phase.logical
-    targets = _collective_local_phase(
-        lambda: tuple(
+    # These phases contain scientific collectives. Their local steps agree
+    # internally; an outer catch would add a different collective after a fault.
+    with budget.measurement():
+        targets = tuple(
             _local_target(
                 partitioned,
                 _neighborhood_commit(
-                    partitioned, owned, neighborhood, scope=scope, budget=budget
+                    partitioned, owned, neighborhood, logical, scope=scope, budget=budget
                 ),
                 logical,
                 evidence,
@@ -10742,20 +11510,17 @@ def _run_partitioned_adaptive_simplex_commit(
                 budget=budget,
             )
             for owned in local
-        ),
-        budget=budget,
-    )
-    premises = _collective_local_phase(
-        lambda: tuple(
+        )
+    with budget.measurement():
+        premises = tuple(
             _collective_plc_premises(
-                partitioned, target, evidence, scope=scope, budget=budget
+                partitioned, target, evidence,
+                publication=publication, scope=scope, budget=budget,
             )
             for target in targets
-        ),
-        budget=budget,
-    )
-    results = _collective_local_phase(
-        lambda: tuple(
+        )
+    with budget.measurement():
+        results = tuple(
             _local_adaptation_result(
                 partitioned,
                 target,
@@ -10765,54 +11530,16 @@ def _run_partitioned_adaptive_simplex_commit(
                 started,
                 scope=scope,
                 budget=budget,
+                historical_sources=historical_sources,
             )
             for target, premise in zip(targets, premises, strict=True)
-        ),
-        budget=budget,
-    )
+        )
     return _dependency_phydrax_meshing__result.PartitionedMeshAdaptationResult(
         results,
         _collective_adaptation_identity(
             partitioned, results, evidence, scope=scope, budget=budget
         ),
     )
-
-
-_Phase = TypeVar("_Phase")
-
-
-def _collective_local_phase(
-    action: Callable[[], tuple[_Phase, ...]],
-    /,
-    *,
-    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
-) -> tuple[_Phase, ...]:
-    """Run one owner-local phase; every process rejects if any owner failed."""
-    values: tuple[_Phase, ...] = ()
-    failure: _leaf_phydrax_meshing__failures.MeshingFailure | None = None
-    try:
-        with budget.measurement():
-            values = action()
-    except _leaf_phydrax_meshing__failures.MeshingFailure as error:
-        failure = error
-    except (
-        MeshcoreError,
-        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
-    ) as error:
-        failure = _collective_resource_failure(error)
-    except ValueError as error:
-        failure = _leaf_phydrax_meshing__failures.MeshingFailure(
-            _leaf_phydrax_meshing__failures.MeshingFailureCategory.LINEAGE_FAILED,
-            str(error),
-            stage="distributed-device-commit",
-        )
-    collective_failure_owner.collective_failure_barrier(
-        failure,
-        message="An owning process rejected the exact topology, lineage, or geometry "
-        "resolution of the distributed epoch; no part was published.",
-        stage="distributed-device-commit",
-    )
-    return values
 
 
 __all__ = [

@@ -14,9 +14,11 @@ pair and ray test to the embedding state's counters.
 Mesh certificate checks
 -----------------------
 [
-{"checks":["mapped_boundary_degree"],"owner":"phydrax.geometry._boundary_degree_embedding.certify_boundary_degree_embedding","premises":[{"tag":"N","statement":"The bound validity certificate proves positive orientation and each closed cell map is injective; boundary pair proofs admit only shared contacts."},{"tag":"X","statement":"Every shared entity has one exact restriction and every boundary shell is ridge-linked and balanced."},{"tag":"T","statement":"Cancellation of identical interior traces makes the positive cell preimage count equal to the oriented boundary winding degree."}],"conclusion":"Zero shell exterior degrees prove global injectivity; a nonzero certified shell exterior degree contradicts degree-one embedding.","citation":{"kind":"mathematical","reference":"Lipman, Bijective Mappings of Meshes with Boundary and the Degree in Mesh Processing","locator":"Theorems 1 and 4; Section 3, cycle degree","url":"https://arxiv.org/abs/1310.0955"},"failure_statuses":["violated"]},
+{"checks":["mapped_boundary_degree"],"owner":"phydrax.geometry._boundary_degree_embedding.certify_boundary_degree_embedding","premises":[{"tag":"N","statement":"The bound validity certificate proves strictly positive full closed-cell Jacobians; the whole boundary is independently proved injective, by the generic closed-cell/contact route or an issued complete CAD isotopy."},{"tag":"X","statement":"Every shared entity has one exact restriction, interior facets pair oppositely, and every boundary shell is ridge-linked and balanced."},{"tag":"T","statement":"Cancellation makes the positive regular preimage count equal to boundary winding; a locally closed interior star has positive degree, excluding exceptional skeleton collisions without requiring closed-cell injectivity."}],"conclusion":"Zero shell exterior degrees prove global injectivity; a nonzero certified shell exterior degree contradicts degree-one embedding.","citation":{"kind":"mathematical","reference":"Lipman, Bijective Mappings of Meshes with Boundary and the Degree in Mesh Processing","locator":"Theorems 1 and 4; Section 3, cycle degree; positive closed-star degree argument in MappedBoundaryDegreeEvidence","url":"https://arxiv.org/abs/1310.0955"},"failure_statuses":["violated"]},
+{"checks":["mapped_cad_boundary_homotopy_reuse"],"owner":"phydrax.geometry._boundary_degree_embedding._decide","premises":[{"tag":"X","statement":"The independent source-chart issuer retains this exact complete homotopy report on this mesh object and unchanged live mesh/geometry/topology/limits; its target facets equal the entire current boundary."},{"tag":"N","statement":"The issued interval homotopy proves every full facet and same-owner/different-owner pair injective, all boundary links and traces conforming, synchronized-time separation, and source domain-side orientation."},{"tag":"T","statement":"The endpoint of the proved whole-boundary isotopy is an embedding modulo exactly the shared target entities."}],"conclusion":"Import only whole-boundary injectivity; current positive full-cell Jacobians, all skeleton conformity, facet pairing and shell exterior degrees remain independent obligations.","citation":{"kind":"mathematical","reference":"Hatcher, Algebraic Topology","locator":"Section 2.2, degree invariance under homotopy and sum of local degrees","url":"https://pi.math.cornell.edu/~hatcher/AT/AT.pdf"},"failure_statuses":[]},
 {"checks":["mapped_closed_cell_orientation"],"owner":"phydrax.geometry._boundary_degree_embedding._decide","premises":[{"tag":"N","statement":"The bound closed-cell validity certificate proves a strictly positive determinant on each full source cell."}],"conclusion":"The positive local-degree orientation hypothesis is recorded for the boundary-degree route.","citation":{"kind":"mathematical","reference":"Hatcher, Algebraic Topology","locator":"Section 2.2, Proposition 2.30 (sum of local degrees)","url":"https://pi.math.cornell.edu/~hatcher/AT/AT.pdf"},"failure_statuses":[]},
 {"checks":["mapped_shared_entity_conformity"],"owner":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","premises":[{"tag":"X","statement":"Every repeated vertex image and every repeated oriented edge restriction is identical across its incident cells; facet identity was checked by trace_continuity."}],"conclusion":"The source coordinate action is well-defined on the shared vertex, edge and facet skeleton.","citation":{"kind":"definition","reference":"Mapped embedding proof and resource contract","locator":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","url":""},"failure_statuses":[]},
+{"checks":["mapped_shared_entity_conformity"],"owner":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity_from_facets","premises":[{"tag":"X","statement":"A just-issued complete exact facet-trace proof binds this same mesh, actual polynomial coordinate laws, canonical tetrahedron charts, cell objects, state and live budget; the full coefficient and topology signature is authenticated again."},{"tag":"T","statement":"For each shared vertex or oriented edge, actual paired facets containing that entity connect its incident cells. Restriction of an exact facet identity to that entity preserves identity, and equality propagates along the connected star."},{"tag":"X","statement":"Every disconnected star component is compared with the first incident cell by the original exact vertex evaluation or full edge restriction. Unsupported, rational and composed coordinate laws retain the original full proof."}],"conclusion":"All original shared vertex and edge conformity obligations are earned, with representative vertex images and unchanged incidence counts; no report status or source identifier substitutes for a trace proof.","citation":{"kind":"definition","reference":"Transitivity of equality and composition of affine simplex restrictions","locator":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity_from_facets","url":""},"failure_statuses":["violated"]},
 {"checks":["mapped_shared_entity_conformity"],"owner":"phydrax.geometry._boundary_degree_embedding._decide","premises":[{"tag":"X","statement":"A repeated source vertex or edge has different exact images or restrictions."}],"conclusion":"The boundary-degree route reports violated shared-entity conformity and emits mapped_trace_mismatch.","citation":{"kind":"definition","reference":"Mapped embedding proof and resource contract","locator":"phydrax.geometry._boundary_degree_embedding._decide","url":""},"failure_statuses":["violated"]},
 {"checks":["mapped_trace_mismatch"],"owner":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","premises":[{"tag":"X","statement":"Two incident cells disagree on an exact shared vertex image or oriented edge expression."}],"conclusion":"The mapped mesh has a nonconforming shared coordinate action.","citation":{"kind":"definition","reference":"Mapped embedding proof and resource contract","locator":"phydrax.geometry._boundary_degree_embedding._shared_entity_conformity","url":""},"failure_statuses":["violated"]},
 {"checks":["mapped_boundary_injectivity"],"owner":"phydrax.geometry._boundary_degree_embedding._boundary_injectivity","premises":[{"tag":"N","statement":"All boundary candidate pairs are separated by certified full-image or tangent-cone contact proofs."},{"tag":"X","statement":"Facets of one owner inherit its closed-cell injectivity and facets of different owners admit only their shared entities."}],"conclusion":"The union of mapped boundary facets is injective modulo its shared mesh entities.","citation":{"kind":"mathematical","reference":"Rockafellar, Convex Analysis","locator":"Section 11, separation theorems","url":"https://doi.org/10.1515/9781400873173"},"failure_statuses":[]},
@@ -35,7 +37,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from math import factorial
-from typing import assert_never, final
+from typing import assert_never, cast, final
+from weakref import ReferenceType, ref, WeakKeyDictionary
 
 import equinox as eqx
 import numpy as np
@@ -47,8 +50,11 @@ import phydrax.geometry._exact_polyhedral_geometry as exact_polyhedral_geometry_
 import phydrax.geometry._global_embedding as mesh_certificates_owner
 import phydrax.geometry._mapped_embedding as mapped_embedding_owner
 
+from .._fingerprint import canonical_fingerprint
+from .._resource_ticket import BatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._coordinate_enclosure import (
@@ -58,6 +64,7 @@ from ..discretization._coordinate_enclosure import (
     BernsteinDomain,
     constant,
     derivative,
+    element_identity,
     Expression,
     expression_reference_evaluate,
     expression_sequence_equal,
@@ -66,6 +73,7 @@ from ..discretization._coordinate_enclosure import (
     Polynomial,
     polynomial_bounds,
     RationalPolynomial,
+    prepared_coordinate_source_bank,
     restrict_chart_expressions,
     scale,
     sum_polynomials,
@@ -73,9 +81,12 @@ from ..discretization._coordinate_enclosure import (
 from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..discretization._reference_cell import reference_cell_topology
 from ..typing import checked
+from ..discretization.fem._reference_types import FiniteElementSpec
 from ._embedding_cells import Cell
 from ._embedding_state import ContactDecision, EmbeddingState, MeshCertificateLimits
 from ._global_embedding import MappedBoundaryDegreeStatus
+
+from ._source_boundary_records import CadBoundaryClosureEvidence
 
 
 type _Point = tuple[Fraction, ...]
@@ -104,6 +115,271 @@ class _EntityConformity(StrictModule, NonTrainableState):
     images: dict[int, _Point]
     mismatch: _IncidentCells | None
 
+
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
+class _FacetTraceWitness:
+    """One just-earned facet theorem, bound to the current pure proof."""
+
+    mesh: ReferenceType[CellMesh]
+    geometry: ReferenceType[CellGeometrySpec]
+    state: ReferenceType[EmbeddingState]
+    budget: ReferenceType[CoordinateEnclosureBudget]
+    ticket: ReferenceType[BatchTicket]
+    cells: tuple[ReferenceType[Cell], ...]
+    source_signature: str
+    pairs: tuple[tuple[int, int, tuple[int, ...]], ...]
+    evidence_id: str
+
+    def __reduce__(self):
+        raise TypeError("Facet trace witnesses must not cross archive or proof boundaries.")
+
+
+def _facet_trace_fields(value: _FacetTraceWitness) -> tuple[object, ...]:
+    return (
+        value.mesh, value.geometry, value.state, value.budget, value.ticket, value.cells,
+        value.source_signature, value.pairs, value.evidence_id,
+    )
+
+
+_ISSUED_FACET_TRACES: WeakKeyDictionary[_FacetTraceWitness, tuple[object, ...]] = WeakKeyDictionary()
+
+
+def _tetrahedron_source_signature(
+    mesh: CellMesh, geometry: CellGeometrySpec, cells: list[Cell],
+    budget: CoordinateEnclosureBudget, /
+) -> str | None:
+    """Read the actual topology, canonical charts and complete polynomial laws."""
+    if (
+        not cells or mesh.topological_dimension != 3 or mesh.ambient_dimension != 3
+        or mesh.storage is not None or mesh.periodic_topology is not None
+        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+        or len(cells) != sum(block.cell_count for block in mesh.blocks)
+    ):
+        return None
+    reference = embedding_cells_owner.vertices("tetrahedron")
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    if any(type(element) is not FiniteElementSpec for element in elements):
+        return None
+    basis_identities = tuple(element_identity(element, budget=budget) for element in elements)
+    values = prepared_coordinate_source_bank(geometry, budget=budget)
+    with budget.temporary_scope():
+        budget.reserve(len(cells), 1024 + 128 * len(cells))
+        signatures = []
+        rows = (
+            (row, dofs, basis)
+            for block, route, basis in zip(mesh.blocks, routes, basis_identities, strict=True)
+            for row, dofs in zip(np.asarray(block.vertices), np.asarray(route), strict=True)
+        )
+        for cell, (row, dofs, basis) in zip(cells, rows, strict=True):
+            if (
+                type(cell) is not Cell or cell.kind != "tetrahedron"
+                or cell.domain != "simplex" or cell.dimension != 3
+                or cell.corner_images is not None or len(cell.coordinates) != 3
+                or cell.reference_vertices != reference
+                or cell.vertices != tuple(int(vertex) for vertex in row)
+                or len(set(cell.vertices)) != 4
+            ):
+                return None
+            with budget.temporary_scope():
+                budget.reserve(1, 4096)
+                polynomials = []
+                encoded_bound = 4096
+                budget.reserve(len(dofs), 256 + 256 * len(dofs))
+                source_coefficients = []
+                for dof in dofs:
+                    source_row = values[int(dof)]
+                    if any(type(value) is not Fraction for value in source_row):
+                        return None
+                    rational_row = cast(tuple[Fraction, ...], source_row)
+                    encoded_bound += 1024 + 16 * sum(
+                        abs(value.numerator).bit_length() + value.denominator.bit_length()
+                        for value in rational_row
+                    )
+                    source_coefficients.append(tuple(
+                        (value.numerator, value.denominator) for value in rational_row
+                    ))
+                for polynomial in cell.coordinates:
+                    if type(polynomial) is not dict:
+                        return None
+                    budget.reserve(len(polynomial), 256 + 256 * len(polynomial))
+                    terms = []
+                    for index, value in polynomial.items():
+                        if (
+                            type(index) is not tuple or len(index) != 3
+                            or any(type(axis) is not int or axis < 0 for axis in index)
+                            or type(value) is not Fraction
+                        ):
+                            return None
+                        typed_index = cast(tuple[int, ...], index)
+                        encoded_bound += 1024 + 16 * (
+                            abs(value.numerator).bit_length() + value.denominator.bit_length()
+                            + sum(axis.bit_length() for axis in typed_index)
+                        )
+                        terms.append((typed_index, value.numerator, value.denominator))
+                    polynomials.append(tuple(terms))
+                budget.reserve(0, encoded_bound)
+                signatures.append(canonical_fingerprint((
+                    basis, tuple(int(dof) for dof in dofs), tuple(source_coefficients),
+                    cell.kind, cell.domain, cell.dimension, cell.vertices,
+                    tuple(tuple((value.numerator, value.denominator) for value in point)
+                          for point in cell.reference_vertices),
+                    tuple(polynomials),
+                )))
+        return canonical_fingerprint(tuple(signatures))
+
+
+def _issue_facet_trace_witness(
+    state: EmbeddingState, mesh: CellMesh, cells: list[Cell],
+    pairs: tuple[tuple[int, int, tuple[int, ...]], ...],
+    *, geometry: CellGeometrySpec | None, budget: CoordinateEnclosureBudget,
+) -> _FacetTraceWitness | None:
+    """Called only after the actual complete facet coefficient proof returns."""
+    if not state.clean or geometry is None:
+        return None
+    signature = _tetrahedron_source_signature(mesh, geometry, cells, budget)
+    if signature is None:
+        return None
+    facets = embedding_state_owner.mesh_facets(mesh, budget=budget)
+    with budget.temporary_scope():
+        budget.reserve(int(facets.counts.size), 256 + 3 * int(facets.counts.size))
+        if (
+            np.any((facets.counts != 1) & (facets.counts != 2))
+            or len(pairs) != int(np.count_nonzero(facets.counts == 2))
+        ):
+            return None
+    budget.reserve(1, 1024 + 128 * len(cells) + 512 * len(pairs))
+    try:
+        ticket = ref(budget.ticket)
+    except TypeError:
+        # A foreign ticket without weak ownership cannot transport this
+        # request-local theorem; its existing full proof remains available.
+        return None
+    witness = _FacetTraceWitness(
+        ref(mesh), ref(geometry), ref(state), ref(budget), ticket, tuple(ref(cell) for cell in cells),
+        signature, pairs,
+        canonical_fingerprint({"source": signature, "facet_pairs": pairs}),
+    )
+    _ISSUED_FACET_TRACES[witness] = _facet_trace_fields(witness)
+    return witness
+
+
+def _shared_entity_conformity_from_facets(
+    state: EmbeddingState, mesh: CellMesh, cells: list[Cell],
+    witness: _FacetTraceWitness, *, geometry: CellGeometrySpec, budget: CoordinateEnclosureBudget,
+) -> _EntityConformity:
+    """Transport exact facet equality through each actual connected entity star.
+
+    Disconnected stars still compare every independent component to the first
+    incident cell by the original exact vertex/edge operations.
+    """
+    seal = _ISSUED_FACET_TRACES.get(witness) if type(witness) is _FacetTraceWitness else None
+    actual = _facet_trace_fields(witness)
+    if (
+        seal is None or any(a is not b for a, b in zip(actual, seal, strict=True))
+        or witness.mesh() is not mesh or witness.state() is not state
+        or witness.geometry() is not geometry
+        or witness.budget() is not budget or witness.ticket() is not budget.ticket
+        or len(witness.cells) != len(cells)
+        or any(saved() is not cell for saved, cell in zip(witness.cells, cells, strict=True))
+        or _tetrahedron_source_signature(mesh, geometry, cells, budget) != witness.source_signature
+    ):
+        raise ValueError("Facet trace transport must bind this actual current proof and source.")
+    topology = reference_cell_topology("tetrahedron")
+    edge_slots = tuple(tuple(sorted(edge)) for edge in topology.entities[1])
+    budget.reserve(10 * len(cells), 4096 + 4096 * len(cells))
+    parents = np.arange(10 * len(cells), dtype=np.int64)
+    first_occurrence: dict[tuple[int, ...], int] = {}
+
+    def find(index: int) -> int:
+        while int(parents[index]) != index:
+            parents[index] = parents[int(parents[index])]
+            index = int(parents[index])
+        return index
+
+    def join(first: int, second: int) -> None:
+        budget.reserve(1)
+        left, right = find(first), find(second)
+        if left != right:
+            parents[right] = left
+
+    for index, cell in enumerate(cells):
+        for local, vertex in enumerate(cell.vertices):
+            first_occurrence.setdefault((vertex,), 10 * index + local)
+        for local, (a, b) in enumerate(edge_slots):
+            key = tuple(sorted((cell.vertices[a], cell.vertices[b])))
+            first_occurrence.setdefault(key, 10 * index + 4 + local)
+    for first, second, vertices in witness.pairs:
+        if (
+            first == second or not 0 <= first < len(cells) or not 0 <= second < len(cells)
+            or len(vertices) != 3 or len(set(vertices)) != 3
+            or any(vertex not in cells[first].vertices or vertex not in cells[second].vertices
+                   for vertex in vertices)
+        ):
+            raise ValueError("Facet trace transport must contain actual paired tetrahedron faces.")
+        for vertex in vertices:
+            join(10 * first + cells[first].vertices.index(vertex),
+                 10 * second + cells[second].vertices.index(vertex))
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            first_edge = tuple(sorted((cells[first].vertices.index(vertices[a]),
+                                       cells[first].vertices.index(vertices[b]))))
+            second_edge = tuple(sorted((cells[second].vertices.index(vertices[a]),
+                                        cells[second].vertices.index(vertices[b]))))
+            join(10 * first + 4 + edge_slots.index(first_edge),
+                 10 * second + 4 + edge_slots.index(second_edge))
+    images: dict[int, tuple[_Point, int]] = {}
+    edges: dict[tuple[int, ...], tuple[Expression, ...]] = {}
+    reference = np.asarray(topology.vertices, dtype=np.float64)
+    matched = 0
+
+    def restriction(cell: Cell, local: int) -> tuple[Expression, ...]:
+        first, second = edge_slots[local]
+        if cell.vertices[first] > cell.vertices[second]:
+            first, second = second, first
+        return restrict_chart_expressions(
+            cell.coordinates, cell.kind, "interval", reference[first],
+            (reference[second] - reference[first])[:, None], budget=budget,
+        )
+
+    for index, cell in enumerate(cells):
+        for local, (vertex, point) in enumerate(zip(cell.vertices, cell.reference_vertices, strict=True)):
+            budget.reserve(1)
+            prior = images.get(vertex)
+            if prior is not None and find(10 * index + local) == find(first_occurrence[(vertex,)]):
+                matched += 1
+                continue
+            image = tuple(rational_coefficient(
+                expression_reference_evaluate(value, point, cell.domain, budget=budget),
+                role="boundary_degree.vertex_image",
+            ) for value in cell.coordinates)
+            if prior is None:
+                budget.reserve(1, 256 + 128 * len(image))
+                images[vertex] = (image, index)
+            elif prior[0] != image:
+                return _EntityConformity(matched, {}, _IncidentCells(prior[1], index))
+            else:
+                matched += 1
+        for local, (a, b) in enumerate(edge_slots):
+            budget.reserve(1)
+            key = tuple(sorted((cell.vertices[a], cell.vertices[b])))
+            occurrence = 10 * index + 4 + local
+            first = first_occurrence[key]
+            if occurrence == first:
+                continue
+            if find(occurrence) != find(first):
+                prior_edge = edges.get(key)
+                if prior_edge is None:
+                    prior_edge = restriction(cells[first // 10], first % 10 - 4)
+                    budget.reserve(1, 256)
+                    edges[key] = prior_edge
+                current = restriction(cell, local)
+                if not expression_sequence_equal(prior_edge, current, budget=budget):
+                    return _EntityConformity(
+                        matched, {}, _IncidentCells(first // 10, index)
+                    )
+            matched += 1
+    return _EntityConformity(
+        matched, {vertex: value[0] for vertex, value in images.items()}, None
+    )
 
 def _shared_entity_conformity(
     cells: list[Cell], /, *, budget: CoordinateEnclosureBudget
@@ -459,6 +735,8 @@ def certify_boundary_degree_embedding(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    cad_boundary: tuple[CellGeometrySpec, CadBoundaryClosureEvidence] | None = None,
+    facet_traces: _FacetTraceWitness | None = None,
 ) -> bool:
     """Decide a mapped volume mesh by the boundary-degree theorem.
 
@@ -475,8 +753,21 @@ def certify_boundary_degree_embedding(
         or not state.closed_cell_orientation
     ):
         return False
+    closure = None
+    facet_geometry = None
+    if cad_boundary is not None:
+        from ._source_fidelity import require_issued_cad_boundary_closure
+
+        geometry, closure = cad_boundary
+        facet_geometry = geometry
+        require_issued_cad_boundary_closure(mesh, geometry, closure, limits)
     record = _DegreeCounts(len(cells))
-    outcome = _decide(state, mesh, cells, cell_ids, limits, record, budget=budget)
+    outcome = _decide(
+        state, mesh, cells, cell_ids, limits, record, budget=budget,
+        cad_boundary_closure=closure,
+        facet_traces=facet_traces,
+        facet_geometry=facet_geometry,
+    )
     state.boundary_degree = mesh_certificates_owner.MappedBoundaryDegreeEvidence(
         outcome.status,
         outcome.failed_premise,
@@ -505,6 +796,9 @@ def _decide(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    cad_boundary_closure: CadBoundaryClosureEvidence | None = None,
+    facet_traces: _FacetTraceWitness | None = None,
+    facet_geometry: CellGeometrySpec | None = None,
 ) -> _DegreeOutcome:
 
     dimension = mesh.topological_dimension
@@ -512,7 +806,14 @@ def _decide(
         return _DegreeOutcome("premise_unproven", "boundary_chart_kind", (), None)
     # (b) Shared vertex images and edge coefficients agree; facets were proved
     # by the caller's trace continuity.
-    conformity = _shared_entity_conformity(cells, budget=budget)
+    if facet_traces is None:
+        conformity = _shared_entity_conformity(cells, budget=budget)
+    elif facet_geometry is None:
+        raise ValueError("Facet trace transport must receive the actual coordinate geometry.")
+    else:
+        conformity = _shared_entity_conformity_from_facets(
+            state, mesh, cells, facet_traces, geometry=facet_geometry, budget=budget
+        )
     images, mismatch = conformity.images, conformity.mismatch
     record.conforming_entity_count = conformity.count
     if mismatch is not None:
@@ -550,11 +851,23 @@ def _decide(
     record.shell_count = unbalanced.size
     if np.any(unbalanced):
         return _DegreeOutcome("premise_unproven", "boundary_shell_manifold", (), None)
-    contact = _boundary_injectivity(
-        state, faces, owners, cell_ids, limits, record, budget=budget
-    )
-    if contact is not None:
-        return contact
+    if cad_boundary_closure is None:
+        contact = _boundary_injectivity(
+            state, faces, owners, cell_ids, limits, record, budget=budget
+        )
+        if contact is not None:
+            return contact
+    else:
+        # This independently issued theorem includes same-owner facet pairs,
+        # full-facet injectivity, manifold links and every target boundary trace.
+        # Neither fidelity status nor a homotopy identity authorizes this import.
+        if not np.array_equal(
+            np.sort(entities), np.sort(cad_boundary_closure.target_facet_ids)
+        ):
+            raise ValueError(
+                "cad_boundary_closure must cover exactly every current boundary facet"
+            )
+        state.checks.append("mapped_cad_boundary_homotopy_reuse")
     # (d) Exterior shell degrees. One shell has no other winding and its
     # covered side carries degree at least one, so its exterior degree is 0.
     shell_degrees = (

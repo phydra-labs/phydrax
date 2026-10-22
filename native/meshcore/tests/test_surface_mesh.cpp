@@ -251,14 +251,36 @@ void budgets_refuse_without_invalidating() {
   PHX_CHECK(capacity.item_status[0] == PHX_MC_OK);
   PHX_CHECK(capacity.item_status[1] == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(capacity.triangles.size() / 3 == 4);
-  const Outcome work = reconnect(square(), charts, points, 0.0, 1, 1024, 2);
+  // Two seed cells cost 2 * (4 + 3 * 3) = 26 preparation units. Once the
+  // source is validated, exhaustion keeps the unchanged valid prefix with OK.
+  const Outcome work = reconnect(square(), charts, points, 0.0, 1, 1024, 26);
   PHX_CHECK(work.status == PHX_MC_OK);
   PHX_CHECK(work.counters[PHX_MC_SURFACE_EXHAUSTED] == 1);
+  PHX_CHECK(work.item_status[0] == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(work.item_status[1] == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(work.triangles == square().triangles);
   PHX_CHECK(work.constrained == square().constrained);
-  PHX_CHECK(work.counters[PHX_MC_SURFACE_WORK] <= 2);
+  PHX_CHECK(work.counters[PHX_MC_SURFACE_WORK] == 26);
   PHX_CHECK(chart_valid(work));
+}
+
+void unvalidated_source_is_never_published() {
+  // A budget below source validation refuses the call instead of returning
+  // the unvalidated input with OK, valid or not.
+  Patch clockwise = square();
+  clockwise.triangles = {0, 2, 1, 0, 3, 2};
+  for (const Patch& patch : {square(), clockwise}) {
+    const Outcome refused =
+        reconnect(patch, {0.3, 0.1}, {0.3, 0.1, 0.0}, 0.0, 1, 1024, 25);
+    PHX_CHECK(refused.status == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(refused.triangles.empty());
+    PHX_CHECK(refused.vertex_ids == std::vector<int32_t>({-7}));
+    PHX_CHECK(refused.item_status == std::vector<int32_t>({-7}));
+    PHX_CHECK(refused.counters[PHX_MC_SURFACE_WORK] == 0);
+    PHX_CHECK(refused.counters[PHX_MC_SURFACE_EXHAUSTED] == 1);
+  }
+  PHX_CHECK(reconnect(clockwise, {0.3, 0.1}, {0.3, 0.1, 0.0}, 0.0, 1, 1024, 26).status ==
+            PHX_MC_INVALID_INPUT);
 }
 
 void invalid_triangulations_are_refused() {
@@ -408,10 +430,11 @@ void explicit_edge_refusals_preserve_state() {
 
 void item_errors_precede_work_exhaustion() {
   const Patch patch = square();
+  // The limit pays exactly the 26 source-validation units.
   const Outcome result = reconnect(
       patch, {NAN, 0.5, 0.5, 0.5, 0.5, 0.5},
       {0.5, 0.5, 0.0, 0.5, 0.5, 0.0, 0.5, 0.5, 0.0},
-      0.0, 0, 1024, 0, {}, {0, 2, -1, 2, 0, 2});
+      0.0, 0, 1024, 26, {}, {0, 2, -1, 2, 0, 2});
   PHX_CHECK(result.status == PHX_MC_OK);
   PHX_CHECK(result.item_status[0] == PHX_MC_NONFINITE_INPUT);
   PHX_CHECK(result.item_status[1] == PHX_MC_INVALID_INPUT);
@@ -421,7 +444,7 @@ void item_errors_precede_work_exhaustion() {
   PHX_CHECK(result.constrained == patch.constrained);
   PHX_CHECK(result.counters[PHX_MC_SURFACE_INSERTED] == 0);
   PHX_CHECK(result.counters[PHX_MC_SURFACE_REFUSED] == 3);
-  PHX_CHECK(result.counters[PHX_MC_SURFACE_WORK] == 0);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_WORK] == 26);
   PHX_CHECK(result.counters[PHX_MC_SURFACE_EXHAUSTED] == 1);
 }
 
@@ -475,6 +498,7 @@ int main() {
   constrained_diagonal_is_preserved();
   edge_split_and_refusals();
   budgets_refuse_without_invalidating();
+  unvalidated_source_is_never_published();
   invalid_triangulations_are_refused();
   curved_patch_keeps_orientation();
   opposed_source_normal_is_refused();

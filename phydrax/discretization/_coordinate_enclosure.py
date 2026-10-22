@@ -61,10 +61,17 @@ from . import (
 )
 from ._coordinate_budget import (
     CoordinateEnclosureBudget,
+    polynomial_coefficient_storage_upper,
     RationalEnclosureError,
     reserve_polynomial,
 )
-from ._coordinate_identity import coordinate_source_bank_key
+from ._coordinate_identity import (
+    coordinate_identity_inputs,
+    coordinate_scope_key,
+    coordinate_source_bank_key,
+    ElementIdentityAdmission,
+    require_coordinate_identity_inputs,
+)
 from ._coordinate_source_snapshot import BarycentricSourceSnapshot, SplineSourceSnapshot
 from ._exact_algebraic_geometry import (
     coefficient_endpoint,
@@ -93,6 +100,7 @@ if TYPE_CHECKING:
         ScalarCoordinateElement,
         SplineCellGeometryElement,
     )
+    from ._cell_mesh import CellMesh
     from .fem._high_order import SimplexNodalFamily
 
 
@@ -199,6 +207,11 @@ type CoordinateLinearKey = (
 type CoordinateCoefficients = np.ndarray | CoordinateSourceBank
 type CoordinateCornerWeights = tuple[tuple[tuple[int, ExactScalar], ...], ...]
 type OrderedReferenceArguments = tuple[PreparedPolynomialCoefficients, ...]
+type ExactRestrictionArgumentsKey = tuple[
+    str, str, tuple[int, ...], tuple[int, ...],
+    tuple[tuple[int, int], ...], tuple[tuple[int, int], ...],
+]
+type ReferenceArgumentsKey = tuple[str, str] | ExactRestrictionArgumentsKey
 BernsteinDomain: TypeAlias = Literal["simplex", "prism", "box"]
 """Reference domain of a Bernstein control net: simplex, triangle x interval, or unit box."""
 
@@ -1264,6 +1277,56 @@ class ArgumentComposition:
         # The weighted reduction retains the same insertion/cancellation order.
         return linear_combinations(tuple(monomials), (tuple(weights),), budget=budget)[0]
 
+    def compose_many(
+        self,
+        polynomials: tuple[Mapping[tuple[int, ...], ExactScalar], ...],
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[Polynomial, ...]:
+        """Share one bank profile only for consecutive identical ordered supports."""
+        if len(polynomials) < 2 or self._axis_affine is not None:
+            return tuple(self(value, budget=budget) for value in polynomials)
+        terms = sum(len(value) for value in polynomials)
+        width = max((len(value) for value in polynomials), default=0)
+        with budget.live_storage() as metadata:
+            metadata.set_bound(1024 + 128 * len(polynomials) + 64 * terms + 128 * width)
+            supports = tuple(tuple(value) for value in polynomials)
+            results: list[Polynomial] = []
+            start = 0
+            while start < len(polynomials):
+                support = supports[start]
+                end = start + 1
+                while end < len(polynomials) and supports[end] == support:
+                    end += 1
+                monomials = []
+                active = []
+                for index in support:
+                    if len(index) != len(self.arguments):
+                        raise ValueError(
+                            "coordinate_enclosure.arguments must match the polynomial parameter dimension; got unequal exponent ranks."
+                        )
+                    monomial = self._monomial(index, budget=budget)
+                    if monomial:
+                        monomials.append(monomial)
+                        active.append(index)
+                if monomials:
+                    # Each axis retains its exact input order and its own
+                    # unchanged weight scan, bit bound, arithmetic and admission.
+                    weights = tuple(
+                        tuple(polynomials[axis][index] for index in active)
+                        for axis in range(start, end)
+                    )
+                    results.extend(
+                        linear_combinations(tuple(monomials), weights, budget=budget)
+                    )
+                else:
+                    budget.reserve(0, 256 * (end - start))
+                    results.extend({} for _ in range(start, end))
+                start = end
+            budget.reserve(0, 256 + 16 * len(results))
+            return tuple(results)
+
 
 def compose(
     polynomial: Mapping[tuple[int, ...], ExactScalar],
@@ -1523,7 +1586,17 @@ def source_basis(
     element: CellGeometryElement, *, budget: CoordinateEnclosureBudget
 ) -> tuple[Polynomial, ...] | None:
     """Prepare declared expressions once within an explicit resource ledger."""
-    key = element_identity(element)
+    key = element_identity(element, budget=budget)
+    return _source_basis_from_identity(element, key, budget=budget)
+
+
+def _source_basis_from_identity(
+    element: CellGeometryElement,
+    key: tuple[str, str],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Polynomial, ...] | None:
+    """Consume this synchronous operation's already authenticated element binding."""
     if key not in budget.basis_cache:
         with budget.temporary_scope():
             basis = _source_basis(element, budget=budget)
@@ -1533,19 +1606,71 @@ def source_basis(
     return budget.basis_cache[key]
 
 
-def element_identity(element: CellGeometryElement, /) -> tuple[str, str]:
-    """Declared identity of an element: its declared ID and full array contents."""
+def element_identity(
+    element: CellGeometryElement, /, *, budget: CoordinateEnclosureBudget | None = None
+) -> tuple[str, str]:
+    """Preserve the declared ID/full-array formula, optionally memoized per budget.
 
+    Reuse authenticates every retained actual field/container edge, rescans
+    every NumPy logical bank (including readonly views), and checks live JAX
+    owners. Unsupported owners retain the original complete fingerprint path.
+    No wrapper is transparent and no source/compiler identity is changed.
+    """
+    if budget is None:
+        return _canonical_element_identity(element)
+    return _authenticated_element_identity(element, budget, retain_admission=True)
+
+
+def _canonical_element_identity(element: CellGeometryElement, /) -> tuple[str, str]:
     return element.element_id, imported_fingerprint.canonical_fingerprint(
         imported_fingerprint.array_tree_fingerprint(element)
     )
+
+
+def _authenticated_element_identity(
+    element: CellGeometryElement,
+    budget: CoordinateEnclosureBudget,
+    /,
+    *,
+    retain_admission: bool,
+) -> tuple[str, str]:
+    """Pay complete current authentication, optionally retaining its memo record."""
+    cached = budget.element_identity_admission_cache.get(id(element))
+    if cached is not None and cached.owner is element:
+        if require_coordinate_identity_inputs(cached.inputs, budget):
+            return cached.identity
+        del budget.element_identity_admission_cache[id(element)]
+    inputs = coordinate_identity_inputs(element, budget)
+    identity = _canonical_element_identity(element)
+    if retain_admission and inputs is not None:
+        admission = ElementIdentityAdmission(element, identity, inputs)
+        budget.retain_owner(admission)
+        budget.element_identity_admission_cache[id(element)] = admission
+    elif not retain_admission:
+        # A one-shot host snapshot already has its own content-keyed numerical
+        # bank. Retain the actual source, not an unused second admission graph.
+        if inputs is not None:
+            for bank in (*inputs.immutable_banks, *inputs.mutable_banks):
+                budget.retain_owner(bank)
+        budget.retain_owner(element)
+    return identity
 
 
 def reference_composition_arguments(
     element: CellGeometryElement, *, budget: CoordinateEnclosureBudget
 ) -> tuple[Polynomial, ...]:
     """Prepare the immutable source chart once on its preparation resource ledger."""
-    key = element_identity(element)
+    key = element_identity(element, budget=budget)
+    return _reference_composition_from_identity(element, key, budget=budget)
+
+
+def _reference_composition_from_identity(
+    element: CellGeometryElement,
+    key: tuple[str, str],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Polynomial, ...]:
+    """Use the exact chart binding authenticated by the enclosing pure operation."""
     cached = budget.reference_composition_cache.get(key)
     if cached is not None:
         return cached
@@ -1560,11 +1685,124 @@ def prepared_reference_arguments(
     element: CellGeometryElement, /, *, budget: CoordinateEnclosureBudget
 ) -> tuple[Polynomial, ...] | PreparedPolynomialArguments:
     """Reuse immutable rational reference preparation, never physical coefficient bindings."""
-    source_key = element_identity(element)
+    source_key = element_identity(element, budget=budget)
     cached = budget.prepared_reference_cache.get(source_key)
     if cached is not None:
         return cached
-    original = reference_composition_arguments(element, budget=budget)
+    original = _reference_composition_from_identity(element, source_key, budget=budget)
+    return _retain_prepared_arguments(source_key, original, budget=budget)
+
+
+def restriction_chart_arguments(
+    target_kind: str,
+    origin: np.ndarray,
+    matrix: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Polynomial, ...] | PreparedPolynomialArguments:
+    """Exact target-chart arguments of one affine source restriction.
+
+    Binary64 banks bind their exact bytes. Rational object banks bind every
+    current numerator/denominator, shape and target chart, with owned private
+    output atoms. These numeric preparations never bind a physical map or verdict.
+    """
+    dimension = matrix.shape[1]
+    if origin.dtype == object and matrix.dtype == object:
+        exact = _exact_restriction_chart_arguments(
+            target_kind, origin, matrix, budget=budget
+        )
+        if exact is not None:
+            return exact
+    if origin.dtype != np.float64 or matrix.dtype != np.float64:
+        # Other field-valued charts retain their normal per-call preparation.
+        chart = chart_arguments(target_kind, dimension, budget=budget)
+        return tuple(
+            compose(term, chart, budget=budget)
+            for term in affine_arguments(origin, matrix, budget=budget)
+        )
+    source_key = (
+        f"restriction-chart:{target_kind}",
+        imported_fingerprint.canonical_fingerprint(
+            imported_fingerprint.array_tree_fingerprint((origin, matrix))
+        ),
+    )
+    cached = budget.prepared_reference_cache.get(source_key)
+    if cached is not None:
+        return cached
+    with budget.temporary_scope():
+        chart = chart_arguments(target_kind, dimension, budget=budget)
+        original = tuple(
+            compose(term, chart, budget=budget)
+            for term in affine_arguments(origin, matrix, budget=budget)
+        )
+        return _retain_prepared_arguments(source_key, original, budget=budget)
+
+
+def _exact_restriction_chart_arguments(
+    target_kind: str,
+    origin: np.ndarray,
+    matrix: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Polynomial, ...] | PreparedPolynomialArguments | None:
+    """Prepare one full exact rational chart, never a physical map or verdict."""
+    count = origin.size + matrix.size
+    with budget.temporary_scope():
+        # Inspect every current logical entry, including both actual Fraction
+        # fields. Object-array addresses and reversible NumPy flags earn no trust.
+        budget.reserve(3 * count + 2, 512 + 128 * count)
+        if any(type(value) is not Fraction for value in origin.flat) or any(
+            type(value) is not Fraction for value in matrix.flat
+        ):
+            return None
+        origin_rows = tuple(
+            (value.numerator, value.denominator)
+            for value in origin.flat if isinstance(value, Fraction)
+        )
+        matrix_rows = tuple(
+            (value.numerator, value.denominator)
+            for value in matrix.flat if isinstance(value, Fraction)
+        )
+        key: ExactRestrictionArgumentsKey = (
+            "exact-restriction-chart", target_kind,
+            origin.shape, matrix.shape, origin_rows, matrix_rows,
+        )
+        cached = budget.prepared_reference_cache.get(key)
+        if cached is not None:
+            return cached
+        # A newly prepared chart must not borrow a caller's mutable Fraction
+        # slots. Its exact copied atoms are private kernel numerical operands.
+        budget.reserve(
+            count,
+            512 + 128 * count + sum(
+                declared_integer_storage_bytes(abs(numerator).bit_length())
+                + declared_integer_storage_bytes(denominator.bit_length())
+                for numerator, denominator in (*origin_rows, *matrix_rows)
+            ),
+        )
+        private_origin = np.empty(origin.shape, dtype=object)
+        private_matrix = np.empty(matrix.shape, dtype=object)
+        for index, (numerator, denominator) in enumerate(origin_rows):
+            private_origin.flat[index] = Fraction(numerator, denominator)
+        for index, (numerator, denominator) in enumerate(matrix_rows):
+            private_matrix.flat[index] = Fraction(numerator, denominator)
+        chart = chart_arguments(target_kind, matrix.shape[1], budget=budget)
+        original = tuple(
+            compose(term, chart, budget=budget)
+            for term in affine_arguments(private_origin, private_matrix, budget=budget)
+        )
+        return _retain_prepared_arguments(key, original, budget=budget)
+
+
+def _retain_prepared_arguments(
+    source_key: ReferenceArgumentsKey,
+    original: tuple[Polynomial, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Polynomial, ...] | PreparedPolynomialArguments:
     if any(isinstance(argument, RationalPolynomial) for argument in original):
         # Rational actions keep their existing preparation homogeneous preparation.
         return original
@@ -1636,23 +1874,137 @@ def prepare_reference_chart_arguments(
     dimension: int,
     *,
     budget: CoordinateEnclosureBudget,
+    retain: bool = True,
 ) -> tuple[Polynomial, ...]:
-    """Prepare admitted source chart inputs without a partial preparation instance."""
-    basis = source_basis(chart_element, budget=budget)
-    if basis is None:
-        raise ValueError(
-            "coordinate_enclosure.chart_basis must have supported source expressions; got unsupported tabulator."
-        )
-    return tuple(
-        sum_polynomials(
+    """Prepare admitted source chart inputs without a partial preparation instance.
+
+    The arguments are a function of the chart law, its rational coefficients
+    and the source dimension alone; equal charts share one preparation.
+    Constructor-only consumers may leave expansion on their temporary ledger:
+    their element retains the exact coefficients, not these polynomial memos.
+    """
+    chart_id, chart_fingerprint = element_identity(chart_element, budget=budget)
+    budget.reserve(1 + sum(len(row) for row in coefficients))
+    key = (
+        f"reference-chart:{chart_id}",
+        imported_fingerprint.canonical_fingerprint(
+            {
+                "chart": chart_fingerprint,
+                "coefficients": coefficients,
+                "dimension": dimension,
+            }
+        ),
+    )
+    cached = budget.reference_composition_cache.get(key)
+    if cached is not None:
+        return cached
+    arguments = _separable_linear_chart_arguments(
+        chart_element, coefficients, dimension, budget=budget
+    )
+    if arguments is None:
+        basis = source_basis(chart_element, budget=budget)
+        if basis is None:
+            raise ValueError(
+                "coordinate_enclosure.chart_basis must have supported source expressions; got unsupported tabulator."
+            )
+        arguments = linear_combinations(
+            basis,
             tuple(
-                scale(term, Fraction(*row[axis]), budget=budget)
-                for term, row in zip(basis, coefficients, strict=True)
+                tuple(Fraction(*row[axis]) for row in coefficients)
+                for axis in range(dimension)
             ),
             budget=budget,
         )
-        for axis in range(dimension)
+    if retain:
+        budget.retain_basis((key, arguments))
+        budget.reference_composition_cache[key] = arguments
+    return arguments
+
+
+def _separable_linear_chart_arguments(
+    element: CellGeometryElement,
+    coefficients: tuple[tuple[tuple[int, int], ...], ...],
+    dimension: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Polynomial, ...] | None:
+    """Earn a sparse affine chart from every current exact control coefficient.
+
+    Only the nominal equispaced degree-one source law is specialized. Each
+    output may depend on one reference axis; permutations and signed scales
+    are allowed. Nonseparable maps keep the ordinary source-basis expansion.
+    No physical coefficient, chart proof, or argument bank is retained here.
+    """
+    budget.reserve(1)
+    if (
+        type(element) is not FiniteElementSpec
+        or element.mapping != "identity"
+        or element.value_shape
+        or element.representation != "point_value"
+        or type(element.tabulator) is not _cell_geometry_dispatch().CoordinateTabulator
+        or element.degree != 1
+        or element.tabulator.degree != 1
+        or element.cell_kind != element.tabulator.cell_kind
+        or element.cell_kind not in (
+            "interval", "triangle", "quadrilateral", "tetrahedron", "hexahedron"
+        )
+    ):
+        return None
+    topology = imported_reference_cell.reference_cell_topology(element.cell_kind)
+    vertices = topology.vertices
+    count = len(coefficients) * dimension
+    budget.reserve(count, 512 + 128 * count)
+    if (
+        len(coefficients) != len(vertices)
+        or element.local_dof_count != len(vertices)
+        or any(len(row) != dimension for row in coefficients)
+    ):
+        return None
+    bits = 1
+    for row in coefficients:
+        for numerator, denominator in row:
+            if (
+                type(numerator) is not int
+                or type(denominator) is not int
+                or denominator <= 0
+            ):
+                return None
+            bits = max(bits, abs(numerator).bit_length() + denominator.bit_length())
+    reserve_polynomial(count, count, topology.dimension, bits, budget=budget)
+    values = tuple(tuple(Fraction(*pair) for pair in row) for row in coefficients)
+    zero = (0,) * topology.dimension
+    # Source-law vertex ordering, not caller reference-node values, defines
+    # these nodal coefficients (exactly as _linear_reference_basis does).
+    budget.reserve(len(vertices) + 2 * topology.dimension)
+    vertex_nodes = {tuple(vertex): i for i, vertex in enumerate(vertices)}
+    origin = vertex_nodes[zero]
+    units = tuple(
+        vertex_nodes[tuple(int(j == axis) for j in range(topology.dimension))]
+        for axis in range(topology.dimension)
     )
+    result: list[Polynomial] = []
+    budget.reserve(dimension * topology.dimension + count)
+    for output in range(dimension):
+        offset = values[origin][output]
+        active = tuple(
+            axis for axis, node in enumerate(units) if values[node][output] != offset
+        )
+        if len(active) > 1:
+            return None
+        axis = active[0] if active else 0
+        endpoint = values[units[axis]][output]
+        if any(
+            row[output] != (endpoint if vertex[axis] else offset)
+            for row, vertex in zip(values, vertices, strict=True)
+        ):
+            return None
+        reserve_polynomial(1, 2, topology.dimension, 2 * bits + 1, budget=budget)
+        slope = endpoint - offset
+        polynomial: Polynomial = {zero: offset} if offset else {}
+        if slope:
+            polynomial[tuple(int(j == axis) for j in range(topology.dimension))] = slope
+        result.append(polynomial)
+    return tuple(result)
 
 
 def _spline_axis_basis(
@@ -1729,11 +2081,11 @@ def source_expressions(
     element: CellGeometryElement, *, budget: CoordinateEnclosureBudget
 ) -> tuple[Expression, ...] | None:
     """Prepare the source scalar source expression once on the preparation ledger."""
-    key = element_identity(element)
+    key = element_identity(element, budget=budget)
     if key in budget.source_expression_cache:
         return budget.source_expression_cache[key]
     with budget.temporary_scope():
-        expressions = _prepare_source_expressions(element, budget=budget)
+        expressions = _prepare_source_expressions(element, key, budget=budget)
         if expressions is not None:
             budget.retain_basis((key, expressions))
         budget.source_expression_cache[key] = expressions
@@ -1741,7 +2093,7 @@ def source_expressions(
 
 
 def _prepare_source_expressions(
-    element: CellGeometryElement, *, budget: CoordinateEnclosureBudget
+    element: CellGeometryElement, key: tuple[str, str], *, budget: CoordinateEnclosureBudget
 ) -> tuple[Expression, ...] | None:
     """Retained scalar coordinate source basis, including source rational weights."""
 
@@ -1802,7 +2154,7 @@ def _prepare_source_expressions(
             np.asarray(element.matrix),
             budget=budget,
         )
-    return source_basis(element, budget=budget)
+    return _source_basis_from_identity(element, key, budget=budget)
 
 
 def _source_basis(
@@ -1870,21 +2222,31 @@ def _barycentric_source_basis(
             current.barycentric_weights.size,
             128 + 512 * current.barycentric_weights.size,
         )
-        weights = (
-            _cell_geometry_dispatch()
-            .prepare_barycentric_source_snapshot(current, budget=budget)
-            .barycentric_weights
-        )
+        weights = barycentric_exact_rows(current, budget=budget)
         columns = tuple(
-            tuple(
-                Fraction(float(weights[target, source]))
-                for target in range(weights.shape[0])
-            )
-            for source in range(weights.shape[1])
+            tuple(weights[target][source] for target in range(len(weights)))
+            for source in range(len(weights[0]))
         )
         basis = linear_combinations(basis, columns, budget=budget)
         current = current.source_element
     return basis
+
+
+def barycentric_exact_rows(
+    element: cell_geometry_types.BarycentricCellGeometryElement,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Source-owned rational action rows; binary64 rows only when exactly representable."""
+    snapshot = _cell_geometry_dispatch().prepare_barycentric_source_snapshot(
+        element, budget=budget
+    )
+    if snapshot.exact_weights is not None:
+        return snapshot.exact_weights
+    return tuple(
+        tuple(Fraction(float(value)) for value in row)
+        for row in snapshot.barycentric_weights
+    )
 
 
 def _layer_column_source_basis(
@@ -2337,20 +2699,27 @@ def _coordinate_polynomials_from_prepared(
     coordinates = _affine_simplex_coordinates(element, coefficients, budget=budget)
     if coordinates is None:
         coordinates = _prepare_coordinate_polynomials(
-            element, coefficients, budget=budget
+            element, coefficients, identity=(key[0], key[1]), budget=budget
         )
     if coordinates is not None:
         budget.retain_basis((key, coordinates))
+        if budget.capture_polynomial_operands:
+            from ._coordinate_operands import _remember_coordinate_polynomial_operands
+            _remember_coordinate_polynomial_operands(key, coordinates, budget, polynomial=True)
         budget.coordinate_cache[key] = coordinates
         budget.polynomial_cache[key] = coordinates
     return coordinates
 
 
 def coordinate_bank_cache_key(
-    element: CellGeometryElement, coefficients: CoordinateSourceBank, /
+    element: CellGeometryElement,
+    coefficients: CoordinateSourceBank,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CoordinatePreparationKey:
     """Bind an immutable coefficient bank and its scalar representations to an element."""
-    identity = element_identity(element)
+    identity = element_identity(element, budget=budget)
     kinds = _scalar_kind_key(value for row in coefficients for value in row)
     return (*identity, coefficients, kinds) if kinds else (*identity, coefficients)
 
@@ -2365,7 +2734,7 @@ def coordinate_preparation_key(
 ) -> tuple[CoordinateSourceBank, CoordinatePreparationKey]:
     immutable_key = None
     if isinstance(local, tuple) and all((isinstance(row, tuple) for row in local)):
-        immutable_key = coordinate_bank_cache_key(element, local)
+        immutable_key = coordinate_bank_cache_key(element, local, budget=budget)
         prepared = budget.coefficient_preparation_cache.get(immutable_key)
         if prepared is not None:
             return prepared
@@ -2382,7 +2751,7 @@ def coordinate_preparation_key(
     key = (
         immutable_key
         if immutable_key is not None
-        else coordinate_bank_cache_key(element, coefficients)
+        else coordinate_bank_cache_key(element, coefficients, budget=budget)
     )
     prepared = coefficients, key
     if immutable_key is not None:
@@ -2405,14 +2774,27 @@ def prepared_coordinate_source_bank(
     bank. Equal carrier arrays alone never authorize reuse of a foreign source.
     """
 
+    prepared = budget._prepared_coordinate_operands
+    if prepared is not None and geometry is prepared.geometry:
+        from ._coordinate_operands import _require_coordinate_operand_source
+
+        _require_coordinate_operand_source(geometry, budget)
     key = coordinate_source_bank_key(geometry)
     cached = budget.source_bank_cache.get(key)
-    if cached is not None:
+    foreign_operand_bank = (
+        prepared is not None
+        and geometry is not prepared.geometry
+        and key in prepared._source_banks
+    )
+    if cached is not None and not foreign_operand_bank:
         return cached
     with budget.temporary_scope():
         bank = geometry.source_coordinates(budget=budget)
-        budget.retain_basis((key, bank))
-    budget.source_bank_cache[key] = bank
+        budget.retain_basis((key, bank), operand=True)
+    # Another actual source may have the same scientific content key. It must
+    # earn its own preparation without borrowing or replacing the admitted bank.
+    if not foreign_operand_bank:
+        budget.source_bank_cache[key] = bank
     return bank
 
 
@@ -2422,6 +2804,7 @@ def _prepare_coordinate_polynomials(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    identity: tuple[str, str],
 ) -> tuple[Polynomial, ...] | None:
 
     if isinstance(element, _cell_geometry_dispatch().BarycentricCellGeometryElement):
@@ -2431,23 +2814,14 @@ def _prepare_coordinate_polynomials(
         actions = []
         root = element
         while isinstance(root, _cell_geometry_dispatch().BarycentricCellGeometryElement):
-            actions.append(
-                _cell_geometry_dispatch()
-                .prepare_barycentric_source_snapshot(root, budget=budget)
-                .barycentric_weights
-            )
+            actions.append(barycentric_exact_rows(root, budget=budget))
             root = root.source_element
         rows = coordinate_source_rows(local)
         for action in reversed(actions):
-            weights = action
-            budget.reserve(weights.size)
+            budget.reserve(sum(len(row) for row in action))
             exact = tuple(
-                tuple(
-                    (index, Fraction(float(value)))
-                    for index, value in enumerate(row)
-                    if value
-                )
-                for row in weights
+                tuple((index, value) for index, value in enumerate(row) if value)
+                for row in action
             )
             transformed = []
             for coefficients in exact:
@@ -2479,12 +2853,24 @@ def _prepare_coordinate_polynomials(
             np.asarray(element.matrix),
             budget=budget,
         )
-    basis = source_basis(element, budget=budget)
+    if isinstance(element, _cell_geometry_dispatch().PolynomialComposedCellGeometryElement):
+        # Composition is linear in the source coefficients:
+        # sum_i c_i (b_i o A) = (sum_i c_i b_i) o A exactly. Pull back the
+        # source map earned for this coefficient bank instead of composing every
+        # source basis term and recombining them for each chart.
+        source = coordinate_polynomials(element.source_element, local, budget=budget)
+        if source is None:
+            return None
+        composition = ArgumentComposition(
+            prepared_reference_arguments(element, budget=budget), budget=budget
+        )
+        return composition.compose_many(source, budget=budget)
+    basis = _source_basis_from_identity(element, identity, budget=budget)
     if basis is None:
         return None
     rows = coordinate_source_rows(local)
     profile = None
-    key = element_identity(element)
+    key = identity
     profile = budget.basis_profile_cache.get(key)
     if profile is None:
         numerator, denominator = coefficient_profile(basis, budget=budget)
@@ -3261,21 +3647,32 @@ def corner_images(
     )
 
 
-def affine_simplex_corner_images(
-    element: CellGeometryElement,
-    local: CoordinateCoefficients,
-    *,
-    budget: CoordinateEnclosureBudget,
-) -> CoordinateSourceBank | None:
-    """Return rational corners only after proving the full simplex source affine."""
+def affine_simplex_source(
+    element: CellGeometryElement, /, *, budget: CoordinateEnclosureBudget
+) -> bool:
+    """Prove the full simplex source map affine once per root source element.
+
+    Simplex restriction, barycentric and degree-one Lagrange chart compositions
+    are followed to their degree-one finite-element root, whose prepared basis
+    must have total degree at most one; an affine chart of an affine map is affine.
+    """
     source = element
     geometry = _cell_geometry_dispatch()
     while isinstance(
         source,
-        (geometry.RestrictedCellGeometryElement, geometry.BarycentricCellGeometryElement),
+        (
+            geometry.RestrictedCellGeometryElement,
+            geometry.BarycentricCellGeometryElement,
+            geometry.PolynomialComposedCellGeometryElement,
+        ),
     ):
         if source.cell_kind not in ("interval", "triangle", "tetrahedron"):
-            return None
+            return False
+        if isinstance(source, geometry.PolynomialComposedCellGeometryElement) and (
+            source.chart_element.degree != 1
+            or source.chart_element.cell_kind != source.source_element.cell_kind
+        ):
+            return False
         source = source.source_element
     match source:
         case FiniteElementSpec() as source:
@@ -3283,10 +3680,10 @@ def affine_simplex_corner_images(
                 source.cell_kind not in ("interval", "triangle", "tetrahedron")
                 or source.degree != 1
             ):
-                return None
+                return False
         case _:
-            return None
-    key = element_identity(source)
+            return False
+    key = element_identity(source, budget=budget)
     affine = budget.affine_simplex_source_cache.get(key)
     if affine is None:
         basis = source_basis(source, budget=budget)
@@ -3302,7 +3699,19 @@ def affine_simplex_corner_images(
             )
         budget.retain_basis((key, affine))
         budget.affine_simplex_source_cache[key] = affine
-    return coordinate_corner_images(element, local, budget=budget) if affine else None
+    return affine
+
+
+def affine_simplex_corner_images(
+    element: CellGeometryElement,
+    local: CoordinateCoefficients,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateSourceBank | None:
+    """Return rational corners only after proving the full simplex source affine."""
+    if not affine_simplex_source(element, budget=budget):
+        return None
+    return coordinate_corner_images(element, local, budget=budget)
 
 
 def _affine_simplex_coordinates(
@@ -3465,11 +3874,56 @@ def _reference_basis_values(
         yield tuple(row)
 
 
+def _barycentric_corner_weights(
+    element: cell_geometry_types.BarycentricCellGeometryElement,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateCornerWeights:
+    """Evaluate cardinal P1 corners by the retained exact coefficient actions."""
+    geometry = _cell_geometry_dispatch()
+    root = element.source_element
+    while isinstance(root, geometry.BarycentricCellGeometryElement):
+        root = root.source_element
+    geometry.require_p1_cardinal_source(root)
+    width = element.local_dof_count
+    budget.reserve(width * width, 128 + 512 * width * width)
+    rows = barycentric_exact_rows(element, budget=budget)
+    current = element.source_element
+    while isinstance(current, geometry.BarycentricCellGeometryElement):
+        budget.reserve(width * width, 128 + 512 * width * width)
+        right = barycentric_exact_rows(current, budget=budget)
+        # The declared chain acts outer first, then toward its cardinal root.
+        # Full coefficient actions need not have unit row sums; do not normalize.
+        budget.reserve(2 * width**3, 128 * width * width)
+        rows = tuple(
+            tuple(
+                sum(
+                    (left * right[inner][column]
+                     for inner, left in enumerate(row) if left and right[inner][column]),
+                    Fraction(0),
+                )
+                for column in range(width)
+            )
+            for row in rows
+        )
+        current = current.source_element
+    budget.reserve(width * width, 256 + 128 * width * width)
+    return tuple(
+        tuple((column, value) for column, value in enumerate(row) if value)
+        for row in rows
+    )
+
+
 def _prepare_coordinate_corner_weights(
     element: CellGeometryElement, *, budget: CoordinateEnclosureBudget
 ) -> tuple[tuple[str, str], CoordinateCornerWeights] | None:
     """Prepare sparse corner rows from the declared root and reference chain."""
     with budget.temporary_scope():
+        if isinstance(element, _cell_geometry_dispatch().BarycentricCellGeometryElement):
+            source_identity = element_identity(element, budget=budget)
+            weights = _barycentric_corner_weights(element, budget=budget)
+            budget.retain_basis((source_identity, weights))
+            return source_identity, weights
         if has_cartesian_reference_chain(element):
             root, arguments = coordinate_reference_chain(element, budget=budget)
         else:
@@ -3485,7 +3939,7 @@ def _prepare_coordinate_corner_weights(
         basis = source_expressions(root, budget=budget)
         if basis is None:
             return None
-        source_identity = element_identity(root)
+        source_identity = element_identity(root, budget=budget)
         if any(isinstance(term, RationalPolynomial) for term in basis):
             budget.reserve(1)
             prepared = budget.reference_denominator_group_cache.get(source_identity)
@@ -3518,16 +3972,30 @@ def _prepare_coordinate_corner_weights(
             )
             for corner in corners
         )
-        rows = []
-        for values in _reference_basis_values(
-            basis, points, root.cell_kind, prepared, budget=budget
+        # A basis row is a function of the root source law and the rational
+        # reference point alone, so charts sharing a corner share its row.
+        cache = budget.reference_basis_row_cache
+        budget.reserve(sum(len(point) for point in points))
+        keys = tuple(
+            (source_identity, root.cell_kind, point, _scalar_kind_key(point))
+            for point in points
+        )
+        pending = tuple(dict.fromkeys(key for key in keys if key not in cache))
+        for key, values in zip(
+            pending,
+            _reference_basis_values(
+                basis,
+                tuple(key[2] for key in pending),
+                root.cell_kind,
+                prepared,
+                budget=budget,
+            ),
+            strict=True,
         ):
-            row = []
-            for node, value in enumerate(values):
-                if value:
-                    row.append((node, value))
-            rows.append(tuple(row))
-        weights = tuple(rows)
+            row = tuple((node, value) for node, value in enumerate(values) if value)
+            budget.retain_basis((key, row))
+            cache[key] = row
+        weights = tuple(cache[key] for key in keys)
         budget.retain_basis((source_identity, weights))
     return source_identity, weights
 
@@ -3559,6 +4027,71 @@ def _retained_coordinate_point(
         return point
 
 
+def _composed_polynomial_corner_images(
+    element: CellGeometryElement,
+    coefficients: CoordinateSourceBank,
+    map_key: CoordinatePreparationKey,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateSourceBank | None:
+    """Evaluate the actual source polynomials at a canonical Q1 chart's corners.
+
+    Composition is evaluated, not interpolated: at a cardinal chart corner,
+    its reference image is exactly the stored rational chart coefficient.
+    The source-bank/reference-point key shares only this completed evaluation;
+    the composed map keeps its own full bank binding in the ordinary corner
+    cache. Higher-degree or noncanonical charts retain the general action.
+    """
+    from ._cell_geometry import _cardinal_corner_nodes, coordinate_lagrange_element
+
+    geometry = _cell_geometry_dispatch()
+    if not isinstance(element, geometry.PolynomialComposedCellGeometryElement):
+        return None
+    chart = element.chart_element
+    source = geometry.require_scalar_coordinate_element(
+        element.source_element, "Composed polynomial corner source"
+    )
+    if (
+        source.degree < 2
+        or chart.degree != 1
+        or chart.element_id
+        != coordinate_lagrange_element(chart.cell_kind, 1).element_id
+    ):
+        return None
+    nodes = _cardinal_corner_nodes(chart, budget=budget)
+    if nodes is None:
+        return None
+    polynomials = coordinate_polynomials(source, coefficients, budget=budget)
+    if polynomials is None:
+        return None
+    _, source_key = coordinate_preparation_key(source, coefficients, budget=budget)
+    cache = budget.polynomial_reference_image_cache
+    images = []
+    budget.reserve(len(nodes))
+    for node in nodes:
+        point = tuple(
+            Fraction(numerator, denominator)
+            for numerator, denominator in element.chart_coefficients[node]
+        )
+        budget.reserve(len(point))
+        key = (source_key, point)
+        image = cache.get(key)
+        if image is None:
+            with budget.temporary_scope():
+                image = reference_image(
+                    polynomials, source.cell_kind, point, budget=budget
+                )
+                image = _retained_coordinate_point(image, budget=budget)
+            budget.retain_basis((key, image))
+            cache[key] = image
+        images.append(image)
+    result = tuple(images)
+    budget.retain_basis((map_key, result))
+    budget.coordinate_corner_cache[map_key] = result
+    return result
+
+
 def _coordinate_corner_images_from_prepared(
     element: CellGeometryElement,
     coefficients: CoordinateSourceBank,
@@ -3572,6 +4105,11 @@ def _coordinate_corner_images_from_prepared(
     cached = budget.coordinate_corner_cache.get(map_key)
     if cached is not None:
         return cached
+    polynomial_images = _composed_polynomial_corner_images(
+        element, coefficients, map_key, budget=budget
+    )
+    if polynomial_images is not None:
+        return polynomial_images
     key = map_key[:2]
     prepared_weights = budget.corner_weight_cache.get(key)
     if prepared_weights is None:
@@ -3664,16 +4202,296 @@ def _coordinate_corner_images_from_prepared(
     return images
 
 
+def prepared_coordinate_vertex_images(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    mismatch: str,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[ExactScalar, ...] | None, ...] | None:
+    """Reuse the exact routed image bank bound to a live mesh and geometry.
+
+    The canonical scope key includes the full current numerical tree, source
+    definitions and layout. Only this owner resolves the routes used by the
+    cached proof; callers cannot attach arbitrary mutable tables to its key.
+    Construction-time mutable tables continue through ``coordinate_vertex_images``.
+    """
+    key = coordinate_scope_key(mesh, geometry)
+    cached = budget.coordinate_vertex_image_cache.get(key)
+    if cached is not None:
+        return cached
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    controls = prepared_coordinate_source_bank(geometry, budget=budget)
+    if key in budget.plc_identity_corner_cache:
+        if len(controls) != mesh.coordinates.shape[0]:
+            raise ValueError(
+                "prepared_coordinate_vertex_images.identity must bind every mesh vertex to its exact source row; got a different bank length"
+            )
+        images = controls
+    else:
+        images = coordinate_vertex_images(
+            tuple(
+                (
+                    element,
+                    np.asarray(route, dtype=np.int64),
+                    np.asarray(block.vertices, dtype=np.int64),
+                )
+                for block, element, route in zip(
+                    mesh.blocks, elements, routes, strict=True
+                )
+            ),
+            controls,
+            int(mesh.coordinates.shape[0]),
+            mismatch=mismatch,
+            budget=budget,
+        )
+    if images is not None:
+        budget.retain_basis((key, images), operand=True)
+        budget.coordinate_vertex_image_cache[key] = images
+    return images
+
+
+def coordinate_vertex_images(
+    blocks: tuple[tuple[CellGeometryElement, np.ndarray, np.ndarray], ...],
+    controls: CoordinateSourceBank,
+    vertex_count: int,
+    /,
+    *,
+    mismatch: str,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[ExactScalar, ...] | None, ...] | None:
+    """Evaluate every routed corner image once and bind one exact image per vertex.
+
+    Each block is ``(element, routes, vertices)`` in cell-row order. A corner
+    whose prepared weight row is one unit cardinal coefficient is that routed
+    control row itself. Every other corner is the rational combination of its
+    routed controls, evaluated once per distinct (weight row, control rows)
+    operation of the whole route set, so sibling cells sharing an operation
+    share its arithmetic. Corners naming one vertex through distinct
+    operations or control rows are compared exactly; ``mismatch`` reports
+    unequal images. Unreferenced vertices have no image. Returns ``None``
+    when an element has no prepared corner weights, leaving per-cell owners to
+    decide it. The routed tables are charged once per entry.
+    """
+    prepared_blocks: list[
+        tuple[tuple[tuple[tuple[int, ExactScalar], ...], ...], np.ndarray, np.ndarray]
+    ] = []
+    for element, route, vertices in blocks:
+        identity = element_identity(element, budget=budget)
+        prepared = budget.corner_weight_cache.get(identity)
+        if prepared is None:
+            prepared = _prepare_coordinate_corner_weights(element, budget=budget)
+            if prepared is None:
+                return None
+            budget.corner_weight_cache[identity] = prepared
+        weights = prepared[1]
+        route = np.asarray(route, dtype=np.int64)
+        vertices = np.asarray(vertices, dtype=np.int64)
+        if route.ndim != 2 or route.shape != (
+            vertices.shape[0],
+            element.local_dof_count,
+        ):
+            raise ValueError(
+                "coordinate_enclosure.coefficients must include every source degree of freedom; got unequal row count."
+            )
+        if vertices.ndim != 2 or vertices.shape[1] != len(weights):
+            raise ValueError(
+                "coordinate_vertex_images.vertices must name every reference corner; got another corner count."
+            )
+        prepared_blocks.append((weights, route, vertices))
+    entries = sum(vertices.size for _, _, vertices in prepared_blocks)
+    routed = sum(route.size for _, route, _ in prepared_blocks)
+    budget.reserve(0, 512 + 32 * vertex_count)
+    images: list[tuple[ExactScalar, ...] | None] = [None] * vertex_count
+    if not entries:
+        result = tuple(images)
+        budget.retain_basis(result, operand=True)
+        return result
+    rows: list[tuple[tuple[int, ExactScalar], ...]] = []
+    row_ids: dict[tuple[tuple[int, ExactScalar], ...], int] = {}
+    operations: list[tuple[int, ...]] = []
+    operation_ids: dict[tuple[int, ...], int] = {}
+    vertex_columns: list[np.ndarray] = []
+    code_columns: list[np.ndarray] = []
+    with budget.temporary_scope(), budget.live_storage() as output_storage:
+        # One pass over every routed coefficient and corner; the code, pair and
+        # sort tables coexist with the input routes.
+        budget.reserve(entries + routed, 1024 + 64 * entries + 16 * routed)
+        for weights, route, vertices in prepared_blocks:
+            if route.size and (np.min(route) < 0 or np.max(route) >= len(controls)):
+                raise ValueError(
+                    "coordinate_vertex_images.routes must index the source bank; got an out-of-range row."
+                )
+            if vertices.size and (
+                np.min(vertices) < 0 or np.max(vertices) >= vertex_count
+            ):
+                raise ValueError(
+                    "coordinate_vertex_images.vertices must index mesh vertices; got an out-of-range vertex."
+                )
+            codes = np.empty(vertices.shape, dtype=np.int64)
+            for corner, row in enumerate(weights):
+                if len(row) == 1 and row[0][1] == 1:
+                    codes[:, corner] = route[:, row[0][0]]
+                    continue
+                identifier = row_ids.get(row)
+                if identifier is None:
+                    identifier = row_ids[row] = len(rows)
+                    rows.append(row)
+                table = route[:, [node for node, _ in row]]
+                unique, inverse = np.unique(table, axis=0, return_inverse=True)
+                mapped = np.empty((unique.shape[0],), dtype=np.int64)
+                for position, indices in enumerate(unique.tolist()):
+                    key = (identifier, *indices)
+                    operation = operation_ids.get(key)
+                    if operation is None:
+                        operation = operation_ids[key] = len(operations)
+                        operations.append(key)
+                    mapped[position] = operation
+                codes[:, corner] = -1 - mapped[inverse.reshape(-1)]
+            vertex_columns.append(vertices.reshape(-1))
+            code_columns.append(codes.reshape(-1))
+        dimension = len(controls[0])
+        output_base = 2048 + 192 * len(operations)
+        output_storage.set_bound(output_base)
+        computed: list[tuple[ExactScalar, ...] | None] = [None] * len(operations)
+        fresh = [False] * len(operations)
+        operation_bounds: list[tuple[int, int]] = []
+        retained_output_storage = 0
+        if operations:
+            terms = sum(len(rows[key[0]]) for key in operations)
+            used = sorted({index for key in operations for index in key[1:]})
+            with budget.live_storage() as profiles:
+                profiles.set_bound(
+                    1024 + (192 + 64 * dimension) * len(used) + 64 * len(rows)
+                )
+                control_bits = {
+                    index: tuple(_scalar_bits(value) for value in controls[index])
+                    for index in used
+                }
+                weight_bits = tuple(
+                    max((_scalar_bits(weight) for _, weight in row), default=0)
+                    for row in rows
+                )
+                for key in operations:
+                    width = len(rows[key[0]])
+                    point_storage, arithmetic_scratch = 0, 0
+                    for axis in range(dimension):
+                        bits = width * (
+                            max(
+                                (control_bits[index][axis] for index in key[1:]),
+                                default=0,
+                            )
+                            + weight_bits[key[0]]
+                        ) + width.bit_length()
+                        coefficient_storage = polynomial_coefficient_storage_upper(0, bits)
+                        point_storage += coefficient_storage
+                        arithmetic_scratch = max(arithmetic_scratch, 2 * coefficient_storage)
+                    operation_bounds.append((point_storage, arithmetic_scratch))
+                del control_bits, weight_bits
+            # Retain the original arithmetic charge. Exact scalar expressions
+            # themselves are unchanged; only independent operation demand order
+            # follows the existing sorted vertex requests below.
+            budget.reserve(dimension * terms)
+            _reserve_coefficient_work(
+                banks=(tuple(controls[index] for index in used),),
+                work=dimension * terms,
+                count=dimension * len(operations),
+                degree=2,
+                budget=budget,
+            )
+        pairs = np.unique(
+            np.stack(
+                (np.concatenate(vertex_columns), np.concatenate(code_columns)), axis=1
+            ),
+            axis=0,
+        )
+        bound, first, counts = np.unique(
+            pairs[:, 0], return_index=True, return_counts=True
+        )
+        # Keep the original full comparison charge and sorted comparison/error
+        # order. No topology or entity identity is inferred from equal values.
+        budget.reserve(dimension * (pairs.shape[0] - bound.size))
+
+        def requested_image(
+            code: int,
+        ) -> tuple[tuple[ExactScalar, ...], int | None, bool]:
+            if code >= 0:
+                return controls[code], None, False
+            budget.reserve(1)  # Actual operation-cache lookup.
+            operation = -1 - code
+            point = computed[operation]
+            if point is not None:
+                return point, None, fresh[operation]
+            point_storage, scratch = operation_bounds[operation]
+            output_storage.set_bound(
+                output_base + retained_output_storage + point_storage + scratch
+            )
+            key = operations[operation]
+            row = rows[key[0]]
+            point = tuple(
+                sum(
+                    (
+                        weight * controls[index][axis]
+                        for (_, weight), index in zip(row, key[1:], strict=True)
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(dimension)
+            )
+            builtin_fraction_operation = (
+                all(type(weight) is Fraction for _, weight in row)
+                and all(
+                    type(value) is Fraction
+                    for index in key[1:] for value in controls[index]
+                )
+                and all(type(value) is Fraction for value in point)
+            )
+            return point, operation, builtin_fraction_operation
+
+        codes = pairs[:, 1].tolist()
+        for vertex, start, count in zip(
+            bound.tolist(), first.tolist(), counts.tolist(), strict=True
+        ):
+            image, created, image_fresh = requested_image(codes[start])
+            if created is not None:
+                computed[created] = image
+                fresh[created] = image_fresh
+                retained_output_storage += operation_bounds[created][0]
+            output_storage.set_bound(output_base + retained_output_storage)
+            for other in codes[start + 1 : start + count]:
+                other_image, created, other_fresh = requested_image(other)
+                if other_image != image:
+                    raise ValueError(mismatch)
+                if created is not None:
+                    if image_fresh and other_fresh:
+                        # The complete original exact comparison just proved
+                        # equality at this DECLARED vertex. Share only these
+                        # freshly computed builtin-Fraction numerical owners.
+                        computed[created] = image
+                        fresh[created] = True
+                    else:
+                        computed[created] = other_image
+                        fresh[created] = other_fresh
+                        retained_output_storage += operation_bounds[created][0]
+                del other_image
+                output_storage.set_bound(output_base + retained_output_storage)
+            images[vertex] = image
+        result = tuple(images)
+        budget.retain_basis(result, operand=True)
+        return result
+
+
 def _multi_affine_source(
     element: CellGeometryElement, /, *, budget: CoordinateEnclosureBudget
 ) -> bool:
     """Whether every source scalar has degree at most one in each axis."""
-    key = element_identity(element)
+    key = element_identity(element, budget=budget)
     if key is not None:
         cached = budget.multi_affine_cache.get(key)
         if cached is not None:
             return cached
-    basis = source_basis(element, budget=budget)
+    basis = _source_basis_from_identity(element, key, budget=budget)
     if basis is not None:
         budget.reserve(sum(len(term) for term in basis))
     decided = basis is not None and all(
@@ -3786,6 +4604,9 @@ def _prepare_multi_affine_coordinates(
         budget.retain_basis((key, polynomials, corners))
         budget.coordinate_cache[key] = polynomials
         budget.polynomial_cache[key] = polynomials
+        if budget.capture_polynomial_operands:
+            from ._coordinate_operands import _remember_coordinate_polynomial_operands
+            _remember_coordinate_polynomial_operands(key, polynomials, budget, polynomial=True)
         budget.coordinate_corner_cache[key] = corners
     return polynomials, corners
 
@@ -4796,6 +5617,11 @@ def coordinate_source_signature(element: CellGeometryElement) -> dict[str, objec
             result["barycentric_weights"] = tuple(
                 tuple(row) for row in np.asarray(element.barycentric_weights).tolist()
             )
+            if element.barycentric_homogeneous is not None:
+                result["barycentric_homogeneous"] = tuple(
+                    tuple(row)
+                    for row in np.asarray(element.barycentric_homogeneous).tolist()
+                )
         case geometry.LayerColumnCellGeometryElement():
             result["operator"] = "endpoint-profile-with-authored-corner-corrections"
             result["profile"] = coordinate_source_signature(element.wall_element)
@@ -5471,31 +6297,52 @@ def expression_determinant(
         )
     for row in matrix:
         for value in row:
-            numerator, denominator = expression_parts(value, variables, budget=budget)
+            polynomials = (
+                (value.numerator, value.denominator)
+                if isinstance(value, RationalPolynomial) else (value,)
+            )
             if any(
                 len(index) != variables
-                for polynomial in (numerator, denominator)
+                for polynomial in polynomials
                 for index in polynomial
             ):
                 raise ValueError(
                     "coordinate_enclosure.determinant_entries must share declared parameter axes; got unequal exponent ranks."
                 )
-    result: Expression = {}
+    if dimension == 0:
+        return constant(1, variables, budget=budget)
+    result: Expression | None = None
     for permutation in imported_itertools.permutations(range(dimension)):
         if any(not matrix[row][column] for row, column in enumerate(permutation)):
             continue
-        term: Expression = constant(1, variables, budget=budget)
-        for row, column in enumerate(permutation):
-            term = expression_multiply(term, matrix[row][column], budget=budget)
+        first = matrix[0][permutation[0]]
+        if not isinstance(first, (dict, RationalPolynomial)):
+            raise TypeError(
+                "coordinate_enclosure.expression_multiply.operands must be polynomial expressions; got unsupported operands."
+            )
+        if dimension == 1:
+            # The scalar determinant must still own both numerator and
+            # denominator rather than expose mutable input dictionaries.
+            term = expression_multiply(
+                constant(1, variables, budget=budget), first, budget=budget
+            )
+        else:
+            # No unit polynomial or copy is needed before the first actual
+            # product; that product itself owns the result support.
+            term = first
+            for row in range(1, dimension):
+                term = expression_multiply(
+                    term, matrix[row][permutation[row]], budget=budget
+                )
         sign = (-1) ** sum(
             permutation[i] > permutation[j]
             for i in range(dimension)
             for j in range(i + 1, dimension)
         )
-        result = expression_add(
-            result, expression_scale(term, sign, budget=budget), budget=budget
-        )
-    return result
+        if sign < 0:
+            term = expression_scale(term, -1, budget=budget)
+        result = term if result is None else expression_add(result, term, budget=budget)
+    return {} if result is None else result
 
 
 def _homogeneous_jacobian(
@@ -5591,15 +6438,19 @@ def restrict_chart_expressions(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> tuple[Expression, ...]:
+    origin, matrix = np.asarray(origin), np.asarray(matrix)
     dimension = matrix.shape[1]
+    if source_kind != "pyramid":
+        composition = ExpressionComposition(
+            restriction_chart_arguments(target_kind, origin, matrix, budget=budget),
+            budget=budget,
+        )
+        return composition.compose_many(coordinates, budget=budget)
     chart = chart_arguments(target_kind, dimension, budget=budget)
     arguments = tuple(
         compose(term, chart, budget=budget)
         for term in affine_arguments(origin, matrix, budget=budget)
     )
-    if source_kind != "pyramid":
-        composition = ExpressionComposition(arguments, budget=budget)
-        return tuple(composition(value, budget=budget) for value in coordinates)
     height = arguments[2]
     denominator = add(
         constant(1, dimension, budget=budget),
@@ -5688,6 +6539,9 @@ def _coordinate_expressions_from_prepared(
     )
     if coordinates is not None and key not in budget.coordinate_cache:
         budget.retain_basis((key, coordinates))
+        if budget.capture_polynomial_operands:
+            from ._coordinate_operands import _remember_coordinate_polynomial_operands
+            _remember_coordinate_polynomial_operands(key, coordinates, budget, polynomial=False)
         budget.coordinate_cache[key] = coordinates
     return coordinates
 
@@ -5757,7 +6611,7 @@ def _prepare_coordinate_expressions(
         composition = ExpressionComposition(
             prepared_reference_arguments(element, budget=budget), budget=budget
         )
-        return tuple(composition(value, budget=budget) for value in source)
+        return composition.compose_many(source, budget=budget)
 
     if isinstance(element, _cell_geometry_dispatch().SplineCellGeometryElement):
         basis = source_expressions(element, budget=budget)
@@ -5920,6 +6774,20 @@ class ExpressionComposition:
             )
         numerator, denominator = self._polynomial(value, budget=budget)
         return rational_expression(numerator, denominator, budget=budget)
+
+    def compose_many(
+        self, values: tuple[Expression, ...], /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[Expression, ...]:
+        """Batch only polynomial axes; rational pullbacks keep their scalar route."""
+        if self.composition is not None and not any(
+            isinstance(value, RationalPolynomial) for value in values
+        ):
+            budget.reserve(0, 128 + 16 * len(values))
+            return self.composition.compose_many(
+                tuple(value for value in values if not isinstance(value, RationalPolynomial)),
+                budget=budget,
+            )
+        return tuple(self(value, budget=budget) for value in values)
 
 
 def expression_node_count(value: Expression, domain: str, dimension: int) -> int:
@@ -7903,16 +8771,12 @@ def _source_expression_estimates(
         while isinstance(
             current, _cell_geometry_dispatch().BarycentricCellGeometryElement
         ):
-            weights = (
-                _cell_geometry_dispatch()
-                .prepare_barycentric_source_snapshot(current, budget=budget)
-                .barycentric_weights
-            )
+            weights = barycentric_exact_rows(current, budget=budget)
             basis = _estimate_weighted_bank(
                 basis,
                 tuple(
-                    rational_vector(weights[:, column])
-                    for column in range(weights.shape[1])
+                    tuple(row[column] for row in weights)
+                    for column in range(len(weights[0]))
                 ),
             )
             current = current.source_element

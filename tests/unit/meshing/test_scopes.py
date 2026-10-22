@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 
+import equinox as eqx
 import jax
 import numpy as np
 import pytest
@@ -196,6 +197,31 @@ def test_scope_host_validation_preserves_device_leaves(capacity: int) -> None:
     np.testing.assert_array_equal(device_scope.entity_owner, np.zeros(capacity, np.int32))
 
 
+@pytest.mark.parametrize("dtype", (np.int32, np.int64, np.uint64))
+def test_canonical_scope_members_remain_independently_owned(dtype: type) -> None:
+    from phydrax.meshing._scope import _host_member_ids
+
+    identifiers = np.asarray((0, 3, 11), dtype=dtype)
+    canonical = _host_member_ids(identifiers)
+    assert canonical.dtype == np.int64
+    assert not np.shares_memory(canonical, identifiers)
+    identifiers[0] = 2
+    np.testing.assert_array_equal(canonical, (0, 3, 11))
+    np.testing.assert_array_equal(
+        _host_member_ids(np.asarray((11, 3, 0), dtype=dtype)), canonical
+    )
+
+
+@pytest.mark.parametrize("identifiers", ((0, 0, 3), (3, 0, 0), (-1, 0, 3)))
+def test_scope_member_order_fast_path_preserves_refusals(
+    identifiers: tuple[int, ...],
+) -> None:
+    from phydrax.meshing._scope import _host_member_ids
+
+    with pytest.raises(ValueError, match="unique and nonnegative"):
+        _host_member_ids(np.asarray(identifiers, dtype=np.int64))
+
+
 def test_scope_admits_host_banks_in_one_transfer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -227,7 +253,25 @@ def test_local_scope_reconstruction_preserves_membership_and_identity() -> None:
         np.asarray((29,), dtype=np.int64),
         local_mesh=mesh,
     )
-    assert scope.matches_local_mesh(mesh)
+    from tools.compile_counter import CompileCounter
+
+    assert scope.local_entity_universe is not None
+    copied = eqx.tree_at(
+        lambda value: value.local_entity_universe,
+        scope,
+        scope.local_entity_universe.copy(),
+    )
+    changed = eqx.tree_at(
+        lambda value: value.local_entity_universe,
+        scope,
+        jax.device_put(np.asarray((29, 17), dtype=np.int64)),
+    )
+
+    with CompileCounter() as compiler:
+        assert scope.matches_local_mesh(mesh)
+        assert copied.matches_local_mesh(mesh)
+        assert not changed.matches_local_mesh(mesh)
+    assert compiler.count == 0
     restored = phx.meshing.MeshingScope.from_stored_fields(scope, local_mesh=mesh)
     assert restored.scope_id == scope.scope_id
     assert restored.logical_entity_set_id == scope.logical_entity_set_id

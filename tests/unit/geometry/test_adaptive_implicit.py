@@ -164,7 +164,8 @@ def test_nearly_touching_spheres_are_reported_when_unresolved() -> None:
 
 def test_exact_zero_lattice_samples_are_certified_by_perturbation() -> None:
     # |(0.25, 0.25, 0.25)| is the radius in floating point, so eight lattice
-    # vertices lie exactly on the zero set.
+    # vertices lie exactly on the zero set. The domain lies inside the padded
+    # analytic support, so discovery refines this authored lattice itself.
     radius = float(np.sqrt(0.1875))
     geometry = _G.Sphere((0.0, 0.0, 0.0), radius).compile(coordinate_unit=METER)
     lattice = phx.discretization.TensorGridPlan(
@@ -174,7 +175,7 @@ def test_exact_zero_lattice_samples_are_certified_by_perturbation() -> None:
     with pytest.raises(ValueError, match="ambiguous zero"):
         _G.discover_implicit_surface(geometry, lattice, source_id="fixed")
 
-    result = _discover(geometry, _UNIT, maximum_level=7)
+    result = _discover(geometry, 0.5 * _UNIT, maximum_level=7)
 
     assert result.evidence.accuracy == "certified"
     assert result.evidence.zero_vertex_count == 8

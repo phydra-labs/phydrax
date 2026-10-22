@@ -39,6 +39,9 @@ def stored_mesh() -> CellMesh:
         logical_arrays=(("coordinates", source.coordinates),),
         local_coordinates=source.coordinates,
         local_blocks=source.blocks,
+        local_physical_boundary_entities=tuple(
+            entity.subset("boundary").mask for entity in entities
+        ),
     )
     return CellMesh(source.coordinates, source.blocks, storage=storage)
 
@@ -63,6 +66,33 @@ def test_corner_storage_reconstruction_preserves_coordinate_and_entity_identity(
         np.testing.assert_array_equal(
             restored.entity_owned[degree], storage.entity_owned[degree]
         )
+
+
+@pytest.mark.parametrize("fault", ("missing-degree", "shape", "dtype", "facet", "cell"))
+def test_storage_reconstruction_refuses_invalid_global_boundary_receipts(
+    stored_mesh: CellMesh, fault: str
+) -> None:
+    storage = stored_mesh.storage
+    assert storage is not None
+    assert storage.local_physical_boundary_entities is not None
+    boundary = list(storage.local_physical_boundary_entities)
+    if fault == "missing-degree":
+        boundary.pop()
+    elif fault == "shape":
+        boundary[0] = boundary[0][:-1]
+    elif fault == "dtype":
+        boundary[0] = boundary[0].astype(np.int32)
+    elif fault == "facet":
+        boundary[-2] = ~boundary[-2]
+    else:
+        boundary[-1] = ~boundary[-1]
+    damaged = eqx.tree_at(
+        lambda value: value.local_physical_boundary_entities,
+        storage,
+        tuple(boundary),
+    )
+    with pytest.raises(ValueError, match="local_physical_boundary_entities"):
+        CellMeshStorage.from_stored_fields(damaged)
 
 
 def test_storage_bound_mesh_reconstruction_preserves_logical_ids(

@@ -10,7 +10,7 @@ import sys
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Literal
+from typing import cast, Literal, TYPE_CHECKING
 
 import numpy as np
 
@@ -22,6 +22,7 @@ from phydrax.discretization._coordinate_budget import (
 from phydrax.typing import checked, parse
 
 from ..discretization import _coordinate_enclosure as algebra
+from ..discretization._coordinate_operands import live_affine_area_operands
 from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ._mapped_coverage import (
     nonnegative,
@@ -43,6 +44,13 @@ from ._planar_primitives import (
     signed_measure,
     simplex_key,
 )
+
+
+if TYPE_CHECKING:
+    from ..discretization._coordinate_operands import (
+        _LiveAffineAreaOperands,
+        AffineAreaKey,
+    )
 
 
 type PlanarContainmentStatus = Literal["absent", "unresolved", "proven"]
@@ -71,6 +79,8 @@ class SourceGroup:
     box_upper: np.ndarray
     simplex_keys: tuple[Polygon, ...]
     simplex_key_owners: tuple[int, ...]
+    # No two members were found to overlap with positive measure.
+    disjoint: bool
 
 
 class _SourceCollection(StrictModule):
@@ -126,6 +136,7 @@ def _source_overlaps(
     maximum_pairs: int,
     *,
     budget: CoordinateEnclosureBudget,
+    operands: _LiveAffineAreaOperands | None = None,
 ) -> _SourceOverlaps:
     overlaps = []
     used = 0
@@ -141,7 +152,15 @@ def _source_overlaps(
         for first, second in zip(firsts.tolist(), seconds.tolist(), strict=True):
             with budget.temporary_scope():
                 a, b = members[first], members[second]
-                overlapping = intersection(a[1], b[1], budget=budget) > 0
+                key = (a[1], b[1])
+                area = (
+                    intersection(*key, budget=budget)
+                    if operands is None or not all(
+                        isinstance(value, Fraction) for row in (*a[1], *b[1]) for value in row
+                    )
+                    else operands.intersection(cast("AffineAreaKey", key), budget)
+                )
+                overlapping = area > 0
             if overlapping:
                 budget.reserve(1, 128)
                 overlaps.append((a[0], b[0]))
@@ -156,6 +175,7 @@ def _prepare_source_group(
     orientation: int,
     pair: tuple[int, int],
     members: list[tuple[int, Polygon]],
+    disjoint: bool,
     *,
     budget: CoordinateEnclosureBudget,
 ) -> SourceGroup:
@@ -226,6 +246,7 @@ def _prepare_source_group(
             box_upper,
             simplex_keys,
             simplex_key_owners,
+            disjoint,
         )
     budget.reserve(1, sys.getsizeof(group))
     return group
@@ -242,13 +263,23 @@ def source_groups(
 ) -> tuple[tuple[SourceGroup, ...], tuple[tuple[int, int], ...], int, bool]:
     """Group coplanar labeled source facets and report positive-area overlaps."""
     collected = _collect_source_facets(vertices, facets, regions, budget=budget)
+    operands = live_affine_area_operands(vertices, facets, regions, budget=budget)
     overlaps = _source_overlaps(
-        vertices, facets, collected.plane_members, maximum_pairs, budget=budget
+        vertices, facets, collected.plane_members, maximum_pairs,
+        budget=budget, operands=operands,
     )
     if overlaps.exceeded:
         return (), overlaps.overlaps, overlaps.used, True
     groups = tuple(
-        _prepare_source_group(plane, axes, orientation, pair, members, budget=budget)
+        _prepare_source_group(
+            plane,
+            axes,
+            orientation,
+            pair,
+            members,
+            _members_disjoint(members, overlaps.overlaps),
+            budget=budget,
+        )
         for (plane, axes, orientation, pair), members in sorted(
             collected.collected.items()
         )
@@ -256,8 +287,18 @@ def source_groups(
     return groups, overlaps.overlaps, overlaps.used, False
 
 
+def _members_disjoint(
+    members: list[tuple[int, Polygon]], overlaps: tuple[tuple[int, int], ...], /
+) -> bool:
+    """Whether no reported positive-area overlap joins two of these members."""
+    identifiers = {index for index, _ in members}
+    return not any(
+        first in identifiers and second in identifiers for first, second in overlaps
+    )
+
+
 @checked
-def image_hull(
+def image_controls(
     coordinates: tuple[algebra.Expression, ...],
     domain: str,
     axes: tuple[int, ...],
@@ -265,14 +306,14 @@ def image_hull(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> Polygon | None:
-    domain = parse(domain, algebra.BernsteinDomain, "image_hull.domain")
+    """Projected Bernstein control points whose convex hull encloses the image."""
+    domain = parse(domain, algebra.BernsteinDomain, "image_controls.domain")
     dimension = len(axes)
     projected = tuple(coordinates[axis] for axis in axes)
     if any(isinstance(value, algebra.RationalPolynomial) for value in projected):
-        controls = algebra.expression_control_points(
+        return algebra.expression_control_points(
             projected, domain, dimension, maximum_nodes, budget=budget
         )
-        return None if controls is None else convex_hull(controls, budget=budget)
     polynomial_projected = tuple(
         value for value in projected if not isinstance(value, algebra.RationalPolynomial)
     )
@@ -303,9 +344,7 @@ def image_hull(
         coefficients.append(
             algebra.bernstein_coefficients(elevated, domain, dimension, budget=budget)
         )
-    return convex_hull(
-        tuple(tuple(row) for row in zip(*coefficients, strict=True)), budget=budget
-    )
+    return tuple(tuple(row) for row in zip(*coefficients, strict=True))
 
 
 def _simplex_contains(
@@ -460,10 +499,22 @@ def affine_segment_containment(
     return _simplex_contains(segment, simplex, source_orientation, budget=budget)
 
 
-def _unique_containing_simplex(
-    polygon: Polygon, group: SourceGroup, /, *, budget: CoordinateEnclosureBudget
+@checked
+def containing_member(
+    polygon: Polygon,
+    group: SourceGroup,
+    /,
+    *,
+    unique: bool,
+    budget: CoordinateEnclosureBudget,
 ) -> int | None:
-    """Return the sole convex source simplex containing every target corner."""
+    """Return a convex source member containing every polygon point.
+
+    With ``unique`` the member must be the only one containing the polygon.
+    A positive-area polygon lies in at most one member of a disjoint group,
+    since two would overlap on it with positive measure; such callers therefore
+    accept the first containing member.
+    """
     if len(group.simplices) == 1:
         return (
             0
@@ -472,15 +523,35 @@ def _unique_containing_simplex(
             )
             else None
         )
-    key = simplex_key(polygon, budget=budget)
-    first = bisect_left(group.simplex_keys, key)
-    after = bisect_right(group.simplex_keys, key, lo=first)
-    if after == first + 1:
-        owner = group.simplex_key_owners[first]
-        if _simplex_contains(
-            polygon, group.simplices[owner], group.orientations[owner], budget=budget
+    if len(polygon) == len(group.simplices[0]):
+        # Only a polygon with a member's vertex count can equal its sorted key.
+        key = simplex_key(polygon, budget=budget)
+        first = bisect_left(group.simplex_keys, key)
+        after = bisect_right(group.simplex_keys, key, lo=first)
+        if after == first + 1:
+            owner = group.simplex_key_owners[first]
+            if _simplex_contains(
+                polygon, group.simplices[owner], group.orientations[owner], budget=budget
+            ):
+                return owner
+    owner: int | None = None
+    for index in _containment_candidates(polygon, group, budget=budget):
+        if not _simplex_contains(
+            polygon, group.simplices[index], group.orientations[index], budget=budget
         ):
-            return owner
+            continue
+        if not unique:
+            return index
+        if owner is not None:
+            return None
+        owner = index
+    return owner
+
+
+def _containment_candidates(
+    polygon: Polygon, group: SourceGroup, /, *, budget: CoordinateEnclosureBudget
+) -> list[int]:
+    """Members whose outward box contains the polygon's inward box."""
     target_lower_, target_upper_ = binary64_polygon_bounds(
         polygon, math.inf, -math.inf, budget=budget
     )
@@ -494,27 +565,80 @@ def _unique_containing_simplex(
     )
     # The caller has charged every broad-phase pair. These directed binary64
     # boxes discard impossible owners; rational oriented edges prove containment
-    # for the surviving owner below.
-    candidates = np.flatnonzero(
+    # for the surviving owners.
+    return np.flatnonzero(
         np.all(group.box_lower <= target_lower, axis=1)
         & np.all(group.box_upper >= target_upper, axis=1)
+    ).tolist()
+
+
+@checked
+def containing_members(
+    polygon: Polygon, group: SourceGroup, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[int, ...]:
+    """Every convex source member containing all polygon points, in member order."""
+    candidates = (
+        [0]
+        if len(group.simplices) == 1
+        else _containment_candidates(polygon, group, budget=budget)
     )
-    owner: int | None = None
-    for index in candidates.tolist():
-        if not _simplex_contains(
+    return tuple(
+        index
+        for index in candidates
+        if _simplex_contains(
             polygon, group.simplices[index], group.orientations[index], budget=budget
-        ):
-            continue
-        if owner is not None:
-            return None
-        owner = index
-    return owner
+        )
+    )
+
+
+def _unique_containing_simplex(
+    polygon: Polygon, group: SourceGroup, /, *, budget: CoordinateEnclosureBudget
+) -> int | None:
+    """Return the sole convex source member containing a positive-area polygon."""
+    return containing_member(
+        polygon, group, unique=not group.disjoint, budget=budget
+    )
 
 
 class _Containment(StrictModule):
     outcome: PlanarContainmentStatus
     measure: Fraction
     candidates: tuple[int, ...] = ()
+    own: int | None = None
+
+
+def _oriented_side(group: SourceGroup, own: int | None, raw: Fraction) -> tuple[int, int]:
+    """Return the region side and its orientation sign for a raw projected measure.
+
+    ``None`` selects the side on which a nonzero ``raw`` is positive. Every
+    other side has nonpositive oriented measure and is therefore absent, so
+    the selection decides both region orders with one measure evaluation.
+    """
+    if own is None:
+        own = group.regions[0] if group.orientation * raw > 0 else group.regions[1]
+    return own, group.orientation * (1 if own == group.regions[0] else -1)
+
+
+@checked
+def group_box_candidates(
+    polygon: Polygon, group: SourceGroup, /, *, budget: CoordinateEnclosureBudget
+) -> np.ndarray:
+    """Members whose prepared outward box meets the polygon's outward box.
+
+    Both boxes are directed binary64 enclosures of exact points, so strict
+    separation on any axis proves the closed member disjoint from the polygon.
+    """
+    if len(group.simplices) == 1:
+        return np.ones((1,), dtype=np.bool_)
+    lower, upper = binary64_polygon_bounds(polygon, -math.inf, math.inf, budget=budget)
+    count, dimension = group.box_lower.shape
+    budget.reserve(
+        2 * dimension * count,
+        256 + 16 * dimension + (2 * dimension + 10) * count,
+    )
+    return np.all(
+        group.box_lower <= np.asarray(upper, dtype=np.float64), axis=1
+    ) & np.all(group.box_upper >= np.asarray(lower, dtype=np.float64), axis=1)
 
 
 def _group_intersections(
@@ -528,15 +652,7 @@ def _group_intersections(
                 role="planar_coverage.intersection_measure",
             ),
         )
-    lower, upper = binary64_polygon_bounds(polygon, -math.inf, math.inf, budget=budget)
-    count, dimension = group.box_lower.shape
-    budget.reserve(
-        2 * dimension * count,
-        256 + 16 * dimension + (2 * dimension + 10) * count,
-    )
-    candidates = np.all(
-        group.box_lower <= np.asarray(upper, dtype=np.float64), axis=1
-    ) & np.all(group.box_upper >= np.asarray(lower, dtype=np.float64), axis=1)
+    candidates = group_box_candidates(polygon, group, budget=budget)
     # Strict box separation excludes the entire compact image. Keep zeros in
     # source order, including all touching boxes, so overlap witnesses and
     # rational accumulation retain their declared meanings.
@@ -554,7 +670,7 @@ def _group_intersections(
 def _affine_group_containment(
     corners: tuple[Point, Point, Point],
     group: SourceGroup,
-    own: int,
+    own: int | None,
     maximum_pairs: int,
     work: SubdivisionLedger,
     *,
@@ -566,7 +682,7 @@ def _affine_group_containment(
     raw = rational_coefficient(
         signed_measure(polygon, budget=budget), role="planar_coverage.group_measure"
     )
-    orientation = group.orientation * (1 if own == group.regions[0] else -1)
+    own, orientation = _oriented_side(group, own, raw)
     measure = orientation * raw
     if measure <= 0:
         return _Containment("absent", Fraction(0), ())
@@ -575,7 +691,7 @@ def _affine_group_containment(
         return _Containment("unresolved", Fraction(0), ())
     owner = _unique_containing_simplex(polygon, group, budget=budget)
     if owner is not None:
-        return _Containment("proven", measure, (owner,))
+        return _Containment("proven", measure, (owner,), own)
     intersections = _group_intersections(polygon, group, budget=budget)
     reserve_fraction_work(
         (intersections,), len(intersections), 1, len(intersections), budget=budget
@@ -583,14 +699,14 @@ def _affine_group_containment(
     if sum(intersections, Fraction(0)) != measure:
         return _Containment("absent", Fraction(0), ())
     candidates = tuple(index for index, value in enumerate(intersections) if value > 0)
-    return _Containment("proven", measure, candidates)
+    return _Containment("proven", measure, candidates, own)
 
 
 def _mapped_group_measure(
     coordinates: tuple[algebra.Expression, ...],
     domain: algebra.BernsteinDomain,
     group: SourceGroup,
-    own: int,
+    own: int | None,
     maximum_nodes: int,
     maximum_depth: int,
     maximum_pieces: int,
@@ -612,17 +728,17 @@ def _mapped_group_measure(
     )
     if plane:
         return _Containment("absent", Fraction(0), ())
-    orientation = group.orientation * (1 if own == group.regions[0] else -1)
     jacobian = projected_jacobian(coordinates, group.axes, budget=budget)
-    signed = algebra.expression_scale(jacobian, orientation, budget=budget)
     raw_measure = projected_chart_measure(
         coordinates, domain, group.axes, jacobian=jacobian, budget=budget
     )
     if raw_measure is None:
         return _Containment("unresolved", Fraction(0), ())
+    own, orientation = _oriented_side(group, own, raw_measure)
     measure = orientation * raw_measure
     if measure <= 0:
         return _Containment("absent", Fraction(0), ())
+    signed = algebra.expression_scale(jacobian, orientation, budget=budget)
     if not nonnegative(
         signed,
         domain,
@@ -634,14 +750,14 @@ def _mapped_group_measure(
         budget=budget,
     ):
         return _Containment("unresolved", Fraction(0), ())
-    return _Containment("proven", measure)
+    return _Containment("proven", measure, (), own)
 
 
 def _subdivision_group_containment(
     coordinates: tuple[algebra.Expression, ...],
     domain: algebra.BernsteinDomain,
     group: SourceGroup,
-    measure: Fraction,
+    proven: _Containment,
     maximum_nodes: int,
     maximum_depth: int,
     maximum_pieces: int,
@@ -650,6 +766,16 @@ def _subdivision_group_containment(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _Containment:
+    """Cover every subdivision piece's control hull by the closed source union.
+
+    A planar piece whose control points all lie in one convex source simplex is
+    contained without clipping: its image lies in the control hull, the hull in
+    that closed simplex. The positive oriented measure proved before this
+    search gives every piece a positive-area hull, which the clipped measure of
+    that simplex alone equals, so it is the sole positive-measure candidate of
+    a nonoverlapping union. Other pieces compare the hull's measure with the sum
+    of its clipped source measures.
+    """
     dimension = len(group.axes)
     pending = [(coordinates, 0)]
     children = None
@@ -659,12 +785,24 @@ def _subdivision_group_containment(
         work.charge(depth)
         if work.pieces > maximum_pieces:
             return _Containment("unresolved", Fraction(0), ())
-        hull = image_hull(current, domain, group.axes, maximum_nodes, budget=budget)
-        if hull is None:
+        controls = image_controls(
+            current, domain, group.axes, maximum_nodes, budget=budget
+        )
+        if controls is None:
             return _Containment("unresolved", Fraction(0), ())
         work.candidate_pairs += len(group.simplices)
         if work.candidate_pairs > maximum_pairs:
             return _Containment("unresolved", Fraction(0), ())
+        owner = (
+            _unique_containing_simplex(controls, group, budget=budget)
+            if dimension == 2
+            else None
+        )
+        if owner is not None:
+            if depth == 0:
+                candidates = (owner,)
+            continue
+        hull = convex_hull(controls, budget=budget)
         area = abs(signed_measure(hull, budget=budget))
         intersections = _group_intersections(hull, group, budget=budget)
         reserve_fraction_work(
@@ -690,7 +828,57 @@ def _subdivision_group_containment(
             )
             for child in children
         )
-    return _Containment("proven", measure, candidates)
+    return _Containment("proven", proven.measure, candidates, proven.own)
+
+
+def _mapped_containment(
+    coordinates: tuple[algebra.Expression, ...],
+    domain: str,
+    group: SourceGroup,
+    own: int | None,
+    maximum_nodes: int,
+    maximum_depth: int,
+    maximum_pieces: int,
+    maximum_pairs: int,
+    work: SubdivisionLedger,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _Containment:
+    domain = parse(domain, algebra.BernsteinDomain, "mapped_containment.domain")
+    corners = (
+        _affine_triangle_corners(coordinates, domain, budget=budget)
+        if len(group.axes) == 2
+        else None
+    )
+    if corners is not None:
+        return _affine_group_containment(
+            corners, group, own, maximum_pairs, work, budget=budget
+        )
+    result = _mapped_group_measure(
+        coordinates,
+        domain,
+        group,
+        own,
+        maximum_nodes,
+        maximum_depth,
+        maximum_pieces,
+        work,
+        budget=budget,
+    )
+    if result.outcome != "proven":
+        return result
+    return _subdivision_group_containment(
+        coordinates,
+        domain,
+        group,
+        result,
+        maximum_nodes,
+        maximum_depth,
+        maximum_pieces,
+        maximum_pairs,
+        work,
+        budget=budget,
+    )
 
 
 @checked
@@ -711,39 +899,84 @@ def mapped_containment(
     """Prove an oriented chart image is contained in its labeled source union."""
     if not ((own, other) == group.regions or (other, own) == group.regions):
         return "absent", Fraction(0), ()
-    domain = parse(domain, algebra.BernsteinDomain, "mapped_containment.domain")
-    corners = (
-        _affine_triangle_corners(coordinates, domain, budget=budget)
-        if len(group.axes) == 2
-        else None
+    result = _mapped_containment(
+        coordinates,
+        domain,
+        group,
+        own,
+        maximum_nodes,
+        maximum_depth,
+        maximum_pieces,
+        maximum_pairs,
+        work,
+        budget=budget,
     )
-    if corners is not None:
-        result = _affine_group_containment(
-            corners, group, own, maximum_pairs, work, budget=budget
-        )
-    else:
-        result = _mapped_group_measure(
-            coordinates,
-            domain,
-            group,
-            own,
-            maximum_nodes,
-            maximum_depth,
-            maximum_pieces,
-            work,
-            budget=budget,
-        )
-        if result.outcome == "proven":
-            result = _subdivision_group_containment(
-                coordinates,
-                domain,
-                group,
-                result.measure,
-                maximum_nodes,
-                maximum_depth,
-                maximum_pieces,
-                maximum_pairs,
-                work,
-                budget=budget,
-            )
     return result.outcome, result.measure, result.candidates
+
+
+@checked
+def mapped_side_containment(
+    coordinates: tuple[algebra.Expression, ...],
+    domain: str,
+    group: SourceGroup,
+    maximum_nodes: int,
+    maximum_depth: int,
+    maximum_pieces: int,
+    maximum_pairs: int,
+    work: SubdivisionLedger,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[PlanarContainmentStatus, int | None]:
+    """Decide ``mapped_containment`` for both region orders of ``group`` at once.
+
+    A nonzero projected measure is positive for exactly one order, and every
+    order with nonpositive oriented measure is absent. One plane, Jacobian and
+    measure evaluation therefore selects the only order that can be proven;
+    its ``own`` region is returned with the outcome, ``None`` unless proven.
+    """
+    result = _mapped_containment(
+        coordinates,
+        domain,
+        group,
+        None,
+        maximum_nodes,
+        maximum_depth,
+        maximum_pieces,
+        maximum_pairs,
+        work,
+        budget=budget,
+    )
+    return result.outcome, result.own if result.outcome == "proven" else None
+
+
+@checked
+def mapped_side_orientation(
+    coordinates: tuple[algebra.Expression, ...],
+    domain: str,
+    group: SourceGroup,
+    maximum_nodes: int,
+    maximum_depth: int,
+    maximum_pieces: int,
+    work: SubdivisionLedger,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[PlanarContainmentStatus, int | None]:
+    """Prove the plane, positive measure and Jacobian sign of a mapped chart.
+
+    These are the premises of ``mapped_side_containment`` before its image
+    containment search, decided for both region orders at once; a caller that
+    proves the image contained by other exact means completes the same proof.
+    """
+    domain = parse(domain, algebra.BernsteinDomain, "mapped_side_orientation.domain")
+    result = _mapped_group_measure(
+        coordinates,
+        domain,
+        group,
+        None,
+        maximum_nodes,
+        maximum_depth,
+        maximum_pieces,
+        work,
+        budget=budget,
+    )
+    return result.outcome, result.own if result.outcome == "proven" else None

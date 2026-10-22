@@ -11,10 +11,12 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import numpy as np
 
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_geometry_validity as cell_geometry_validity_owner
 import phydrax.geometry.surface as surface_owner
 import phydrax.imaging as imaging_owner
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._validation import canonical_identifier
@@ -359,6 +361,8 @@ def _prepare_compartment_source(
     interfaces: imaging_owner.CompartmentSurfaceResult,
     interpretation: CompartmentImageInterpretation,
     /,
+    *,
+    outer_geometry: cell_geometry_owner.CellGeometrySpec | None,
 ) -> _CompartmentSourceBinding:
     interpretation_ = parse(
         interpretation, CompartmentImageInterpretation, "interpretation"
@@ -414,6 +418,34 @@ def _prepare_compartment_source(
             "CompartmentMeshingSource.interfaces.surfaces must match the extraction binding; got different interface or mesh IDs"
         )
     definitions = complete_interface_definitions(compartments)
+    if outer_geometry is not None:
+        mesh = outer_surface.mesh
+        if (
+            outer_geometry.block_names != tuple(sorted(block.name for block in mesh.blocks))
+            or not np.array_equal(
+                np.asarray(outer_geometry.coordinates), np.asarray(mesh.coordinates)
+            )
+        ):
+            raise ValueError(
+                "CompartmentMeshingSource.outer_geometry must bind the declared outer mesh; got different coordinates or blocks"
+            )
+        blocks = {block.name: block for block in mesh.blocks}
+        for name, element, route in zip(
+            outer_geometry.block_names,
+            outer_geometry.elements,
+            outer_geometry.geometry_dofs,
+            strict=True,
+        ):
+            block = blocks[name]
+            if (
+                element.cell_kind != block.cell_kind
+                or element.element_id
+                != cell_geometry_owner.coordinate_lagrange_element(block.cell_kind, 1).element_id
+                or not np.array_equal(np.asarray(route), np.asarray(block.vertices))
+            ):
+                raise ValueError(
+                    "CompartmentMeshingSource.outer_geometry must bind affine facet source laws; got different elements or routes"
+                )
     source_id = canonical_fingerprint(
         {
             "kind": "compartment-meshing-source",
@@ -423,6 +455,14 @@ def _prepare_compartment_source(
             "interfaces": interfaces.extraction_id,
             "interpretation": interpretation_,
             "coordinates": contract.spatial_id,
+            **(
+                {
+                    "outer_geometry": cell_geometry_validity_owner.cell_geometry_id(outer_geometry),
+                    "outer_geometry_content": array_tree_fingerprint(outer_geometry),
+                }
+                if outer_geometry is not None
+                else {}
+            ),
         }
     )
     return _CompartmentSourceBinding(
@@ -430,7 +470,7 @@ def _prepare_compartment_source(
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class CompartmentMeshingSource:
     """Bind a voxel-cell material domain to its source revision and spatial contract.
 
@@ -447,6 +487,7 @@ class CompartmentMeshingSource:
     outer_surface: surface_owner.SurfaceModel
     interfaces: imaging_owner.CompartmentSurfaceResult
     interpretation: CompartmentImageInterpretation = "occupied-voxel-cells"
+    outer_geometry: cell_geometry_owner.CellGeometrySpec | None = None
     source_id: str = field(init=False)
     source_revision: str = field(init=False)
     coordinate_contract: SpatialCoordinateContract = field(init=False)
@@ -460,13 +501,17 @@ class CompartmentMeshingSource:
         outer_surface: surface_owner.SurfaceModel,
         interfaces: imaging_owner.CompartmentSurfaceResult,
         interpretation: CompartmentImageInterpretation = "occupied-voxel-cells",
+        *,
+        outer_geometry: cell_geometry_owner.CellGeometrySpec | None = None,
     ) -> None:
         binding = _prepare_compartment_source(
-            labels, compartments, outer_surface, interfaces, interpretation
+            labels, compartments, outer_surface, interfaces, interpretation,
+            outer_geometry=outer_geometry,
         )
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "compartments", compartments)
         object.__setattr__(self, "outer_surface", outer_surface)
+        object.__setattr__(self, "outer_geometry", outer_geometry)
         object.__setattr__(self, "interfaces", interfaces)
         object.__setattr__(self, "interpretation", binding.interpretation)
         object.__setattr__(self, "interface_definitions", binding.interface_definitions)
@@ -482,6 +527,7 @@ class CompartmentMeshingSource:
             self.outer_surface,
             self.interfaces,
             self.interpretation,
+            outer_geometry=self.outer_geometry,
         )
         if (
             expected.source_id != self.source_id

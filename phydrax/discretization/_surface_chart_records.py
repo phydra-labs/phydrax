@@ -20,11 +20,13 @@ from .._trainable import NonTrainableState
 from ..geometry._domain_boundary import MeshingDomainBoundarySource
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
 from ..typing import checked, ConvertibleToArray
+from ..linalg._hermitian_spectral import reserve_fraction_work
 from ._cell_geometry import CellGeometrySpec
 from ._cell_geometry_transition_types import MaterialChartDeformation
 from ._cell_geometry_validity import cell_geometry_id, CellValidityCertificate
 from ._cell_mesh import CellMesh
 from ._chart_geometry import area
+from ._coordinate_budget import CoordinateEnclosureBudget
 
 
 type _ExactPoint = tuple[Fraction, Fraction]
@@ -275,6 +277,8 @@ class PreparedSurfaceChartDeformation(MaterialChartDeformation, NonTrainableStat
         target_mesh: CellMesh,
         target_geometry: CellGeometrySpec,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         if (
             source_mesh.mesh_id,
@@ -361,6 +365,7 @@ class PreparedSurfaceChartDeformation(MaterialChartDeformation, NonTrainableStat
             root_charts = exact_chart_bank(
                 np.asarray(self.material_root_witness.charts)[root_selection],
                 root_selection.size,
+                budget=budget,
             )
             root_ids = np.asarray(self.material_root_witness.cell_global_ids)[
                 root_selection
@@ -375,6 +380,7 @@ class PreparedSurfaceChartDeformation(MaterialChartDeformation, NonTrainableStat
                     item.exact_source_material_charts,
                     root_ids,
                     source_ids,
+                    budget=budget,
                 )
             elif root_charts != item.exact_source_material_charts or not np.array_equal(
                 root_ids, source_ids
@@ -388,6 +394,7 @@ class PreparedSurfaceChartDeformation(MaterialChartDeformation, NonTrainableStat
                 item.exact_target_material_charts,
                 source_ids,
                 chart_cell_ids(target_mesh)[np.asarray(item.target_rows, dtype=np.int64)],
+                budget=budget,
             )
         for mesh, target in ((source_mesh, False), (target_mesh, True)):
             rows = np.concatenate(
@@ -421,13 +428,16 @@ class PreparedSurfaceChartDeformation(MaterialChartDeformation, NonTrainableStat
         cls: type[PreparedSurfaceChartDeformation],
         value: PreparedSurfaceChartDeformation,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> PreparedSurfaceChartDeformation:
-        """Validate retained endpoints without rebuilding numerical chart data."""
+        """Re-prove retained partitions on the supplied actual caller ledger."""
         value.require_bound(
             value.source_mesh,
             value.source_geometry,
             value.target_mesh,
             value.target_geometry,
+            budget=budget,
         )
         return value
 
@@ -504,6 +514,8 @@ def require_material_partition(
     target: tuple[_ExactTriangle, ...],
     source_ids: _IntArray,
     target_ids: _IntArray,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> None:
     """Authenticate native supporting faces and both whole partitions."""
     source_areas, target_areas = (
@@ -522,6 +534,21 @@ def require_material_partition(
             raise ValueError(
                 "surface_chart.require_material_partition.binding must satisfy the declared geometry and cell identities; got material piece changes its source scientific cell binding."
             )
+        # Admit term-visit upper bounds for the three reference solves,
+        # supporting planes, polygon predicates, fan images and area sums.
+        # The bit bound includes division and products of exact input ratios.
+        values = (*source[old], *target[new], *piece.exact_native_source_polygon)
+        bits = max(
+            (
+                max(abs(value.numerator).bit_length(), value.denominator.bit_length())
+                for point in values for value in point
+            ),
+            default=1,
+        )
+        vertices = len(piece.exact_native_source_polygon)
+        reserve_fraction_work(
+            budget, 145 + 47 * vertices, 96 + 24 * vertices, 32 * bits + 64
+        )
         mapped = (
             material_reference(target[new], source[old][0]),
             material_reference(target[new], source[old][1]),
@@ -630,7 +657,9 @@ def require_material_partition(
 
 
 def exact_chart_bank(
-    values: ConvertibleToArray, count: int
+    values: ConvertibleToArray, count: int,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[_ExactTriangle, ...]:
     bank = np.asarray(values, dtype=object)
     if bank.shape != (count, 3, 2):
@@ -652,6 +681,14 @@ def exact_chart_bank(
             )
             points.append(exact)
         charts.append((points[0], points[1], points[2]))
+    bits = max(
+        (
+            max(abs(value.numerator).bit_length(), value.denominator.bit_length())
+            for chart in charts for point in chart for value in point
+        ),
+        default=1,
+    )
+    reserve_fraction_work(budget, 13 * len(charts), 13 * len(charts), 8 * bits + 8)
     if any((not area(chart) for chart in charts)):
         raise ValueError(
             "surface_chart.exact_chart_bank.reference_map must satisfy the regular reference-map contract; got A material chart is singular."

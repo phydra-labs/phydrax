@@ -31,6 +31,10 @@ struct ParallelRequest {
   // bytes in per_item must be zero: scratch is one proved chunk-lifetime
   // bound, including allocator headers/alignment, not an item-count multiple.
   uint64_t arena_bytes_per_chunk = 0;
+  // False: chunk scratch is released inside its chunk, so each participant
+  // recycles one arena (bytes scale with participants). True: chunk outputs
+  // retain their arena, which then stays one per chunk.
+  bool outputs_retain_arena = false;
   uint32_t parallelism = 1;
   // Bounds waiting for the pool; a scoped policy and parent execution also
   // impose their absolute remaining deadline on the region.
@@ -60,6 +64,8 @@ class NativeParallelPolicy final {
 
 uint32_t current_parallelism() noexcept;
 double current_parallel_lease_seconds() noexcept;
+// Absolute policy expiry is independent of request preparation-time debits.
+std::chrono::steady_clock::time_point current_parallel_deadline() noexcept;
 
 namespace parallel_detail {
 using BorrowedBody = int32_t (*)(const void*, std::size_t, std::size_t, ChunkContext&);

@@ -6,11 +6,13 @@ import math
 from fractions import Fraction
 from pathlib import Path
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._atlas import CurveTrimLoop
 from phydrax.geometry.brep import (
     boolean_brep,
     brep_box,
@@ -29,9 +31,16 @@ from phydrax.geometry.brep import (
     prepare_brep_query,
     SpherePatch,
 )
+from phydrax.geometry.brep._boolean_arrangement import arc_area_bounds_batch
+from phydrax.geometry.brep._boolean_cells import _area_sign, _FaceCellWork
 from phydrax.geometry.brep._boolean_coincidence import prove_surface_correspondence
+from phydrax.geometry.brep._boolean_core import boolean_face_chart_box
+from phydrax.geometry.brep._constructors import brep_trim_domain
 from phydrax.geometry.brep._containment import certify_solid_containment
+from phydrax.geometry.brep._coordinate_request import coordinate_source_request
+from phydrax.geometry.brep._intersection_curve import AffinePCurve
 from phydrax.geometry.brep._placed import PlacedSurface
+from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
 from phydrax.interchange._cad import CadInterchangeError
 from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
 from phydrax.interchange._step import write_step
@@ -82,6 +91,176 @@ def _volume(model: BRepModel) -> float:
                         / 6.0
                     )
     return volume
+
+
+def test_boolean_period_chart_requires_authored_full_turn() -> None:
+    model = brep_cylinder(
+        1.0, 2.0, coordinate_contract=_COORDINATES, tessellation=_EXACT_SOURCE
+    )
+    lateral = next(
+        index for index, patch in enumerate(model.patches) if isinstance(patch, CylinderPatch)
+    )
+    original = np.asarray(model.parameter_bounds)
+    bounds = original.copy()
+    bounds[lateral, 0, 0] -= 1e-12
+    bounds[lateral, 1, 0] += 1e-12
+    padded = eqx.tree_at(lambda value: value.parameter_bounds, model, jnp.asarray(bounds))
+    chart = boolean_face_chart_box(padded, lateral)
+    np.testing.assert_array_equal(chart[:, 0], (0.0, 2.0 * math.pi))
+    np.testing.assert_array_equal(padded.parameter_bounds, bounds)
+    assert padded.model_id == model.model_id
+    # A near-full discovery box is not a proof of a whole periodic face.
+    partial = bounds.copy()
+    partial[lateral, 1, 0] = np.nextafter(2.0 * math.pi, -np.inf)
+    narrowed = eqx.tree_at(
+        lambda value: value.parameter_bounds, model, jnp.asarray(partial)
+    )
+    np.testing.assert_array_equal(
+        boolean_face_chart_box(narrowed, lateral), partial[lateral]
+    )
+
+
+def test_trim_loop_preparation_binds_actual_source_and_exact_policy() -> None:
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=_COORDINATES,
+        tessellation=_EXACT_SOURCE,
+    )
+    geometry = model.geometry
+    assert geometry is not None
+    request = TrimRequestPreparations()
+    with coordinate_source_request((model,)) as budget:
+        first = brep_trim_domain(
+            geometry, 0, model.patches[0], tolerance=0.25,
+            preparations=request, budget=budget,
+        )
+        work = budget.work_units
+        repeated = brep_trim_domain(
+            geometry, 0, model.patches[0], tolerance=0.25,
+            preparations=request, budget=budget,
+        )
+        assert repeated.outer is first.outer
+        assert budget.work_units == work
+        assert budget.retained_basis_bytes > 0
+        with coordinate_source_request((model,)) as independent_budget:
+            independent = brep_trim_domain(
+                geometry, 0, model.patches[0], tolerance=0.25,
+                preparations=request, budget=independent_budget,
+            )
+            assert independent.outer is not first.outer
+            np.testing.assert_array_equal(independent.outer.chords, first.outer.chords)
+        finer = brep_trim_domain(
+            geometry, 0, model.patches[0], tolerance=0.125,
+            preparations=request, budget=budget,
+        )
+        assert finer.outer is not first.outer
+        with pytest.raises(ValueError, match="maximum_arcs"):
+            brep_trim_domain(
+                geometry, 0, model.patches[0], tolerance=0.25, maximum_arcs=1,
+                preparations=request, budget=budget,
+            )
+        # The certified cover does not depend on the arc cap; any cap admitting
+        # it reuses the same loop without further work.
+        work = budget.work_units
+        capped = brep_trim_domain(
+            geometry, 0, model.patches[0], tolerance=0.25,
+            maximum_arcs=first.outer.chords.shape[0],
+            preparations=request, budget=budget,
+        )
+        assert capped.outer is first.outer
+        assert budget.work_units == work
+        shifted = eqx.tree_at(
+            lambda value: value.pcurves,
+            geometry,
+            tuple(
+                AffinePCurve(curve, np.eye(2), np.asarray((0.25, 0.0)))
+                for curve in geometry.pcurves
+            ),
+        )
+        assert shifted.geometry_id == geometry.geometry_id
+        changed = brep_trim_domain(
+            shifted, 0, model.patches[0], tolerance=0.25,
+            preparations=request, budget=budget,
+        )
+        assert changed.outer is not first.outer
+        assert isinstance(changed.outer, CurveTrimLoop)
+        assert isinstance(first.outer, CurveTrimLoop)
+        np.testing.assert_array_equal(
+            changed.outer.curves[0].evaluate(jnp.asarray(0.5)),
+            first.outer.curves[0].evaluate(jnp.asarray(0.5)) + np.asarray((0.25, 0.0)),
+        )
+
+
+def test_area_sign_merges_partition_arcs_without_changing_the_certified_sign() -> None:
+    model = brep_cylinder(
+        0.5, 1.0, coordinate_contract=_COORDINATES, tessellation=_EXACT_SOURCE
+    )
+    geometry = model.geometry
+    assert geometry is not None
+    request = TrimRequestPreparations()
+    with coordinate_source_request((model,)) as budget:
+        loops = [
+            loop
+            for face, patch in enumerate(model.patches)
+            if isinstance(
+                loop := brep_trim_domain(
+                    geometry, face, patch, tolerance=1.0 / 64.0,
+                    preparations=request, budget=budget,
+                ).outer,
+                CurveTrimLoop,
+            )
+        ]
+        loop = max(loops, key=lambda item: item.arc_curves.shape[0])
+        arcs = int(loop.arc_curves.shape[0])
+        assert arcs > len(loop.curves)
+        reference = arc_area_bounds_batch(
+            [
+                (loop.curves[int(index)], float(first), float(last))
+                for index, first, last in zip(
+                    loop.arc_curves, loop.arc_first, loop.arc_last, strict=True
+                )
+            ],
+            preparations=request,
+            budget=budget,
+        )
+        lower = math.fsum(item[0] for item in reference)
+        upper = math.fsum(item[1] for item in reference)
+        assert lower > 0 or upper < 0
+        work = _FaceCellWork(maximum=arcs)
+        sign = _area_sign(loop, work, preparations=request, budget=budget)
+        assert sign == (1 if lower > 0 else -1)
+        assert work.used < arcs
+
+
+def test_normalized_trim_batch_preserves_scalar_outward_rounding() -> None:
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=_COORDINATES,
+        tessellation=_EXACT_SOURCE,
+    )
+    assert model.geometry is not None
+    request = TrimRequestPreparations()
+    rows = np.asarray(((0.0, 0.0), (0.1, 0.2), (0.5, 1.0)))
+    with coordinate_source_request((model,)) as budget:
+        domain = brep_trim_domain(
+            model.geometry, 0, model.patches[0], tolerance=0.25,
+            parameter_bounds=np.asarray(((-2.0, -3.0), (4.0, 9.0))),
+            preparations=request, budget=budget,
+        )
+        curve_loop = domain.outer
+        assert isinstance(curve_loop, CurveTrimLoop)
+        curve = curve_loop.curves[0]
+        expected = np.stack(
+            [
+                curve.enclosure(first, last, preparations=request, budget=budget)
+                for first, last in rows
+            ]
+        )
+        np.testing.assert_array_equal(
+            curve.enclosures(rows, preparations=request, budget=budget), expected
+        )
 
 
 @pytest.mark.parametrize(
@@ -356,12 +535,15 @@ def test_nonrational_quadric_boolean_archive_preserves_authority(tmp_path: Path)
         coordinate_contract=_COORDINATES,
         tessellation=_EXACT_SOURCE,
     )
+    preparations = TrimRequestPreparations()
     result = boolean_brep(
         first,
         second,
         "intersection",
         policy=BRepBooleanPolicy(tessellation=_EXACT_SOURCE),
+        preparations=preparations,
     )
+    assert preparations.trim_source_arcs
     geometry = result.model.geometry
     assert geometry is not None
     branches = tuple(

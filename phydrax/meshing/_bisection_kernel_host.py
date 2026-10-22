@@ -10,8 +10,11 @@ imports a partially initialized record class during fresh-module loading.
 
 from __future__ import annotations
 
+import heapq
+import math
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from fractions import Fraction
 from itertools import combinations
 from typing import final, NamedTuple
 
@@ -735,8 +738,8 @@ def prepared_request(
 
 def _longest_edge_labels(
     cells: Cells, coordinates: np.ndarray, dimension: int, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """Maubach labels from the global strict edge order (longest first, then key)."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Maubach labels and their shared strict edge-rank/incidence preparation."""
 
     pairs = MAUBACH_TABLES[dimension][3]
     low = np.minimum(cells.rows[:, pairs[:, 0]], cells.rows[:, pairs[:, 1]])
@@ -769,7 +772,7 @@ def _longest_edge_labels(
         tuples = np.stack((x0, x1, x2, xk), axis=1)
     tags = np.full((count,), dimension, dtype=np.int64)
     tuples, _ = _canonical(tuples, tags, np.zeros((count,), dtype=np.bool_), dimension)
-    return tuples, tags
+    return tuples, tags, unique, rank, inverse.reshape(codes.shape)
 
 
 def _reflected(
@@ -947,8 +950,14 @@ def _bisected(
     chosen = select(cells, selected)
     count = selected.size
     uniform_count(count, budget=budget)
-    _uniform_cavity(count, budget=budget)
     codes = _edge_codes(chosen.tuples[:, 0], chosen.tuples[np.arange(count), chosen.tags])
+    # Each local edit bisects the batch cells sharing one refinement edge: it
+    # removes those cells and proposes two children each. Independent edges are
+    # separate cavities, so the batch is admitted at its largest edge cavity.
+    _uniform_cavity(
+        3 * int(np.max(np.unique(codes, return_counts=True)[1], initial=0)),
+        budget=budget,
+    )
     front, midpoints, created = _split_edges(front, codes, level, dimension)
     first, second = _children(chosen.tuples, chosen.tags, midpoints, dimension)
     odd = _odd_relative(chosen.rows, chosen.tuples, dimension)
@@ -1127,6 +1136,341 @@ def _admissible_marks(
     return np.sort(np.concatenate(accepted)), np.sort(np.concatenate(rejected)), tests
 
 
+def _edge_star_template(
+    mask: int,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> tuple[Cells, Records]:
+    """One of 64 source-edge subsets, in global lexicographic edge order.
+
+    Each selected edge explicitly relabels its incident parents with tag three;
+    records retain that ordered edge and children inherit tag two. The relabeling
+    is not a continuation of the parent's previous Maubach similarity class.
+    """
+    root = np.arange(4, dtype=np.int64)[None, :]
+    zero = np.zeros((1,), dtype=np.int64)
+    cells = Cells(zero, root, root, zero + 3, zero, zero, zero)
+    front = _initial_front(cells, 4, 1, 3)
+    records = _empty_records(3)
+    for column, (first, last) in enumerate(combinations(range(4), 2)):
+        if not mask & (1 << column):
+            continue
+        rows = front.cells.rows
+        selected = np.flatnonzero(
+            np.any(rows == first, axis=1) & np.any(rows == last, axis=1)
+        )
+        middle = rows[selected][
+            (rows[selected] != first) & (rows[selected] != last)
+        ].reshape((-1, 2))
+        tuples = front.cells.tuples.copy()
+        tags = front.cells.tags.copy()
+        tuples[selected] = np.column_stack((
+            np.full(selected.size, first), middle, np.full(selected.size, last),
+        ))
+        tags[selected] = 3
+        tuples[selected], _ = _canonical(
+            tuples[selected], tags[selected], np.zeros(selected.size, dtype=np.bool_), 3
+        )
+        front = front._replace(cells=front.cells._replace(tuples=tuples, tags=tags))
+        front, one, _ = _bisected(
+            front, selected, column + 1, 3, scope=scope, budget=budget
+        )
+        records = joined(records, one)
+    return front.cells, records
+
+
+class _StarCoverPriority:
+    """A live heap key billing each actually inspected ordering field."""
+
+    __slots__ = ("negative_coverage", "rank", "slot", "budget")
+
+    def __init__(
+        self, negative_coverage: int, rank: int, slot: int, *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
+        self.negative_coverage = negative_coverage
+        self.rank = rank
+        self.slot = slot
+        self.budget = budget
+
+    def __lt__(self, other: _StarCoverPriority) -> bool:
+        # Admission precedes the comparison. A refusal escapes heapq and the
+        # request terminates; a partially modified heap is never resumed.
+        self.budget.reserve(1)
+        if self.negative_coverage != other.negative_coverage:
+            return self.negative_coverage < other.negative_coverage
+        self.budget.reserve(1)
+        if self.rank != other.rank:
+            return self.rank < other.rank
+        self.budget.reserve(1)
+        return self.slot < other.slot
+
+
+def _whole_edge_star_generation(
+    start: Start,
+    request: Request,
+    capacity: _Capacity,
+    /,
+    *,
+    coordinates: np.ndarray,
+    templates: dict[int, tuple[Cells, Records]],
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> Refinement:
+    """Prepare complete source-edge stars through a shared finite template bank.
+
+    Every current mark announces its edge using the existing binary64 squared-
+    length priority and stable global edge rank. A deterministic uncovered-
+    marked-star cover chooses enough announced edges to cut every mark.
+    Each source cell applies its selected edges in the same global edge order. This is the
+    complete-star closure, factorized over cells, not independent facet splits:
+    every incident cell sees every selected edge in the identical order. No
+    intermediate mesh is published. One generation has at most eight children
+    per source tetrahedron; subsequent generations have their own actual edges.
+    """
+    front, cells = start.front, start.front.cells
+    count = cells.ids.size
+    budget.reserve(16 * count, 512 * count)
+    tuples, tags, edge_keys, edge_rank, incidence = _longest_edge_labels(cells, coordinates, 3)
+    del tuples, tags
+    marked_edges = incidence[start.marks]
+    ranks = edge_rank[marked_edges]
+    if request.protected_codes.size:
+        protected = _members(request.protected_codes, edge_keys)
+        ranks = np.where(protected[marked_edges], edge_rank.size, ranks)
+    first = np.argmin(ranks, axis=1)
+    blocked = ranks[np.arange(start.marks.size), first] == edge_rank.size
+    rejected = cells.origins[start.marks[blocked]]
+    candidates = np.unique(marked_edges[~blocked, first[~blocked]])
+    candidate_mask = np.zeros(edge_keys.size, dtype=np.bool_)
+    candidate_mask[candidates] = True
+    occurrences = np.flatnonzero(candidate_mask[incidence.reshape(-1)])
+    occurrence_edges = incidence.reshape(-1)[occurrences]
+    order = np.argsort(occurrence_edges, kind="stable")
+    occurrence_edges = occurrence_edges[order]
+    owners = (occurrences // 6)[order]
+    uncovered = np.zeros(count, dtype=np.bool_)
+    uncovered[start.marks[~blocked]] = True
+    # Count actual uncovered marked owners, not unmarked neighbours. Coverage
+    # only decreases: an old heap key is an upper bound until refreshed, so a
+    # live top entry is the true maximum with the original global rank tie.
+    depth = max(1, (int(owners.size) - 1).bit_length())
+    budget.reserve(
+        3 * owners.size + edge_keys.size + 7 * candidates.size
+        + 2 * candidates.size * depth + start.marks.size,
+        512 + 16 * owners.size + 16 * edge_keys.size + 256 * candidates.size,
+    )
+    coverage = np.bincount(
+        occurrence_edges[uncovered[owners]], minlength=edge_keys.size
+    )
+    starts = np.searchsorted(occurrence_edges, candidates, side="left")
+    stops = np.searchsorted(occurrence_edges, candidates, side="right")
+    queue = [
+        _StarCoverPriority(
+            -int(coverage[edge]), int(edge_rank[edge]), slot, budget=budget
+        )
+        for slot, edge in enumerate(candidates)
+    ]
+    heapq.heapify(queue)
+    remaining = int(start.marks.size - np.count_nonzero(blocked))
+    selected_edges = np.empty(candidates.size, dtype=np.int64)
+    selected_count = 0
+    while queue and remaining:
+        # Heap comparisons admit their actual inspected fields through the
+        # private key; the unchanged fixed pop/bookkeeping tariff remains.
+        budget.reserve(3)
+        item = heapq.heappop(queue)
+        slot = item.slot
+        edge = candidates[slot]
+        live = int(coverage[edge])
+        if -item.negative_coverage != live:
+            if live:
+                budget.reserve(3)
+                heapq.heappush(
+                    queue, _StarCoverPriority(-live, item.rank, slot, budget=budget)
+                )
+            continue
+        star = owners[starts[slot]:stops[slot]]
+        budget.reserve(2 * star.size, 256 + 16 * star.size)
+        newly_covered = star[uncovered[star]]
+        selected_edges[selected_count] = edge_keys[edge]
+        selected_count += 1
+        uncovered[newly_covered] = False
+        remaining -= newly_covered.size
+        # Each original marked owner reaches this update once, so the total
+        # incidence scan is at most six entries per mark, never a star retry.
+        entries = 6 * newly_covered.size
+        budget.reserve(3 * entries, 512 + 24 * entries)
+        incident = incidence[newly_covered].reshape(-1)
+        active = incident[candidate_mask[incident]]
+        budget.reserve(active.size)
+        np.add.at(coverage, active, -1)
+    if np.any(uncovered):
+        raise ValueError("Bisection.whole_edge_star must cover every admissible mark")
+    edges = np.sort(selected_edges[:selected_count])
+    if not edges.size:
+        return Refinement(front, _empty_records(3), rejected, 0, 0)
+    del marked_edges, ranks, incidence, edge_keys, edge_rank, candidate_mask
+    del coverage, queue, item, star, newly_covered, incident, active
+    del occurrences, occurrence_edges, owners, candidates, starts, stops, order, uncovered
+    bases = np.sort(cells.rows, axis=1)
+    pairs = np.asarray(tuple(combinations(range(4), 2)), dtype=np.int64)
+    codes = _edge_codes(bases[:, pairs[:, 0]], bases[:, pairs[:, 1]])
+    masks = np.sum(
+        _members(edges, codes) * (1 << np.arange(6, dtype=np.int64)), axis=1
+    )
+    patterns, inverse, multiplicities = np.unique(
+        masks, return_inverse=True, return_counts=True
+    )
+    steps = 0
+    star_sizes = np.zeros(edges.size, dtype=np.int64)
+    groups: list[tuple[np.ndarray, Cells, Records, np.ndarray]] = []
+    for group, (mask, multiplicity) in enumerate(zip(patterns, multiplicities, strict=True)):
+        key = int(mask)
+        template = templates.get(key)
+        if template is None:
+            template = _edge_star_template(key, scope=scope, budget=budget)
+            templates[key] = template
+        leaves, records = template
+        chosen = np.flatnonzero(inverse == group)
+        local_edges = np.flatnonzero(key & (1 << np.arange(6)))
+        if local_edges.size:
+            edge_rows = np.searchsorted(edges, codes[chosen][:, local_edges])
+            local_star = np.bincount(
+                records.vertices - 4, minlength=local_edges.size
+            )
+            np.add.at(star_sizes, edge_rows, np.broadcast_to(local_star, edge_rows.shape))
+        steps += int(multiplicity) * records.parent_ids.size
+        groups.append((chosen, leaves, records, local_edges))
+    vertices = front.vertex_base + front.growth.levels.size + edges.size
+    if count + steps > capacity.cells or vertices > capacity.vertices or steps > capacity.work_units:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            f"Bisection.whole_edge_star must fit actual cells, vertices and binary steps; got {(count + steps, vertices, steps, capacity)!r}",
+            stage="bisection-closure",
+        )
+    if request.limit < 1:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "Bisection.whole_edge_star must fit the declared generation limit",
+            stage="bisection-closure",
+        )
+    _uniform_cavity(3 * int(np.max(star_sizes, initial=0)), budget=budget)
+    uniform_count(steps, 512 * (count + steps + edges.size), budget=budget)
+    level = int(np.max(front.growth.levels, initial=0)) + 1
+    front, midpoints, _ = _split_edges(front, edges, level, 3)
+    children_parts: list[Cells] = []
+    record_parts: list[Records] = []
+    next_cell = front.next_cell
+    for chosen, leaves, records, local_edges in groups:
+        size, splits = chosen.size, records.parent_ids.size
+        vertex_map = np.concatenate((
+            bases[chosen],
+            midpoints[np.searchsorted(edges, codes[chosen][:, local_edges])],
+        ), axis=1)
+        node_ids = next_cell + np.arange(size * 2 * splits, dtype=np.int64).reshape(size, 2 * splits)
+        node_ids = np.column_stack((cells.ids[chosen], node_ids))
+        next_cell += size * 2 * splits
+        odd = _odd_relative(cells.rows[chosen], bases[chosen], 3)
+        rows = _oriented_rows(
+            vertex_map[:, leaves.rows].reshape((-1, 4)),
+            np.repeat(odd, leaves.ids.size),
+        )
+        if not splits:
+            rows = cells.rows[chosen]
+        tuples = (
+            vertex_map[:, leaves.tuples].reshape((-1, 4))
+            if splits else cells.tuples[chosen]
+        )
+        tags = np.tile(leaves.tags, size) if splits else cells.tags[chosen]
+        children_parts.append(Cells(
+            node_ids[:, leaves.ids].reshape(-1),
+            rows,
+            tuples,
+            tags,
+            np.repeat(cells.blocks[chosen], leaves.ids.size),
+            np.repeat(cells.origins[chosen], leaves.ids.size),
+            (cells.generations[chosen, None] + leaves.generations).reshape(-1),
+        ))
+        if splits:
+            parent_rows = _oriented_rows(
+                vertex_map[:, records.rows].reshape((-1, 4)),
+                np.repeat(odd, splits),
+            ).reshape((size, splits, 4))
+            parent_rows[:, records.parent_ids == 0] = cells.rows[chosen, None, :]
+            record_parts.append(Records(
+                node_ids[:, records.parent_ids].reshape(-1),
+                np.repeat(cells.blocks[chosen], splits),
+                parent_rows.reshape((-1, 4)),
+                vertex_map[:, records.tuples].reshape((-1, 4)),
+                np.tile(records.tags, size),
+                node_ids[:, records.child_ids].reshape((-1, 2)),
+                vertex_map[:, records.vertices].reshape(-1),
+            ))
+    children = Cells(*(np.concatenate([part[index] for part in children_parts]) for index in range(len(Cells._fields))))
+    records = (
+        Records(*(np.concatenate([part[index] for part in record_parts]) for index in range(len(Records._fields))))
+        if record_parts else _empty_records(3)
+    )
+    front = front._replace(cells=children, next_cell=next_cell)
+    return Refinement(front, records, np.asarray(rejected, dtype=np.int64), 0, 1)
+
+
+def _whole_edge_star_refinement(
+    start: Start,
+    request: Request,
+    capacity: _Capacity,
+    /,
+    *,
+    generations: int,
+    target_cells: int | None,
+    coordinates: np.ndarray,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> Refinement:
+    """Execute the declared descendant generations under one request allowance."""
+    marked_origins = start.front.cells.origins[start.marks]
+    front = start.front
+    records = _empty_records(3)
+    rejected = np.empty((0,), dtype=np.int64)
+    iterations = 0
+    points = coordinates
+    templates: dict[int, tuple[Cells, Records]] = {}
+    for generation in range(generations):
+        marks = np.flatnonzero(np.isin(front.cells.origins, marked_origins))
+        if not marks.size:
+            break
+        prior_growth = front.growth.levels.size
+        one = _whole_edge_star_generation(
+            start._replace(front=front, marks=marks),
+            request._replace(limit=request.limit - iterations),
+            capacity._replace(work_units=capacity.work_units - records.parent_ids.size),
+            coordinates=points, templates=templates, scope=scope, budget=budget,
+        )
+        front = one.front
+        records = joined(records, one.records)
+        rejected = np.union1d(rejected, one.rejected_ids)
+        iterations += one.iterations
+        if target_cells is not None and front.cells.ids.size >= target_cells:
+            break
+        if generation + 1 < generations:
+            # Only append this generation's new midpoints to the unpublished
+            # edge-ordering view. Exact root stencils/maps are reconstructed
+            # once by build_bisection_edit, never replaced by this priority view.
+            parents = front.growth.parents[prior_growth:, :2]
+            created = parents.shape[0]
+            budget.reserve(
+                16 * created + 3 * points.shape[0], points.nbytes + 96 * created
+            )
+            points = np.concatenate((
+                points,
+                0.5 * points[parents[:, 0]] + 0.5 * points[parents[:, 1]],
+            ))
+    return Refinement(front, records, rejected, 0, iterations)
+
+
 @checked
 def refinement(
     start: Start,
@@ -1136,8 +1480,20 @@ def refinement(
     /,
     *,
     scope: NativeExecutionScope,
+    compatibility: bisection_records.BisectionCompatibility,
+    refinement_generations: int,
+    refinement_target_cells: int | None,
+    coordinates: np.ndarray,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> Refinement:
+    if compatibility is bisection_records.BisectionCompatibility.WHOLE_EDGE_STAR:
+        if dimension != 3:
+            raise ValueError("Bisection.WHOLE_EDGE_STAR requires tetrahedral cells")
+        return _whole_edge_star_refinement(
+            start, request, capacity, generations=refinement_generations,
+            target_cells=refinement_target_cells,
+            coordinates=coordinates, budget=budget, scope=scope
+        )
     accepted, rejected, tests = _admissible_marks(
         start.front, start.marks, request, capacity, dimension, scope=scope, budget=budget
     )
@@ -1493,7 +1849,9 @@ def reprepare_admitted_uniform(
         )
     next_vertex, next_cell = (int(value) for value in retained_issuers)
     with budget.temporary_scope():
-        _uniform_cavity(count, budget=budget)
+        # Each parent's subdivision is one local edit: it removes the parent
+        # and proposes its arrangement children.
+        _uniform_cavity(1 + arrangements, budget=budget)
         slots = count * arrangements * width
         uniform_count(
             slots + admitted.child_vertices.size + source.coordinates.size,
@@ -1554,7 +1912,10 @@ def _labeled_start(
         raise ValueError(
             f"Bisection.coarsen_cell_ids must use a BisectionHierarchy from a previous bisection; got {request.coarsen_ids.size!r}"
         )
-    tuples, tags = _longest_edge_labels(source.cells, source.coordinates, dimension)
+    tuples, tags, edge_keys, edge_rank, incidence = _longest_edge_labels(
+        source.cells, source.coordinates, dimension
+    )
+    del edge_keys, edge_rank, incidence
     cells = source.cells._replace(tuples=tuples, tags=tags)
     next_vertex = (
         int(source.vertex_ids[-1]) + 1
@@ -1611,7 +1972,8 @@ def _labeled_start(
                         stage="uniform-source-preparation",
                     )
                 with budget.temporary_scope():
-                    _uniform_cavity(cells.ids.size, budget=budget)
+                    # One parent's subdivision is one local edit.
+                    _uniform_cavity(1 + arrangements, budget=budget)
                     slots = cells.ids.size * arrangements * (dimension + 1)
                     uniform_count(
                         slots,
@@ -1636,6 +1998,9 @@ def _labeled_start(
                     raise ValueError(
                         f"Bisection.compatibility must apply CONFORMING_CLOSURE to triangle meshes only; tetrahedra require UNIFORM_REFINEMENT; got {(compatibility, dimension, incompatible)!r}"
                     )
+            case bisection_records.BisectionCompatibility.WHOLE_EDGE_STAR:
+                if dimension != 3:
+                    raise ValueError("Bisection.WHOLE_EDGE_STAR requires tetrahedral cells")
             case _:
                 raise ValueError(
                     f"Bisection.compatibility must select a supported bisection compatibility mode; got {compatibility!r}"
@@ -2104,6 +2469,7 @@ def rebind_bisection_presentation_blocks(
             next_vertex_id=hierarchy.next_vertex_id,
             next_cell_id=hierarchy.next_cell_id,
             uniform_refinement=hierarchy.uniform_refinement,
+            refinement_rule=hierarchy.refinement_rule,
         )
 
 
@@ -2550,6 +2916,10 @@ def uniform_inverse(
     }
     active = {int(identifier): index for index, identifier in enumerate(cells.ids)}
     records = []
+    # Packing rows into a MixedSiblingBank allocates, per row, at most 1 KiB of
+    # row/column objects, 128 bytes per integer slot and 96 bytes per reference
+    # coordinate (exact-bits key, transient binary64 table, dictionary float).
+    bank_bytes = 0
     for parent, identifier in enumerate(arrays["parent_ids"]):
         children = arrays["child_ids"][parent]
         uniform_count(children.size, 128 * children.size, budget=budget)
@@ -2611,6 +2981,11 @@ def uniform_inverse(
                 (),
             )
         )
+        bank_bytes += (
+            1024
+            + 128 * (source.dimension + 1 + children.size)
+            + 96 * children.size * (source.dimension + 1) * source.dimension
+        )
     uniform_count(cells.rows.size, 128 * cells.rows.size, budget=budget)
     current = [
         _owner_phydrax_meshing__mixed_adaptation.Cell(
@@ -2639,11 +3014,12 @@ def uniform_inverse(
             request.protected_codes % SHIFT, source, start.next_vertex
         ).tolist()
     )
+    uniform_count(0, bank_bytes, budget=budget)
     # Uniform simplex ancestry has no layer-column cohorts and does not author
     # the mixed hierarchy's unchanged-cell scientific signatures.
     patch = _owner_phydrax_meshing__mixed_adaptation.coarsen_patch(
         current,
-        tuple(records),
+        _owner_phydrax_meshing__mixed_adaptation.MixedSiblingBank(tuple(records)),
         set(cells.ids[flags.marked].tolist()),
         protected,
         set(cells.ids[flags.blocked].tolist()),
@@ -2805,6 +3181,70 @@ def resolved_stencil(
             width,
         )
     return sources, weights
+
+
+def _nondyadic_growth(growth: Growth, /) -> bool:
+    """Whether any authored construction weight is not a power of two."""
+    weights = growth.weights[growth.parents >= 0]
+    return bool(np.any(np.frexp(weights)[0] != 0.5))
+
+
+def _exact_stencil(
+    growth: Growth,
+    vertex_base: int,
+    sources: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Integer homogeneous rows and correctly rounded weights of every new vertex.
+
+    Each construction averages its ``m`` parents with the authored weight
+    ``1/m`` (midpoints, face and cell centroids), composed exactly level by
+    level over the source columns of ``resolved_stencil``. Rows ``h`` satisfy
+    ``h / sum(h)`` equal to the exact barycentric stencil; the returned weights
+    are its binary64 rounding.
+    """
+
+    count, width = sources.shape
+    uniform_count(count * width * width, 192 * count * width, budget=budget)
+    rows: list[dict[int, Fraction]] = [{} for _ in range(count)]
+    for level in np.unique(growth.levels).tolist():
+        for vertex in np.flatnonzero(growth.levels == level).tolist():
+            parents = growth.parents[vertex]
+            valid = parents >= 0
+            arity = int(np.count_nonzero(valid))
+            row: dict[int, Fraction] = {}
+            for parent, weight in zip(
+                parents[valid].tolist(), growth.weights[vertex][valid].tolist(), strict=True
+            ):
+                exact = Fraction(1, arity) if weight == 1.0 / arity else Fraction(weight)
+                if parent >= vertex_base:
+                    for column, value in rows[parent - vertex_base].items():
+                        row[column] = row.get(column, Fraction(0)) + exact * value
+                else:
+                    row[parent] = row.get(parent, Fraction(0)) + exact
+            rows[vertex] = row
+    homogeneous = np.zeros((count, width), dtype=np.float64)
+    weights = np.zeros((count, width), dtype=np.float64)
+    for vertex, row in enumerate(rows):
+        columns = sources[vertex]
+        if sum(row.values(), Fraction(0)) != 1 or sorted(row) != sorted(
+            columns[columns >= 0].tolist()
+        ):
+            raise ValueError(
+                f"Bisection.vertex_stencil must be an exact barycentric source row; got vertex {vertex!r}"
+            )
+        scale = math.lcm(*(value.denominator for value in row.values()))
+        if scale > 2**53:
+            raise ValueError(
+                f"Bisection.vertex_stencil must have a binary64 homogeneous row; got denominator {scale!r}"
+            )
+        for slot, column in enumerate(columns.tolist()):
+            if column >= 0:
+                homogeneous[vertex, slot] = float(row[column] * scale)
+                weights[vertex, slot] = float(row[column])
+    return homogeneous, weights
 
 
 def global_vertices(
@@ -3005,6 +3445,7 @@ def target_hierarchy(
     front: Front,
     /,
     *,
+    refinement_rule: bisection_records.BisectionRefinementRule,
     prior: bisection_records.BisectionHierarchy | None = None,
     source_authority: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> bisection_records.BisectionHierarchy:
@@ -3081,6 +3522,7 @@ def target_hierarchy(
         next_vertex_id=start.next_vertex + front.growth.levels.size,
         next_cell_id=front.next_cell,
         uniform_refinement=uniform,
+        refinement_rule=refinement_rule,
     )
 
 
@@ -3162,12 +3604,25 @@ def build_bisection_edit(
             budget=budget,
         )
     stencil = resolved_stencil(growth, count, dimension)
+    exact = None
+    if _nondyadic_growth(growth):
+        # Centroid weights are not binary64: retain exact homogeneous rows so
+        # nested witnesses carry the rational reference bank, not roundings.
+        exact, rounded = _exact_stencil(growth, count, stencil[0], budget=budget)
+        stencil = (stencil[0], rounded)
     ordered, position, alive = _target_vertices(
         source, coarsening.removed_vertices, growth.levels.size
     )
     # Removed new vertices keep their stencil for composition but relate nothing.
     stencil = (np.where(alive[count:, None], stencil[0], -1), stencil[1])
     coordinates, sources, weights, valid = _target_stencil(source, stencil, ordered)
+    stencil_homogeneous = None
+    if exact is not None:
+        identity = np.zeros((count, dimension + 1), dtype=np.float64)
+        identity[:, 0] = 1.0
+        stencil_homogeneous = np.where(
+            valid, np.concatenate((identity, exact))[ordered], 0.0
+        )
     entity_tables = tuple(
         (
             np.searchsorted(
@@ -3246,7 +3701,13 @@ def build_bisection_edit(
     refined = bool(refinement.records.parent_ids.size) or start.uniform
     coarsened = bool(coarsening.removed_ids.size)
     refinement_witnesses, coarsening_witnesses = _nested_witnesses(
-        source, cells, coarsening, (sources, weights), position
+        source,
+        cells,
+        coarsening,
+        (sources, weights),
+        position,
+        stencil_homogeneous,
+        budget=budget,
     )
     edit = _dependency_phydrax_meshing__topology_edit.CellTopologyEdit(
         "nested_adaptation"
@@ -3268,6 +3729,7 @@ def build_bisection_edit(
         prescribed,
         refinement=refinement_witnesses,
         coarsening=coarsening_witnesses,
+        stencil_homogeneous=stencil_homogeneous,
     )
     return edit, retired
 
@@ -3278,7 +3740,10 @@ def _nested_witnesses(
     coarsening: Coarsening,
     stencil: tuple[np.ndarray, np.ndarray],
     position: np.ndarray,
+    homogeneous: np.ndarray | None,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
     transition_types_owner.NestedReferenceWitnesses,
     transition_types_owner.NestedReferenceWitnesses,
@@ -3296,12 +3761,20 @@ def _nested_witnesses(
     origins = cells.origins[~restored]
     parent_rows = source.cells.rows[np.searchsorted(source.cells.ids, origins)]
     fine = position[cells.rows[~restored]]
+    coarse_rows = source.vertex_ids[parent_rows]
+    if homogeneous is None:
+        reference = _dependency_phydrax_meshing__topology_edit.nested_reference_vertices(
+            sources[fine], weights[fine], coarse_rows
+        )
+        bank = None
+    else:
+        reference, bank = (
+            _dependency_phydrax_meshing__topology_edit.exact_nested_reference_vertices(
+                sources[fine], homogeneous[fine], coarse_rows, budget=budget
+            )
+        )
     refined = transition_types_owner.NestedReferenceWitnesses(
-        cells.ids[~restored],
-        origins,
-        _dependency_phydrax_meshing__topology_edit.nested_reference_vertices(
-            sources[fine], weights[fine], source.vertex_ids[parent_rows]
-        ),
+        cells.ids[~restored], origins, reference, bank
     )
     children = source.cells.rows[
         np.searchsorted(source.cells.ids, coarsening.removed_ids)

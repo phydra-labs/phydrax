@@ -2,7 +2,13 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include "tet_mesh.hpp"
+
+#include <bit>
+#include <mutex>
+#include <numeric>
+
 #include "facet_coverage.hpp"
+#include "spatial_sort.hpp"
 
 namespace phx::mc {
 
@@ -132,6 +138,211 @@ int32_t TetMesh::build_source_witnesses(int64_t point_count, const SourceComplex
   return PHX_MC_OK;
 }
 
+void TetMesh::build_source_face_index() {
+  source_face_nodes_.clear();
+  source_face_roots_.clear();
+  const std::size_t count = original_faces_.size();
+  if (count == 0) return;
+  std::size_t groups = 0;
+  for (std::size_t i = 0; i < face_rows_.size(); ++i) {
+    native_execution_charge(TetWorkCost::kCheckpoint);
+    groups += i == 0 || face_rows_[i - 1].first != face_rows_[i].first;
+  }
+  if (count > source_face_nodes_.max_size() / 2) throw std::bad_alloc();
+  source_face_nodes_.reserve(2 * count - groups);
+  source_face_roots_.reserve(groups);
+  // Leaf indices equal original row indices. No rounded construction is used
+  // in the bounds, including zero-width boxes on coordinate planes.
+  for (std::size_t row = 0; row < count; ++row) {
+    native_execution_charge(TetWorkCost::kVisit);
+    SourceFaceNode leaf;
+    leaf.row = static_cast<int32_t>(row);
+    const auto& face = original_faces_[row];
+    for (int axis = 0; axis < 3; ++axis) {
+      const double a = original_point(face[0])[axis];
+      const double b = original_point(face[1])[axis];
+      const double c = original_point(face[2])[axis];
+      leaf.lower[axis] = std::min({a, b, c});
+      leaf.upper[axis] = std::max({a, b, c});
+    }
+    source_face_nodes_.push_back(leaf);
+  }
+  NativeVector<std::pair<std::uint64_t, int32_t>> order;
+  const auto checkpoint = [] { native_execution_charge(TetWorkCost::kCheckpoint); };
+  for (std::size_t first = 0; first < face_rows_.size();) {
+    std::size_t end = first + 1;
+    while (end < face_rows_.size() && face_rows_[end].first == face_rows_[first].first) {
+      checkpoint();
+      ++end;
+    }
+    if (end - first == 1) {
+      source_face_roots_.push_back({face_rows_[first].first,
+                                    static_cast<std::size_t>(face_rows_[first].second)});
+      first = end;
+      continue;
+    }
+    const auto& initial = source_face_nodes_[static_cast<std::size_t>(face_rows_[first].second)];
+    double lower[3], upper[3];
+    std::copy_n(initial.lower, 3, lower);
+    std::copy_n(initial.upper, 3, upper);
+    for (std::size_t i = first + 1; i < end; ++i) {
+      checkpoint();
+      const auto& leaf = source_face_nodes_[static_cast<std::size_t>(face_rows_[i].second)];
+      for (int axis = 0; axis < 3; ++axis) {
+        lower[axis] = std::min(lower[axis], leaf.lower[axis]);
+        upper[axis] = std::max(upper[axis], leaf.upper[axis]);
+      }
+    }
+    order.clear();
+    order.reserve(end - first);
+    constexpr int bits = 21;  // Shared native 3D Hilbert ordering.
+    constexpr double cells = static_cast<double>((std::uint64_t{1} << bits) - 1);
+    for (std::size_t i = first; i < end; ++i) {
+      const int32_t row = face_rows_[i].second;
+      const auto& leaf = source_face_nodes_[static_cast<std::size_t>(row)];
+      std::uint32_t quantized[3]{};
+      for (int axis = 0; axis < 3; ++axis) {
+        const double center = std::midpoint(leaf.lower[axis], leaf.upper[axis]);
+        const double extent = 0.5 * upper[axis] - 0.5 * lower[axis];
+        const double scaled = extent > 0.0
+            ? (0.5 * center - 0.5 * lower[axis]) / extent * cells : 0.0;
+        quantized[axis] = static_cast<std::uint32_t>(std::clamp(scaled, 0.0, cells));
+      }
+      order.emplace_back(hilbert_key(quantized, 3, bits, checkpoint), row);
+    }
+    std::sort(order.begin(), order.end(), [&](const auto& a, const auto& b) {
+      checkpoint();
+      return a < b;
+    });
+    const auto build = [&](auto&& self, std::size_t begin, std::size_t finish) -> std::size_t {
+      if (finish - begin == 1) return static_cast<std::size_t>(order[begin].second);
+      const std::size_t middle = begin + (finish - begin) / 2;
+      const std::size_t left = self(self, begin, middle);
+      const std::size_t right = self(self, middle, finish);
+      native_execution_charge(TetWorkCost::kVisit);
+      SourceFaceNode node;
+      node.left = left;
+      node.right = right;
+      for (int axis = 0; axis < 3; ++axis) {
+        node.lower[axis] = std::min(source_face_nodes_[left].lower[axis],
+                                    source_face_nodes_[right].lower[axis]);
+        node.upper[axis] = std::max(source_face_nodes_[left].upper[axis],
+                                    source_face_nodes_[right].upper[axis]);
+      }
+      const std::size_t index = source_face_nodes_.size();
+      source_face_nodes_.push_back(node);
+      return index;
+    };
+    source_face_roots_.push_back({face_rows_[first].first, build(build, 0, order.size())});
+    first = end;
+  }
+}
+
+void TetMesh::source_face_candidates(int32_t source, const double* lower, const double* upper,
+                                      NativeVector<int32_t>& rows) const {
+  rows.clear();
+  const auto overlaps = [&](const double* low, const double* high) {
+    for (int axis = 0; axis < 3; ++axis)
+      if (high[axis] < lower[axis] || low[axis] > upper[axis]) return false;
+    return true;
+  };
+  const auto root = std::lower_bound(source_face_roots_.begin(), source_face_roots_.end(),
+      source, [](const auto& entry, int32_t label) { return entry.first < label; });
+  if (root != source_face_roots_.end() && root->first == source) {
+    // Balanced source-local trees bound recursion by the original row-count
+    // logarithm. Closed overlap retains every boundary/edge/point contact.
+    const auto visit = [&](auto&& self, std::size_t index) -> void {
+      native_execution_charge(TetWorkCost::kVisit);
+      const auto& node = source_face_nodes_[index];
+      if (!overlaps(node.lower, node.upper)) return;
+      if (node.row >= 0) rows.push_back(node.row);
+      else {
+        self(self, node.left);
+        self(self, node.right);
+      }
+    };
+    visit(visit, root->second);
+  }
+  // Committed curved rows of this source are few and local to their patch.
+  const std::pair<int32_t, int32_t> probe{source, std::numeric_limits<int32_t>::min()};
+  for (auto claimed = std::lower_bound(claimed_rows_.begin(), claimed_rows_.end(), probe);
+       claimed != claimed_rows_.end() && claimed->first == source; ++claimed) {
+    native_execution_charge(TetWorkCost::kVisit);
+    const auto& face = original_faces_[static_cast<std::size_t>(claimed->second)];
+    double low[3], high[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      const double a = original_point(face[0])[axis];
+      const double b = original_point(face[1])[axis];
+      const double c = original_point(face[2])[axis];
+      low[axis] = std::min({a, b, c});
+      high[axis] = std::max({a, b, c});
+    }
+    if (overlaps(low, high)) rows.push_back(claimed->second);
+  }
+  std::sort(rows.begin(), rows.end(), [](int32_t a, int32_t b) {
+    native_execution_charge(TetWorkCost::kCheckpoint);
+    return a < b;
+  });
+}
+
+double TetMesh::curved_tolerance(int32_t source) const {
+  const auto found = std::lower_bound(
+      curved_sources_.begin(), curved_sources_.end(), source,
+      [](const CurvedSource& entry, int32_t label) { return entry.source < label; });
+  return found != curved_sources_.end() && found->source == source
+             ? found->tolerance
+             : std::numeric_limits<double>::quiet_NaN();
+}
+
+const std::uint8_t* TetMesh::curved_digest(int32_t source) const {
+  const auto found = std::lower_bound(
+      curved_sources_.begin(), curved_sources_.end(), source,
+      [](const CurvedSource& entry, int32_t label) { return entry.source < label; });
+  return found != curved_sources_.end() && found->source == source ? found->digest.data()
+                                                                   : nullptr;
+}
+
+int32_t TetMesh::declare_curved_sources(int64_t face_count, const int32_t* face_sources,
+                                        const CurvedSourceDeclaration& curved) {
+  if (curved.sources == nullptr || curved.tolerances == nullptr || curved.digests == nullptr ||
+      (face_count > 0 && curved.face_claims == nullptr) ||
+      static_cast<std::size_t>(face_count) != original_faces_.size()) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  curved_sources_.clear();
+  curved_claims_.clear();
+  claimed_rows_.clear();
+  curved_sources_.reserve(static_cast<std::size_t>(curved.source_count));
+  for (int64_t i = 0; i < curved.source_count; ++i) {
+    native_execution_charge(TetWorkCost::kVisit);
+    const double tolerance = curved.tolerances[i];
+    if (curved.sources[i] < 0 || !std::isfinite(tolerance) || tolerance < 0.0) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    CurvedSource entry{curved.sources[i], tolerance, {}};
+    std::copy_n(curved.digests + 32 * i, 32, entry.digest.begin());
+    curved_sources_.push_back(entry);
+  }
+  std::sort(curved_sources_.begin(), curved_sources_.end(),
+            [](const CurvedSource& a, const CurvedSource& b) { return a.source < b.source; });
+  for (std::size_t i = 1; i < curved_sources_.size(); ++i) {
+    if (curved_sources_[i - 1].source == curved_sources_[i].source) return PHX_MC_INVALID_INPUT;
+  }
+  for (int64_t i = 0; i < face_count; ++i) {
+    native_execution_charge(TetWorkCost::kVisit);
+    const double tolerance = curved_tolerance(face_sources[i]);
+    const double claim = curved.face_claims[i];
+    if (std::isnan(tolerance)) {
+      if (!std::isnan(claim)) return PHX_MC_INVALID_INPUT;
+      continue;
+    }
+    if (!std::isfinite(claim) || claim < 0.0 || claim > tolerance) return PHX_MC_INVALID_INPUT;
+    curved_claims_.push_back(
+        {static_cast<int32_t>(i), face_sources[i], claim, accepted_generation_});
+  }
+  return PHX_MC_OK;
+}
+
 int32_t TetMesh::build_source(int64_t point_count, const SourceComplex& source) {
   const MemoryScope memory_scope(memory_owner_);
   if (source.face_count < 0 || source.segment_count < 0 ||
@@ -149,6 +360,8 @@ int32_t TetMesh::build_source(int64_t point_count, const SourceComplex& source) 
   int32_t status = prepare_source_points(source_count, source);
   if (status != PHX_MC_OK) return status;
   original_faces_.clear();
+  source_face_nodes_.clear();
+  source_face_roots_.clear();
   original_segments_.clear();
   face_tolerance_.clear();
   segment_tolerance_.clear();
@@ -160,6 +373,7 @@ int32_t TetMesh::build_source(int64_t point_count, const SourceComplex& source) 
   if (status != PHX_MC_OK) return status;
   std::sort(face_rows_.begin(), face_rows_.end());
   std::sort(segment_rows_.begin(), segment_rows_.end());
+  build_source_face_index();
   tighten_source_segment_bounds();
   return build_source_witnesses(point_count, source);
 }
@@ -183,6 +397,7 @@ int32_t TetMesh::complete_boundary_witnesses() {
 int32_t TetMesh::verify_ancestry(int64_t point_count, int64_t face_count, const int32_t* faces,
                                  const int32_t* face_sources, int64_t segment_count,
                                  const int32_t* segments, const int32_t* segment_sources) const {
+  const MemoryScope memory_scope(memory_owner_);
   for (int64_t v = 0; v < point_count; ++v) {
     native_execution_charge(TetWorkCost::kCheckpoint);
     const auto index = static_cast<std::size_t>(v);
@@ -191,11 +406,77 @@ int32_t TetMesh::verify_ancestry(int64_t point_count, int64_t face_count, const 
       return PHX_MC_INVALID_INPUT;
     }
   }
+  NativeVector<std::array<int32_t, 4>> exported_faces;
+  NativeVector<std::size_t> proof_order;
+  NativeVector<int64_t> proof_offsets;
+  NativeVector<int32_t> proof_rows;
+  // Optional preparation for the already-performed constructor proof. Keep
+  // room for staging, the retained bank and vector growth; a constrained
+  // allocation continues through the ordinary uncached verification path.
+  const std::size_t cache_limit = memory_owner_ ? memory_owner_->available_bytes() / 4 : 0;
+  const std::size_t per_face =
+      2 * sizeof(std::array<int32_t, 4>) + sizeof(std::size_t) +
+      2 * sizeof(int64_t) + 9 * sizeof(double) + 3 * sizeof(SourceWitness);
+  const auto count = static_cast<std::size_t>(face_count);
+  bool ordered = face_count > 0 && count <= cache_limit / (per_face + 12);
+  if (ordered) {
+    exported_faces.reserve(count);
+    collect_faces(exported_faces);
+    ordered = exported_faces.size() == count;
+    if (ordered) {
+      proof_order.assign(count, std::numeric_limits<std::size_t>::max());
+      for (std::size_t i = 0; i < count; ++i) {
+        native_execution_charge(TetWorkCost::kVisit);
+        const FaceKey key = FaceKey::of(faces[3 * i], faces[3 * i + 1], faces[3 * i + 2]);
+        std::array<int32_t, 4> probe{key.v[0], key.v[1], key.v[2], face_sources[i]};
+        auto found = std::lower_bound(exported_faces.begin(), exported_faces.end(), probe);
+        if (found == exported_faces.end() || *found != probe) {
+          std::swap(probe[1], probe[2]);
+          found = std::lower_bound(exported_faces.begin(), exported_faces.end(), probe);
+        }
+        if (found == exported_faces.end() || *found != probe) {
+          ordered = false;
+          break;
+        }
+        const auto slot = static_cast<std::size_t>(found - exported_faces.begin());
+        if (proof_order[slot] != std::numeric_limits<std::size_t>::max()) {
+          ordered = false;
+          break;
+        }
+        proof_order[slot] = i;
+      }
+    }
+    if (!ordered) {
+      NativeVector<std::array<int32_t, 4>>{}.swap(exported_faces);
+      NativeVector<std::size_t>{}.swap(proof_order);
+    }
+  }
+  bool retain = ordered;
+  if (retain) {
+    proof_offsets.reserve(count + 1);
+    proof_rows.reserve(count);
+    proof_offsets.push_back(0);
+  }
   NativeVector<int32_t> contributors;
-  for (int64_t i = 0; i < face_count; ++i) {
+  for (int64_t position = 0; position < face_count; ++position) {
+    // Contributor sets are independent of triangle cyclic order and reversal.
+    // Verify the same input faces once, in their canonical export order.
+    const auto i = ordered ? proof_order[static_cast<std::size_t>(position)]
+                           : static_cast<std::size_t>(position);
     native_execution_charge(TetWorkCost::kCheckpoint);
     if (!face_ancestry(faces + 3 * i, face_sources[i], contributors)) {
       return PHX_MC_INVALID_INPUT;
+    }
+    if (retain) {
+      const std::size_t row_limit = (cache_limit - per_face * count) / 12;
+      if (contributors.size() > row_limit - proof_rows.size()) {
+        retain = false;
+        NativeVector<int64_t>{}.swap(proof_offsets);
+        NativeVector<int32_t>{}.swap(proof_rows);
+      } else {
+        proof_rows.insert(proof_rows.end(), contributors.begin(), contributors.end());
+        proof_offsets.push_back(static_cast<int64_t>(proof_rows.size()));
+      }
     }
   }
   for (int64_t i = 0; i < segment_count; ++i) {
@@ -207,6 +488,7 @@ int32_t TetMesh::verify_ancestry(int64_t point_count, int64_t face_count, const 
   for (int32_t t = 0; t < static_cast<int32_t>(complex_.tets.size()); ++t) {
     if (finite(t) && !positive(tet(t).v)) return PHX_MC_INVALID_INPUT;
   }
+  if (retain) store_face_ancestry(exported_faces, proof_offsets, proof_rows);
   return PHX_MC_OK;
 }
 
@@ -292,6 +574,25 @@ bool TetMesh::on_source_row(int32_t v, SourceStratum stratum, std::size_t row) c
 int32_t TetMesh::source_ancestor(SourceStratum stratum, int32_t source,
                                  std::span<const int32_t> support) const {
   const MemoryScope memory_scope(memory_owner_);
+  if (stratum == SourceStratum::kFacet) {
+    for (int32_t vertex : support) {
+      const SourceWitness& own = vertex == pending_ ? pending_source_ : witness(vertex);
+      if (own.deviation != 0.0) continue;
+      // Any containing source row must contain this exact support point.
+      // Bounded witnesses alone do not justify a carrier-box filter.
+      NativeVector<int32_t> candidates;
+      source_face_candidates(source, point(vertex), point(vertex), candidates);
+      for (int32_t row : candidates) {
+        native_execution_charge(TetWorkCost::kCheckpoint);
+        bool contained = true;
+        for (int32_t v : support) {
+          contained = contained && on_source_row(v, stratum, static_cast<std::size_t>(row));
+        }
+        if (contained) return row;
+      }
+      return -1;
+    }
+  }
   const auto& rows = stratum == SourceStratum::kSegment ? segment_rows_ : face_rows_;
   const std::pair<int32_t, int32_t> probe{source, std::numeric_limits<int32_t>::min()};
   for (auto row = std::lower_bound(rows.begin(), rows.end(), probe);
@@ -327,13 +628,13 @@ bool TetMesh::face_ancestry(const int32_t* vertices, int32_t source,
     }
     std::copy_n(point(vertices[k]), 3, subject + 3 * k);
   }
-  NativeVector<int32_t> rows;
-  const std::pair<int32_t, int32_t> probe{source, std::numeric_limits<int32_t>::min()};
-  for (auto row = std::lower_bound(face_rows_.begin(), face_rows_.end(), probe);
-       row != face_rows_.end() && row->first == source; ++row) {
-    native_execution_charge(TetWorkCost::kVisit);
-    rows.push_back(row->second);
+  double lower[3], upper[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    lower[axis] = std::min({subject[axis], subject[3 + axis], subject[6 + axis]});
+    upper[axis] = std::max({subject[axis], subject[3 + axis], subject[6 + axis]});
   }
+  NativeVector<int32_t> rows;
+  source_face_candidates(source, lower, upper, rows);
   if (rows.size() == 1) {
     for (int k = 0; k < 3; ++k)
       if (!on_source_row(vertices[k], SourceStratum::kFacet, rows.front())) return false;
@@ -355,6 +656,108 @@ bool TetMesh::facet_witness_admitted(const int32_t* vertices, int32_t source,
         witness_on_facet(witness, static_cast<std::size_t>(row))) return true;
   }
   return false;
+}
+
+namespace {
+
+bool same_bits(double a, double b) {
+  return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+}
+
+bool same_witness(const SourceWitness& a, const SourceWitness& b) {
+  return a.stratum == b.stratum && a.entity == b.entity &&
+         same_bits(a.parameters[0], b.parameters[0]) &&
+         same_bits(a.parameters[1], b.parameters[1]) && same_bits(a.deviation, b.deviation);
+}
+
+// Serializes memo lookups/stores of const evidence calls that may run on
+// different threads for one handle; never held across ancestry computation.
+std::mutex ancestry_memo_mutex;
+
+template <class T>
+void release_storage(NativeVector<T>& values) noexcept {
+  NativeVector<T> empty(values.get_allocator());
+  values.swap(empty);
+}
+
+}  // namespace
+
+bool TetMesh::cached_face_ancestry(std::span<const std::array<int32_t, 4>> faces,
+                                   NativeVector<int64_t>& offsets,
+                                   NativeVector<int32_t>& rows) const {
+  const std::lock_guard lock(ancestry_memo_mutex);
+  if (!ancestry_cached_ || pending_ != kNoPending || faces.size() != ancestry_faces_.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < faces.size(); ++i) {
+    native_execution_charge(TetWorkCost::kVisit);
+    if (faces[i] != ancestry_faces_[i]) return false;
+    for (int k = 0; k < 3; ++k) {
+      const int32_t v = faces[i][static_cast<std::size_t>(k)];
+      const std::size_t slot = 3 * i + static_cast<std::size_t>(k);
+      const double* p = point(v);
+      for (int axis = 0; axis < 3; ++axis) {
+        if (!same_bits(p[axis], ancestry_points_[3 * slot + static_cast<std::size_t>(axis)])) {
+          return false;
+        }
+      }
+      if (!same_witness(witness(v), ancestry_witnesses_[slot])) return false;
+    }
+  }
+  offsets.assign(ancestry_offsets_.begin(), ancestry_offsets_.end());
+  rows.assign(ancestry_rows_.begin(), ancestry_rows_.end());
+  return true;
+}
+
+void TetMesh::release_face_ancestry() const noexcept {
+  const std::lock_guard lock(ancestry_memo_mutex);
+  ancestry_cached_ = false;
+  release_storage(ancestry_faces_);
+  release_storage(ancestry_points_);
+  release_storage(ancestry_witnesses_);
+  release_storage(ancestry_offsets_);
+  release_storage(ancestry_rows_);
+}
+
+void TetMesh::store_face_ancestry(std::span<const std::array<int32_t, 4>> faces,
+                                  std::span<const int64_t> offsets,
+                                  std::span<const int32_t> rows) const {
+  // A replaced memo returns its storage before the new one is sized, so a
+  // stale memo never holds managed bytes against later work.
+  release_face_ancestry();
+  const std::lock_guard lock(ancestry_memo_mutex);
+  if (pending_ != kNoPending) return;
+  const std::size_t bytes = faces.size() * (sizeof(std::array<int32_t, 4>) +
+                                            9 * sizeof(double) + 3 * sizeof(SourceWitness)) +
+                            offsets.size() * sizeof(int64_t) + rows.size() * sizeof(int32_t);
+  // Room for the payload and one growth copy; never a refused request.
+  if (!memory_owner_ || bytes > memory_owner_->available_bytes() / 2) return;
+  try {
+    ancestry_faces_.reserve(faces.size());
+    ancestry_points_.reserve(9 * faces.size());
+    ancestry_witnesses_.reserve(3 * faces.size());
+    ancestry_offsets_.reserve(offsets.size());
+    ancestry_rows_.reserve(rows.size());
+  } catch (const std::bad_alloc&) {
+    release_storage(ancestry_faces_);
+    release_storage(ancestry_points_);
+    release_storage(ancestry_witnesses_);
+    release_storage(ancestry_offsets_);
+    release_storage(ancestry_rows_);
+    return;
+  }
+  for (const auto& face : faces) {
+    ancestry_faces_.push_back(face);
+    for (int k = 0; k < 3; ++k) {
+      const int32_t v = face[static_cast<std::size_t>(k)];
+      const double* p = point(v);
+      ancestry_points_.insert(ancestry_points_.end(), p, p + 3);
+      ancestry_witnesses_.push_back(witness(v));
+    }
+  }
+  ancestry_offsets_.assign(offsets.begin(), offsets.end());
+  ancestry_rows_.assign(rows.begin(), rows.end());
+  ancestry_cached_ = true;
 }
 
 bool TetMesh::source_position(int32_t vertex, Expansion* coordinates) const {
@@ -721,6 +1124,21 @@ Insertion TetMesh::derive_witness(SourceStratum stratum, int32_t source,
 }
 
 int32_t TetMesh::position_row(SourceStratum stratum, int32_t source, const double* position) {
+  if (stratum == SourceStratum::kFacet) {
+    // A point on a closed original triangle is in that triangle's exact
+    // coordinate box. The source-local index retains every such row,
+    // including contacts on box boundaries and committed curved rows.
+    // Sorted candidates preserve the exhaustive lookup's first-row rule.
+    NativeVector<int32_t> candidates;
+    source_face_candidates(source, position, position, candidates);
+    for (int32_t row : candidates) {
+      if (!spend(TetWorkCost::kFacet)) return -1;
+      const double* corners[3];
+      row_corners(stratum, static_cast<std::size_t>(row), corners);
+      if (on_source_entity(corners, stratum, position)) return row;
+    }
+    return -1;
+  }
   const auto& rows = stratum == SourceStratum::kSegment ? segment_rows_ : face_rows_;
   const std::pair<int32_t, int32_t> probe{source, std::numeric_limits<int32_t>::min()};
   for (auto row = std::lower_bound(rows.begin(), rows.end(), probe);

@@ -26,6 +26,7 @@ from .._trainable import NonTrainableState
 from .._validation import nonnegative_integer, positive_integer
 from ..discretization import _coordinate_enclosure as algebra
 from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..geometry._mapped_source_support import MappedSourceFacetAuthority
@@ -446,14 +447,8 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
             }
         )
 
-    def _contexts(
-        self,
-        source: CellMeshingResult,
-        /,
-        *,
-        budget: CoordinateEnclosureBudget,
-    ) -> tuple[association_owner.PlcBankContext, ...]:
-        material = self.plans[self.material_index]
+    def _material_cell_regions(self, source: CellMeshingResult, /) -> np.ndarray:
+        """Material-namespace region labels of every source cell in entity order."""
         keys = {(plan.domain.source_id, plan.source_revision) for plan in self.plans}
         if any(
             value.association_kind is not GeometryAssociationKind.PIECEWISE_LINEAR
@@ -481,9 +476,52 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 f"ComposedAssociationTransfer.material_association must bind all cells to region strata; got target IDs {np.asarray(owner.target_global_ids)!r}, cell IDs {ids!r}, dimensions {np.asarray(owner.source_dimensions)!r}"
             )
-        cell_regions = np.asarray(owner.source_indices, dtype=np.int64)[
-            owner.target_rows(ids)
-        ]
+        return np.asarray(owner.source_indices, dtype=np.int64)[owner.target_rows(ids)]
+
+    def bind_source_proof(
+        self,
+        source: CellMeshingResult,
+        proof: plc_mapped_support_owner.MappedPlcSupportProof,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        import_charges: bool = True,
+    ) -> plc_mapped_support_owner.MappedPlcSupport:
+        """Bind an ended material source-support proof to a request ledger.
+
+        The source, material domain, allowance, cell regions and certified
+        request are authenticated as for ``PlcAssociationTransfer``;
+        ``import_charges=False`` is for the request whose own charged
+        preparation receipt already contains the proof's work.
+        """
+        certificate = source.certification
+        if certificate is None:
+            raise ValueError(
+                "ComposedAssociationTransfer.source_proof must bind a certified volume source; got no certification"
+            )
+        material = self.plans[self.material_index]
+        return plc_mapped_support_owner.bind_mapped_plc_support(
+            proof,
+            source.mesh,
+            source.geometry,
+            material.domain,
+            self._material_cell_regions(source),
+            maximum_support_queries=self.maximum_support_queries,
+            certification_request=certificate.request,
+            budget=budget,
+            import_charges=import_charges,
+        )
+
+    def _contexts(
+        self,
+        source: CellMeshingResult,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        _prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] | None = None,
+    ) -> tuple[association_owner.PlcBankContext, ...]:
+        material = self.plans[self.material_index]
+        cell_regions = self._material_cell_regions(source)
         certificate = source.certification
         if certificate is None or not certificate.passed:
             raise ValueError(
@@ -496,19 +534,47 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 f"ComposedAssociationTransfer.maximum_data_bytes must admit temporary source classes; got bytes {allocation}, limit {self.maximum_data_bytes}"
             )
-        proof = plc_mapped_support_owner.prepare_mapped_plc_support(
-            source.mesh,
-            source.geometry,
-            material.domain,
-            cell_regions,
-            material.region_indices,
-            maximum_support_queries=self.maximum_support_queries,
-            embedding=certificate.embedding,
-            validity=source.audit.validity,
-            certificate_limits=certificate.request.limits,
-            certification_request=certificate.request,
-            budget=budget,
-        )
+        prepared = [] if _prepared_source is None else _prepared_source
+        if len(prepared) > 1:
+            raise ValueError(
+                f"ComposedAssociationTransfer.prepared_source must contain at most one material support proof; got count {len(prepared)}"
+            )
+        if not prepared:
+            prepared.append(
+                plc_mapped_support_owner.prepare_mapped_plc_support(
+                    source.mesh,
+                    source.geometry,
+                    material.domain,
+                    cell_regions,
+                    material.region_indices,
+                    maximum_support_queries=self.maximum_support_queries,
+                    embedding=certificate.embedding,
+                    validity=source.audit.validity,
+                    certificate_limits=certificate.request.limits,
+                    certification_request=certificate.request,
+                    budget=budget,
+                )
+            )
+        else:
+            # A proof earned earlier in this request is admitted only on this
+            # ledger, for this exact source carrier, domain, allowance and labels.
+            earned = prepared[0]
+            if (
+                earned.ledger is not budget
+                or earned.mesh is not source.mesh
+                or earned.geometry is not source.geometry
+                or earned.domain.domain_id != material.domain.domain_id
+                or earned.limits.maximum_candidate_pairs != self.maximum_support_queries
+                or not np.array_equal(earned.cell_regions, cell_regions)
+                or not plc_mapped_support_owner._support_proof_is_issued(earned.proof)
+            ):
+                raise ValueError(
+                    f"ComposedAssociationTransfer.prepared_source must be bound to this request ledger and match source, material domain, support allowance and cell regions; got same ledger {earned.ledger is budget}, domain {earned.domain.domain_id!r}, allowance {earned.limits.maximum_candidate_pairs}, expected {(material.domain.domain_id, self.maximum_support_queries)!r}"
+                )
+            earned.prepared.require(
+                source.mesh, source.geometry, certificate.request, budget=budget
+            )
+        proof = prepared[0]
         work = [self.maximum_support_queries]
         contexts: list[association_owner.PlcBankContext] = []
         for index in range(len(self.plans)):
@@ -545,13 +611,21 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         budget: CoordinateEnclosureBudget | None = None,
+        _prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] | None = None,
     ) -> tuple[GeometryAssociation, ...]:
         with association_owner.support_budget(
             MeshCertificateLimits().maximum_work_units,
             self.maximum_support_queries,
             budget,
+            maximum_memory_bytes=(
+                MeshCertificateLimits().maximum_scratch_bytes
+                if budget is None
+                else budget.maximum_memory_bytes
+            ),
         ) as budget:
-            contexts = self._contexts(source, budget=budget)
+            contexts = self._contexts(
+                source, budget=budget, _prepared_source=_prepared_source
+            )
             for plan, context in zip(self.plans, contexts, strict=True):
                 plan.source_associations(source, _bank=context, budget=budget)
             return source.associations
@@ -562,11 +636,14 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         budget: CoordinateEnclosureBudget,
+        _prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] | None,
     ) -> tuple[
         tuple[association_owner.PlcBankContext, ...],
         tuple[tuple[PlcEntityClasses, ...], ...],
     ]:
-        contexts = self._contexts(source, budget=budget)
+        contexts = self._contexts(
+            source, budget=budget, _prepared_source=_prepared_source
+        )
         levels = tuple(
             plan.classes(source, _bank=context, budget=budget)
             for plan, context in zip(self.plans, contexts, strict=True)
@@ -580,13 +657,21 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
         *,
         budget: CoordinateEnclosureBudget | None = None,
         _prepared_contexts: list[association_owner.PlcBankContext] | None = None,
+        _prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] | None = None,
     ) -> tuple[ComposedEntityClasses, ...]:
         with association_owner.support_budget(
             MeshCertificateLimits().maximum_work_units,
             self.maximum_support_queries,
             budget,
+            maximum_memory_bytes=(
+                MeshCertificateLimits().maximum_scratch_bytes
+                if budget is None
+                else budget.maximum_memory_bytes
+            ),
         ) as budget:
-            contexts, levels = self._classes(source, budget=budget)
+            contexts, levels = self._classes(
+                source, budget=budget, _prepared_source=_prepared_source
+            )
             if _prepared_contexts is not None:
                 _prepared_contexts.extend(contexts)
             result: list[ComposedEntityClasses] = []
@@ -691,6 +776,11 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
             MeshCertificateLimits().maximum_work_units,
             self.maximum_support_queries,
             budget,
+            maximum_memory_bytes=(
+                MeshCertificateLimits().maximum_scratch_bytes
+                if budget is None
+                else budget.maximum_memory_bytes
+            ),
         ) as budget:
             retained_contexts = [] if _prepared_contexts is None else _prepared_contexts
             levels = (
@@ -759,19 +849,28 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
         embedding: GlobalEmbeddingCertificate | None = None,
         coverage: DomainCoverageCertificate | None = None,
         _certification_request: MeshCertificationInputs | None = None,
+        _geometry_transition: CellGeometryTransition | None = None,
         _prepared_target: list[MeshCertificationPreparedEvidence] | None = None,
+        _prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] | None = None,
         budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[GeometryAssociation, ...]:
         with association_owner.support_budget(
             MeshCertificateLimits().maximum_work_units,
             self.maximum_support_queries,
             budget,
+            maximum_memory_bytes=(
+                MeshCertificateLimits().maximum_scratch_bytes
+                if budget is None
+                else budget.maximum_memory_bytes
+            ),
         ) as budget:
             if embedding is not None or coverage is not None:
                 raise ValueError(
                     f"ComposedAssociationTransfer.target_support must be prepared by its material plan; got supplied embedding {embedding is not None}, coverage {coverage is not None}"
                 )
-            contexts = self._contexts(source, budget=budget)
+            contexts = self._contexts(
+                source, budget=budget, _prepared_source=_prepared_source
+            )
             material = self.material_index
             target_proofs: list[plc_mapped_support_owner.MappedPlcSupport] = []
             output = self.plans[material].propagate(
@@ -781,6 +880,7 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
                 geometry=geometry,
                 _bank=contexts[material],
                 _certification_request=_certification_request,
+                _geometry_transition=_geometry_transition,
                 _prepared_target=_prepared_target,
                 _mapped_target=target_proofs,
                 budget=budget,

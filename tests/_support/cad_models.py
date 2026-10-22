@@ -1,6 +1,8 @@
 """Native B-Rep fixtures shared by the CAD interchange contract tests."""
 
 import hashlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from fractions import Fraction
 from functools import cache
@@ -12,6 +14,8 @@ import numpy as np
 import phydrax as phx
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
+from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry.brep import (
     assemble_brep_model,
     brep_cone,
@@ -28,12 +32,14 @@ from phydrax.geometry.brep import (
     ProfileLoop,
     ProfilePlane,
 )
+from phydrax.geometry.brep._coordinate_request import coordinate_source_request
 from phydrax.geometry.brep._intersection import (
     NativePeriodEndpoint,
     TrimIntersectionRoot,
     TrimRootEndpoint,
 )
 from phydrax.geometry.brep._intersection_curve import CurveTrimSegment
+from phydrax.geometry.brep._measure import prepare_quadrature
 from phydrax.geometry.brep._model import BRepAssemblyContainer
 from phydrax.geometry.brep._patches import (
     BSplineCurve,
@@ -43,6 +49,7 @@ from phydrax.geometry.brep._patches import (
     OffsetSurface,
     PlanePatch,
 )
+from phydrax.geometry.brep._query import BRepQueryPolicy
 from phydrax.geometry.brep._root_bindings import BRepRootSupport, BRepVertexRoot
 from phydrax.interchange._cad import CadImportPolicy, CadStage, StagedCoedge
 from phydrax.meshing.qualification import benchmark_box
@@ -60,6 +67,20 @@ EXACT_VOLUMES = {
     "plate": (12.0 - np.pi * 0.25) * 0.5,
     "ring": np.pi * (3.0**2 - 2.0**2) * 1.0,
 }
+
+
+@contextmanager
+def placement_budget() -> Iterator[CoordinateEnclosureBudget]:
+    """Yield the coordinate ledger for near-rigid CAD placement certification."""
+    with HostBatchTicket(100_000_000, bytes_upper=256 << 20) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=100_000_000,
+            maximum_memory_bytes=256 << 20,
+        )
+        with budget.activate():
+            yield budget
+
 
 # Closed forms for the BRep-text catalog; dimensions match independent OCCT fixtures.
 BREP_TEXT_SOLIDS = (
@@ -677,7 +698,18 @@ def native_offset_plane(policy: CadImportPolicy) -> BRepModel:
 
 
 def solid_volumes(model: BRepModel) -> np.ndarray:
-    return np.asarray(phx.geometry.brep.prepare_brep_query(model).measures.solid_volumes)
+    """Return one quadrature volume per DEFINITION solid, in model solid order.
+
+    This is the measurement `PreparedBRepQuery.measures` publishes, without
+    preparing world-space occurrence queries. Callers apply occurrence
+    multiplicity by indexing with ``occurrence.solid``.
+    """
+    policy = BRepQueryPolicy()
+    with coordinate_source_request((model, policy)) as budget:
+        _, measures = prepare_quadrature(
+            model, model.require_geometry(), policy, coordinate_budget=budget
+        )
+    return np.asarray(measures.solid_volumes)
 
 
 def geometry_of(model: BRepModel, /) -> BRepGeometry:

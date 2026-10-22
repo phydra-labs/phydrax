@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from math import isfinite
 from operator import attrgetter
 from pathlib import Path
-from typing import Any, final, NotRequired, overload, TypedDict
+from typing import Any, final, get_args, Literal, NotRequired, overload, TypedDict
 
 import equinox as eqx
 
@@ -16,11 +17,35 @@ from phydrax.typing import parse
 from tools._meshing_cases import POLYHEDRAL_CASE_NAMES
 
 
+type CadCase = Literal[
+    "planar-box",
+    "quadric-routine",
+    "quadric-larger",
+    "external-routine",
+    "external-combined",
+]
+type ImplicitCase = Literal[
+    "sphere", "sphere-refinement", "offset-ring-torus-anisotropic"
+]
+type ImageCase = Literal["two-slab", "oblique-junction-transport"]
+type DesignCase = Literal["routine-sphere", "larger-sphere", "combined-design-target"]
+type OversetProfile = Literal["routine", "larger", "combined"]
+type ReconstructionCase = Literal["lobed-sphere", "torus", "rotated-ellipsoid"]
+
+CAD_CASES = get_args(CadCase.__value__)
+IMPLICIT_CASES = get_args(ImplicitCase.__value__)
+IMAGE_CASES = get_args(ImageCase.__value__)
+DESIGN_CASES = get_args(DesignCase.__value__)
+OVERSET_PROFILES = get_args(OversetProfile.__value__)
+RECONSTRUCTION_CASES = get_args(ReconstructionCase.__value__)
+
+
 SURFACE_CASES = (
     "sphere",
     "torus",
     "capped_cylinder",
     "annulus",
+    "capped_cylinder_features",
     "cylinder_sheet",
     "folded_plates",
 )
@@ -42,6 +67,7 @@ FAMILY_CASES = (
     "curved-nonsweepable-hex",
     "curved-cavity-hex",
     "curved-material-hex",
+    "nonsweepable-dual-hex",
 )
 
 
@@ -97,6 +123,7 @@ SCENARIOS = (
         "scenarios.image",
         "labeled-image",
         (
+            "image_case",
             "image_size",
             "transport_steps",
             "transport_dt",
@@ -118,7 +145,7 @@ SCENARIOS = (
         "native-design-lifecycle",
         "scenarios.design",
         "design-learned-loop",
-        ("maximum_memory_bytes", "maximum_condition"),
+        ("maximum_memory_bytes", "maximum_condition", "design_case"),
         driver_position=4,
         corpus_position=9,
     ),
@@ -154,6 +181,7 @@ SCENARIOS = (
         "scenarios.implicit",
         "implicit-domain",
         (
+            "implicit_case",
             "maximum_memory_bytes",
             "implicit_radius",
             "implicit_fidelity",
@@ -191,7 +219,7 @@ SCENARIOS = (
         "native-cad-lifecycle",
         "scenarios.cad",
         "native-cad",
-        ("cad_format",),
+        ("cad_format", "cad_case"),
         driver_position=1,
         corpus_position=3,
     ),
@@ -203,12 +231,20 @@ SCENARIOS = (
         driver_position=2,
         corpus_position=2,
     ),
-    Scenario("native-reconstruction-lifecycle", "scenarios.reconstruction"),
+    Scenario(
+        "native-reconstruction-lifecycle",
+        "scenarios.reconstruction",
+        "imperfect-surface",
+        ("reconstruction_case",),
+        driver_position=10,
+        corpus_position=10,
+    ),
     Scenario(
         "native-overset-lifecycle",
         "scenarios.overset",
         "moving-overset",
         (
+            "overset_profile",
             "overset_motion_steps",
             "overset_wall_pairs",
             "overset_donor_pairs",
@@ -274,11 +310,317 @@ _NATIVE_DRIVER_ARGUMENTS = {
     for scenario in sorted(SCENARIOS, key=attrgetter("driver_position"))
     if scenario.driver_arguments is not None
 }
-CORPUS_SCENARIO_WORKFLOWS = {
-    scenario.workflow: scenario.name
+CORPUS_SCENARIOS = tuple(
+    scenario
     for scenario in sorted(SCENARIOS, key=attrgetter("corpus_position"))
     if scenario.corpus_position >= 0 and scenario.workflow is not None
-}
+)
+
+
+def _hybrid_material_controls(
+    profile: str,
+    densities: tuple[float, ...] | list[float] | None,
+    site: str | None,
+    /,
+) -> tuple[tuple[float, ...], str]:
+    """Resolve omitted CLI material controls before freezing the request.
+
+    Explicit material values remain the caller's physics; incompatible
+    cardinality refuses rather than projecting them into another declaration.
+    """
+    single_fluid = profile in ("unit-box", "concave-box-core-lifecycle")
+    values = ((2.0,) if single_fluid else (2.0, 3.0)) if densities is None else tuple(densities)
+    material_site = (
+        ("fluid-density" if single_fluid else "two-material-density")
+        if site is None
+        else site
+    )
+    count = 1 if single_fluid else 2
+    if profile in (
+        "unit-box",
+        "concave-box-core-lifecycle",
+        "curved-periodic-layer-core",
+        "archived-layer-core",
+    ) and len(values) != count:
+        raise ValueError(
+            f"qualification.hybrid_region_densities must contain {count} source-region values for {profile!r}; got {values!r}"
+        )
+    return values, material_site
+
+
+def authored_resource_envelope(
+    scenario: str | None,
+    case_name: str,
+    controls: Mapping[str, object],
+    *,
+    larger: bool,
+) -> dict[str, Any] | None:
+    """Declare finite measured envelopes only for the registered workflow families."""
+    limits: dict[str, int | float]
+    if scenario == "native-surface-pde" or case_name == "planar-hole-feature":
+        limits = {
+            "maximum_work_units": 4_000_000,
+            "maximum_geometry_queries": 4_000_000,
+            "maximum_scratch_bytes": 1_024_000_000,
+            "timeout": 300.0,
+        }
+        rationale = (
+            "Capped planar at 2000000 work, 4000000 queries, 512000000 scratch and "
+            "300 seconds progressed through scientific carrier fixes into adaptation, "
+            "then exhausted 1999999 work with next 2. Queries were 2047558, scratch "
+            "359 MB and elapsed time 133 seconds; transfer/cold had not started. "
+            "Finite work 4000000 doubled the prior work cap. At work/query caps "
+            "4000000 and scratch 512000000, adaptation certification reached "
+            "source_affine_chain, requesting 57886604 scratch bytes with 57885430 "
+            "remaining, a 1174-byte deficit. Work was 2.81M, queries 2.06M and "
+            "elapsed time 146 seconds; later lifecycle had not started. Finite "
+            "scratch 1024000000 doubles the prior cap; other caps and science are unchanged."
+        )
+    elif case_name in POLYHEDRAL_CASE_NAMES:
+        limits = {
+            "maximum_work_units": 2_000_000,
+            "maximum_scratch_bytes": 256_000_000,
+            "timeout": 300.0,
+        }
+        rationale = (
+            "Material-L routine at 640000 work, 1280000 queries, 81920000 scratch "
+            "and 120 seconds passed source FE/VEM/FV and regeneration, then common-"
+            "refinement/conservative remap received native CAPACITY_EXCEEDED. "
+            "Target continuation/archive/cold had not started; the exact limiting "
+            "axis is not established by that status alone. Finite work 2000000, "
+            "scratch 256000000 and whole timeout 300 seconds author diagnostic "
+            "headroom for all six polyhedral profiles. Geometry queries retain "
+            "their prior capacity-scaled limit (1280000 at capacity 20000); "
+            "scientific, entity and data controls are unchanged. This is not "
+            "evidence of successful completion."
+        )
+    elif scenario == "native-periodic-lifecycle":
+        periodic_case = controls.get("periodic_case")
+        if not isinstance(periodic_case, str):
+            return None
+        contract = _periodic_qualification_profile_contracts()[periodic_case]
+        if contract["expected_admission"] != "positive":
+            return None
+        limits = {"maximum_scratch_bytes": 256_000_000, "timeout": 300.0}
+        rationale = (
+            "Retained periodic work evidence 639987 of 640000 predates the current "
+            "2048-times-capacity work multiplier and is stale for work-cap policy. "
+            "The default work remains 40960000 at capacity 20000 unless explicitly "
+            "overridden. The baseline positive exact-algebraic periodic envelope has "
+            "scratch 256000000 and whole timeout 300 seconds, above the prior "
+            "81920000/120 defaults. Entity/data/scientific controls and "
+            "historical binary64 refusal controls are unchanged. This is not "
+            "evidence of successful completion."
+        )
+        if contract["base_case"] == "skew-material-feature":
+            limits["maximum_work_units"] = 320_000_000
+            limits["maximum_geometry_queries"] = 5_120_000
+            limits["maximum_scratch_bytes"] = 512_000_000
+            limits["timeout"] = 1200.0
+            limits["maximum_recipe_bytes"] = 2_097_152
+            rationale += (
+                " Material-feature routine at work 160000000 and queries 2560000 "
+                "reached its target after three refinements (2480 cells, L2 0.0181), "
+                "then coarsen exhausted 159997437 work with next 16384. Queries "
+                "were 1.93M; storage/time had headroom, but archive/cold had not "
+                "started and lifecycle time was 440 seconds. Only material-feature "
+                "routine/larger now author finite work 320000000, queries 5120000 "
+                "and whole timeout 1200 seconds. Scratch 512000000 and science "
+                "are unchanged; exact lattice profiles are untouched. The scratch "
+                "cap retains headroom over the earlier 307950571-byte geometry-"
+                "association requirement. Target attainment alone is not evidence "
+                "of completed coarsen/archive/cold workflow."
+                " At the numerical envelope target and coarsen completed, then "
+                "archive recipe 1099585 bytes exceeded the authored 1048576-byte "
+                "metadata ceiling by 51009; cold had not started. Only material-"
+                "feature routine/larger author finite maximum_recipe_bytes 2097152, "
+                "mapped to the existing archive max_manifest_bytes admission owner. "
+                "Lattice retains 1048576; numerical and scientific caps are unchanged."
+            )
+        else:
+            rationale += (
+                " No current work failure is observed for exact lattice profiles; "
+                "their 2048-times-capacity work allowance remains unchanged."
+            )
+    elif scenario == "native-overset-lifecycle":
+        extended = controls.get("overset_profile") in ("larger", "combined")
+        limits = {
+            "maximum_work_units": 2_000_000 if extended else 1_280_000,
+            "maximum_geometry_queries": 2_560_000,
+            "maximum_scratch_bytes": 128_000_000,
+            "timeout": 180.0,
+        }
+        rationale = (
+            "Moving overset mandatory workflows exhausted the prior finite work/query envelope. "
+            "Cold common-refinement polynomial preparation required 93128801 storage "
+            "bytes before expansion against 81920000; 128000000 authored scratch bytes "
+            "provides 37.4% headroom without changing queries, cavity, or deadline."
+        )
+        if extended:
+            rationale += (
+                " Larger warm execution and both archives passed at 1280000 work; "
+                "fresh cold FE restore completed, then conservative archive "
+                "MeshingGeometryMotionTransition.from_stored_fields to "
+                "stored_record_content_id exhausted work before remap. Larger and "
+                "combined author 2000000 work; the positive routine remains at 1280000."
+            )
+    elif scenario == "native-distributed-lifecycle":
+        limits = {
+            "maximum_work_units": 32_000_000 if larger else 8_000_000,
+            "timeout": 600.0,
+            "maximum_memory_bytes": (32 if larger else 24) * 1024**3,
+        }
+        rationale = (
+            "Distributed routine at work 8000000, 24 GiB and 300 seconds completed "
+            "4-to-2 restore, all 16 roles and continued FE/FV/Euler/RNG/allfield "
+            "acceptance, then rearchive binding failed. Producer time was 148.9 "
+            "seconds, consumer time 275.4 seconds and scenario time 425 seconds; "
+            "memory was healthy. Finite whole timeout 600 seconds provides remaining "
+            "workflow headroom; routine work 8000000, routine/larger memory 24/32 GiB and "
+            "science are unchanged. This does not resolve the binding failure or "
+            "establish successful workflow completion."
+        )
+        if larger:
+            rationale += (
+                " Current larger 6-to-3 at work 8000000, 600 seconds and 32 GiB "
+                "reached initial FE/FV and first refine, then all ranks exhausted "
+                "about 7.99M work with next 6144. Storage/query/cavity/time/memory "
+                "were healthy; checkpoint/cold had not started. Only larger "
+                "authors finite work 32000000, four times the prior cap for its "
+                "two-times resolution/six-rank topology and remaining lifecycle. "
+                "Routine remains at 8000000; all other caps and science are unchanged."
+            )
+    elif scenario == "native-family-lifecycle":
+        limits = {
+            "maximum_work_units": 128_000_000,
+            "maximum_geometry_queries": 32_000_000,
+            "maximum_scratch_bytes": 1_536_000_000,
+            "maximum_data_bytes": 40_960_000,
+            "maximum_memory_bytes": 32 * 1024**3,
+            "timeout": 2400.0,
+        }
+        rationale = (
+            "Family durable 2400-second run at MemoryMax=16G completed publication, "
+            "independent acceptance, association and all-field preparation, then "
+            "the external cgroup recorded oom-kill at finite_volume_owner_preparation_epoch_0 "
+            "after 1442 seconds. Work/query/deadline had headroom. Finite execution-group/"
+            "process memory 32 GiB (34359738368 bytes) doubles the prior cap; native "
+            "scratch 1536000000, retained data 40960000, work/query/deadline and "
+            "science are unchanged. Durable incremental stage and failure evidence "
+            "remains required before any rerun. This envelope is not evidence of "
+            "successful completion; RSS enforcement belongs to the external cgroup."
+        )
+    elif scenario == "native-design-lifecycle":
+        limits = {"maximum_work_units": 480_000, "timeout": 180.0}
+        rationale = "Uniform design required more than 330000 work units; larger cold continuation exceeded 120 seconds."
+    elif (
+        scenario == "native-implicit-lifecycle"
+        and controls.get("implicit_case") in (
+            "sphere-refinement", "offset-ring-torus-anisotropic",
+        )
+    ):
+        limits = {"timeout": 240.0}
+        rationale = (
+            "Implicit sphere-refinement at 120 seconds completed both adaptations/"
+            "transfers, scalar query and final PDE/error, then received native "
+            "TIMEOUT at checkpoint publication. Process time was 122.292 seconds "
+            "including 1.319 seconds reporting; archive/cold had not started. "
+            "Sphere-refinement authors a finite 240-second whole deadline; "
+            "routine sphere remains at 120 seconds. "
+            "Reporting time does not extend the scientific clock."
+        )
+        if controls.get("implicit_case") == "offset-ring-torus-anisotropic":
+            limits["maximum_work_units"] = 80_000_000
+            limits["timeout"] = 2400.0
+            rationale += (
+                " Prior torus at work 80000000 and whole timeout 1200 seconds timed "
+                "out in its first metric stage at 1145 seconds. The exact workset "
+                "optimization has a verified 1.67-1.75x speedup with identical "
+                "arrays/evidence/order. Only torus authors finite whole timeout "
+                "2400 seconds, combining that measured stage and verified speedup "
+                "with remaining workflow headroom. The work 80000000 two-adaptation "
+                "envelope and all other scientific/resource controls are unchanged. "
+                "This envelope is not evidence of successful completion."
+            )
+    elif scenario == "native-cad-lifecycle":
+        limits = {"timeout": 600.0}
+        rationale = (
+            "Native CAD cylinder at 240 seconds reached accepted volume and spent "
+            "203.668 seconds in exact P2 mapped-cell bisection before timeout; solve, "
+            "archive, and cold continuation had not started, with healthy memory. "
+            "The finite 600-second whole deadline is 2.5 times the current completion "
+            "lower bound, retaining all work/query/scratch and scientific controls."
+        )
+    elif (
+        scenario == "native-image-lifecycle"
+        and controls.get("image_case") == "oblique-junction-transport"
+    ):
+        limits = {"timeout": 360.0}
+        rationale = (
+            "Oblique6 warm and archive consumed 130.352 seconds; cold ran another "
+            "109.686 seconds before the 240-second deadline killed it. Completion "
+            "requires more than 240 seconds; 360 seconds leaves at most 229.648 "
+            "seconds for cold continuation, with 50% headroom over the current "
+            "completion lower bound. Two-slab remains unchanged."
+        )
+    else:
+        return None
+    return {
+        "requested": dict(limits),
+        "effective": dict(limits),
+        "rationale": rationale,
+        "policy": "finite-authored-whole-workflow-envelope",
+        **(
+            {
+                "execution_group_memory_enforcement": "external-systemd-cgroup-wrapper",
+                "external_cgroup_properties": {"MemoryMax": limits["maximum_memory_bytes"]},
+            }
+            if scenario in ("native-distributed-lifecycle", "native-family-lifecycle") else {}
+        ),
+        **(
+            {
+                "rerun_prerequisites": ["durable-incremental-stage-and-failure-evidence"],
+            }
+            if scenario == "native-family-lifecycle" else {}
+        ),
+    }
+
+
+def qualification_timeout(controls: Mapping[str, object], default: float) -> float:
+    """Resolve one finite whole-workflow allowance before any launcher starts it."""
+    value = controls.get("timeout", default)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(value)
+        or value <= 0.0
+    ):
+        raise ValueError(f"qualification.timeout must be finite and positive; got {value!r}")
+    return float(value)
+
+
+def _validate_optional_resource_limit(name: str, value: int | None) -> None:
+    if value is not None and (type(value) is not int or value <= 0):
+        raise ValueError(f"qualification.{name} must be a positive integer; got {value!r}")
+
+
+def _validate_resource_controls(
+    timeout: float,
+    maximum_memory_bytes: int,
+    maximum_work_units: int | None,
+    maximum_geometry_queries: int | None,
+    maximum_scratch_bytes: int | None,
+    maximum_data_bytes: int | None,
+    maximum_recipe_bytes: int | None,
+) -> None:
+    if not isfinite(timeout) or timeout <= 0.0:
+        raise ValueError(f"qualification.timeout must be finite and positive; got {timeout!r}")
+    _validate_optional_resource_limit("maximum_memory_bytes", maximum_memory_bytes)
+    _validate_optional_resource_limit("maximum_work_units", maximum_work_units)
+    _validate_optional_resource_limit("maximum_geometry_queries", maximum_geometry_queries)
+    _validate_optional_resource_limit("maximum_scratch_bytes", maximum_scratch_bytes)
+    _validate_optional_resource_limit("maximum_data_bytes", maximum_data_bytes)
+    _validate_optional_resource_limit("maximum_recipe_bytes", maximum_recipe_bytes)
 
 
 @final
@@ -292,13 +634,26 @@ class QualificationControls(StrictModule):
     resolution: int = eqx.field(static=True, default=4)
     capacity: int = eqx.field(static=True, default=20000)
     timeout: float = eqx.field(static=True, default=120.0)
+    maximum_work_units: int | None = eqx.field(static=True, default=None)
+    maximum_geometry_queries: int | None = eqx.field(static=True, default=None)
+    maximum_scratch_bytes: int | None = eqx.field(static=True, default=None)
+    maximum_data_bytes: int | None = eqx.field(static=True, default=None)
+    maximum_recipe_bytes: int | None = eqx.field(static=True, default=None)
     repeats: int = eqx.field(static=True, default=3)
     target_error: float = eqx.field(static=True, default=0.05)
     adaptation_rounds: int = eqx.field(static=True, default=1)
     cad_curving_fidelity: float | None = eqx.field(static=True, default=None)
     surface_case: str = eqx.field(static=True, default="sphere")
     cad_format: str = eqx.field(static=True, default="step")
-    periodic_case: str = eqx.field(static=True, default="skew-lattice")
+    cad_case: CadCase = eqx.field(static=True, default="planar-box")
+    implicit_case: ImplicitCase = eqx.field(static=True, default="sphere")
+    image_case: ImageCase = eqx.field(static=True, default="two-slab")
+    design_case: DesignCase = eqx.field(static=True, default="routine-sphere")
+    overset_profile: OversetProfile = eqx.field(static=True, default="routine")
+    reconstruction_case: ReconstructionCase = eqx.field(
+        static=True, default="lobed-sphere"
+    )
+    periodic_case: str = eqx.field(static=True, default="skew-lattice-exact-algebraic")
     maximum_memory_bytes: int = eqx.field(static=True, default=8 * 1024**3)
     maximum_condition: float = eqx.field(static=True, default=1000000000000.0)
     overset_motion_steps: int = eqx.field(static=True, default=2)
@@ -310,10 +665,10 @@ class QualificationControls(StrictModule):
     hybrid_profile: str = eqx.field(static=True, default="unit-box")
     hybrid_archive: str | None = eqx.field(static=True, default=None)
     hybrid_content_id: str | None = eqx.field(static=True, default=None)
-    hybrid_region_densities: tuple[float, ...] = eqx.field(
-        static=True, default=(2.0, 3.0)
+    hybrid_region_densities: tuple[float, ...] | None = eqx.field(
+        static=True, default=None
     )
-    hybrid_material_site: str = eqx.field(static=True, default="two-material-density")
+    hybrid_material_site: str | None = eqx.field(static=True, default=None)
     hybrid_core_size: float = eqx.field(static=True, default=0.1)
     first_thickness: float = eqx.field(static=True, default=0.1)
     layer_growth: float = eqx.field(static=True, default=1.0)
@@ -345,6 +700,15 @@ class QualificationControls(StrictModule):
     balance_tolerance: float = eqx.field(static=True, default=1e-09)
     oracle_capacity: int = eqx.field(static=True, default=2048)
 
+    def __check_init__(self) -> None:
+        _validate_resource_controls(
+            self.timeout, self.maximum_memory_bytes,
+            self.maximum_work_units, self.maximum_geometry_queries,
+            self.maximum_scratch_bytes,
+            self.maximum_data_bytes,
+            self.maximum_recipe_bytes,
+        )
+
     def to_record(self) -> dict[str, Any]:
         """Serialize host controls at a process or JSON boundary."""
         return {
@@ -357,12 +721,23 @@ class QualificationControls(StrictModule):
             "resolution": self.resolution,
             "capacity": self.capacity,
             "timeout": self.timeout,
+            "maximum_work_units": self.maximum_work_units,
+            "maximum_geometry_queries": self.maximum_geometry_queries,
+            "maximum_scratch_bytes": self.maximum_scratch_bytes,
+            "maximum_data_bytes": self.maximum_data_bytes,
+            "maximum_recipe_bytes": self.maximum_recipe_bytes,
             "repeats": self.repeats,
             "target_error": self.target_error,
             "adaptation_rounds": self.adaptation_rounds,
             "cad_curving_fidelity": self.cad_curving_fidelity,
             "surface_case": self.surface_case,
             "cad_format": self.cad_format,
+            "cad_case": self.cad_case,
+            "implicit_case": self.implicit_case,
+            "image_case": self.image_case,
+            "design_case": self.design_case,
+            "overset_profile": self.overset_profile,
+            "reconstruction_case": self.reconstruction_case,
             "periodic_case": self.periodic_case,
             "maximum_memory_bytes": self.maximum_memory_bytes,
             "maximum_condition": self.maximum_condition,
@@ -410,6 +785,20 @@ class QualificationControls(StrictModule):
     @classmethod
     def from_namespace(cls, value: argparse.Namespace) -> QualificationControls:
         """Convert the parser result once before dispatch."""
+        densities, material_site = (
+            (
+                None
+                if value.hybrid_region_densities is None
+                else tuple(value.hybrid_region_densities),
+                value.hybrid_material_site,
+            )
+            if value.scenario == "native-corpus"
+            else _hybrid_material_controls(
+                value.hybrid_profile,
+                value.hybrid_region_densities,
+                value.hybrid_material_site,
+            )
+        )
         return cls(
             scenario=value.scenario,
             executable=value.executable,
@@ -422,12 +811,27 @@ class QualificationControls(StrictModule):
             resolution=value.resolution,
             capacity=value.capacity,
             timeout=value.timeout,
+            maximum_work_units=value.maximum_work_units,
+            maximum_geometry_queries=value.maximum_geometry_queries,
+            maximum_scratch_bytes=value.maximum_scratch_bytes,
+            maximum_data_bytes=value.maximum_data_bytes,
+            maximum_recipe_bytes=value.maximum_recipe_bytes,
             repeats=value.repeats,
             target_error=value.target_error,
             adaptation_rounds=value.adaptation_rounds,
             cad_curving_fidelity=value.cad_curving_fidelity,
             surface_case=value.surface_case,
             cad_format=value.cad_format,
+            cad_case=parse(value.cad_case, CadCase, "cad_case"),
+            implicit_case=parse(value.implicit_case, ImplicitCase, "implicit_case"),
+            image_case=parse(value.image_case, ImageCase, "image_case"),
+            design_case=parse(value.design_case, DesignCase, "design_case"),
+            overset_profile=parse(
+                value.overset_profile, OversetProfile, "overset_profile"
+            ),
+            reconstruction_case=parse(
+                value.reconstruction_case, ReconstructionCase, "reconstruction_case"
+            ),
             periodic_case=value.periodic_case,
             maximum_memory_bytes=value.maximum_memory_bytes,
             maximum_condition=value.maximum_condition,
@@ -440,8 +844,8 @@ class QualificationControls(StrictModule):
             hybrid_profile=value.hybrid_profile,
             hybrid_archive=value.hybrid_archive,
             hybrid_content_id=value.hybrid_content_id,
-            hybrid_region_densities=tuple(value.hybrid_region_densities),
-            hybrid_material_site=value.hybrid_material_site,
+            hybrid_region_densities=densities,
+            hybrid_material_site=material_site,
             hybrid_core_size=value.hybrid_core_size,
             first_thickness=value.first_thickness,
             layer_growth=value.layer_growth,
@@ -511,11 +915,24 @@ class BenchmarkControls(StrictModule):
     )
     capacity: tuple[int, ...] = eqx.field(static=True, default=(20000,))
     timeout: float = eqx.field(static=True, default=120.0)
+    maximum_work_units: int | None = eqx.field(static=True, default=None)
+    maximum_geometry_queries: int | None = eqx.field(static=True, default=None)
+    maximum_scratch_bytes: int | None = eqx.field(static=True, default=None)
+    maximum_data_bytes: int | None = eqx.field(static=True, default=None)
+    maximum_recipe_bytes: int | None = eqx.field(static=True, default=None)
     target_error: float = eqx.field(static=True, default=0.05)
     adaptation_rounds: int = eqx.field(static=True, default=1)
     comparison: str | None = eqx.field(static=True, default=None)
     cad_format: str = eqx.field(static=True, default="step")
-    periodic_case: str = eqx.field(static=True, default="skew-lattice")
+    cad_case: CadCase = eqx.field(static=True, default="planar-box")
+    implicit_case: ImplicitCase = eqx.field(static=True, default="sphere")
+    image_case: ImageCase = eqx.field(static=True, default="two-slab")
+    design_case: DesignCase = eqx.field(static=True, default="routine-sphere")
+    overset_profile: OversetProfile = eqx.field(static=True, default="routine")
+    reconstruction_case: ReconstructionCase = eqx.field(
+        static=True, default="lobed-sphere"
+    )
+    periodic_case: str = eqx.field(static=True, default="skew-lattice-exact-algebraic")
     maximum_memory_bytes: int = eqx.field(static=True, default=8 * 1024**3)
     maximum_condition: float = eqx.field(static=True, default=1000000000000.0)
     family_case: str = eqx.field(static=True, default="dual-hex")
@@ -524,10 +941,10 @@ class BenchmarkControls(StrictModule):
     hybrid_archive: str | None = eqx.field(static=True, default=None)
     hybrid_content_id: str | None = eqx.field(static=True, default=None)
     hybrid_core_size: float = eqx.field(static=True, default=0.1)
-    hybrid_region_densities: tuple[float, ...] = eqx.field(
-        static=True, default=(2.0, 3.0)
+    hybrid_region_densities: tuple[float, ...] | None = eqx.field(
+        static=True, default=None
     )
-    hybrid_material_site: str = eqx.field(static=True, default="two-material-density")
+    hybrid_material_site: str | None = eqx.field(static=True, default=None)
     layer_count: int = eqx.field(static=True, default=2)
     first_thickness: float = eqx.field(static=True, default=0.1)
     layer_growth: float = eqx.field(static=True, default=1.0)
@@ -565,6 +982,15 @@ class BenchmarkControls(StrictModule):
     gmsh_semantic: bool = eqx.field(static=True, default=False)
     case: tuple[str, ...] | None = eqx.field(static=True, default=None)
 
+    def __check_init__(self) -> None:
+        _validate_resource_controls(
+            self.timeout, self.maximum_memory_bytes,
+            self.maximum_work_units, self.maximum_geometry_queries,
+            self.maximum_scratch_bytes,
+            self.maximum_data_bytes,
+            self.maximum_recipe_bytes,
+        )
+
     def to_record(self) -> dict[str, Any]:
         """Serialize host controls at a process or JSON boundary."""
         return {
@@ -576,10 +1002,21 @@ class BenchmarkControls(StrictModule):
             "polyhedral_source": self.polyhedral_source,
             "capacity": self.capacity,
             "timeout": self.timeout,
+            "maximum_work_units": self.maximum_work_units,
+            "maximum_geometry_queries": self.maximum_geometry_queries,
+            "maximum_scratch_bytes": self.maximum_scratch_bytes,
+            "maximum_data_bytes": self.maximum_data_bytes,
+            "maximum_recipe_bytes": self.maximum_recipe_bytes,
             "target_error": self.target_error,
             "adaptation_rounds": self.adaptation_rounds,
             "comparison": self.comparison,
             "cad_format": self.cad_format,
+            "cad_case": self.cad_case,
+            "implicit_case": self.implicit_case,
+            "image_case": self.image_case,
+            "design_case": self.design_case,
+            "overset_profile": self.overset_profile,
+            "reconstruction_case": self.reconstruction_case,
             "periodic_case": self.periodic_case,
             "maximum_memory_bytes": self.maximum_memory_bytes,
             "maximum_condition": self.maximum_condition,
@@ -641,10 +1078,25 @@ class BenchmarkControls(StrictModule):
             polyhedral_source=tuple(value.polyhedral_source),
             capacity=tuple(value.capacity),
             timeout=value.timeout,
+            maximum_work_units=value.maximum_work_units,
+            maximum_geometry_queries=value.maximum_geometry_queries,
+            maximum_scratch_bytes=value.maximum_scratch_bytes,
+            maximum_data_bytes=value.maximum_data_bytes,
+            maximum_recipe_bytes=value.maximum_recipe_bytes,
             target_error=value.target_error,
             adaptation_rounds=value.adaptation_rounds,
             comparison=value.comparison,
             cad_format=value.cad_format,
+            cad_case=parse(value.cad_case, CadCase, "cad_case"),
+            implicit_case=parse(value.implicit_case, ImplicitCase, "implicit_case"),
+            image_case=parse(value.image_case, ImageCase, "image_case"),
+            design_case=parse(value.design_case, DesignCase, "design_case"),
+            overset_profile=parse(
+                value.overset_profile, OversetProfile, "overset_profile"
+            ),
+            reconstruction_case=parse(
+                value.reconstruction_case, ReconstructionCase, "reconstruction_case"
+            ),
             periodic_case=value.periodic_case,
             maximum_memory_bytes=value.maximum_memory_bytes,
             maximum_condition=value.maximum_condition,
@@ -654,7 +1106,9 @@ class BenchmarkControls(StrictModule):
             hybrid_archive=value.hybrid_archive,
             hybrid_content_id=value.hybrid_content_id,
             hybrid_core_size=value.hybrid_core_size,
-            hybrid_region_densities=tuple(value.hybrid_region_densities),
+            hybrid_region_densities=None
+            if value.hybrid_region_densities is None
+            else tuple(value.hybrid_region_densities),
             hybrid_material_site=value.hybrid_material_site,
             layer_count=value.layer_count,
             first_thickness=value.first_thickness,
@@ -717,6 +1171,32 @@ def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--hybrid-profile", choices=HYBRID_PROFILES, default="unit-box")
 
 
+def add_case_arguments(parser: argparse.ArgumentParser) -> None:
+    """Keep qualification and benchmark case selection on one declared contract."""
+    defaults = QualificationControls()
+    parser.add_argument("--maximum-work-units", type=int, default=None)
+    parser.add_argument("--maximum-geometry-queries", type=int, default=None)
+    parser.add_argument("--maximum-scratch-bytes", type=int, default=None)
+    parser.add_argument("--maximum-data-bytes", type=int, default=None)
+    parser.add_argument("--maximum-recipe-bytes", type=int, default=None)
+    parser.add_argument("--cad-case", choices=CAD_CASES, default=defaults.cad_case)
+    parser.add_argument(
+        "--implicit-case", choices=IMPLICIT_CASES, default=defaults.implicit_case
+    )
+    parser.add_argument("--image-case", choices=IMAGE_CASES, default=defaults.image_case)
+    parser.add_argument(
+        "--design-case", choices=DESIGN_CASES, default=defaults.design_case
+    )
+    parser.add_argument(
+        "--overset-profile", choices=OVERSET_PROFILES, default=defaults.overset_profile
+    )
+    parser.add_argument(
+        "--reconstruction-case",
+        choices=RECONSTRUCTION_CASES,
+        default=defaults.reconstruction_case,
+    )
+
+
 def meshing_limit_values(limits: phx.meshing.MeshingLimits) -> dict[str, int | float]:
     """Record the declared admission controls, excluding derived identities."""
     return {
@@ -765,6 +1245,8 @@ def capacity_meshing_limits(
     data_bytes_limit: int | None = None,
     scratch_bytes_limit: int | None = None,
     cavity_cells_limit: int | None = None,
+    maximum_work_units: int | None = None,
+    maximum_geometry_queries: int | None = None,
 ) -> phx.meshing.MeshingLimits:
     """Lower caller-declared capacity factors without changing admission controls."""
     values: _ScaledMeshingLimitArguments = {
@@ -795,6 +1277,17 @@ def capacity_meshing_limits(
         values["maximum_scratch_bytes"] = scratch_bytes_limit
     if cavity_cells_limit is not None:
         values["maximum_cavity_cells"] = cavity_cells_limit
+    for name, value in (
+        ("maximum_work_units", maximum_work_units),
+        ("maximum_geometry_queries", maximum_geometry_queries),
+        ("maximum_scratch_bytes", scratch_bytes_limit),
+        ("maximum_data_bytes", data_bytes_limit),
+    ):
+        _validate_optional_resource_limit(name, value)
+    if maximum_work_units is not None:
+        values["maximum_work_units"] = maximum_work_units
+    if maximum_geometry_queries is not None:
+        values["maximum_geometry_queries"] = maximum_geometry_queries
     return phx.meshing.MeshingLimits(**values)
 
 
@@ -912,14 +1405,7 @@ def _surface_qualification_requirements() -> dict[str, object]:
     return {
         "required_arguments": {
             "surface_case": {
-                "choices": (
-                    "sphere",
-                    "torus",
-                    "capped_cylinder",
-                    "annulus",
-                    "cylinder_sheet",
-                    "folded_plates",
-                ),
+                "choices": SURFACE_CASES,
                 "default": "sphere",
             }
         },
@@ -943,6 +1429,11 @@ def _surface_qualification_requirements() -> dict[str, object]:
             "capped_cylinder": {
                 "source": "original-shared-periodic-rims",
                 "pde": "seam-C1-axial-quartic-reaction-diffusion",
+            },
+            "capped_cylinder_features": {
+                "source": "original-shared-periodic-rims",
+                "pde": "seam-C1-axial-quartic-reaction-diffusion",
+                "controls": "hard-size-p50-surface-and-rim-curve-deviation",
             },
             "annulus": {
                 "source": "original-exact-period-hole",
@@ -977,6 +1468,7 @@ def _cad_qualification_requirements() -> dict[str, object]:
     return {
         "required_arguments": {
             "cad_format": {"choices": ["step", "iges", "brep"]},
+            "cad_case": {"choices": CAD_CASES, "default": "planar-box"},
             "resolution": {"minimum": 1},
             "capacity": {"minimum": 1},
             "timeout": {"exclusive_minimum": 0.0, "finite": True},
@@ -1012,10 +1504,11 @@ def _cad_qualification_requirements() -> dict[str, object]:
 
 
 def _overset_qualification_requirements() -> dict[str, object]:
-    """Freeze the caller contract independently of registry and release claims."""
+    """Freeze the physical assemblies and their independent consumer obligations."""
     return {
         "callable": "_overset_qualification_lifecycle",
         "required_arguments": {
+            "overset_profile": {"choices": OVERSET_PROFILES, "default": "routine"},
             "resolution": {"minimum": 1},
             "capacity": {"minimum": 1},
             "timeout": {"exclusive_minimum": 0.0, "finite": True},
@@ -1026,25 +1519,93 @@ def _overset_qualification_requirements() -> dict[str, object]:
             "overset_donor_pairs": {"minimum": 1},
             "overset_overlap_pairs": {"minimum": 1},
         },
-        "fixture": "native-planar-background-and-protected-square-annulus",
+        "fixture": "native-planar-background-and-protected-square-annulus-bodies",
         "geometry": {
             "background_half_width": 3.0,
-            "moving_half_width": 2.25,
-            "cavity_half_width": 0.25,
-            "motion_offsets": [0.55, 0.05],
+            "profiles": {
+                "routine": {
+                    "fringe_layers": 1,
+                    "bodies": [
+                        {
+                            "name": "moving",
+                            "center": [0.0, 0.0],
+                            "half_width": 2.25,
+                            "cavity_half_width": 0.25,
+                            "refinement": 1,
+                            "offsets": [[0.55, 0.0], [0.05, 0.0]],
+                            "offset_rule": "first-then-repeat-last",
+                        },
+                    ],
+                },
+                "larger": {
+                    "fringe_layers": 1,
+                    "bodies": [
+                        {
+                            "name": "port",
+                            "center": [-1.5, 0.0],
+                            "half_width": 1.25,
+                            "cavity_half_width": 0.25,
+                            "refinement": 2,
+                            "offsets": [[0.0, 0.5], [0.0, -0.5]],
+                            "offset_rule": "cycle",
+                        },
+                        {
+                            "name": "starboard",
+                            "center": [1.5, 0.0],
+                            "half_width": 1.25,
+                            "cavity_half_width": 0.25,
+                            "refinement": 2,
+                            "offsets": [[0.0, -0.5], [0.0, 0.5]],
+                            "offset_rule": "cycle",
+                        },
+                    ],
+                },
+                "combined": {
+                    "fringe_layers": 2,
+                    "bodies": [
+                        {
+                            "name": "alpha",
+                            "center": [-1.15, -0.3],
+                            "half_width": 1.7,
+                            "cavity_half_width": 0.3,
+                            "refinement": 1,
+                            "offsets": [[0.0, 0.45], [0.0, -0.45]],
+                            "offset_rule": "cycle",
+                        },
+                        {
+                            "name": "beta",
+                            "center": [1.55, 0.5],
+                            "half_width": 1.3,
+                            "cavity_half_width": 0.2,
+                            "refinement": 2,
+                            "offsets": [[-0.05, -0.4], [0.05, 0.4]],
+                            "offset_rule": "cycle",
+                        },
+                    ],
+                },
+            },
         },
         "profiles": {
-            "moving_scalar_h1": "actual-P1-FE-interpolation-explicitly-nonconservative",
-            "moving_cell_average": "separately-certified-native-interior-motion-complete-overlap-state-remap",
+            "routine": "original-single-annulus-0.55-0.05-translation",
+            "larger": "two-refined-bodies-disconnected-holes-opposite-0.5-translations",
+            "combined": "mutually-overlapping-mixed-resolution-bodies-two-layer-fringe-narrow-boundary-gaps-donor-competition",
         },
-        "error_quantity": "independent-linear-system-relative-residual-and-carried-boundary-error",
+        "routes": {
+            "moving_scalar_h1": "actual-P1-FE-interpolation-explicitly-nonconservative",
+            "moving_cell_average": "separately-certified-quality-limited-background-ALE-complete-overlap-state-remap",
+            "pde_update": "multiplicative-overlapping-Schwarz-composite-Poisson-runtime-lift",
+        },
+        "manufactured_solution": "u=5+x+y-(x^2+y^2)/4, -Laplace(u)=1, Dirichlet u on background exterior and every protected cavity wall",
+        "error_quantity": "independent-manufactured-composite-overset-L2-error",
         "evidence_sections": [
             "parts",
             "native_phases",
             "connectivity",
             "epochs",
             "conservative_profile",
+            "refused_overreach_motion",
             "restart",
+            "workflow_obligations",
             "physical_error",
             "time_to_target_error_seconds",
             "stages_seconds",
@@ -1054,10 +1615,51 @@ def _overset_qualification_requirements() -> dict[str, object]:
         ],
         "nonclaims": [
             "Partition of unity is not inventory conservation.",
-            "The separate moving cell-average route does not certify moving FE interpolation.",
-            "Residual and boundary enforcement are not an analytic annulus solution L2 error.",
-            "A routine case does not complete the full corpus, release, or leadership gates.",
+            "The separate background cell-average ALE route does not certify moving FE interpolation.",
+            "Wall and exterior reactions are compared with analytic fluxes; the global discrete balance identity is gated.",
+            "Profile completion does not complete the full corpus, release, or leadership gates.",
         ],
+    }
+
+
+def _periodic_qualification_profile_contracts() -> dict[str, dict[str, Any]]:
+    """Keep historical binary64 exclusions separate from exact-carrier positives."""
+    profiles = (
+        ("skew-lattice", "qualification-skew-torus", "skew-lattice", False),
+        (
+            "skew-material-feature",
+            "qualification-skew-material-torus",
+            "skew-material-feature",
+            False,
+        ),
+        (
+            "skew-lattice-exact-algebraic",
+            "qualification-skew-torus-exact-algebraic",
+            "skew-lattice",
+            True,
+        ),
+        (
+            "skew-material-feature-exact-algebraic",
+            "qualification-skew-material-torus-exact-algebraic",
+            "skew-material-feature",
+            True,
+        ),
+    )
+    return {
+        name: {
+            "source_id": source_id,
+            "base_case": base,
+            "carrier_representation": "exact-algebraic" if positive else "binary64",
+            "expected_admission": "positive" if positive else "refusal",
+            "expected_outcome": "passed" if positive else "expected-refusal",
+            "full_workflow": positive,
+            "contract_scope": (
+                "source-preserving-exact-carrier-full-lifecycle"
+                if positive
+                else "immutable-dyadic-zero-tolerance-statistical-exclusion"
+            ),
+        }
+        for name, source_id, base, positive in profiles
     }
 
 
@@ -1065,10 +1667,11 @@ def _periodic_qualification_requirements() -> dict[str, object]:
     """Frozen parser and evidence contract of the periodic lifecycle."""
     return {
         "callable": "_periodic_qualification_lifecycle",
+        "profile_contracts": _periodic_qualification_profile_contracts(),
         "required_arguments": {
             "periodic_case": {
-                "choices": ["skew-lattice", "skew-material-feature"],
-                "default": "skew-lattice",
+                "choices": list(_periodic_qualification_profile_contracts()),
+                "default": "skew-lattice-exact-algebraic",
             },
             "resolution": {"minimum": 4, "material_case_requires_even": True},
             "capacity": {"minimum": 1},
@@ -1082,6 +1685,8 @@ def _periodic_qualification_requirements() -> dict[str, object]:
             "case",
             "request",
             "generation",
+            "exact_source_oracle",
+            "profile_obligations",
             "checkpoint",
             "epochs",
             "transitions",
@@ -1091,10 +1696,10 @@ def _periodic_qualification_requirements() -> dict[str, object]:
             "time_to_target_error_seconds",
             "peak_process_resident_bytes",
         ],
-        "mandatory_workflow_completion": "incomplete",
         "nonclaims": [
             "No layer, rotational, curved, or full mandatory corpus completion.",
             "No release or performance leadership inferred from a bounded run.",
+            "Historical binary64 zero-tolerance exclusions are never positive completions.",
         ],
     }
 
@@ -1109,6 +1714,7 @@ class FamilyProfileRecord(TypedDict):
     core_fraction: NotRequired[float]
     family_policy: NotRequired[dict[str, Any]]
     frozen_controls: NotRequired[dict[str, Any]]
+    nonsweepability_required: NotRequired[bool]
 
 
 class FamilyRequirementsRecord(TypedDict):
@@ -1257,7 +1863,16 @@ def _family_qualification_requirements() -> FamilyRequirementsRecord:
             "dimension": 3,
             "geometry_order": 2,
         },
+        "nonsweepable-dual-hex": {
+            "source": "NativePlcSource:unit-tetrahedron-two-enclosed-tetrahedral-cavities",
+            "route": "plc_dual_hex",
+            "family": "hexahedron",
+            "dimension": 3,
+            "nonsweepability_required": True,
+        },
     }
+    for profile in profiles.values():
+        profile.setdefault("nonsweepability_required", False)
     return {
         "scenario": "native-family-lifecycle",
         "parser_flag": "--family-case",
@@ -1371,6 +1986,35 @@ _DISTRIBUTED_FIELD_ROLES: tuple[
         "cell-mean(37+3*x-y)",
         "kelvin",
     ),
+    (
+        "rng-counter",
+        "allocated-rng-counter",
+        "rng-counter",
+        "rng-counter",
+        "mesh/cell_ids",
+        "cell",
+        1,
+        False,
+        "rademacher(derive_key(wrap_key_data(rng-root-key, threefry2x32), "
+        "SampleAddress('phydrax.meshing.qualification.distributed', "
+        "'material-history-probe', target=('temperature', 'material-cell-average'), "
+        "role='rademacher'), id_hi, id_lo, counter_hi, counter_lo), (8,)); "
+        "retained slots keep counters, fresh children start at 0, "
+        "coarsened parents resume their retained counter",
+        None,
+    ),
+    (
+        "euler-conserved",
+        "allocated-euler-conserved",
+        "stage-history",
+        "stage-history",
+        "mesh/cell_ids",
+        "cell",
+        2,
+        False,
+        "accepted-Euler-conservative-native-lineage",
+        "euler-conserved",
+    ),
 )
 
 
@@ -1383,11 +2027,14 @@ def _distributed_qualification_requirements() -> dict[str, Any]:
             "resolution": {"minimum": 1, "default": 4},
             "capacity": {"minimum": 1, "default": 20000},
             "timeout": {"exclusive_minimum": 0.0, "finite": True, "default": 120.0},
+            "maximum_work_units": {"minimum": 1, "nullable": True},
+            "maximum_geometry_queries": {"minimum": 1, "nullable": True},
+            "maximum_memory_bytes": {"minimum": 1, "nullable": False},
             "repeats": {"minimum": 1, "default": 3},
             "target_error": {"exclusive_minimum": 0.0, "finite": True, "default": 0.05},
             "adaptation_rounds": {"minimum": 1, "default": 1},
             "distributed_parts": {"minimum": 2, "default": 2},
-            "restart_parts": {"choices": [1], "default": 1},
+            "restart_parts": {"minimum": 1, "default": 1},
             "distributed_processes": {"minimum": 2, "default": 2},
             "distributed_source": {
                 "choices": ["native-unit-square"],
@@ -1435,6 +2082,15 @@ def _distributed_qualification_requirements() -> dict[str, Any]:
             "velocity": [0.0, 0.0],
             "pressure": 1.0,
             "boundary": "slip-wall",
+            "initial_condition_scope": "epoch-zero",
+            "conserved_components": [
+                "density",
+                "momentum_x",
+                "momentum_y",
+                "total_energy",
+            ],
+            "component_units": ["kg/m^3", "kg/(m^2*s)", "kg/(m^2*s)", "Pa"],
+            "continuation": "accepted-state-required",
             "required_transfer": "conservative-and-positive",
         },
         "source": {
@@ -1454,7 +2110,15 @@ def _distributed_qualification_requirements() -> dict[str, Any]:
             "source_preparation",
             "geometry_constraint_preparation",
             "native_generation_publication_certification",
-            "native_morton_partition",
+            "owner_local_tile_ownership",
+            "initial_fe_halo_preparation",
+            "initial_fe_preparation",
+            "initial_fe_solve",
+            "initial_fields_integral_validation",
+            "initial_fv_preparation",
+            "initial_fv_halo_preparation",
+            "initial_fv_execution_preparation",
+            "initial_owner_local_fv",
             "owner_local_refine",
             "owner_local_coarsen",
             "all_field_history_projection",
@@ -1654,10 +2318,13 @@ def _hybrid_qualification_requirements() -> HybridRequirementsRecord:
             "hybrid_region_densities": {
                 "default": [2.0, 3.0],
                 "source_authoritative": True,
+                "single_fluid_profiles": ["unit-box", "concave-box-core-lifecycle"],
+                "single_fluid_default": [2.0],
             },
             "hybrid_material_site": {
                 "default": "two-material-density",
                 "source_authoritative": True,
+                "single_fluid_default": "fluid-density",
             },
             "resolution": {"minimum": 2},
             "capacity": {"minimum": 1},
@@ -1704,6 +2371,7 @@ def _implicit_qualification_requirements() -> dict[str, object]:
     return {
         "callable": "_implicit_qualification_lifecycle",
         "required_arguments": {
+            "implicit_case": {"choices": IMPLICIT_CASES, "default": "sphere"},
             "resolution": {"minimum": 4},
             "capacity": {"minimum": 64},
             "repeats": {"minimum": 1},
@@ -1753,5 +2421,46 @@ def _implicit_qualification_requirements() -> dict[str, object]:
             "No generic Boolean/neural/periodic implicit-volume admission.",
             "No workset is a published volume or positive completion.",
             "No full mandatory corpus, release, or performance leadership claim.",
+        ],
+    }
+
+
+def _design_qualification_requirements() -> dict[str, object]:
+    """Expose the design owner's authored cases without duplicating their physics."""
+    from phydrax.meshing.qualification._design_oracle import (
+        design_qualification_cases,
+        DESIGN_QUALIFICATION_DEFAULT_CASE,
+    )
+
+    return {
+        "callable": "_design_qualification_lifecycle",
+        "required_arguments": {
+            "design_case": {
+                "choices": DESIGN_CASES,
+                "default": DESIGN_QUALIFICATION_DEFAULT_CASE,
+            },
+        },
+        "profiles": design_qualification_cases(),
+        "nonclaims": [
+            "Fixed-epoch derivatives do not differentiate native topology events.",
+            "A proposal is not accepted until its native event and physical reanalysis pass.",
+        ],
+    }
+
+
+def _reconstruction_qualification_requirements() -> dict[str, object]:
+    """Declare the reconstruction cases and the selected repair semantics."""
+    return {
+        "callable": "_reconstruction_qualification_lifecycle",
+        "required_arguments": {
+            "reconstruction_case": {
+                "choices": RECONSTRUCTION_CASES,
+                "default": "lobed-sphere",
+            },
+        },
+        "domain": "underspecified-defective-sampled-closed-surface",
+        "research_gate": "underspecified-defective-surface-reconstruction",
+        "nonclaims": [
+            "Repair selects a represented source; it does not recover a unique unknown original.",
         ],
     }

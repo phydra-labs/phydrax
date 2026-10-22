@@ -74,14 +74,24 @@ from ..discretization import (
     certify_cell_geometry_validity,
     reference_cell_topology,
 )
-from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateLiveStorage,
+)
 from ..ein import contract
 from ..linalg import (
     determinant_small_linear,
     inverse_small_linear,
+    LocalBlockPreconditioner,
+    PyTreeSpace,
     SmallLinearSolvePlan,
 )
-from ..optim import MinimizationResult, OptimizationStatus, OptimizationTermination
+from ..optim import (
+    MinimizationResult,
+    NewtonTrustRegion,
+    OptimizationStatus,
+    OptimizationTermination,
+)
 from ..typing import checked, parse
 
 
@@ -120,9 +130,11 @@ class HighOrderCurvingStatus(StrEnum):
 class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
     """Degree, objective weights, acceptance tolerances, and solver controls.
 
-    ``degree`` is the geometry order (2, 3, 4, 6 or 10). ``relaxation_rounds`` bounds the
-    optimize/re-project/certify rounds (0 accepts or rejects the projected
-    configuration directly). Weights scale the mean sampled distortion, the
+    ``degree`` is the geometry order (2, 3, 4, 6 or 10). ``relaxation_rounds``
+    bounds the optimize/re-project rounds (0 tests the projection directly).
+    Certificates are evaluated newest-first after these unchanged rounds; the
+    last candidate and selected accepted fallback always retain full proofs.
+    Weights scale the mean sampled distortion, the
     squared tangent-space residual of constrained nodes, and the squared nodal
     displacement (the latter two relative to the mean straight edge length).
     ``regularization`` is the Escobar determinant regularization of the
@@ -221,6 +233,10 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
                 "kind": "high-order-curving-policy",
                 "degree": self.degree,
                 "relaxation_rounds": self.relaxation_rounds,
+                "relaxation_algorithms": {
+                    "p2-tetrahedral-volume": "newton-trust-region/fixed-smoothing-normal-gram-jacobi",
+                    "other": "projected-lbfgs",
+                },
                 "maximum_geometry_nodes": self.maximum_geometry_nodes,
                 "maximum_tabulation_entries": self.maximum_tabulation_entries,
                 "distortion_weight": self.distortion_weight,
@@ -487,6 +503,13 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
                     )
                 ),
                 "relaxation_statuses": [int(value) for value in self.relaxation_statuses],
+                "minimizations": {
+                    "arrays": array_tree_fingerprint(self.minimizations),
+                    "methods": [value.provenance.method for value in self.minimizations],
+                    "globalizations": [
+                        value.provenance.globalization for value in self.minimizations
+                    ],
+                },
                 "accepted_round": accepted_round,
             }
         )
@@ -836,7 +859,10 @@ def _node_classes(
 ) -> _NodeClasses:
     owner_dims, owner_rows = node_owners(mesh, geometry)
     levels = _dependency_phydrax_meshing__association.mesh_entity_classes(
-        mesh, association, projection
+        mesh,
+        association,
+        projection,
+        policy=_dependency_phydrax_meshing__association.AssociationPropagationPolicy(),
     )
     count = owner_dims.size
     dims = np.full((count,), -1, dtype=np.int64)
@@ -1108,15 +1134,15 @@ def _evidence(
     cell_regions: np.ndarray | None = None,
     certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
     | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CurvedGeometryEvidence:
     coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
     _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
     scaled, distortion = _sampled_quality(blocks, coordinates)
-    local = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity)
-    embedding = global_embedding_owner.certify_global_embedding(
-        mesh, geometry, local, limits=certificate_limits
+    local = certify_cell_geometry_validity(
+        geometry, mesh=mesh, policy=policy.validity, budget=budget
     )
-    failures = [] if embedding.status == "certified" else ["global_embedding"]
+    failures: list[str] = []
     fidelity = None
     if source is None:
         failures.append("source_fidelity")
@@ -1131,9 +1157,30 @@ def _evidence(
             source,
             tolerance=policy.fidelity_tolerance,
             limits=certificate_limits,
+            budget=budget,
         )
         if fidelity.status != "certified":
             failures.append("source_fidelity")
+    # The CAD homotopy already proves the full target boundary, not sampled
+    # facet proximity. Its independently issued witness may discharge only
+    # those global degree premises; local validity and all remaining exact
+    # conformity, topology and shell-degree obligations are still required.
+    embedding = global_embedding_owner.certify_global_embedding(
+        mesh,
+        geometry,
+        local,
+        limits=certificate_limits,
+        budget=budget,
+        cad_boundary=(
+            fidelity.cad_closure
+            if local.all_certified
+            and fidelity is not None
+            and fidelity.status == "certified"
+            else None
+        ),
+    )
+    if embedding.status != "certified":
+        failures.insert(0, "global_embedding")
     coverage = None
     if domain is None and isinstance(
         source, source_fidelity_owner.MappedDomainBoundarySource
@@ -1162,7 +1209,9 @@ def _evidence(
                             cell_regions,
                             embedding=embedding,
                             fidelity=fidelity,
+                            source=source,
                             limits=certificate_limits,
+                            budget=budget,
                         )
                 case (
                     domain_coverage_owner.PiecewiseLinearDomain()
@@ -1175,6 +1224,7 @@ def _evidence(
                         cell_regions,
                         embedding=embedding,
                         limits=certificate_limits,
+                        budget=budget,
                     )
                 case None:
                     pass
@@ -1253,6 +1303,7 @@ def verify_curved_geometry(
     cell_regions: np.ndarray | None = None,
     certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
     | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CurvedGeometryEvidence:
     """Certify an existing high-order geometry (e.g. a Gmsh high-order output).
 
@@ -1290,6 +1341,7 @@ def verify_curved_geometry(
         domain=domain,
         cell_regions=cell_regions,
         certificate_limits=certificate_limits,
+        budget=budget,
     )
 
 
@@ -1583,9 +1635,81 @@ def _curving_round_energy(
     )
 
 
-# Keep projection, sequential relaxation acceptance, and rollback evidence in order.
-@checked
-def curve_cell_mesh(
+@eqx.filter_jit
+def _curving_node_gram(energy: _CurvingEnergy, coordinates: Array, /) -> Array:
+    """Fixed smoothing/normal Gram blocks, not the objective's Hessian."""
+    ambient = coordinates.shape[1]
+    identity = jnp.eye(ambient, dtype=coordinates.dtype)
+    diagonal = jnp.broadcast_to(
+        2.0 * energy.weights[2] * identity,
+        (coordinates.shape[0], ambient, ambient),
+    )
+    for block in energy.blocks:
+        dimension = block.gradients.shape[-1]
+        _, determinant, _ = block.ratios(coordinates)
+        regularized = 0.5 * (
+            determinant + jnp.sqrt(determinant**2 + 4 * energy.regularization**2)
+        )
+        scale = 1.0 / (dimension * regularized ** (2.0 / dimension))
+        gradients = contract("qnk,cqkl->cqnl", block.gradients, block.target_inverses)
+        norm_squared = jnp.sum(gradients**2, axis=-1)
+        smoothing = (
+            2.0 * energy.weights[0]
+            * jnp.mean(scale[..., None] * norm_squared, axis=1)
+            / block.routes.shape[0]
+        )
+        diagonal = diagonal.at[block.routes].add(
+            smoothing[..., None, None] * identity
+        )
+    normal = jnp.swapaxes(energy.normal_projectors, -1, -2) @ energy.normal_projectors
+    return diagonal.at[energy.constrained_rows].add(
+        2.0 * energy.weights[1] * normal
+    )
+
+
+def _curving_volume_method(
+    energy: _CurvingEnergy,
+    coordinates: np.ndarray,
+    fixed: np.ndarray,
+    policy: HighOrderCurvingPolicy,
+    /,
+) -> NewtonTrustRegion:
+    """Fixed SPD node-Jacobi acceleration; the physical objective is unchanged."""
+    ambient = coordinates.shape[1]
+    retained = coordinates.shape[0] * ambient * ambient
+    temporary = max(
+        block.routes.shape[0] * block.gradients.shape[0]
+        * (block.routes.shape[1] * ambient + 3 * ambient * ambient + 2 * block.routes.shape[1] + 8)
+        for block in energy.blocks
+    )
+    retained_tables = sum(
+        block.gradients.size + block.target_inverses.size for block in energy.blocks
+    )
+    entries = retained_tables + temporary + 8 * retained
+    if entries > policy.maximum_tabulation_entries:
+        raise ValueError(
+            "curve_cell_mesh.maximum_tabulation_entries must cover the node-Gram "
+            f"preconditioner workspace; got {entries} above "
+            f"{policy.maximum_tabulation_entries}"
+        )
+    blocks = _curving_node_gram(energy, jnp.asarray(coordinates))[~fixed]
+    accelerator = LocalBlockPreconditioner(
+        blocks,
+        space=PyTreeSpace(jnp.asarray(coordinates[~fixed])),
+        positive_definite=True,
+        preconditioner_id=canonical_fingerprint(
+            {
+                "kind": "curving-smoothing-normal-gram-jacobi",
+                "nodes": int(np.count_nonzero(~fixed)),
+                "ambient": ambient,
+            }
+        ),
+    )
+    return NewtonTrustRegion(preconditioner=accelerator)
+
+
+# Optimization uses only its preceding iterate; proofs select the published maps.
+def _curve_cell_mesh(
     mesh: CellMesh,
     association: association_state_owner.GeometryAssociation,
     projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
@@ -1602,6 +1726,8 @@ def curve_cell_mesh(
     certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
     | None = None,
     layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh | None = None,
+    budget: CoordinateEnclosureBudget,
+    candidate_storage: CoordinateLiveStorage,
 ) -> HighOrderCurvingResult:
     """Curve an affine mesh to its B-Rep geometry with certified high-order nodes.
 
@@ -1651,6 +1777,7 @@ def curve_cell_mesh(
             domain=domain,
             cell_regions=cell_regions,
             certificate_limits=certificate_limits,
+            budget=budget,
         )
         return HighOrderCurvingResult(
             HighOrderCurvingStatus.UNRESOLVED_ASSOCIATION,
@@ -1662,6 +1789,10 @@ def curve_cell_mesh(
             (),
             None,
         )
+    # Retained candidate coordinates and small per-candidate route records coexist
+    # until newest-first selection. Admit that added lifetime before projection.
+    candidate_bytes = 4096 + 2 * straight.coordinates.nbytes
+    candidate_storage.set_bound(candidate_bytes)
     projected = _prepare_projected_curving(
         mesh, straight, classes, projection, periodic, layers
     )
@@ -1672,23 +1803,10 @@ def curve_cell_mesh(
         projected.constrained_rows,
         projected.projectors,
     )
-    candidate_geometry = projected.geometry
-    candidate = _evidence(
-        mesh,
-        candidate_geometry,
-        classes,
-        projection,
-        blocks,
-        policy,
-        source=source,
-        domain=domain,
-        cell_regions=cell_regions,
-        certificate_limits=certificate_limits,
-    )
-    # The CAD projection needs no relaxation; it is accepted on its own when valid.
-    accepted = (candidate_geometry, candidate, 0) if candidate.accepted else None
+    candidates = [(projected.geometry, True, 0)]
     minimizations = []
     for round_ in range(1, policy.relaxation_rounds + 1):
+        candidate_storage.set_bound(candidate_storage.bound + candidate_bytes)
         energy = _curving_round_energy(
             blocks, coordinates, constrained_rows, projectors, length, policy
         )
@@ -1698,6 +1816,14 @@ def curve_cell_mesh(
                 energy,
                 fixed_coordinates=fixed,
                 termination=policy.termination,
+                method=(
+                    _curving_volume_method(energy, coordinates, fixed, policy)
+                    if policy.degree == 2
+                    and mesh.topological_dimension == mesh.ambient_dimension == 3
+                    and all(block.cell_kind == "tetrahedron" for block in mesh.blocks)
+                    and np.any(~fixed)
+                    else None
+                ),
             )
         )
         minimizations.append(relaxed.minimization)
@@ -1712,23 +1838,35 @@ def curve_cell_mesh(
                 coordinates, reference_coordinates, layer_nodes
             )
             coordinates = apply_periodic(coordinates, pairs)
-        candidate_geometry = straight.with_coordinates(coordinates)
-        candidate = _evidence(
-            mesh,
-            candidate_geometry,
-            classes,
-            projection,
-            blocks,
-            policy,
-            source=source,
-            domain=domain,
-            cell_regions=cell_regions,
-            certificate_limits=certificate_limits,
-        )
-        if candidate.accepted and (
-            relaxed.converged or policy.accept_valid_nonconverged_relaxation
-        ):
-            accepted = (candidate_geometry, candidate, round_)
+        admissible = relaxed.converged or policy.accept_valid_nonconverged_relaxation
+        candidates.append((straight.with_coordinates(coordinates), admissible, round_))
+    # No certificate participates in an objective, iterate, projection, stopping
+    # decision or minimization status above. Only the last candidate and latest
+    # admissible accepted map are public evidence; superseded unreported maps
+    # cannot affect that choice. Prove the last candidate even when it is invalid
+    # or inadmissible, then search backward for the exact same accepted fallback.
+    candidate_geometry, candidate_admissible, candidate_round = candidates.pop()
+    candidate = _evidence(
+        mesh, candidate_geometry, classes, projection, blocks, policy,
+        source=source, domain=domain, cell_regions=cell_regions,
+        certificate_limits=certificate_limits, budget=budget,
+    )
+    accepted = (
+        (candidate_geometry, candidate, candidate_round)
+        if candidate_admissible and candidate.accepted else None
+    )
+    if accepted is None:
+        for previous_geometry, admissible, round_ in reversed(candidates):
+            if not admissible:
+                continue
+            previous = _evidence(
+                mesh, previous_geometry, classes, projection, blocks, policy,
+                source=source, domain=domain, cell_regions=cell_regions,
+                certificate_limits=certificate_limits, budget=budget,
+            )
+            if previous.accepted:
+                accepted = (previous_geometry, previous, round_)
+                break
     if accepted is not None:
         return HighOrderCurvingResult(
             HighOrderCurvingStatus.CURVED,
@@ -1763,6 +1901,7 @@ def curve_cell_mesh(
         domain=domain,
         cell_regions=cell_regions,
         certificate_limits=certificate_limits,
+        budget=budget,
     )
     return HighOrderCurvingResult(
         status,
@@ -1774,6 +1913,51 @@ def curve_cell_mesh(
         tuple(minimizations),
         None,
     )
+
+
+@checked
+def curve_cell_mesh(
+    mesh: CellMesh,
+    association: association_state_owner.GeometryAssociation,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
+    /,
+    *,
+    policy: HighOrderCurvingPolicy,
+    periodic: tuple[_dependency_phydrax_meshing__coupling.PeriodicCoupling, ...] = (),
+    source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
+    domain: domain_coverage_owner.PiecewiseLinearDomain
+    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+    | domain_planar_boundary_owner.CadSourceDomain
+    | None = None,
+    cell_regions: np.ndarray | None = None,
+    certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> HighOrderCurvingResult:
+    """Curve and certify the reported maps under one original request allowance.
+
+    Source projection, all declared relaxation rounds, final proofs and rollback
+    evidence share this request's charged preparation and enclosure banks. An
+    explicit budget joins its owning request; it does not reset an allowance.
+    A nonconverged relaxation remains inadmissible unless policy permits it.
+    """
+    limits = (
+        _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits()
+        if certificate_limits is None else certificate_limits
+    )
+    with (
+        _dependency_phydrax_geometry__embedding_state.coordinate_certificate_request(
+            limits, budget=budget
+        ) as request,
+        request.live_storage() as candidate_storage,
+    ):
+        return _curve_cell_mesh(
+            mesh, association, projection, policy=policy, periodic=periodic,
+            source=source, domain=domain, cell_regions=cell_regions,
+            certificate_limits=limits, layers=layers, budget=request,
+            candidate_storage=candidate_storage,
+        )
 
 
 __all__ = [

@@ -129,6 +129,7 @@ def compile_reuse(operation: str) -> dict[str, object]:
     # Preparation replaces empty routes before restart validation.
     routes = forest_migration_routes(parts, first_state)
     routed_parts = prepare_migration_routes(parts, routes)
+    assert isinstance(routed_parts, AdaptiveSimplexParts)
     assert routed_parts.neighbor_pairs != parts.neighbor_pairs
     with CompileCounter(capture_stack=True) as warm:
         repeated = jax.block_until_ready(run(routed_parts, first_state))

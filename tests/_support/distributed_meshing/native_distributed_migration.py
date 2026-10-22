@@ -50,7 +50,7 @@ _CONTRACT_KEYS = (
 
 def _migration(scenario: str) -> dict[str, Any]:
     checks: dict[str, Any] = _new_checks(_CONTRACT_KEYS)
-    capacity = 1 if scenario == "overflow" else 2
+    capacity = 1 if scenario in ("overflow", "cell_boundary") else 2
     scientific = 2**54
     ids = np.full((2, capacity), np.iinfo(np.int64).max, dtype=np.int64)
     ids[:, 0] = [scientific + 11, scientific + 29]
@@ -118,8 +118,8 @@ def _migration(scenario: str) -> dict[str, Any]:
         parts,
         original,
         jnp.asarray(targets),
-        halo_width=0 if scenario == "overflow" else 1,
-        vertex_capacity=4,
+        halo_width=0 if scenario in ("overflow", "cell_boundary") else 1,
+        vertex_capacity=3 if scenario in ("cell_boundary", "vertex_overflow") else 4,
     )
     target = accept_ownerlocal_migration(prepared)
     if scenario == "positive":
@@ -176,11 +176,25 @@ def _migration(scenario: str) -> dict[str, Any]:
         checks.setdefault("migration_78", []).append(
             bool(prepared.target_parts.neighbor_pairs == ((0, 1), (1, 0)))
         )
+    elif scenario == "cell_boundary":
+        # Exactly one incoming owned cell fills each one-cell bucket; the
+        # adjacent `overflow` fixture sends two cells into the same bucket.
+        _record_array(checks, "migration_59", prepared.evidence.accepted, [True, True])
+        _record_array(
+            checks, "migration_60", target.workset.cell_ids,
+            [[scientific + 29], [scientific + 11]],
+        )
+        _record_array(checks, "migration_61", target.workset.cell_owner, [[0], [1]])
+        _record_array(checks, "migration_62", target.cell_fields, [[7.0], [3.0]])
+        _record_array(checks, "migration_63", target.cell_epochs, [[42], [41]])
+        _record_array(checks, "migration_74", prepared.evidence.sent_cells, [1, 1])
+        _record_array(checks, "migration_75", prepared.evidence.received_cells, [1, 1])
+        _record_array(checks, "migration_76", prepared.evidence.vertices_after, [3, 3])
     else:
         _record_array(checks, "migration_80", prepared.evidence.accepted, [False, False])
         flag = (
             AdaptiveSimplexStatus.CAPACITY_EXCEEDED
-            if scenario == "overflow"
+            if scenario in ("overflow", "vertex_overflow")
             else AdaptiveSimplexStatus.INVALID_GEOMETRY
         )
         checks.setdefault("migration_82", []).append(
@@ -205,3 +219,11 @@ def migration_overflow() -> dict[str, Any]:
 
 def migration_shared_field_conflict() -> dict[str, Any]:
     return _migration("shared_field_conflict")
+
+
+def migration_cell_boundary() -> dict[str, Any]:
+    return _migration("cell_boundary")
+
+
+def migration_vertex_overflow() -> dict[str, Any]:
+    return _migration("vertex_overflow")

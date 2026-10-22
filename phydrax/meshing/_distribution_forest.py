@@ -17,10 +17,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jax.sharding import Mesh, PartitionSpec
+from jax.sharding import PartitionSpec
 
 from ..discretization._adaptive_simplex import (
-    AdaptiveSimplexParts,
     AdaptiveSimplexState,
     AdaptiveSimplexStatus,
     global_flags,
@@ -28,6 +27,7 @@ from ..discretization._adaptive_simplex import (
     MaskedSimplexMesh,
     vertex_half_facets,
 )
+from ._migration_execution import LogicalMigrationParts, MigrationParts, partition_map
 
 
 if TYPE_CHECKING:
@@ -183,46 +183,52 @@ def members(sorted_ids: Array, references: Array) -> Array:
     )
 
 
-def forest_vertex_record_owners(parts: AdaptiveSimplexParts, vertex_ids: Array) -> Array:
+def forest_vertex_record_owners(parts: MigrationParts, vertex_ids: Array) -> Array:
     """Elect record owners for a global part-sharded raw vertex inventory."""
-    return _forest_vertex_record_owner_values(
-        vertex_ids, parts.mesh, parts.axis_name, parts.part_count
-    )
+    return _forest_vertex_record_owner_values(vertex_ids, parts)
 
 
 @eqx.filter_jit
 def _forest_vertex_record_owner_values(
-    vertex_ids: Array, mesh: Mesh, axis_name: str, part_count: int
+    vertex_ids: Array, parts: MigrationParts
 ) -> Array:
-    """Compile owner election together with its global-to-local placement."""
+    """Compile owner election together with its historical or physical rank axis."""
+    axis_name, part_count = parts.axis_name, parts.part_count
 
     def local(block: Array) -> Array:
-        return _vertex_record_owner_values(block[0], axis_name, part_count)[None]
+        return _vertex_record_owner_values(
+            block[0], axis_name, part_count, isinstance(parts, LogicalMigrationParts)
+        )[None]
 
-    return jax.shard_map(
+    return partition_map(
         local,
-        mesh=mesh,
+        parts=parts,
         in_specs=PartitionSpec(axis_name),
         out_specs=PartitionSpec(axis_name),
     )(vertex_ids)
 
 
-def vertex_record_owners(parts: AdaptiveSimplexParts, vertex_ids: Array) -> Array:
+def vertex_record_owners(parts: MigrationParts, vertex_ids: Array) -> Array:
     """Assign one record owner to each allocated raw vertex in a local shard."""
-    return _vertex_record_owner_values(vertex_ids, parts.axis_name, parts.part_count)
+    return _vertex_record_owner_values(
+        vertex_ids, parts.axis_name, parts.part_count,
+        isinstance(parts, LogicalMigrationParts),
+    )
 
 
 @eqx.filter_jit
 def _vertex_record_owner_values(
-    vertex_ids: Array, axis_name: str, part_count: int
+    vertex_ids: Array, axis_name: str, part_count: int, logical_batch: bool
 ) -> Array:
     """Elect minimum ranks inside the caller's bound collective axis."""
     axis = axis_name
     ring = tuple((rank, (rank + 1) % part_count) for rank in range(part_count))
     rank = jax.lax.axis_index(axis)
     owners = jnp.full(vertex_ids.shape, part_count, jnp.int32)
-    # Owner updates vary by shard; scan carry types must agree from iteration zero.
-    owners = jax.lax.pcast(owners, axis, to="varying")
+    # Manual-axis casts describe physical shard_map variance only. A named
+    # logical batch gets its rank variance from vmap, not a fabricated mesh axis.
+    if not logical_batch:
+        owners = jax.lax.pcast(owners, axis, to="varying")
 
     def visit(_: int, carry: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         ids, source_rank, owners = carry
@@ -459,7 +465,7 @@ def _inherit_solver_owners_local(
 
 @eqx.filter_jit
 def inherit_solver_cell_owners(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     states: AdaptiveSimplexState,
     initial_states: AdaptiveSimplexState,
     initial_solver_cell_owners: Array,
@@ -499,13 +505,13 @@ def inherit_solver_cell_owners(
         )
         return owners[None], status[None]
 
-    return jax.shard_map(
-        local,
-        mesh=parts.mesh,
-        in_specs=(spec, spec, spec),
-        out_specs=(spec, spec),
-        check_vma=False,
-    )(states, initial_states, initial_solver_cell_owners)
+    return partition_map(
+            local,
+            parts=parts,
+            in_specs=(spec, spec, spec),
+            out_specs=(spec, spec),
+            check_vma=False,
+        )(states, initial_states, initial_solver_cell_owners)
 
 
 @eqx.filter_jit
@@ -606,7 +612,7 @@ def _merge(
 
 @eqx.filter_jit
 def migrate_simplex_forest(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     forest: AdaptiveSimplexState,
     cell_owners: Array,
     vertex_owners: Array,
@@ -1037,10 +1043,10 @@ def migrate_simplex_forest(
             ),
         )
 
-    return jax.shard_map(
-        local,
-        mesh=parts.mesh,
-        in_specs=(spec, spec, spec, spec, spec, spec),
-        out_specs=(spec, spec, spec, spec, spec, spec),
-        check_vma=False,
-    )(forest, cell_owners, vertex_owners, cell_history, vertex_history, target)
+    return partition_map(
+            local,
+            parts=parts,
+            in_specs=(spec, spec, spec, spec, spec, spec),
+            out_specs=(spec, spec, spec, spec, spec, spec),
+            check_vma=False,
+        )(forest, cell_owners, vertex_owners, cell_history, vertex_history, target)

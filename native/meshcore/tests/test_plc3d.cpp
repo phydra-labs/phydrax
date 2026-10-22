@@ -5,6 +5,7 @@
 // boundary preservation and failure evidence.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
@@ -15,6 +16,7 @@
 
 #include "bounded_memory.hpp"
 #include "check.hpp"
+#include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "plc3d.hpp"
 #include "predicates.hpp"
@@ -27,6 +29,162 @@ using phx::mc::PlcInput;
 using phx::mc::PlcRecovery;
 using phx::mc::test::face_area;
 using phx::mc::test::tet_volume;
+
+// Frozen exhaustive protection arithmetic: this is intentionally the original
+// primitive order/kernel, not an ideal-distance oracle for the new broad phase.
+double protection_distance(const double* a, const double* b) {
+  return std::sqrt(phx::mc::geometry::squared_distance(a, b));
+}
+
+double protection_segment(const double* p, const double* a, const double* b) {
+  const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+  const double ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
+  const double length = phx::mc::geometry::dot(ab, ab);
+  const double t = length > 0.0
+                       ? std::clamp(phx::mc::geometry::dot(ap, ab) / length, 0.0, 1.0)
+                       : 0.0;
+  const double q[3] = {a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]};
+  return protection_distance(p, q);
+}
+
+double protection_triangle(const double* p, const double* a, const double* b,
+                           const double* c) {
+  using phx::mc::geometry::dot;
+  const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+  const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+  const double ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
+  const double d1 = dot(ab, ap), d2 = dot(ac, ap);
+  if (d1 <= 0.0 && d2 <= 0.0) return protection_distance(p, a);
+  const double bp[3] = {p[0] - b[0], p[1] - b[1], p[2] - b[2]};
+  const double d3 = dot(ab, bp), d4 = dot(ac, bp);
+  if (d3 >= 0.0 && d4 <= d3) return protection_distance(p, b);
+  const double vc = d1 * d4 - d3 * d2;
+  if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) return protection_segment(p, a, b);
+  const double cp[3] = {p[0] - c[0], p[1] - c[1], p[2] - c[2]};
+  const double d5 = dot(ab, cp), d6 = dot(ac, cp);
+  if (d6 >= 0.0 && d5 <= d6) return protection_distance(p, c);
+  const double vb = d5 * d2 - d1 * d6;
+  if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) return protection_segment(p, a, c);
+  const double va = d3 * d6 - d5 * d4;
+  if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0) return protection_segment(p, b, c);
+  const double denominator = va + vb + vc;
+  if (!(denominator > 0.0)) {
+    return std::min({protection_segment(p, a, b), protection_segment(p, b, c),
+                     protection_segment(p, c, a)});
+  }
+  const double v = vb / denominator, w = vc / denominator;
+  const double q[3] = {a[0] + ab[0] * v + ac[0] * w,
+                       a[1] + ab[1] * v + ac[1] * w,
+                       a[2] + ab[2] * v + ac[2] * w};
+  return protection_distance(p, q);
+}
+
+std::vector<double> exhaustive_protection(const std::vector<double>& points,
+                                          const std::vector<int32_t>& edges,
+                                          const std::vector<int32_t>& triangles) {
+  using phx::mc::geometry::dot;
+  const std::size_t count = points.size() / 3;
+  std::vector<std::vector<int32_t>> incident(count);
+  for (std::size_t e = 0; e < edges.size(); e += 2) {
+    incident[edges[e]].push_back(edges[e + 1]);
+    incident[edges[e + 1]].push_back(edges[e]);
+  }
+  std::vector<double> result(count, 0.0);
+  for (std::size_t v = 0; v < count; ++v) {
+    const double* p = points.data() + 3 * v;
+    bool acute = false;
+    const auto& around = incident[v];
+    for (std::size_t i = 0; i < around.size() && !acute; ++i) {
+      const double* a = points.data() + 3 * around[i];
+      const double u[3] = {a[0] - p[0], a[1] - p[1], a[2] - p[2]};
+      for (std::size_t j = i + 1; j < around.size() && !acute; ++j) {
+        const double* b = points.data() + 3 * around[j];
+        const double w[3] = {b[0] - p[0], b[1] - p[1], b[2] - p[2]};
+        acute = dot(u, w) > 0.0;
+      }
+    }
+    if (!acute) continue;
+    double reach = std::numeric_limits<double>::infinity();
+    for (int32_t other : around) {
+      reach = std::min(reach, protection_distance(p, points.data() + 3 * other) / 3.0);
+    }
+    for (std::size_t u = 0; u < count; ++u) {
+      if (u != v) reach = std::min(reach, 0.5 * protection_distance(p, points.data() + 3 * u));
+    }
+    for (std::size_t e = 0; e < edges.size(); e += 2) {
+      if (static_cast<std::size_t>(edges[e]) != v && static_cast<std::size_t>(edges[e + 1]) != v) {
+        reach = std::min(reach, 0.5 * protection_segment(
+            p, points.data() + 3 * edges[e], points.data() + 3 * edges[e + 1]));
+      }
+    }
+    for (std::size_t t = 0; t < triangles.size(); t += 3) {
+      const int32_t a = triangles[t], b = triangles[t + 1], c = triangles[t + 2];
+      if (static_cast<std::size_t>(a) != v && static_cast<std::size_t>(b) != v &&
+          static_cast<std::size_t>(c) != v) {
+        reach = std::min(reach, 0.5 * protection_triangle(
+            p, points.data() + 3 * a, points.data() + 3 * b, points.data() + 3 * c));
+      }
+    }
+    result[v] = reach;
+  }
+  return result;
+}
+
+void check_protection_equivalence(const std::vector<double>& points,
+                                  const std::vector<int32_t>& edges,
+                                  const std::vector<int32_t>& triangles) {
+  const auto expected = exhaustive_protection(points, edges, triangles);
+  int64_t work = 0;
+  const auto actual = phx::mc::protection_radii(points.data(), points.size() / 3, edges,
+                                               triangles, work, 100000000);
+  PHX_CHECK(actual.size() == expected.size());
+  for (std::size_t i = 0; i < actual.size(); ++i) {
+    PHX_CHECK(std::bit_cast<uint64_t>(actual[i]) == std::bit_cast<uint64_t>(expected[i]));
+  }
+  int64_t admitted_work = 0;
+  const auto admitted = phx::mc::protection_radii(points.data(), points.size() / 3, edges,
+                                                 triangles, admitted_work, work);
+  PHX_CHECK(admitted.size() == expected.size());
+  PHX_CHECK(admitted_work == work);
+  if (work > 0) {
+    int64_t refused_work = 0;
+    const auto refused = phx::mc::protection_radii(points.data(), points.size() / 3, edges,
+                                                  triangles, refused_work, work - 1);
+    PHX_CHECK(refused.empty());
+    PHX_CHECK(refused_work == work - 1);
+  }
+}
+
+void test_protection_index_matches_actual_exhaustive_kernels() {
+  std::vector<double> points;
+  std::vector<int32_t> edges, triangles;
+  for (int32_t i = 0; i < 128; ++i) {
+    points.insert(points.end(), {((37 * i) % 127) / 127.0,
+                                 ((53 * i) % 131) / 131.0,
+                                 ((71 * i) % 137) / 137.0});
+    edges.insert(edges.end(), {i, (i + 1) % 128, i, (i + 7) % 128});
+    triangles.insert(triangles.end(), {i, (i + 1) % 128, (i + 7) % 128});
+  }
+  check_protection_equivalence(points, edges, triangles);
+  for (int exponent : {-540, -300, 300, 600}) {
+    auto scaled = points;
+    for (double& value : scaled) value = std::ldexp(value, exponent);
+    check_protection_equivalence(scaled, edges, triangles);
+  }
+  // Rounded a + (b - a) is zero, outside the ideal segment [1, 1e16].
+  // The actual segment kernel therefore reduces vertex 2's radius to 1/2.
+  const std::vector<double> rounded{1e16, 0, 0, 1, 0, 0, 0, 1, 0,
+                                    100, 1, 0, 100, 2, 0, 0, 100, 0};
+  const std::vector<int32_t> rounded_edges{0, 1, 2, 3, 2, 4};
+  check_protection_equivalence(rounded, rounded_edges, {});
+  const auto reference = exhaustive_protection(rounded, rounded_edges, {});
+  PHX_CHECK(reference[2] == 0.5);
+  // Degenerate triangles and collapsed/zero/subnormal coordinate directions
+  // continue to use the unchanged Voronoi kernel and its NaN min semantics.
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  check_protection_equivalence({0, 0, 0, 1, 0, 0, 2, tiny, 0, 3, 0, -0.0},
+                               {0, 1, 0, 2, 1, 2, 2, 3}, {0, 1, 2, 1, 2, 3});
+}
 
 struct Plc {
   std::vector<double> points;
@@ -180,6 +338,63 @@ void test_reflex_l_prism() {
   PHX_CHECK(plc.run(BoundaryPolicy::kConforming, depleted, 500) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(depleted.failure.reason == phx::mc::kPlcWorkBudget);
   PHX_CHECK(depleted.counters.work_units <= 500);
+}
+
+// Extruded dumbbell whose blocks meet through a 0.2 x 0.02 x 1 channel. Its
+// rectangular walls are exactly cocircular, so each polygon CDT diagonal is
+// a tie; ties that cross the tetrahedralization's own wall diagonals would
+// otherwise need an interior kernel point inside the channel, whose cells
+// span its 0.02 width.
+void test_thin_channel_prism(BoundaryPolicy policy) {
+  const double xy[24] = {0.0, 0.0,  0.4, 0.0,  0.4, 0.19, 0.6, 0.19, 0.6, 0.0,  1.0, 0.0,
+                         1.0, 0.4,  0.6, 0.4,  0.6, 0.21, 0.4, 0.21, 0.4, 0.4,  0.0, 0.4};
+  Plc plc;
+  for (int z = 0; z < 2; ++z) {
+    for (int i = 0; i < 12; ++i) {
+      plc.points.insert(plc.points.end(), {xy[2 * i], xy[2 * i + 1], static_cast<double>(z)});
+    }
+  }
+  const int32_t facet = plc.facet(-1, 0);
+  plc.polygon({11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, facet);
+  plc.polygon({12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}, facet);
+  for (int i = 0; i < 12; ++i) {
+    const int j = (i + 1) % 12;
+    plc.polygon({i, j, j + 12, i + 12}, facet);
+  }
+  PlcRecovery r;
+  const int32_t status = plc.run(policy, r, 640000);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) {
+    return;
+  }
+  PHX_CHECK(r.counters.interior_steiner_points == 0);
+  PHX_CHECK(r.counters.facet_steiner_points == 0);
+  PHX_CHECK(r.counters.segment_steiner_points == 0);
+  PHX_CHECK(r.points.size() == plc.points.size());
+  PHX_CHECK_NEAR(region_volumes(r).at(0), 0.324, 1e-14);
+  double area = 0.0;
+  for (std::size_t f = 0; f < r.face_sources.size(); ++f) {
+    area += face_area(r, f);
+  }
+  PHX_CHECK_NEAR(area, 2.0 * 0.324 + 3.56, 1e-13);
+  // The published input triangulation still tiles every polygon exactly once.
+  std::vector<double> polygon_area(plc.polygon_facets.size(), 0.0);
+  for (std::size_t t = 0; t < r.input_polygons.size(); ++t) {
+    const double* p = plc.points.data();
+    const int32_t* v = r.input_triangles.data() + 3 * t;
+    double u[3], w[3];
+    for (int k = 0; k < 3; ++k) {
+      u[k] = p[3 * v[1] + k] - p[3 * v[0] + k];
+      w[k] = p[3 * v[2] + k] - p[3 * v[0] + k];
+    }
+    const double n[3] = {u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2],
+                         u[0] * w[1] - u[1] * w[0]};
+    polygon_area[static_cast<std::size_t>(r.input_polygons[t])] +=
+        0.5 * std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  }
+  PHX_CHECK_NEAR(polygon_area[0], 0.324, 1e-14);
+  PHX_CHECK_NEAR(polygon_area[1], 0.324, 1e-14);
+  check_cover_incidence(plc, r);
 }
 
 void test_cube(BoundaryPolicy policy) {
@@ -823,6 +1038,8 @@ void test_planar_recovery_debits_global_work_once() {
 int main() {
   test_cube(BoundaryPolicy::kFixed);
   test_cube(BoundaryPolicy::kConforming);
+  test_thin_channel_prism(BoundaryPolicy::kConforming);
+  test_thin_channel_prism(BoundaryPolicy::kFixed);
   test_two_materials();
   test_material_triple_junction();
   test_schonhardt();
@@ -837,5 +1054,6 @@ int main() {
   test_witness_output_contract();
   test_source_export_allows_empty_banks();
   test_planar_recovery_debits_global_work_once();
+  test_protection_index_matches_actual_exhaustive_kernels();
   return phx::mc::test::finish("test_plc3d");
 }

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import equinox as eqx
@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.sharding import PartitionSpec
+from jax.sharding import Mesh, PartitionSpec
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
@@ -46,6 +46,7 @@ from .._conservation_ledger import (
     ConservationStageLedger,
 )
 from .._distributed_field import DistributedHaloPlan, make_owner_local_field_array
+from .._distributed_preparation import owner_local_host_array, replicated_host_array
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._closure import AbstractFaceClosurePlan, FaceFluxContext
 from ._contact_angle import reconstruct_wall_interface_normal
@@ -2555,7 +2556,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
 
         Call inside a real named-axis map. Halo values are refreshed from
         their owners, and equal/opposite ghost contributions are returned
-        through the halo transpose; no global field is materialized.
+        through the halo transpose; no global field is materialized. Rows
+        outside ``halo.local_valid`` are inactive execution padding: physics
+        reads a real closure row there and their rate is zero. Halo/ID
+        disagreement on any partition refuses every partition.
         """
         geometry = _owner_local_geometry(self)
         if halo.local_global_ids.ndim != 1:
@@ -2587,16 +2591,22 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             route_valid = route_valid & jnp.all(
                 ~halo.phase_receive_valid[phase] | (owners[receive] == expected)
             )
+        local_valid = (
+            ~jnp.any(halo.local_global_ids != geometry.cell_global_ids)
+            & ~jnp.any(halo.local_owned != geometry.cell_owned)
+            & route_valid
+        )
         value = eqx.error_if(
             value,
-            jnp.any(halo.local_global_ids != geometry.cell_global_ids)
-            | jnp.any(halo.local_owned != geometry.cell_owned)
-            | ~route_valid
+            (jax.lax.pmin(local_valid.astype(jnp.int32), axis_name) == 0)
             | ~halo.collective_certificate(axis_name=axis_name),
             "Owner-local FV halo ownership, stable IDs, or collective coverage is invalid.",
         )
         part = jnp.asarray(geometry.partition_index, dtype=jnp.int32)
         exchanged = halo.exchange(value, part, axis_name=axis_name)
+        # Valid rows are a nonempty prefix; masked padding lanes evaluate the
+        # physics at row zero, so they stay finite in value and derivative.
+        exchanged = jnp.where(halo.local_valid[:, None], exchanged, exchanged[0])
         time_ = jnp.asarray(time)
         trace = self._centroid_face_states(time_, exchanged, args)
         left, right, normal = trace.left, trace.right, trace.normal
@@ -2790,8 +2800,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
 class OwnerLocalFiniteVolumeAdvance(StrictModule):
     """Retain an owner-local advance and globally reduced owned content.
 
-    Byte counts describe the supplied arrays, not a measured allocator peak.
-    Admissibility is meaningful only when ``admissibility_checked`` is true.
+    ``state`` keeps the execution layout of its
+    `OwnerLocalFiniteVolumeExecution`: logical closure rows prefix every
+    partition bucket and padding rows are zero. Byte counts describe arrays,
+    not a measured allocator peak: ``logical_state_bytes`` counts the logical
+    closure rows of every partition, ``execution_state_bytes`` the padded
+    global state and ``process_execution_bytes`` this process's padded
+    execution leaves. Admissibility is meaningful only when
+    ``admissibility_checked`` is true.
     """
 
     state: Array
@@ -2803,6 +2819,35 @@ class OwnerLocalFiniteVolumeAdvance(StrictModule):
     admissibility_checked: bool = eqx.field(static=True)
     process_execution_bytes: int = eqx.field(static=True)
     logical_state_bytes: int = eqx.field(static=True)
+    execution_state_bytes: int = eqx.field(static=True)
+
+
+_OWNER_GEOMETRY_FIELDS = (
+    "cell_volumes",
+    "cell_centers",
+    "face_centers",
+    "area_vectors",
+    "face_measures",
+    "owner_cells",
+    "neighbor_cells",
+    "boundary_patch_ids",
+    "cell_owned",
+    "cell_owner",
+    "cell_global_ids",
+    "owned_face_indices",
+    "owned_face_valid",
+    "partition_index",
+)
+# Descriptor layout: closure cells, faces, owned-facet slots, halo message
+# entries and valid owned facets; one refusal flag per reason; family digest.
+_OWNER_COUNTS = 5
+_OWNER_REFUSALS = (
+    "a local program admission failure",
+    "halo and closure stable IDs, ownership, evidence, or routes that disagree",
+    "dynamics outside the uncoupled piecewise-constant owner-local route",
+    "an empty closure",
+)
+_OWNER_DIGEST = 10
 
 
 class _OwnerExecutionData(StrictModule):
@@ -2824,26 +2869,13 @@ class _OwnerExecutionData(StrictModule):
     owned_face_indices: Array
     owned_face_valid: Array
     partition_index: Array
+    neighbor_state_action: Array | None
     halo: DistributedHaloPlan
 
 
-class _OwnerProgramPlacement(StrictModule):
-    ordered: tuple[
-        tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
-    ]
-    prototype: PreparedUnstructuredFiniteVolumeDynamics
-    prototype_halo: DistributedHaloPlan
-    geometry: UnstructuredFiniteVolumeDiscretization
-    local_parts: tuple[int, ...] = eqx.field(static=True)
-    parts: int = eqx.field(static=True)
-
-
-class _OwnerExecutionArrays(StrictModule):
-    static: _OwnerExecutionData
-    structure: jax.tree_util.PyTreeDef = eqx.field(static=True)
-    numeric: tuple[Array, ...]
-    specifications: tuple[PartitionSpec, ...] = eqx.field(static=True)
-    local_leaves: tuple[tuple[Array, ...], ...]
+class _OwnerExecutionDescriptor(StrictModule):
+    values: Array
+    family: str = eqx.field(static=True)
 
 
 def _owner_local_geometry(
@@ -2866,16 +2898,10 @@ def _prepare_owner_program_placement(
     programs: tuple[
         tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
     ],
-    state: Array,
-    execution_group: ExecutionGroup,
-    axis_name: str,
+    local_parts: tuple[int, ...],
+    parts: int,
     /,
-) -> _OwnerProgramPlacement:
-    mesh = execution_group.mesh
-    if tuple(mesh.axis_names) != (axis_name,):
-        raise ValueError(
-            "owner_local.execution_group must contain one explicit partition axis; got a different mesh axis layout."
-        )
+) -> tuple[tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...]:
     if not programs:
         raise ValueError(
             "owner_local.programs must contain addressable owner programs; got an empty tuple."
@@ -2899,89 +2925,562 @@ def _prepare_owner_program_placement(
                 raise TypeError(
                     "owner_local.programs.halo must contain an owner-local sparse halo; got another kind or mode."
                 )
-        rank = int(np.asarray(geometry.partition_index))
+        rank = int(owner_local_host_array(geometry.partition_index))
         if rank in by_part:
             raise ValueError(
                 "owner_local.programs must have unique semantic partition indices; got a duplicate index."
             )
         by_part[rank] = (dynamics, halo)
-    local_parts = tuple(
-        index
-        for index, device in enumerate(execution_group.devices)
-        if device.process_index == jax.process_index()
-    )
     if set(by_part) != set(local_parts):
         raise ValueError(
             "owner_local.programs must cover the addressable group ranks; got a mismatched partition set."
         )
     ordered = tuple(by_part[rank] for rank in local_parts)
-    prototype, prototype_halo = ordered[0]
-    geometry = _owner_local_geometry(prototype)
-    parts = mesh.shape[axis_name]
-    if geometry.partition_count != parts:
+    if any(
+        _owner_local_geometry(dynamics).partition_count != parts
+        for dynamics, _ in ordered
+    ):
         raise ValueError(
             "owner_local.execution_group must preserve the certified partition count; got a different count."
         )
-    match state:
-        case Array() if state.shape == (parts, *geometry.state_shape):
-            pass
-        case _:
-            raise ValueError(
-                "owner_local.state must use the certified global closure layout; got a different shape."
+    return ordered
+
+
+def _owner_closure_identity(
+    geometry: UnstructuredFiniteVolumeDiscretization, halo: DistributedHaloPlan, /
+) -> bool:
+    """Host check that a logical halo matches closure IDs, ownership and routes."""
+    ids = owner_local_host_array(halo.local_global_ids, dtype=np.int64)
+    cell_ids = owner_local_host_array(geometry.cell_global_ids, dtype=np.int64)
+    index = int(owner_local_host_array(geometry.partition_index))
+    if (
+        halo.part_count != geometry.partition_count
+        or halo.entity_count != geometry.global_entity_counts[geometry.cell_dimension]
+        or halo.evidence_id != geometry.closure_evidence_id
+        or int(owner_local_host_array(halo.partition_index)) != index
+        or ids.shape != cell_ids.shape
+        or not np.all(owner_local_host_array(halo.local_valid, dtype=np.bool_))
+        or not np.array_equal(ids, cell_ids)
+        or not np.array_equal(
+            owner_local_host_array(halo.local_owned, dtype=np.bool_),
+            owner_local_host_array(geometry.cell_owned, dtype=np.bool_),
+        )
+    ):
+        return False
+    owners = owner_local_host_array(geometry.cell_owner, dtype=np.int64)
+    receive = owner_local_host_array(halo.phase_receive_indices)
+    receive_valid = owner_local_host_array(halo.phase_receive_valid, dtype=np.bool_)
+    return all(
+        np.all(
+            owners[receive[phase][receive_valid[phase]]]
+            == next((source for source, target in permutation if target == index), -1)
+        )
+        for phase, permutation in enumerate(halo.permutations)
+    )
+
+
+def _owner_execution_descriptor(
+    dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+    halo: DistributedHaloPlan,
+    controls: tuple[str | int, ...],
+    /,
+) -> _OwnerExecutionDescriptor:
+    geometry = _owner_local_geometry(dynamics)
+    physics = jax.tree_util.tree_leaves(
+        eqx.filter(
+            (dynamics.system, dynamics.method, dynamics.boundaries, dynamics.precision),
+            eqx.is_array,
+        )
+    )
+    geometric = tuple(getattr(geometry, name) for name in _OWNER_GEOMETRY_FIELDS) + (
+        ()
+        if dynamics.neighbor_state_action is None
+        else (dynamics.neighbor_state_action,)
+    )
+    family = canonical_fingerprint(
+        {
+            "kind": "owner-local-finite-volume-execution-family",
+            "controls": controls,
+            "system": (type(dynamics.system).__qualname__, dynamics.system.system_id),
+            "method": dynamics.method.method_id,
+            "boundaries": dynamics.boundaries.boundary_set_id,
+            "precision": dynamics.precision.policy_id,
+            "source": dynamics.source_id,
+            "geometry": (
+                geometry.cell_dimension,
+                geometry.component_names,
+                geometry.boundary_patch_names,
+                geometry.owned_face_buffered,
+                geometry.partition_count,
+                geometry.global_entity_counts,
+                geometry.closure_evidence_id,
+            ),
+            "halo": (
+                halo.permutations,
+                halo.entity_count,
+                halo.part_count,
+                halo.evidence_id,
+            ),
+            "physics_leaves": [(tuple(leaf.shape), str(leaf.dtype)) for leaf in physics],
+            "geometry_leaves": [
+                (tuple(leaf.shape[1:]), str(leaf.dtype)) for leaf in geometric
+            ],
+        }
+    )
+    counts = (
+        geometry.cell_count,
+        geometry.face_measures.size,
+        geometry.owned_face_indices.size,
+        halo.message_capacity,
+        int(np.count_nonzero(owner_local_host_array(geometry.owned_face_valid))),
+    )
+    # Owner-local advances solve centroid piecewise-constant traces only.
+    supported = (
+        type(dynamics.method.reconstruction) is PiecewiseConstantReconstruction
+        and dynamics.coupling.plan_id == UnstructuredFiniteVolumeCouplingPlan().plan_id
+    )
+    refusals = (
+        0,
+        int(not _owner_closure_identity(geometry, halo)),
+        int(not supported),
+        int(geometry.cell_count == 0),
+    )
+    digest = tuple(int(family[offset : offset + 7], 16) for offset in range(0, 64, 7))
+    return _OwnerExecutionDescriptor(
+        jnp.asarray(counts + refusals + digest, dtype=jnp.int64), family
+    )
+
+
+def _agree_owner_execution(
+    descriptors: tuple[_OwnerExecutionDescriptor, ...],
+    local_parts: tuple[int, ...],
+    execution_group: ExecutionGroup,
+    axis_name: str,
+    /,
+) -> np.ndarray:
+    """The single preparation sync: maxima, totals, refusals and agreement."""
+    packed = make_owner_local_field_array(
+        tuple(descriptor.values for descriptor in descriptors),
+        local_parts,
+        execution_group.devices,
+        axis_name=axis_name,
+    )
+    flags = _OWNER_COUNTS + len(_OWNER_REFUSALS)
+
+    def admit(value: Array) -> Array:
+        local = value[0]
+        counts, digest = local[:_OWNER_COUNTS], local[flags:]
+        agreed = jnp.all(
+            jax.lax.pmin(digest, axis_name) == jax.lax.pmax(digest, axis_name)
+        )
+        return jnp.concatenate(
+            (
+                jax.lax.pmax(counts, axis_name),
+                jax.lax.psum(counts, axis_name),
+                jax.lax.pmax(local[_OWNER_COUNTS:flags], axis_name),
+                agreed.astype(local.dtype)[None],
             )
-    return _OwnerProgramPlacement(
-        ordered, prototype, prototype_halo, geometry, local_parts, parts
+        )
+
+    summary = jax.shard_map(
+        admit,
+        mesh=execution_group.mesh,
+        in_specs=PartitionSpec(axis_name),
+        out_specs=PartitionSpec(),
+        check_vma=False,
+    )(packed)
+    return replicated_host_array(summary).astype(np.int64)
+
+
+def _padded_execution_data(
+    dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+    halo: DistributedHaloPlan,
+    capacities: tuple[int, int, int, int],
+    /,
+) -> _OwnerExecutionData:
+    """Pad one logical closure to the agreed buckets with inactive, safe lanes.
+
+    Padding faces join the first closure cell to no neighbor or patch with a
+    unit normal and measure and are never owned-facet slots; padding cells have
+    unit volume, the first cell's center, no ownership, and negative IDs equal
+    to the halo bucket's. Nothing is gathered from other partitions.
+    """
+    cells, faces, slots, messages = capacities
+    geometry = _owner_local_geometry(dynamics)
+    anchor = geometry.cell_centers[0]
+
+    def pad(value: Array, size: int, fill: ArrayLike) -> Array:
+        filler = jnp.broadcast_to(
+            jnp.asarray(fill, dtype=value.dtype),
+            (size - value.shape[0], *value.shape[1:]),
+        )
+        return jnp.concatenate((value, filler))
+
+    action = dynamics.neighbor_state_action
+    return _OwnerExecutionData(
+        dynamics.system,
+        dynamics.method,
+        dynamics.boundaries,
+        dynamics.precision,
+        pad(geometry.cell_volumes, cells, 1),
+        pad(geometry.cell_centers, cells, anchor),
+        pad(geometry.face_centers, faces, anchor),
+        pad(geometry.area_vectors, faces, jnp.eye(geometry.area_vectors.shape[1])[0]),
+        pad(geometry.face_measures, faces, 1),
+        pad(geometry.owner_cells, faces, 0),
+        pad(geometry.neighbor_cells, faces, -1),
+        pad(geometry.boundary_patch_ids, faces, -1),
+        pad(geometry.cell_owned, cells, False),
+        pad(geometry.cell_owner, cells, -1),
+        jnp.concatenate(
+            (
+                geometry.cell_global_ids,
+                jnp.arange(
+                    geometry.cell_count - cells,
+                    0,
+                    dtype=geometry.cell_global_ids.dtype,
+                ),
+            )
+        ),
+        pad(geometry.owned_face_indices, slots, 0),
+        pad(geometry.owned_face_valid, slots, False),
+        geometry.partition_index,
+        None if action is None else pad(action, faces, jnp.eye(action.shape[-1])),
+        halo.execution_bucket(cells, messages),
     )
 
 
-def _prepare_owner_execution_arrays(
-    placement: _OwnerProgramPlacement, execution_group: ExecutionGroup, axis_name: str, /
-) -> _OwnerExecutionArrays:
-    prototype, prototype_halo, geometry = (
-        placement.prototype,
-        placement.prototype_halo,
-        placement.geometry,
+def _is_none(value: object, /) -> bool:
+    return value is None
+
+
+def _bind_owner_execution(
+    skeleton: PreparedUnstructuredFiniteVolumeDynamics, data: _OwnerExecutionData, /
+) -> PreparedUnstructuredFiniteVolumeDynamics:
+    """Rebind the array-free prototype to one partition's padded leaves."""
+    geometry = eqx.tree_at(
+        lambda value: tuple(getattr(value, name) for name in _OWNER_GEOMETRY_FIELDS),
+        skeleton.discretization,
+        tuple(getattr(data, name) for name in _OWNER_GEOMETRY_FIELDS),
+        is_leaf=_is_none,
     )
-    ordered, local_parts, parts = (
-        placement.ordered,
-        placement.local_parts,
-        placement.parts,
+    return eqx.tree_at(
+        lambda value: (
+            value.system,
+            value.method,
+            value.boundaries,
+            value.precision,
+            value.discretization,
+            value.neighbor_state_action,
+        ),
+        skeleton,
+        (
+            data.system,
+            data.method,
+            data.boundaries,
+            data.precision,
+            geometry,
+            data.neighbor_state_action,
+        ),
+        is_leaf=_is_none,
     )
-    execution = _owner_local_execution_data(prototype, prototype_halo)
-    static = eqx.filter(execution, lambda value: not eqx.is_array(value))
-    first_leaves, structure = jax.tree_util.tree_flatten(
-        eqx.filter(execution, eqx.is_array)
+
+
+def _owner_execution_program(
+    skeleton: PreparedUnstructuredFiniteVolumeDynamics,
+    static: _OwnerExecutionData,
+    structure: jax.tree_util.PyTreeDef,
+    specifications: tuple[PartitionSpec, ...],
+    mesh: Mesh,
+    axis_name: str,
+    /,
+) -> Callable[..., tuple[Array, ...]]:
+    state_spec = PartitionSpec(axis_name, None, None)
+
+    def run(
+        numeric: tuple[Array, ...],
+        state: Array,
+        time: Array,
+        step: Array,
+        arguments: tuple[Array, ...],
+        argument_tree: jax.tree_util.PyTreeDef,
+        constant: Any,
+    ) -> tuple[Array, ...]:
+        def advance(
+            local_numeric: tuple[Array, ...],
+            local_state: Array,
+            local_time: Array,
+            local_step: Array,
+            local_arguments: tuple[Array, ...],
+        ) -> tuple[Array, ...]:
+            data = eqx.combine(
+                jax.tree_util.tree_unflatten(
+                    structure, tuple(value[0] for value in local_numeric)
+                ),
+                static,
+            )
+            dynamics = _bind_owner_execution(skeleton, data)
+            halo, precision = data.halo, data.precision
+            args = eqx.combine(
+                jax.tree_util.tree_unflatten(argument_tree, local_arguments), constant
+            )
+            valid = halo.local_valid[:, None]
+            before = local_state[0]
+            after = jnp.where(
+                valid,
+                dynamics.owner_local_advance(
+                    local_time, before, local_step, halo, axis_name=axis_name, args=args
+                ),
+                jnp.zeros((), dtype=before.dtype),
+            )
+            owned = data.cell_owned[:, None]
+            volumes = precision.reduction(data.cell_volumes[:, None])
+
+            def inventory(value: Array) -> Array:
+                local_content = compensated_sum(
+                    jnp.where(owned, volumes * precision.reduction(value), 0.0), axis=0
+                )
+                return jax.lax.psum(local_content, axis_name)
+
+            def collective(flag: Array) -> Array:
+                return jax.lax.pmin(flag.astype(jnp.int32), axis_name).astype(jnp.bool_)
+
+            # Padding is judged at the residual's real anchor row, never as an
+            # inactive zero state whose invalid predicate is masked away.
+            judged = jnp.where(valid, after, after[0])
+            return (
+                after[None, ...],
+                inventory(before),
+                inventory(after),
+                collective(jnp.all(jnp.where(valid, jnp.isfinite(after), True))),
+                collective(
+                    jnp.all(
+                        jnp.where(data.cell_owned, data.system.admissible(judged), True)
+                    )
+                ),
+            )
+
+        return jax.shard_map(
+            advance,
+            mesh=mesh,
+            in_specs=(
+                specifications,
+                state_spec,
+                PartitionSpec(),
+                PartitionSpec(),
+                tuple(PartitionSpec() for _ in arguments),
+            ),
+            out_specs=(
+                state_spec,
+                PartitionSpec(None),
+                PartitionSpec(None),
+                PartitionSpec(),
+                PartitionSpec(),
+            ),
+            check_vma=False,
+        )(numeric, state, time, step, arguments)
+
+    return eqx.filter_jit(run)
+
+
+def _replicated(value: ArrayLike, execution_group: ExecutionGroup, /) -> Array:
+    """Replicate one control from local device copies, without a host round trip."""
+    sharding = execution_group.named_sharding(PartitionSpec())
+    array = jnp.asarray(value)
+    if array.sharding.is_equivalent_to(sharding, array.ndim):
+        return array
+    return jax.make_array_from_single_device_arrays(
+        array.shape,
+        sharding,
+        [jax.device_put(array, device) for device in sharding.addressable_devices],
     )
-    signature = tuple((leaf.shape, leaf.dtype) for leaf in first_leaves)
-    local_leaves = []
-    for dynamics, halo in ordered:
-        other = _owner_local_geometry(dynamics)
-        if (
-            other.partition_count != parts
-            or other.state_shape != geometry.state_shape
-            or other.component_names != geometry.component_names
-            or other.boundary_patch_names != geometry.boundary_patch_names
-            or other.owned_face_buffered != geometry.owned_face_buffered
-            or type(dynamics.system) is not type(prototype.system)
-            or type(dynamics.method.interface_solver)
-            is not type(prototype.method.interface_solver)
-            or dynamics.source_id != prototype.source_id
+
+
+class OwnerLocalFiniteVolumeExecution(StrictModule):
+    """Collectively agreed fixed-capacity buckets for owner-local FV advances.
+
+    Logical closure cells, faces, owned-facet slots and halo message slots are
+    prefixes of buckets whose capacities are the collective maxima. Padding is
+    inactive execution storage, never scientific content: negative halo IDs,
+    no ownership, no owned-facet solve or message, unit placeholder measures
+    and zero state; physics on padding lanes reads a real closure row, so
+    masked lanes stay finite in value and derivative. ``local_cell_counts``,
+    ``logical_cell_count`` and ``logical_owned_face_count`` are logical sizes;
+    capacities and ``process_execution_bytes`` (this process's padded
+    execution leaves) describe the execution layout. Advances reuse one
+    compiled program and never synchronize with the host.
+    """
+
+    numeric: tuple[Array, ...]
+    program: Callable[..., tuple[Array, ...]] = eqx.field(static=True)
+    execution_group: ExecutionGroup = eqx.field(static=True)
+    axis_name: str = eqx.field(static=True)
+    local_parts: tuple[int, ...] = eqx.field(static=True)
+    local_cell_counts: tuple[int, ...] = eqx.field(static=True)
+    component_count: int = eqx.field(static=True)
+    state_dtype: str = eqx.field(static=True)
+    partition_count: int = eqx.field(static=True)
+    cell_capacity: int = eqx.field(static=True)
+    face_capacity: int = eqx.field(static=True)
+    owned_face_capacity: int = eqx.field(static=True)
+    message_capacity: int = eqx.field(static=True)
+    logical_cell_count: int = eqx.field(static=True)
+    logical_owned_face_count: int = eqx.field(static=True)
+    process_execution_bytes: int = eqx.field(static=True)
+    execution_id: str = eqx.field(static=True)
+
+    def require_state(self, state: Array, /) -> None:
+        if state.shape != (
+            self.partition_count,
+            self.cell_capacity,
+            self.component_count,
+        ) or jnp.dtype(state.dtype) != jnp.dtype(self.state_dtype):
+            raise ValueError(
+                "owner_local.state must use the padded execution layout and storage dtype; got another shape or dtype."
+            )
+
+    def pack_state(self, local_states: Sequence[ArrayLike], /) -> Array:
+        """Place logical closure states, in ``local_parts`` order, into zero-padded buckets."""
+        values = tuple(jnp.asarray(value) for value in local_states)
+        if len(values) != len(self.local_parts) or any(
+            value.shape != (count, self.component_count)
+            or jnp.dtype(value.dtype) != jnp.dtype(self.state_dtype)
+            for value, count in zip(values, self.local_cell_counts, strict=True)
         ):
             raise ValueError(
-                "owner_local.programs must share one compatible execution family; got incompatible metadata or system types."
+                "owner_local.state must contain one logical closure state per addressable partition with the storage dtype; got another count, shape, or dtype."
             )
-        leaves = jax.tree_util.tree_leaves(
-            eqx.filter(_owner_local_execution_data(dynamics, halo), eqx.is_array)
+        return make_owner_local_field_array(
+            tuple(
+                jnp.pad(value, ((0, self.cell_capacity - count), (0, 0)))
+                for value, count in zip(values, self.local_cell_counts, strict=True)
+            ),
+            self.local_parts,
+            self.execution_group.devices,
+            axis_name=self.axis_name,
         )
-        if tuple((leaf.shape, leaf.dtype) for leaf in leaves) != signature:
-            raise ValueError(
-                "owner_local.programs.buffers must share local capacities and dtypes; got incompatible signatures."
-            )
-        if any(not leaf.is_fully_addressable for leaf in leaves):
-            raise ValueError(
-                "owner_local.programs.buffers must be process-addressable; got a non-addressable array."
-            )
-        local_leaves.append(leaves)
+
+    def unpack_state(self, state: Array, /) -> tuple[Array, ...]:
+        """Return this process's logical closure rows in ``local_parts`` order."""
+        self.require_state(state)
+        placed = jax.device_put(
+            state,
+            self.execution_group.named_sharding(
+                PartitionSpec(self.axis_name, None, None)
+            ),
+        )
+        shards = {
+            0 if shard.index[0].start is None else int(shard.index[0].start): shard.data
+            for shard in placed.addressable_shards
+        }
+        return tuple(
+            shards[part][0, :count]
+            for part, count in zip(self.local_parts, self.local_cell_counts, strict=True)
+        )
+
+
+@checked
+def prepare_owner_local_finite_volume_execution(
+    programs: tuple[
+        tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
+    ],
+    execution_group: ExecutionGroup,
+    /,
+    *,
+    axis_name: str,
+    maximum_cells: int,
+    maximum_faces: int,
+    maximum_message_entries: int,
+    maximum_storage_bytes: int,
+) -> OwnerLocalFiniteVolumeExecution:
+    """Agree fixed-capacity owner-local buckets with one collective host sync.
+
+    ``programs`` are this process's logical closures with their halos, one per
+    addressable execution-group partition. Every partition contributes closure
+    counts, local refusal flags, and an execution-family digest to one
+    collective; capacities are the agreed maxima. Disagreement, a refusal on
+    any partition, or a bucket beyond the declared maxima refuses on every
+    partition. ``maximum_faces`` bounds closure faces and owned-facet slots;
+    ``maximum_storage_bytes`` bounds every partition's padded execution leaves
+    plus state input and output, with the FE coexistence reserve.
+    """
+    bounds = (
+        maximum_cells,
+        maximum_faces,
+        maximum_message_entries,
+        maximum_storage_bytes,
+    )
+    mesh = execution_group.mesh
+    if any(type(value) is not int or value < 1 for value in bounds) or tuple(
+        mesh.axis_names
+    ) != (axis_name,):
+        raise ValueError(
+            "owner_local.execution must declare positive integer bounds and one explicit partition axis; got invalid bounds or a different mesh axis layout."
+        )
+    parts = mesh.shape[axis_name]
+    local_parts = tuple(
+        index
+        for index, device in enumerate(execution_group.devices)
+        if device.process_index == jax.process_index()
+    )
+    # A local refusal still joins the collective, so every partition refuses.
+    failure: Exception | None = None
+    try:
+        ordered = _prepare_owner_program_placement(programs, local_parts, parts)
+        descriptors = tuple(
+            _owner_execution_descriptor(dynamics, halo, (axis_name, *bounds))
+            for dynamics, halo in ordered
+        )
+    except (TypeError, ValueError) as error:
+        failure, ordered = error, ()
+        refused = jnp.zeros(
+            (_OWNER_COUNTS + len(_OWNER_REFUSALS) + _OWNER_DIGEST,), dtype=jnp.int64
+        )
+        descriptors = tuple(
+            _OwnerExecutionDescriptor(refused.at[_OWNER_COUNTS].set(1), "")
+            for _ in local_parts
+        )
+    summary = _agree_owner_execution(descriptors, local_parts, execution_group, axis_name)
+    flags = summary[2 * _OWNER_COUNTS : 2 * _OWNER_COUNTS + len(_OWNER_REFUSALS)]
+    if np.any(flags):
+        reasons = ", ".join(
+            reason for reason, flag in zip(_OWNER_REFUSALS, flags, strict=True) if flag
+        )
+        raise ValueError(
+            f"owner_local.programs must be admitted on every partition; got {reasons}."
+        ) from failure
+    if not summary[-1]:
+        raise ValueError(
+            "owner_local.programs must share one execution family on every partition; got incompatible metadata, system types, or declared bounds."
+        )
+    cells, faces, slots, messages = (int(value) for value in summary[:4])
+    if (
+        cells > maximum_cells
+        or max(faces, slots) > maximum_faces
+        or messages > maximum_message_entries
+    ):
+        raise ValueError(
+            "owner_local.capacities must fit the declared execution bounds; got overflowing cell, face, or halo buckets."
+        )
+    padded = tuple(
+        _padded_execution_data(dynamics, halo, (cells, faces, slots, messages))
+        for dynamics, halo in ordered
+    )
+    prototype = ordered[0][0]
+    precision = prototype.precision
+    components = _owner_local_geometry(prototype).component_count
+    first, structure = jax.tree_util.tree_flatten(eqx.filter(padded[0], eqx.is_array))
+    leaf_bytes = sum(leaf.size * leaf.dtype.itemsize for leaf in first)
+    state_bytes = cells * components * jnp.dtype(precision.storage_dtype).itemsize
+    # The FE execution-bucket host-staging/execution/launch coexistence
+    # reserve: an admission bound, not a measured allocation.
+    if 3 * parts * (leaf_bytes + 2 * state_bytes) > maximum_storage_bytes:
+        raise ValueError(
+            "owner_local.storage_bytes must fit the declared coexistence bound; got excess padded storage."
+        )
+    local_leaves = tuple(
+        jax.tree_util.tree_leaves(eqx.filter(data, eqx.is_array)) for data in padded
+    )
     numeric = tuple(
         make_owner_local_field_array(
             tuple(leaves[index] for leaves in local_leaves),
@@ -2989,180 +3488,86 @@ def _prepare_owner_execution_arrays(
             execution_group.devices,
             axis_name=axis_name,
         )
-        for index in range(len(first_leaves))
+        for index in range(len(first))
     )
     specifications = tuple(
-        PartitionSpec(axis_name, *(None for _ in leaf.shape)) for leaf in first_leaves
+        PartitionSpec(axis_name, *(None for _ in leaf.shape)) for leaf in first
     )
-    return _OwnerExecutionArrays(
-        static,
-        structure,
-        numeric,
-        specifications,
-        tuple(tuple(leaves) for leaves in local_leaves),
-    )
-
-
-def _owner_local_execution_data(
-    dynamics: PreparedUnstructuredFiniteVolumeDynamics,
-    halo: DistributedHaloPlan,
-    /,
-) -> _OwnerExecutionData:
-    geometry = _owner_local_geometry(dynamics)
-    return _OwnerExecutionData(
-        dynamics.system,
-        dynamics.method,
-        dynamics.boundaries,
-        dynamics.precision,
-        geometry.cell_volumes,
-        geometry.cell_centers,
-        geometry.face_centers,
-        geometry.area_vectors,
-        geometry.face_measures,
-        geometry.owner_cells,
-        geometry.neighbor_cells,
-        geometry.boundary_patch_ids,
-        geometry.cell_owned,
-        geometry.cell_owner,
-        geometry.cell_global_ids,
-        geometry.owned_face_indices,
-        geometry.owned_face_valid,
-        geometry.partition_index,
-        halo,
+    return OwnerLocalFiniteVolumeExecution(
+        numeric=numeric,
+        program=_owner_execution_program(
+            eqx.filter(prototype, lambda value: not eqx.is_array(value)),
+            eqx.filter(padded[0], lambda value: not eqx.is_array(value)),
+            structure,
+            specifications,
+            mesh,
+            axis_name,
+        ),
+        execution_group=execution_group,
+        axis_name=axis_name,
+        local_parts=local_parts,
+        local_cell_counts=tuple(
+            _owner_local_geometry(dynamics).cell_count for dynamics, _ in ordered
+        ),
+        component_count=components,
+        state_dtype=precision.storage_dtype,
+        partition_count=parts,
+        cell_capacity=cells,
+        face_capacity=faces,
+        owned_face_capacity=slots,
+        message_capacity=messages,
+        logical_cell_count=int(summary[_OWNER_COUNTS]),
+        logical_owned_face_count=int(summary[_OWNER_COUNTS + 4]),
+        process_execution_bytes=len(local_parts) * leaf_bytes,
+        execution_id=canonical_fingerprint(
+            {
+                "kind": "owner-local-finite-volume-execution",
+                "family": descriptors[0].family,
+                "capacities": (cells, faces, slots, messages),
+                "partitions": parts,
+            }
+        ),
     )
 
 
 @checked
 def execute_owner_local_finite_volume_advance(
-    programs: tuple[
-        tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
-    ],
+    execution: OwnerLocalFiniteVolumeExecution,
     state: Array,
     time: ArrayLike,
     step: ArrayLike,
-    execution_group: ExecutionGroup,
     /,
     *,
-    axis_name: str,
     args: Any = None,
 ) -> OwnerLocalFiniteVolumeAdvance:
-    """Execute process-addressable owner programs on their real group placement.
+    """Advance prepared owner programs once, without host synchronization.
 
-    ``state`` is a global JAX closure-layout array ``(parts, local_cells,
-    components)`` whose first axis is the persisted semantic partition index.
-    This boundary does not infer stable IDs as global slots or repartition a
-    changed partition count. Supply the separately certified lowering for that
-    operation. Only local numerical execution leaves enter the mapped program;
-    mesh topology and logical checkpoint arrays never become map arguments.
+    ``state`` is a global JAX array in the execution layout ``(partitions,
+    cell_capacity, components)`` (see `OwnerLocalFiniteVolumeExecution`)
+    whose first axis is the persisted semantic partition index. This boundary
+    does not infer stable IDs as global slots or repartition a changed
+    partition count. Only padded local execution leaves enter the cached
+    program; mesh topology and logical checkpoint arrays never become map
+    arguments. ``time``, ``step`` and array leaves of ``args`` are replicated
+    controls shared by every partition.
     """
-    placement = _prepare_owner_program_placement(
-        programs, state, execution_group, axis_name
+    execution.require_state(state)
+    group = execution.execution_group
+    placed = jax.device_put(
+        state, group.named_sharding(PartitionSpec(execution.axis_name, None, None))
     )
-    prepared = _prepare_owner_execution_arrays(placement, execution_group, axis_name)
-    prototype, geometry = placement.prototype, placement.geometry
-    static, structure = prepared.static, prepared.structure
-    numeric, specifications = prepared.numeric, prepared.specifications
-    local_leaves = prepared.local_leaves
-    mesh = execution_group.mesh
-    state_spec = PartitionSpec(axis_name, None, None)
-    placed_state = jax.device_put(state, execution_group.named_sharding(state_spec))
-    admissibility_checked = True
-
-    def advance(
-        local_numeric: tuple[Array, ...], local_state: Array
-    ) -> tuple[Array, ...]:
-        data = eqx.combine(
-            jax.tree_util.tree_unflatten(
-                structure, tuple(value[0] for value in local_numeric)
-            ),
-            static,
-        )
-        system, method = data.system, data.method
-        boundaries, precision, halo = data.boundaries, data.precision, data.halo
-        values = (
-            data.cell_volumes,
-            data.cell_centers,
-            data.face_centers,
-            data.area_vectors,
-            data.face_measures,
-            data.owner_cells,
-            data.neighbor_cells,
-            data.boundary_patch_ids,
-            data.cell_owned,
-            data.cell_owner,
-            data.cell_global_ids,
-            data.owned_face_indices,
-            data.owned_face_valid,
-            data.partition_index,
-        )
-        local_geometry = eqx.tree_at(
-            lambda value: (
-                value.cell_volumes,
-                value.cell_centers,
-                value.face_centers,
-                value.area_vectors,
-                value.face_measures,
-                value.owner_cells,
-                value.neighbor_cells,
-                value.boundary_patch_ids,
-                value.cell_owned,
-                value.cell_owner,
-                value.cell_global_ids,
-                value.owned_face_indices,
-                value.owned_face_valid,
-                value.partition_index,
-            ),
-            geometry,
-            tuple(values),
-        )
-        dynamics = eqx.tree_at(
-            lambda value: (
-                value.system,
-                value.method,
-                value.boundaries,
-                value.precision,
-                value.discretization,
-            ),
-            prototype,
-            (system, method, boundaries, precision, local_geometry),
-        )
-        before = local_state[0]
-        after = dynamics.owner_local_advance(
-            time, before, step, halo, axis_name=axis_name, args=args
-        )
-        owned = local_geometry.cell_owned[:, None]
-        volumes = precision.reduction(local_geometry.cell_volumes[:, None])
-
-        def inventory(value: Array) -> Array:
-            local_content = compensated_sum(
-                jnp.where(owned, volumes * precision.reduction(value), 0.0), axis=0
-            )
-            return jax.lax.psum(local_content, axis_name)
-
-        finite = jax.lax.pmin(
-            jnp.all(jnp.isfinite(after)).astype(jnp.int32), axis_name
-        ).astype(jnp.bool_)
-        admissible = jnp.all(
-            jnp.where(local_geometry.cell_owned, system.admissible(after), True)
-        )
-        admissible = jax.lax.pmin(admissible.astype(jnp.int32), axis_name).astype(
-            jnp.bool_
-        )
-        return after[None, ...], inventory(before), inventory(after), finite, admissible
-
-    advanced, before, after, finite, admissible = jax.shard_map(
-        advance,
-        mesh=mesh,
-        in_specs=(specifications, state_spec),
-        out_specs=(
-            state_spec,
-            PartitionSpec(None),
-            PartitionSpec(None),
-            PartitionSpec(),
-            PartitionSpec(),
-        ),
-        check_vma=False,
-    )(numeric, placed_state)
+    dynamic, constant = eqx.partition(args, eqx.is_array)
+    leaves, tree = jax.tree_util.tree_flatten(dynamic)
+    advanced, before, after, finite, admissible = execution.program(
+        execution.numeric,
+        placed,
+        _replicated(time, group),
+        _replicated(step, group),
+        tuple(_replicated(leaf, group) for leaf in leaves),
+        tree,
+        constant,
+    )
+    itemsize = jnp.dtype(execution.state_dtype).itemsize
     return OwnerLocalFiniteVolumeAdvance(
         state=advanced,
         inventory_before=before,
@@ -3170,18 +3575,21 @@ def execute_owner_local_finite_volume_advance(
         inventory_change=after - before,
         finite=finite,
         admissible=admissible,
-        admissibility_checked=admissibility_checked,
-        process_execution_bytes=sum(
-            leaf.size * leaf.dtype.itemsize for leaves in local_leaves for leaf in leaves
-        ),
-        logical_state_bytes=state.size * state.dtype.itemsize,
+        admissibility_checked=True,
+        process_execution_bytes=execution.process_execution_bytes,
+        logical_state_bytes=execution.logical_cell_count
+        * execution.component_count
+        * itemsize,
+        execution_state_bytes=state.size * itemsize,
     )
 
 
 __all__ = [
     "PreparedUnstructuredFiniteVolumeDynamics",
     "OwnerLocalFiniteVolumeAdvance",
+    "OwnerLocalFiniteVolumeExecution",
     "execute_owner_local_finite_volume_advance",
+    "prepare_owner_local_finite_volume_execution",
     "UnstructuredFiniteVolumeBoundarySet",
     "UnstructuredFiniteVolumeDiagnostics",
     "UnstructuredFiniteVolumeMethodPlan",

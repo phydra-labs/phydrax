@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,11 +19,13 @@ from phydrax.discretization.vem import (
     PreparedPolyhedralH1VirtualElement3D,
     VirtualElementResourceBudget,
 )
+from phydrax.discretization.vem._operator import FactorizedVirtualElementOperator
 from phydrax.lifecycle import (
     read_meshing_source_closure,
     write_meshing_source_closure,
 )
 from phydrax.meshing._polyhedral_generation import PolyhedralConstruction
+from phydrax.sparse import RelationAccumulation
 from tests._support.coordinate_references import coordinate_reference_budget
 from tests._support.distributed_meshing.cold_lifecycle_identities import (
     array_record,
@@ -180,6 +185,228 @@ def test_periodic_vem_cell_capacity_refusal(periodic_case: _PeriodicCase) -> Non
             periodic_case.construction.mesh,
             resource_budget=VirtualElementResourceBudget(maximum_cells=1),
         )
+
+
+def _with_accumulation(
+    prepared: PreparedPolyhedralH1VirtualElement3D,
+    accumulation: RelationAccumulation,
+) -> PreparedPolyhedralH1VirtualElement3D:
+    operator = prepared.operator
+    replacement = FactorizedVirtualElementOperator(
+        operator.coefficient_maps,
+        operator.polynomial_matrices,
+        operator.stabilization_matrices,
+        operator.gathers,
+        operator.global_size,
+        accumulation=accumulation,
+        properties=operator.properties,
+    )
+    return eqx.tree_at(lambda value: value.operator, prepared, replacement)
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic"])
+@pytest.mark.parametrize("scale", [1.0, float.fromhex("0x1p-1020")])
+def test_periodic_zero_mean_load_all_stage_bound(
+    periodic_case: _PeriodicCase,
+    accumulation: RelationAccumulation,
+    scale: float,
+) -> None:
+    prepared = _with_accumulation(periodic_case.prepared, accumulation)
+    count = prepared.mesh.connectivity.cell_count
+    density = np.linspace(0.1, 0.2, count, dtype=np.float64) * scale
+    weights = np.asarray(prepared.evidence.cell_volumes)
+    # Exercise the actual backend's weighted dot, reduction and quotient.
+    mean = float(jnp.dot(jnp.asarray(density), jnp.asarray(weights)) / jnp.sum(weights))
+    force = density - np.float64(mean)
+    bound = prepared.zero_mean_load_compatibility_bound(density, weights, mean, force)
+    # The bound is obtained before assembling or observing the residual.
+    load = prepared.assemble_cellwise_constant_load(force)
+    residual = abs(math.fsum(map(float, np.asarray(load))))
+    assert Fraction(residual) <= Fraction(bound.tolerance)
+    if scale == 1.0:
+        assert residual > 0  # This genuinely needs the approved nonzero bound.
+    assert math.isfinite(bound.tolerance)
+    assert bound.tolerance > 0
+    assert bound.cell_count == count
+    assert bound.maximum_incidence > 0
+    assert bound.mean_reduction_bound > 0
+    assert bound.assembly_bound > 0
+    assert bound.accumulation_bound > 0
+    prepared.compatible_pinned_load(load, 0, compatibility_tolerance=bound.tolerance)
+    repeated = prepared.zero_mean_load_compatibility_bound(density, weights, mean, force)
+    assert repeated.inputs_id == bound.inputs_id
+    assert repeated.bound_id == bound.bound_id
+    assert repeated.tolerance == bound.tolerance
+    changed_density = density[::-1].copy()
+    changed_mean = float(
+        jnp.dot(jnp.asarray(changed_density), jnp.asarray(weights)) / jnp.sum(weights)
+    )
+    changed = prepared.zero_mean_load_compatibility_bound(
+        changed_density, weights, changed_mean, changed_density - changed_mean
+    )
+    assert changed.inputs_id != bound.inputs_id
+    assert changed.bound_id != bound.bound_id
+
+
+def test_periodic_zero_mean_load_rejects_physical_incompatibility(
+    periodic_case: _PeriodicCase,
+) -> None:
+    prepared = periodic_case.prepared
+    count = prepared.mesh.connectivity.cell_count
+    density = np.ones(count, dtype=np.float64)
+    weights = np.asarray(prepared.evidence.cell_volumes)
+    # A perfectly finite, bitwise-correct subtraction is not enough: this
+    # omits the physical mean and must not be absorbed by the rounding bound.
+    with pytest.raises(ValueError, match="physically incompatible mean"):
+        prepared.zero_mean_load_compatibility_bound(density, weights, 0.0, density)
+    with pytest.raises(ValueError, match="another force"):
+        prepared.zero_mean_load_compatibility_bound(density, weights, 1.0, density)
+    # Preserve the old exact-zero negative admissions, independently of the
+    # approved bound for a correctly constructed zero-mean physical force.
+    unit_load = prepared.assemble_cellwise_constant_load(density)
+    with pytest.raises(ValueError, match="zero-total"):
+        prepared.compatible_pinned_load(unit_load, 0, compatibility_tolerance=0.0)
+    with pytest.raises(ValueError, match="zero-total"):
+        prepared.compatible_pinned_load(
+            np.ones(prepared.dof_count, dtype=np.float64),
+            0,
+            compatibility_tolerance=0.0,
+        )
+
+
+@pytest.mark.parametrize("weight_fault", ["changed", "zero", "negative"])
+def test_periodic_zero_mean_load_rejects_weights(
+    periodic_case: _PeriodicCase, weight_fault: str
+) -> None:
+    prepared = periodic_case.prepared
+    weights = np.asarray(prepared.evidence.cell_volumes).copy()
+    match weight_fault:
+        case "changed":
+            weights[0] = np.nextafter(weights[0], np.inf)
+        case "zero":
+            weights[0] = 0.0
+            prepared = eqx.tree_at(
+                lambda value: value.evidence.cell_volumes,
+                prepared,
+                jnp.asarray(weights),
+            )
+        case "negative":
+            weights[0] = -weights[0]
+            prepared = eqx.tree_at(
+                lambda value: value.evidence.cell_volumes,
+                prepared,
+                jnp.asarray(weights),
+            )
+        case _:
+            raise AssertionError(f"unexpected test weight fault {weight_fault}")
+    zero = np.zeros(weights.shape, dtype=np.float64)
+    with pytest.raises(ValueError, match="admitted positive cell volumes"):
+        prepared.zero_mean_load_compatibility_bound(zero, weights, 0.0, zero)
+
+
+def test_periodic_zero_mean_load_rejects_unproved_accumulation(
+    periodic_case: _PeriodicCase,
+) -> None:
+    prepared = _with_accumulation(periodic_case.prepared, "compensated")
+    weights = np.asarray(prepared.evidence.cell_volumes)
+    zero = np.zeros(weights.shape, dtype=np.float64)
+    with pytest.raises(ValueError, match="plain fast or deterministic"):
+        prepared.zero_mean_load_compatibility_bound(zero, weights, 0.0, zero)
+
+
+def test_periodic_zero_mean_load_rejects_unproved_denominator_range(
+    periodic_case: _PeriodicCase,
+) -> None:
+    prepared = periodic_case.prepared
+    weights = np.full(
+        (prepared.mesh.connectivity.cell_count,),
+        np.finfo(np.float64).tiny,
+        dtype=np.float64,
+    )
+    prepared = eqx.tree_at(
+        lambda value: value.evidence.cell_volumes, prepared, jnp.asarray(weights)
+    )
+    zero = np.zeros(weights.shape, dtype=np.float64)
+    with pytest.raises(ValueError, match="normal positive rounded total"):
+        prepared.zero_mean_load_compatibility_bound(zero, weights, 0.0, zero)
+
+
+@pytest.mark.parametrize("fault", ["float32", "shape"])
+def test_periodic_zero_mean_load_rejects_nonbinary64_inputs(
+    periodic_case: _PeriodicCase, fault: str
+) -> None:
+    prepared = periodic_case.prepared
+    weights = np.asarray(prepared.evidence.cell_volumes)
+    zero = np.zeros(weights.shape, dtype=np.float64)
+    match fault:
+        case "float32":
+            density = zero.astype(np.float32)
+        case "shape":
+            density = zero[:, None]
+        case _:
+            raise AssertionError(f"unexpected test input fault {fault}")
+    with pytest.raises(ValueError, match="finite float64"):
+        prepared.zero_mean_load_compatibility_bound(density, weights, 0.0, zero)
+
+
+@pytest.mark.parametrize("field", ["density", "weights", "mean", "force"])
+@pytest.mark.parametrize("nonfinite", [math.inf, math.nan])
+def test_periodic_zero_mean_load_rejects_nonfinite(
+    periodic_case: _PeriodicCase, field: str, nonfinite: float
+) -> None:
+    prepared = periodic_case.prepared
+    weights = np.asarray(prepared.evidence.cell_volumes).copy()
+    density = np.zeros(weights.shape, dtype=np.float64)
+    force = density.copy()
+    mean = 0.0
+    match field:
+        case "density":
+            density[0] = nonfinite
+        case "weights":
+            weights[0] = nonfinite
+        case "mean":
+            mean = nonfinite
+        case "force":
+            force[0] = nonfinite
+        case _:
+            raise AssertionError(f"unexpected test nonfinite field {field}")
+    with pytest.raises(ValueError, match="finite float64"):
+        prepared.zero_mean_load_compatibility_bound(density, weights, mean, force)
+
+
+@pytest.mark.parametrize("stage", ["subtraction", "weight reduction", "final fsum"])
+def test_periodic_zero_mean_load_rejects_overflow_ranges(
+    periodic_case: _PeriodicCase, stage: str
+) -> None:
+    prepared = periodic_case.prepared
+    weights = np.asarray(prepared.evidence.cell_volumes).copy()
+    maximum = np.finfo(np.float64).max
+    mean = 0.0
+    match stage:
+        case "subtraction":
+            density = np.full(weights.shape, -maximum, dtype=np.float64)
+            force = density.copy()
+            mean = float(maximum)
+        case "weight reduction":
+            weights.fill(maximum)
+            prepared = eqx.tree_at(
+                lambda value: value.evidence.cell_volumes,
+                prepared,
+                jnp.asarray(weights),
+            )
+            density = np.zeros(weights.shape, dtype=np.float64)
+            force = density.copy()
+        case "final fsum":
+            density = np.full(weights.shape, maximum / 2, dtype=np.float64)
+            density[::2] *= -1
+            mean = float(
+                jnp.dot(jnp.asarray(density), jnp.asarray(weights)) / jnp.sum(weights)
+            )
+            force = density - mean
+        case _:
+            raise AssertionError(f"unexpected test overflow stage {stage}")
+    with pytest.raises(ValueError, match="overflow range"):
+        prepared.zero_mean_load_compatibility_bound(density, weights, mean, force)
 
 
 def test_periodic_vem_archive_continuation(

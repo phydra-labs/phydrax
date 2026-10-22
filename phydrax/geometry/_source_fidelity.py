@@ -14,6 +14,109 @@ Mesh certificate checks
 [
   {
     "checks": [
+      "source_chart_authority_premise",
+      "source_chart_facet_lineage_premise",
+      "source_chart_orientation_premise",
+      "source_chart_map_premise"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "The independently reconstructed native BRep authority, revision, single region and complete oriented patch/trim chain agree with the supplied source."
+      },
+      {
+        "tag": "X",
+        "statement": "Every source chart triangle matches exactly one target boundary facet, its corner coefficient values match the root vertex bank, and the authored region-side orientation agrees with the reference volume boundary orientation."
+      },
+      {
+        "tag": "X",
+        "statement": "Native endpoint/root, coedge correspondence and original admitted gap envelopes authenticate a continuous closed representative and oriented incidence ribbons from every original face; removable value and one-sided derivative limits of its curved-edge corrections are proved."
+      }
+    ],
+    "conclusion": "An unsupported source map, foreign authority, incomplete facet lineage or inconsistent source side cannot establish a boundary-degree identity.",
+    "citation": {
+      "kind": "definition",
+      "reference": "Source fidelity certificate contract",
+      "locator": "phydrax.geometry._source_fidelity._chart_boundary_homotopy",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "checks": [
+      "source_chart_homotopy_premise"
+    ],
+    "premises": [
+      {
+        "tag": "N",
+        "statement": "Outward native source and exact target polynomial intervals certify continuous deviation including original-face-to-representative ribbon bounds, rank-two projected Jacobians, edge-atlas monotonicity, vertex-cone separation and synchronized-time separation of every nonadjacent pair throughout the closed-boundary homotopy."
+      },
+      {
+        "tag": "X",
+        "statement": "Exact shared representative and target traces glue the complete oriented chart chain to the complete target boundary, without unidentified contacts or omitted authored patches; original nonzero incidences remain bounded ribbons under their unchanged import/model allowance."
+      },
+      {
+        "tag": "T",
+        "statement": "A continuous family of embeddings of a closed oriented boundary preserves its degree off the swept image; oriented incidence ribbons preserve the represented region side off their support. Complete oriented chart boundaries and nonzero chart Jacobians give degree-one coverage of the bounded trimmed parameter domains."
+      }
+    ],
+    "conclusion": "Only the fully certified source-to-target isotopy establishes the two directed boundary bounds and the source-bound signed-degree identity.",
+    "citation": {
+      "kind": "mathematical",
+      "reference": "Allen Hatcher, Algebraic Topology (2002)",
+      "locator": "Section 2.2, Degree; Section 2.B, Jordan separation",
+      "url": "https://math.uchicago.edu/~farb/algtop2023/Hatcher.pdf"
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "checks": [
+      "source_chart_homotopy_resource"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "The shared coordinate/source budget refuses the chart map, exact trace or continuous homotopy phase at its original work or storage allowance."
+      }
+    ],
+    "conclusion": "Retain the refusing resource phase and leave the boundary-degree proof unresolved.",
+    "citation": {
+      "kind": "definition",
+      "reference": "Source fidelity certificate contract",
+      "locator": "phydrax.geometry._source_fidelity._chart_boundary_homotopy",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "checks": [
+      "source_trim_coverage_premise"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "An explicitly supplied chart witness names every selected authored patch exactly once and independently certifies its oriented chart chain and complete trims."
+      }
+    ],
+    "conclusion": "A closed-form boundary projection cannot discard an invalid supplied chart witness; the accepted witness and its continuous cover bind the degree identity.",
+    "citation": {
+      "kind": "definition",
+      "reference": "Source fidelity certificate contract",
+      "locator": "phydrax.geometry._source_fidelity.analytic_boundary_proof",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "checks": [
       "mesh_sample_capacity",
       "source_sample_capacity",
       "source_chart_capacity"
@@ -531,11 +634,15 @@ import phydrax.discretization._coordinate_enclosure as coordinate_enclosure_owne
 import phydrax.ein as ein
 import phydrax.geometry._affine_chart_coverage as affine_chart_coverage_owner
 import phydrax.geometry._domain_boundary as domain_boundary_owner
+import phydrax.geometry._domain_chart_chain as domain_chart_chain_owner
 import phydrax.geometry._domain_numerics as domain_numerics_owner
 import phydrax.geometry._domain_planar_boundary as domain_planar_boundary_owner
 import phydrax.geometry._domain_preparation as domain_preparation_owner
+import phydrax.geometry._embedding_cells as embedding_cells_owner
 import phydrax.geometry._exact_polyhedral_geometry as exact_polyhedral_geometry_owner
+import phydrax.geometry._mapped_embedding as mapped_embedding_owner
 import phydrax.geometry._mapped_reference_domain as mapped_reference_domain_owner
+import phydrax.geometry._meshing_domain as meshing_domain_owner
 import phydrax.geometry._radial_source_fidelity as radial_source_fidelity_owner
 import phydrax.geometry._surface_source_support as surface_source_support_owner
 import phydrax.geometry.brep._patches as patches_owner
@@ -551,6 +658,8 @@ from .._fingerprint import (
     tree_content_equal,
 )
 from .._geometry_predicates import bigint_bytes
+from .._host_storage import immutable_host_array
+from .._issued_proofs import IssuedProofs
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, positive_integer
@@ -578,7 +687,9 @@ from ._contracts import CompiledGeometry
 from ._domain_coverage import (
     certify_domain_coverage,
     DomainCoverageCertificate,
+    is_issued_domain_coverage,
     mapped_reference_proofs,
+    PiecewiseLinearDomain,
 )
 from ._embedding_state import (
     coordinate_certificate_request,
@@ -597,6 +708,7 @@ from ._global_embedding import (
     certify_global_embedding,
     coordinate_scope,
     exact_pair_contacts,
+    GlobalEmbeddingCertificate,
     ray_crossings_2d,
     ray_crossings_3d,
 )
@@ -609,6 +721,9 @@ from ._mesh_certificates import (
 from ._polygon_triangulation import loop_triangles
 from ._rational import dyadic_integers, rational_vector
 from ._source_boundary_records import (
+    AffineChainResourceEvidence,
+    AffineChainResourceMetric,
+    CadBoundaryClosureEvidence,
     SourceAmbientDim,
     SourceBoundaryChartCover,
     SourceBoundaryChartQuery,
@@ -622,6 +737,7 @@ from .brep._analytic_source_regions import (
     CylinderSourceRegion,
     native_full_turn,
 )
+from .brep._carrier_pieces import admit_carrier_fingerprint, carrier_payload
 from .brep._model import BRepGeometry, BRepModel
 from .brep._patches import AbstractCurve
 
@@ -905,7 +1021,11 @@ class MappedDomainBoundarySource(StrictModule, NonTrainableState):
         covering_radius: float = 0.01,
     ) -> None:
 
-        limits_ = MeshCertificateLimits() if limits is None else limits
+        limits_ = domain.certificate_limits if limits is None else limits
+        if not tree_content_equal(limits_, domain.certificate_limits):
+            raise ValueError(
+                "MappedDomainBoundarySource.limits must match domain.certificate_limits"
+            )
         radius = float(covering_radius)
         if not math.isfinite(radius) or radius <= 0:
             raise ValueError(
@@ -1275,6 +1395,24 @@ class ImplicitProjectionCoverageEvidence(StrictModule, NonTrainableState):
             HostInt64[_ProjectionFiberCandidateDim],
             "fiber_candidate_facets",
         )
+        # These validated proof operands are immutable numerical banks, not
+        # mutable producer views. Preserve their host representation and exact
+        # bytes while allowing publication to authenticate the actual backing.
+        self.source_center = immutable_host_array(self.source_center)
+        self.facets = immutable_host_array(self.facets)
+        self.facet_vertices = immutable_host_array(self.facet_vertices)
+        self.facet_ids = immutable_host_array(self.facet_ids)
+        self.facet_components = immutable_host_array(self.facet_components)
+        self.piece_triangles = immutable_host_array(self.piece_triangles)
+        self.piece_barycentric_vertices = immutable_host_array(self.piece_barycentric_vertices)
+        self.piece_coordinate_bounds = immutable_host_array(self.piece_coordinate_bounds)
+        self.piece_owners = immutable_host_array(self.piece_owners)
+        self.field_bounds = immutable_host_array(self.field_bounds)
+        self.gradient_bounds = immutable_host_array(self.gradient_bounds)
+        self.normal_bounds = immutable_host_array(self.normal_bounds)
+        self.fiber_value_bounds = immutable_host_array(self.fiber_value_bounds)
+        self.fiber_gradient_bounds = immutable_host_array(self.fiber_gradient_bounds)
+        self.fiber_candidate_facets = immutable_host_array(self.fiber_candidate_facets)
         self.fiber_crossing_classes = classes
         self.fiber_crossing_parameters = fiber_crossing_parameters
         self.forward_upper, self.forward_lower = (
@@ -1416,10 +1554,16 @@ class ImplicitProjectionBoundarySource(StrictModule, NonTrainableState):
 
     @checked
     def __init__(
-        self, profile: analytic_profile_owner.AnalyticImplicitProfile, /
+        self,
+        profile: analytic_profile_owner.AnalyticImplicitProfile,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
 
-        profile.require_bound(profile.geometry, profile.coordinate_contract)
+        profile.require_bound(
+            profile.geometry, profile.coordinate_contract, budget=budget
+        )
         self.profile = profile
 
     @property
@@ -1614,6 +1758,96 @@ class SourceFidelityBounds(StrictModule, NonTrainableState):
     sample_counts: tuple[int, int] = eqx.field(static=True)
 
 
+
+
+# Only the independent full source/homotopy proof below issues this premise.
+# Reconstruction validates its stored report but never grants proof authority:
+# a restored process must earn the theorem again, as for issued domain coverage.
+# Key by the exact issued report and weakly retain its mesh owner. Several
+# independently earned reports on the same mesh may remain valid concurrently.
+_ISSUED_CAD_BOUNDARY: IssuedProofs[CadBoundaryClosureEvidence, CellMesh] = IssuedProofs()
+
+
+def _cad_boundary_request_key(
+    mesh: CellMesh, geometry: CellGeometrySpec, limits: MeshCertificateLimits,
+    closure: CadBoundaryClosureEvidence, /
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "issued-cad-boundary-isotopy",
+            "mesh": mesh.mesh_id,
+            "mesh_arrays": array_tree_fingerprint(mesh),
+            "topology": mesh.topology_id,
+            "coordinate_scope": coordinate_scope_key(mesh, geometry),
+            "limits": limits.limits_id,
+            "issued_evidence": closure.evidence_id,
+        }
+    )
+
+
+def _cad_boundary_source_key(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    limits: MeshCertificateLimits,
+    closure: CadBoundaryClosureEvidence,
+    source: domain_boundary_owner.MeshingDomainBoundarySource,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> str:
+    with budget.temporary_scope():
+        admit_carrier_fingerprint(source, budget)
+        return canonical_fingerprint(
+            {
+                "issued_boundary": _cad_boundary_request_key(mesh, geometry, limits, closure),
+                "source_definition": carrier_payload(source),
+            }
+        )
+
+
+def require_issued_cad_boundary_closure(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    closure: CadBoundaryClosureEvidence,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    source: domain_boundary_owner.MeshingDomainBoundarySource | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> None:
+    """Authenticate an actually earned whole-boundary theorem, not a report/hash."""
+    CadBoundaryClosureEvidence.from_stored_fields(closure)
+    closure.binding.require(mesh, geometry)
+    expected = MeshCertificateBinding(
+        mesh, geometry, "mapped", limits,
+        source_id=closure.binding.source_id,
+        source_revision=closure.binding.source_revision,
+    )
+    if (
+        closure.binding.limits_id != limits.limits_id
+        or closure.binding.coordinate_scope != "mapped"
+        or closure.binding.junction_vertices
+        or closure.binding.binding_id != expected.binding_id
+        or _ISSUED_CAD_BOUNDARY.get(
+            closure, _cad_boundary_request_key(mesh, geometry, limits, closure)
+        ) is not mesh
+    ):
+        raise ValueError(
+            "cad_boundary_closure must be the independently issued whole-boundary "
+            "homotopy for the current mesh, geometry, topology and limits; "
+            "stored reports, foreign owners and changed inputs must prove again"
+        )
+    if source is not None:
+        with coordinate_certificate_request(limits, budget=budget) as budget:
+            if _ISSUED_CAD_BOUNDARY.get(
+                closure,
+                _cad_boundary_source_key(mesh, geometry, limits, closure, source, budget),
+            ) is not mesh:
+                raise ValueError(
+                    "cad_boundary_closure.source must retain the actual issued source "
+                    "carriers, root/static metadata and complete chart restrictions"
+                )
+
+
 @final
 class SourceFidelityCoverage(StrictModule, NonTrainableState):
     """Independent coverage evidence used by a source fidelity certificate."""
@@ -1621,6 +1855,8 @@ class SourceFidelityCoverage(StrictModule, NonTrainableState):
     projection: ImplicitProjectionCoverageEvidence | None = None
     domain: DomainCoverageCertificate | None = None
     chart: SourceBoundaryChartCover | None = None
+    cad_closure: CadBoundaryClosureEvidence | None = None
+    boundary_equality: DomainBoundaryFidelityEvidence | None = None
 
     @checked
     def __init__(
@@ -1628,10 +1864,14 @@ class SourceFidelityCoverage(StrictModule, NonTrainableState):
         projection: ImplicitProjectionCoverageEvidence | None = None,
         domain: DomainCoverageCertificate | None = None,
         chart: SourceBoundaryChartCover | None = None,
+        cad_closure: CadBoundaryClosureEvidence | None = None,
+        boundary_equality: DomainBoundaryFidelityEvidence | None = None,
     ) -> None:
         self.projection = projection
         self.domain = domain
         self.chart = chart
+        self.cad_closure = cad_closure
+        self.boundary_equality = boundary_equality
 
 
 @final
@@ -1652,6 +1892,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
     projection_coverage: ImplicitProjectionCoverageEvidence | None
     domain_coverage: DomainCoverageCertificate | None
     chart_coverage: SourceBoundaryChartCover | None
+    cad_closure: CadBoundaryClosureEvidence | None
+    boundary_equality: DomainBoundaryFidelityEvidence | None
     status: MeshCertificateStatus = eqx.field(static=True)
     findings: tuple[MeshCertificateFinding, ...]
     tolerance: float = eqx.field(static=True)
@@ -1691,6 +1933,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         projection_coverage = None if coverage is None else coverage.projection
         domain_coverage = None if coverage is None else coverage.domain
         chart_coverage = None if coverage is None else coverage.chart
+        cad_closure = None if coverage is None else coverage.cad_closure
+        boundary_equality = None if coverage is None else coverage.boundary_equality
         if target_facet_ids is not None:
             if (
                 not target_facet_ids
@@ -1728,6 +1972,40 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             raise ValueError(
                 f"SourceFidelityCertificate.chart_coverage must name source {(binding.source_id, binding.source_revision)!r}; got {(chart_coverage.source_id, chart_coverage.source_revision)!r}."
             )
+        if cad_closure is not None:
+            CadBoundaryClosureEvidence.from_stored_fields(cad_closure)
+            if (
+                cad_closure.binding.binding_id != binding.binding_id
+                or boundary_degree_id is None
+                or target_facet_ids is not None
+                or cad_closure.gap_upper > max(mesh_to_source[0], source_to_mesh[0])
+                or cad_closure.homotopy_distance_upper
+                > min(mesh_to_source[0], source_to_mesh[0])
+            ):
+                raise ValueError(
+                    "SourceFidelityCertificate.cad_closure must bind this whole-boundary "
+                    "source/mesh proof and its retained physical deviation bounds"
+                )
+        if boundary_equality is not None:
+            boundary_equality.require_binding(binding)
+            previous = boundary_equality.predecessor.fidelity
+            if (
+                target_facet_ids is not None
+                or source_scope_id is not None
+                or semantics
+                != (previous.mesh_to_source_semantics, previous.source_to_mesh_semantics)
+                or mesh_to_source
+                != (previous.mesh_to_source_upper, previous.mesh_to_source_lower)
+                or source_to_mesh
+                != (previous.source_to_mesh_upper, previous.source_to_mesh_lower)
+                or tolerance != previous.tolerance
+                or sample_order != previous.sample_order
+                or sample_counts
+                != (previous.mesh_sample_count, previous.source_sample_count)
+            ):
+                raise ValueError(
+                    "SourceFidelityCertificate.boundary_equality must retain its whole-source bounds and original controls; got changed fidelity"
+                )
         forward = parse(semantics[0], SourceBoundSemantics, "semantics")
         backward = parse(semantics[1], SourceBoundSemantics, "semantics")
         findings_ = tuple(findings)
@@ -1739,6 +2017,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         self.projection_coverage = projection_coverage
         self.domain_coverage = domain_coverage
         self.chart_coverage = chart_coverage
+        self.cad_closure = cad_closure
+        self.boundary_equality = boundary_equality
         self.status = certificate_status(findings_)
         self.findings = findings_
         self.tolerance = float(tolerance)
@@ -1780,6 +2060,12 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "chart_coverage": None
                 if chart_coverage is None
                 else chart_coverage.cover_id,
+                "cad_closure": None if cad_closure is None else cad_closure.evidence_id,
+                **(
+                    {}
+                    if boundary_equality is None
+                    else {"boundary_equality": boundary_equality.evidence_id}
+                ),
                 **(
                     {}
                     if boundary_degree_id is None
@@ -1825,6 +2111,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 projection=value.projection_coverage,
                 domain=value.domain_coverage,
                 chart=value.chart_coverage,
+                cad_closure=value.cad_closure,
+                boundary_equality=value.boundary_equality,
             ),
             target_facet_ids=value.target_facet_ids,
             source_scope_id=value.source_scope_id,
@@ -1839,6 +2127,429 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 f"got {value.certificate_id!r} with status {value.status!r}."
             )
         return renewed
+
+
+def _source_authority_content_id(source: SourceBoundaryQuery, /) -> str:
+    # Reuse the closure owner's identity recipe: array fingerprints alone omit
+    # static controls such as implicit sampling spacing and source chart limits.
+    from ..lifecycle._meshing_source_records import stored_record_content_id
+
+    return stored_record_content_id(source, excluded="")
+
+
+@final
+class SourceFidelityPredecessor(StrictModule, NonTrainableState):
+    """Complete independently accepted source authority for boundary-set reuse."""
+
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    source: SourceBoundaryQuery
+    domain: PiecewiseLinearDomain | mapped_reference_domain_owner.MappedReferenceDomain
+    cell_regions: np.ndarray
+    embedding: GlobalEmbeddingCertificate
+    coverage: DomainCoverageCertificate
+    fidelity: SourceFidelityCertificate
+    limits: MeshCertificateLimits
+
+    @property
+    def content_id(self) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "domain-boundary-fidelity-source",
+                "mesh": (self.mesh.mesh_id, array_tree_fingerprint(self.mesh)),
+                "geometry": coordinate_scope_key(self.mesh, self.geometry),
+                "source": (
+                    self.source.source_id,
+                    self.source.source_revision,
+                    _source_authority_content_id(self.source),
+                ),
+                "domain": (self.domain.domain_id, array_tree_fingerprint(self.domain)),
+                "regions": array_tree_fingerprint(self.cell_regions),
+                "embedding": self.embedding.certificate_id,
+                "coverage": self.coverage.certificate_id,
+                "fidelity": self.fidelity.certificate_id,
+                "limits": self.limits.limits_id,
+            }
+        )
+
+    def require_current(self) -> None:
+        """Validate full proof content, boundary coverage, orientation and owners."""
+        self.embedding.binding.require(self.mesh, self.geometry)
+        GlobalEmbeddingCertificate.from_stored_fields(self.embedding)
+        self.coverage.binding.require(self.mesh, self.geometry)
+        self.fidelity.binding.require(self.mesh, self.geometry)
+        rebuilt = DomainCoverageCertificate.from_stored_fields(
+            self.coverage, self.domain
+        )
+        SourceFidelityCertificate.from_stored_fields(self.fidelity)
+        if (
+            self.mesh.storage is not None
+            or self.mesh.periodic_topology is not None
+            or self.mesh.topological_dimension != self.mesh.ambient_dimension
+            or self.embedding.status != "certified"
+            or self.coverage.status != "certified"
+            or self.fidelity.status != "certified"
+            or rebuilt.certificate_id != self.coverage.certificate_id
+            or self.coverage.domain_id != self.domain.domain_id
+            or self.coverage.embedding_certificate_id != self.embedding.certificate_id
+            or self.coverage.covered_source_facet_count
+            != self.coverage.source_facet_count
+            or not self.coverage.source_facet_count
+            or self.coverage.binding.limits_id != self.limits.limits_id
+            or self.embedding.binding.limits_id != self.limits.limits_id
+            or self.fidelity.binding.limits_id != self.limits.limits_id
+            or self.fidelity.target_facet_ids is not None
+            or self.fidelity.source_scope_id is not None
+            or (
+                self.fidelity.binding.source_id,
+                self.fidelity.binding.source_revision,
+            )
+            != (self.source.source_id, self.source.source_revision)
+            or (
+                isinstance(self.source, MappedDomainBoundarySource)
+                and not np.array_equal(self.source.cell_regions, self.cell_regions)
+            )
+            or (
+                self.fidelity.mesh_to_source_semantics,
+                self.fidelity.source_to_mesh_semantics,
+            )
+            != ("certified", "certified")
+            or not math.isfinite(
+                max(
+                    self.fidelity.mesh_to_source_upper,
+                    self.fidelity.source_to_mesh_upper,
+                )
+            )
+            or max(
+                self.fidelity.mesh_to_source_upper,
+                self.fidelity.source_to_mesh_upper,
+            )
+            > self.fidelity.tolerance
+        ):
+            raise ValueError(
+                "SourceFidelityPredecessor must retain complete certified oriented domain and whole-source fidelity proofs; got changed or partial authority"
+            )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[SourceFidelityPredecessor], value: SourceFidelityPredecessor, /
+    ) -> SourceFidelityPredecessor:
+        """Validate retained data only; reconstruction never issues proof authority."""
+        renewed = cls(
+            value.mesh, value.geometry, value.source, value.domain,
+            value.cell_regions, value.embedding, value.coverage,
+            value.fidelity, value.limits,
+        )
+        renewed.require_current()
+        return renewed
+
+
+_ISSUED_INDEPENDENT_FIDELITY: IssuedProofs[
+    CellMesh, SourceFidelityCertificate
+] = IssuedProofs()
+
+
+def _independent_fidelity_key(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    certificate: SourceFidelityCertificate,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "issued-independent-source-fidelity",
+            "mesh": (mesh.mesh_id, array_tree_fingerprint(mesh)),
+            "geometry": coordinate_scope_key(mesh, geometry),
+            "source": (
+                source.source_id, source.source_revision,
+                _source_authority_content_id(source),
+            ),
+            "certificate": certificate.certificate_id,
+        }
+    )
+
+
+def _issue_independent_fidelity(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    certificate: SourceFidelityCertificate,
+    /,
+) -> SourceFidelityCertificate:
+    if (
+        certificate.status == "certified"
+        and isinstance(source, StrictModule)
+        and certificate.target_facet_ids is None
+        and certificate.source_scope_id is None
+        and certificate.boundary_equality is None
+    ):
+        _ISSUED_INDEPENDENT_FIDELITY.record(
+            mesh,
+            _independent_fidelity_key(mesh, geometry, source, certificate),
+            certificate,
+        )
+    return certificate
+
+
+_ISSUED_DOMAIN_FIDELITY: IssuedProofs[
+    CellMesh, SourceFidelityCertificate
+] = IssuedProofs()
+
+
+def issue_domain_fidelity_source(
+    predecessor: SourceFidelityPredecessor, /, *, budget: CoordinateEnclosureBudget
+) -> None:
+    """Record authority only after independent full acceptance in this process."""
+    if _ISSUED_INDEPENDENT_FIDELITY.get(
+        predecessor.mesh,
+        _independent_fidelity_key(
+            predecessor.mesh, predecessor.geometry, predecessor.source,
+            predecessor.fidelity,
+        ),
+    ) is not predecessor.fidelity:
+        return
+    if not is_issued_domain_coverage(
+        predecessor.mesh, predecessor.geometry, predecessor.domain,
+        predecessor.cell_regions, predecessor.embedding, predecessor.limits,
+        predecessor.coverage, budget=budget,
+    ):
+        return
+    predecessor.require_current()
+    # This operation's actual boundary/interface/adjacency proof, not a rebuilt
+    # status or a toleranced volume comparison, must have been earned here.
+    _ISSUED_DOMAIN_FIDELITY.record(
+        predecessor.mesh, predecessor.content_id, predecessor.fidelity
+    )
+
+
+@final
+class DomainBoundaryFidelityEvidence(StrictModule, NonTrainableState):
+    """Exact physical boundary equality through full oriented domain coverage.
+
+    Both volume carriers cover every declared material region, exterior facet
+    and interface with the declared adjacency. Equal region volumes alone are
+    not a premise. This transfers only directed boundary distances; feature,
+    patch, stratum and normal claims remain their independent owners' work.
+    """
+
+    predecessor: SourceFidelityPredecessor
+    target_coverage: DomainCoverageCertificate
+    source_execution_error: float = eqx.field(static=True)
+    target_execution_error: float = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        predecessor: SourceFidelityPredecessor,
+        target_coverage: DomainCoverageCertificate,
+        source_execution_error: float,
+        target_execution_error: float,
+    ) -> None:
+        predecessor.require_current()
+        rebuilt = DomainCoverageCertificate.from_stored_fields(
+            target_coverage, predecessor.domain
+        )
+        if (
+            target_coverage.status != "certified"
+            or rebuilt.certificate_id != target_coverage.certificate_id
+            or target_coverage.domain_id != predecessor.domain.domain_id
+            or target_coverage.covered_source_facet_count
+            != target_coverage.source_facet_count
+            or target_coverage.source_facet_count
+            != predecessor.coverage.source_facet_count
+            or predecessor.fidelity.boundary_equality is not None
+            or not math.isfinite(source_execution_error)
+            or not math.isfinite(target_execution_error)
+            or not 0.0 <= target_execution_error <= source_execution_error
+        ):
+            raise ValueError(
+                "DomainBoundaryFidelityEvidence must retain complete exact boundary/interface coverage and an unchained root; got partial or foreign proof"
+            )
+        self.predecessor = predecessor
+        self.target_coverage = target_coverage
+        self.source_execution_error = float(source_execution_error)
+        self.target_execution_error = float(target_execution_error)
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "exact-domain-boundary-fidelity",
+                "source": predecessor.content_id,
+                "target_coverage": target_coverage.certificate_id,
+                "execution_error": (
+                    self.source_execution_error, self.target_execution_error
+                ),
+            }
+        )
+
+    def require_binding(self, binding: MeshCertificateBinding, /) -> None:
+        renewed = DomainBoundaryFidelityEvidence(
+            self.predecessor, self.target_coverage,
+            self.source_execution_error, self.target_execution_error,
+        )
+        target = self.target_coverage.binding
+        root = self.predecessor.fidelity.binding
+        if (
+            renewed.evidence_id != self.evidence_id
+            or (
+                binding.mesh_id,
+                binding.topology_id,
+                binding.geometry_layout_id,
+                binding.geometry_id,
+                binding.coordinate_scope,
+            )
+            != (
+                target.mesh_id,
+                target.topology_id,
+                target.geometry_layout_id,
+                target.geometry_id,
+                target.coordinate_scope,
+            )
+            or (binding.source_id, binding.source_revision)
+            != (root.source_id, root.source_revision)
+        ):
+            raise ValueError(
+                "DomainBoundaryFidelityEvidence must bind the actual target maps and original source; got changed proof or owner"
+            )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[DomainBoundaryFidelityEvidence],
+        value: DomainBoundaryFidelityEvidence,
+        /,
+    ) -> DomainBoundaryFidelityEvidence:
+        renewed = cls(
+            value.predecessor, value.target_coverage,
+            value.source_execution_error, value.target_execution_error,
+        )
+        if renewed.evidence_id != value.evidence_id:
+            raise ValueError(
+                "DomainBoundaryFidelityEvidence.evidence_id must bind its complete root and target proofs; got changed content"
+            )
+        return renewed
+
+
+def _reprove_domain_fidelity_root(
+    root: SourceFidelityPredecessor, /, *, budget: CoordinateEnclosureBudget
+) -> SourceFidelityPredecessor | None:
+    """Earn a cold root on this request's existing cumulative budget."""
+    validity = cell_geometry_validity_owner.certify_cell_geometry_validity(
+        root.geometry, mesh=root.mesh, budget=budget
+    )
+    if validity.certificate_id != root.embedding.validity_certificate_id:
+        # This route cannot reconstruct another validity policy from an ID.
+        return None
+    embedding = certify_global_embedding(
+        root.mesh, root.geometry, validity, limits=root.limits, budget=budget
+    )
+    coverage = certify_domain_coverage(
+        root.mesh, root.geometry, root.domain, root.cell_regions,
+        embedding=embedding, limits=root.limits, budget=budget,
+    )
+    fidelity = certify_source_fidelity(
+        root.mesh, root.geometry, root.source,
+        tolerance=root.fidelity.tolerance, sample_order=root.fidelity.sample_order,
+        limits=root.limits, budget=budget,
+    )
+    if (
+        embedding.status != "certified"
+        or coverage.status != "certified"
+        or fidelity.status != "certified"
+    ):
+        return None
+    renewed = SourceFidelityPredecessor(
+        root.mesh, root.geometry, root.source, root.domain, root.cell_regions,
+        embedding, coverage, fidelity, root.limits,
+    )
+    issue_domain_fidelity_source(renewed, budget=budget)
+    return renewed
+
+
+def prepare_domain_boundary_fidelity(
+    predecessor: SourceFidelityPredecessor,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    domain: PiecewiseLinearDomain | mapped_reference_domain_owner.MappedReferenceDomain,
+    cell_regions: np.ndarray,
+    embedding: GlobalEmbeddingCertificate,
+    coverage: DomainCoverageCertificate,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    tolerance: float,
+    sample_order: int,
+    budget: CoordinateEnclosureBudget,
+) -> SourceFidelityCertificate | None:
+    """Reuse issued root bounds only after earning exact target boundary equality."""
+    if isinstance(source, ImplicitProjectionBoundarySource):
+        # Equal domain boundaries transfer distance bounds, not the target's
+        # bound facet/normal-fiber degree certificate. Let the canonical query
+        # earn its complete projection obligation on the caller's ledger.
+        return None
+    predecessor.require_current()
+    inherited = predecessor.fidelity.boundary_equality
+    root = predecessor if inherited is None else inherited.predecessor
+    root.require_current()
+    query = source
+    if isinstance(source, MappedDomainBoundarySource) and isinstance(
+        root.source, MappedDomainBoundarySource
+    ):
+        if not np.array_equal(source.cell_regions, cell_regions):
+            return None
+        # The query owner's explicit renewal changes target routing, not the
+        # independently authored source or any sampling/coverage controls.
+        query = source.for_target_regions(root.source.cell_regions)
+    if (
+        not tree_content_equal(domain, root.domain)
+        or (source.source_id, source.source_revision)
+        != (root.source.source_id, root.source.source_revision)
+        or not tree_content_equal(query, root.source)
+        or tolerance != root.fidelity.tolerance
+        or sample_order != root.fidelity.sample_order
+        or mesh.storage is not None
+        or mesh.periodic_topology is not None
+        or mesh.topological_dimension != mesh.ambient_dimension
+    ):
+        return None
+    issued = _ISSUED_DOMAIN_FIDELITY.get(root.mesh, root.content_id)
+    if issued is None:
+        reproved = _reprove_domain_fidelity_root(root, budget=budget)
+        if reproved is None:
+            return None
+        root = reproved
+        issued = _ISSUED_DOMAIN_FIDELITY.get(root.mesh, root.content_id)
+    if issued is None or issued.certificate_id != root.fidelity.certificate_id:
+        return None
+    embedding.binding.require(mesh, geometry)
+    if not is_issued_domain_coverage(
+        mesh, geometry, domain, cell_regions, embedding, limits, coverage, budget=budget,
+    ):
+        return None
+    source_error = root.geometry.source_execution_error(root.mesh, budget=budget)
+    target_error = geometry.source_execution_error(mesh, budget=budget)
+    if target_error > source_error:
+        return None
+    budget.retain_owner((root, coverage))
+    evidence = DomainBoundaryFidelityEvidence(root, coverage, source_error, target_error)
+    binding = MeshCertificateBinding(
+        mesh, geometry, coverage.binding.coordinate_scope, limits,
+        source_id=source.source_id, source_revision=source.source_revision,
+    )
+    previous = root.fidelity
+    return SourceFidelityCertificate(
+        binding, (), tolerance=tolerance,
+        bounds=SourceFidelityBounds(
+            semantics=("certified", "certified"),
+            mesh_to_source=(previous.mesh_to_source_upper, previous.mesh_to_source_lower),
+            source_to_mesh=(previous.source_to_mesh_upper, previous.source_to_mesh_lower),
+            sample_counts=(previous.mesh_sample_count, previous.source_sample_count),
+        ),
+        sample_order=sample_order,
+        coverage=SourceFidelityCoverage(boundary_equality=evidence),
+    )
 
 
 def _fidelity_items(
@@ -2674,15 +3385,13 @@ def _chart_refusal_cover(
     limits: MeshCertificateLimits,
     /,
 ) -> SourceBoundaryChartCover:
-    resources: list[tuple[str, int | np.integer, int | np.integer]] = list(
-        cover.resource_counts
-    )
+    resources: list[tuple[AffineChainResourceMetric, int, int]] = []
     match error:
         case meshcore_owner.MeshcoreError():
             if error.work_counters is not None:
                 resources.append(
                     (
-                        "affine_chain_refused_total_work",
+                        "refused_total_work",
                         int(error.work_counters.construction_work),
                         limits.maximum_work_units,
                     )
@@ -2690,17 +3399,27 @@ def _chart_refusal_cover(
             if error.memory_counters is not None:
                 resources.append(
                     (
-                        "affine_chain_refused_native_peak_bytes",
+                        "refused_native_peak_bytes",
                         int(error.memory_counters.peak_bytes),
                         limits.maximum_scratch_bytes,
                     )
                 )
         case CoordinateEnclosureResourceError():
+            metric: AffineChainResourceMetric
+            match error.resource:
+                case "coefficient_work":
+                    metric = "refused_coefficient_work"
+                case "polynomial_storage":
+                    metric = "refused_polynomial_storage"
+                case "retained_basis":
+                    metric = "refused_retained_basis"
+                case invalid_resource:
+                    assert_never(invalid_resource)
             resources.append(
                 (
-                    f"affine_chain_refused_{error.resource}",
-                    error.completed,
-                    error.limit,
+                    metric,
+                    int(error.completed),
+                    int(error.limit),
                 )
             )
         case invalid:
@@ -2713,7 +3432,14 @@ def _chart_refusal_cover(
         cover.source_id,
         cover.source_revision,
         findings=cover.findings,
-        resource_counts=tuple(resources),
+        resource_counts=cover.resource_counts,
+        affine_chain_resources=(
+            *(row.as_source() for row in cover.affine_chain_resources),
+            *(AffineChainResourceEvidence(
+                metric, "target", cover.cover_id, used, maximum,
+            ) for metric, used, maximum in resources),
+        ),
+        restriction_ids=cover.restriction_ids,
     )
     return cover
 
@@ -2777,6 +3503,10 @@ def _include_brep_source_gap(
     here is conservative and also covers routes that discard a chart comparison
     in favor of direct queries. No zero-equality claim survives a positive gap.
     """
+    if certificate.cad_closure is not None:
+        # The retained closure already includes original face, edge and vertex
+        # incidence displacement. Charging it again would double the same bound.
+        return certificate
     gap, identity = _brep_source_gap(source, budget=budget)
     if identity is None:
         return certificate
@@ -2811,7 +3541,12 @@ def _include_brep_source_gap(
             ),
         ),
         sample_order=certificate.sample_order,
-        coverage=SourceFidelityCoverage(chart=certificate.chart_coverage),
+        coverage=SourceFidelityCoverage(
+            projection=certificate.projection_coverage,
+            domain=certificate.domain_coverage,
+            chart=certificate.chart_coverage,
+            cad_closure=certificate.cad_closure,
+        ),
         target_facet_ids=certificate.target_facet_ids,
         source_scope_id=identity,
     )
@@ -2847,6 +3582,7 @@ def _chart_fidelity(
             cover.source_revision,
             findings=cover.findings,
             resource_counts=cover.resource_counts,
+            affine_chain_resources=cover.affine_chain_resources,
             restriction_ids=(*cover.restriction_ids, gap_identity),
         )
     if (
@@ -2889,13 +3625,37 @@ def _chart_fidelity(
         with budget.temporary_scope():
             proxies.append(fidelity_proxy(item, budget=budget))
 
+    earned_areas: dict[
+        tuple[tuple[tuple[Fraction, ...], ...], tuple[tuple[Fraction, ...], ...]],
+        Fraction,
+    ] = {}
     try:
         with budget.measurement():
             affine_bound, cover, separation = (
                 affine_chart_coverage_owner.prove_affine_chart_chain(
-                    proxies, cover, limits, tolerance
+                    proxies,
+                    cover,
+                    limits,
+                    tolerance,
+                    source_identity=(source.source_id, source.source_revision),
+                    areas=budget.affine_chain_intersection_cache,
+                    earned_areas=earned_areas,
                 )
             )
+            if earned_areas:
+                # Exact pair areas are request-owned proofs reused by later
+                # whole and scoped chart chains over the same rational rows.
+                if budget.capture_affine_areas:
+                    budget.reserve(len(earned_areas), 128 + 32 * len(earned_areas))
+                budget.retain_basis(
+                    tuple(earned_areas.items()), operand=budget.capture_affine_areas,
+                    _kernel_operands=True,
+                )
+                budget.affine_chain_intersection_cache.update(earned_areas)
+                if budget.capture_affine_areas:
+                    # Only actual exact-kernel output enters the issued bank;
+                    # no working-cache entries or coverage verdicts are copied.
+                    budget.affine_intersection_operand_snapshots.update(earned_areas)
     except (
         coordinate_budget_owner.CoordinateEnclosureResourceError,
         meshcore_owner.MeshcoreError,
@@ -3608,6 +4368,7 @@ class _AnalyticBoundaryProof(StrictModule):
     boundary_degree_id: str | None = eqx.field(static=True)
     findings: tuple[MeshCertificateFinding, ...]
     piece_count: int = eqx.field(static=True)
+    cad_closure: CadBoundaryClosureEvidence | None = None
 
 
 type _AnalyticPoint = tuple[Fraction, ...]
@@ -4627,7 +5388,12 @@ def analytic_boundary_proof(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> _AnalyticBoundaryProof | None:
-    """Return polynomial boundary projection bounds and signed-degree evidence."""
+    """Return polynomial boundary projection bounds and signed-degree evidence.
+
+    Explicit chart witnesses are independently checked and included in the
+    degree identity. Their distance ribbons do not themselves establish a
+    general curved-source homotopy, embedding or signed-degree theorem.
+    """
 
     cylinder_model: BRepModel | None = None
     match source:
@@ -4635,6 +5401,10 @@ def analytic_boundary_proof(
             source_scope_id = source.source_scope_id
             source_size = len(source.curves)
         case domain_boundary_owner.MeshingDomainBoundarySource():
+            # The closed-volume theorem is not selected for a surface target;
+            # its own chart-chain certificate owns that comparison.
+            if mesh.topological_dimension != mesh.ambient_dimension:
+                return None
             if len(source.patches) != 3 or source.patches != tuple(
                 range(len(source.domain.patches))
             ):
@@ -4676,15 +5446,59 @@ def analytic_boundary_proof(
             )
             if frame is None and planar is None:
                 return None
+            # Missing retained gap tables are not evidence of coincidence. The
+            # closed-form cylinder admission itself earns exact zero rows: it
+            # requires exact rational harmonic correspondence of every ring and
+            # cap coedge, an exact seam line and exact ring vertices. A gapped
+            # source therefore never reaches this shortcut; its positive bounds
+            # need the separately identified chart-closure representative.
+            if (
+                isinstance(source, domain_boundary_owner.MeshingDomainBoundarySource)
+                and source.chart_triangulations
+            ):
+                # A supplied chart witness is part of the scientific request,
+                # even when an independent closed-form projection exists.
+                # Never silently discard a gapped, reversed or foreign chain.
+                if tuple(sorted(row[0] for row in source.chart_triangulations)) != (
+                    source.patches
+                ):
+                    state.add("source_trim_coverage_premise", "unresolved", "mesh")
+                else:
+                    cover = source.boundary_chart_cover(
+                        min(
+                            limits.maximum_source_samples,
+                            limits.maximum_subdivision_pieces,
+                        ),
+                        budget=budget,
+                    )
+                    state.findings.extend(cover.findings)
+                    if not cover.complete or cover.semantics != "certified":
+                        state.add("source_trim_coverage_premise", "unresolved", "mesh")
+                    source_scope_id = canonical_fingerprint(
+                        {
+                            "source_scope": source_scope_id,
+                            "chart_cover": cover.cover_id,
+                            "chart_patches": tuple(
+                                row[0] for row in source.chart_triangulations
+                            ),
+                            "chart_witness": array_tree_fingerprint(
+                                tuple(row[1:] for row in source.chart_triangulations)
+                            ),
+                        }
+                    )
+                if state.findings:
+                    return _AnalyticBoundaryProof(
+                        math.inf, None, tuple(state.findings), 0
+                    )
             if (
                 mesh.topological_dimension != mesh.ambient_dimension
                 or mesh.periodic_topology is not None
             ):
                 state.add("analytic_boundary_volume_chain_premise", "unresolved", "mesh")
                 return _AnalyticBoundaryProof(math.inf, None, tuple(state.findings), 0)
-            capacity = sum(block.vertices.size for block in mesh.blocks)
-            budget.reserve(capacity, 1024 * capacity)
-            facets = mesh_facets(mesh, budget=budget)
+            # Geometry-bound facets charge their build once per request and
+            # are shared with the embedding and coverage certificates.
+            facets = mesh_facets(mesh, geometry=geometry, budget=budget)
             count = int(np.count_nonzero(facets.boundary))
             if count > min(
                 limits.maximum_source_samples,
@@ -4737,7 +5551,443 @@ def analytic_boundary_proof(
     )
 
 
-def _certify_analytic_source_fidelity(
+@dataclass(frozen=True, slots=True, weakref_slot=True)
+class _PreparedChartBoundarySource:
+    """Issued source-only premises retained by one live coordinate request.
+
+    No value points back to its budget. The weak issuer therefore cannot keep
+    a request alive through its retained proof. Neither target coordinate maps
+    nor target correspondence or homotopy findings belong in this preparation.
+    """
+
+    cover: SourceBoundaryChartCover
+    maps: tuple[tuple[domain_chart_chain_owner.SourceChartMap, ...], ...]
+
+
+_ISSUED_CHART_BOUNDARY_SOURCE: IssuedProofs[
+    CoordinateEnclosureBudget, _PreparedChartBoundarySource
+] = IssuedProofs()
+
+
+def _prepare_chart_boundary_source(
+    source: domain_boundary_owner.MeshingDomainBoundarySource,
+    maximum_patches: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _PreparedChartBoundarySource:
+    """Earn source coverage/native maps once, authenticating live content on reuse."""
+    with budget.temporary_scope():
+        # This includes root/static metadata, all source carriers and every
+        # chart/provenance/restriction array, not their asserted identities.
+        admit_carrier_fingerprint(source, budget)
+        identity = canonical_fingerprint(
+            {
+                "source": carrier_payload(source),
+                "maximum_patches": maximum_patches,
+            }
+        )
+    issued = _ISSUED_CHART_BOUNDARY_SOURCE.get(budget, identity)
+    if issued is not None:
+        budget.ticket.checkpoint()
+        return issued
+    cover = source.boundary_chart_cover(maximum_patches, budget=budget)
+    maps: tuple[tuple[domain_chart_chain_owner.SourceChartMap, ...], ...] = ()
+    if cover.complete and cover.semantics == "certified" and not cover.findings:
+        native = domain_chart_chain_owner.prepare_source_chart_domain(
+            source.domain, budget=budget
+        )
+        maps = tuple(
+            domain_chart_chain_owner.prepare_source_chart_maps(
+                source.domain, data, budget=budget, preparations=native
+            )
+            for data in source.chart_triangulations
+        )
+    prepared = _PreparedChartBoundarySource(cover, maps)
+    if maps:
+        # Admit the entire retained graph before publishing reuse authority.
+        # Incomplete/refused source proofs never enter the issuer.
+        budget.retain_owner(prepared)
+        _ISSUED_CHART_BOUNDARY_SOURCE.record(budget, identity, prepared)
+    return prepared
+
+
+def _chart_boundary_cells(
+    state: EmbeddingState,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: domain_boundary_owner.MeshingDomainBoundarySource,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    source_maps: tuple[tuple[domain_chart_chain_owner.SourceChartMap, ...], ...],
+) -> tuple[embedding_cells_owner.IntervalBoundaryCell, ...]:
+    """Match every root chart triangle to one outward target boundary facet."""
+    if any(block.cell_kind != "tetrahedron" for block in mesh.blocks):
+        state.add("source_chart_facet_lineage_premise", "unresolved", "mesh")
+        return ()
+    facets = mesh_facets(mesh, geometry=geometry, budget=budget)
+    occurrences = np.flatnonzero(facets.boundary)
+    count = occurrences.size
+    if not count or count > min(
+        limits.maximum_source_samples, limits.maximum_subdivision_pieces
+    ):
+        state.add("source_chart_capacity", "unresolved", "mesh")
+        return ()
+    # Pre-admit the request-local facet, vertex and map records. This is
+    # per-created-entity storage/work, not a hash/sort/instruction proxy.
+    budget.reserve(int(count), 4096 + 4096 * int(count) + 8 * mesh.coordinates.size)
+    points = np.asarray(jax.device_get(mesh.coordinates), dtype=np.float64)
+    rows = facets.rows[occurrences, :3]
+    identifiers = facet_entity_ids(mesh, rows)
+    selected = tuple(sorted(int(value) for value in identifiers))
+    maps = _fidelity_maps(
+        state, mesh, geometry, target_facet_ids=selected, budget=budget
+    )
+    if state.findings or len(maps) != count:
+        state.add("source_chart_facet_lineage_premise", "unresolved", "mesh")
+        return ()
+    by_identifier = {item.entity: item for item in maps}
+    if len(by_identifier) != count:
+        state.add("source_chart_facet_lineage_premise", "unresolved", "mesh")
+        return ()
+    vertices = np.unique(rows)
+    point_rows: dict[tuple[float, ...], int] = {}
+    for vertex in vertices:
+        key = tuple(float(value) for value in points[vertex])
+        if key in point_rows:
+            state.add("source_chart_facet_lineage_premise", "unresolved", "mesh")
+            return ()
+        point_rows[key] = int(vertex)
+    boundary = {
+        tuple(sorted(int(value) for value in row)): (int(identifier), int(occurrence))
+        for row, identifier, occurrence in zip(
+            rows, identifiers, occurrences, strict=True
+        )
+    }
+    reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    exact_reference = tuple(
+        tuple(Fraction(float(value)) for value in row) for row in reference
+    )
+    map_vertices: dict[int, tuple[int, ...]] = {}
+    for item in maps:
+        corners = []
+        for point in exact_reference:
+            coordinate_key: list[float] = []
+            for expression in item.coordinates:
+                value = coordinate_enclosure_owner.expression_evaluate(
+                    expression, point, budget=budget
+                )
+                if not isinstance(value, Fraction):
+                    break
+                rounded = float(value)
+                if not math.isfinite(rounded) or Fraction(rounded) != value:
+                    break
+                coordinate_key.append(rounded)
+            key = tuple(coordinate_key)
+            if len(key) != 3 or key not in point_rows:
+                state.add(
+                    "source_chart_facet_lineage_premise",
+                    "unresolved",
+                    "facet",
+                    (item.entity,),
+                )
+                return ()
+            corners.append(point_rows[key])
+        map_vertices[item.entity] = tuple(corners)
+    stops = np.cumsum([block.cell_count for block in mesh.blocks])
+    connectivity = tuple(np.asarray(block.vertices) for block in mesh.blocks)
+    global_vertices = np.asarray(mesh.vertex_global_ids)
+    region_sides = dict(source.domain.regions[0].boundary)
+    seen: set[int] = set()
+    result = []
+    for data, patch_maps in zip(source.chart_triangulations, source_maps, strict=True):
+        patch, _, chart_points, chart_cells, *_ = data
+        if len(patch_maps) != len(chart_cells):
+            state.add("source_chart_map_premise", "unresolved", "source_facet", (patch,))
+            return ()
+        orientation = region_sides[patch] * (
+            -1 if source.domain.patches[patch].reversed else 1
+        )
+        for source_map, cell in zip(patch_maps, chart_cells, strict=True):
+            anchor = chart_points[cell]
+            keys = tuple(tuple(float(value) for value in point) for point in anchor)
+            if any(key not in point_rows for key in keys):
+                state.add("source_chart_facet_lineage_premise", "unresolved", "source_facet", (patch,))
+                return ()
+            target_rows = tuple(point_rows[key] for key in keys)
+            match = boundary.get(tuple(sorted(target_rows)))
+            if match is None or match[0] in seen or len(set(target_rows)) != 3:
+                state.add("source_chart_facet_lineage_premise", "unresolved", "source_facet", (patch,))
+                return ()
+            identifier, occurrence = match
+            seen.add(identifier)
+            owner = int(facets.cells[occurrence])
+            block = int(np.searchsorted(stops, owner, side="right"))
+            start = 0 if block == 0 else int(stops[block - 1])
+            parent_vertices = tuple(int(value) for value in connectivity[block][owner - start])
+            local = tuple(parent_vertices.index(vertex) for vertex in target_rows)
+            opposite = next(index for index in range(4) if index not in local)
+            permutation = (*local, opposite)
+            inversions = sum(
+                permutation[i] > permutation[j]
+                for i in range(4)
+                for j in range(i + 1, 4)
+            )
+            # The reference tetrahedron is positively oriented. Its boundary
+            # normal points away from the omitted reference vertex.
+            outward = -1 if inversions % 2 == 0 else 1
+            if orientation != outward:
+                state.add("source_chart_orientation_premise", "unresolved", "facet", (identifier,))
+                return ()
+            item = by_identifier[identifier]
+            ordered = map_vertices[identifier]
+            if set(ordered) != set(target_rows):
+                state.add("source_chart_facet_lineage_premise", "unresolved", "facet", (identifier,))
+                return ()
+            order = tuple(ordered.index(vertex) for vertex in target_rows)
+            target = item.coordinates
+            if order != (0, 1, 2):
+                corners = reference[np.asarray(order)]
+                arguments = coordinate_enclosure_owner.affine_arguments(
+                    corners[0], (corners[1:] - corners[0]).T, budget=budget
+                )
+                composition = coordinate_enclosure_owner.ExpressionComposition(
+                    arguments, budget=budget
+                )
+                target = tuple(composition(value, budget=budget) for value in target)
+            result.append(
+                embedding_cells_owner.IntervalBoundaryCell(
+                    source=source_map,
+                    target=target,
+                    vertices=(
+                        int(global_vertices[target_rows[0]]),
+                        int(global_vertices[target_rows[1]]),
+                        int(global_vertices[target_rows[2]]),
+                    ),
+                    anchor=anchor,
+                    entity=identifier,
+                    orientation=orientation,
+                )
+            )
+    if seen != set(selected):
+        state.add("source_chart_facet_lineage_premise", "unresolved", "mesh")
+        return ()
+    return tuple(result)
+
+
+def _chart_boundary_homotopy(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    tolerance: float,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _AnalyticBoundaryProof | None:
+    """Prove an oriented CAD representative, its gap ribbons and target isotopy."""
+    if (
+        not isinstance(source, domain_boundary_owner.MeshingDomainBoundarySource)
+        or not source.chart_triangulations
+        or mesh.topological_dimension != 3
+        or mesh.ambient_dimension != 3
+        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+    ):
+        return None
+    state = EmbeddingState([], ["source_chart_boundary_homotopy"])
+    upper, degree_id, pieces = math.inf, None, 0
+    closure = None
+    try:
+        with budget.measurement(), budget.activate(), budget.temporary_scope():
+            if coordinate_scope(mesh, geometry, budget=budget).coordinate_scope == "affine":
+                # Straight publication keeps its direct certified chart-cover
+                # comparison with the authored faces. The closed-representative
+                # isotopy is the curved-geometry degree/coverage theorem.
+                return None
+            domain = source.domain
+            authority = domain.brep_authority
+            if (
+                not isinstance(authority, BRepModel)
+                or domain.authority_id != authority.model_id
+                or not tree_content_equal(
+                    domain,
+                    meshing_domain_owner.MeshingDomain.from_brep(authority, budget=budget),
+                )
+                or len(domain.regions) != 1
+                or source.patches != tuple(range(len(domain.patches)))
+                or tuple(patch for patch, _ in domain.regions[0].boundary) != source.patches
+                or mesh.periodic_topology is not None
+                or mesh.storage is not None
+            ):
+                state.add("source_chart_authority_premise", "unresolved", "mesh")
+            elif tuple(sorted(row[0] for row in source.chart_triangulations)) != source.patches:
+                state.add("source_trim_coverage_premise", "unresolved", "mesh")
+            else:
+                prepared_source = _prepare_chart_boundary_source(
+                    source,
+                    min(limits.maximum_source_samples, limits.maximum_subdivision_pieces),
+                    budget=budget,
+                )
+                cover = prepared_source.cover
+                state.findings.extend(cover.findings)
+                if not cover.complete or cover.semantics != "certified":
+                    state.add("source_trim_coverage_premise", "unresolved", "mesh")
+                if not state.findings:
+                    cells = _chart_boundary_cells(
+                        state, mesh, geometry, source, limits, budget=budget,
+                        source_maps=prepared_source.maps,
+                    )
+                    if not state.findings:
+                        proof = mapped_embedding_owner.certify_interval_boundary_homotopy(
+                            cells, limits, tolerance=tolerance, budget=budget
+                        )
+                        pieces = proof.piece_count
+                        if (
+                            not proof.complete
+                            or proof.proof_id is None
+                            or not math.isfinite(proof.distance_upper)
+                            or proof.distance_upper > tolerance
+                        ):
+                            state.add(
+                                "source_chart_homotopy_premise",
+                                "unresolved",
+                                "facet" if proof.entities else "mesh",
+                                proof.entities,
+                            )
+                        else:
+                            upper = proof.distance_upper
+                            budget.reserve(1, 2048 + 40 * len(cells))
+                            representative_id = canonical_fingerprint(
+                                {
+                                    "kind": "bounded-cad-boundary-representative",
+                                    "authority": domain.authority_id,
+                                    "source_scope": source.source_scope_id,
+                                    "chart_cover": cover.cover_id,
+                                    "maps": tuple(cell.source.map_id for cell in cells),
+                                    "orientations": tuple(cell.orientation for cell in cells),
+                                }
+                            )
+                            binding = MeshCertificateBinding(
+                                mesh,
+                                geometry,
+                                coordinate_scope(mesh, geometry, budget=budget).coordinate_scope,
+                                limits,
+                                source_id=source.source_id,
+                                source_revision=source.source_revision,
+                            )
+                            closure = CadBoundaryClosureEvidence(
+                                binding,
+                                authority_id=domain.authority_id,
+                                source_scope_id=source.source_scope_id,
+                                representative_id=representative_id,
+                                homotopy_id=proof.proof_id,
+                                homotopy_distance_upper=proof.distance_upper,
+                                homotopy_piece_count=proof.piece_count,
+                                chart_indices=np.asarray(
+                                    [
+                                        (data[0], row)
+                                        for data in source.chart_triangulations
+                                        for row in range(len(data[3]))
+                                    ],
+                                    dtype=np.int64,
+                                ),
+                                target_facet_ids=np.asarray(
+                                    [cell.entity for cell in cells], dtype=np.int64
+                                ),
+                                gap_bounds=np.asarray(
+                                    [cell.source.authored_deviation_bound for cell in cells],
+                                    dtype=np.float64,
+                                ),
+                                original_gap_allowance=np.asarray(
+                                    authority.report.curve_surface_tolerance,
+                                    dtype=np.float64,
+                                ),
+                            )
+                            _ISSUED_CAD_BOUNDARY.record(
+                                closure, _cad_boundary_request_key(
+                                    mesh, geometry, limits, closure
+                                ),
+                                mesh,
+                            )
+                            _ISSUED_CAD_BOUNDARY.record(
+                                closure,
+                                _cad_boundary_source_key(
+                                    mesh, geometry, limits, closure, source, budget
+                                ),
+                                mesh,
+                            )
+                            degree_id = canonical_fingerprint(
+                                {
+                                    "kind": "source-chart-boundary-degree",
+                                    "source": source.source_id,
+                                    "revision": source.source_revision,
+                                    "authority": domain.authority_id,
+                                    "domain": domain.domain_id,
+                                    "source_scope": source.source_scope_id,
+                                    "chart_cover": cover.cover_id,
+                                    "chart_patches": tuple(row[0] for row in source.chart_triangulations),
+                                    "chart_witness": array_tree_fingerprint(
+                                        tuple(row[1:] for row in source.chart_triangulations)
+                                    ),
+                                    "mesh": mesh.mesh_id,
+                                    "topology": mesh.topology_id,
+                                    "geometry": cell_geometry_id(geometry),
+                                    "homotopy": proof.proof_id,
+                                    "cad_closure": closure.evidence_id,
+                                    "limits": limits.limits_id,
+                                    "tolerance": repr(tolerance),
+                                    "distance_upper": repr(upper),
+                                }
+                            )
+        if closure is not None:
+            budget.reserve(0, budget.live_object_storage_upper(closure))
+    except domain_chart_chain_owner.SourceChartMapError:
+        state.add("source_chart_map_premise", "unresolved", "mesh")
+    except CoordinateEnclosureResourceError as error:
+        closure, upper, degree_id = None, math.inf, None
+        state.add(
+            "source_chart_homotopy_resource",
+            "unresolved",
+            "mesh",
+            resource_error=error,
+            expression_budget=budget,
+        )
+    except RationalEnclosureError:
+        state.add("source_chart_map_premise", "unresolved", "mesh")
+    return _AnalyticBoundaryProof(
+        upper, degree_id, tuple(state.findings), pieces, closure
+    )
+
+
+def boundary_degree_proof(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    tolerance: float,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _AnalyticBoundaryProof | None:
+    """Use the same source-bound degree proof for fidelity and region coverage."""
+    gap, _ = _brep_source_gap(source, budget=budget)
+    analytic = (
+        analytic_boundary_proof(
+            mesh, geometry, source, tolerance, limits, budget=budget
+        )
+        if gap == 0.0
+        else None
+    )
+    if analytic is not None:
+        return analytic
+    return _chart_boundary_homotopy(
+        mesh, geometry, source, tolerance, limits, budget=budget
+    )
+
+
+def _certify_boundary_degree_fidelity(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
@@ -4749,7 +5999,7 @@ def _certify_analytic_source_fidelity(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> SourceFidelityCertificate | None:
-    proof = analytic_boundary_proof(
+    proof = boundary_degree_proof(
         mesh, geometry, source, tolerance, limits, budget=budget
     )
     if proof is None:
@@ -4770,6 +6020,7 @@ def _certify_analytic_source_fidelity(
             sample_counts=(proof.piece_count, 0),
         ),
         sample_order=order,
+        coverage=SourceFidelityCoverage(cad_closure=proof.cad_closure),
         boundary_degree_id=proof.boundary_degree_id,
     )
 
@@ -5132,15 +6383,15 @@ def _certify_scientific_source_fidelity(
     )
     if radial is not None:
         return radial
-    analytic = (
-        _certify_analytic_source_fidelity(
+    degree = (
+        _certify_boundary_degree_fidelity(
             mesh, geometry, source, binding, tolerance_, order, limits_, budget=budget
         )
         if selected_facets is None
         else None
     )
-    if analytic is not None:
-        return analytic
+    if degree is not None:
+        return degree
     boundary_evidence = _certify_boundary_source_evidence(
         mesh, geometry, source, binding, request, budget=budget
     )
@@ -5207,7 +6458,7 @@ def certify_source_fidelity(
             )
             certificate = _include_brep_source_gap(certificate, source, budget=budget)
             if geometry.periodic_source is None and geometry.exact_source is None:
-                return certificate
+                return _issue_independent_fidelity(mesh, geometry, source, certificate)
             findings = certificate.findings
             try:
                 with budget.measurement(), budget.activate():
@@ -5235,7 +6486,7 @@ def certify_source_fidelity(
                     ),
                 )
             if error == 0.0:
-                return certificate
+                return _issue_independent_fidelity(mesh, geometry, source, certificate)
             forward = float(
                 np.nextafter(certificate.mesh_to_source_upper + error, math.inf)
             )
@@ -5249,7 +6500,7 @@ def certify_source_fidelity(
                         "coordinate_source_execution_error", "unresolved", "mesh", ()
                     ),
                 )
-            return SourceFidelityCertificate(
+            certificate = SourceFidelityCertificate(
                 certificate.binding,
                 findings,
                 tolerance=certificate.tolerance,
@@ -5276,11 +6527,13 @@ def certify_source_fidelity(
                     projection=certificate.projection_coverage,
                     domain=certificate.domain_coverage,
                     chart=certificate.chart_coverage,
+                    cad_closure=certificate.cad_closure,
                 ),
                 target_facet_ids=certificate.target_facet_ids,
                 source_scope_id=certificate.source_scope_id,
                 boundary_degree_id=certificate.boundary_degree_id,
             )
+            return _issue_independent_fidelity(mesh, geometry, source, certificate)
 
 
 __all__ = [
@@ -5297,6 +6550,7 @@ __all__ = [
     "SourceFidelityCertificate",
     "SourceFidelityCoverage",
     "analytic_boundary_proof",
+    "boundary_degree_proof",
     "certify_source_fidelity",
     "fidelity_affine",
     "fidelity_norm_bound",

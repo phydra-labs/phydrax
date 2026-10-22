@@ -3,6 +3,8 @@
 //
 #include "tet_mesh.hpp"
 
+#include <bit>
+
 namespace phx::mc {
 
 namespace geometry {
@@ -126,9 +128,39 @@ bool TetMesh::construct_edge_point(int32_t a, int32_t b, double* position, doubl
     }
     return false;
   };
+  const auto dyadics_excluded = [&]() {
+    // For same-sign nonzero endpoints, every interior image has magnitude at
+    // least that of the smaller endpoint. Let delta be that endpoint bin's
+    // binary64 spacing. Both endpoints are integers A,B times delta, and
+    // every representable interior image must also lie on delta*Z. If B-A is
+    // odd, no proper dyadic n/2^level can do so. This excludes every remaining
+    // level-1..8 candidate, without constructing its expansions or predicates.
+    // Unsupported coordinate/exponent cases keep the original search.
+    bool excluded = false;
+    constexpr uint64_t sign = uint64_t{1} << 63;
+    constexpr uint64_t exponent = uint64_t{0x7ff} << 52;
+    for (int k = 0; k < 3; ++k) {
+      const double first = point(a)[k], second = point(b)[k];
+      if (!coordinate_in_domain(first) || !coordinate_in_domain(second)) {
+        return false;
+      }
+      const uint64_t x = std::bit_cast<uint64_t>(first);
+      const uint64_t y = std::bit_cast<uint64_t>(second);
+      const uint64_t ex = x & exponent, ey = y & exponent;
+      if (ex == 0 || ey == 0 || ((x ^ y) & sign) != 0) {
+        continue;
+      }
+      excluded = excluded ||
+                 (ex == ey ? ((x ^ y) & 1) != 0 : ((ex < ey ? x : y) & 1) != 0);
+    }
+    return excluded;
+  };
   if (preferred_fraction != 0.0) {
     if (construct(preferred_fraction, true)) {
       return true;
+    }
+    if (!spend(TetWorkCost::kCoordinates) || dyadics_excluded()) {
+      return false;
     }
     // The existing level-1..8 candidates are exactly [64,192]/256.
     // Walk the two nearest frontiers without allocating or sorting. Ties
@@ -151,6 +183,9 @@ bool TetMesh::construct_edge_point(int32_t a, int32_t b, double* position, doubl
     return false;
   }
   for (int level = 1; level <= 8; ++level) {
+    if (level == 2 && (!spend(TetWorkCost::kCoordinates) || dyadics_excluded())) {
+      return false;
+    }
     const int denominator = 1 << level;
     for (int numerator = 1; numerator < denominator; numerator += 2) {
       const double fraction = std::ldexp(static_cast<double>(numerator), -level);
@@ -166,6 +201,28 @@ bool TetMesh::construct_edge_point(int32_t a, int32_t b, double* position, doubl
     }
   }
   return false;
+}
+
+bool TetMesh::construct_interior_edge_point(int32_t a, int32_t b, double fraction,
+                                            double* position) {
+  const MemoryScope memory_scope(memory_owner_);
+  if (!live_vertex(a) || !live_vertex(b) || a == b || !(fraction > 0.0 && fraction < 1.0) ||
+      segment_source(a, b) >= 0 || !spend(TetWorkCost::kCoordinates)) {
+    return false;
+  }
+  int axis = 0;
+  for (int k = 0; k < 3; ++k) {
+    position[k] = (Expansion(point(a)[k]) +
+                   Expansion::difference(point(b)[k], point(a)[k]).scaled(fraction))
+                      .estimate();
+    if (std::abs(point(a)[k] - point(b)[k]) > std::abs(point(a)[axis] - point(b)[axis])) {
+      axis = k;
+    }
+  }
+  const double low = std::min(point(a)[axis], point(b)[axis]);
+  const double high = std::max(point(a)[axis], point(b)[axis]);
+  return coordinate_in_domain(position[0]) && coordinate_in_domain(position[1]) &&
+         coordinate_in_domain(position[2]) && low < position[axis] && position[axis] < high;
 }
 
 bool TetMesh::construct_facet_point(int32_t a, int32_t b, int32_t c, double* position) {
@@ -229,7 +286,7 @@ Insertion TetMesh::prepare_source_facet(int32_t t, int slot, const double* cente
   int32_t face[3];
   oriented_facet(tet(t).v, slot, face);
   const int32_t source = complex_.constraint(t, slot);
-  NativeVector<int32_t> contributors;
+  NativeVector<int32_t>& contributors = facet_contributors_;
   if (!face_ancestry(face, source, contributors) ||
       !spend(TetWorkCost::kSourceFacetConstruction))
     return work_exhausted_ ? Insertion::kCapacity : Insertion::kRefused;

@@ -34,6 +34,10 @@ def _run_packed_scenario(
         devices=2,
         env={},
     )
+    packed_support = record["compact_packed_support"]
+    assert packed_support["source_width"] >= (24 if scenario.endswith("tetra") else 6)
+    assert packed_support["complete_parent_multisets"]
+    assert packed_support["canonical_prefix"]
     restore = record["packed_restore"]
     record["packed_cold_replay"] = run_on_forced_devices(
         _MODULE + "native_distributed_cold",
@@ -635,6 +639,20 @@ def _assert_proof(record: dict[str, Any]) -> None:
     for actual, expected in record["proof_81"]:
         np.testing.assert_array_equal(_record_array(actual), _record_array(expected))
     assert all(record["proof_82"]), "int(work.root_cell_ids[rank, lane]) == -1"
+    compact = record["compact_predecessors"]
+    assert compact["widths"] == [1, 1, 1, 2]
+    for name in (
+        "dense_oracle_complete",
+        "duplicates_negative_and_max_preserved",
+        "undersized_collective_refused",
+        "forged_zero_status_width_refused",
+        "malformed_and_duplicate_witness_refused",
+        "unsupported_refused",
+        "representation_id_changed",
+        "entity_and_affine_bytes_unchanged",
+        "canonical_archive_roundtrip",
+    ):
+        assert compact[name], name
     for actual, expected in record["proof_86"]:
         np.testing.assert_array_equal(_record_array(actual), _record_array(expected))
     assert all(record["proof_90"]), "not np.all(checks[:, 0])"
@@ -890,7 +908,10 @@ def test_one_owner_halo_preserves_local_field_without_peer_packets() -> None:
     _assert_one_owner_halo(record)
 
 
-@pytest.mark.parametrize("scenario", ("positive", "overflow", "shared_field_conflict"))
+@pytest.mark.parametrize(
+    "scenario",
+    ("positive", "cell_boundary", "overflow", "vertex_overflow", "shared_field_conflict"),
+)
 def test_native_owner_local_semantic_migration(scenario: str) -> None:
     record = run_on_forced_devices(
         _MODULE + "native_distributed_migration",
@@ -916,12 +937,12 @@ def test_collective_complete_family_coarsening(device_count: int) -> None:
 
 @pytest.mark.parametrize("coordinate_kind", ("dyadic", "rounded"))
 def test_accepted_predecessor_forest_and_scientific_neighborhood_ancestry(
-    coordinate_kind: str,
+    coordinate_kind: str, tmp_path: Path,
 ) -> None:
     record = run_on_forced_devices(
         _MODULE + "native_distributed_proof",
         "predecessor_forest_proof",
-        (coordinate_kind,),
+        (coordinate_kind, str(tmp_path / "compact-predecessors.npz")),
         devices=2,
         env={},
     )

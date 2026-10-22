@@ -36,6 +36,7 @@ from . import (
     _exact_rational_geometry as exact_rational_geometry_owner,
 )
 from ._cell_geometry import (
+    _cardinal_corner_nodes,
     BarycentricCellGeometryElement,
     CellGeometrySpec,
     LayerColumnCellGeometryElement,
@@ -51,6 +52,7 @@ from ._cell_mesh import CellMesh
 from ._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
 )
 from ._coordinate_enclosure import (
     add,
@@ -85,7 +87,12 @@ from ._exact_power_geometry import (
     ExactPowerCellGeometryRestrictionSource,
     ExactPowerCellGeometrySource,
 )
-from ._nested_reference_types import NestedReferencePair
+from ._nested_reference_types import (
+    NestedReferencePair,
+    rational_affine_bits,
+    rational_pair_affine,
+    rational_pair_arrays,
+)
 from ._reference_cell import reference_cell_topology
 
 
@@ -170,8 +177,8 @@ def mapped_expression_restriction(
     polynomials: tuple[Expression, ...],
     source_kind: str,
     target_kind: str,
-    matrix: NDArray[np.float64],
-    offset: NDArray[np.float64],
+    matrix: NDArray[np.float64] | NDArray[np.object_],
+    offset: NDArray[np.float64] | NDArray[np.object_],
     *,
     budget: CoordinateEnclosureBudget,
 ) -> tuple[Expression, ...]:
@@ -468,6 +475,86 @@ def _certify_mapped_density(
     return density
 
 
+def _numeric_mapped_density(
+    coordinates: tuple[Expression, ...],
+    dimension: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Expression:
+    """Compute a signed determinant, without any domain or positivity verdict."""
+    return expression_determinant(
+        tuple(
+            tuple(
+                expression_derivative(value, axis, budget=budget)
+                for axis in range(dimension)
+            )
+            for value in coordinates
+        ),
+        budget=budget,
+    )
+
+
+def _composed_mapped_density(
+    element: PolynomialComposedCellGeometryElement,
+    coefficients: CoordinateSourceBank,
+    *,
+    budget: CoordinateEnclosureBudget,
+    identity: tuple[str, str],
+) -> Expression:
+    """Pull back numerical determinants; certify only the final target chart."""
+    source = element.source_element
+    dimension = element.topological_dimension
+    coefficients, source_key = imported_coordinate_enclosure.coordinate_preparation_key(
+        source, coefficients, budget=budget
+    )
+    from ._coordinate_operands import _signed_determinant_operands_for
+
+    # The source determinant remains signed: only the final composed target
+    # chart is certified below, never the source's whole physical domain.
+    source_density = (
+        _signed_determinant_operands_for(
+            source_key, source.cell_kind, source.topological_dimension, budget,
+            element=source,
+        )
+        if source.cell_kind != "pyramid"
+        else None
+    )
+    if source_density is None:
+        source_density = budget.composed_source_density_cache.get(source_key)
+    if source_density is None:
+        with budget.temporary_scope():
+            coordinates = imported_coordinate_enclosure._coordinate_expressions_from_prepared(
+                source, coefficients, source_key, budget=budget
+            )
+            if coordinates is None:
+                raise ValueError("mapped_geometry.source_expressions must provide the coordinate source law; got absent source expressions")
+            source_density = _numeric_mapped_density(
+                coordinates,
+                dimension,
+                budget=budget,
+            )
+            budget.retain_basis((source_key, source_density))
+            budget.composed_source_density_cache[source_key] = source_density
+    # The composed element identity binds the actual chart coefficients as well
+    # as its chart/source elements; the chart element alone is not a binding.
+    chart_key = identity
+    arguments = imported_coordinate_enclosure._reference_composition_from_identity(
+        element, chart_key, budget=budget
+    )
+    chart_density = budget.composed_chart_density_cache.get(chart_key)
+    if chart_density is None:
+        with budget.temporary_scope():
+            chart_density = _numeric_mapped_density(arguments, dimension, budget=budget)
+            budget.retain_basis((chart_key, chart_density))
+            budget.composed_chart_density_cache[chart_key] = chart_density
+    composition = imported_coordinate_enclosure.ExpressionComposition(
+        arguments, budget=budget
+    )
+    return expression_multiply(
+        composition(source_density, budget=budget), chart_density, budget=budget
+    )
+
+
 @checked
 def mapped_density_expression(
     element: CellGeometryElement,
@@ -477,19 +564,66 @@ def mapped_density_expression(
 ) -> Expression:
 
     ledger = budget
-    coefficients = imported_coordinate_enclosure.coordinate_source_rows(local)
     element = require_scalar_coordinate_element(element, "Mapped density expressions")
+    if isinstance(element, RestrictedCellGeometryElement):
+        coefficients = imported_coordinate_enclosure.coordinate_source_rows(local)
+        if len(coefficients[0]) == element.topological_dimension:
+            return _restricted_mapped_density(element, coefficients, budget=budget)
+    coefficients, cache_key = imported_coordinate_enclosure.coordinate_preparation_key(
+        element, local, budget=budget
+    )
+    signed_density = None
     if (
-        isinstance(element, RestrictedCellGeometryElement)
+        element.cell_kind != "pyramid"
+        and not isinstance(element, RationalComposedCellGeometryElement)
         and len(coefficients[0]) == element.topological_dimension
     ):
-        return _restricted_mapped_density(element, coefficients, budget=budget)
-    cache_key = imported_coordinate_enclosure.coordinate_bank_cache_key(
-        element, coefficients
-    )
+        from ._coordinate_operands import _signed_determinant_operands_for
+
+        # Only the receipt owner can admit an earned signed numerical operand.
+        # In particular, an arbitrary public working-cache entry is not a
+        # source, physical-frame, or paid-current-request binding.
+        signed_density = _signed_determinant_operands_for(
+            cache_key, element.cell_kind, element.topological_dimension, budget,
+            element=element,
+        )
     if cache_key in ledger.density_cache:
         return ledger.density_cache[cache_key][0]
-    coordinates = mapped_coordinate_expressions(element, local, budget=budget)
+    if signed_density is not None:
+        # No positivity, orientation, tolerance, or measure verdict crosses the
+        # earning boundary. Certify this consumer's chart exactly as on a miss.
+        density = _certify_mapped_density(
+            element, signed_density, False, budget=budget,
+        )
+        retained = (density,)
+        ledger.retain_basis(retained)
+        ledger.density_cache[cache_key] = retained
+        return density
+    if (
+        isinstance(element, PolynomialComposedCellGeometryElement)
+        and element.source_element.topological_dimension == element.topological_dimension
+        and len(coefficients[0]) == element.topological_dimension
+    ):
+        # det(D(X o A)) = det(DX)(A) det(DA), including both signs.
+        # A folded source can be valid on this target, so neither numerical
+        # operand may pass through the source-domain positivity certificate.
+        density = _certify_mapped_density(
+            element,
+            _composed_mapped_density(
+                element, coefficients, identity=(cache_key[0], cache_key[1]), budget=budget
+            ),
+            False,
+            budget=budget,
+        )
+        retained = (density,)
+        ledger.retain_basis(retained)
+        ledger.density_cache[cache_key] = retained
+        return density
+    coordinates = imported_coordinate_enclosure._coordinate_expressions_from_prepared(
+        element, coefficients, cache_key, budget=budget
+    )
+    if coordinates is None:
+        raise ValueError("mapped_geometry.source_expressions must provide the coordinate source law; got absent source expressions")
     dimension = element.topological_dimension
     coordinates, axis_plane = _mapped_density_coordinates(
         element, coordinates, budget=budget
@@ -811,9 +945,21 @@ def mapped_geometry_cells(
     ...,
 ]:
 
-    elements, routes, _ = geometry.resolve(mesh)
+    # Resolve on the caller's ledger: its validation, charges and retained
+    # source banks are shared with the bank read below.
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
     local = imported_coordinate_enclosure.prepared_coordinate_source_bank(
         geometry, budget=budget
+    )
+    # The actual routed gathers and their tuple/host-route storage remain paid
+    # even when the source numeric bank came from a completed predecessor.
+    count = sum(route.shape[0] for route in routes)
+    entries = sum(route.size for route in routes)
+    budget.reserve(
+        count + entries,
+        256 + 144 * count + 16 * entries + 8 * max(
+            (route.size for route in routes), default=0
+        ),
     )
     return tuple(
         (
@@ -1041,6 +1187,37 @@ def _validate_embedded_denominators(
                 )
 
 
+def _embedded_affine_triangle_squared(
+    corners: CoordinateSourceBank, *, budget: CoordinateEnclosureBudget
+) -> imported_coordinate_enclosure.ExactScalar:
+    """Exact constant Gram determinant of a proved affine embedded triangle."""
+    bits = max(
+        abs(value.numerator).bit_length() + value.denominator.bit_length()
+        if isinstance(value, Fraction)
+        else 2 * value.coefficient_bits
+        for point in corners
+        for value in point
+    )
+    reserve_polynomial(20, 12, 0, 4 * bits + 4, budget=budget)
+    if any(
+        isinstance(value, exact_algebraic_geometry_owner.RadicalElement)
+        for point in corners
+        for value in point
+    ):
+        exact_algebraic_geometry_owner.reserve_algebraic_work(
+            corners, 20, 12, 4, budget=budget
+        )
+    first = tuple(corners[1][axis] - corners[0][axis] for axis in range(3))
+    second = tuple(corners[2][axis] - corners[0][axis] for axis in range(3))
+    cross = (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+    squared = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]
+    return squared
+
+
 @checked
 def embedded_squared_density(
     element: CellGeometryElement,
@@ -1052,6 +1229,21 @@ def embedded_squared_density(
 ) -> Expression:
 
     element = require_scalar_coordinate_element(element, "Embedded squared density")
+    if (
+        prepared_coordinates is None
+        and element.cell_kind == "triangle"
+        and element.topological_dimension == 2
+        and len(local[0]) == 3
+    ):
+        corners = imported_coordinate_enclosure.affine_simplex_corner_images(
+            element, local, budget=budget
+        )
+        if corners is not None:
+            return imported_coordinate_enclosure.constant(
+                _embedded_affine_triangle_squared(corners, budget=budget),
+                2,
+                budget=budget,
+            )
     coordinates = (
         mapped_coordinate_expressions(element, local, budget=budget)
         if prepared_coordinates is None
@@ -3360,23 +3552,7 @@ def _exact_affine_simplex_measure_from_corners(
         for value in point
     )
     if embedded_triangle:
-        reserve_polynomial(20, 12, 0, 4 * bits + 4, budget=budget)
-        if any(
-            isinstance(value, exact_algebraic_geometry_owner.RadicalElement)
-            for point in corners
-            for value in point
-        ):
-            exact_algebraic_geometry_owner.reserve_algebraic_work(
-                corners, 20, 12, 4, budget=budget
-            )
-        first = tuple(corners[1][axis] - corners[0][axis] for axis in range(ambient))
-        second = tuple(corners[2][axis] - corners[0][axis] for axis in range(ambient))
-        cross = (
-            first[1] * second[2] - first[2] * second[1],
-            first[2] * second[0] - first[0] * second[2],
-            first[0] * second[1] - first[1] * second[0],
-        )
-        squared = sum((value * value for value in cross), Fraction(0))
+        squared = _embedded_affine_triangle_squared(corners, budget=budget)
         if squared <= 0:
             raise ValueError(
                 "mapped_geometry.gram must have a positive lower bound; got nonpositive embedded Jacobian"
@@ -3455,6 +3631,7 @@ def _exact_affine_simplex_measure(
     /,
     *,
     budget: CoordinateEnclosureBudget,
+    preparation: tuple[_NestedCornerProofs, CoordinateLiveStorage] | None = None,
 ) -> tuple[float, float, bool] | None:
     """algebraic degree-one simplex measure without materializing its polynomials.
 
@@ -3463,6 +3640,12 @@ def _exact_affine_simplex_measure(
     only when the unrestricted source is a degree-one simplex whose basis has
     total degree at most one; other maps return ``None`` for expression
     integration.
+
+    A closed measure batch may retain the same actual element's completed
+    cardinal/source proof, as nested-map proofs do. Only fully admitted owners
+    with cardinal corners are retained; other sources take the original route.
+    Cell coefficient banks, corner/component work and determinants are never
+    retained here.
     """
 
     scalar = require_scalar_coordinate_element(element, "Exact affine measure")
@@ -3476,22 +3659,60 @@ def _exact_affine_simplex_measure(
         )
     ):
         return None
-    root = scalar
-    while isinstance(root, RestrictedCellGeometryElement):
-        root = root.source_element
-    if (
-        not isinstance(
-            root,
-            (reference_types_owner.FiniteElementSpec, BarycentricCellGeometryElement),
-        )
-        or root.cell_kind not in ("interval", "triangle", "tetrahedron")
-        or root.degree != 1
-    ):
-        return None
-    basis = source_basis(root, budget=budget)
-    if basis is None or any(sum(index) > 1 for term in basis for index in term):
-        return None
-    corners = coordinate_corner_images(scalar, local, budget=budget)
+    proof = None if preparation is None else preparation[0].get(id(scalar))
+    if proof is not None and proof[0] is scalar:
+        _, _, nodes = proof
+    else:
+        root = scalar
+        while isinstance(root, RestrictedCellGeometryElement):
+            root = root.source_element
+        if (
+            not isinstance(
+                root,
+                (reference_types_owner.FiniteElementSpec, BarycentricCellGeometryElement),
+            )
+            or root.cell_kind not in ("interval", "triangle", "tetrahedron")
+            or root.degree != 1
+        ):
+            return None
+        # Admit the dictionary entry, strong owner and complete corner-node
+        # tuple before preparing or retaining any operation-local metadata.
+        previous_bound = 0 if preparation is None else preparation[1].bound
+        if preparation is not None:
+            preparation[1].set_bound(previous_bound + 256 + 8 * (dimension + 1))
+            # A new source must itself have a closed, actual-owner-bound input
+            # graph before any of its preparation can span an earlier proof.
+            # Pay the complete structure/NumPy-byte/JAX check, not an ambient
+            # admission flag; custom protocols retire earlier proofs first.
+            if imported_coordinate_enclosure.coordinate_identity_inputs(
+                scalar, budget
+            ) is None:
+                preparation[0].clear()
+                previous_bound = 0
+                preparation[1].set_bound(256 + 8 * (dimension + 1))
+        basis = source_basis(root, budget=budget)
+        if basis is None or any(sum(index) > 1 for term in basis for index in term):
+            if preparation is not None:
+                preparation[1].set_bound(previous_bound)
+            return None
+        nodes = _cardinal_corner_nodes(scalar, budget=budget)
+        if preparation is not None:
+            admission = budget.element_identity_admission_cache.get(id(scalar))
+            if nodes is not None and admission is not None and admission.owner is scalar:
+                preparation[0][id(scalar)] = (scalar, True, nodes)
+            else:
+                # Protocol/custom owners and weighted corners must keep their
+                # complete original authentication/evaluation route. Retire
+                # earlier proofs as well, so none spans unchecked custom reentry.
+                preparation[0].clear()
+                preparation[1].set_bound(0)
+    if nodes is None:
+        corners = coordinate_corner_images(scalar, local, budget=budget)
+    else:
+        # The shared exact cardinal proof selects source-owned coefficients,
+        # avoiding a per-cell map key and retained weighted-image graph.
+        budget.reserve(len(nodes) * (1 + ambient), 128 + 8 * len(nodes))
+        corners = tuple(local[node] for node in nodes)
     if corners is None or len(corners) != dimension + 1:
         return None
     return _exact_affine_simplex_measure_from_corners(corners, budget=budget)
@@ -3653,6 +3874,9 @@ def _certified_cell_measures(
     source conversion, coefficient arithmetic and publication errors are enclosed.
     No quadrature samples certify this measure. The equality flag is false on that route.
 
+    Proved affine simplices publish their exact corner determinant directly;
+    they do not materialize per-cell polynomial preparation/cache-key graphs.
+
     Absolute tolerance is allocated across cells; relative budgets use certified
     lower areas, so summed errors are at most absolute plus relative total area.
     ``maximum_work`` bounds dense coefficient products across all cells;
@@ -3706,11 +3930,174 @@ def _certified_cell_measures(
     controls = _CellMeasureControls(
         absolute_per_cell, relative, maximum_subcells, maximum_binomial_terms, work
     )
-    with ledger.temporary_scope():
+    from ._coordinate_operands import _signed_determinant_operand_batch
+
+    with (
+        ledger.temporary_scope(),
+        ledger.live_storage() as affine_storage,
+        _signed_determinant_operand_batch(mesh, geometry, budget) as signed_batch,
+    ):
         references: dict[
             str, list[tuple[Polynomial, imported_fractions.Fraction, float, float]]
         ] = {}
+        affine_proofs: _NestedCornerProofs = {}
+
+        def affine_measure_key(
+            element: CellGeometryElement, local: CoordinateSourceBank
+        ) -> imported_coordinate_enclosure.CoordinatePreparationKey | None:
+            # Only the operation's completed actual-owner/cardinal proof admits
+            # reuse. Its first source authentication still takes the original
+            # route below; neither a cached verdict nor a Fraction hash earns it.
+            proof = affine_proofs.get(id(element))
+            admission = ledger.element_identity_admission_cache.get(id(element))
+            if (
+                proof is None
+                or proof[0] is not element
+                or admission is None
+                or admission.owner is not element
+                or type(local) is not tuple
+            ):
+                return None
+            payload_size = 8
+            for row in local:
+                ledger.reserve(1)
+                if type(row) is not tuple:
+                    return None
+                payload_size += 8
+                for value in row:
+                    ledger.reserve(1)
+                    if (
+                        type(value) is not Fraction
+                        or type(value.numerator) is not int
+                        or type(value.denominator) is not int
+                        or value.denominator <= 0
+                    ):
+                        return None
+                    payload_size += (
+                        16
+                        + max(1, (value.numerator.bit_length() + 8) // 8)
+                        + max(1, (value.denominator.bit_length() + 7) // 8)
+                    )
+            # Admit the growing bytearray, largest transient integer encoding,
+            # final immutable bytes, namespace and key before allocating them.
+            # This lives alongside the ledger's entire retained cache union.
+            identity = admission.identity
+            ledger.reserve(0, 1024 + 3 * payload_size + 4 * len(identity[0]))
+            payload = bytearray()
+            payload.extend(len(local).to_bytes(8, "big"))
+            for row in local:
+                ledger.reserve(1)
+                payload.extend(len(row).to_bytes(8, "big"))
+                for value in row:
+                    ledger.reserve(1)
+                    assert isinstance(value, Fraction)
+                    numerator, denominator = value.numerator, value.denominator
+                    size = max(1, (numerator.bit_length() + 8) // 8)
+                    payload.extend(size.to_bytes(8, "big"))
+                    payload.extend(numerator.to_bytes(size, "big", signed=True))
+                    size = max(1, (denominator.bit_length() + 7) // 8)
+                    payload.extend(size.to_bytes(8, "big"))
+                    payload.extend(denominator.to_bytes(size, "big"))
+            # Complete current values, not digests or mutable Fraction owners,
+            # are numerical authority. The empty bank avoids retaining the
+            # per-cell coefficient graph and separates this key's namespace.
+            return (
+                "affine-rational-measure:" + identity[0],
+                identity[1],
+                (),
+                bytes(payload),
+            )
+
         for element, local in cells:
+            if signed_batch is not None:
+                signed_batch.for_element(element)
+            # Always earn the first actual affine/cardinal proof afresh in this
+            # operation. Later closed rational cells can skip only numerical
+            # selection, determinant arithmetic and rounding already earned.
+            with ledger.temporary_scope():
+                key = affine_measure_key(element, local)
+                retained = None
+                if key is not None:
+                    ledger.reserve(1)
+                    retained = ledger.exact_cell_measure_cache.get(key)
+                    if (
+                        retained is not None
+                        and math.isfinite(retained[0])
+                        and math.isfinite(retained[1])
+                        and retained[0] > retained[1] >= 0
+                    ):
+                        _require_measure_publication(
+                            retained, controls.absolute_per_cell, controls.relative
+                        )
+                        integrals.append(retained)
+                        continue
+                affine = _exact_affine_simplex_measure(
+                    element,
+                    local,
+                    preparation=(affine_proofs, affine_storage),
+                    budget=budget,
+                )
+                if affine is not None:
+                    integral = affine[:2]
+                    _require_measure_publication(
+                        integral, controls.absolute_per_cell, controls.relative
+                    )
+                    if key is None:
+                        key = affine_measure_key(element, local)
+                        if key is not None and affine[2]:
+                            ledger.reserve(1)
+                            retained = ledger.exact_cell_measure_cache.get(key)
+                    if affine[2]:
+                        if (
+                            key is not None
+                            and math.isfinite(integral[0])
+                            and math.isfinite(integral[1])
+                            and integral[0] > integral[1] >= 0
+                        ):
+                            if retained is None:
+                                ledger.retain_basis((key, integral))
+                                ledger.exact_cell_measure_cache[key] = integral
+                            if (
+                                ledger.capture_coordinate_operands
+                                and ledger.capture_measure_operands
+                            ):
+                                from ._coordinate_operands import (
+                                    _remember_exact_cell_measure_operand,
+                                )
+
+                                # Only this freshly executed exact kernel may
+                                # issue numerical operands. The cache-hit
+                                # shortcut above never crosses this boundary.
+                                _remember_exact_cell_measure_operand(
+                                    key, integral, ledger
+                                )
+                    if key is None:
+                        # No proof may span unsupported scalar callbacks before
+                        # another cell attempts the closed rational reuse path.
+                        affine_proofs.clear()
+                        affine_storage.set_bound(0)
+                    integrals.append(integral)
+                    exact = exact and affine[2]
+                    continue
+            # No operation-local proof may span the general source route:
+            # unsupported/custom protocols must not introduce unchecked reentry
+            # between this proof's authentication and its next use.
+            affine_proofs.clear()
+            affine_storage.set_bound(0)
+            # An algebraic integral and its outward publication error depend
+            # only on the immutable element/source bank, not on the caller's
+            # requested tolerance. Recheck that tolerance on every import.
+            local, key = imported_coordinate_enclosure.coordinate_preparation_key(
+                element, local, budget=budget
+            )
+            budget.reserve(1)
+            retained = ledger.exact_cell_measure_cache.get(key)
+            if retained is not None:
+                _require_measure_publication(
+                    retained, controls.absolute_per_cell, controls.relative
+                )
+                integrals.append(retained)
+                continue
             reference = None
             with ledger.temporary_scope():
                 measured = _measure_coordinate_cell(
@@ -3719,6 +4106,9 @@ def _certified_cell_measures(
                 exact = exact and measured.exact
                 integral, reference = measured.integral, measured.reference
                 integrals.append(integral)
+            if measured.exact:
+                ledger.retain_basis((key, integral))
+                ledger.exact_cell_measure_cache[key] = integral
             if reference is not None:
                 gram = reference[0]
                 numerator, denominator = (
@@ -3816,38 +4206,73 @@ def mapped_root_identities(
     return tuple(result)
 
 
-@checked
-def affine_nested_geometry_pair_bound(
-    fine_element: CellGeometryElement,
-    fine_local: CoordinateCoefficients,
-    coarse_element: CellGeometryElement,
-    coarse_local: CoordinateCoefficients,
+type _AffinePairLaw = tuple[
+    tuple[tuple[Fraction, ...], ...],
+    tuple[Fraction, ...],
+    tuple[tuple[Fraction, ...], ...],
+]
+
+
+def _affine_pair_bound(
+    fine_kind: str,
+    fine: CoordinateSourceBank,
+    coarse_kind: str,
+    coarse: CoordinateSourceBank,
     pair: NestedReferencePair,
+    laws: dict[tuple[object, ...], _AffinePairLaw | None],
+    law_storage: CoordinateLiveStorage | None,
+    /,
     *,
     budget: CoordinateEnclosureBudget,
-) -> float | None:
-    """Bound a proved affine simplex difference exactly at its extreme vertices."""
+) -> float:
+    """Bound one proved affine simplex difference at its extreme vertices.
 
-    fine = imported_coordinate_enclosure.affine_simplex_corner_images(
-        fine_element, fine_local, budget=budget
-    )
-    coarse = imported_coordinate_enclosure.affine_simplex_corner_images(
-        coarse_element, coarse_local, budget=budget
-    )
-    if fine is None or coarse is None:
-        return None
-    fine_dimension = reference_cell_topology(fine_element.cell_kind).dimension
-    coarse_dimension = reference_cell_topology(coarse_element.cell_kind).dimension
+    The exact child law and the coarse reference parameters of its fine
+    corners depend only on the pair's binary64 view and retained rational rows.
+    With ``law_storage``, a law seen once keeps only its admitted key and a
+    repeated law is retained, so later equal laws charge only their difference
+    work and unique laws never accumulate parameter banks.
+    """
+    fine_dimension = reference_cell_topology(fine_kind).dimension
+    coarse_dimension = reference_cell_topology(coarse_kind).dimension
     ambient = len(fine[0])
-    # Every finite binary64 coefficient has numerator/denominator below 1076 bits.
-    imported_linalg__hermitian_spectral.reserve_fraction_work(
-        budget,
-        pair.matrix.size + pair.offset.size,
-        pair.matrix.size + pair.offset.size,
-        1076,
-    )
-    matrix = tuple(rational_vector(row) for row in pair.matrix)
-    offset = rational_vector(pair.offset)
+    key: tuple[object, ...] = ()
+    law: _AffinePairLaw | None = None
+    seen = False
+    if law_storage is not None:
+        law_storage.set_bound(
+            law_storage.bound + 256 + 16 * (pair.matrix.size + pair.offset.size)
+        )
+        key = (
+            fine_kind,
+            pair.matrix.shape,
+            np.asarray(pair.matrix, dtype=np.float64).tobytes(),
+            np.asarray(pair.offset, dtype=np.float64).tobytes(),
+            pair.exact_matrix,
+            pair.exact_offset,
+        )
+        seen = key in laws
+        law = laws.get(key)
+        if seen:
+            # Only a first sighting retains its key.
+            law_storage.set_bound(
+                law_storage.bound - 256 - 16 * (pair.matrix.size + pair.offset.size)
+            )
+        else:
+            laws[key] = None
+    if law is None:
+        # Binary64 pairs stay below 1076 bits; retained rational source-owned
+        # pairs charge their full rational size.
+        matrix, offset = rational_pair_affine(pair)
+        imported_linalg__hermitian_spectral.reserve_fraction_work(
+            budget,
+            pair.matrix.size + pair.offset.size,
+            pair.matrix.size + pair.offset.size,
+            max(1076, rational_affine_bits((matrix, offset))),
+        )
+        parameters = None
+    else:
+        matrix, offset, parameters = law
     profile_rows = (*fine, *coarse, *matrix, offset)
     budget.reserve(sum(len(row) for row in profile_rows))
     numerator = max(
@@ -3876,9 +4301,10 @@ def affine_nested_geometry_pair_bound(
         4 * (numerator + denominator + 1) * (coarse_dimension + 1) * (fine_dimension + 3)
         + 64
     )
-    work = len(fine) * (
-        coarse_dimension * (2 * fine_dimension + 1) + ambient * (3 * coarse_dimension + 2)
+    parameter_work = 0 if parameters is not None else coarse_dimension * (
+        2 * fine_dimension + 1
     )
+    work = len(fine) * (parameter_work + ambient * (3 * coarse_dimension + 2))
     imported_linalg__hermitian_spectral.reserve_fraction_work(
         budget,
         work,
@@ -3897,29 +4323,52 @@ def affine_nested_geometry_pair_bound(
             coarse_dimension + 1,
             budget=budget,
         )
-    parameters = tuple(
-        tuple(
-            start
-            + sum(
-                (
-                    coefficient * Fraction(float(value))
-                    for coefficient, value in zip(row, reference, strict=True)
-                ),
-                Fraction(0),
+    if parameters is None:
+        vertices = reference_cell_topology(fine_kind).vertices
+        retain = law_storage is not None and seen
+        if retain and law_storage is not None:
+            # Admit the repeated law before building it: every exact scalar of
+            # the map and of the (dimension + 1)-term parameter sums.
+            scalar_bits = (len(offset) + 1) * (
+                rational_affine_bits((matrix, offset)) + 2
             )
-            for start, row in zip(offset, matrix, strict=True)
+            scalars = (
+                sum(len(row) for row in matrix) + len(offset) + len(vertices) * len(offset)
+            )
+            law_storage.set_bound(
+                law_storage.bound
+                + 512
+                + scalars * (128 + 2 * ((scalar_bits + 7) // 8))
+            )
+        parameters = tuple(
+            tuple(
+                start
+                + sum(
+                    (
+                        coefficient * Fraction(float(value))
+                        for coefficient, value in zip(row, reference, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                for start, row in zip(offset, matrix, strict=True)
+            )
+            for reference in vertices
         )
-        for reference in reference_cell_topology(fine_element.cell_kind).vertices
-    )
+        if retain:
+            laws[key] = (matrix, offset, parameters)
     bound = 0.0
+    origin = coarse[0]
     for axis in range(ambient):
+        # Coarse edge components are shared by every fine corner of this axis.
+        start = origin[axis]
+        edges = tuple(corner[axis] - start for corner in coarse[1:])
         differences = tuple(
             actual[axis]
-            - coarse[0][axis]
+            - start
             - sum(
                 (
-                    parameter * (corner[axis] - coarse[0][axis])
-                    for parameter, corner in zip(point, coarse[1:], strict=True)
+                    parameter * edge
+                    for parameter, edge in zip(point, edges, strict=True)
                 ),
                 Fraction(0),
             )
@@ -3936,6 +4385,38 @@ def affine_nested_geometry_pair_bound(
 
 
 @checked
+def affine_nested_geometry_pair_bound(
+    fine_element: CellGeometryElement,
+    fine_local: CoordinateCoefficients,
+    coarse_element: CellGeometryElement,
+    coarse_local: CoordinateCoefficients,
+    pair: NestedReferencePair,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> float | None:
+    """Bound a proved affine simplex difference exactly at its extreme vertices."""
+
+    fine = imported_coordinate_enclosure.affine_simplex_corner_images(
+        fine_element, fine_local, budget=budget
+    )
+    coarse = imported_coordinate_enclosure.affine_simplex_corner_images(
+        coarse_element, coarse_local, budget=budget
+    )
+    if fine is None or coarse is None:
+        return None
+    return _affine_pair_bound(
+        fine_element.cell_kind,
+        fine,
+        coarse_element.cell_kind,
+        coarse,
+        pair,
+        {},
+        None,
+        budget=budget,
+    )
+
+
+@checked
 def polynomial_nested_geometry_pair_bound(
     fine_element: CellGeometryElement,
     fine_local: CoordinateCoefficients,
@@ -3946,18 +4427,137 @@ def polynomial_nested_geometry_pair_bound(
     budget: CoordinateEnclosureBudget,
 ) -> float:
     """Bound the full source-polynomial difference on the fine reference cell."""
+    if isinstance(
+        fine_element, (PolynomialComposedCellGeometryElement, RestrictedCellGeometryElement)
+    ):
+        # This is an equality of definitions, not a fitted corner map or a
+        # positivity verdict. Authenticate the current complete laws and ordered
+        # banks once, including the scalar-representation part of each bank key.
+        count = (
+            fine_local.size
+            if isinstance(fine_local, np.ndarray)
+            else sum(len(row) for row in fine_local)
+        ) + (
+            coarse_local.size
+            if isinstance(coarse_local, np.ndarray)
+            else sum(len(row) for row in coarse_local)
+        )
+        budget.reserve(count + 4, 512 + count)
+        _, fine_key = imported_coordinate_enclosure.coordinate_preparation_key(
+            fine_element, fine_local, budget=budget
+        )
+        _, coarse_key = imported_coordinate_enclosure.coordinate_preparation_key(
+            coarse_element, coarse_local, budget=budget
+        )
+        coarse_identity = coarse_key[0], coarse_key[1]
+        source_identity = (
+            coarse_identity
+            if fine_element.source_element is coarse_element
+            else imported_coordinate_enclosure.element_identity(
+                fine_element.source_element, budget=budget
+            )
+        )
+        if (
+            source_identity == coarse_identity
+            and len(fine_key) == len(coarse_key)
+            and fine_key[2] == coarse_key[2]
+            and fine_key[3:] == coarse_key[3:]
+        ):
+            # Admit the rational_pair_arrays validation scratch, exact atoms and
+            # object arrays before allocating them. Binary64 rationals need at
+            # most 1075 bits; explicit rational sources may need more.
+            pair_count = pair.matrix.size + pair.offset.size
+            bits = 1075
+            if pair.exact_matrix is not None and pair.exact_offset is not None:
+                bits = max(
+                    bits,
+                    max(
+                        (
+                            max(
+                                abs(value.numerator).bit_length(),
+                                value.denominator.bit_length(),
+                            )
+                            for row in pair.exact_matrix
+                            for value in row
+                            if isinstance(value, Fraction)
+                        ),
+                        default=1,
+                    ),
+                    max(
+                        (
+                            max(
+                                abs(value.numerator).bit_length(),
+                                value.denominator.bit_length(),
+                            )
+                            for value in pair.exact_offset
+                            if isinstance(value, Fraction)
+                        ),
+                        default=1,
+                    ),
+                )
+            budget.reserve(
+                3 * pair_count + 2,
+                512 + pair_count * (128 + 2 * declared_integer_storage_bytes(bits)),
+            )
+            exact_matrix, exact_offset = rational_pair_arrays(pair)
+            if isinstance(fine_element, RestrictedCellGeometryElement):
+                budget.reserve(pair_count, 512 + 16 * pair_count)
+                actual_matrix = np.asarray(fine_element.matrix, dtype=np.float64)
+                actual_offset = np.asarray(fine_element.offset, dtype=np.float64)
+                if (
+                    actual_matrix.shape == exact_matrix.shape
+                    and actual_offset.shape == exact_offset.shape
+                    and all(
+                        Fraction(float(actual)) == expected
+                        for actual, expected in zip(
+                            actual_matrix.flat, exact_matrix.flat, strict=True
+                        )
+                    )
+                    and all(
+                        Fraction(float(actual)) == expected
+                        for actual, expected in zip(
+                            actual_offset.flat, exact_offset.flat, strict=True
+                        )
+                    )
+                ):
+                    # Both maps are the same complete source law evaluated at
+                    # exactly the same affine reference argument, not just at
+                    # its corners or within a floating-point fitting tolerance.
+                    return 0.0
+            else:
+                arguments = imported_coordinate_enclosure._reference_composition_from_identity(
+                    fine_element, (fine_key[0], fine_key[1]), budget=budget
+                )
+                expected = imported_coordinate_enclosure.restriction_chart_arguments(
+                    fine_element.cell_kind, exact_offset, exact_matrix, budget=budget
+                )
+                expected_arguments = (
+                    expected.arguments
+                    if isinstance(expected, imported_coordinate_enclosure.PreparedPolynomialArguments)
+                    else expected
+                )
+                budget.reserve(
+                    len(arguments)
+                    + sum(len(argument) for argument in arguments)
+                    + sum(len(argument) for argument in expected_arguments)
+                )
+                if arguments == expected_arguments:
+                    # For every reference point, sum_i c_i (b_i o A) is exactly
+                    # (sum_i c_i b_i) o A, for arbitrary nonlinear/nonunit sources.
+                    return 0.0
     fine_coordinates = mapped_coordinate_expressions(
         fine_element, fine_local, budget=budget
     )
     coarse_coordinates = mapped_coordinate_expressions(
         coarse_element, coarse_local, budget=budget
     )
+    exact_matrix, exact_offset = rational_pair_arrays(pair)
     restricted = mapped_expression_restriction(
         coarse_coordinates,
         coarse_element.cell_kind,
         fine_element.cell_kind,
-        pair.matrix,
-        pair.offset,
+        exact_matrix,
+        exact_offset,
         budget=budget,
     )
     domain = (
@@ -3981,6 +4581,48 @@ def polynomial_nested_geometry_pair_bound(
             )
             bound = max(bound, abs(lower), abs(upper))
     return bound
+
+
+# Element identity -> (element, affine simplex source, cardinal corner rows).
+type _NestedCornerProofs = dict[
+    int, tuple[ScalarCoordinateElement, bool, tuple[int, ...] | None]
+]
+
+
+def _nested_affine_corner_images(
+    element: ScalarCoordinateElement,
+    local: CoordinateSourceBank,
+    *,
+    proofs: _NestedCornerProofs,
+    storage: CoordinateLiveStorage,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateSourceBank | None:
+    """Select proved cardinal affine images from the admitted exact source bank.
+
+    ``proofs`` keeps each live element's completed affine-basis and cardinal
+    corner verdicts for one proof, so cells sharing an element object do not
+    rebuild its source identity; both verdicts depend on the element alone.
+    """
+    proof = proofs.get(id(element))
+    if proof is None or proof[0] is not element:
+        affine = imported_coordinate_enclosure.affine_simplex_source(
+            element, budget=budget
+        )
+        nodes = _cardinal_corner_nodes(element, budget=budget) if affine else None
+        storage.set_bound(storage.bound + 256 + (0 if nodes is None else 8 * len(nodes)))
+        proofs[id(element)] = (element, affine, nodes)
+    else:
+        _, affine, nodes = proof
+    if not affine:
+        return None
+    if nodes is None:
+        return imported_coordinate_enclosure.coordinate_corner_images(
+            element, local, budget=budget
+        )
+    # Preserve the canonical corner/component evaluation charges; map-key
+    # preparation and intermediate weighted operations are no longer needed.
+    budget.reserve(len(nodes) * (1 + len(local[0])), 128 + 8 * len(nodes))
+    return tuple(local[node] for node in nodes)
 
 
 @checked
@@ -4010,35 +4652,73 @@ def certify_nested_geometry_pairs(
                 "nested_geometry.source_root must retain the scientific root identity; got stale or mismatched root identities"
             )
     bound = 0.0
-    for pair in pairs:
-        # Coordinate banks remain request-owned; this pair's restrictions and
-        # difference enclosures end after its scalar bound has been recorded.
-        with budget.temporary_scope():
-            fine, coarse = (
-                (source[pair.source_cell], target[pair.target_cell])
-                if pair.fine_is_source
-                else (target[pair.target_cell], source[pair.source_cell])
-            )
-            fine_element, fine_local = fine
-            coarse_element, coarse_local = coarse
-            pair_bound = affine_nested_geometry_pair_bound(
-                fine_element,
-                fine_local,
-                coarse_element,
-                coarse_local,
-                pair,
-                budget=budget,
-            )
-            if pair_bound is None:
-                pair_bound = polynomial_nested_geometry_pair_bound(
+    # Children of one coarse cell share its corner images, and equal child laws
+    # share their exact reference parameters; both live for this proof only.
+    laws: dict[tuple[object, ...], _AffinePairLaw | None] = {}
+    coarse_images: dict[tuple[bool, int], CoordinateSourceBank | None] = {}
+    proofs: _NestedCornerProofs = {}
+    with budget.temporary_scope(), budget.live_storage() as reuse_storage:
+        for pair in pairs:
+            # Coordinate banks remain request-owned; this pair's restrictions and
+            # difference enclosures end after its scalar bound has been recorded.
+            with budget.temporary_scope():
+                fine, coarse = (
+                    (source[pair.source_cell], target[pair.target_cell])
+                    if pair.fine_is_source
+                    else (target[pair.target_cell], source[pair.source_cell])
+                )
+                fine_element, fine_local = fine
+                coarse_element, coarse_local = coarse
+                fine_corners = _nested_affine_corner_images(
                     fine_element,
                     fine_local,
-                    coarse_element,
-                    coarse_local,
-                    pair,
+                    proofs=proofs,
+                    storage=reuse_storage,
                     budget=budget,
                 )
-            bound = max(bound, pair_bound)
+                coarse_key = (
+                    pair.fine_is_source,
+                    pair.target_cell if pair.fine_is_source else pair.source_cell,
+                )
+                if coarse_key in coarse_images:
+                    coarse_corners = coarse_images[coarse_key]
+                else:
+                    coarse_corners = (
+                        _nested_affine_corner_images(
+                            coarse_element,
+                            coarse_local,
+                            proofs=proofs,
+                            storage=reuse_storage,
+                            budget=budget,
+                        )
+                    )
+                    reuse_storage.set_bound(
+                        reuse_storage.bound
+                        + 256
+                        + (0 if coarse_corners is None else 8 * len(coarse_corners))
+                    )
+                    coarse_images[coarse_key] = coarse_corners
+                if fine_corners is None or coarse_corners is None:
+                    pair_bound = polynomial_nested_geometry_pair_bound(
+                        fine_element,
+                        fine_local,
+                        coarse_element,
+                        coarse_local,
+                        pair,
+                        budget=budget,
+                    )
+                else:
+                    pair_bound = _affine_pair_bound(
+                        fine_element.cell_kind,
+                        fine_corners,
+                        coarse_element.cell_kind,
+                        coarse_corners,
+                        pair,
+                        laws,
+                        reuse_storage,
+                        budget=budget,
+                    )
+                bound = max(bound, pair_bound)
     scale_ = max(
         float(np.max(np.abs(np.asarray(source_geometry.coordinates)))),
         float(np.max(np.abs(np.asarray(target_geometry.coordinates)))),

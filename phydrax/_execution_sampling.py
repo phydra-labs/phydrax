@@ -174,7 +174,9 @@ class HostMemorySample:
     """Process RSS, RSS high-water mark, and host memory at one instant.
 
     ``process_peak_resident`` retains the raw process-lifetime kernel high-water
-    counter. Host RSS counters are approximate and do not certify an upper bound.
+    counter (``getrusage`` ``ru_maxrss``). On Linux this counter survives ``exec``,
+    so a launched process can report its launcher's pre-exec high water.
+    Host RSS counters are approximate and do not certify an upper bound.
     ``host_available`` is the provider's reclaimable-memory estimate
     (Linux ``MemAvailable``; Darwin free plus inactive pages).
     """
@@ -381,8 +383,9 @@ class PhaseMemoryEvidence:
     ``sampled_peak_resident`` is the maximum RSS over ``sample_count`` discrete
     samples at the declared interval; transients between samples are missed.
     ``observed_peak_resident`` also includes the raw bracketing process-lifetime
-    high-water readings. This observed process-lifetime maximum certifies
-    neither a phase-specific peak nor a bound in either direction.
+    high-water readings, which on Linux can include a launcher's pre-exec high
+    water. This observed maximum certifies neither a phase-specific peak nor a
+    bound in either direction.
     """
 
     phase: str

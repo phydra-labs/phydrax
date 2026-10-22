@@ -364,6 +364,15 @@ class LogicalArrayContent:
     chunks: Iterable[LogicalArrayChunk]
 
 
+@dataclass(frozen=True, slots=True)
+class _NumpyArraySeal:
+    """Private same-operation byte seal, never a portable scientific identity."""
+
+    shape: tuple[int, ...]
+    dtype: str
+    payload_digest: str
+
+
 def logical_array_collection_digest(
     arrays: Mapping[str, LogicalArrayContent],
     /,
@@ -493,18 +502,44 @@ def _logical_array_shard_intervals(
     return intervals
 
 
-def _logical_shard_array_chunks(
+@dataclass(frozen=True, slots=True)
+class _ShardPiece:
+    """One bounded element interval of a selected shard replica."""
+
+    process: int
+    host: np.ndarray | None
+    device_shard: jax.Array | None
+    first: int
+    count: int
+    itemsize: int
+
+    @property
+    def nbytes(self) -> int:
+        return self.count * self.itemsize
+
+    def payload(self) -> np.ndarray:
+        if self.host is not None:
+            return self.host[self.first : self.first + self.count]
+        if self.device_shard is None:
+            raise ValueError(
+                "logical_array_value_collection_digest.shard.payload must be addressable on its source process; got a remote piece."
+            )
+        return np.asarray(
+            self.device_shard.reshape(-1)[self.first : self.first + self.count]
+        )
+
+
+def _logical_shard_pieces(
     value: jax.Array,
     shape: tuple[int, ...],
     intervals: dict[tuple[int, int], jax.Device],
     local: dict[jax.Device, jax.Array],
     trailing: int,
-    elements_per_chunk: int,
-    broadcast: Callable[..., np.ndarray],
+    elements_per_piece: int,
     /,
-) -> Iterable[LogicalArrayChunk]:
-    """Stream the selected replicas in global C order with bounded transfers."""
-    offset = 0
+) -> list[_ShardPiece]:
+    """Selected replica intervals in global C order, split into bounded pieces."""
+    pieces: list[_ShardPiece] = []
     for interval, device in sorted(intervals.items()):
         stop = min(interval[1], shape[0]) if shape else interval[1]
         count = max(0, stop - interval[0]) * trailing
@@ -515,26 +550,185 @@ def _logical_shard_array_chunks(
                 f"logical_array_value_collection_digest.shard.payload must be addressable on the selected process; got device={device}, process={jax.process_index()}."
             )
         # CPU shard buffers already live in host memory: a zero-copy view
-        # replaces per-chunk device slicing, which compiles one program per
-        # distinct chunk bound. Accelerator shards keep bounded device slices.
-        host_view = (
+        # replaces per-piece device slicing, which compiles one program per
+        # distinct piece bound. Accelerator shards keep bounded device slices.
+        host = (
             np.asarray(shard).reshape(-1)
             if shard is not None and device.platform == "cpu"
             else None
         )
-        for first in range(0, count, elements_per_chunk):
-            last = min(first + elements_per_chunk, count)
-            if host_view is not None:
-                payload = host_view[first:last]
-            elif shard is not None:
-                payload = np.asarray(shard.reshape(-1)[first:last])
-            else:
-                payload = np.empty((last - first,), dtype=value.dtype)
-            if jax.process_count() > 1 and not value.is_fully_addressable:
-                payload = broadcast(payload, is_source=source)
-            encoded = np.ascontiguousarray(payload).tobytes(order="C")
-            yield LogicalArrayChunk(offset, encoded)
-            offset += len(encoded)
+        for first in range(0, count, elements_per_piece):
+            pieces.append(
+                _ShardPiece(
+                    device.process_index,
+                    host,
+                    None if host is not None else shard,
+                    first,
+                    min(elements_per_piece, count - first),
+                    value.dtype.itemsize,
+                )
+            )
+    return pieces
+
+
+def _routed_piece_payloads(
+    pieces: list[_ShardPiece], maximum_chunk_bytes: int, /
+) -> Iterator[bytes]:
+    """Every piece's bytes on every process, in order, through bounded rounds.
+
+    Gather input and output buffers both fit ``maximum_chunk_bytes``, including
+    padding. Round composition depends only on rank-invariant shard metadata.
+    If one element exceeds a process's gather share, bounded broadcasts retain
+    the original one-element admission rather than increasing the byte limit.
+    """
+    from jax.experimental import multihost_utils
+
+    processes = jax.process_count()
+    me = jax.process_index()
+    contribution_bytes = maximum_chunk_bytes // processes
+    if any(piece.nbytes > contribution_bytes for piece in pieces):
+        for piece in pieces:
+            source = piece.process == me
+            buffer = (
+                np.ascontiguousarray(piece.payload()).reshape(-1).view(np.uint8)
+                if source
+                else np.empty((piece.nbytes,), dtype=np.uint8)
+            )
+            payload = multihost_utils.broadcast_one_to_all(buffer, is_source=source)
+            yield np.asarray(payload).tobytes(order="C")
+        return
+    index = 0
+    while index < len(pieces):
+        load = [0] * processes
+        stop = index
+        while stop < len(pieces):
+            piece = pieces[stop]
+            if stop > index and load[piece.process] + piece.nbytes > contribution_bytes:
+                break
+            load[piece.process] += piece.nbytes
+            stop += 1
+        width = max(load)
+        # Prefer reusable padded widths, but never let padding exceed the
+        # per-process share (including small and non-power-of-two limits).
+        capacity = min(
+            contribution_bytes, max(256, 1 << max(width - 1, 0).bit_length())
+        )
+        buffer = np.zeros((capacity,), np.uint8)
+        offsets = [0] * processes
+        placed: list[tuple[int, int, int]] = []
+        for piece in pieces[index:stop]:
+            offset = offsets[piece.process]
+            if piece.process == me:
+                buffer[offset : offset + piece.nbytes] = (
+                    np.ascontiguousarray(piece.payload()).reshape(-1).view(np.uint8)
+                )
+            placed.append((piece.process, offset, piece.nbytes))
+            offsets[piece.process] = offset + piece.nbytes
+        gathered = np.asarray(
+            multihost_utils.process_allgather(buffer, tiled=False), dtype=np.uint8
+        ).reshape((processes, buffer.size))
+        for process, offset, count in placed:
+            yield gathered[process, offset : offset + count].tobytes()
+        index = stop
+
+
+def _logical_piece_chunks(
+    pieces: list[_ShardPiece], payloads: Iterator[bytes], /
+) -> Iterable[LogicalArrayChunk]:
+    """Stream one array's pieces from the shared ordered round stream."""
+    offset = 0
+    for piece in pieces:
+        encoded = next(payloads)
+        if len(encoded) != piece.nbytes:
+            raise ValueError(
+                f"logical_array_value_collection_digest.round must return each piece's bytes; got {len(encoded)} for {piece.nbytes}."
+            )
+        yield LogicalArrayChunk(offset, encoded)
+        offset += len(encoded)
+
+
+def _local_piece_chunks(pieces: list[_ShardPiece], /) -> Iterable[LogicalArrayChunk]:
+    """Stream one fully addressable array's pieces without interprocess traffic."""
+    offset = 0
+    for piece in pieces:
+        encoded = np.ascontiguousarray(piece.payload()).tobytes(order="C")
+        yield LogicalArrayChunk(offset, encoded)
+        offset += len(encoded)
+
+
+def _logical_array_shape(
+    value: jax.Array | np.ndarray, logical_shape: tuple[int, ...], /
+) -> tuple[int, ...]:
+    """Admit exactly a leading-axis prefix, identically for both stream APIs."""
+    message = (
+        "logical_array.logical_shape must trim only leading-axis capacity padding; "
+        f"got logical={logical_shape!r}, stored={value.shape}."
+    )
+    try:
+        boolean_extent = any(
+            isinstance(size, (bool, np.bool_)) for size in logical_shape
+        )
+        shape = (
+            () if boolean_extent else tuple(operator.index(size) for size in logical_shape)
+        )
+        valid = (
+            not boolean_extent
+            and len(shape) == value.ndim
+            and len(shape) <= 32
+            and all(size >= 0 for size in shape)
+            and (
+                not shape
+                or (shape[1:] == value.shape[1:] and shape[0] <= value.shape[0])
+            )
+        )
+    except TypeError as error:
+        raise ValueError(message) from error
+    if not valid:
+        raise ValueError(message)
+    return shape
+
+
+def logical_array_payloads(
+    value: jax.Array,
+    logical_shape: tuple[int, ...],
+    /,
+    *,
+    maximum_chunk_bytes: int = 1 << 20,
+) -> Iterator[bytes]:
+    """C-order bytes of one logical JAX array's leading-axis prefix, in order.
+
+    A multi-process array streams through the same bounded gather rounds as
+    ``logical_array_value_collection_digest``; every process must consume it.
+    """
+    if not isinstance(value, jax.Array):
+        raise TypeError(
+            f"logical_array_payloads.value must be a JAX array; got {type(value).__qualname__}."
+        )
+    if value.dtype.kind not in "biufc" or value.dtype.hasobject:
+        raise TypeError(
+            f"logical_array_payloads.value.dtype must be primitive numeric; got {value.dtype}."
+        )
+    shape = _logical_array_shape(value, logical_shape)
+    limit = operator.index(maximum_chunk_bytes)
+    if isinstance(maximum_chunk_bytes, bool) or limit < value.dtype.itemsize:
+        raise ValueError(
+            f"logical_array_payloads.maximum_chunk_bytes must hold one array element; got {maximum_chunk_bytes!r}."
+        )
+    routed = jax.process_count() > 1 and not value.is_fully_addressable
+    share = limit // jax.process_count() if routed else limit
+    pieces = _logical_shard_pieces(
+        value,
+        shape,
+        _logical_array_shard_intervals(value),
+        {shard.device: shard.data for shard in value.addressable_shards},
+        prod(value.shape[1:]) if value.shape else 1,
+        max(1, share // value.dtype.itemsize),
+    )
+    if routed:
+        yield from _routed_piece_payloads(pieces, limit)
+        return
+    for piece in pieces:
+        yield np.ascontiguousarray(piece.payload()).tobytes(order="C")
 
 
 def logical_array_value_collection_digest(
@@ -543,16 +737,17 @@ def logical_array_value_collection_digest(
     *,
     maximum_chunk_bytes: int = 1 << 20,
     logical_shapes: Mapping[str, tuple[int, ...]] | None = None,
+    _numpy_seals: dict[int, _NumpyArraySeal] | None = None,
 ) -> str:
     """Hash host source data and logical JAX shards with bounded byte chunks.
 
     NumPy sources stream C-order buffers without a device roundtrip or whole
     contiguous copy. JAX requires contiguous leading-axis shards; replicas are
-    read once. Global byte traffic is explicit, not a parallel scaling claim.
-    Tiled execution layouts require an explicit C-order redistribution.
+    read once. Shards of every distributed array travel together in bounded
+    gather rounds, in sorted name order, rather than one collective per shard.
+    Global byte traffic is explicit, not a parallel scaling claim. Tiled
+    execution layouts require an explicit C-order redistribution.
     """
-
-    from jax.experimental.multihost_utils import broadcast_one_to_all
 
     limit = operator.index(maximum_chunk_bytes)
     if isinstance(maximum_chunk_bytes, bool) or limit <= 0:
@@ -564,68 +759,93 @@ def logical_array_value_collection_digest(
         raise ValueError(
             f"logical_array_value_collection_digest.logical_shapes must refer to declared arrays; got undeclared={set(shapes) - set(arrays)!r}."
         )
-
-    def content(name: str, value: jax.Array | np.ndarray) -> LogicalArrayContent:
+    processes = jax.process_count()
+    contribution = limit // processes
+    host_contents: dict[str, LogicalArrayContent] = {}
+    shard_pieces: dict[str, tuple[tuple[int, ...], str, list[_ShardPiece], bool]] = {}
+    for name in sorted(arrays):
+        value = arrays[name]
         if not isinstance(value, (jax.Array, np.ndarray)):
             raise TypeError(
                 f"logical_array_value_collection_digest.value must be a JAX or NumPy array; got {type(value).__qualname__}."
+            )
+        if value.dtype.kind not in "biufc" or value.dtype.hasobject:
+            raise TypeError(
+                f"logical_array_value_collection_digest.value.dtype must be primitive numeric; got {value.dtype}."
             )
         if value.dtype.itemsize > limit:
             raise ValueError(
                 f"logical_array_value_collection_digest.maximum_chunk_bytes must hold one array element; got limit={limit}, itemsize={value.dtype.itemsize}."
             )
-        shape = shapes.get(name, value.shape)
-        if (
-            len(shape) != value.ndim
-            or any(isinstance(size, bool) or operator.index(size) < 0 for size in shape)
-            or (
-                value.ndim > 0
-                and (shape[1:] != value.shape[1:] or shape[0] > value.shape[0])
-            )
-        ):
-            raise ValueError(
-                f"logical_array_value_collection_digest.logical_shapes must trim only leading-axis capacity padding; got logical={shape}, stored={value.shape}."
-            )
+        shape = _logical_array_shape(value, shapes.get(name, value.shape))
         if isinstance(value, np.ndarray):
-            host = value[: shape[0]] if shape else value
-
-            def host_chunks() -> Iterable[LogicalArrayChunk]:
-                offset = 0
-                iterator = np.nditer(
-                    host,
-                    flags=("external_loop", "buffered", "zerosize_ok"),
-                    op_flags=("readonly",),
-                    order="C",
-                    buffersize=limit // host.dtype.itemsize,
-                )
-                for chunk in iterator:
-                    encoded = np.ascontiguousarray(chunk).tobytes(order="C")
-                    yield LogicalArrayChunk(offset, encoded)
-                    offset += len(encoded)
-
-            return LogicalArrayContent(shape, value.dtype.str, host_chunks())
-        intervals = _logical_array_shard_intervals(value)
-        local = {shard.device: shard.data for shard in value.addressable_shards}
-        trailing = prod(value.shape[1:]) if value.shape else 1
-        elements_per_chunk = limit // value.dtype.itemsize
-        return LogicalArrayContent(
+            host_contents[name] = LogicalArrayContent(
+                shape, value.dtype.str,
+                _host_array_chunks(value, shape, limit, _numpy_seals=_numpy_seals),
+            )
+            continue
+        routed = processes > 1 and not value.is_fully_addressable
+        per_piece = (
+            max(1, contribution // value.dtype.itemsize)
+            if routed
+            else limit // value.dtype.itemsize
+        )
+        shard_pieces[name] = (
             shape,
             value.dtype.str,
-            _logical_shard_array_chunks(
+            _logical_shard_pieces(
                 value,
                 shape,
-                intervals,
-                local,
-                trailing,
-                elements_per_chunk,
-                broadcast_one_to_all,
+                _logical_array_shard_intervals(value),
+                {shard.device: shard.data for shard in value.addressable_shards},
+                prod(value.shape[1:]) if value.shape else 1,
+                per_piece,
             ),
+            routed,
         )
+    routed_pieces = [
+        piece
+        for _, _, pieces, routed in shard_pieces.values()
+        if routed
+        for piece in pieces
+    ]
+    payloads = _routed_piece_payloads(routed_pieces, limit)
+    contents = dict(host_contents)
+    for name, (shape, dtype, pieces, routed) in shard_pieces.items():
+        contents[name] = LogicalArrayContent(
+            shape,
+            dtype,
+            _logical_piece_chunks(pieces, payloads)
+            if routed
+            else _local_piece_chunks(pieces),
+        )
+    return logical_array_collection_digest(contents, maximum_chunk_bytes=limit)
 
-    return logical_array_collection_digest(
-        {name: content(name, value) for name, value in arrays.items()},
-        maximum_chunk_bytes=limit,
+
+def _host_array_chunks(
+    value: np.ndarray, shape: tuple[int, ...], limit: int, /,
+    *, _numpy_seals: dict[int, _NumpyArraySeal] | None = None,
+) -> Iterable[LogicalArrayChunk]:
+    """Bounded C-order chunks of a host source trimmed to its logical shape."""
+    host = value[: shape[0]] if shape else value
+    dtype = value.dtype.str
+    seal = None if _numpy_seals is None else hashlib.sha256()
+    offset = 0
+    iterator = np.nditer(
+        host,
+        flags=("external_loop", "buffered", "zerosize_ok"),
+        op_flags=("readonly",),
+        order="C",
+        buffersize=limit // host.dtype.itemsize,
     )
+    for chunk in iterator:
+        encoded = np.ascontiguousarray(chunk).tobytes(order="C")
+        if seal is not None:
+            seal.update(encoded)
+        yield LogicalArrayChunk(offset, encoded)
+        offset += len(encoded)
+    if seal is not None and _numpy_seals is not None:
+        _numpy_seals[id(value)] = _NumpyArraySeal(shape, dtype, seal.hexdigest())
 
 
 __all__ = [
@@ -640,6 +860,7 @@ __all__ = [
     "LogicalArrayChunk",
     "LogicalArrayContent",
     "logical_array_collection_digest",
+    "logical_array_payloads",
     "logical_array_value_collection_digest",
     "iter_array_bytes",
 ]

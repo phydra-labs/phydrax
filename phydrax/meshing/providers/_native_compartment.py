@@ -5,7 +5,11 @@
 
 from __future__ import annotations
 
-from typing import final
+import weakref
+from contextlib import nullcontext
+from dataclasses import dataclass
+from os import getpid
+from typing import Any, final
 
 import equinox as eqx
 import numpy as np
@@ -18,12 +22,16 @@ from ..._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...discretization._coordinate_operands import CoordinateOperandCollector
 from ...geometry._compartments import CompartmentMeshingSource
 from ...geometry._embedding_state import MeshCertificateLimits
 from ...geometry.multiregion_surface._label_extraction import LabelFieldVolumeBinding
 from ...typing import checked
 from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
+from .._certification import MeshCertificationReport
 from .._compartments import (
+    CompartmentConstruction,
     generate_compartment_volume,
     generate_reconstructed_image_volume,
 )
@@ -41,7 +49,9 @@ from .._volume_generation import (
     native_volume_checkpoint,
     NativeVolumeSchedule,
 )
+from ._native_options import NativeMeshingOptions
 from ._native_publication import (
+    coordinate_budget,
     NativeCertificationRequest,
     NativePublicationExecution,
     NativePublicationOrganization,
@@ -53,6 +63,131 @@ from ._native_volume import volume_compliance
 
 
 type ImageVolumeSource = CompartmentMeshingSource | LabelFieldVolumeBinding
+
+@dataclass(frozen=True, slots=True)
+class _CompartmentOuterProofPayload:
+    domain: object
+    certificate: object
+
+
+@dataclass(frozen=True, slots=True)
+class _IssuedCompartmentMaterialAuthority:
+    source: weakref.ReferenceType[Any]
+    specification: weakref.ReferenceType[Any]
+    options: weakref.ReferenceType[Any]
+    report: weakref.ReferenceType[Any]
+    evidence: weakref.ReferenceType[Any]
+    root: weakref.ReferenceType[NativeExecutionScope]
+    constructors: tuple[weakref.ReferenceType[Any], ...]
+    content: str
+    outer_domain_id: str
+    outer_certificate_id: str
+    outer_content: str
+    maximum_work_units: int
+    maximum_memory_bytes: int
+    process_id: int
+
+
+# Only the actual publication boundary below can issue these process-local
+# seals. Neither the table nor its callbacks keep a numerical owner alive.
+_issued_compartment_material: dict[tuple[int, ...], _IssuedCompartmentMaterialAuthority] = {}
+
+
+def _issue_compartment_material_authority(
+    source: CompartmentMeshingSource,
+    specification: VolumeMeshingSpec,
+    options: NativeMeshingOptions,
+    result: CellMeshingResult,
+    construction: CompartmentConstruction,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    from ...lifecycle import _meshing_registration as registration
+
+    root = registration._material_root(budget)
+    report, evidence = result.certification, result.region_evidence
+    outer, outer_certificate = construction.outer_domain, construction.outer_certificate
+    if (
+        root is None or report is None or evidence is None
+        or evidence is not construction.region_evidence
+        or outer is None or outer_certificate is None
+        or outer_certificate.status != "certified"
+        or outer_certificate.domain_id != outer.domain_id
+        or evidence.coverage.status != "certified"
+        or budget.maximum_work_units != specification.limits.maximum_work_units
+        or budget.maximum_memory_bytes != specification.limits.maximum_scratch_bytes
+    ):
+        raise ValueError("compartment_material.authority requires actual material, outer and publication proofs")
+    MeshCertificationReport.require_passed(report)
+    outer_certificate.binding.require(result.mesh, result.geometry)
+    evidence.require_source(source.compartments)
+    evidence.require_current(result.mesh, result.zones, result.patches, geometry=result.geometry)
+    content = registration._content(
+        source, specification, options, result, budget, memoize=False
+    )
+    outer_content = registration.stored_record_content_id(
+        _CompartmentOuterProofPayload(outer, outer_certificate),
+        excluded="", budget=budget, memoize=False,
+    )
+    constructors = tuple(weakref.ref(function) for function in registration._material_constructors(
+        source, specification, options, result
+    ))
+    key = (id(source), id(report), id(evidence), id(root))
+
+    def forget(reference: weakref.ReferenceType[Any]) -> None:
+        entry = _issued_compartment_material.get(key)
+        if entry is not None and any(owner is reference for owner in (
+            entry.source, entry.specification, entry.options, entry.report,
+            entry.evidence, entry.root,
+        )):
+            del _issued_compartment_material[key]
+
+    _issued_compartment_material[key] = _IssuedCompartmentMaterialAuthority(
+        weakref.ref(source, forget), weakref.ref(specification, forget),
+        weakref.ref(options, forget), weakref.ref(report, forget),
+        weakref.ref(evidence, forget), weakref.ref(root, forget),
+        constructors, content, outer.domain_id, outer_certificate.certificate_id,
+        outer_content,
+        budget.maximum_work_units, budget.maximum_memory_bytes, getpid(),
+    )
+
+
+def _require_issued_compartment_material_authority(
+    source: CompartmentMeshingSource,
+    specification: VolumeMeshingSpec,
+    options: NativeMeshingOptions,
+    result: CellMeshingResult,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> object:
+    from ...lifecycle import _meshing_registration as registration
+
+    root = registration._material_root(budget)
+    report, evidence = result.certification, result.region_evidence
+    entry = _issued_compartment_material.get((id(source), id(report), id(evidence), id(root)))
+    if (
+        root is None or entry is None or entry.process_id != getpid()
+        or entry.source() is not source or entry.specification() is not specification
+        or entry.options() is not options or entry.report() is not report
+        or entry.evidence() is not evidence or entry.root() is not root
+        or budget.maximum_work_units > entry.maximum_work_units
+        or budget.maximum_memory_bytes > entry.maximum_memory_bytes
+    ):
+        raise ValueError("compartment_material.authority requires its original live paid root and current owners")
+    constructors = registration._material_constructors(source, specification, options, result)
+    if len(constructors) != len(entry.constructors) or any(
+        reference() is not function for reference, function in zip(
+            entry.constructors, constructors, strict=True
+        )
+    ):
+        raise ValueError("compartment_material.authority constructors changed since actual production")
+    if entry.content != registration._content(
+        source, specification, options, result, budget, memoize=False
+    ):
+        raise ValueError("compartment_material.authority current payload differs from actual production")
+    return evidence
 
 
 @final
@@ -395,11 +530,34 @@ def execute_compartment_route(
     plan_id: str,
     /,
     *,
+    options: NativeMeshingOptions,
     record_phase: NativeMeshingPhaseRecorder | None = None,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     """Publish native material cells after independent acceptance."""
+    collector = CoordinateOperandCollector(capture_affine_areas=True)
+    with collector.live_affine_areas(scope):
+        return _execute_compartment_route(
+            source, specification, prepared, coordinate_contract, provider, plan_id,
+            options=options, record_phase=record_phase, scope=scope, workspace=workspace,
+        )
+
+
+def _execute_compartment_route(
+    source: ImageVolumeSource,
+    specification: VolumeMeshingSpec,
+    prepared: PreparedCompartmentVolume,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: MeshingProviderInfo,
+    plan_id: str,
+    /,
+    *,
+    options: NativeMeshingOptions,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
+) -> CellMeshingResult:
     prepared.validate_source_integrity()
     if (
         prepared.source_binding_id != _image_source_facts(source).binding_id
@@ -478,6 +636,7 @@ def execute_compartment_route(
         ),
         *volume.stages,
     )
+    publication_budget = coordinate_budget(specification.limits)
     result = publish_native_result(
         mesh,
         coordinate_contract,
@@ -510,12 +669,30 @@ def execute_compartment_route(
             associations=volume.associations,
             region_evidence=construction.region_evidence,
         ),
-        execution=NativePublicationExecution(scope, workspace, record_phase, None),
+        execution=NativePublicationExecution(scope, workspace, record_phase, publication_budget),
         geometry=volume.geometry,
     )
     native_volume_checkpoint(
         specification.limits, MeshingStageKind.CERTIFICATION, scope=scope
     )
+    if isinstance(source, CompartmentMeshingSource):
+        from ...lifecycle._meshing_registration import (
+            _remember_issued_compartment_material_registration,
+        )
+
+        # This is the same budget that paid for final publication, attached to
+        # the same actual scope without reserving or opening another request.
+        with (
+            publication_budget.bind_ticket(scope.ticket_view())
+            if publication_budget.ticket.settled
+            else nullcontext()
+        ):
+            _issue_compartment_material_authority(
+                source, specification, options, result, construction, budget=publication_budget
+            )
+            _remember_issued_compartment_material_registration(
+                source, specification, options, result, budget=publication_budget
+            )
     return result
 
 

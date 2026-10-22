@@ -20,6 +20,7 @@ from tools.meshing_qualification._runtime import (
     _missing_dependency,
     _runtime_identity,
     qualification_failure,
+    StageMeasurement,
 )
 from tools.meshing_qualification.scenarios.boundary_layer import (
     _layer_certificate_counts,
@@ -36,9 +37,9 @@ class _GmshLayerPublication(phx.StrictModule):
     plan: phx.meshing.GmshMeshingPlan
     result: phx.meshing.CellMeshingResult
     certificate: phx.discretization.CellValidityCertificate
-    planning: dict[str, float]
-    execution: dict[str, float]
-    certification: dict[str, float]
+    planning: StageMeasurement
+    execution: StageMeasurement
+    certification: StageMeasurement
 
 
 @final

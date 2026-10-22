@@ -492,9 +492,7 @@ def restart_positive(directory: str, device_count: str) -> dict[str, Any]:
         receipt.states.counters.sum(axis=0),
         raw.counters.sum(axis=0),
     )
-    continued = coarsen_adaptive_simplex_parts(
-        layout, receipt.parts, receipt.states, receipt.states.mesh.cell_active
-    )
+    continued = coarsen_adaptive_simplex_parts(layout, type(receipt).execution_parts(receipt), receipt.states, receipt.states.mesh.cell_active)
     _record_array(
         checks, "repack_195", continued.report.status, np.zeros(count, np.int32)
     )

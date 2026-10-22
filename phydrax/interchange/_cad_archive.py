@@ -45,13 +45,14 @@ from .._array_archive import (
 from .._fingerprint import iter_array_bytes
 from .._physical import SpatialCoordinateContract
 from .._publication import PublicationMode
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..geometry._atlas import (
     AbstractTrimCurve,
     CurveTrimLoop,
     PolygonTrimLoop,
     TrimDomain,
 )
-from ..geometry.brep._constructors import NormalizedTrimCurve
+from ..geometry.brep._constructors import NormalizedTrimCurve, _prepared_brep_trim_loop
 from ..geometry.brep._intersection import (
     BranchRootEndpoint,
     CurveSurfaceIntersectionRoot,
@@ -1196,8 +1197,11 @@ def save_brep_archive(
     *,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     mode: PublicationMode = "exclusive",
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepArchiveReceipt:
     """Publish lossless native geometry, exclusively unless replacement is requested."""
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     arrays: dict[str, np.ndarray] = {
         "model/parameter_bounds": np.asarray(model.parameter_bounds, dtype=np.float64),
         "model/orientation": np.asarray(model.orientation, dtype=np.float64),
@@ -1279,6 +1283,8 @@ def save_brep_archive(
         "trim_domains": trims,
     }
     manifest = _factor_definitions(manifest, arrays, limits)
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     destination = write_array_archive(
         path, manifest=manifest, arrays=arrays, limits=limits, mode=mode
     )
@@ -1412,12 +1418,17 @@ def _decode_trim_curve(record: Any, /) -> Any:
             )
 
 
+# CurveTrimLoop's default arc cap, which the archive record does not store.
+_DEFAULT_TRIM_LOOP_ARCS = 65_536
+
+
 def _decode_loop(
     record: Any,
     arrays: Mapping[str, np.ndarray],
     /,
     *,
     preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> Any:
     if not isinstance(record, Mapping):
         raise ValueError(
@@ -1443,14 +1454,28 @@ def _decode_loop(
                 raise ValueError(
                     f"BRepArchive.trim_loop.curves must be a list; got {type(curves).__name__}"
                 )
-            return CurveTrimLoop(
-                [_decode_trim_curve(curve) for curve in curves],
-                tolerance=_unhex(record["tolerance"], "tolerance"),
-                relative_closure_tolerance=_unhex(
-                    record["relative_closure_tolerance"],
-                    "relative_closure_tolerance",
-                ),
+            decoded = tuple(_decode_trim_curve(curve) for curve in curves)
+            tolerance = _unhex(record["tolerance"], "tolerance")
+            relative_closure_tolerance = _unhex(
+                record["relative_closure_tolerance"], "relative_closure_tolerance"
+            )
+            if coordinate_budget is None:
+                return CurveTrimLoop(
+                    decoded,
+                    tolerance=tolerance,
+                    relative_closure_tolerance=relative_closure_tolerance,
+                    preparations=preparations,
+                )
+            # A request-bound cover of content-identical curves under the same
+            # tolerances is the same deterministic certificate; misses certify
+            # under the request's own allowance.
+            return _prepared_brep_trim_loop(
+                decoded,
+                tolerance=tolerance,
+                maximum_arcs=_DEFAULT_TRIM_LOOP_ARCS,
+                relative_closure_tolerance=relative_closure_tolerance,
                 preparations=preparations,
+                budget=coordinate_budget,
             )
         case kind:
             raise ValueError(
@@ -1592,7 +1617,13 @@ def _decode_face_gaps(record: Any, /) -> tuple[float, ...] | None:
     return tuple(_unhex(bound, "edge_face_gap_bounds") for bound in record)
 
 
-def _decode_geometry(record: Any, arrays: Mapping[str, np.ndarray], /) -> BRepGeometry:
+def _decode_geometry(
+    record: Any,
+    arrays: Mapping[str, np.ndarray],
+    /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
+) -> BRepGeometry:
     _record(
         record,
         {
@@ -1657,6 +1688,7 @@ def _decode_geometry(record: Any, arrays: Mapping[str, np.ndarray], /) -> BRepGe
         vertex_roots=tuple(_decode_root(root) for root in record["vertex_roots"]),
         edge_endpoint_roots=_decode_root_pairs(record["edge_endpoint_roots"]),
         coedge_endpoint_roots=_decode_root_pairs(record["coedge_endpoint_roots"]),
+        budget=coordinate_budget,
     )
 
 
@@ -1748,12 +1780,17 @@ def load_brep_archive(
     *,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
     """Restore a native B-Rep archive under bounded decoding and identity checks."""
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     with original_trim_intersection_preparation(
         (), preparations=preparations
     ) as preparations:
-        return _load_brep_archive(path, limits, preparations=preparations)
+        return _load_brep_archive(
+            path, limits, preparations=preparations, coordinate_budget=coordinate_budget
+        )
 
 
 def _load_brep_archive(
@@ -1762,6 +1799,7 @@ def _load_brep_archive(
     /,
     *,
     preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
     manifest, arrays = read_array_archive(path, limits=limits)
     if set(manifest) != _MANIFEST_FIELDS or manifest["kind"] != _KIND:
@@ -1789,9 +1827,19 @@ def _load_brep_archive(
         _record(record, {"outer", "holes"}, "trim domain")
         domains.append(
             TrimDomain(
-                _decode_loop(record["outer"], arrays, preparations=preparations),
+                _decode_loop(
+                    record["outer"],
+                    arrays,
+                    preparations=preparations,
+                    coordinate_budget=coordinate_budget,
+                ),
                 [
-                    _decode_loop(hole, arrays, preparations=preparations)
+                    _decode_loop(
+                        hole,
+                        arrays,
+                        preparations=preparations,
+                        coordinate_budget=coordinate_budget,
+                    )
                     for hole in record["holes"]
                 ],
             )
@@ -1836,8 +1884,11 @@ def _load_brep_archive(
         report=report,
         geometry=None
         if geometry_record is None
-        else _decode_geometry(geometry_record, arrays),
+        else _decode_geometry(
+            geometry_record, arrays, coordinate_budget=coordinate_budget
+        ),
         preparations=preparations,
+        budget=coordinate_budget,
     )
     if (model.model_id, model.tessellation_id) != (
         manifest["model_id"],
@@ -1886,6 +1937,8 @@ def _load_brep_archive(
         raise ValueError(
             f"BRepArchive.arrays must equal the model source and tessellation array closure; got unexpected={tuple(sorted(set(arrays) - expected_arrays))!r}, missing={tuple(sorted(expected_arrays - set(arrays)))!r}"
         )
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     return model
 
 

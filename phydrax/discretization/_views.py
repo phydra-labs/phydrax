@@ -317,6 +317,22 @@ class AbstractFieldReconstructionKernel(StrictModule):
     ) -> tuple[Any, FieldQueryEvidence]:
         raise NotImplementedError
 
+    def prepare_location(
+        self,
+        points: Array,
+        derivative: tuple[int, ...],
+        side: FieldSideBinding | None,
+        /,
+        *,
+        maximum_location_pairs: int | None = None,
+    ) -> tuple[Any, FieldQueryEvidence]:
+        """Prepare fixed sites, optionally admitting a bounded location workset."""
+        if maximum_location_pairs is not None:
+            raise ValueError(
+                "This reconstruction does not support a location-pair budget."
+            )
+        return self.locate(points, derivative, side)
+
     @abc.abstractmethod
     def apply(self, route: Any, coefficients: Array, /) -> Array:
         raise NotImplementedError
@@ -656,6 +672,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         side: FieldTraceSide | None = None,
         cell_ids: ArrayLike | None = None,
         coverage: FieldQueryCoverage = "complete",
+        maximum_location_pairs: int | None = None,
     ) -> PreparedFieldQuery:
         """Locate fixed points once and return their reusable prepared query.
 
@@ -664,6 +681,12 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         calls with changing coefficients reuse that route without relocating.
         Invalid-point refusal or masking follows the coverage policy; masking admits the
         valid points only and retains the evidence of every requested point.
+        For finite-element owners, ``maximum_location_pairs`` admits a two-pass
+        complete broad phase: count own-box hits, then allocate
+        ``point_count * max(candidate_counts)`` candidate slots. An insufficient
+        allowance raises ``CellLocationResourceError`` before candidate storage
+        or inverse evaluation; no tolerance or point is changed. Without this
+        option, the owner's existing fixed-capacity location policy applies.
         """
         # Field views → prepared field queries → field-view validation.
         from ._field_query import PreparedFieldQuery
@@ -678,7 +701,12 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
             else self.bind_trace(points, side=side, cell_ids=cell_ids)
         )
         return PreparedFieldQuery(
-            self, points, derivative=derivative, side=binding, coverage=coverage
+            self,
+            points,
+            derivative=derivative,
+            side=binding,
+            coverage=coverage,
+            maximum_location_pairs=maximum_location_pairs,
         )
 
     @checked

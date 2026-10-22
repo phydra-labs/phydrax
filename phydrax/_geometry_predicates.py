@@ -949,14 +949,19 @@ def _host_signs_from_points(
                     spec, flat, unresolved, budget=budget
                 )
             else:
-                with (
-                    budget.ticket.native_target()
-                    if budget.ticket.native_accounting
-                    else nullcontext()
-                ):
-                    signs[unresolved] = _EXACT_ROUTES[spec.name](
-                        *(array[unresolved] for array in flat)
-                    )
+                with budget.temporary_scope():
+                    if budget.maximum_memory_bytes:
+                        budget.reserve(
+                            0, 512 + unresolved.size * (8 * spec.arity * spec.width + 1)
+                        )
+                    with (
+                        budget.ticket.native_target()
+                        if budget.ticket.native_accounting
+                        else nullcontext()
+                    ):
+                        signs[unresolved] = _EXACT_ROUTES[spec.name](
+                            *(array[unresolved] for array in flat)
+                        )
             certain[unresolved] = True
         elif unresolved.size:
             exact_signs, exact_certain = _exact_dyadic(spec, flat, unresolved)
@@ -1002,6 +1007,7 @@ def _host(
     /,
     *,
     budget: CoordinateEnclosureBudget | None,
+    memoize_native: bool = True,
 ) -> HostPredicateResult:
     native_exact = mode is PredicateMode.EXACT and meshcore_available()
     if native_exact:
@@ -1031,7 +1037,8 @@ def _host(
             )
     else:
         signs, certain = _host_signs_from_points(
-            spec, flat, leading, mode, native_exact=native_exact, budget=budget
+            spec, flat, leading, mode, native_exact=native_exact,
+            memoize=memoize_native, budget=budget,
         )
     return HostPredicateResult(signs, certain, mode)
 
@@ -1126,11 +1133,20 @@ def orient2d_host(
     *,
     mode: PredicateMode,
     budget: CoordinateEnclosureBudget | None = None,
+    memoize_native: bool = True,
 ) -> HostPredicateResult:
-    """Return host signs of ``det[b - a, c - a]`` with certification."""
+    """Return certified host signs of ``det[b - a, c - a]``.
+
+    ``memoize_native=False`` executes each filtered-uncertain binary64 row
+    directly, without retaining coordinate-byte/sign keys. Native counter
+    prices and exact-integer operand preparation are unchanged.
+    """
     mode = parse(mode, PredicateMode, "orient2d_host.mode")
     resolve_host_predicate_mode(mode)
-    return _host(_ORIENT2D, (a, b, c), mode, budget=budget)
+    return _host(
+        _ORIENT2D, (a, b, c), mode, budget=budget,
+        memoize_native=memoize_native,
+    )
 
 
 @checked
@@ -1143,11 +1159,88 @@ def orient3d_host(
     *,
     mode: PredicateMode,
     budget: CoordinateEnclosureBudget | None = None,
+    memoize_native: bool = True,
 ) -> HostPredicateResult:
-    """Return host signs of ``det[b - a, c - a, d - a]`` with certification."""
+    """Return certified host signs of ``det[b - a, c - a, d - a]``.
+
+    ``memoize_native=False`` executes every filtered-uncertain binary64 row
+    directly, without building retained coordinate-byte/sign keys. The native
+    work/query ticket and exact-integer prepared operands are unchanged.
+    Primitive telemetry remains distinct from construction work/source queries
+    under the original native counter contract.
+    """
     mode = parse(mode, PredicateMode, "orient3d_host.mode")
     resolve_host_predicate_mode(mode)
-    return _host(_ORIENT3D, (a, b, c, d), mode, budget=budget)
+    return _host(
+        _ORIENT3D, (a, b, c, d), mode, budget=budget,
+        memoize_native=memoize_native,
+    )
+
+
+def _orientation_enclosure_host(
+    spec: _Filter,
+    values: tuple[np.ndarray, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose the exact binary64 orientation with the existing static filter.
+
+    This is the determinant enclosure underlying the host orientation's certified
+    sign, not an enclosure of a rounded or sampled source. Callers lifting an
+    exact source bank must first prove equality with its binary64 view.
+    Nonfinite filter operands return an unbounded interval and require the
+    caller's exact route. One filtered predicate visit is charged per row.
+    """
+    points, leading = _host_points(values, spec.width, budget=budget)
+    if points[0].dtype == object:
+        raise TypeError("orientation_enclosure_host requires binary64 predicate points")
+    count = points[0].shape[0]
+    budget.reserve(count, 1536 * count)
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        determinant, permanent, zero, largest = spec.kernel(np, *points)
+        info = np.finfo(np.float64)
+        unit = float(info.eps) / 2.0
+        first, second = spec.coefficient
+        relative = np.nextafter((first + second * unit) * unit, np.inf)
+        absolute = np.nextafter(
+            spec.multiplier * float(info.tiny) * (1.0 + largest) ** (spec.degree - 1),
+            np.inf,
+        )
+        bound = np.nextafter(
+            np.nextafter(relative * permanent, np.inf) + absolute, np.inf
+        )
+        lower = np.nextafter(determinant - bound, -np.inf)
+        upper = np.nextafter(determinant + bound, np.inf)
+    finite = np.isfinite(determinant) & np.isfinite(bound)
+    lower = np.where(finite, np.where(zero, 0.0, lower), -np.inf)
+    upper = np.where(finite, np.where(zero, 0.0, upper), np.inf)
+    return lower.reshape(leading), upper.reshape(leading)
+
+
+def orient2d_enclosure_host(
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose the exact binary64 determinant using the planar static filter."""
+    return _orientation_enclosure_host(_ORIENT2D, (a, b, c), budget=budget)
+
+
+def orient3d_enclosure_host(
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    d: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose the exact binary64 determinant using the spatial static filter."""
+    return _orientation_enclosure_host(_ORIENT3D, (a, b, c, d), budget=budget)
 
 
 def orient2d(

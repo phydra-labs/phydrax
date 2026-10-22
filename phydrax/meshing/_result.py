@@ -7,14 +7,20 @@
 from __future__ import annotations
 
 import abc
-from dataclasses import fields
-from typing import final, Literal, TYPE_CHECKING
+from collections.abc import Mapping
+from contextlib import nullcontext
+from dataclasses import dataclass, fields, is_dataclass
+from enum import Enum
+from fractions import Fraction
+from functools import partial
+from typing import final, Literal, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.experimental import multihost_utils
 
 import phydrax
 import phydrax.discretization._adaptive_simplex as _dependency_phydrax_discretization__adaptive_simplex
@@ -40,7 +46,7 @@ from .._fingerprint import (
     tree_content_equal,
 )
 from .._identity import SemanticProvenance
-from .._meshcore import NativeExecutionScope
+from .._meshcore import current_native_execution_scope, NativeExecutionScope
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -56,11 +62,13 @@ if TYPE_CHECKING:
     import phydrax.meshing._device_adaptation
     import phydrax.meshing._initial_certification
 
+    from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+    from ..discretization._coordinate_operands import OwnerFields
     from ._adaptation import MeshAdaptationResult, PreparedMeshAdaptation
     from ._bisection import BisectionUniformRefinement
     from ._distribution import PartitionedRebalanceProposal
     from ._distribution_migration import PartitionedEpochMigration
-
+    from ._restart_distribution import SimplexRestartRepack
 
 _BISECTION_CERTIFICATE_CHECKS = (
     "source_roots",
@@ -77,7 +85,7 @@ import phydrax._validation as _owner_phydrax__validation
 
 
 @final
-class _CollectiveSourcePreparation(StrictModule):
+class _CollectiveSourcePreparation(NamedTuple):
     cold: bool
     preparation: PreparedMeshAdaptation
     initial: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState
@@ -97,10 +105,11 @@ class _CollectiveSourcePreparation(StrictModule):
     initial_owners: Array
     migration: PartitionedEpochMigration | None
     rebalance_proposal: PartitionedRebalanceProposal | None
+    restart_repack: SimplexRestartRepack | None
 
 
 @final
-class _CollectiveScientificSource(StrictModule):
+class _CollectiveScientificSource(NamedTuple):
     original: (
         CellMeshingResult
         | phydrax.meshing._initial_certification.InitialCollectiveMeshEvidence
@@ -114,7 +123,7 @@ class _CollectiveScientificSource(StrictModule):
 
 
 @final
-class _CollectiveSubdivision(StrictModule):
+class _CollectiveSubdivision(NamedTuple):
     source_cache_id: str
     initial_state_id: str
     native_arrays: tuple[tuple[str, Array], ...]
@@ -126,7 +135,7 @@ class _CollectiveSubdivision(StrictModule):
 
 
 @final
-class _CollectivePackedEpoch(StrictModule):
+class _CollectivePackedEpoch(NamedTuple):
     compiled_states: (
         _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState
     )
@@ -137,7 +146,7 @@ class _CollectivePackedEpoch(StrictModule):
 
 
 @final
-class _CollectivePublication(StrictModule):
+class _CollectivePublication(NamedTuple):
     arrays: tuple[tuple[str, Array], ...]
     entity_keys: tuple[Array, ...]
     entity_ids: tuple[Array, ...]
@@ -152,6 +161,54 @@ class _CollectivePublication(StrictModule):
     global_organization_id: str
     source_evidence_id: str
     target_mesh_id: str
+
+
+def _restart_publication_source(
+    partitioned: phydrax.meshing.PartitionedAdaptiveSimplex | CollectiveMeshEvidence,
+    placement_arrays: tuple[tuple[str, Array], ...],
+    /,
+) -> SimplexRestartRepack | None:
+    """Authenticate the explicit transaction before choosing solver publication."""
+    from ._collective_failure import agreed_local_step
+    from ._restart_distribution import SimplexRestartRepackProof
+
+    cold = isinstance(partitioned, CollectiveMeshEvidence)
+    placement = dict(placement_arrays)
+    requested = "placement/requested_target_owners" in placement
+    with agreed_local_step(stage="restart-publication-source"):
+        if requested != ("placement/proof_content_id" in placement):
+            raise ValueError("collective_source.restart must retain its complete explicit transaction")
+        if not cold:
+            if requested != (partitioned.restart_repack is not None):
+                raise ValueError("collective_source.restart must retain its actual receipt owner")
+            if requested and partitioned.restart_proof is None:
+                raise ValueError("collective_source.restart must retain its numerical proof")
+        if requested:
+            declared = placement["placement/proof_content_id"]
+            if declared.shape != (32,) or declared.dtype != np.uint8:
+                raise ValueError("collective_source.restart proof must have its exact byte declaration")
+    declarations = np.asarray(multihost_utils.process_allgather(
+        np.asarray((cold, requested), dtype=np.bool_), tiled=False,
+    )).reshape((-1, 2))
+    if np.any(declarations != declarations[0]):
+        raise ValueError("collective_source.restart route must agree across all owners")
+    if not requested:
+        return None
+    if isinstance(partitioned, CollectiveMeshEvidence):
+        receipt = phydrax.meshing._device_adaptation._restart_receipt_from_evidence(partitioned)
+        proof = SimplexRestartRepackProof(receipt, collective=True)
+    else:
+        receipt, proof = partitioned.restart_repack, partitioned.restart_proof
+    if receipt is None or proof is None:
+        raise ValueError("collective_source.restart must retain its admitted transaction")
+    type(proof).require_receipt(proof, receipt)
+    declared = placement["placement/proof_content_id"]
+    expected = jax.device_put(
+        np.frombuffer(bytes.fromhex(proof.content_id), dtype=np.uint8), declared.sharding,
+    )
+    if not bool(jax.device_get(jnp.array_equal(declared, expected))):
+        raise ValueError("collective_source.restart proof must bind the actual retained transaction")
+    return receipt
 
 
 def _prepare_collective_source(
@@ -180,7 +237,7 @@ def _prepare_collective_source(
     saved_publication_blocks: tuple[CellBlock, ...] | None = None
     match partitioned:
         case CollectiveMeshEvidence():
-            partitioned.require_passed()
+            type(partitioned).require_passed(partitioned)
             preparation = partitioned.preparation
             initial = partitioned.initial_states
             raw_source_blocks = partitioned.raw_source_blocks
@@ -209,10 +266,16 @@ def _prepare_collective_source(
                 if name.startswith(("placement/", "rebalance/"))
             )
             source = preparation.source
+            from ..lifecycle._restart_topology import TopologyRestartPolicy
+
             migration = (
                 None
                 if partitioned.migration_record is None
-                else partitioned.migration_record.replay(scope=scope, budget=budget)
+                else partitioned.migration_record.replay(
+                    scope=scope,
+                    budget=budget,
+                    policy=TopologyRestartPolicy(allow_topology_change=True),
+                )
             )
             rebalance_proposal = partitioned.rebalance_proposal
             if source.result_id != partitioned.source.result_id:
@@ -262,6 +325,7 @@ def _prepare_collective_source(
             raise TypeError(
                 "collective_source.partitioned must be a partitioned preparation or retained evidence; got unsupported type"
             )
+    restart_repack = _restart_publication_source(partitioned, placement_arrays)
     if not isinstance(raw_source_blocks, tuple) or not raw_source_blocks:
         raise ValueError(
             "collective_source.raw_source_blocks must retain nonempty source block declarations; got absent declarations"
@@ -288,7 +352,15 @@ def _prepare_collective_source(
                 "collective_migration.proposal must bind the transported ownership; got mismatched evidence"
             )
         phydrax.meshing._distribution.replay_partitioned_rebalance_proposal(
-            rebalance_proposal, axis_name=axis_name
+            rebalance_proposal,
+            axis_name=axis_name,
+            # Only the live source issues physical graph owners. Retained
+            # evidence must replay its historical rows on the current devices.
+            parts=None
+            if cold
+            else type(migration.source_partitioned).execution_parts(
+                migration.source_partitioned
+            ),
         )
     kind = "triangle" if layout.dimension == 2 else "tetrahedron"
     raw_blocks = tuple(
@@ -319,6 +391,7 @@ def _prepare_collective_source(
         initial_owners=initial_owners,
         migration=migration,
         rebalance_proposal=rebalance_proposal,
+        restart_repack=restart_repack,
     )
 
 
@@ -351,8 +424,7 @@ def _bind_collective_scientific_source(
                 "kind": "independent-native-initial-theorem",
                 "theorem": original.evidence_id,
                 "source": original.source_evidence_id,
-                "compiled": original.compiled.compiled_id,
-                "specification": original.specification.specification_id,
+                "definitions": original.premise.definitions_id,
             }
         case CellMeshingResult():
             if witness is None or witness.embedding is None:
@@ -562,6 +634,131 @@ def _prove_collective_subdivision(
     )
 
 
+@jax.jit
+def _invalid_collective_blocks(
+    cell_ids: Array,
+    active: Array,
+    retired: Array,
+    blocks: Array,
+    block_count: int,
+) -> Array:
+    """Check every allocated nonretired source lane in one numerical program."""
+    used = (cell_ids >= 0) & (active | ~retired)
+    return jnp.any(used & ((blocks < 0) | (blocks >= block_count)))
+
+
+@jax.jit
+def _uniform_publication_owner_values(
+    raw_ids: Array,
+    published_ids: Array,
+    published_active: Array,
+    owners: Array,
+    roots: Array,
+    siblings: Array,
+) -> tuple[Array, Array]:
+    """Join retained leaf owners without changing restored-root completeness."""
+    raw_keys = jnp.where(raw_ids >= 0, raw_ids, jnp.iinfo(jnp.int64).max)
+    positions = jax.vmap(jnp.searchsorted)(raw_keys, published_ids)
+    safe = jnp.minimum(positions, raw_keys.shape[1] - 1)
+    inherited = jnp.take_along_axis(owners, safe, axis=1)
+    present = jnp.take_along_axis(raw_keys, safe, axis=1) == published_ids
+    root_positions = jnp.searchsorted(roots, published_ids)
+    root_safe = jnp.minimum(root_positions, roots.shape[0] - 1)
+    root_present = roots[root_safe] == published_ids
+    child_ids = jnp.broadcast_to(siblings, (raw_keys.shape[0], *siblings.shape))
+    child_positions = jax.vmap(jnp.searchsorted)(
+        raw_keys, child_ids.reshape((raw_keys.shape[0], -1))
+    ).reshape(child_ids.shape)
+    child_safe = jnp.minimum(child_positions, raw_keys.shape[1] - 1)
+    child_keys = jax.vmap(lambda keys, positions: keys[positions])(raw_keys, child_safe)
+    child_owners = jax.vmap(lambda values, positions: values[positions])(
+        owners, child_safe
+    )
+    root_complete = jnp.all((child_keys == child_ids) & (child_owners >= 0), axis=-1)
+    complete = jnp.take_along_axis(root_complete, root_safe, axis=1)
+    newly_restored = published_active & ~present
+    missing = jnp.any(newly_restored & ~(root_present & complete))
+    # Scientific solver ownership is the same minimum over all source leaves,
+    # not the process or physical device holding the restored root.
+    restored = jnp.take_along_axis(jnp.min(child_owners, axis=-1), root_safe, axis=1)
+    return (
+        jnp.where(published_active, jnp.where(present, inherited, restored), -1),
+        missing,
+    )
+
+
+@partial(jax.jit, static_argnames=("capacity",))
+def _publication_class_values(
+    cell_ids: Array,
+    active: Array,
+    cell_classes: Array,
+    facet_classes: Array,
+    *,
+    capacity: int,
+) -> tuple[Array, Array]:
+    """Preserve stable class-content ordering, including allocated tail bytes."""
+    order = jnp.argsort(
+        jnp.where(active.reshape(-1), cell_ids.reshape(-1), jnp.iinfo(jnp.int64).max),
+        stable=True,
+    )[:capacity]
+    return (
+        cell_classes.reshape(-1)[order],
+        facet_classes.reshape((-1, facet_classes.shape[-1]))[order],
+    )
+
+
+def _prove_collective_raw_source(
+    partitioned: phydrax.meshing.PartitionedAdaptiveSimplex | CollectiveMeshEvidence,
+    states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[
+    _CollectiveSourcePreparation, _CollectiveScientificSource, _CollectiveSubdivision
+]:
+    """Reprove source binding and raw subdivision without an unused publication."""
+    from ._collective_failure import agreed_local_step
+
+    prepared = _prepare_collective_source(
+        partitioned, states, scope=scope, budget=budget
+    )
+    with agreed_local_step(stage="collective-evidence-resource-admission"):
+        lanes = prepared.initial.mesh.cell_ids.size + states.mesh.cell_ids.size
+        phydrax.meshing._bisection_kernel_host.uniform_count(
+            8 * lanes + len(prepared.raw_blocks), 8 * lanes, budget=budget
+        )
+        for raw in (prepared.initial, states):
+            if raw.blocks.shape != raw.mesh.cell_ids.shape or not jnp.issubdtype(
+                raw.blocks.dtype, jnp.integer
+            ):
+                raise ValueError(
+                    "collective_source.blocks must have integer indices on the allocated cell axis; got incompatible shape or dtype"
+                )
+    for raw in (prepared.initial, states):
+        invalid_blocks = bool(
+            jax.device_get(
+                _invalid_collective_blocks(
+                    raw.mesh.cell_ids,
+                    raw.mesh.cell_active,
+                    raw.retired,
+                    raw.blocks,
+                    len(prepared.raw_blocks),
+                )
+            )
+        )
+        with agreed_local_step(stage="collective-evidence-block-admission"):
+            if invalid_blocks:
+                raise ValueError(
+                    "collective_source.blocks must index a declared source block for every nonretired cell; got an out-of-range index"
+                )
+    scientific = _bind_collective_scientific_source(prepared, partitioned, states)
+    proof = _prove_collective_subdivision(
+        prepared, partitioned, states, scope=scope, budget=budget
+    )
+    return prepared, scientific, proof
+
+
 def _pack_collective_epoch(
     prepared: _CollectiveSourcePreparation,
     proof: _CollectiveSubdivision,
@@ -613,67 +810,37 @@ def _pack_collective_epoch(
         8 * states.mesh.cell_ids.size,
         budget=budget,
     )
-    used = (states.mesh.cell_ids >= 0) & (states.mesh.cell_active | ~states.retired)
     if states.blocks.shape != states.mesh.cell_ids.shape or not jnp.issubdtype(
         states.blocks.dtype, jnp.integer
     ):
         raise ValueError(
             "collective_publication.blocks must have integer indices on the allocated cell axis; got incompatible shape or dtype"
         )
-    invalid = used & (
-        (states.blocks < 0) | (states.blocks >= len(publication_source_blocks))
+    invalid = _invalid_collective_blocks(
+        states.mesh.cell_ids,
+        states.mesh.cell_active,
+        states.retired,
+        states.blocks,
+        len(publication_source_blocks),
     )
-    if bool(jax.device_get(jnp.any(invalid))):
+    if bool(jax.device_get(invalid)):
         raise ValueError(
             "collective_publication.blocks must index a declared source block for every nonretired cell; got an out-of-range index"
         )
     owners = proof.owners
     if prepared.uniform_refinement is not None:
-        sentinel = jnp.iinfo(jnp.int64).max
-        raw_keys = jnp.where(
-            compiled_states.mesh.cell_ids >= 0,
+        owners, missing = _uniform_publication_owner_values(
             compiled_states.mesh.cell_ids,
-            sentinel,
+            states.mesh.cell_ids,
+            states.mesh.cell_active,
+            owners,
+            jnp.asarray(prepared.uniform_refinement.parent_ids),
+            jnp.asarray(prepared.uniform_refinement.child_ids),
         )
-        positions = jax.vmap(jnp.searchsorted)(raw_keys, states.mesh.cell_ids)
-        safe = jnp.minimum(positions, raw_keys.shape[1] - 1)
-        inherited = jnp.take_along_axis(owners, safe, axis=1)
-        present = jnp.take_along_axis(raw_keys, safe, axis=1) == states.mesh.cell_ids
-        # A restored uniform root inherits the same minimum of
-        # source-leaf solver owners as a binary coarsening. Physical
-        # placement rank is not scientific solver ownership.
-        roots = jnp.asarray(prepared.uniform_refinement.parent_ids)
-        siblings = jnp.asarray(prepared.uniform_refinement.child_ids)
-        root_positions = jnp.searchsorted(roots, states.mesh.cell_ids)
-        root_safe = jnp.minimum(root_positions, roots.shape[0] - 1)
-        root_present = roots[root_safe] == states.mesh.cell_ids
-        child_ids = jnp.broadcast_to(siblings, (raw_keys.shape[0], *siblings.shape))
-        child_positions = jax.vmap(jnp.searchsorted)(
-            raw_keys, child_ids.reshape((raw_keys.shape[0], -1))
-        )
-        child_positions = child_positions.reshape(child_ids.shape)
-        child_safe = jnp.minimum(child_positions, raw_keys.shape[1] - 1)
-        child_keys = jax.vmap(lambda keys, positions: keys[positions])(
-            raw_keys, child_safe
-        )
-        child_owners = jax.vmap(lambda values, positions: values[positions])(
-            owners, child_safe
-        )
-        root_complete = jnp.all((child_keys == child_ids) & (child_owners >= 0), axis=-1)
-        complete = jnp.take_along_axis(root_complete, root_safe, axis=1)
-        newly_restored = states.mesh.cell_active & ~present
-        if bool(jax.device_get(jnp.any(newly_restored & ~(root_present & complete)))):
+        if bool(jax.device_get(missing)):
             raise ValueError(
                 "collective_publication.owners must retain every source-leaf owner for a restored root; got missing root support"
             )
-        restored_owners = jnp.take_along_axis(
-            jnp.min(child_owners, axis=-1), root_safe, axis=1
-        )
-        owners = jnp.where(
-            states.mesh.cell_active,
-            jnp.where(present, inherited, restored_owners),
-            -1,
-        )
     return _CollectivePackedEpoch(
         compiled_states=compiled_states,
         states=states,
@@ -705,23 +872,23 @@ def _prepare_collective_publication(
         uniform_refinement=prepared.uniform_refinement,
         # The serial commit binds the adapted target to its preparation.
         numeric_version=f"adaptation:{prepared.preparation.prepared_id}",
-        publication_cell_owners=packed.owners if prepared.migration is not None else None,
+        publication_cell_owners=(
+            packed.owners
+            if prepared.migration is not None or prepared.restart_repack is not None
+            else None
+        ),
         scope=scope,
         budget=budget,
     )
     logical_values = dict(logical.arrays)
     capacity = logical_values["cell_global_ids"].shape[0]
-    active = packed.states.mesh.cell_active.reshape(-1)
-    order = jnp.argsort(
-        jnp.where(
-            active, packed.states.mesh.cell_ids.reshape(-1), jnp.iinfo(jnp.int64).max
-        ),
-        stable=True,
-    )[:capacity]
-    classes = packed.states.cell_classes.reshape(-1)[order]
-    facets = packed.states.facet_classes.reshape(
-        (-1, packed.states.mesh.cells.shape[-1])
-    )[order]
+    classes, facets = _publication_class_values(
+        packed.states.mesh.cell_ids,
+        packed.states.mesh.cell_active,
+        packed.states.cell_classes,
+        packed.states.facet_classes,
+        capacity=capacity,
+    )
     placement = logical_values["cell_global_ids"].sharding
     organization_content = logical_array_value_collection_digest(
         {
@@ -831,6 +998,284 @@ class _CollectivePartitionDim(Dim, minimum=1):
     """Partition axis of one collective subdivision theorem."""
 
 
+@dataclass(frozen=True, slots=True)
+class _LiveCollectiveRecordBinding:
+    owner: object
+    excluded: str
+    content_id: str
+    owner_fields: OwnerFields
+    container_owners: tuple[tuple[object, type, tuple[object, ...]], ...]
+    immutable_banks: tuple[Array, ...]
+
+
+def _bind_live_collective_record(
+    root: object, excluded: str, /, *, budget: CoordinateEnclosureBudget,
+) -> _LiveCollectiveRecordBinding:
+    """Snapshot actual canonical edges independently of optional digest memoization."""
+    from .._model._artifacts import artifact_value_codec_for
+    from .._model._structure import _model_owner_children
+    from ..lifecycle._meshing_source_records import stored_record_content_id
+
+    content_id = stored_record_content_id(
+        root, excluded=excluded, budget=budget, memoize=False
+    )
+    owners: list[tuple[object, type, tuple[str, ...], tuple[object, ...]]] = []
+    containers: list[tuple[object, type, tuple[object, ...]]] = []
+    banks: list[Array] = []
+    pending = [root]
+    seen: dict[int, object] = {}
+    with budget.temporary_scope():
+        while pending:
+            owner = pending.pop()
+            if seen.get(id(owner)) is owner:
+                continue
+            budget.reserve(1, 128)
+            seen[id(owner)] = owner
+            if isinstance(owner, Array):
+                if owner.is_deleted():
+                    raise ValueError("collective_publication.output must retain live actual banks")
+                banks.append(owner)
+                continue
+            if isinstance(owner, np.ndarray):
+                # Full canonical authentication above and on every use scans
+                # mutable logical bytes; readonly flags never confer trust.
+                continue
+            if is_dataclass(owner) and not isinstance(owner, type):
+                names = tuple(
+                    member.name for member in fields(owner)
+                    if owner is not root or member.name != excluded
+                )
+                values = tuple(getattr(owner, name) for name in names)
+                owners.append((owner, type(owner), names, values))
+                children = values
+            elif isinstance(owner, (Mapping, list, set, frozenset)):
+                children = tuple(_model_owner_children(owner))
+                containers.append((owner, type(owner), children))
+            elif isinstance(owner, tuple):
+                children = tuple(owner)
+            elif isinstance(owner, Fraction):
+                children = (owner.numerator, owner.denominator)
+                owners.append((owner, type(owner), ("numerator", "denominator"), children))
+            elif isinstance(owner, Enum):
+                children = (owner.value,)
+                owners.append((owner, type(owner), ("name", "value"), (owner.name, owner.value)))
+            elif artifact_value_codec_for(owner) is not None and hasattr(owner, "__dict__"):
+                names = tuple(vars(owner))
+                children = tuple(vars(owner).values())
+                owners.append((owner, type(owner), names, children))
+            else:
+                children = tuple(_model_owner_children(owner))
+            budget.reserve(0, 128 + 64 * len(children))
+            pending.extend(children)
+    return _LiveCollectiveRecordBinding(
+        root, excluded, content_id, tuple(owners), tuple(containers), tuple(banks)
+    )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _LiveCollectivePublication:
+    """Actual constructor output, usable only inside its live native request.
+
+    This host-only view owns numerical references, not a retained proof verdict.
+    Its evidence and current source bytes are authenticated again on consumption.
+    """
+
+    evidence: CollectiveMeshEvidence
+    _partitioned: phydrax.meshing.PartitionedAdaptiveSimplex
+    _raw_states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState
+    _states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState
+    _scope: NativeExecutionScope
+    _budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    _constructor: object
+    _initializer: object
+    _owners: OwnerFields
+    _bindings: tuple[_LiveCollectiveRecordBinding, ...]
+
+    def require_states(
+        self,
+        storage: phydrax.discretization.CellMeshStorage,
+        evidence: CollectiveMeshEvidence,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState:
+        from ..discretization._coordinate_operands import require_coordinate_input_owners
+        from ..lifecycle._meshing_source_records import (
+            _require_record_containers,
+            stored_record_content_id,
+        )
+
+        def reject() -> None:
+            raise ValueError(
+                "collective_publication.live must retain the same current constructor, "
+                "native request, evidence, source owners and epoch storage; got a "
+                "foreign, expired, rebound, changed or deleted publication"
+            )
+
+        if type(self) is not _LiveCollectivePublication or not hasattr(self, "_scope"):
+            reject()
+        active = current_native_execution_scope()
+        while active is not None and active is not self._scope:
+            active = active._parent
+        if (
+            scope is not self._scope or budget is not self._budget
+            or active is None or scope.evidence is not None
+            or evidence is not self.evidence
+            or type(evidence) is not CollectiveMeshEvidence
+            or CollectiveMeshEvidence.__init__ is not self._constructor
+            or CollectiveMeshEvidence._initialize is not self._initializer
+        ):
+            reject()
+        try:
+            if (
+                len(self._owners) != 6 or not self._bindings
+                or len(self._bindings) > 2
+                or self._bindings[0].owner is not evidence
+            ):
+                reject()
+            if (
+                self._partitioned is not self._owners[0][0]
+                or self._raw_states is not self._owners[1][0]
+                or self._states is not self._owners[3][0]
+                or evidence is not self._owners[5][0]
+            ):
+                reject()
+            if not require_coordinate_input_owners(self._owners, budget):
+                reject()
+            for binding in self._bindings:
+                if (
+                    not require_coordinate_input_owners(binding.owner_fields, budget)
+                    or not _require_record_containers(binding.container_owners, budget)
+                    or any(bank.is_deleted() for bank in binding.immutable_banks)
+                    or stored_record_content_id(
+                        binding.owner, excluded=binding.excluded,
+                        budget=budget, memoize=False,
+                    ) != binding.content_id
+                ):
+                    reject()
+            if (
+                evidence.stored_content_id != self._bindings[0].content_id
+                or self._states.mesh.signature_id != evidence.layout.mesh_signature_id
+                or self._states.mesh.ambient_dimension
+                != evidence.layout.ambient_dimension
+                or storage.logical_topology_id != evidence.topology_id
+                or storage.logical_geometry_id != evidence.geometry_id
+                or storage.logical_coordinate_geometry_id != evidence.coordinate_geometry_id
+                or storage.evidence_id != evidence.evidence_id
+                or storage.partition_count != evidence.partition_count
+                or storage.global_entity_counts != evidence.global_entity_counts
+                or not 0 <= storage.partition_index < evidence.partition_count
+            ):
+                reject()
+            accepted = dict(evidence.logical_arrays)
+            retained = dict(storage.logical_arrays)
+            epoch = {name: value for name, value in accepted.items() if name.startswith("epoch/")}
+            if (
+                len(accepted) != len(evidence.logical_arrays)
+                or len(retained) != len(storage.logical_arrays)
+                or {name for name in retained if name.startswith("epoch/")} != set(epoch)
+                or any(retained[name] is not value for name, value in epoch.items())
+            ):
+                reject()
+            for owner in (self._states.mesh, self._states):
+                for member in fields(owner):
+                    value = getattr(owner, member.name)
+                    if isinstance(value, Array) and (
+                        epoch.get(f"epoch/{member.name}") is not value
+                    ):
+                        reject()
+        except (AttributeError, KeyError):
+            reject()
+        return self._states
+
+
+class _CollectivePublicationOutput:
+    """Empty builder-owned collector; never accepts a prevalidated input."""
+
+    def __init__(
+        self,
+        partitioned: phydrax.meshing.PartitionedAdaptiveSimplex,
+        raw_states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
+        self.partitioned = partitioned
+        self.raw_states = raw_states
+        self.scope = scope
+        self.budget = budget
+        self.publication: _LiveCollectivePublication | None = None
+
+    def bind(
+        self,
+        partitioned: phydrax.meshing.PartitionedAdaptiveSimplex | CollectiveMeshEvidence,
+        raw_states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+        evidence: CollectiveMeshEvidence,
+        states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+        evidence_binding: _LiveCollectiveRecordBinding,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
+        # The initializer supplies the binding produced by its one canonical scan.
+
+        if (
+            self.publication is not None or partitioned is not self.partitioned
+            or raw_states is not self.raw_states or scope is not self.scope
+            or budget is not self.budget
+            or evidence_binding.owner is not evidence
+            or evidence_binding.excluded != "stored_content_id"
+            or evidence_binding.content_id != evidence.stored_content_id
+        ):
+            raise ValueError("collective_publication.output must be empty and owned by this construction")
+        owners: OwnerFields = tuple(
+            (
+                owner, type(owner), tuple(member.name for member in fields(owner)),
+                tuple(getattr(owner, member.name) for member in fields(owner)),
+            )
+            for owner in (self.partitioned, raw_states, raw_states.mesh, states, states.mesh, evidence)
+        )
+        bindings = [evidence_binding]
+        if self.partitioned.source_witness is not None:
+            bindings.append(
+                _bind_live_collective_record(
+                    self.partitioned.source_witness, "", budget=budget
+                )
+            )
+        publication = object.__new__(_LiveCollectivePublication)
+        values = (
+            evidence, self.partitioned, raw_states, states, scope, budget,
+            CollectiveMeshEvidence.__init__, CollectiveMeshEvidence._initialize,
+            owners, tuple(bindings),
+        )
+        for member, value in zip(fields(_LiveCollectivePublication), values, strict=True):
+            object.__setattr__(publication, member.name, value)
+        self.publication = publication
+
+
+def _build_collective_mesh_evidence(
+    partitioned: phydrax.meshing.PartitionedAdaptiveSimplex,
+    raw_states: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexState,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _LiveCollectivePublication:
+    output = _CollectivePublicationOutput(
+        partitioned, raw_states, scope=scope, budget=budget
+    )
+    evidence = CollectiveMeshEvidence(
+        partitioned, raw_states, scope=scope, budget=budget, _publication_output=output
+    )
+    publication = output.publication
+    if publication is None or publication.evidence is not evidence:
+        raise ValueError("collective_publication.output must be issued by the full current constructor")
+    return publication
+
+
 class CollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
     """Retain partition-indexed subdivision checks and publication arrays.
 
@@ -891,44 +1336,75 @@ class CollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
         *,
         scope: NativeExecutionScope,
         budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        _publication_output: _CollectivePublicationOutput | None = None,
     ) -> None:
-        self._initialize(partitioned, states, scope=scope, budget=budget)
+        type(self)._initialize(
+            self, partitioned, states, scope=scope, budget=budget,
+            _publication_output=_publication_output,
+        )
 
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[CollectiveMeshEvidence], value: CollectiveMeshEvidence, /
+        cls: type[CollectiveMeshEvidence],
+        value: CollectiveMeshEvidence,
+        /,
+        *,
+        collective: bool = False,
     ) -> CollectiveMeshEvidence:
         """Authenticate retained fields without repeating charged proof generation.
 
         Mathematical replay remains the explicit partitioned-evidence validator's
         responsibility. The enclosing result authenticates the storage binding.
+        Common cold replay opts into local-phase agreement around the unchanged
+        canonical stored-content scan; standalone reconstruction remains local
+        except for that scan's explicitly distributed input arrays.
         """
         # Lazy: source registration resolves meshing declarations after import.
-        from .._model._structure import restore_registered_fields
-        from ..lifecycle._meshing_source_records import stored_record_content_id
+        from .._model._structure import prepare_model_recipe, restore_registered_fields
+        from ..lifecycle._meshing_source_records import register_meshing_source_types
+        from ..lifecycle._meshing_sources import meshing_source_local_restore_phase
 
-        if type(value) is not cls:
-            raise TypeError(
-                "CollectiveMeshEvidence.stored_fields must have the reconstruction "
-                f"type; got {type(value).__name__} for {cls.__name__}"
-            )
-        content_id = stored_record_content_id(value, excluded="stored_content_id")
-        if not tree_content_equal(content_id, value.stored_content_id):
-            raise ValueError(
-                "CollectiveMeshEvidence.stored_content_id must match retained field and bank bindings; got changed stored content"
-            )
-        value.require_passed()
-        stored = {member.name: getattr(value, member.name) for member in fields(value)}
-        stored["stored_content_id"] = content_id
-        rebuilt = restore_registered_fields(cls, stored)
-        for member in fields(value):
-            if not tree_content_equal(
-                getattr(rebuilt, member.name), getattr(value, member.name)
-            ):
-                raise ValueError(
-                    f"CollectiveMeshEvidence.{member.name} must match authenticated retained content; got changed stored content"
+        local_phase = meshing_source_local_restore_phase if collective else nullcontext
+        with local_phase():
+            if type(value) is not cls:
+                raise TypeError(
+                    "CollectiveMeshEvidence.stored_fields must have the reconstruction "
+                    f"type; got {type(value).__name__} for {cls.__name__}"
                 )
+            register_meshing_source_types()
+            # This is exactly stored_record_content_id's unbudgeted, nonmemoized
+            # fields, recipe prefix and digest framing, split at its byte scan.
+            content = tuple(
+                (member.name, getattr(value, member.name))
+                for member in fields(value)
+                if member.name != "stored_content_id"
+            )
+            recipe, arrays = prepare_model_recipe(content, prefix="stored_fields")
+        bank_digest = logical_array_value_collection_digest(arrays)
+        with local_phase():
+            content_id = canonical_fingerprint(
+                {
+                    "kind": "stored-record-content",
+                    "structure": recipe,
+                    "banks": bank_digest,
+                }
+            )
+            if not tree_content_equal(content_id, value.stored_content_id):
+                raise ValueError(
+                    "CollectiveMeshEvidence.stored_content_id must match retained field and bank bindings; got changed stored content"
+                )
+            type(value).require_passed(value)
+            stored = {member.name: getattr(value, member.name) for member in fields(value)}
+            stored["stored_content_id"] = content_id
+            rebuilt = restore_registered_fields(cls, stored)
+            for member in fields(value):
+                if not tree_content_equal(
+                    getattr(rebuilt, member.name), getattr(value, member.name)
+                ):
+                    raise ValueError(
+                        f"CollectiveMeshEvidence.{member.name} must match authenticated retained content; got changed stored content"
+                    )
         return rebuilt
 
     @staticmethod
@@ -1012,30 +1488,10 @@ class CollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
         *,
         scope: NativeExecutionScope,
         budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        _publication_output: _CollectivePublicationOutput | None = None,
     ) -> None:
-        prepared = _prepare_collective_source(
+        prepared, scientific, proof = _prove_collective_raw_source(
             partitioned, states, scope=scope, budget=budget
-        )
-        lanes = prepared.initial.mesh.cell_ids.size + states.mesh.cell_ids.size
-        phydrax.meshing._bisection_kernel_host.uniform_count(
-            8 * lanes + len(prepared.raw_blocks), 8 * lanes, budget=budget
-        )
-        for raw in (prepared.initial, states):
-            if raw.blocks.shape != raw.mesh.cell_ids.shape or not jnp.issubdtype(
-                raw.blocks.dtype, jnp.integer
-            ):
-                raise ValueError(
-                    "collective_source.blocks must have integer indices on the allocated cell axis; got incompatible shape or dtype"
-                )
-            used = (raw.mesh.cell_ids >= 0) & (raw.mesh.cell_active | ~raw.retired)
-            invalid = used & ((raw.blocks < 0) | (raw.blocks >= len(prepared.raw_blocks)))
-            if bool(jax.device_get(jnp.any(invalid))):
-                raise ValueError(
-                    "collective_source.blocks must index a declared source block for every nonretired cell; got an out-of-range index"
-                )
-        scientific = _bind_collective_scientific_source(prepared, partitioned, states)
-        proof = _prove_collective_subdivision(
-            prepared, partitioned, states, scope=scope, budget=budget
         )
         packed = _pack_collective_epoch(
             prepared, proof, states, scope=scope, budget=budget
@@ -1110,6 +1566,10 @@ class CollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
                 "rebalance": None
                 if prepared.rebalance_proposal is None
                 else prepared.rebalance_proposal.proposal_id,
+                # Route, limits, audit, device capacities, ownership policy and
+                # association transfer govern the target beyond its numerical
+                # state; their declaration is shared by every owner.
+                "adaptation_policy": prepared.preparation.policy.policy_id,
                 "initial_numerical_state": proof.initial_state_id,
                 "compiled_numerical_state": logical_array_value_collection_digest(
                     {
@@ -1120,9 +1580,15 @@ class CollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
                         if isinstance(value, Array)
                     }
                 ),
-                "raw_source_blocks": [block.block_id for block in prepared.raw_blocks],
+                # Retained blocks present each process's resident closure; the
+                # collective identity binds their process-invariant declarations.
+                # Cell content is bound by the source mesh and global receipts.
+                "raw_source_blocks": [
+                    (block.name, block.cell_kind) for block in prepared.raw_blocks
+                ],
                 "publication_source_blocks": [
-                    block.block_id for block in packed.publication_source_blocks
+                    (block.name, block.cell_kind)
+                    for block in packed.publication_source_blocks
                 ],
                 "uniform_source": None
                 if prepared.uniform_refinement is None
@@ -1142,9 +1608,19 @@ class CollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
         # Lazy: the registered source graph resolves after meshing declarations.
         from ..lifecycle._meshing_source_records import stored_record_content_id
 
-        self.stored_content_id = stored_record_content_id(
-            self, excluded="stored_content_id"
-        )
+        if _publication_output is None:
+            self.stored_content_id = stored_record_content_id(
+                self, excluded="stored_content_id"
+            )
+        else:
+            binding = _bind_live_collective_record(
+                self, "stored_content_id", budget=budget
+            )
+            self.stored_content_id = binding.content_id
+            _publication_output.bind(
+                partitioned, states, self, packed.states, binding,
+                scope=scope, budget=budget,
+            )
 
     def require_passed(self) -> None:
         """Refuse failed global checks at the collective publication barrier."""
@@ -1283,7 +1759,7 @@ def _require_bound_evidence(
             raise ValueError(
                 "result.certification must bind the publication mesh, geometry and audit; got mismatched certification evidence"
             )
-        certification.require_passed()
+        type(certification).require_passed(certification)
     binding = trace.binding
     if binding is not None and (
         binding.topology_id != mesh.topology_id
@@ -1313,34 +1789,39 @@ class CollectiveMeshStorageBinding(StrictModule, NonTrainableState):
         global_entity_counts: tuple[int, ...],
         /,
     ) -> None:
-        evidence.require_passed()
-        if global_entity_counts != evidence.global_entity_counts:
-            raise ValueError(
-                "collective_storage.global_entity_counts must match accepted evidence; got mismatched counts"
-            )
-        stored = dict(arrays)
-        theorem = dict(evidence.logical_arrays)
-        if any(name not in stored for name in theorem):
-            raise ValueError(
-                "collective_storage.arrays must contain every accepted scientific bank; got missing array names"
-            )
-        actual = {name: stored[name] for name in theorem}
+        from ._collective_failure import agreed_local_step
+
+        with agreed_local_step():
+            type(evidence).require_passed(evidence)
+            if global_entity_counts != evidence.global_entity_counts:
+                raise ValueError(
+                    "collective_storage.global_entity_counts must match accepted evidence; got mismatched counts"
+                )
+            stored = dict(arrays)
+            theorem = dict(evidence.logical_arrays)
+            if any(name not in stored for name in theorem):
+                raise ValueError(
+                    "collective_storage.arrays must contain every accepted scientific bank; got missing array names"
+                )
+            actual = {name: stored[name] for name in theorem}
         digest = logical_array_value_collection_digest(actual)
-        if digest != logical_array_value_collection_digest(theorem):
-            raise ValueError(
-                "collective_storage.arrays must reproduce accepted scientific bytes; got changed content digest"
+        theorem_digest = logical_array_value_collection_digest(theorem)
+        with agreed_local_step():
+            if digest != theorem_digest:
+                raise ValueError(
+                    "collective_storage.arrays must reproduce accepted scientific bytes; got changed content digest"
+                )
+            self.evidence = evidence
+            self.arrays = tuple(sorted(actual.items()))
+            self.global_entity_counts = global_entity_counts
+            self.content_id = canonical_fingerprint(
+                {
+                    "kind": "accepted-collective-storage-bank",
+                    "evidence": evidence.evidence_id,
+                    "counts": global_entity_counts,
+                    "actual_bytes": digest,
+                }
             )
-        self.evidence = evidence
-        self.arrays = tuple(sorted(actual.items()))
-        self.global_entity_counts = global_entity_counts
-        self.content_id = canonical_fingerprint(
-            {
-                "kind": "accepted-collective-storage-bank",
-                "evidence": evidence.evidence_id,
-                "counts": global_entity_counts,
-                "actual_bytes": digest,
-            }
-        )
 
     @checked
     def require_storage(
@@ -1387,7 +1868,7 @@ def restore_collective_mesh_storage_binding(
 
 
 @final
-class _ResultInputs(StrictModule):
+class _ResultInputs(NamedTuple):
     mesh: CellMesh
     geometry: CellGeometrySpec
     coordinate_contract: SpatialCoordinateContract
@@ -1400,7 +1881,10 @@ class _ResultInputs(StrictModule):
     derivative_mode: _dependency_phydrax_meshing__contracts.MeshingDerivativeMode
     provenance: SemanticProvenance
     boundary: SurfaceModel | None
-    patches: tuple[_dependency_phydrax_meshing__organization_records.MeshPatch, ...]
+    patches: (
+        tuple[_dependency_phydrax_meshing__organization_records.MeshPatch, ...]
+        | _dependency_phydrax_meshing__organization_records.MeshPatchBank
+    )
     zones: tuple[_dependency_phydrax_meshing__organization_records.MeshZone, ...]
     labels: tuple[_dependency_phydrax_meshing__organization_records.MeshLabel, ...]
     attributes: tuple[
@@ -1447,7 +1931,7 @@ class _ResultInputs(StrictModule):
 
 
 @final
-class _ResultCarrier(StrictModule):
+class _ResultCarrier(NamedTuple):
     storage_binding: CollectiveMeshStorageBinding | None
     collective_certificates: (
         tuple[
@@ -1459,7 +1943,7 @@ class _ResultCarrier(StrictModule):
 
 
 @final
-class _ResultVerdicts(StrictModule):
+class _ResultVerdicts(NamedTuple):
     audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport
     quality: _dependency_phydrax_meshing__quality.CellQualityReport
     compliance: MeshingComplianceReport
@@ -1468,8 +1952,9 @@ class _ResultVerdicts(StrictModule):
 
 
 @final
-class _ResultOrganization(StrictModule):
+class _ResultOrganization(NamedTuple):
     patches: tuple[_dependency_phydrax_meshing__organization_records.MeshPatch, ...]
+    patch_bank: _dependency_phydrax_meshing__organization_records.MeshPatchBank
     zones: tuple[_dependency_phydrax_meshing__organization_records.MeshZone, ...]
     labels: tuple[_dependency_phydrax_meshing__organization_records.MeshLabel, ...]
     attributes: tuple[
@@ -1483,7 +1968,7 @@ class _ResultOrganization(StrictModule):
 
 
 @final
-class _ResultIdentity(StrictModule):
+class _ResultIdentity(NamedTuple):
     result_id: str
 
 
@@ -1493,7 +1978,7 @@ def _prepare_result_carrier(
 ) -> _ResultCarrier:
     storage_binding = inputs.storage_binding
     if inputs.execution_evidence is not None:
-        inputs.execution_evidence.require_valid()
+        type(inputs.execution_evidence).require_valid(inputs.execution_evidence)
     if inputs.surface_source is not None:
         if inputs.certification is None or inputs.certification.fidelity is None:
             raise ValueError(
@@ -1510,7 +1995,9 @@ def _prepare_result_carrier(
             inputs.certification.request.source,
             "result.surface_source.certification_source",
         )
-        inputs.surface_source.require_bound(inputs.mesh, inputs.geometry, source)
+        type(inputs.surface_source).require_bound(
+            inputs.surface_source, inputs.mesh, inputs.geometry, source
+        )
 
     if inputs.mesh.storage is not None:
         if inputs.collective_evidence is None:
@@ -1535,7 +2022,7 @@ def _prepare_result_carrier(
                 not value.is_fully_addressable
                 for _, value in inputs.mesh.storage.logical_arrays
             ):
-                inputs.collective_evidence.require_passed()
+                type(inputs.collective_evidence).require_passed(inputs.collective_evidence)
                 raise ValueError(
                     "result.storage_binding must admit nonaddressable scientific banks on all owners; got absent admission"
                 )
@@ -1543,13 +2030,21 @@ def _prepare_result_carrier(
                 inputs.mesh, inputs.collective_evidence
             )
         else:
-            inputs.collective_evidence.require_passed()
-        storage_binding.require_storage(inputs.mesh, inputs.collective_evidence)
+            type(inputs.collective_evidence).require_passed(inputs.collective_evidence)
+        type(storage_binding).require_storage(
+            storage_binding, inputs.mesh, inputs.collective_evidence
+        )
     elif inputs.collective_evidence is not None:
         raise ValueError(
             "result.collective_evidence must be absent for dense serial storage; got owner-local evidence"
         )
     if inputs.collective_certificates is not None:
+        if not isinstance(inputs.collective_evidence, CollectiveMeshEvidence):
+            # Only subdivision evidence carries the storage anchor that
+            # authenticates each owner's certificate receipts.
+            raise ValueError(
+                "result.collective_certificates must accompany collective subdivision evidence; got another theorem kind"
+            )
         _require_collective_certificates(
             inputs.mesh, inputs.geometry, inputs.collective_certificates
         )
@@ -1562,8 +2057,11 @@ def _prepare_result_carrier(
 def _require_result_verdicts(
     inputs: _ResultInputs,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
 ) -> _ResultVerdicts:
-    inputs.geometry.resolve(inputs.mesh)
+    inputs.geometry.resolve(inputs.mesh, budget=budget)
     if inputs.audit.mesh_id != inputs.mesh.mesh_id:
         raise ValueError(
             "result.audit.mesh_id must match the publication mesh; got mismatched identity"
@@ -1589,7 +2087,7 @@ def _require_result_verdicts(
         raise ValueError(
             "result.audit.geometry must bind result geometry values and layout; got mismatched geometry evidence"
         )
-    inputs.audit.require_passed()
+    type(inputs.audit).require_passed(inputs.audit)
     if inputs.quality.report_id != inputs.audit.quality.report_id:
         raise ValueError(
             "result.quality.report_id must match the mesh audit; got mismatched quality evidence"
@@ -1649,6 +2147,13 @@ def _prepare_result_organization(
         raise TypeError(
             "result.patches must contain MeshPatch values; got an invalid patch kind"
         )
+    patch_bank = (
+        inputs.patches
+        if isinstance(
+            inputs.patches, _dependency_phydrax_meshing__organization_records.MeshPatchBank
+        )
+        else _dependency_phydrax_meshing__organization_records.MeshPatchBank(patches_)
+    )
     if inputs.region_evidence is not None:
         inputs.region_evidence.require_current(
             inputs.mesh, zones_, patches_, geometry=inputs.geometry
@@ -1730,6 +2235,7 @@ def _prepare_result_organization(
         )
     return _ResultOrganization(
         patches=patches_,
+        patch_bank=patch_bank,
         zones=zones_,
         labels=labels_,
         boundary_regions=boundary_regions,
@@ -1776,7 +2282,7 @@ def _prepare_result_identity(
             case phydrax.meshing._initial_certification.InitialCollectiveMeshEvidence():
                 if (
                     inputs.compliance.specification_id
-                    != inputs.collective_evidence.specification.specification_id
+                    != inputs.collective_evidence.premise.specification.specification_id
                 ):
                     raise ValueError(
                         "result.compliance.specification_id must match the authored request; got mismatched initial specification"
@@ -1797,9 +2303,9 @@ def _prepare_result_identity(
                     attribute_projections=inputs.attribute_projections,
                 )
                 source_identity = {
-                    "source_domain": inputs.collective_evidence.compiled.domain.domain_id,
-                    "compiled_domain": inputs.collective_evidence.compiled.compiled_id,
-                    "specification": inputs.collective_evidence.specification.specification_id,
+                    "source_domain": inputs.collective_evidence.premise.source_domain_id,
+                    "compiled_domain": inputs.collective_evidence.premise.generation_id,
+                    "specification": inputs.collective_evidence.premise.specification.specification_id,
                 }
             case _:
                 raise TypeError(
@@ -1821,7 +2327,7 @@ def _prepare_result_identity(
                 "collective": inputs.collective_evidence.evidence_id,
                 "provider": inputs.provider.provider_id,
                 "derivative_mode": inputs.derivative_mode.value,
-                "collective_certificates": _collective_certificate_ids(
+                "collective_certificates": _collective_certificate_theorems(
                     inputs.collective_certificates
                 ),
                 "surface_source": None
@@ -1883,16 +2389,21 @@ class CellMeshingResult(StrictModule, NonTrainableState):
     Construction refuses a failed audit, a REJECT-governed check left
     unresolved, a failed or unresolved trace stage, and (when supplied) a route
     certification that is not passed or not bound to this mesh and audit.
-    ``result_id`` identifies the scientific publication independently of rank.
-    ``stored_content_id`` anchors its collective rank-local storage binding,
-    authenticated by the archive content ID, or is absent for other publications.
+    ``result_id`` identifies the scientific publication independently of rank;
+    collective target certificates enter it only through rank-invariant theorem
+    content. ``stored_content_id`` anchors its collective rank-local storage
+    binding and the owner's target-certificate receipts (resident validity
+    bindings and measured work), authenticated by the archive content ID, or is
+    absent for other publications. ``budget`` charges the publication's geometry
+    resolution to the caller's request; without it a construction-local ledger
+    owns that work.
     """
 
     mesh: CellMesh
     geometry: CellGeometrySpec
     coordinate_contract: SpatialCoordinateContract
     boundary: SurfaceModel | None
-    patches: tuple[_dependency_phydrax_meshing__organization_records.MeshPatch, ...]
+    patches: _dependency_phydrax_meshing__organization_records.MeshPatchBank
     zones: tuple[_dependency_phydrax_meshing__organization_records.MeshZone, ...]
     labels: tuple[_dependency_phydrax_meshing__organization_records.MeshLabel, ...]
     attributes: tuple[
@@ -1952,9 +2463,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         /,
         *,
         boundary: SurfaceModel | None = None,
-        patches: tuple[
-            _dependency_phydrax_meshing__organization_records.MeshPatch, ...
-        ] = (),
+        patches: tuple[_dependency_phydrax_meshing__organization_records.MeshPatch, ...]
+        | _dependency_phydrax_meshing__organization_records.MeshPatchBank = (),
         zones: tuple[
             _dependency_phydrax_meshing__organization_records.MeshZone, ...
         ] = (),
@@ -1995,6 +2505,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         execution_evidence: NativeExecutionRecord | None = None,
         surface_source: _dependency_phydrax_geometry__surface_source_support.SurfaceSourceCharts
         | None = None,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+        | None = None,
     ) -> None:
         inputs = _ResultInputs(
             mesh=mesh,
@@ -2027,14 +2539,14 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             surface_source=surface_source,
         )
         carrier = _prepare_result_carrier(inputs)
-        verdicts = _require_result_verdicts(inputs)
+        verdicts = _require_result_verdicts(inputs, budget=budget)
         organization = _prepare_result_organization(inputs)
         identity = _prepare_result_identity(inputs, organization)
         self.mesh = inputs.mesh
         self.geometry = inputs.geometry
         self.coordinate_contract = inputs.coordinate_contract
         self.boundary = inputs.boundary
-        self.patches = organization.patches
+        self.patches = organization.patch_bank
         self.zones = organization.zones
         self.labels = organization.labels
         self.attributes = organization.attributes
@@ -2057,10 +2569,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         self.collective_certificates = carrier.collective_certificates
         self.storage_binding = carrier.storage_binding
         self.result_id = identity.result_id
-        self.stored_content_id = (
-            inputs.collective_evidence.stored_content_id
-            if isinstance(inputs.collective_evidence, CollectiveMeshEvidence)
-            else None
+        self.stored_content_id = _result_stored_content_id(
+            inputs.collective_evidence, inputs.collective_certificates
         )
 
     @classmethod
@@ -2078,14 +2588,12 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 "CellMeshingResult.stored_fields must have the reconstruction type; "
                 f"got {type(value).__name__} for {cls.__name__}"
             )
-        stored_content_id = (
-            value.collective_evidence.stored_content_id
-            if isinstance(value.collective_evidence, CollectiveMeshEvidence)
-            else None
+        stored_content_id = _result_stored_content_id(
+            value.collective_evidence, value.collective_certificates
         )
         if not tree_content_equal(stored_content_id, value.stored_content_id):
             raise ValueError(
-                "CellMeshingResult.stored_content_id must match its retained collective storage binding; got changed child content"
+                "CellMeshingResult.stored_content_id must match its retained collective storage and certificate bindings; got changed child content"
             )
         # Lazy: retained projection recovery reaches collective owners and _lineage.
         import phydrax.meshing._organization as _dependency_phydrax_meshing__organization
@@ -2156,18 +2664,92 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         )
 
 
-def _collective_certificate_ids(
+def _collective_certificate_theorems(
     certificates: tuple[
         global_embedding_owner.GlobalEmbeddingCertificate,
         domain_coverage_owner.DomainCoverageCertificate,
     ]
     | None,
     /,
-) -> tuple[str, str] | None:
-    return (
-        None
-        if certificates is None
-        else (certificates[0].certificate_id, certificates[1].certificate_id)
+) -> dict[str, object] | None:
+    """Rank-invariant hypotheses and verdicts of target collective certificates.
+
+    Bindings identify the logical mesh, coordinate map, limits and source; counts,
+    measures and premises are all-owner aggregates. Certificate IDs also bind
+    each owner's resident validity certificate, so the result storage anchor
+    authenticates them instead.
+    """
+    if certificates is None:
+        return None
+    embedding, coverage = certificates
+    return {
+        "embedding": {
+            "binding": embedding.binding.binding_id,
+            "status": embedding.status,
+            "findings": [value.finding_id for value in embedding.findings],
+            "checks": embedding.evaluated_checks,
+            "counts": (
+                embedding.cell_count,
+                embedding.boundary_facet_count,
+                embedding.shell_count,
+                embedding.candidate_pair_count,
+                embedding.ray_test_count,
+                embedding.subdivision_piece_count,
+                embedding.periodic_image_count,
+            ),
+        },
+        "coverage": {
+            "binding": coverage.binding.binding_id,
+            "domain": coverage.domain_id,
+            "status": coverage.status,
+            "findings": [value.finding_id for value in coverage.findings],
+            "regions": coverage.region_ids,
+            "requested": coverage.requested_region_measures,
+            "achieved": coverage.achieved_region_measures,
+            "requested_bounds": coverage.requested_region_measure_bounds,
+            "achieved_bounds": coverage.achieved_region_measure_bounds,
+            "integration_errors": coverage.integration_error_bounds,
+            "facet_source_overlaps": coverage.facet_source_overlaps.fingerprint_record(),
+            "premises": coverage.premise_certificate_ids,
+            "covered": coverage.covered_source_facet_count,
+            "candidate_pairs": coverage.candidate_pair_count,
+            "subdivision_pieces": coverage.subdivision_piece_count,
+            "maximum_subdivision_depth": coverage.maximum_subdivision_depth_reached,
+        },
+    }
+
+
+def _result_stored_content_id(
+    evidence: AbstractCollectiveMeshTheorem | None,
+    certificates: tuple[
+        global_embedding_owner.GlobalEmbeddingCertificate,
+        domain_coverage_owner.DomainCoverageCertificate,
+    ]
+    | None,
+    /,
+) -> str | None:
+    """Anchor collective storage and this owner's target-certificate receipts."""
+    if not isinstance(evidence, CollectiveMeshEvidence):
+        return None
+    if certificates is None:
+        return evidence.stored_content_id
+    embedding, coverage = certificates
+    return canonical_fingerprint(
+        {
+            "kind": "owner-local-result-storage",
+            "collective": evidence.stored_content_id,
+            "embedding": embedding.certificate_id,
+            "coverage": coverage.certificate_id,
+            "embedding_work": (
+                embedding.source_expression_work_units,
+                embedding.source_expression_peak_bytes,
+            ),
+            "coverage_work": (
+                coverage.source_expression_work_units,
+                coverage.source_expression_required_work_units,
+                coverage.source_expression_peak_bytes,
+            ),
+        }
     )
 
 
@@ -2211,6 +2793,19 @@ def _require_collective_certificates(
     ):
         raise ValueError(
             "result.collective_certificates must certify and bind this owner-local partition; got failed status or mismatched evidence"
+        )
+    if (
+        embedding.boundary_degree is not None
+        or embedding.periodic_affine is not None
+        or embedding.periodic_affine_degree is not None
+        or embedding.periodic_restriction is not None
+        or embedding.restriction_root_embedding is not None
+        or "mapped_affine_polytope_contact" in embedding.evaluated_checks
+    ):
+        # These proofs bind one resident carrier, so they cannot enter the
+        # rank-invariant theorem content of the result identity.
+        raise ValueError(
+            "result.collective_certificates.embedding must contain only collective partition premises; got a resident-carrier proof"
         )
     if any(
         value is None
@@ -2263,7 +2858,7 @@ def require_original_meshing_source(
             evidence = current.collective_evidence
             match evidence:
                 case phydrax.meshing._initial_certification.InitialCollectiveMeshEvidence():
-                    evidence.require_passed()
+                    type(evidence).require_passed(evidence)
                     storage = current.mesh.storage
                     if (
                         storage is None
@@ -2274,7 +2869,7 @@ def require_original_meshing_source(
                         )
                         != evidence.coordinate_geometry_id
                         or current.compliance.specification_id
-                        != evidence.specification.specification_id
+                        != evidence.premise.specification.specification_id
                     ):
                         raise ValueError(
                             "meshing_source.collective_evidence must bind initial storage and specification; got mismatched source evidence"
@@ -2284,7 +2879,7 @@ def require_original_meshing_source(
                         | phydrax.meshing._initial_certification.InitialCollectiveMeshEvidence
                     ) = evidence
                 case CollectiveMeshEvidence():
-                    evidence.require_passed()
+                    type(evidence).require_passed(evidence)
                     predecessor = evidence.source
                     storage = current.mesh.storage
                     if (
@@ -2322,10 +2917,10 @@ def require_original_meshing_source(
                         )
                 case None:
                     certification = current.certification
-                    current.geometry.resolve(current.mesh)
-                    current.audit.require_passed()
-                    current.audit.validity.require_bound(
-                        current.geometry, mesh=current.mesh
+                    type(current.geometry).resolve(current.geometry, current.mesh)
+                    type(current.audit).require_passed(current.audit)
+                    type(current.audit.validity).require_bound(
+                        current.audit.validity, current.geometry, mesh=current.mesh
                     )
                     _require_bound_evidence(
                         current.mesh,
@@ -2436,6 +3031,16 @@ class PartitionedMeshAdaptationResult(StrictModule, NonTrainableState):
 
     local_results: tuple[MeshAdaptationResult, ...]
     identity: CollectiveMeshIdentity
+
+    def __init__(
+        self,
+        local_results: tuple[MeshAdaptationResult, ...],
+        identity: CollectiveMeshIdentity,
+    ) -> None:
+        # Keep packaging field-local: accepted scientific owners retain complete
+        # shared predecessor DAGs, whose numerical bindings remain unchanged.
+        self.local_results = local_results
+        self.identity = identity
 
 
 __all__ = [

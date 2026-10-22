@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import replace
 from enum import StrEnum
 from math import prod
@@ -27,7 +28,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.sharding import PartitionSpec
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
@@ -40,8 +41,9 @@ from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
     logical_array_value_collection_digest,
+    tree_content_equal,
 )
-from .._meshcore import NativeExecutionScope
+from .._meshcore import GraphPartitionCounters, NativeExecutionScope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._adaptive_simplex import (
@@ -98,10 +100,15 @@ from ..discretization.finite_volume import (
 from ..discretization.iga import IsogeometricPlan
 from ..discretization.spatial import hilbert_encode_integer, morton_encode_integer
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
-from ..graph._distributed_partition import replay_logical_partition
+from ..graph._distributed_partition import (
+    execute as execute_ownerlocal_partition,
+    logical_id,
+    replay_logical_partition,
+)
 from ..graph._partition import (
     GraphPartitionEvidence,
     GraphPartitionPlan,
+    GraphPartitionWork,
     partition_graph,
     WeightedCSRGraph,
 )
@@ -125,13 +132,15 @@ from ._measurements import NativeExecutionRecord
 # Module references defer symbol resolution across mutually dependent execution owners.
 from ._mesh_part import MeshPart
 from ._metis import metis_identity, metis_partition, MetisPartitionError
+from ._migration_execution import LogicalMigrationParts, MigrationParts, partition_map
 from ._result import (
+    AbstractCollectiveMeshTheorem,
     CellMeshingResult,
     CollectiveMeshEvidence,
     prepare_meshing_source_embedding,
     require_original_meshing_source,
 )
-from ._scope import local_logical_lookup
+from ._scope import local_logical_lookup, local_logical_rows
 
 
 if TYPE_CHECKING:
@@ -519,31 +528,38 @@ def _prepare_local_mesh_distribution(
         raise ValueError(
             "distribution.owner_local_storage.collective_evidence must be present; got None"
         )
-    collective.require_passed()
+    type(collective).require_passed(collective)
     rank = storage.partition_index
     weights = _cell_weights(cell_weights, native.size)
     owned = np.flatnonzero(owner == rank)
     ghosts = np.flatnonzero(owner != rank)
     owned = owned[np.argsort(native[owned], kind="stable")]
     ghosts = ghosts[np.argsort(native[ghosts], kind="stable")]
-    empty = jnp.empty((0,), dtype=jnp.int32)
-    partition = partition
+    # All residency rows belong to this accepted owner-local storage. Prepare
+    # their indices and IDs together on its host, rather than compiling a
+    # device gather for each differently sized (often empty) rank inventory.
+    empty = jax.device_put(np.empty((0,), dtype=np.int32))
     cell_global_ids = storage.entity_global_ids[-1]
-    cell_weights = jnp.asarray(weights, dtype=jnp.float64)
+    cell_weights = jax.device_put(weights)
     owned_rows = tuple(
-        jnp.asarray(owned, dtype=jnp.int32) if index == rank else empty
+        jax.device_put(owned.astype(np.int32)) if index == rank else empty
         for index in range(storage.partition_count)
     )
     halo_rows = tuple(
-        jnp.asarray(ghosts, dtype=jnp.int32) if index == rank else empty
+        jax.device_put(ghosts.astype(np.int32)) if index == rank else empty
         for index in range(storage.partition_count)
     )
-    halo_global_ids = tuple(cell_global_ids[rows] for rows in halo_rows)
+    local_halo_ids = jax.device_put(native[ghosts])
+    empty_ids = jax.device_put(np.empty((0,), dtype=np.int64))
+    halo_global_ids = tuple(
+        local_halo_ids if index == rank else empty_ids
+        for index in range(storage.partition_count)
+    )
     dependencies = np.zeros(
         (storage.partition_count, storage.partition_count), dtype=np.bool_
     )
     dependencies[rank, owner[ghosts]] = True
-    dependencies = jnp.asarray(dependencies, dtype=jnp.bool_)
+    dependencies = jax.device_put(dependencies)
     evidence = MeshPartitionEvidence(
         owner,
         weights,
@@ -1533,6 +1549,21 @@ def _prepare_local_fe_closure_plan(
         local_geometry.periodic_source,
         local_geometry.exact_source,
     )
+    boundary_entities = []
+    for degree, identifiers in enumerate(local_ids):
+        entities = mesh.entity_set(degree)
+        source_ids = np.asarray(entities.entity_ids, dtype=np.int64)
+        order = np.argsort(source_ids, kind="stable")
+        rows = np.searchsorted(source_ids[order], np.asarray(identifiers))
+        if np.any(rows >= source_ids.size) or not np.array_equal(
+            source_ids[order[rows]], np.asarray(identifiers)
+        ):
+            raise ValueError(
+                "distribution.boundary_entities must project scientific entity IDs; got foreign closure IDs"
+            )
+        boundary_entities.append(
+            np.asarray(entities.subset("boundary").mask, dtype=np.bool_)[order[rows]]
+        )
     storage = CellMeshStorage(
         tuple(
             mesh.entity_set(degree).count
@@ -1554,6 +1585,7 @@ def _prepare_local_fe_closure_plan(
         coordinate_owner=coordinate_owners[coordinate_ids],
         global_coordinate_count=geometry.coordinates.shape[0],
         neighborhood_depth=distribution.halo_width,
+        local_physical_boundary_entities=boundary_entities,
     )
     local_mesh = CellMesh(
         points,
@@ -2071,7 +2103,7 @@ def _restart_transport_binding(
     if proof is None:
         content_id = restart_owner.simplex_restart_repack_content_id(repack)
     else:
-        proof.require_receipt(repack)
+        type(proof).require_receipt(proof, repack)
         content_id = proof.content_id
     original = repack.source_result
     before, after = source.part.carrier, target.part.carrier
@@ -2145,7 +2177,32 @@ class _TransitionMessages(StrictModule):
     volume: np.float64
 
 
-def _prepare_logical_transition_source(
+def _require_lineage_routes(
+    carrier: CellMeshingResult,
+    target: MeshDistribution,
+    targets: np.ndarray,
+    routed_source_ids: np.ndarray,
+    lineage: MeshLineage,
+    /,
+) -> None:
+    """Bind every input route, in order, to its retained cell lineage relation.
+
+    Strict ordered equality keeps repeated parents of refined cells and repeated
+    targets of merged cells, while refusing in-range routes to other cells.
+    """
+    record = lineage.entity_lineage(carrier.mesh.topological_dimension)
+    if not np.array_equal(
+        routed_source_ids, np.asarray(record.source_global_ids)
+    ) or not np.array_equal(
+        np.asarray(target.cell_global_ids)[targets],
+        np.asarray(record.target_global_ids),
+    ):
+        raise ValueError(
+            "distribution.transition.routes must bind the retained source and target cell lineage IDs; got different routed identifiers"
+        )
+
+
+def _prepare_logical_transition_inputs(
     source: MeshDistribution,
     target: MeshDistribution,
     sources: np.ndarray,
@@ -2154,7 +2211,7 @@ def _prepare_logical_transition_source(
     source_count: int,
     _source_cell_owners: ArrayLike | None,
     _source_cell_ids: ArrayLike | None,
-) -> _TransitionSource:
+) -> tuple[CellMeshingResult, AbstractCollectiveMeshTheorem, Array, Array]:
     parts = source.partition.part_count
     carrier = source.part.carrier
     if not isinstance(carrier, CellMeshingResult) or carrier.mesh.storage is None:
@@ -2171,7 +2228,7 @@ def _prepare_logical_transition_source(
         raise ValueError(
             "distribution.transition.source.storage must match collective evidence and global cell count; got missing evidence or incompatible storage metadata"
         )
-    evidence.require_passed()
+    type(evidence).require_passed(evidence)
     native_partition_id = canonical_fingerprint(
         {
             "kind": "owner-local-cell-partition",
@@ -2208,6 +2265,29 @@ def _prepare_logical_transition_source(
         raise ValueError(
             "distribution.source_cache must use aligned int64 IDs and int32 owners; got incompatible shape or dtype"
         )
+    return carrier, evidence, source_ids, source_owner
+
+
+def _prepare_logical_transition_source(
+    source: MeshDistribution,
+    target: MeshDistribution,
+    sources: np.ndarray,
+    targets: np.ndarray,
+    lineage: MeshLineage,
+    source_count: int,
+    _source_cell_owners: ArrayLike | None,
+    _source_cell_ids: ArrayLike | None,
+    *,
+    collective: bool = False,
+) -> _TransitionSource:
+    from ..lifecycle._meshing_sources import meshing_source_local_restore_phase
+
+    local_phase = meshing_source_local_restore_phase if collective else nullcontext
+    with local_phase():
+        carrier, evidence, source_ids, source_owner = _prepare_logical_transition_inputs(
+            source, target, sources, targets, lineage, source_count,
+            _source_cell_owners, _source_cell_ids,
+        )
     shapes = {"cell_ids": (source_count,), "cell_owner": (source_count,)}
     actual = logical_array_value_collection_digest(
         {"cell_ids": source_ids, "cell_owner": source_owner},
@@ -2220,37 +2300,37 @@ def _prepare_logical_transition_source(
         },
         logical_shapes=shapes,
     )
-    if actual != expected:
-        raise ValueError(
-            f"distribution.transition.source.logical_arrays must match accepted source IDs and ownership; got digest={actual}, expected={expected}"
-        )
-    # Only transport occurrences are lowered. The scientific source
-    # bank stays globally sharded, irrespective of local block order.
-    sender = np.asarray(
-        jax.device_get(source_owner[jnp.asarray(sources)]), dtype=np.int32
-    )
-    routed_source_ids = np.asarray(
-        jax.device_get(source_ids[jnp.asarray(sources)]), dtype=np.int64
-    )
-    record = lineage.entity_lineage(carrier.mesh.topological_dimension)
-    if not np.array_equal(
-        routed_source_ids, np.asarray(record.source_global_ids)
-    ) or not np.array_equal(
-        np.asarray(target.cell_global_ids)[targets],
-        np.asarray(record.target_global_ids),
-    ):
-        raise ValueError(
-            "distribution.transition.routes must bind the retained source and target cell lineage IDs; got different routed identifiers"
-        )
-    return _TransitionSource(source_ids, sender, routed_source_ids)
+    with local_phase():
+        if actual != expected:
+            raise ValueError(
+                f"distribution.transition.source.logical_arrays must match accepted source IDs and ownership; got digest={actual}, expected={expected}"
+            )
+        routed_bank = jnp.stack((source_ids, source_owner.astype(jnp.int64)), axis=1)
+    # Only transport occurrences are lowered. The scientific source bank stays
+    # globally sharded; this owner's route rows travel in fixed packets.
+    routed = local_logical_rows(routed_bank, sources, collective=collective)
+    with local_phase():
+        sender = routed[:, 1].astype(np.int32)
+        routed_source_ids = routed[:, 0]
+        _require_lineage_routes(carrier, target, targets, routed_source_ids, lineage)
+        return _TransitionSource(source_ids, sender, routed_source_ids)
 
 
 def _prepare_serial_transition_source(
     source: MeshDistribution,
+    target: MeshDistribution,
     sources: np.ndarray,
+    targets: np.ndarray,
+    lineage: MeshLineage,
     _source_cell_owners: ArrayLike | None,
     _source_cell_ids: ArrayLike | None,
 ) -> _TransitionSource:
+    carrier = source.part.carrier
+    if not isinstance(carrier, CellMeshingResult):
+        raise TypeError(
+            "distribution.transition.source.carrier must be a certified cell result bound by lineage; "
+            f"got {type(carrier).__name__}"
+        )
     parts = source.partition.part_count
     source_owner = (
         np.asarray(source.partition.cell_owner, dtype=np.int32)
@@ -2277,6 +2357,7 @@ def _prepare_serial_transition_source(
         )
     sender = source_owner[sources]
     routed_source_ids = source_ids[sources]
+    _require_lineage_routes(carrier, target, targets, routed_source_ids, lineage)
     return _TransitionSource(source_ids, sender, routed_source_ids)
 
 
@@ -2338,8 +2419,11 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
     ``source_rank * target.part_count + target_rank``. Its rectangular traffic
     table has one row per old owner and one column per new owner. Global IDs are
     never renumbered; changed owner counts consume a numerical repack proof.
-    Input routes, lineage, and portable repack records are retained so archive
-    reconstruction repeats the same source and migration validation.
+    Input routes must follow the retained cell lineage relations in order, so
+    repeated refined parents and merged targets stay legitimate while routes to
+    other cells are refused. Input routes, lineage, and portable repack records
+    are retained so archive reconstruction repeats the same source, lineage, and
+    migration validation.
     """
 
     __strict_contract__ = True
@@ -2375,8 +2459,19 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         cls: type[MeshDistributionTransition],
         value: MeshDistributionTransition,
         /,
+        *,
+        collective: bool = False,
+        restart_proof: restart_owner.SimplexRestartRepackProof | None = None,
     ) -> MeshDistributionTransition:
-        """Reconstruct routes and revalidate retained source and restart records."""
+        """Reconstruct routes and revalidate retained source and restart records.
+
+        Common cold replay uses ``collective=True`` on every process, before
+        owner-local admission, and supplies the actual freshly reconstructed
+        restart proof when a repack is present. Local refusals agree before
+        advancing to logical source digests or routed row lookup. The resulting
+        transition is retained for later local consumption; replaying it again
+        on only one process is not a local validation operation.
+        """
         rebuilt = cls(
             value.source,
             value.target,
@@ -2387,8 +2482,13 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
             _source_cell_owners=value.source_cell_owners,
             _source_cell_ids=value.source_cell_global_ids,
             restart_repack=value.restart_repack,
+            restart_proof=restart_proof,
+            collective=collective,
         )
-        validate(rebuilt)
+        from ..lifecycle._meshing_sources import meshing_source_local_restore_phase
+
+        with meshing_source_local_restore_phase() if collective else nullcontext():
+            validate(rebuilt)
         return rebuilt
 
     @checked
@@ -2406,38 +2506,56 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         _source_cell_ids: ArrayLike | None = None,
         restart_repack: restart_owner.SimplexRestartRepack | None = None,
         restart_proof: restart_owner.SimplexRestartRepackProof | None = None,
+        collective: bool = False,
     ) -> None:
-        parts = source.partition.part_count
-        target_parts = target.partition.part_count
-        repack_id = None
-        if restart_repack is None:
-            if restart_proof is not None or target_parts != parts:
+        from ..lifecycle._meshing_sources import meshing_source_local_restore_phase
+
+        local_phase = meshing_source_local_restore_phase if collective else nullcontext
+        # Cold replay supplies a current proof. Never replay a mixed local/global
+        # repack validator inside the local admission phase.
+        with local_phase():
+            parts = source.partition.part_count
+            target_parts = target.partition.part_count
+            if collective and restart_repack is not None and restart_proof is None:
+                raise ValueError(
+                    "distribution.restart_repack collective reconstruction requires a current numerical proof"
+                )
+            if restart_repack is None and (
+                restart_proof is not None or target_parts != parts
+            ):
                 raise ValueError(
                     "distribution.restart_repack must bind changed owner counts; got missing repack or unexpected proof"
                 )
-        else:
-            repack_id = _restart_transport_binding(
-                source, target, restart_repack, restart_proof
+            sources = np.asarray(source_rows, dtype=np.int64)
+            targets = np.asarray(target_rows, dtype=np.int64)
+            source_count = (
+                source.global_cell_count
+                if source.local_scope
+                else source.cell_global_ids.size
             )
-        sources = np.asarray(source_rows, dtype=np.int64)
-        targets = np.asarray(target_rows, dtype=np.int64)
-        source_count = (
-            source.global_cell_count
-            if source.local_scope
-            else source.cell_global_ids.size
-        )
-        target_count = target.cell_global_ids.size
-        if (
-            sources.ndim != 1
-            or targets.shape != sources.shape
-            or np.any((sources < 0) | (sources >= source_count))
-            or np.any((targets < 0) | (targets >= target_count))
-        ):
-            raise ValueError(
-                "distribution.transition.routes must provide paired one-dimensional in-range source and target rows; got incompatible route shape or out-of-range rows"
-            )
-        retained_sources = jnp.asarray(sources, dtype=jnp.int64)
-        retained_targets = jnp.asarray(targets, dtype=jnp.int64)
+            target_count = target.cell_global_ids.size
+            if (
+                sources.ndim != 1
+                or targets.shape != sources.shape
+                or np.any((sources < 0) | (sources >= source_count))
+                or np.any((targets < 0) | (targets >= target_count))
+            ):
+                raise ValueError(
+                    "distribution.transition.routes must provide paired one-dimensional in-range source and target rows; got incompatible route shape or out-of-range rows"
+                )
+            retained_sources = jnp.asarray(sources, dtype=jnp.int64)
+            retained_targets = jnp.asarray(targets, dtype=jnp.int64)
+        repack_id = None
+        if restart_repack is not None:
+            if collective:
+                with local_phase():
+                    repack_id = _restart_transport_binding(
+                        source, target, restart_repack, restart_proof
+                    )
+            else:
+                repack_id = _restart_transport_binding(
+                    source, target, restart_repack, restart_proof
+                )
         if source.local_scope:
             prepared = _prepare_logical_transition_source(
                 source,
@@ -2448,83 +2566,89 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
                 source_count,
                 _source_cell_owners,
                 _source_cell_ids,
+                collective=collective,
             )
         else:
-            prepared = _prepare_serial_transition_source(
-                source,
-                sources,
-                _source_cell_owners,
-                _source_cell_ids,
+            with local_phase():
+                prepared = _prepare_serial_transition_source(
+                    source,
+                    target,
+                    sources,
+                    targets,
+                    lineage,
+                    _source_cell_owners,
+                    _source_cell_ids,
+                )
+        with local_phase():
+            messages = _prepare_transition_messages(
+                source, target, sources, targets, prepared
             )
-        messages = _prepare_transition_messages(
-            source, target, sources, targets, prepared
-        )
-        source_ids = prepared.identifiers
-        sources, targets = messages.sources, messages.targets
-        sender, receiver, slots = messages.sender, messages.receiver, messages.slots
-        pair_counts, offsets = messages.pair_counts, messages.offsets
-        remote, volume = messages.remote, messages.volume
-        self.source = source
-        self.target = target
-        self.source_rows = retained_sources
-        self.target_rows = retained_targets
-        self.source_cell_owners = (
-            None
-            if _source_cell_owners is None
-            else jnp.asarray(_source_cell_owners, dtype=jnp.int32)
-        )
-        self.lineage = lineage
-        self.restart_repack = (
-            None
-            if restart_repack is None
-            else replace(
-                restart_repack,
-                parts=restart_owner.SimplexRestartPlacement(
-                    axis_name=restart_repack.parts.axis_name,
-                    part_count=restart_repack.parts.part_count,
-                    neighbor_pairs=restart_repack.parts.neighbor_pairs,
-                ),
+            source_ids = prepared.identifiers
+            sources, targets = messages.sources, messages.targets
+            sender, receiver, slots = messages.sender, messages.receiver, messages.slots
+            pair_counts, offsets = messages.pair_counts, messages.offsets
+            remote, volume = messages.remote, messages.volume
+            self.source = source
+            self.target = target
+            self.source_rows = retained_sources
+            self.target_rows = retained_targets
+            self.source_cell_owners = (
+                None
+                if _source_cell_owners is None
+                else jnp.asarray(_source_cell_owners, dtype=jnp.int32)
             )
-        )
-        self.source_cell_global_ids = jnp.asarray(source_ids, dtype=jnp.int64)
-        self.source_cell_count = source_count
-        self.send = EdgeRelation(
-            sources, slots, source_size=source_count, target_size=sources.size
-        )
-        self.receive = EdgeRelation(
-            slots, targets, source_size=sources.size, target_size=target_count
-        )
-        self.message_source_ranks = jnp.asarray(sender, dtype=jnp.int32)
-        self.message_target_ranks = jnp.asarray(receiver, dtype=jnp.int32)
-        self.message_offsets = jnp.asarray(offsets, dtype=jnp.int64)
-        self.migration_counts = jnp.asarray(
-            pair_counts.reshape(parts, target_parts), dtype=jnp.int64
-        )
-        self.local_scope = source.local_scope or target.local_scope
-        self.target_defined = jnp.asarray(
-            np.bincount(targets, minlength=target_count) > 0
-        )
-        self.migrated_cells = jnp.asarray(remote.size, dtype=jnp.int64)
-        self.migration_volume = jnp.asarray(volume, dtype=jnp.float64)
-        self.rebalanced = bool(rebalanced)
-        self.lineage_id = lineage.lineage_id
-        self.restart_repack_id = repack_id
-        restart_source = None if restart_repack is None else restart_repack.source_result
-        self.restart_source_result_id = (
-            None if restart_source is None else restart_source.result_id
-        )
-        self.transition_id = canonical_fingerprint(
-            {
-                "kind": "mesh-distribution-transition",
-                "source": source.distribution_id,
-                "target": target.distribution_id,
-                "lineage": lineage.lineage_id,
-                "sources": array_tree_fingerprint(sources),
-                "targets": array_tree_fingerprint(targets),
-                "rebalanced": self.rebalanced,
-                **({} if repack_id is None else {"restart_repack": repack_id}),
-            }
-        )
+            self.lineage = lineage
+            self.restart_repack = (
+                None
+                if restart_repack is None
+                else replace(
+                    restart_repack,
+                    parts=restart_owner.SimplexRestartPlacement(
+                        axis_name=restart_repack.parts.axis_name,
+                        part_count=restart_repack.parts.part_count,
+                        neighbor_pairs=restart_repack.parts.neighbor_pairs,
+                    ),
+                )
+            )
+            self.source_cell_global_ids = jnp.asarray(source_ids, dtype=jnp.int64)
+            self.source_cell_count = source_count
+            self.send = EdgeRelation(
+                sources, slots, source_size=source_count, target_size=sources.size
+            )
+            self.receive = EdgeRelation(
+                slots, targets, source_size=sources.size, target_size=target_count
+            )
+            self.message_source_ranks = jnp.asarray(sender, dtype=jnp.int32)
+            self.message_target_ranks = jnp.asarray(receiver, dtype=jnp.int32)
+            self.message_offsets = jnp.asarray(offsets, dtype=jnp.int64)
+            self.migration_counts = jnp.asarray(
+                pair_counts.reshape(parts, target_parts), dtype=jnp.int64
+            )
+            self.local_scope = source.local_scope or target.local_scope
+            self.target_defined = jnp.asarray(
+                np.bincount(targets, minlength=target_count) > 0
+            )
+            self.migrated_cells = jnp.asarray(remote.size, dtype=jnp.int64)
+            self.migration_volume = jnp.asarray(volume, dtype=jnp.float64)
+            self.rebalanced = bool(rebalanced)
+            self.lineage_id = lineage.lineage_id
+            self.restart_repack_id = repack_id
+            restart_source = None if restart_repack is None else restart_repack.source_result
+            self.restart_source_result_id = (
+                None if restart_source is None else restart_source.result_id
+            )
+            self.transition_id = canonical_fingerprint(
+                {
+                    "kind": "mesh-distribution-transition",
+                    "source": source.distribution_id,
+                    "target": target.distribution_id,
+                    "lineage": lineage.lineage_id,
+                    "sources": array_tree_fingerprint(sources),
+                    "targets": array_tree_fingerprint(targets),
+                    "rebalanced": self.rebalanced,
+                    **({} if repack_id is None else {"restart_repack": repack_id}),
+                }
+            )
 
     def _rank(self, rank: int, parts: int, /) -> int:
         index = operator.index(rank)
@@ -3033,7 +3157,7 @@ def _bisection_part_checks(
 
 
 def _collective_bisection_checks(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     states: AdaptiveSimplexState,
     initial_states: AdaptiveSimplexState,
     initial_exterior: Array,
@@ -3055,15 +3179,16 @@ def _collective_bisection_checks(
             parts.part_count,
             parts.neighbor_pairs,
             parts.axis_name,
+            isinstance(parts, LogicalMigrationParts),
         )[None]
 
-    return jax.shard_map(
-        local,
-        mesh=parts.mesh,
-        in_specs=(spec, spec, spec),
-        out_specs=spec,
-        check_vma=False,
-    )(states, initial_states, initial_exterior)
+    return partition_map(
+            local,
+            parts=parts,
+            in_specs=(spec, spec, spec),
+            out_specs=spec,
+            check_vma=False,
+        )(states, initial_states, initial_exterior)
 
 
 @eqx.filter_jit
@@ -3169,7 +3294,9 @@ class AffineBisectionSourceWitness(StrictModule, NonTrainableState):
             if not bool(
                 jax.device_get(
                     jnp.all(
-                        source_banks["geometry/source_basis/surface"][:count]
+                        source_banks[
+                            f"geometry/source_basis/{scientific_source.premise.block_name}"
+                        ][:count]
                         == jnp.asarray(basis)
                     )
                 )
@@ -3228,7 +3355,12 @@ class AffineBisectionSourceWitness(StrictModule, NonTrainableState):
 
 
 class SimplexNeighborhoodWorkset(StrictModule, NonTrainableState):
-    """Store bounded owner and ghost packets with affine field ancestry."""
+    """Store bounded owner and ghost packets with affine field ancestry.
+
+    ``source_cell_ids`` is each row's complete canonical predecessor-ID list,
+    padded with -1 to the planned collective maximum support width. Its columns
+    are not raw source slots. Raw-cell, halo and vertex capacities are independent.
+    """
 
     cell_ids: Array
     cell_vertices: Array
@@ -3453,7 +3585,7 @@ def _curve_owner_part(
 
 @eqx.filter_jit
 def _partitioned_curve_owners(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     workset: SimplexNeighborhoodWorkset,
     policy: MeshPartitionPolicy,
     /,
@@ -3466,13 +3598,13 @@ def _partitioned_curve_owners(
         fresh, invalid = _curve_owner_part(work, policy, axis)
         return fresh[None], invalid
 
-    return jax.shard_map(
-        local,
-        mesh=parts.mesh,
-        in_specs=(spec,),
-        out_specs=(spec, PartitionSpec()),
-        check_vma=False,
-    )(workset)
+    return partition_map(
+            local,
+            parts=parts,
+            in_specs=(spec,),
+            out_specs=(spec, PartitionSpec()),
+            check_vma=False,
+        )(workset)
 
 
 @eqx.filter_jit
@@ -3526,7 +3658,7 @@ def _proposal_summary_part(
 
 @eqx.filter_jit
 def _partitioned_proposal_summary(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     workset: SimplexNeighborhoodWorkset,
     fresh: Array,
     /,
@@ -3540,13 +3672,13 @@ def _partitioned_proposal_summary(
         work = jax.tree_util.tree_map(lambda value: value[0], block)
         return _proposal_summary_part(work, owners[0], parts.part_count, axis)
 
-    return jax.shard_map(
-        local,
-        mesh=parts.mesh,
-        in_specs=(spec, spec),
-        out_specs=(PartitionSpec(),) * 3,
-        check_vma=False,
-    )(workset, fresh)
+    return partition_map(
+            local,
+            parts=parts,
+            in_specs=(spec, spec),
+            out_specs=(PartitionSpec(),) * 3,
+            check_vma=False,
+        )(workset, fresh)
 
 
 @eqx.filter_jit
@@ -3594,16 +3726,23 @@ def _partitioned_proposal_identity(proposal: PartitionedRebalanceProposal, /) ->
     )
 
 
+@jax.jit
+def _proposal_balance_values(
+    part_weights: Array, invalid: Array, /
+) -> tuple[Array, Array]:
+    """Measure the unchanged balance predicate in one numerical program."""
+    imbalance = jnp.max(part_weights) / jnp.mean(part_weights)
+    measured = jnp.stack(
+        (invalid.astype(jnp.float64), jnp.min(part_weights), imbalance)
+    )
+    return imbalance, measured
+
+
 def _require_proposal_balance(
     part_weights: Array, invalid: Array, policy: MeshPartitionPolicy, /
 ) -> Array:
-    imbalance = jnp.max(part_weights) / jnp.mean(part_weights)
-    measured = np.asarray(
-        jax.device_get(
-            jnp.stack((invalid.astype(jnp.float64), jnp.min(part_weights), imbalance))
-        ),
-        dtype=np.float64,
-    )
+    imbalance, values = _proposal_balance_values(part_weights, invalid)
+    measured = np.asarray(jax.device_get(values), dtype=np.float64)
     if (
         measured[0] != 0
         or measured[1] <= 0.0
@@ -3700,10 +3839,60 @@ def prepare_partitioned_rebalance_proposal(
     )
 
 
+@jax.jit
+def _proposal_replay_difference_values(
+    cell_valid: Array,
+    fresh: Array,
+    mapping: Array,
+    weights: Array,
+    imbalance: Array,
+    saved_fresh: Array,
+    saved_mapping: Array,
+    saved_owners: Array,
+    saved_weights: Array,
+    saved_imbalance: Array,
+    /,
+) -> Array:
+    """Recompute relabeling and every numerical proposal comparison."""
+    owners = jnp.where(cell_valid, mapping[jnp.maximum(fresh, 0)], -1)
+    relabeled_weights = jnp.zeros_like(weights).at[mapping].set(weights)
+    difference = jnp.any(fresh != saved_fresh)
+    difference |= jnp.any(mapping != saved_mapping)
+    difference |= jnp.any(owners != saved_owners)
+    difference |= jnp.any(relabeled_weights != saved_weights)
+    difference |= imbalance != saved_imbalance
+    return difference
+
+
+class _RebalanceGraphReplayView(StrictModule):
+    """Numerical owner CSR operands, without a scientific-ID compilation key."""
+
+    offsets: Array
+    neighbor_ids: Array
+    edge_weights: Array
+    vertex_weights: Array
+    vertex_ids: Array
+    vertex_owners: Array
+    vertex_valid: Array
+    mesh: Mesh = eqx.field(static=True)
+    axis_name: str = eqx.field(static=True)
+
+
 def replay_partitioned_rebalance_proposal(
-    proposal: PartitionedRebalanceProposal, /, *, axis_name: str
+    proposal: PartitionedRebalanceProposal,
+    /,
+    *,
+    axis_name: str,
+    parts: MigrationParts | None = None,
 ) -> None:
-    """Replay the declared curve/graph route, overlap relabeling and balance."""
+    """Replay the declared route, full graph evidence, relabeling and balance.
+
+    Only explicitly supplied live physical owners select physical graph replay.
+    Retained evidence and explicit historical owners keep canonical logical
+    replay, including when historical and physical rank counts happen to match.
+    Execution placement is admitted against the actual workset sharding; neither
+    saved backend labels nor row shapes establish physical owner identity.
+    """
 
     work, policy = proposal.workset, proposal.policy
     _require_rebalance_workset(work, policy)
@@ -3718,6 +3907,23 @@ def replay_partitioned_rebalance_proposal(
     )
     if not axis_name:
         raise ValueError(f"proposal.axis_name must be nonempty; got {axis_name!r}.")
+    if parts is not None:
+        if (
+            not isinstance(parts, (AdaptiveSimplexParts, LogicalMigrationParts))
+            or parts.axis_name != axis_name
+            or parts.part_count != policy.part_count
+        ):
+            raise ValueError(
+                "proposal.parts must bind explicit execution owners with the declared axis and count; got incompatible parts"
+            )
+        placement = NamedSharding(parts.mesh, PartitionSpec(parts.axis_name))
+        if any(
+            not value.sharding.is_equivalent_to(placement, ndim=value.ndim)
+            for value in jax.tree_util.tree_leaves(work)
+        ):
+            raise ValueError(
+                "proposal.parts must match the workset rank-bank sharding; got different execution placement"
+            )
     match policy.kind:
         case MeshPartitionKind.MORTON | MeshPartitionKind.HILBERT:
             if proposal.graph_evidence is not None:
@@ -3733,26 +3939,87 @@ def replay_partitioned_rebalance_proposal(
                     "proposal.graph_evidence must retain an accepted native partition; "
                     f"got evidence={evidence}."
                 )
-            offsets, neighbors, edges, valid = (
-                migration_owner.replay_logical_simplex_graph(
+            vertex_weights, edge_weights = (
+                migration_owner.place_logical_simplex_graph_weights(
                     work,
+                    jnp.ones(work.cell_ids.shape, jnp.int64),
                     jnp.ones(work.cell_vertices.shape, jnp.int64),
-                    axis_name=axis_name,
                 )
             )
-            fresh, _, measured = replay_logical_partition(
-                offsets,
-                neighbors,
-                edges,
-                jnp.ones(work.cell_ids.shape, jnp.int64),
-                work.cell_ids,
-                work.cell_owner,
-                valid,
-                GraphPartitionPlan(
-                    policy.part_count, maximum_imbalance=policy.maximum_imbalance
-                ),
-                axis_name=axis_name,
+            plan = GraphPartitionPlan(
+                policy.part_count, maximum_imbalance=policy.maximum_imbalance
             )
+            if isinstance(parts, AdaptiveSimplexParts):
+                offsets, neighbors, edges, valid = (
+                    migration_owner.replay_ownerlocal_simplex_graph(
+                        parts, work, edge_weights
+                    )
+                )
+                fresh, heavy, measured = execute_ownerlocal_partition(
+                    _RebalanceGraphReplayView(
+                        offsets=offsets,
+                        neighbor_ids=neighbors,
+                        edge_weights=edges,
+                        vertex_weights=vertex_weights,
+                        vertex_ids=work.cell_ids,
+                        vertex_owners=work.cell_owner,
+                        vertex_valid=valid,
+                        mesh=parts.mesh,
+                        axis_name=parts.axis_name,
+                    ),
+                    plan,
+                )
+            else:
+                offsets, neighbors, edges, valid = (
+                    migration_owner.replay_logical_simplex_graph(
+                        work, edge_weights, axis_name=axis_name
+                    )
+                )
+                fresh, heavy, measured = replay_logical_partition(
+                    offsets,
+                    neighbors,
+                    edges,
+                    vertex_weights,
+                    work.cell_ids,
+                    work.cell_owner,
+                    valid,
+                    plan,
+                    axis_name=axis_name,
+                )
+            replayed_evidence = GraphPartitionEvidence.logical(
+                logical_id(
+                    (
+                        offsets,
+                        neighbors,
+                        edges,
+                        vertex_weights,
+                        work.cell_ids,
+                        work.cell_owner,
+                        valid,
+                    )
+                ),
+                work.cell_ids,
+                fresh,
+                measured,
+                heavy,
+                GraphPartitionWork(
+                    GraphPartitionCounters.from_slots(
+                        np.asarray(jax.device_get(measured.counters.slots))
+                    )
+                ),
+                "xla/compiled-local-shard",
+            )
+            if not tree_content_equal(
+                replayed_evidence,
+                evidence,
+                array_equal=lambda left, right: logical_array_value_collection_digest(
+                    {"value": left}
+                )
+                == logical_array_value_collection_digest({"value": right}),
+            ):
+                raise ValueError(
+                    "proposal.graph_evidence must reproduce every measured native graph statistic and counter; got changed evidence"
+                )
             fresh = jnp.where(work.cell_valid, fresh, -1).astype(jnp.int32)
             route_invalid = measured.resource_status
         case MeshPartitionKind.METIS | MeshPartitionKind.PROVIDER:
@@ -3770,13 +4037,18 @@ def replay_partitioned_rebalance_proposal(
         _overlap_rank_mapping(np.asarray(jax.device_get(overlap), dtype=np.float64)),
         dtype=jnp.int32,
     )
-    owners = jnp.where(work.cell_valid, mapping[jnp.maximum(fresh, 0)], -1)
-    relabeled_weights = jnp.zeros_like(weights).at[mapping].set(weights)
-    difference = jnp.any(fresh != proposal.fresh_owners)
-    difference |= jnp.any(mapping != proposal.rank_mapping)
-    difference |= jnp.any(owners != proposal.requested_target_owners)
-    difference |= jnp.any(relabeled_weights != proposal.part_weights)
-    difference |= imbalance != proposal.imbalance
+    difference = _proposal_replay_difference_values(
+        work.cell_valid,
+        fresh,
+        mapping,
+        weights,
+        imbalance,
+        proposal.fresh_owners,
+        proposal.rank_mapping,
+        proposal.requested_target_owners,
+        proposal.part_weights,
+        proposal.imbalance,
+    )
     if bool(jax.device_get(difference)) or (
         _partitioned_proposal_identity(proposal) != proposal.proposal_id
     ):
@@ -3785,17 +4057,13 @@ def replay_partitioned_rebalance_proposal(
         )
 
 
-def simplex_neighborhood_seed(
+def _simplex_predecessor_support(
     state: AdaptiveSimplexState,
     initial: AdaptiveSimplexState,
-    initial_exterior: Array,
-    rank: Array,
-    capacity: int,
     /,
-) -> SimplexNeighborhoodWorkset:
-    """Lower accepted midpoint DAGs into compact per-cell affine witnesses."""
-    cells, width = state.mesh.cells.shape
-    vertices = state.mesh.vertex_ids.shape[0]
+) -> tuple[Array, Array, Array]:
+    """Compute exact ancestry labels and support counts using only raw-slot arrays."""
+    cells = state.mesh.cells.shape[0]
     roots = jnp.full((cells,), -1, dtype=jnp.int32)
 
     def ancestor(slot: Array, values: Array) -> Array:
@@ -3820,16 +4088,129 @@ def simplex_neighborhood_seed(
         return values.at[slot].set(nearest)
 
     active_ancestors = jax.lax.fori_loop(0, cells, target_ancestor, active_ancestors)
-    lanes = jnp.arange(cells, dtype=jnp.int32)
-    predecessor_support = (
-        (
-            (roots[:, None] == lanes[None, :])
-            | ((roots[:, None] < 0) & (lanes[:, None] == active_ancestors[None, :]))
-        )
-        & initial.mesh.cell_active[None, :]
-        & state.mesh.cell_active[:, None]
+    targets = jnp.maximum(active_ancestors, 0)
+    coarsened_source = (
+        initial.mesh.cell_active
+        & (active_ancestors >= 0)
+        & state.mesh.cell_active[targets]
+        & (roots[targets] < 0)
     )
-    source_cells = jnp.where(predecessor_support, initial.mesh.cell_ids[None, :], -1)
+    coarsened_counts = (
+        jnp.zeros((cells,), dtype=jnp.int32)
+        .at[targets]
+        .add(coarsened_source.astype(jnp.int32))
+    )
+    counts = jnp.where(
+        roots >= 0,
+        initial.mesh.cell_active[jnp.maximum(roots, 0)].astype(jnp.int32),
+        coarsened_counts,
+    )
+    counts = jnp.where(state.mesh.cell_active, counts, 0)
+    return roots, active_ancestors, counts
+
+
+def simplex_neighborhood_seed(
+    state: AdaptiveSimplexState,
+    initial: AdaptiveSimplexState,
+    initial_exterior: Array,
+    rank: Array,
+    capacity: int,
+    /,
+    *,
+    source_width: int,
+) -> SimplexNeighborhoodWorkset:
+    """Lower midpoint DAGs with complete canonical predecessor-ID row lists.
+
+    ``source_width`` is the explicitly prepared collective maximum support, not
+    a raw-slot column extent. An undersized plan refuses through capacity status;
+    selected IDs (including repeated or malformed IDs) are never filtered.
+    """
+    width = operator.index(source_width)
+    if isinstance(source_width, bool) or width <= 0:
+        raise ValueError(
+            "distribution.neighborhood_seed.source_width must be a positive prepared support width; got an invalid width"
+        )
+    return _simplex_neighborhood_seed(
+        state,
+        initial,
+        initial_exterior,
+        rank,
+        capacity,
+        _simplex_predecessor_support(state, initial),
+        width,
+    )
+
+
+def _simplex_predecessor_ids(
+    state: AdaptiveSimplexState,
+    initial: AdaptiveSimplexState,
+    support: tuple[Array, Array, Array],
+    source_width: int,
+    /,
+) -> Array:
+    """Pack complete source-slot multiplicity without interpreting ID values."""
+    cells = state.mesh.cells.shape[0]
+    roots, active_ancestors, support_counts = support
+    refined = state.mesh.cell_active & (roots >= 0)
+    refined &= initial.mesh.cell_active[jnp.maximum(roots, 0)]
+    source_cells = jnp.full((cells, source_width), -1, dtype=jnp.int64)
+    source_cells = source_cells.at[:, 0].set(
+        jnp.where(refined, initial.mesh.cell_ids[jnp.maximum(roots, 0)], -1)
+    )
+
+    def append_source(
+        slot: Array, carry: tuple[Array, Array]
+    ) -> tuple[Array, Array]:
+        values, filled = carry
+        target = active_ancestors[slot]
+        safe_target = jnp.maximum(target, 0)
+        selected = (
+            initial.mesh.cell_active[slot]
+            & (target >= 0)
+            & state.mesh.cell_active[safe_target]
+            & (roots[safe_target] < 0)
+        )
+
+        def append(previous: tuple[Array, Array]) -> tuple[Array, Array]:
+            ids, counts = previous
+            # Out-of-plan writes occur only on a refused result: callers must
+            # compare the complete support_counts against the explicit width.
+            ids = ids.at[target, counts[target]].set(
+                initial.mesh.cell_ids[slot], mode="drop"
+            )
+            return ids, counts.at[target].add(1)
+
+        return jax.lax.cond(selected, append, lambda previous: previous, carry)
+
+    source_cells, _ = jax.lax.fori_loop(
+        0,
+        cells,
+        append_source,
+        (source_cells, jnp.zeros((cells,), dtype=jnp.int32)),
+    )
+    selected_sources = jnp.arange(source_width)[None, :] < support_counts[:, None]
+    source_order = jnp.argsort(
+        jnp.where(selected_sources, source_cells, jnp.iinfo(jnp.int64).max),
+        axis=1,
+        stable=True,
+    )
+    return jnp.take_along_axis(source_cells, source_order, axis=1)
+
+
+def _simplex_neighborhood_seed(
+    state: AdaptiveSimplexState,
+    initial: AdaptiveSimplexState,
+    initial_exterior: Array,
+    rank: Array,
+    capacity: int,
+    support: tuple[Array, Array, Array],
+    source_width: int,
+    /,
+) -> SimplexNeighborhoodWorkset:
+    cells, width = state.mesh.cells.shape
+    vertices = state.mesh.vertex_ids.shape[0]
+    roots, _, support_counts = support
+    source_cells = _simplex_predecessor_ids(state, initial, support, source_width)
     weights = jnp.zeros((cells, width, width), dtype=jnp.float64)
     source_ids = jnp.full((cells, width, width), -1, dtype=jnp.int64)
     vertex_lanes = jnp.arange(vertices, dtype=jnp.int32)
@@ -3901,7 +4282,7 @@ def simplex_neighborhood_seed(
     ancestry_valid = jnp.all(
         ~state.mesh.cell_active
         | (
-            jnp.any(predecessor_support, axis=1)
+            (support_counts > 0)
             & jnp.all(jnp.sum(weights, axis=2) == 1.0, axis=1)
             & (~coarsened | jnp.all(supported_vertices[state.mesh.cells], axis=1))
         )
@@ -3937,7 +4318,7 @@ def simplex_neighborhood_seed(
         gather(source_ids),
         gather(weights),
         jnp.where(
-            active_count > capacity,
+            (active_count > capacity) | jnp.any(support_counts > source_width),
             int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED),
             0,
         ).astype(jnp.int32)
@@ -4034,7 +4415,7 @@ def _merge_neighborhood_packets(
 
 
 def _expand_local_neighborhood(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     work: SimplexNeighborhoodWorkset,
     halo_width: int,
     vertex_capacity: int,
@@ -4050,10 +4431,21 @@ def _expand_local_neighborhood(
         frontier = neighborhood_facet_keys(previous)
         current = previous
         for source, target in parts.neighbor_pairs:
+            logical = isinstance(parts, LogicalMigrationParts)
+            permutation = _proof_packet_permutation(
+                source, target, parts.part_count, logical
+            )
             packet = jax.tree_util.tree_map(
-                lambda value: jax.lax.ppermute(value, axis, ((source, target),)),
+                lambda value: jax.lax.ppermute(value, axis, permutation),
                 previous,
             )
+            if logical:
+                # vmap needs a full permutation. Restore the physical partial
+                # ppermute's zero lanes too, including unused packet padding.
+                packet = jax.tree.map(
+                    lambda value: jnp.where(rank == target, value, jnp.zeros_like(value)),
+                    packet,
+                )
             packet = SimplexNeighborhoodWorkset(
                 packet.cell_ids,
                 packet.cell_vertices,
@@ -4106,14 +4498,52 @@ def _expand_local_neighborhood(
     )
 
 
+@eqx.filter_jit
+def _prepare_partitioned_simplex_predecessors(
+    parts: MigrationParts,
+    states: AdaptiveSimplexState,
+    initial_states: AdaptiveSimplexState,
+    /,
+) -> tuple[tuple[Array, Array, Array], Array]:
+    """Bound the packet width by the actual collective complete row support.
+
+    All labels and counts remain numerical device operands. Only the replicated
+    scalar maximum crosses to the host before the static packet allocation.
+    Preparation needs linear raw-slot storage, without a pairwise support bank.
+    """
+    spec = PartitionSpec(parts.axis_name)
+
+    def local(
+        state_block: AdaptiveSimplexState,
+        initial_block: AdaptiveSimplexState,
+    ) -> tuple[tuple[Array, Array, Array], Array]:
+        state = jax.tree_util.tree_map(lambda value: value[0], state_block)
+        initial = jax.tree_util.tree_map(lambda value: value[0], initial_block)
+        support = _simplex_predecessor_support(state, initial)
+        maximum = jax.lax.pmax(
+            jnp.maximum(jnp.max(support[2]), 1), parts.axis_name
+        )
+        return (support[0][None], support[1][None], support[2][None]), maximum
+
+    return partition_map(
+        local,
+        parts=parts,
+        in_specs=(spec, spec),
+        out_specs=(spec, PartitionSpec()),
+        check_vma=False,
+    )(states, initial_states)
+
+
 def _expand_simplex_neighborhood(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     states: AdaptiveSimplexState,
     initial_states: AdaptiveSimplexState,
     initial_exterior: Array,
     halo_width: int,
     cell_capacity: int,
     vertex_capacity: int,
+    support: tuple[Array, Array, Array],
+    source_width: int,
     /,
 ) -> SimplexNeighborhoodWorkset:
     axis = parts.axis_name
@@ -4123,31 +4553,38 @@ def _expand_simplex_neighborhood(
         state_block: AdaptiveSimplexState,
         initial_block: AdaptiveSimplexState,
         exterior_block: Array,
+        support_block: tuple[Array, Array, Array],
     ) -> SimplexNeighborhoodWorkset:
         state = jax.tree_util.tree_map(lambda value: value[0], state_block)
         initial = jax.tree_util.tree_map(lambda value: value[0], initial_block)
         rank = jax.lax.axis_index(axis)
-        work = simplex_neighborhood_seed(
-            state, initial, exterior_block[0], rank, cell_capacity
+        work = _simplex_neighborhood_seed(
+            state,
+            initial,
+            exterior_block[0],
+            rank,
+            cell_capacity,
+            (support_block[0][0], support_block[1][0], support_block[2][0]),
+            source_width,
         )
 
         work = _expand_local_neighborhood(parts, work, halo_width, vertex_capacity)
         return jax.tree_util.tree_map(lambda value: value[None], work)
 
-    return jax.shard_map(
-        local,
-        mesh=parts.mesh,
-        in_specs=(spec, spec, spec),
-        out_specs=spec,
-        check_vma=False,
-    )(states, initial_states, initial_exterior)
+    return partition_map(
+            local,
+            parts=parts,
+            in_specs=(spec, spec, spec, spec),
+            out_specs=spec,
+            check_vma=False,
+        )(states, initial_states, initial_exterior, support)
 
 
 _compiled_neighborhood_expansion = eqx.filter_jit(_expand_simplex_neighborhood)
 
 
 def _expand_existing_simplex_neighborhood(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     workset: SimplexNeighborhoodWorkset,
     halo_width: int,
     vertex_capacity: int,
@@ -4160,9 +4597,13 @@ def _expand_existing_simplex_neighborhood(
         work = _expand_local_neighborhood(parts, work, halo_width, vertex_capacity)
         return jax.tree_util.tree_map(lambda value: value[None], work)
 
-    return jax.shard_map(
-        local, mesh=parts.mesh, in_specs=(spec,), out_specs=spec, check_vma=False
-    )(workset)
+    return partition_map(
+            local,
+            parts=parts,
+            in_specs=(spec,),
+            out_specs=spec,
+            check_vma=False,
+        )(workset)
 
 
 _compiled_existing_neighborhood_expansion = eqx.filter_jit(
@@ -4171,7 +4612,7 @@ _compiled_existing_neighborhood_expansion = eqx.filter_jit(
 
 
 def expand_simplex_neighborhood_workset(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     workset: SimplexNeighborhoodWorkset,
     /,
     *,
@@ -4197,7 +4638,7 @@ def expand_simplex_neighborhood_workset(
 
 
 def expand_partitioned_simplex_neighborhood(
-    parts: AdaptiveSimplexParts,
+    parts: MigrationParts,
     states: AdaptiveSimplexState,
     initial_states: AdaptiveSimplexState,
     initial_exterior: Array,
@@ -4207,7 +4648,12 @@ def expand_partitioned_simplex_neighborhood(
     cell_capacity: int,
     vertex_capacity: int,
 ) -> SimplexNeighborhoodWorkset:
-    """Expand neighboring cell residency with bounded packets and collective refusal."""
+    """Prepare exact collective predecessor width, then expand bounded packets.
+
+    Raw-cell, halo and vertex capacities retain their requested values. The
+    predecessor dimension alone follows actual support; no helper quota or
+    numerical host bank participates in its preparation.
+    """
     width = operator.index(halo_width)
     cells = operator.index(cell_capacity)
     vertices = operator.index(vertex_capacity)
@@ -4227,8 +4673,20 @@ def expand_partitioned_simplex_neighborhood(
         raise ValueError(
             "distribution.neighborhood_expansion must bind matching source and current states with bool exterior flags and positive capacities; got incompatible arrays or capacities"
         )
+    support, maximum = _prepare_partitioned_simplex_predecessors(
+        parts, states, initial_states
+    )
+    source_width = int(jax.device_get(maximum))
     return _compiled_neighborhood_expansion(
-        parts, states, initial_states, initial_exterior, width, cells, vertices
+        parts,
+        states,
+        initial_states,
+        initial_exterior,
+        width,
+        cells,
+        vertices,
+        support,
+        source_width,
     )
 
 
@@ -4264,6 +4722,41 @@ def _partition_summary_values(
         dtype=jnp.int64,
     )
     return weights, edge_cut, halo_replicas
+
+
+@eqx.filter_jit
+def _restart_graph_weight_values(
+    work: SimplexNeighborhoodWorkset,
+    vertex_weights: Array,
+    proposed_owners: Array,
+    target_ids: Array,
+    target_owners: Array,
+    cell_count: int,
+    part_count: int,
+) -> tuple[Array, Array, Array, Array]:
+    """Bind authored graph costs to the exact published scientific cell IDs."""
+    owned = work.cell_valid & (
+        work.cell_owner == jnp.arange(work.cell_ids.shape[0], dtype=jnp.int32)[:, None]
+    )
+    ids = work.cell_ids.reshape(-1)
+    present = owned.reshape(-1)
+    order = jnp.lexsort((ids, ~present))
+    present = present[order]
+    keys = jnp.where(present, ids[order], jnp.iinfo(jnp.int64).max)
+    weights = jnp.where(present, vertex_weights.reshape(-1)[order], 0).astype(jnp.float64)
+    owners = proposed_owners.reshape(-1)[order]
+    positions = jnp.minimum(jnp.searchsorted(keys, target_ids), keys.size - 1)
+    active = jnp.arange(target_ids.size) < cell_count
+    valid = (jnp.sum(present) == cell_count) & jnp.all(
+        ~active | (present[positions] & (keys[positions] == target_ids) & (owners[positions] == target_owners))
+    )
+    valid &= jnp.all(
+        ~present | (jnp.isfinite(weights) & (weights > 0) & (owners >= 0) & (owners < part_count))
+    )
+    part_weights = jnp.bincount(
+        jnp.where(present, owners, 0), weights=weights, length=part_count,
+    )
+    return keys, weights, part_weights, valid
 
 
 def _owner_local_partition_summary(mesh: CellMesh, /) -> tuple[Array, Array, Array]:
@@ -4339,20 +4832,42 @@ def prepare_owner_local_distribution_transition(
             raise ValueError(
                 "distribution_migration.proposal must bind the declared policy; got mismatched evidence"
             )
+        original_distribution = migration.source.adaptation.policy.distribution
+        if (
+            original_distribution is None
+            or original_distribution.distribution_id != source.distribution_id
+            or not isinstance(source.part.carrier, CellMeshingResult)
+            or migration.source.adaptation.source.result_id
+            != source.part.carrier.result_id
+        ):
+            raise ValueError(
+                "distribution_migration.source must bind the actual predecessor and its owning distribution; got foreign source evidence"
+            )
         if not bool(jax.device_get(jnp.all(migration.transport_evidence.accepted))):
             raise ValueError(
                 "distribution_migration.transport must be collectively accepted; got rejection"
             )
     if (
         (restart_repack is None and policy.part_count != source.partition.part_count)
-        or (restart_repack is None and policy.kind is not source.evidence.kind)
+        or (
+            restart_repack is None
+            and migration is None
+            and policy.kind is not source.evidence.kind
+        )
         or policy.part_count != storage.partition_count
         or policy.halo_width > storage.neighborhood_depth
     ):
         raise ValueError(
             "distribution.retained_ownership must preserve the partition algorithm and satisfy requested owner count and neighborhood; got incompatible policy without validated migration"
         )
+    graph = None
     if restart_repack is not None:
+        if restart_proof is None:
+            restart_owner.validate_simplex_restart_repack(
+                restart_repack, restart_repack.requested_target_owners
+            )
+        else:
+            type(restart_proof).require_receipt(restart_proof, restart_repack)
         graph = restart_repack.graph_proposal
         executed = (
             MeshPartitionKind.PROVIDER if graph is None else MeshPartitionKind.GRAPH
@@ -4364,12 +4879,29 @@ def prepare_owner_local_distribution_transition(
                 "distribution.restart_policy must identify the validated proposal route and graph imbalance plan; got incompatible partition kind or graph plan"
             )
     summary = _owner_local_partition_summary(mesh)
+    local_weights = None
+    if graph is not None:
+        logical = dict(storage.logical_arrays)
+        keys, weights, part_weights, valid = _restart_graph_weight_values(
+            graph.workset, graph.vertex_weights, graph.parts,
+            logical["cell_global_ids"], logical["cell_owners"],
+            storage.global_entity_counts[-1], storage.partition_count,
+        )
+        if not bool(jax.device_get(valid)):
+            raise ValueError("distribution.restart_graph weights must bind every published cell and its accepted solver owner")
+        local_weights, present = local_logical_lookup(
+            keys, weights, storage.entity_global_ids[-1],
+        )
+        if not np.all(present):
+            raise ValueError("distribution.restart_graph weights must cover every resident cell")
+        summary = (part_weights, summary[1], summary[2])
     target = MeshDistribution(
         target_part,
         partition_owner.CellPartition(
             storage.entity_owner[-1], storage.partition_count, storage=storage
         ),
         halo_width=policy.halo_width,
+        cell_weights=local_weights,
         partition_kind=policy.kind,
         partition_provenance=(
             f"collective-rebalanced:{policy.kind.value}:{proposal.proposal_id}"

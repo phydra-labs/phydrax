@@ -17,6 +17,7 @@ from tools.meshing_qualification._runtime import (
     _runtime_identity,
     qualification_failure,
     StageLedger,
+    StageMeasurement,
 )
 from tools.meshing_qualification.scenarios.distribution import (
     _distribution_cells,
@@ -50,13 +51,13 @@ class _OmegaHRequest(phx.StrictModule):
     areas: np.ndarray
     density: np.ndarray
     gradient: np.ndarray
-    certify_stage: dict[str, float]
+    certify_stage: StageMeasurement
 
 
 @final
 class _OmegaHExecution(phx.StrictModule):
     result: phx.meshing.OmegaHAdaptationResult
-    adapt_stage: dict[str, float]
+    adapt_stage: StageMeasurement
 
 
 class _OmegaHPartitionRecord(TypedDict):

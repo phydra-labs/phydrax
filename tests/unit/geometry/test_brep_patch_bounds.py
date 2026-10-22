@@ -505,6 +505,25 @@ def test_host_native_root_source_propagates_its_convergence_refusal() -> None:
         curve_evaluate_host(curve, np.asarray((0.25,), dtype=np.float64))
 
 
+def test_host_native_root_chunks_match_rowwise_execution() -> None:
+    curve = _SquareRootCurve(
+        plan=VectorLocalRootPlan(
+            1,
+            maximum_steps=16,
+            tolerance=1.0e-13,
+            plan_id="brep-host-square-root-chunks",
+        )
+    )
+    parameters = np.linspace(0.0, 1.0, 131, dtype=np.float64)[:, None]
+    prepared = prepare_curve_host(curve, with_derivative=True, batch_capacity=131)
+    batched = prepared.evaluate_host_points(parameters)
+    assert batched.shape == (131, 3, 2)
+    rowwise = np.concatenate(
+        [prepared.evaluate_host_points(parameters[row : row + 1]) for row in range(131)]
+    )
+    np.testing.assert_array_equal(batched, rowwise)
+
+
 def test_host_line_coordinates_preserve_closed_endpoint_values() -> None:
     curve = LineCurve((0, 0, 0), (1, 2, 3))
     parameters = np.asarray((-0.5, 0, 1, 2), dtype=np.float64)

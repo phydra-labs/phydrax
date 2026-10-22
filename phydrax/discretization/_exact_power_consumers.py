@@ -13,9 +13,10 @@ from phydrax.discretization._polygon_types import PolyhedralFaceTriangulation
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..geometry._exact_polyhedral_geometry import (
-    determinant3,
     exact_vertices,
+    star_determinant,
     star_tetrahedra,
+    Tetrahedron,
     triangulate_loop,
     triangulation_bounds,
 )
@@ -80,6 +81,19 @@ def exact_power_finite_volume_preparation_bounds(
     return work, memory, queries
 
 
+def _positive_star_volume(
+    tet: Tetrahedron, /, *, budget: CoordinateEnclosureBudget
+) -> Fraction:
+    """Return one star tetrahedron volume after its positivity proof."""
+    determinant = star_determinant(tet, budget=budget)
+    if determinant <= 0:
+        raise ValueError(
+            "polyhedral.cell.star must contain positive-volume tetrahedra; got nonpositive determinant"
+        )
+    budget.reserve(1)
+    return determinant / 6
+
+
 @checked
 def exact_power_cell_measures(
     mesh: CellMesh,
@@ -97,12 +111,17 @@ def exact_power_cell_measures(
             "exact_power_cell_measures.connectivity must be polyhedral; got another connectivity kind"
         )
     face_sizes = np.diff(np.asarray(connectivity.face_vertex_offsets))
-    ledger.reserve(
+    # The cubic face and star bound is an admission; the star sweep and its
+    # single positivity/integration determinants charge completed operations.
+    ledger.admit_work_bound(
         sum(int(size) ** 3 for size in face_sizes)
         + 40 * connectivity.cell_face_values.size
     )
     stars = star_tetrahedra(
-        mesh, exact_vertices(mesh, geometry, budget=budget), budget=budget
+        mesh,
+        exact_vertices(mesh, geometry, budget=budget),
+        require_positive=False,
+        budget=budget,
     )
     if sum(len(star) * 40 for star in stars) > maximum_work:
         raise ValueError(
@@ -110,20 +129,7 @@ def exact_power_cell_measures(
         )
     integrals = tuple(
         sum(
-            (
-                determinant3(
-                    *(
-                        tuple(
-                            value - base
-                            for value, base in zip(point, tet[0], strict=True)
-                        )
-                        for point in tet[1:]
-                    ),
-                    budget=budget,
-                )
-                / 6
-                for tet in star
-            ),
+            (_positive_star_volume(tet, budget=budget) for tet in star),
             Fraction(0),
         )
         for star in stars
@@ -251,7 +257,7 @@ def exact_power_finite_volume_geometry(
         maximum_entries=maximum_entries,
         budget=budget,
     )
-    stars = star_tetrahedra(mesh, points, budget=budget)
+    stars = star_tetrahedra(mesh, points, require_positive=False, budget=budget)
     face_capacity = worksets.face_vertices.shape[1] - 2
     cell_capacity = max(len(star) for star in stars)
     retained_entries = 5 * (len(stars) * cell_capacity + c.face_count * face_capacity)
@@ -268,19 +274,7 @@ def exact_power_finite_volume_geometry(
     for cell, star in enumerate(stars):
         volume, moment = Fraction(0), [Fraction(0)] * 3
         for slot, tet in enumerate(star):
-            measure = (
-                determinant3(
-                    *(
-                        tuple(
-                            value - base
-                            for value, base in zip(point, tet[0], strict=True)
-                        )
-                        for point in tet[1:]
-                    ),
-                    budget=budget,
-                )
-                / 6
-            )
+            measure = _positive_star_volume(tet, budget=budget)
             center = tuple(
                 sum((point[axis] for point in tet), Fraction(0)) / 4 for axis in range(3)
             )

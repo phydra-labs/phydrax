@@ -1,6 +1,7 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
+#include <array>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -488,6 +489,70 @@ void test_insertion_refusal_preserves_topology() {
   }
 }
 
+// Skilling's per-bit transpose algorithm with per-bit interleave: the
+// reference the word-parallel keys must reproduce bit for bit.
+std::uint64_t transpose_hilbert_key(std::uint32_t* x, int dimension, int bits) {
+  const std::uint32_t top = std::uint32_t{1} << (bits - 1);
+  for (std::uint32_t q = top; q > 1; q >>= 1) {
+    const std::uint32_t p = q - 1;
+    for (int i = 0; i < dimension; ++i) {
+      if (x[i] & q) {
+        x[0] ^= p;
+      } else {
+        const std::uint32_t t = (x[0] ^ x[i]) & p;
+        x[0] ^= t;
+        x[i] ^= t;
+      }
+    }
+  }
+  for (int i = 1; i < dimension; ++i) x[i] ^= x[i - 1];
+  std::uint32_t t = 0;
+  for (std::uint32_t q = top; q > 1; q >>= 1) {
+    if (x[dimension - 1] & q) t ^= q - 1;
+  }
+  for (int i = 0; i < dimension; ++i) x[i] ^= t;
+  std::uint64_t key = 0;
+  for (int bit = bits - 1; bit >= 0; --bit) {
+    for (int i = 0; i < dimension; ++i) key = (key << 1) | ((x[i] >> bit) & 1U);
+  }
+  return key;
+}
+
+void test_hilbert_key_matches_transpose() {
+  std::uint64_t state = 77;
+  const std::uint32_t edges2[] = {0U, 1U, 2U, 3U, (1U << 30) - 1U, 1U << 30, (1U << 31) - 2U,
+                                  (1U << 31) - 1U};
+  std::vector<std::array<std::uint32_t, 3>> samples;
+  for (std::uint32_t a : edges2) {
+    for (std::uint32_t b : edges2) samples.push_back({a, b, 0U});
+  }
+  for (int k = 0; k < 20000; ++k) {
+    state = splitmix64(state);
+    const int width = 1 + static_cast<int>(state % 31U);
+    state = splitmix64(state);
+    const std::uint32_t a = static_cast<std::uint32_t>(state) & ((1U << width) - 1U);
+    state = splitmix64(state);
+    const std::uint32_t b = static_cast<std::uint32_t>(state >> 33);
+    state = splitmix64(state);
+    samples.push_back({a, b, static_cast<std::uint32_t>(state >> 43)});
+  }
+  std::uint64_t charges2 = 0;
+  std::uint64_t charges3 = 0;
+  for (const auto& sample : samples) {
+    std::uint32_t fast2[3] = {sample[0], sample[1], 0U};
+    std::uint32_t slow2[3] = {sample[0], sample[1], 0U};
+    PHX_CHECK(hilbert_key(fast2, 2, 31, [&] { ++charges2; }) == transpose_hilbert_key(slow2, 2, 31));
+    const std::uint32_t mask21 = (1U << 21) - 1U;
+    std::uint32_t fast3[3] = {sample[0] & mask21, sample[1] & mask21, sample[2] & mask21};
+    std::uint32_t slow3[3] = {fast3[0], fast3[1], fast3[2]};
+    PHX_CHECK(hilbert_key(fast3, 3, 21, [&] { ++charges3; }) == transpose_hilbert_key(slow3, 3, 21));
+  }
+  // One charge per executed word stage: 17 per 2D key (previously 155 per-bit
+  // steps) and 101 per 3D key (previously 148).
+  PHX_CHECK(charges2 == 17 * samples.size());
+  PHX_CHECK(charges3 == 101 * samples.size());
+}
+
 }  // namespace
 
 int main() {
@@ -504,5 +569,6 @@ int main() {
   test_regular_redundant();
   test_regular_random();
   test_performance();
+  test_hilbert_key_matches_transpose();
   return phx::mc::test::finish("test_delaunay2d");
 }

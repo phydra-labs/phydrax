@@ -23,6 +23,7 @@ from . import (
     _layer_core_resources as resources_owner,
 )
 from ._contracts import MeshingProviderInfo, VolumeMeshingSpec
+from ._family_execution import family_route_refusals
 from ._measurements import NativeMeshingPhaseRecorder
 from ._native_preparation import NativePreparedOwner
 from ._result import CellMeshingResult, MeshingComplianceReport
@@ -108,21 +109,23 @@ def prepare_layer_route(
     audit consume this same policy.
     """
     limits = specification.limits
-    work = resources_owner.LayerCoreSourceWork(
-        limits.maximum_work_units,
-        source_work_units,
-        ticket=resources.enter_context(
+    host_upper = resources_owner.layer_source_work_upper(source, specification)
+    with family_route_refusals(limits, MeshingStageKind.SOURCE_INSPECTION.value):
+        ticket = resources.enter_context(
             scope.batch(
                 min(limits.maximum_work_units, scope.remaining().remaining_work_units)
                 if specification.periodic_constraints
-                else resources_owner.layer_source_work_upper(source, specification),
+                else host_upper,
                 bytes_upper=min(
                     limits.maximum_scratch_bytes,
                     scope.remaining().remaining_managed_bytes,
                 ),
             )
-        ),
+        )
+    work = resources_owner.LayerCoreSourceWork(
+        limits.maximum_work_units, source_work_units, ticket=ticket
     )
+    work.admit_storage(resources_owner.HOST_RECORD_BYTES * host_upper)
     budget = CoordinateEnclosureBudget(
         work.ticket,
         maximum_work_units=limits.maximum_work_units,
@@ -147,9 +150,15 @@ def publish_layer_route(
     workspace: NativeHostStorageWorkspace,
     /,
     *,
+    budget: CoordinateEnclosureBudget,
     record_phase: NativeMeshingPhaseRecorder | None = None,
 ) -> CellMeshingResult:
-    """Publish the completed carrier and preserve the final deadline checkpoint."""
+    """Publish the completed carrier and preserve the final deadline checkpoint.
+
+    ``budget`` is the route's coordinate ledger over a settled request ticket.
+    Its cache bytes stay in the request's retained storage, opened by the route
+    or by publication, and every audit/certificate phase draws from ``scope``.
+    """
     result = publish_native_result(
         publication.mesh,
         coordinate_contract,
@@ -160,7 +169,7 @@ def publish_layer_route(
         publication.certification,
         policy=preparation.policy,
         organization=publication.organization,
-        execution=NativePublicationExecution(scope, workspace, record_phase),
+        execution=NativePublicationExecution(scope, workspace, record_phase, budget),
         geometry=publication.geometry,
     )
     check_deadline(

@@ -1,13 +1,20 @@
 """Certified CAD tolerance evidence and boundary fault-injection contracts."""
 
+import json
 from dataclasses import replace
 from fractions import Fraction
+from typing import Any
 
 import numpy as np
 import pytest
 
 from phydrax._external_resource import ResourceLimits
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.geometry._interval_enclosure import prepare_interval_function
 from phydrax.geometry.brep import (
+    _correspondence as correspondence_owner,
+    _curve_approximation_bounds as approximation_owner,
+    _model as model_owner,
     BRepEntityId,
     BRepGapEvidence,
     BRepModel,
@@ -15,6 +22,12 @@ from phydrax.geometry.brep import (
     BRepValidationError,
     certify_brep_gaps,
 )
+from phydrax.geometry.brep._coordinate_request import coordinate_source_request
+from phydrax.geometry.brep._correspondence import RationalCurveSurfaceJets
+from phydrax.geometry.brep._intersection_curve import curve_pieces_for_interval
+from phydrax.geometry.brep._model import _certify_edge_face_gap_bounds
+from phydrax.geometry.brep._patches import BSplineCurve, CylinderPatch, LineCurve
+from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
 from phydrax.interchange import (
     _cad,
     build_cad_import_tolerance_evidence,
@@ -85,7 +98,9 @@ def test_export_refuses_unbounded_entity_evidence(
         model_id=model.model_id,
     )
 
-    def gaps(candidate: BRepModel) -> BRepGapEvidence:
+    def gaps(
+        candidate: BRepModel, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> BRepGapEvidence:
         return unbounded
 
     monkeypatch.setattr(_cad, "certify_brep_gaps", gaps)
@@ -109,7 +124,9 @@ def test_import_retains_geometry_with_unbounded_gap_metadata(
         model_id=model.model_id,
     )
 
-    def gaps(candidate: BRepModel) -> BRepGapEvidence:
+    def gaps(
+        candidate: BRepModel, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> BRepGapEvidence:
         return unbounded
 
     monkeypatch.setattr(_cad, "certify_brep_gaps", gaps)
@@ -377,3 +394,422 @@ def test_result_refuses_foreign_model_tolerance_evidence(
     evidence = build_cad_import_tolerance_evidence(native_solid("sphere"), ((None, 0.0),))
     with pytest.raises(ValueError, match=r"CadImportResult.tolerance_evidence.model_id"):
         replace(imported_box_result, tolerance_evidence=evidence)
+
+
+def _bounded_descriptor() -> dict[str, Any]:
+    gap = _cad._written_upper_bound(float(np.nextafter(
+        0.01 + float(np.nextafter(2.0 * 0.01, np.inf)), np.inf
+    )))
+    return {
+        "representation": "bounded-coupled-approximation",
+        "source_model_id": "source-model",
+        "source_geometry_id": "source-geometry",
+        "source_gap_bound": 0.0,
+        "gap_bound": gap,
+        "rows": [{
+            "source_branch_id": "source-branch",
+            "approximation_id": "new-carrier",
+            "spatial_bound": 0.01,
+            "parameter_bound": 0.01,
+            "distance_bound": 0.001,
+            "parameter_error": 0.001,
+            "surface_jacobian_lipschitz": 2.0,
+            "gap_bound": gap,
+        }],
+    }
+
+
+def test_bounded_descriptor_uses_frozen_not_achieved_error_law() -> None:
+    descriptor = _bounded_descriptor()
+    gap = _cad.decode_bounded_approximation_descriptor(json.dumps(descriptor))
+    descriptor["rows"][0]["distance_bound"] = 0.0
+    descriptor["rows"][0]["parameter_error"] = 0.0
+    assert _cad.decode_bounded_approximation_descriptor(json.dumps(descriptor)) == gap
+    assert _cad.decode_bounded_approximation_descriptor(
+        json.dumps(descriptor), length_factor=0.001
+    ) >= gap * 0.001
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("distance_bound", 0.02),
+        ("parameter_error", 0.02),
+        ("gap_bound", 1.0),
+        ("surface_jacobian_lipschitz", float("inf")),
+        ("spatial_bound", True),
+    ],
+)
+def test_bounded_descriptor_refuses_invalid_or_posthoc_law(field: str, value: object) -> None:
+    descriptor = _bounded_descriptor()
+    descriptor["rows"][0][field] = value
+    with pytest.raises(CadInterchangeError, match="complete finite frozen"):
+        _cad.decode_bounded_approximation_descriptor(json.dumps(descriptor))
+
+
+def test_stored_spline_quadric_gap_requires_actual_continuous_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # x=1-t²/2, y=t is a bounded polynomial representative, not a
+    # parametrically exact cylinder circle. No descriptor/provenance is used.
+    curve = BSplineCurve(
+        ((1.0, 0.0, 0.0), (1.0, 0.05, 0.0), (0.995, 0.1, 0.0)),
+        np.ones(3), (0.0, 0.0, 0.0, 0.1, 0.1, 0.1), 2,
+    )
+    pcurve = LineCurve((0.0, 0.0), (1.0, 0.0))
+    patch = CylinderPatch(
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), 1.0,
+    )
+    args = ((curve,), (0,), np.asarray(((0.0, 0.1),)), (pcurve,), (0,), (0,), (patch,))
+    with coordinate_source_request((curve, pcurve, patch)) as budget:
+        proved = _certify_edge_face_gap_bounds(*args, declared_bounds=(0.0002,), budget=budget)
+    assert proved is not None and 0.0 < proved[0] <= 0.0002
+    enclosures: list[int] = []
+    original = correspondence_owner._residual_interval_bounds
+
+    def enclose(*args: Any, **kwargs: Any) -> Any:
+        enclosures.append(len(args[0]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(correspondence_owner, "_residual_interval_bounds", enclose)
+    with coordinate_source_request((curve, pcurve, patch)) as budget:
+        with pytest.raises(ValueError, match="unproved or exceeded"):
+            _certify_edge_face_gap_bounds(*args, declared_bounds=(1.0e-8,), budget=budget)
+    # The outward center intervals already disprove the original tight
+    # allowance; do not subdivide an impossible bound 65,536 times.
+    assert enclosures == [1]
+
+
+def test_coedge_proof_reuse_requires_same_earned_request_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = native_solid("box")
+    with coordinate_source_request((model,)) as budget:
+        actual = model.certified_coedge_bounds(budget=budget)
+        proof = budget.brep_coedge_proof_cache[id(model)]
+        assert proof.owner is model
+        assert proof.model_id == model.model_id
+        assert proof.tolerance == model.report.curve_surface_tolerance
+
+        def refuse_reproof(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("independent coedge validation reached")
+
+        monkeypatch.setattr(model_owner, "_validate_exact_geometry", refuse_reproof)
+        reused = model.certified_coedge_bounds(budget=budget)
+        np.testing.assert_array_equal(reused, actual)
+        assert not reused.flags.writeable
+    with coordinate_source_request((model,)) as fresh:
+        assert id(model) not in fresh.brep_coedge_proof_cache
+        with pytest.raises(RuntimeError, match="independent coedge validation reached"):
+            model.certified_coedge_bounds(budget=fresh)
+
+
+@pytest.mark.parametrize("with_curve", (False, True), ids=("point", "rational-curve"))
+def test_joint_residual_jets_equal_individual_orders_and_share_bounds(
+    with_curve: bool,
+) -> None:
+    curve = BSplineCurve(
+        ((1.0, 0.0, 0.0), (1.0, 0.05, 0.025), (0.995, 0.1, 0.1)),
+        (1.0, 0.8, 1.0), (0.0, 0.0, 0.0, 1.0, 1.0, 1.0), 2,
+    )
+    pcurve = BSplineCurve(
+        ((0.0, 0.0), (0.05, 0.025), (0.1, 0.1)),
+        (1.0, 0.9, 1.0), (0.0, 0.0, 0.0, 1.0, 1.0, 1.0), 2,
+    )
+    patch = CylinderPatch(
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), 1.0,
+    )
+    calls: list[list[tuple[bytes, bytes]]] = []
+    curve_calls: list[None] = []
+
+    def prepare(function: Any, dimension: int, coefficients: Any) -> Any:
+        program = prepare_interval_function(
+            function, dimension, batch_capacity=1, constant_bounds=coefficients
+        )
+        bounds: list[tuple[bytes, bytes]] = []
+        calls.append(bounds)
+
+        class Capture:
+            def evaluate(
+                self, lower: np.ndarray, upper: np.ndarray
+            ) -> tuple[np.ndarray, np.ndarray]:
+                bounds.append((lower.tobytes(), upper.tobytes()))
+                return program.evaluate(lower, upper)
+
+        return Capture()
+
+    jets = RationalCurveSurfaceJets(
+        curve.bezier_pieces()[0] if with_curve else None,
+        pcurve.bezier_pieces()[0], patch, point=np.asarray((1.0, 0.0, 0.0)),
+        prepare=prepare, observe_curve_jet=lambda: curve_calls.append(None),
+    )
+    starts = np.asarray(((0.125,), (0.5,)))
+    ends = np.asarray(((0.375,), (0.875,)))
+    centers = 0.5 * (starts + ends)
+    with coordinate_source_request((curve, pcurve, patch)) as budget:
+        actual = jets.residual_jets_batch(
+            starts, ends, centers, budget=budget, preparations=None
+        )
+        batch_calls = tuple(tuple(items) for items in calls)
+        batch_curve_calls = len(curve_calls)
+        for items in calls:
+            items.clear()
+        curve_calls.clear()
+        for index, (lower, upper, order) in enumerate((
+            (centers, centers, 0), (starts, ends, 1),
+            (centers, centers, 1), (starts, ends, 2),
+        )):
+            expected = [
+                jets.jet(float(a[0]), float(b[0]), order, budget=budget)
+                for a, b in zip(lower, upper, strict=True)
+            ]
+            shape = (len(starts), 3) + (1,) * order
+            for side in (0, 1):
+                np.testing.assert_array_equal(
+                    actual[index][side],
+                    np.asarray([row[side] for row in expected]).reshape(shape),
+                )
+    # Identical UV boxes feed every value/Jacobian/Hessian premise; the joint
+    # route only removes the duplicated full-interval Jacobian and quotient jets.
+    assert tuple(map(len, batch_calls)) == (2, 4, 2)
+    assert tuple(map(len, calls)) == (2, 6, 2)
+    for batch, individual in zip(batch_calls, calls, strict=True):
+        assert set(batch) == set(individual)
+    assert 2 * batch_curve_calls == len(curve_calls)
+
+
+@pytest.mark.parametrize("owns_center", (False, True), ids=("overlap-only", "contains-center"))
+def test_residual_disproof_requires_center_uv_in_supporting_piece(
+    owns_center: bool,
+) -> None:
+    curve = BSplineCurve(
+        ((1.0, 0.0, 0.0), (1.0, 0.05, 0.0), (0.995, 0.1, 0.0)),
+        np.ones(3), (0.0, 0.0, 0.0, 0.1, 0.1, 0.1), 2,
+    )
+    pcurve = LineCurve((0.0, 0.0), (1.0, 0.0))
+    patch = CylinderPatch(
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), 1.0,
+    )
+    preparations = TrimRequestPreparations()
+    with coordinate_source_request((curve, pcurve, patch)) as budget:
+        workset = correspondence_owner._prepare_correspondence_workset(
+            curve, pcurve, patch, np.asarray(((0.0, -1.0), (0.1, 1.0))),
+            0.0, 0.1, preparations, budget,
+        )
+        patches = tuple(
+            replace(
+                piece,
+                lower=np.asarray((0.0 if owns_center else 0.075, -1.0)),
+            )
+            for piece in workset.patches
+        )
+        outcome = correspondence_owner._residual_interval_bounds(
+            [(0.0, 0.1)], curve, np.zeros(3),
+            workset.curve_segments, workset.parameter_segments, patches, {},
+            budget=budget, tolerance=1.0e-8, preparations=preparations,
+        )[(0.0, 0.1)]
+    if owns_center:
+        assert outcome is None
+    else:
+        assert outcome is not None and outcome > 1.0e-8
+
+
+@pytest.mark.parametrize("with_curve", (False, True), ids=("point-carrier", "actual-curve"))
+def test_correspondence_cache_point_premise_only_applies_without_curve(
+    with_curve: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curve = BSplineCurve(
+        ((1.0, 0.0, 0.0), (1.0, 0.05, 0.0), (0.995, 0.1, 0.0)),
+        np.ones(3), (0.0, 0.0, 0.0, 0.1, 0.1, 0.1), 2,
+    )
+    pcurve = LineCurve((0.0, 0.0), (1.0, 0.0))
+    patch = CylinderPatch(
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), 1.0,
+    )
+    original = correspondence_owner._execute_correspondence_workset
+    invocations: list[None] = []
+
+    def execute(*args: Any, **kwargs: Any) -> Any:
+        invocations.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(correspondence_owner, "_execute_correspondence_workset", execute)
+    with coordinate_source_request((curve, pcurve, patch)) as budget:
+        source_curve = curve if with_curve else None
+        first = correspondence_owner.certify_curve_surface(
+            source_curve, pcurve, patch, np.asarray(((0.0, -1.0), (0.1, 1.0))),
+            0.0, 0.1, point=np.asarray((1.0, 0.0, 0.0)),
+            tolerance=0.2, budget=budget,
+        )
+        changed = correspondence_owner.certify_curve_surface(
+            source_curve, pcurve, patch, np.asarray(((0.0, -1.0), (0.1, 1.0))),
+            0.0, 0.1,
+            point=np.asarray((9.0, 8.0, 7.0) if with_curve else (1.0, 0.01, 0.0)),
+            tolerance=0.2, budget=budget,
+        )
+    assert first.complete and changed.complete
+    if with_curve:
+        assert changed is first
+        assert len(invocations) == 1
+    else:
+        assert changed is not first
+        assert len(invocations) == 2
+
+
+@pytest.mark.parametrize("premise", ("shared", "unequal-weights", "unequal-knots"))
+def test_grouped_fitted_jets_preserve_individual_outward_bits_and_fallback(
+    premise: str,
+) -> None:
+    controls = (
+        ((0.0, 0.0, 0.0), (0.5, 0.75, 0.125), (1.0, 0.0, 0.25)),
+        ((0.0, 0.0), (0.5, 0.75), (1.0, 0.0)),
+        ((0.25, 0.0), (0.5, 0.25), (0.75, 0.5)),
+    )
+
+    def spline(side: int, points: Any) -> BSplineCurve:
+        knots = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+        if side == 2 and premise == "unequal-knots":
+            points = (*points[:2], (0.625, 0.375), points[2])
+            knots = (0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0)
+        weights = np.ones(len(points))
+        weights[1] = 0.7 if side == 1 and premise == "unequal-weights" else 0.8
+        return BSplineCurve(points, weights, knots, 2)
+
+    curves = tuple(spline(side, points) for side, points in enumerate(controls))
+    shared_knots = all(
+        np.array_equal(np.asarray(curve.knots), np.asarray(curves[0].knots))
+        for curve in curves[1:]
+    )
+    with coordinate_source_request(curves) as budget:
+        selected = tuple(
+            curve_pieces_for_interval(curve, 0.0, 1.0, coordinate_budget=budget)[0]
+            for curve in curves
+        )
+    actual_budget = approximation_owner._Budget(100, 4, 1 << 20)
+    individual_budget = approximation_owner._Budget(100, 4, 1 << 20)
+    cache: dict[tuple[int, ...], Any] = {}
+    actual = approximation_owner._fitted_cell_jets(
+        selected, 0.125, 0.375, 0.25, shared_knots, cache, actual_budget
+    )
+    expected = approximation_owner._fitted_cell_jets(
+        selected, 0.125, 0.375, 0.25, False, {}, individual_budget
+    )
+    for actual_location, expected_location in zip(actual, expected, strict=True):
+        for actual_piece, expected_piece in zip(actual_location, expected_location, strict=True):
+            for actual_jet, expected_jet in zip(actual_piece, expected_piece, strict=True):
+                for side in (0, 1):
+                    np.testing.assert_array_equal(actual_jet[side], expected_jet[side])
+    assert individual_budget.jets == 6
+    assert actual_budget.jets == (2 if premise == "shared" else 6)
+    retained = actual_budget.bytes
+    repeated = approximation_owner._fitted_cell_jets(
+        selected, 0.125, 0.375, 0.25, shared_knots, cache, actual_budget
+    )
+    assert actual_budget.bytes == retained
+    for first_location, second_location in zip(actual, repeated, strict=True):
+        for first_piece, second_piece in zip(first_location, second_location, strict=True):
+            for first_jet, second_jet in zip(first_piece, second_piece, strict=True):
+                for side in (0, 1):
+                    np.testing.assert_array_equal(first_jet[side], second_jet[side])
+
+
+@pytest.mark.parametrize("covered", (False, True), ids=("overlap-only", "whole-range-covered"))
+def test_correspondence_domain_factorization_requires_whole_pcurve_coverage(
+    covered: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curve = BSplineCurve(
+        ((1.0, 0.0, 0.0), (1.0, 0.05, 0.0), (0.995, 0.1, 0.0)),
+        np.ones(3), (0.0, 0.0, 0.0, 0.1, 0.1, 0.1), 2,
+    )
+    pcurve = LineCurve((0.0, 0.0), (1.0, 0.0))
+    patch = CylinderPatch(
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), 1.0,
+    )
+    original = correspondence_owner._prepare_correspondence_workset
+    boxes: list[np.ndarray] = []
+
+    def prepare(*args: Any, **kwargs: Any) -> Any:
+        boxes.append(np.array(args[3], copy=True))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(correspondence_owner, "_prepare_correspondence_workset", prepare)
+    broad = np.asarray(((-1.0, -1.0), (1.0, 1.0)))
+    with coordinate_source_request((curve, pcurve, patch)) as budget:
+        first = correspondence_owner.certify_curve_surface(
+            curve, pcurve, patch, broad, 0.0, 0.1, point=np.zeros(3),
+            tolerance=0.0002, maximum_intervals=64, budget=budget,
+        )
+        assert first.complete
+        supplied = (
+            pcurve.bounding_box(0.0, 0.1, budget=budget)
+            if covered else np.asarray(((0.075, -1.0), (0.1, 1.0)))
+        )
+        second = correspondence_owner.certify_curve_surface(
+            curve, pcurve, patch, supplied, 0.0, 0.1, point=np.ones(3),
+            tolerance=first.deviation_bound, maximum_intervals=64, budget=budget,
+        )
+    np.testing.assert_array_equal(boxes[0], broad)
+    if covered:
+        assert second is first
+        assert len(boxes) == 1
+    else:
+        assert second is not first
+        assert len(boxes) == 2
+        np.testing.assert_array_equal(boxes[1], supplied)
+
+
+def test_correspondence_factorization_guards_tolerance_cap_and_partial_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curve = BSplineCurve(
+        ((1.0, 0.0, 0.0), (1.0, 0.05, 0.0), (0.995, 0.1, 0.0)),
+        np.ones(3), (0.0, 0.0, 0.0, 0.1, 0.1, 0.1), 2,
+    )
+    pcurve = LineCurve((0.0, 0.0), (1.0, 0.0))
+    patch = CylinderPatch(
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), 1.0,
+    )
+    original = correspondence_owner._execute_correspondence_workset
+    invocations: list[None] = []
+
+    def execute(*args: Any, **kwargs: Any) -> Any:
+        invocations.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(correspondence_owner, "_execute_correspondence_workset", execute)
+    with coordinate_source_request((curve, pcurve, patch)) as budget:
+        def prove(
+            tolerance: float, maximum_intervals: int = 64,
+            source: BSplineCurve = curve,
+        ) -> Any:
+            return correspondence_owner.certify_curve_surface(
+                source, pcurve, patch, np.asarray(((-1.0, -1.0), (1.0, 1.0))),
+                0.0, 0.1, point=np.zeros(3), tolerance=tolerance,
+                maximum_intervals=maximum_intervals, budget=budget,
+            )
+
+        failed = prove(1.0e-8)
+        assert not failed.complete
+        assert not budget.brep_correspondence_cache
+        complete = prove(0.0002)
+        assert complete.complete
+        assert len(invocations) == 2
+        assert prove(complete.deviation_bound) is complete
+        assert len(invocations) == 2
+        tighter = prove(0.5 * complete.deviation_bound)
+        assert not tighter.complete
+        assert len(invocations) == 3
+        assert prove(complete.deviation_bound) is complete
+        assert prove(0.0002, maximum_intervals=1) is not complete
+        assert len(invocations) == 4
+        points = np.array(curve.control_points, copy=True)
+        points[0, 0] += 0.01
+        changed = BSplineCurve(points, curve.weights, curve.knots, curve.degree)
+        assert not prove(0.0002, source=changed).complete
+        assert len(invocations) == 5

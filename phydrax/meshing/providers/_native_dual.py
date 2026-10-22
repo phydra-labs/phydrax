@@ -38,7 +38,7 @@ from phydrax.meshing._contracts import (
     VolumeMeshingSpec,
 )
 from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
-from phydrax.meshing._host_banks import entities
+from phydrax.meshing._host_banks import entities, family_host_array
 from phydrax.typing import checked, parse
 
 from ..._fingerprint import canonical_fingerprint
@@ -49,7 +49,14 @@ from ..._trainable import NonTrainableState
 from ...discretization._cell_geometry import (
     require_scalar_coordinate_element,
 )
-from ...discretization._cell_geometry_validity import cell_geometry_id
+from ...discretization._cell_geometry_validity import (
+    _ConstructedTensorGrid,
+    cell_geometry_id,
+)
+from ...discretization._cell_mesh import (
+    cell_block_construction_bounds,
+    cell_mesh_construction_bounds,
+)
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
@@ -59,19 +66,21 @@ from .._dual_extraction import (
     DualExtraction,
     SurfaceCrossField,
 )
+from .._family_execution import family_route_refusals
 from .._hex_dominant import extract_hex_dominant
 from .._hex_frame_map import (
-    extract_source_block_integer_grid,
-    extract_source_frame_grid,
+    _extract_source_block_tensor_grid,
+    _extract_source_tensor_frame_grid,
     prepare_source_block_connection,
     prepare_source_hex_frame,
 )
 from .._hex_frame_records import (
+    _SourceBlockTensorGrid,
     PreparedSourceHexFrame,
     SourceBlockConnection,
-    SourceBlockIntegerGrid,
 )
 from .._hex_generation import (
+    _HOST_ENTRY_BYTES,
     exact_mapped_volume_quality,
     extract_volume_hexes,
     generate_integer_grid_hexes,
@@ -80,8 +89,8 @@ from .._hex_generation import (
     MappedGridHexConstruction,
     NativeHexGridSchedule,
     realize_mapped_grid_hexes,
-    source_block_interval_counts,
 )
+from .._mapped_reference_association import _tensor_reference_associations
 from .._measurements import (
     measure_phase,
     NativeMeshingPhaseRecorder,
@@ -108,6 +117,7 @@ from .._volume_generation import (
 from . import _native_sources as sources_owner, _native_volume as volume_owner
 from ._native_planar import planar_support_issues
 from ._native_planar_domain import (
+    _FIELD_WORKING_ENTRIES,
     constrained_edges,
     constraint_coordinate_source,
     control_edges,
@@ -320,7 +330,10 @@ def execute_quad_route(
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with (
+        family_route_refusals(specification.limits, "dual_quad"),
+        budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+    ):
         if (
             source.binding_id != prepared.source_binding_id
             or specification.specification_id != prepared.specification_id
@@ -333,27 +346,50 @@ def execute_quad_route(
             triangulation, inserted = triangulate(
                 prepared.scaffold, started, _triangle_scaffold(specification)
             )
-        triangles = np.asarray(triangulation.triangles, dtype=np.int64)
-        used, compact = np.unique(triangles, return_inverse=True)
-        points = np.asarray(triangulation.points, dtype=np.float64)[used]
-        triangles = compact.reshape(triangles.shape)
-        constrained, constrained_sources = constrained_edges(
-            triangles,
-            np.asarray(triangulation.segment_ids, dtype=np.int64),
-            prepared.scaffold.segment_sources,
-        )
-        missing = np.setdiff1d(
-            np.arange(prepared.scaffold.source_directions.shape[0]), constrained_sources
-        )
-        if missing.size:
-            raise MeshingFailure(
-                MeshingFailureCategory.INVALID_SOURCE,
-                "quad.source_edges must intersect the meshed region; got an omitted source edge",
-                entity_ids=tuple(missing.tolist()),
+        triangle_count = triangulation.triangles.shape[0]
+        point_count = triangulation.points.shape[0]
+        source_edge_count = prepared.scaffold.source_directions.shape[0]
+        with scope.host_workspace() as phase_storage:
+            # Sort copies, permutations, inverse and carried-pair temporaries
+            # stay within 640 bytes per triangle; gathered points and the
+            # source-edge difference within 48 per point and 96 per source edge.
+            phase_bytes = (
+                640 * triangle_count + 48 * point_count + 96 * source_edge_count + 4096
             )
-        scaffold = CellMesh.from_triangles(
-            points, triangles, numeric_version=source.source_revision
-        )
+            phase_storage.set_bound(phase_bytes)
+            triangles = np.asarray(triangulation.triangles, dtype=np.int64)
+            used, compact = np.unique(triangles, return_inverse=True)
+            points = np.asarray(triangulation.points, dtype=np.float64)[used]
+            triangles = compact.reshape(triangles.shape)
+            segment_ids = np.asarray(triangulation.segment_ids, dtype=np.int64)
+            constrained, constrained_sources = constrained_edges(
+                triangles, segment_ids, prepared.scaffold.segment_sources
+            )
+            missing = np.setdiff1d(
+                np.arange(source_edge_count), constrained_sources
+            )
+            if missing.size:
+                raise MeshingFailure(
+                    MeshingFailureCategory.INVALID_SOURCE,
+                    "quad.source_edges must intersect the meshed region; got an omitted source edge",
+                    entity_ids=tuple(missing.tolist()),
+                )
+            vertex_count, triangle_rows = max(1, points.shape[0]), max(1, triangles.shape[0])
+            # from_triangles builds its block, then the mesh, beside the phase.
+            phase_storage.set_bound(
+                phase_bytes
+                + max(
+                    cell_block_construction_bounds(triangle_rows, 3),
+                    cell_mesh_construction_bounds(
+                        vertex_count,
+                        triangulation.points.shape[1],
+                        (("triangle", triangle_rows, 3),),
+                    ),
+                )
+            )
+            scaffold = CellMesh.from_triangles(
+                points, triangles, numeric_version=source.source_revision
+            )
         with coordinate_phase(scope, specification.limits, budget):
             authority, source_deviations, carrier_deviations = (
                 constraint_coordinate_source(
@@ -373,17 +409,28 @@ def execute_quad_route(
                 authority,
                 budget=budget,
             )
-        domain = prepared.scaffold.domain(source)
-        rounding = float(np.max(source_deviations, initial=0.0))
-        admissible = float(np.max(prepared.scaffold.source_bounds, initial=0.0))
-        edge_rows = {
-            tuple(sorted(edge)): row
-            for row, edge in enumerate(entities(scaffold, 1).tolist())
-        }
-        features = np.asarray(
-            [edge_rows[tuple(sorted(edge))] for edge in constrained.tolist()],
-            dtype=np.int64,
-        )
+        with scope.host_workspace() as phase_storage:
+            phase_storage.set_bound(128 * source_edge_count + 4096)
+            domain = prepared.scaffold.domain(source)
+            rounding = float(np.max(source_deviations, initial=0.0))
+            admissible = float(np.max(prepared.scaffold.source_bounds, initial=0.0))
+        scaffold_edge_count = scaffold.topology.entities(1).count
+        constrained_count = constrained.shape[0]
+        with scope.host_workspace() as phase_storage:
+            # Edge IDs, their Python rows and keyed dictionary (384 bytes per
+            # edge); constrained rows and the feature list (192 per edge).
+            phase_storage.set_bound(
+                384 * scaffold_edge_count + 192 * constrained_count + 4096
+            )
+            edge_rows = {
+                tuple(sorted(edge)): row
+                for row, edge in enumerate(entities(scaffold, 1).tolist())
+            }
+            features = np.asarray(
+                [edge_rows[tuple(sorted(edge))] for edge in constrained.tolist()],
+                dtype=np.int64,
+            )
+            del edge_rows
         field = prepare_surface_cross_field(
             scaffold,
             feature_edges=features,
@@ -404,7 +451,11 @@ def execute_quad_route(
         mesh = extraction.mesh
         with measure_phase(record_phase, "geometry_association"):
             zones, patches, labels, associations = remap_dual_metadata(
-                extraction, patches=patches, labels=labels, associations=associations
+                extraction,
+                patches=patches,
+                labels=labels,
+                associations=associations,
+                scope=scope,
             )
         phase = _quad_compliance(
             _QuadComplianceInputs(
@@ -429,6 +480,9 @@ def execute_quad_route(
         )
         compliance = phase.compliance
         check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
+        face_count = mesh.topology.entities(2).count
+        cell_regions = family_host_array((face_count,), np.int64, scope=scope)
+        cell_regions.fill(0)
         return publish_native_result(
             mesh,
             coordinate_contract,
@@ -455,7 +509,7 @@ def execute_quad_route(
                 source.source_revision,
                 limits,
                 domain=domain,
-                cell_regions=np.zeros((mesh.topology.entities(2).count,), dtype=np.int64),
+                cell_regions=cell_regions,
             ),
             policy=publication_policy("dual"),
             organization=NativePublicationOrganization(
@@ -483,7 +537,10 @@ def execute_hex_route(
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with (
+        family_route_refusals(specification.limits, "dual_hex"),
+        budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+    ):
         if (
             source.binding_id != prepared.source_binding_id
             or specification.specification_id != prepared.specification_id
@@ -536,6 +593,7 @@ def execute_hex_route(
             record_phase=record_phase,
             scope=scope,
             workspace=workspace,
+            budget=budget,
         )
 
 
@@ -556,10 +614,10 @@ def _publish_volume_extraction(
     mapped_quality: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
+    budget: CoordinateEnclosureBudget,
 ) -> CellMeshingResult:
     route = parse(route, VolumeExtractionRoute, "hex.route")
-    budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with family_route_refusals(specification.limits, "volume_family_publication"):
         mesh, limits = extraction.mesh, specification.limits
         if extraction.geometry is None:
             raise MeshingFailure(
@@ -568,13 +626,18 @@ def _publish_volume_extraction(
                 stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
             )
         geometry = extraction.geometry
+        region_count = extraction.parent_cells.size
+        cell_regions = family_host_array(
+            (region_count,), construction.cell_regions.dtype, scope=scope
+        )
+        np.take(construction.cell_regions, extraction.parent_cells, out=cell_regions)
         certification_request = NativeCertificationRequest(
             MeshCertificationSchedule("volume_plc"),
             source.source_id,
             source.source_revision,
             limits,
             domain=construction.domain,
-            cell_regions=construction.cell_regions[extraction.parent_cells],
+            cell_regions=cell_regions,
         )
         with measure_phase(record_phase, "geometry_association"):
             zones, patches, labels, associations = remap_dual_metadata(
@@ -583,6 +646,7 @@ def _publish_volume_extraction(
                 patches=construction.patches,
                 labels=construction.labels,
                 associations=construction.associations,
+                scope=scope,
             )
             # Constraint ordering follows native source preparation.
             # Support uses Q1 hexahedral and rational transition coordinate maps.
@@ -768,7 +832,10 @@ def execute_hex_dominant_route(
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with (
+        family_route_refusals(specification.limits, "hex_dominant"),
+        budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+    ):
         if (
             source.binding_id != prepared.source_binding_id
             or specification.specification_id != prepared.specification_id
@@ -797,34 +864,43 @@ def execute_hex_dominant_route(
                     "hex_dominant.construction.geometry must retain the PLC coordinate source; got no geometry",
                     stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
                 )
-        cells = np.asarray(construction.mesh.blocks[0].vertices, dtype=np.int64)
-        points = np.asarray(construction.mesh.coordinates, dtype=np.float64)[cells]
-        # Source volumes rank a deterministic robustness-oriented core selection.
-        # This does not advertise a frame-aligned or quality-optimal placement.
-        volume = (
-            np.linalg.det(
-                np.stack(
-                    (
-                        points[:, 1] - points[:, 0],
-                        points[:, 2] - points[:, 0],
-                        points[:, 3] - points[:, 0],
-                    ),
-                    axis=-1,
+        cell_count = construction.mesh.topology.entities(3).count
+        with scope.host_workspace() as phase_storage:
+            # The entries above as float64/int64 plus the sort permutation
+            # and key copies: at most 512 bytes per tetrahedron.
+            phase_storage.set_bound(512 * cell_count + 4096)
+            cells = np.asarray(construction.mesh.blocks[0].vertices, dtype=np.int64)
+            points = np.asarray(construction.mesh.coordinates, dtype=np.float64)[cells]
+            # Source volumes rank a deterministic robustness-oriented core selection.
+            # This does not advertise a frame-aligned or quality-optimal placement.
+            volume = (
+                np.linalg.det(
+                    np.stack(
+                        (
+                            points[:, 1] - points[:, 0],
+                            points[:, 2] - points[:, 0],
+                            points[:, 3] - points[:, 0],
+                        ),
+                        axis=-1,
+                    )
                 )
+                / 6.0
             )
-            / 6.0
-        )
-        identifiers = np.asarray(
-            construction.mesh.topology.entities(3).entity_ids, dtype=np.int64
-        )
-        order = np.lexsort((identifiers, -volume))
-        selected_count = max(1, int(np.ceil(prepared.core_fraction * cells.shape[0])))
+            identifiers = np.asarray(
+                construction.mesh.topology.entities(3).entity_ids, dtype=np.int64
+            )
+            order = np.lexsort((identifiers, -volume))
+            selected_count = max(
+                1, int(np.ceil(prepared.core_fraction * cells.shape[0]))
+            )
+            hex_core_cells = identifiers[order[:selected_count]]
+            del cells, points, volume, identifiers, order
         with measure_phase(record_phase, "topology_construction"):
             extraction = extract_hex_dominant(
                 construction.mesh,
                 specification.limits,
                 specification.target.cell_families,
-                hex_core_cells=identifiers[order[:selected_count]],
+                hex_core_cells=hex_core_cells,
                 source_geometry=source_geometry,
                 scope=scope,
                 budget=budget,
@@ -843,6 +919,7 @@ def execute_hex_dominant_route(
             record_phase=record_phase,
             scope=scope,
             workspace=workspace,
+            budget=budget,
         )
 
 
@@ -889,6 +966,8 @@ def _grid_metadata(
     old: VolumeConstruction,
     grid: GridHexConstruction,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> NativeRouteMetadata:
     "Bind grid entities to PLC strata by plane/chain facts."
     mesh, complex_ = grid.mesh, source.complex
@@ -901,145 +980,189 @@ def _grid_metadata(
                 "grid.mesh.connectivity must be hexahedral; got a different connectivity family"
             )
     sets = tuple(mesh.topology.entities(degree) for degree in range(4))
-    ids = tuple(
-        np.asarray(local_entities.entity_ids, dtype=np.int64) for local_entities in sets
+    vertex_count, edge_count, face_count, cell_count = (
+        local_entities.count for local_entities in sets
     )
-    facets = grid.face_source_facets
-    face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
-    face_edges = np.asarray(connectivity.face_edges, dtype=np.int64)
-    edge_vertices = entities(mesh, 1)
-    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
-    boundary_faces = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
-    if np.any(boundary_faces & (facets < 0)):
-        raise MeshingFailure(
-            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-            "grid.face_source_facets must identify every exposed face; got an unassigned boundary face",
-        )
-
-    zones = tuple(
-        MeshZone(
-            name,
-            MeshZoneRole.REGION,
-            mesh_entity_scope(mesh, 3, ids[3][grid.cell_regions == region]),
-        )
-        for region, name in enumerate(complex_.region_ids)
-        if np.any(grid.cell_regions == region)
+    facet_count = complex_.facet_regions.shape[0]
+    old_edge_set = old.mesh.topology.entities(1)
+    old_vertex_count = old.mesh.coordinates.shape[0]
+    source_edge_count = sum(
+        association.target_global_ids.shape[0]
+        for association in old.associations
+        if association.target_entity_set_id == old_edge_set.entity_set_id
     )
-    facet_rows = np.flatnonzero(facets >= 0)
-    patches = tuple(
-        MeshPatch(f"facet:{facet}", mesh_entity_scope(mesh, 2, ids[2][facets == facet]))
-        for facet in np.unique(facets[facet_rows]).tolist()
-    )
-    incidence = complex_.facet_regions[facets[facet_rows]]
-    interface = (
-        (incidence[:, 0] >= 0)
-        & (incidence[:, 1] >= 0)
-        & (incidence[:, 0] != incidence[:, 1])
-    )
-    sheet = incidence[:, 0] == incidence[:, 1]
-    labels = tuple(
-        MeshLabel(name, mesh_entity_scope(mesh, 2, selected))
-        for name, selected in (
-            ("interface", ids[2][facet_rows][interface]),
-            ("internal_sheet", ids[2][facet_rows][sheet]),
-        )
-        if selected.size
-    )
-    points = np.asarray(mesh.coordinates, dtype=np.float64)
-    rounding = 128.0 * np.finfo(np.float64).eps * np.max(np.abs(points), initial=1.0)
-    facet_names = {
-        facet: sources_owner.source_entity_id(source.source_revision, "facet", facet)
-        for facet in np.unique(facets[facet_rows]).tolist()
-    }
-    source_normals = {}
-    for polygon in np.unique(grid.face_source_polygons[facet_rows]).tolist():
-        loop = complex_.polygon_vertices[
-            complex_.polygon_offsets[polygon] : complex_.polygon_offsets[polygon + 1]
-        ]
-        vertices = complex_.vertices[loop]
-        source_normals[polygon] = np.sum(
-            np.cross(vertices, np.roll(vertices, -1, axis=0)), axis=0
-        )
-    normals = np.cross(
-        points[face_vertices[facet_rows, 1]] - points[face_vertices[facet_rows, 0]],
-        points[face_vertices[facet_rows, 3]] - points[face_vertices[facet_rows, 0]],
-    )
-    orientations = np.asarray(
-        [
-            np.sign(np.sum(normal * source_normals[int(polygon)]))
-            for normal, polygon in zip(
-                normals, grid.face_source_polygons[facet_rows], strict=True
+    source_vertex_count = complex_.vertices.shape[0]
+    with scope.host_workspace() as workspace:
+        # Conservative CPython container bounds per cell, face, edge, and
+        # vertex (identity banks, region strings, incidence sets, ridge and
+        # resolution maps), per source polygon, facet, and source vertex, per
+        # old edge and source edge row (pullback rows and covering
+        # intervals), plus the old-point, old-edge, chart, and edge-row banks.
+        workspace.set_bound(
+            _HOST_ENTRY_BYTES
+            * (
+                2 * cell_count
+                + 2 * face_count
+                + 5 * edge_count
+                + 5 * vertex_count
+                + complex_.polygon_facets.size
+                + facet_count
+                + 2 * source_vertex_count
+                + old_edge_set.count
+                + 3 * source_edge_count
             )
-        ],
-        dtype=np.int8,
-    )
-    associations = [
-        GeometryAssociation(
-            GeometryAssociationKind.PIECEWISE_LINEAR,
-            source.source_id,
-            source.source_revision,
-            sets[3].entity_set_id,
-            ids[3],
-            tuple(
-                sources_owner.source_entity_id(
-                    source.source_revision, "region", int(region)
+            + 32 * old_vertex_count
+            + 16 * old_edge_set.count
+            + 9 * source_edge_count
+            + 40 * vertex_count
+            + 16 * edge_count
+            + 4096
+        )
+        ids = tuple(
+            np.asarray(local_entities.entity_ids, dtype=np.int64)
+            for local_entities in sets
+        )
+        facets = grid.face_source_facets
+        face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
+        face_edges = np.asarray(connectivity.face_edges, dtype=np.int64)
+        edge_vertices = entities(mesh, 1)
+        cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+        boundary_faces = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
+        if np.any(boundary_faces & (facets < 0)):
+            raise MeshingFailure(
+                MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+                "grid.face_source_facets must identify every exposed face; got an unassigned boundary face",
+            )
+        del boundary_faces
+        zones = tuple(
+            MeshZone(
+                name,
+                MeshZoneRole.REGION,
+                mesh_entity_scope(mesh, 3, ids[3][grid.cell_regions == region]),
+            )
+            for region, name in enumerate(complex_.region_ids)
+            if np.any(grid.cell_regions == region)
+        )
+        facet_rows = np.flatnonzero(facets >= 0)
+        present_facets = np.unique(facets[facet_rows]).tolist()
+        patches = tuple(
+            MeshPatch(
+                f"facet:{facet}", mesh_entity_scope(mesh, 2, ids[2][facets == facet])
+            )
+            for facet in present_facets
+        )
+        incidence = complex_.facet_regions[facets[facet_rows]]
+        interface = (
+            (incidence[:, 0] >= 0)
+            & (incidence[:, 1] >= 0)
+            & (incidence[:, 0] != incidence[:, 1])
+        )
+        sheet = incidence[:, 0] == incidence[:, 1]
+        labels = tuple(
+            MeshLabel(name, mesh_entity_scope(mesh, 2, selected))
+            for name, selected in (
+                ("interface", ids[2][facet_rows][interface]),
+                ("internal_sheet", ids[2][facet_rows][sheet]),
+            )
+            if selected.size
+        )
+        del incidence, interface, sheet
+        points = np.asarray(mesh.coordinates, dtype=np.float64)
+        rounding = 128.0 * np.finfo(np.float64).eps * np.max(np.abs(points), initial=1.0)
+        facet_names = {
+            facet: sources_owner.source_entity_id(source.source_revision, "facet", facet)
+            for facet in present_facets
+        }
+        source_normals = {}
+        for polygon in np.unique(grid.face_source_polygons[facet_rows]).tolist():
+            loop = complex_.polygon_vertices[
+                complex_.polygon_offsets[polygon] : complex_.polygon_offsets[polygon + 1]
+            ]
+            vertices = complex_.vertices[loop]
+            source_normals[polygon] = np.sum(
+                np.cross(vertices, np.roll(vertices, -1, axis=0)), axis=0
+            )
+        normals = np.cross(
+            points[face_vertices[facet_rows, 1]] - points[face_vertices[facet_rows, 0]],
+            points[face_vertices[facet_rows, 3]] - points[face_vertices[facet_rows, 0]],
+        )
+        orientations = np.asarray(
+            [
+                np.sign(np.sum(normal * source_normals[int(polygon)]))
+                for normal, polygon in zip(
+                    normals, grid.face_source_polygons[facet_rows], strict=True
                 )
-                for region in grid.cell_regions
+            ],
+            dtype=np.int8,
+        )
+        del normals, source_normals
+        associations = [
+            GeometryAssociation(
+                GeometryAssociationKind.PIECEWISE_LINEAR,
+                source.source_id,
+                source.source_revision,
+                sets[3].entity_set_id,
+                ids[3],
+                tuple(
+                    sources_owner.source_entity_id(
+                        source.source_revision, "region", int(region)
+                    )
+                    for region in grid.cell_regions
+                ),
+                np.zeros((cells.shape[0],), dtype=np.float64),
+                exact=True,
             ),
-            np.zeros((cells.shape[0],), dtype=np.float64),
-            exact=True,
-        ),
-        GeometryAssociation(
-            GeometryAssociationKind.PIECEWISE_LINEAR,
-            source.source_id,
-            source.source_revision,
-            sets[2].entity_set_id,
-            ids[2][facet_rows],
-            tuple(facet_names[int(facet)] for facet in facets[facet_rows]),
-            np.full((facet_rows.size,), rounding, dtype=np.float64),
-            orientations=orientations,
-        ),
-    ]
-    edge_facets: list[set[int]] = [set() for _ in range(edge_vertices.shape[0])]
-    vertex_facets: list[set[int]] = [set() for _ in range(points.shape[0])]
-    for face in facet_rows.tolist():
-        facet = int(facets[face])
-        for edge in face_edges[face].tolist():
-            edge_facets[edge].add(facet)
-        for vertex in face_vertices[face].tolist():
-            vertex_facets[vertex].add(facet)
-    # Source-associated segment unions certify a ridge chain continuously.
-    # Identity comes from their old associations, not nearby coordinates.
-    phase = _grid_ridge_associations(
-        source,
-        old,
-        grid,
-        points,
-        edge_vertices,
-        edge_facets,
-        facet_names,
-        ids,
-        sets,
-        rounding,
-        associations,
-    )
-    associations = phase.associations
-    ridge_names = phase.ridge_names
-    phase = _grid_vertex_associations(
-        source,
-        grid,
-        points,
-        edge_vertices,
-        ridge_names,
-        vertex_facets,
-        facet_names,
-        cells,
-        ids,
-        sets,
-        rounding,
-        associations,
-    )
-    associations = phase.associations
+            GeometryAssociation(
+                GeometryAssociationKind.PIECEWISE_LINEAR,
+                source.source_id,
+                source.source_revision,
+                sets[2].entity_set_id,
+                ids[2][facet_rows],
+                tuple(facet_names[int(facet)] for facet in facets[facet_rows]),
+                np.full((facet_rows.size,), rounding, dtype=np.float64),
+                orientations=orientations,
+            ),
+        ]
+        edge_facets: list[set[int]] = [set() for _ in range(edge_vertices.shape[0])]
+        vertex_facets: list[set[int]] = [set() for _ in range(points.shape[0])]
+        for face in facet_rows.tolist():
+            facet = int(facets[face])
+            for edge in face_edges[face].tolist():
+                edge_facets[edge].add(facet)
+            for vertex in face_vertices[face].tolist():
+                vertex_facets[vertex].add(facet)
+        # Source-associated segment unions certify a ridge chain continuously.
+        # Identity comes from their old associations, not nearby coordinates.
+        phase = _grid_ridge_associations(
+            source,
+            old,
+            grid,
+            points,
+            edge_vertices,
+            edge_facets,
+            facet_names,
+            ids,
+            sets,
+            rounding,
+            associations,
+        )
+        associations = phase.associations
+        ridge_names = phase.ridge_names
+        phase = _grid_vertex_associations(
+            source,
+            grid,
+            points,
+            edge_vertices,
+            ridge_names,
+            vertex_facets,
+            facet_names,
+            cells,
+            ids,
+            sets,
+            rounding,
+            associations,
+        )
+        associations = phase.associations
     return NativeRouteMetadata(zones, patches, labels, tuple(associations))
 
 
@@ -1058,7 +1181,10 @@ def execute_grid_hex_route(
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with (
+        family_route_refusals(specification.limits, "grid_hex"),
+        budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+    ):
         if (
             source.binding_id != prepared.source_binding_id
             or specification.specification_id != prepared.specification_id
@@ -1086,37 +1212,56 @@ def execute_grid_hex_route(
                 raise TypeError(
                     "grid_hex.size_controls must contain a uniform control; got a different control kind"
                 )
-        size = (
-            control.maximum_size
-            if control.maximum_size is not None
-            else control.target_size
-        )
+        # The maximum is an admissibility bound, not the requested resolution.
+        size = control.target_size
         grid = generate_integer_grid_hexes(
             source.complex,
             construction,
             prepared.grid_schedule,
             specification.limits,
             size,
+            maximum_size=min(
+                control.target_size + specification.size_compliance.tolerance(control.target_size),
+                float("inf") if control.maximum_size is None else control.maximum_size + specification.size_compliance.tolerance(control.maximum_size),
+            ),
             record_phase=record_phase,
             scope=scope,
             budget=budget,
         )
         with measure_phase(record_phase, "geometry_association"):
-            metadata = _grid_metadata(source, construction, grid)
+            metadata = _grid_metadata(source, construction, grid, scope=scope)
             zones = metadata.zones
             patches = metadata.patches
             labels = metadata.labels
             associations = metadata.associations
         mesh = grid.mesh
-        with coordinate_phase(scope, specification.limits, budget):
+        cell_count = mesh.blocks[0].cell_count
+        with (
+            coordinate_phase(scope, specification.limits, budget),
+            budget.temporary_scope(),
+        ):
+            # evaluate_cell_quality charges its own corner queries; the three
+            # host quality copies are temporary.
+            budget.reserve(0, 24 * cell_count + 4096)
             quality = evaluate_cell_quality(mesh, budget=budget)
-        minimum = float(np.min(np.asarray(quality.scaled_jacobian)))
-        lengths, growth = edge_size_evidence(
-            np.asarray(mesh.coordinates, dtype=np.float64), entities(mesh, 1)
-        )
-        requested, achieved, issues = uniform_size_compliance(
-            control, specification.size_compliance, lengths, growth
-        )
+            minimum = float(np.min(np.asarray(quality.scaled_jacobian)))
+            mean_ratio = float(np.min(np.asarray(quality.mean_ratios)))
+            aspect_ratio = float(np.max(np.asarray(quality.aspect_ratios)))
+        edge_count = mesh.topology.entities(1).count
+        vertex_count = mesh.coordinates.shape[0]
+        with scope.host_workspace() as size_workspace:
+            # Host point and edge copies, endpoint gathers and differences,
+            # lengths, a partition copy, and per-vertex extrema banks.
+            size_workspace.set_bound(128 * edge_count + 72 * vertex_count + 4096)
+            points = np.asarray(mesh.coordinates, dtype=np.float64)
+            lengths, growth = edge_size_evidence(points, entities(mesh, 1))
+            requested, achieved, issues = uniform_size_compliance(
+                control, specification.size_compliance, lengths, growth
+            )
+            rounding = (
+                128.0 * np.finfo(np.float64).eps * np.max(np.abs(points), initial=1.0)
+            )
+            del points, lengths
         requested.append(
             ("minimum_scaled_jacobian", prepared.grid_schedule.minimum_scaled_jacobian)
         )
@@ -1138,8 +1283,6 @@ def execute_grid_hex_route(
         )
         if minimum < prepared.grid_schedule.minimum_scaled_jacobian:
             issues.append("minimum_scaled_jacobian")
-        mean_ratio = float(np.min(np.asarray(quality.mean_ratios)))
-        aspect_ratio = float(np.max(np.asarray(quality.aspect_ratios)))
         requested.extend(
             (
                 ("minimum_mean_ratio", prepared.grid_schedule.minimum_mean_ratio),
@@ -1153,11 +1296,6 @@ def execute_grid_hex_route(
             issues.append("minimum_mean_ratio")
         if aspect_ratio > prepared.grid_schedule.maximum_aspect_ratio:
             issues.append("maximum_aspect_ratio")
-        rounding = (
-            128.0
-            * np.finfo(np.float64).eps
-            * np.max(np.abs(np.asarray(mesh.coordinates)), initial=1.0)
-        )
         for feature in specification.protected_features:
             requested.append(
                 (
@@ -1402,7 +1540,10 @@ class PreparedMappedGridHex(StrictModule, NonTrainableState):
         record_phase: NativeMeshingPhaseRecorder | None = None,
     ) -> None:
         budget = coordinate_budget(specification.limits)
-        with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+        with (
+            family_route_refusals(specification.limits, "mapped_grid_preparation"),
+            budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+        ):
             issues = mapped_grid_support_issues(source, specification)
             if issues:
                 raise ValueError(
@@ -1453,6 +1594,10 @@ def _mapped_grid_metadata(
     mapped: MappedGridHexConstruction,
     specification: VolumeMeshingSpec,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    association_inputs: list[_ConstructedTensorGrid] | None = None,
 ) -> NativeRouteMetadata:
     "Map source-root strata by chart containment and scientific incidence."
 
@@ -1461,97 +1606,130 @@ def _mapped_grid_metadata(
         source.domain,
         maximum_support_queries=specification.limits.maximum_geometry_queries,
     )
-    associations = transfer.associations(mesh, mapped.geometry)
-    target_entities = tuple(entities(mesh, degree) for degree in range(4))
-    target_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    target_lookup = tuple(
-        {
-            tuple(sorted(target_vertex_ids[vertices].tolist())): row
-            for row, vertices in enumerate(rows)
-        }
-        for rows in target_entities
+    with coordinate_phase(scope, specification.limits, budget):
+        if association_inputs:
+            construction = association_inputs.pop()
+            try:
+                associations = _tensor_reference_associations(
+                    source.domain, mesh, mapped.geometry, construction,
+                    maximum_support_queries=specification.limits.maximum_geometry_queries,
+                    budget=budget,
+                )
+            finally:
+                construction.active = False
+                construction.owner_fields = ()
+                construction.parents = ()
+        else:
+            associations = transfer.associations(mesh, mapped.geometry, budget=budget)
+    vertex_count = mesh.coordinates.shape[0]
+    face_count = mesh.topology.entities(2).count
+    cell_count = mesh.topology.entities(3).count
+    control_entries = sum(
+        len(control.scope.entity_ids) for control in specification.patch_controls
     )
-    topology = reference_cell_topology("hexahedron")
-    target_cells = target_entities[3]
+    with scope.host_workspace() as workspace:
+        # Conservative CPython bounds for the face-key map, owner lists, and
+        # interface rows, plus identity, face, and padded cell banks with
+        # their selection masks and patch-control scope copies.
+        workspace.set_bound(
+            _HOST_ENTRY_BYTES * (3 * face_count + 2 * cell_count)
+            + 8 * vertex_count
+            + 64 * face_count
+            + 160 * cell_count
+            + 8 * control_entries
+            + 4096
+        )
+        face_rows = entities(mesh, 2)
+        target_cells = entities(mesh, 3)
+        target_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        face_lookup = {
+            tuple(sorted(target_vertex_ids[vertices].tolist())): row
+            for row, vertices in enumerate(face_rows)
+        }
+        topology = reference_cell_topology("hexahedron")
 
-    def scope(degree: int, identifiers: np.ndarray, /) -> MeshingScope:
-        return MeshingScope(
-            mesh.mesh_id,
-            mesh.numeric_version,
-            MeshingEntityKind.MESH,
-            degree,
-            mesh.topology.entities(degree).entity_set_id,
-            identifiers,
-        )
+        def entity_scope(degree: int, identifiers: np.ndarray, /) -> MeshingScope:
+            return MeshingScope(
+                mesh.mesh_id,
+                mesh.numeric_version,
+                MeshingEntityKind.MESH,
+                degree,
+                mesh.topology.entities(degree).entity_set_id,
+                identifiers,
+            )
 
-    cell_ids = np.asarray(mesh.topology.entities(3).entity_ids, dtype=np.int64)
-    zones = []
-    for region, region_id in enumerate(source.domain.region_ids):
-        if not np.any(mapped.cell_regions == region):
-            continue
-        control = next(
-            (
-                item
-                for item in specification.region_controls
-                if item.region_name == region_id
-            ),
-            None,
-        )
-        zones.append(
-            MeshZone(
-                region_id,
-                MeshZoneRole.REGION,
-                scope(3, cell_ids[mapped.cell_regions == region]),
-                material_id=None if control is None else control.material_id,
-                region_role=None if control is None else control.role,
+        cell_ids = np.asarray(mesh.topology.entities(3).entity_ids, dtype=np.int64)
+        zones = []
+        for region, region_id in enumerate(source.domain.region_ids):
+            if not np.any(mapped.cell_regions == region):
+                continue
+            control = next(
+                (
+                    item
+                    for item in specification.region_controls
+                    if item.region_name == region_id
+                ),
+                None,
             )
-        )
-    dimensions = np.asarray(associations[2].parent_dimensions, dtype=np.int64)
-    parent_ids = np.asarray(associations[2].parent_ids, dtype=np.int64)
-    faces = np.asarray(mesh.topology.entities(2).entity_ids, dtype=np.int64)
-    patches = [
-        MeshPatch(
-            source.domain.image_entity_id(2, parent),
-            scope(2, faces[(dimensions == 2) & (parent_ids == parent)]),
-        )
-        for parent in np.unique(parent_ids[dimensions == 2]).tolist()
-    ]
-    for control in specification.patch_controls:
-        selected = (dimensions == 2) & np.isin(
-            parent_ids, np.asarray(control.scope.entity_ids)
-        )
-        if control.required and not np.any(selected):
-            raise MeshingFailure(
-                MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                "mapped_grid.patch_controls must publish child faces for every required patch; got an empty patch",
+            zones.append(
+                MeshZone(
+                    region_id,
+                    MeshZoneRole.REGION,
+                    entity_scope(3, cell_ids[mapped.cell_regions == region]),
+                    material_id=None if control is None else control.material_id,
+                    region_role=None if control is None else control.role,
+                )
             )
-        patches.append(MeshPatch(control.name, scope(2, faces[selected])))
-    interface_faces = []
-    face_owners: list[list[int]] = [[] for _ in target_entities[2]]
-    for cell_row, vertices in enumerate(target_cells):
-        for local in topology.entities[2]:
-            key = tuple(sorted(target_vertex_ids[vertices[list(local)]].tolist()))
-            face_owners[target_lookup[2][key]].append(cell_row)
-    for row, owners in enumerate(face_owners):
-        if (
-            len(owners) == 2
-            and mapped.cell_regions[owners[0]] != mapped.cell_regions[owners[1]]
-        ):
-            if dimensions[row] != 2:
+        dimensions = np.asarray(associations[2].parent_dimensions, dtype=np.int64)
+        parent_ids = np.asarray(associations[2].parent_ids, dtype=np.int64)
+        faces = np.asarray(mesh.topology.entities(2).entity_ids, dtype=np.int64)
+        present_parents = np.unique(parent_ids[dimensions == 2]).tolist()
+        patches = [
+            MeshPatch(
+                source.domain.image_entity_id(2, parent),
+                entity_scope(2, faces[(dimensions == 2) & (parent_ids == parent)]),
+            )
+            for parent in present_parents
+        ]
+        for control in specification.patch_controls:
+            selected = (dimensions == 2) & np.isin(
+                parent_ids, np.asarray(control.scope.entity_ids)
+            )
+            if control.required and not np.any(selected):
                 raise MeshingFailure(
                     MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                    "mapped_grid.interface.source_face must identify a declared root face; got an unassigned interface",
+                    "mapped_grid.patch_controls must publish child faces for every required patch; got an empty patch",
                 )
-            interface_faces.append(row)
-    labels = (
-        (
-            MeshLabel(
-                "interface", scope(2, faces[np.asarray(interface_faces, dtype=np.int64)])
-            ),
+            patches.append(MeshPatch(control.name, entity_scope(2, faces[selected])))
+        interface_faces = []
+        face_owners: list[list[int]] = [[] for _ in face_rows]
+        for cell_row, vertices in enumerate(target_cells):
+            for local in topology.entities[2]:
+                key = tuple(sorted(target_vertex_ids[vertices[list(local)]].tolist()))
+                face_owners[face_lookup[key]].append(cell_row)
+        del face_lookup
+        for row, owners in enumerate(face_owners):
+            if (
+                len(owners) == 2
+                and mapped.cell_regions[owners[0]] != mapped.cell_regions[owners[1]]
+            ):
+                if dimensions[row] != 2:
+                    raise MeshingFailure(
+                        MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+                        "mapped_grid.interface.source_face must identify a declared root face; got an unassigned interface",
+                    )
+                interface_faces.append(row)
+        del face_owners
+        labels = (
+            (
+                MeshLabel(
+                    "interface",
+                    entity_scope(2, faces[np.asarray(interface_faces, dtype=np.int64)]),
+                ),
+            )
+            if interface_faces
+            else ()
         )
-        if interface_faces
-        else ()
-    )
     return NativeRouteMetadata(tuple(zones), tuple(patches), labels, associations)
 
 
@@ -1570,7 +1748,10 @@ def execute_mapped_grid_hex_route(
     workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     budget = coordinate_budget(specification.limits)
-    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+    with (
+        family_route_refusals(specification.limits, "mapped_grid_hex"),
+        budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)),
+    ):
         if (
             source.binding_id != prepared.source_binding_id
             or specification.specification_id != prepared.specification_id
@@ -1587,11 +1768,8 @@ def execute_mapped_grid_hex_route(
                 raise TypeError(
                     "mapped_grid.size_controls must contain a uniform control; got a different control kind"
                 )
-        size = (
-            control.maximum_size
-            if control.maximum_size is not None
-            else control.target_size
-        )
+        # Aim at the authored size; compliance still checks every original bound.
+        size = control.target_size
         if (prepared.grid_schedule.route == "frame_grid") != (
             prepared.source_frame is not None
         ) or (prepared.grid_schedule.route == "frame_grid") != (
@@ -1609,22 +1787,52 @@ def execute_mapped_grid_hex_route(
             raise ValueError(
                 "PreparedMappedGridHex.source_frame must bind the declared coordinate source and reference mesh; got mismatched IDs"
             )
+        association_inputs: list[_ConstructedTensorGrid] = []
+        association_domain = source.domain
+        association_bindings = (
+            source.source_id, source.source_revision, source.binding_id,
+            specification.specification_id, prepared.prepared_id,
+            prepared.grid_schedule.schedule_id,
+        )
         phase = _mapped_grid_construction(
-            source, specification, prepared, size, record_phase, scope, budget
+            source, specification, prepared, size, record_phase, scope, budget,
+            association_inputs=association_inputs,
         )
         mapped = phase.mapped
         grid = phase.grid
         grid_identity = phase.grid_identity
         bound = phase.bound
+        if (
+            source.binding_id != prepared.source_binding_id
+            or specification.specification_id != prepared.specification_id
+            or source.domain is not association_domain
+            or association_bindings != (
+                source.source_id, source.source_revision, source.binding_id,
+                specification.specification_id, prepared.prepared_id,
+                prepared.grid_schedule.schedule_id,
+            )
+        ):
+            raise ValueError("mapped_grid.association must retain current source, specification and plan")
         with measure_phase(record_phase, "geometry_association"):
-            metadata = _mapped_grid_metadata(source, mapped, specification)
+            metadata = _mapped_grid_metadata(
+                source, mapped, specification, scope=scope, budget=budget,
+                association_inputs=association_inputs,
+            )
             zones = metadata.zones
             patches = metadata.patches
             labels = metadata.labels
             associations = metadata.associations
         mesh = mapped.mesh
         phase = _mapped_grid_compliance(
-            mesh, mapped, grid, bound, control, specification, prepared, record_phase
+            mesh,
+            mapped,
+            grid,
+            bound,
+            control,
+            specification,
+            prepared,
+            record_phase,
+            scope,
         )
         compliance = phase.compliance
         check_deadline(started, specification.limits, MeshingStageKind.GEOMETRY_AUDIT)
@@ -1705,56 +1913,81 @@ def _quad_compliance(
     carrier_deviations = inputs.carrier_deviations
     source_deviations = inputs.source_deviations
     """Quad compliance."""
-    vertices = np.asarray(mesh.coordinates, dtype=np.float64)
-    edges = entities(mesh, 1)
-    a, b = vertices[edges[:, 0]], vertices[edges[:, 1]]
-    lengths = np.linalg.norm(b - a, axis=1)
-    local = np.min(
-        prepared.scaffold.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(3, -1),
-        axis=0,
-    )
-    endpoint = prepared.scaffold.sizes(vertices)
-    gradation = 1.0 + float(
-        np.max(np.abs(endpoint[edges[:, 1]] - endpoint[edges[:, 0]]) / lengths)
-    )
-    ancestor_edges = extraction.entity_parent_rows[1]
-    ancestor_dimensions = extraction.entity_parent_dimensions[1]
-    old_edge_sources = np.full((scaffold.topology.entities(1).count,), -1, dtype=np.int64)
-    old_edge_sources[features] = constrained_sources
-    child_sources = np.where(
-        ancestor_dimensions == 1,
-        old_edge_sources[np.minimum(ancestor_edges, old_edge_sources.size - 1)],
-        -1,
-    )
-    child_constraints = np.sort(edges[child_sources >= 0], axis=1)
-    child_constraint_sources = child_sources[child_sources >= 0]
-    requested, achieved, issues = [], [], []
-    for control in specification.size_controls:
-        match control:
-            case UniformSizeControl():
-                pass
-            case _:
-                raise TypeError(
-                    "dual_quad.size_controls must contain uniform controls; got a different control kind"
-                )
-        rows = control_edges(
-            control,
-            prepared.scaffold,
-            np.sort(edges, axis=1),
-            local,
-            child_constraints,
-            child_constraint_sources,
+    edge_count = mesh.topology.entities(1).count
+    vertex_count = mesh.coordinates.shape[0]
+    dimension = mesh.ambient_dimension
+    patch_count = prepared.scaffold.patch_sizes.size
+    scaffold_edge_count = scaffold.topology.entities(1).count
+    control_ids = [
+        int(np.size(control.scope.entity_ids))
+        for control in specification.size_controls
+        if isinstance(control, UniformSizeControl)
+    ]
+    with scope.host_workspace() as phase_storage:
+        # Edge and point banks (at most 64 bytes per edge and coordinate plus
+        # 384 per edge for targets, gradation, ancestry and one control's
+        # selections), vertex banks, membership keys, and one size-field chunk:
+        # at most 128 bytes for each of max(chunk entries, patch count) entries.
+        phase_storage.set_bound(
+            (64 * dimension + 384) * edge_count
+            + (8 * dimension + 32) * vertex_count
+            + 8 * scaffold_edge_count
+            + 64 * max(control_ids, default=0)
+            + (128 * max(_FIELD_WORKING_ENTRIES, patch_count) if patch_count else 0)
+            + 4096
         )
-        req, act, failed = graded_size_compliance(
-            control,
-            specification.size_compliance,
-            lengths[rows],
-            local[rows],
-            gradation,
+        vertices = np.asarray(mesh.coordinates, dtype=np.float64)
+        edges = entities(mesh, 1)
+        a, b = vertices[edges[:, 0]], vertices[edges[:, 1]]
+        lengths = np.linalg.norm(b - a, axis=1)
+        local = np.min(
+            prepared.scaffold.sizes(np.concatenate((a, b, 0.5 * (a + b)))).reshape(
+                3, -1
+            ),
+            axis=0,
         )
-        requested.extend(req)
-        achieved.extend(act)
-        issues.extend(failed)
+        endpoint = prepared.scaffold.sizes(vertices)
+        gradation = 1.0 + float(
+            np.max(np.abs(endpoint[edges[:, 1]] - endpoint[edges[:, 0]]) / lengths)
+        )
+        ancestor_edges = extraction.entity_parent_rows[1]
+        ancestor_dimensions = extraction.entity_parent_dimensions[1]
+        old_edge_sources = np.full((scaffold_edge_count,), -1, dtype=np.int64)
+        old_edge_sources[features] = constrained_sources
+        child_sources = np.where(
+            ancestor_dimensions == 1,
+            old_edge_sources[np.minimum(ancestor_edges, old_edge_sources.size - 1)],
+            -1,
+        )
+        child_constraints = np.sort(edges[child_sources >= 0], axis=1)
+        child_constraint_sources = child_sources[child_sources >= 0]
+        requested, achieved, issues = [], [], []
+        for control in specification.size_controls:
+            match control:
+                case UniformSizeControl():
+                    pass
+                case _:
+                    raise TypeError(
+                        "dual_quad.size_controls must contain uniform controls; got a different control kind"
+                    )
+            rows = control_edges(
+                control,
+                prepared.scaffold,
+                np.sort(edges, axis=1),
+                local,
+                child_constraints,
+                child_constraint_sources,
+            )
+            req, act, failed = graded_size_compliance(
+                control,
+                specification.size_compliance,
+                lengths[rows],
+                local[rows],
+                gradation,
+            )
+            requested.extend(req)
+            achieved.extend(act)
+            issues.extend(failed)
     with coordinate_phase(scope, specification.limits, budget):
         quality = evaluate_cell_quality(mesh, budget=budget)
     minimum_angle = float(np.min(np.asarray(quality.minimum_angle)))
@@ -1815,13 +2048,18 @@ def _quad_compliance(
             ("cross_field_counts_complete", int(diagnostics.counts_complete)),
         )
     )
-    source_requested, source_achieved = source_carrier_evidence(
-        prepared.scaffold,
-        authority,
-        np.asarray(scaffold.vertex_global_ids, dtype=np.int64),
-        carrier_deviations,
-        source_deviations,
-    )
+    vertex_rows = int(np.size(authority.vertex_rows))
+    carrier_rows = prepared.scaffold.source_bounds.size + vertex_rows
+    with scope.host_workspace() as phase_storage:
+        # Keyed report tuples and strings, plus host vertex IDs.
+        phase_storage.set_bound(512 * carrier_rows + 8 * vertex_rows + 4096)
+        source_requested, source_achieved = source_carrier_evidence(
+            prepared.scaffold,
+            authority,
+            np.asarray(scaffold.vertex_global_ids, dtype=np.int64),
+            carrier_deviations,
+            source_deviations,
+        )
     requested.extend(source_requested)
     achieved.extend(source_achieved)
     compliance = MeshingComplianceReport(
@@ -1860,56 +2098,92 @@ def _volume_extraction_compliance(
             raise TypeError(
                 "dual_hex.size_controls must contain a uniform control; got a different control kind"
             )
-    vertices = np.asarray(mesh.coordinates, dtype=np.float64)
-    edges = entities(mesh, 1)
-    lengths, growth = edge_size_evidence(vertices, edges)
-    requested, achieved, issues = uniform_size_compliance(
-        control, specification.size_compliance, lengths, growth
-    )
-    for feature in specification.protected_features:
-        key = f"protected:{feature.feature_id}:maximum_deviation"
-        requested_indices = np.asarray(feature.scope.entity_ids, dtype=np.int64)
-        entity_set = mesh.entity_set(feature.scope.entity_dimension).entity_set_id
-        present: set[int] = set()
-        deviation = 0.0
-        for association in associations:
-            if (
-                association.target_entity_set_id != entity_set
-                or not association.exact
-                or association.source_dimensions is None
-                or association.source_indices is None
-            ):
-                continue
-            dimensions = np.asarray(association.source_dimensions, dtype=np.int64)
-            indices = np.asarray(association.source_indices, dtype=np.int64)
-            matched = (dimensions == feature.scope.entity_dimension) & np.isin(
-                indices, requested_indices
-            )
-            present.update(indices[matched].tolist())
-            deviation = max(
-                deviation,
-                float(np.max(np.asarray(association.residuals)[matched], initial=0.0)),
-            )
-        missing = tuple(
-            int(index) for index in requested_indices if int(index) not in present
-        )
-        if missing:
-            raise MeshingFailure(
-                MeshingFailureCategory.ASSOCIATION_FAILED,
-                "hex.protected_features must retain source-map associations for every requested entity; got missing associations",
-                stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
-                entity_ids=missing,
-            )
-        requested.append((key, feature.maximum_deviation))
-        achieved.append((key, deviation))
-        if feature.hard and deviation > feature.maximum_deviation:
-            issues.append(key)
+    # Decomposition and closure work are known before compliance evaluation.
     if construction.work_units + extraction.work_units > limits.maximum_work_units:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
             "hex.work_units must fit decomposition plus closure within maximum_work_units; got an exhausted budget",
             stage=MeshingStageKind.VOLUME_FILL.value,
         )
+    edge_count = mesh.topology.entities(1).count
+    vertex_count = mesh.coordinates.shape[0]
+    feature_rows = []
+    for feature in specification.protected_features:
+        entity_set = mesh.entity_set(feature.scope.entity_dimension).entity_set_id
+        requested_count = int(np.size(feature.scope.entity_ids))
+        feature_rows.append(
+            (
+                requested_count,
+                tuple(
+                    int(np.size(association.source_indices))
+                    for association in associations
+                    if association.target_entity_set_id == entity_set
+                    and association.exact
+                    and association.source_dimensions is not None
+                    and association.source_indices is not None
+                ),
+            )
+        )
+    with scope.host_workspace() as phase_storage:
+        # Edge banks and one statistic copy (128 bytes per edge), vertex
+        # extrema (64 per vertex), and per feature/association membership
+        # temporaries, Python ID rows and the present-ID set (128 per row).
+        phase_storage.set_bound(
+            128 * edge_count
+            + 64 * vertex_count
+            + sum(
+                64 * requested
+                + sum(128 * (rows + requested) for rows in association_rows)
+                for requested, association_rows in feature_rows
+            )
+            + 4096
+        )
+        vertices = np.asarray(mesh.coordinates, dtype=np.float64)
+        edges = entities(mesh, 1)
+        lengths, growth = edge_size_evidence(vertices, edges)
+        requested, achieved, issues = uniform_size_compliance(
+            control, specification.size_compliance, lengths, growth
+        )
+        for feature in specification.protected_features:
+            key = f"protected:{feature.feature_id}:maximum_deviation"
+            requested_indices = np.asarray(feature.scope.entity_ids, dtype=np.int64)
+            entity_set = mesh.entity_set(feature.scope.entity_dimension).entity_set_id
+            present: set[int] = set()
+            deviation = 0.0
+            for association in associations:
+                if (
+                    association.target_entity_set_id != entity_set
+                    or not association.exact
+                    or association.source_dimensions is None
+                    or association.source_indices is None
+                ):
+                    continue
+                dimensions = np.asarray(association.source_dimensions, dtype=np.int64)
+                indices = np.asarray(association.source_indices, dtype=np.int64)
+                matched = (dimensions == feature.scope.entity_dimension) & np.isin(
+                    indices, requested_indices
+                )
+                present.update(indices[matched].tolist())
+                deviation = max(
+                    deviation,
+                    float(
+                        np.max(np.asarray(association.residuals)[matched], initial=0.0)
+                    ),
+                )
+            missing = tuple(
+                int(index) for index in requested_indices if int(index) not in present
+            )
+            if missing:
+                raise MeshingFailure(
+                    MeshingFailureCategory.ASSOCIATION_FAILED,
+                    "hex.protected_features must retain source-map associations for every requested entity; got missing associations",
+                    stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+                    entity_ids=missing,
+                )
+            requested.append((key, feature.maximum_deviation))
+            achieved.append((key, deviation))
+            if feature.hard and deviation > feature.maximum_deviation:
+                issues.append(key)
     counts: dict[str, int] = {}
     for block in mesh.blocks:
         counts[block.cell_kind] = counts.get(block.cell_kind, 0) + block.cell_count
@@ -1966,7 +2240,7 @@ def _volume_extraction_compliance(
 @final
 class _MappedGridConstructionPhase(StrictModule):
     mapped: MappedGridHexConstruction
-    grid: GridHexConstruction | SourceBlockIntegerGrid
+    grid: GridHexConstruction | _SourceBlockTensorGrid
     grid_identity: str = eqx.field(static=True)
     bound: float = eqx.field(static=True)
 
@@ -1979,12 +2253,28 @@ def _mapped_grid_construction(
     record_phase: NativeMeshingPhaseRecorder | None,
     scope: NativeExecutionScope,
     budget: CoordinateEnclosureBudget,
+    *,
+    association_inputs: list[_ConstructedTensorGrid] | None = None,
 ) -> _MappedGridConstructionPhase:
     """Mapped grid construction."""
-    with measure_phase(record_phase, "construction"):
+    control = specification.size_controls[0]
+    assert isinstance(control, UniformSizeControl)
+    maximum_size = min(
+        size + specification.size_compliance.tolerance(size),
+        float("inf") if control.maximum_size is None else control.maximum_size + specification.size_compliance.tolerance(control.maximum_size),
+    )
+    with measure_phase(record_phase, "construction"), scope.host_workspace() as sizing_workspace:
+        roots = sum(block.cell_count for block in source.domain.reference_mesh.blocks)
+        sizing_workspace.set_bound((48 * roots if prepared.source_frame is not None else 0) + 24)
+        root_axis_bounds = None if prepared.source_frame is None else family_host_array((roots, 3), np.float64, scope=scope)
+        root_reference_axis_bounds = None if prepared.source_frame is None else family_host_array((roots, 3), np.float64, scope=scope)
+        reference_axis_bounds = family_host_array((3,), np.float64, scope=scope)
         bound = mapped_source_lipschitz_bound(
             source.domain.reference_mesh,
             source.domain.source_geometry,
+            root_axis_bounds=root_axis_bounds,
+            reference_axis_bounds=reference_axis_bounds,
+            root_reference_axis_bounds=root_reference_axis_bounds,
             scope=scope,
             budget=budget,
         )
@@ -1994,23 +2284,19 @@ def _mapped_grid_construction(
                 source.domain,
                 prepared.grid_schedule,
                 specification.limits,
-                size / bound,
+                size,
+                maximum_size=maximum_size,
+                desired_axis_scale=bound,
+                reference_axis_bounds=tuple(float(value) for value in reference_axis_bounds),
                 record_phase=record_phase,
                 scope=scope,
                 budget=budget,
             )
             grid_identity = grid.construction_id
         else:
-            intervals = source_block_interval_counts(
-                source.domain.reference_mesh,
-                bound,
-                size,
-                prepared.grid_schedule.maximum_depth,
-                scope=scope,
-            )
-            grid = extract_source_block_integer_grid(
+            grid = _extract_source_block_tensor_grid(
                 prepared.source_frame,
-                intervals,
+                None,
                 source.domain.cell_regions,
                 specification.limits,
                 prepared.grid_schedule.maximum_depth,
@@ -2018,8 +2304,14 @@ def _mapped_grid_construction(
                 record_phase=record_phase,
                 scope=scope,
                 budget=budget,
+                axis_bounds=root_axis_bounds,
+                desired_axis_bounds=root_reference_axis_bounds,
+                physical_lipschitz_bound=bound,
+                target_size=size,
+                maximum_size=maximum_size,
             )
             grid_identity = grid.grid_id
+        del root_axis_bounds, root_reference_axis_bounds, reference_axis_bounds
     with measure_phase(record_phase, "curving"):
         match grid:
             case GridHexConstruction():
@@ -2032,16 +2324,18 @@ def _mapped_grid_construction(
                     scope=scope,
                     budget=budget,
                 )
-            case SourceBlockIntegerGrid():
+            case _SourceBlockTensorGrid():
                 match prepared.source_frame:
                     case PreparedSourceHexFrame() as frame:
-                        mapped = extract_source_frame_grid(
+                        mapped = _extract_source_tensor_frame_grid(
                             frame,
                             grid,
                             source.domain.cell_regions,
                             specification.limits,
                             scope=scope,
                             budget=budget,
+                            quality_policy=prepared.grid_schedule,
+                            association_inputs=association_inputs,
                         )
                     case _:
                         raise ValueError(
@@ -2062,21 +2356,32 @@ class _MappedGridCompliancePhase(StrictModule):
 def _mapped_grid_compliance(
     mesh: CellMesh,
     mapped: MappedGridHexConstruction,
-    grid: GridHexConstruction | SourceBlockIntegerGrid,
+    grid: GridHexConstruction | _SourceBlockTensorGrid,
     bound: float,
     control: UniformSizeControl,
     specification: VolumeMeshingSpec,
     prepared: PreparedMappedGridHex,
     record_phase: NativeMeshingPhaseRecorder | None,
+    scope: NativeExecutionScope,
+    /,
 ) -> _MappedGridCompliancePhase:
     """Mapped grid compliance."""
-    with measure_phase(record_phase, "compliance"):
+    edge_count = mesh.topology.entities(1).count
+    vertex_count = mesh.coordinates.shape[0]
+    with (
+        measure_phase(record_phase, "compliance"),
+        scope.host_workspace() as workspace,
+    ):
+        # Host point and edge copies, endpoint gathers and differences,
+        # lengths, a partition copy, and per-vertex extrema banks.
+        workspace.set_bound(128 * edge_count + 72 * vertex_count + 4096)
         lengths, growth = edge_size_evidence(
             np.asarray(mesh.coordinates, dtype=np.float64), entities(mesh, 1)
         )
         requested, achieved, issues = uniform_size_compliance(
             control, specification.size_compliance, lengths, growth
         )
+        del lengths
         minimum_scaled = float(np.min(mapped.scaled_jacobian_lower))
         minimum_mean = float(np.min(mapped.mean_ratio_lower))
         aspect = float(np.max(mapped.aspect_ratio_upper))
@@ -2137,7 +2442,7 @@ def _mapped_grid_compliance(
                     ),
                 )
             )
-        if isinstance(grid, SourceBlockIntegerGrid):
+        if isinstance(grid, _SourceBlockTensorGrid):
             achieved.extend(
                 (
                     ("integer_source_root_count", grid.root_intervals.shape[0]),
@@ -2266,6 +2571,7 @@ def _grid_ridge_associations(
                 end = max(end, last)
             if end >= upper:
                 complete.append((entity, orientation))
+        del intervals
         if len(complete) != 1:
             raise MeshingFailure(
                 MeshingFailureCategory.REGION_RESOLUTION_FAILED,
@@ -2285,7 +2591,8 @@ def _grid_ridge_associations(
             tuple(edge_names[row] for row in edge_rows.tolist()),
             np.full((edge_rows.size,), rounding, dtype=np.float64),
             orientations=np.asarray(
-                [edge_orientations[row] for row in edge_rows.tolist()], dtype=np.int8
+                [edge_orientations[row] for row in edge_rows.tolist()],
+                dtype=np.int8,
             ),
         )
     )

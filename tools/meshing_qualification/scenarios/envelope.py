@@ -1,10 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
-import json
 import os
-import resource
-import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -26,8 +23,13 @@ from phydrax import (
 from phydrax.geometry import SurfaceMetadata
 from phydrax.lifecycle import (
     MeshingAcceptedEpoch,
-    read_meshing_source_closure,
+    read_meshing_source_execution_controls,
     write_meshing_source_closure,
+)
+from phydrax.lifecycle._meshing_sources import (
+    _MeshingSourceArchive,
+    _read_meshing_source_archive,
+    _restore_meshing_source_archive,
 )
 from phydrax.meshing import (
     EnvelopeFeaturePermission,
@@ -42,6 +44,8 @@ from phydrax.meshing.qualification import (
     transition_envelope_state,
     validate_envelope_acceptance,
 )
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.meshing.qualification._native_lifecycle import execute_native_request
 from tools.meshing_qualification._controls import (
     capacity_meshing_limits,
     QualificationControls,
@@ -51,6 +55,7 @@ from tools.meshing_qualification._physics import (
     _manufactured_source,
     _manufactured_value,
     _physical_error,
+    CorpusPreconditioning,
 )
 from tools.meshing_qualification._records import (
     _phase_recordings,
@@ -60,11 +65,14 @@ from tools.meshing_qualification._records import (
 from tools.meshing_qualification._runtime import (
     _measured,
     _runtime_identity,
+    ColdControlPacket,
+    ColdWorkerReport,
     ColdWorkerTimeout,
     Deadline,
     peak_resident_bytes,
+    PEAK_RESIDENT_SCOPE,
+    prepare_cold_worker,
     qualification_failure,
-    run_cold_worker,
     StageLedger,
 )
 from tools.meshing_qualification.scenarios.bisection import (
@@ -278,6 +286,22 @@ def _prepare_envelope_volume(
     return source, result, specification, options
 
 
+def _envelope_transport_space(
+    result: phx.meshing.CellMeshingResult,
+) -> phx.discretization.FiniteElementDiscretization:
+    """Prepare the transported u/density/history owner of one accepted carrier."""
+    return phx.discretization.FiniteElementPlan(
+        result.mesh,
+        tuple(
+            field
+            for _, field in phx.meshing.qualification.envelope_transport_field_templates(
+                result.mesh.blocks[0].cell_kind
+            )
+        ),
+        coordinate_spec=result.geometry,
+    ).prepare()
+
+
 def _solve_envelope_epoch(
     result: phx.meshing.CellMeshingResult,
     previous_values: jax.Array | None,
@@ -315,7 +339,12 @@ def _solve_envelope_epoch(
 
     values, compiler, timings = ledger.run(
         f"solver_execution_epoch_{epoch}",
-        lambda: _compiled_solver_stages(problem, seed, args.repeats),
+        lambda: _compiled_solver_stages(
+            problem,
+            seed,
+            args.repeats,
+            preconditioning=CorpusPreconditioning.EXACT_JACOBI,
+        ),
     )
     stages.update({f"{key}_epoch_{epoch}": value for key, value in timings.items()})
     error = _physical_error(result.mesh, values)
@@ -357,7 +386,7 @@ def _envelope_qualification_epochs(
     accept_result: Callable[[phx.meshing.CellMeshingResult], dict[str, object]]
     | None = None,
 ) -> None:
-    """Continue the PDE with every accepted density/history field carried atomically."""
+    """Continue all fields atomically and cold-replay either repaired source kind."""
 
     _ledger = StageLedger(record, deadline=deadline)
     if accept_result is None:
@@ -382,6 +411,9 @@ def _envelope_qualification_epochs(
     previous_auxiliary = None
     accepted_epochs: list[MeshingAcceptedEpoch] = []
     accepted_transition = None
+    # One transported-field owner per accepted carrier serves its epoch
+    # declaration and both sides of the following state transition.
+    transport_space: phx.discretization.FiniteElementDiscretization | None = None
     stages = record["stages_seconds"]
 
     association_transfer, measured = _ledger.run(
@@ -405,11 +437,16 @@ def _envelope_qualification_epochs(
         space, problem, values, epoch_record = _solve_envelope_epoch(
             result, previous_values, args, record, _ledger, started, epoch
         )
-        if isinstance(source, phx.meshing.NativeSurfaceEnvelopeSource):
+        if isinstance(source, (phx.meshing.NativeSurfaceEnvelopeSource, phx.meshing.NativePlcSource)):
             if previous_auxiliary is None:
                 previous_auxiliary = (
                     jnp.full(values.shape, 2.0, dtype=values.dtype),
                     space.dof_maps[0].dof_coordinates[:, 0] + 0.5,
+                )
+            if transport_space is None:
+                transport_space = _ledger.run(
+                    f"accepted_epoch_declaration_{epoch}",
+                    lambda: _envelope_transport_space(result),
                 )
             accepted_epochs.append(
                 _ledger.run(
@@ -422,6 +459,7 @@ def _envelope_qualification_epochs(
                         epoch,
                         part_name="envelope",
                         transition=accepted_transition,
+                        transport_space=transport_space,
                     ),
                 )
             )
@@ -440,13 +478,22 @@ def _envelope_qualification_epochs(
                 np.empty((0,), dtype=np.int64),
             ),
         )
-        policy = phx.meshing.MeshAdaptationPolicy(
-            phx.meshing.MeshAdaptationRoute.NATIVE_MIXED,
-            limits=specification.limits,
-            association_transfer=association_transfer,
-            audit_policy=phx.meshing.CellMeshAuditPolicy(
-                require_complete_association=True,
-                watertight_boundary=phx.meshing.CellMeshAuditDisposition.REJECT,
+        # Anchoring rewraps the authored envelope under the request limits, so
+        # it is native preparation work inside this deadline-checked phase.
+        policy = _ledger.run(
+            f"adaptation_prepare_epoch_{epoch}",
+            lambda: phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_MIXED,
+                limits=specification.limits,
+                association_transfer=association_transfer,
+                audit_policy=phx.meshing.CellMeshAuditPolicy(
+                    require_complete_association=True,
+                    watertight_boundary=phx.meshing.CellMeshAuditDisposition.REJECT,
+                ),
+                # Repair history is carried only from its independently authored envelope.
+                envelope_source=source
+                if isinstance(source, phx.meshing.NativeSurfaceEnvelopeSource)
+                else None,
             ),
         )
         prepared, measured = _ledger.run(
@@ -473,10 +520,15 @@ def _envelope_qualification_epochs(
                 {"adaptation": adaptation},
             )
 
-        transition, measured = _ledger.run(
-            f"solver_state_transfer_epoch_{epoch}",
-            lambda: _measured(
-                lambda: transition_envelope_state(
+        def carry_state(
+            space_: phx.discretization.FiniteElementDiscretization | None,
+        ) -> tuple[
+            tuple[jax.Array, tuple[jax.Array, jax.Array], dict[str, object]],
+            phx.discretization.FiniteElementDiscretization,
+        ]:
+            target_space = _envelope_transport_space(adaptation.target)
+            return (
+                transition_envelope_state(
                     result,
                     adaptation,
                     problem,
@@ -484,9 +536,15 @@ def _envelope_qualification_epochs(
                     epoch,
                     previous_auxiliary,
                     failure_factory=qualification_failure,
-                    physical_error=_physical_error,
-                )
-            ),
+                    source_space=space_,
+                    target_space=target_space,
+                ),
+                target_space,
+            )
+
+        (transition, transport_space), measured = _ledger.run(
+            f"solver_state_transfer_epoch_{epoch}",
+            lambda: _measured(lambda: carry_state(transport_space)),
         )
         previous_values, previous_auxiliary, transfer = transition
         stages[record["active_phase"]] = measured["wall_seconds"]
@@ -519,7 +577,7 @@ def _envelope_qualification_epochs(
         )
         stages[record["active_phase"]] = measured["wall_seconds"]
         epoch_record["target_acceptance"] = acceptance
-    if isinstance(source, phx.meshing.NativeSurfaceEnvelopeSource):
+    if isinstance(source, (phx.meshing.NativeSurfaceEnvelopeSource, phx.meshing.NativePlcSource)):
         if generation_options is None:
             raise ValueError(
                 "envelope.checkpoint.generation_options must retain the authored native options; got None"
@@ -537,17 +595,18 @@ def _envelope_qualification_epochs(
         )
 
 
-def _envelope_qualification_cold_worker(
-    path: str,
-    content_id: str,
-    expected: tuple[str, str, str, str],
+def _envelope_qualification_cold_request(
+    archive: _MeshingSourceArchive,
+    expected: tuple[str, str, str, dict[str, Any]],
     repeats: int,
     target_error: float,
-) -> dict[str, object]:
+    budget: CoordinateEnclosureBudget,
+    started: float,
+) -> tuple[phx.meshing.CellMeshingResult, ColdWorkerReport]:
     """Fresh-process source certification and continued solve from archived fields."""
 
-    restored = read_meshing_source_closure(
-        Path(path), expected_content_id=content_id, limits=ArrayArchiveLimits()
+    restored = _restore_meshing_source_archive(
+        archive, limits=ArrayArchiveLimits(), budget=budget
     )
     source = restored["generation_source"]
     result = restored["accepted_target"]
@@ -555,7 +614,7 @@ def _envelope_qualification_cold_worker(
     history = restored["accepted_data"]["accepted_epochs"]
     fields = tuple(history[-1].fields[name] for name in ("u", "density", "history"))
     if (
-        not isinstance(source, phx.meshing.NativeSurfaceEnvelopeSource)
+        not isinstance(source, (phx.meshing.NativeSurfaceEnvelopeSource, phx.meshing.NativePlcSource))
         or not isinstance(result, phx.meshing.CellMeshingResult)
         or not isinstance(specification, phx.meshing.VolumeMeshingSpec)
         or (
@@ -578,21 +637,31 @@ def _envelope_qualification_cold_worker(
                 "specification": specification,
             },
         )
-    acceptance = validate_envelope_acceptance(
-        source,
-        result,
-        limits=specification.limits,
-        failure_factory=qualification_failure,
-        measure_cells=_simplex_measures,
-    )
+    read_seconds = perf_counter() - started
+    if isinstance(source, phx.meshing.NativeSurfaceEnvelopeSource):
+        acceptance = validate_envelope_acceptance(
+            source,
+            result,
+            limits=specification.limits,
+            failure_factory=qualification_failure,
+            measure_cells=_simplex_measures,
+        )
+    else:
+        from .reconstruction import _reconstruction_qualification_acceptance
+
+        acceptance = _reconstruction_qualification_acceptance(source, result)
     space, problem, free = prepare_envelope_solver(
         result,
         failure_factory=qualification_failure,
         source_coefficient=_manufactured_source,
         dirichlet_values=_manufactured_value,
+        budget=budget,
     )
     values, compiler, timings = _compiled_solver_stages(
-        problem, jax.device_put(np.asarray(fields[0])[np.asarray(free)]), repeats
+        problem,
+        jax.device_put(np.asarray(fields[0])[np.asarray(free)]),
+        repeats,
+        preconditioning=CorpusPreconditioning.EXACT_JACOBI,
     )
     error = _physical_error(result.mesh, values)
     density_defect = float(np.max(np.abs(np.asarray(fields[1]) - 2.0)))
@@ -615,25 +684,26 @@ def _envelope_qualification_cold_worker(
                 "target_error": target_error,
             },
         )
-    return {
-        "passed": True,
-        "process_id": os.getpid(),
-        "runtime": _runtime_identity(),
-        "source_acceptance": acceptance,
-        "restored_result": _result_identity(result),
-        "field_names": ["u", "density", "history"],
-        "accepted_fields_bitwise_preserved": True,
-        "prepared_fe_caches_serialized": False,
-        "continued_physical_L2_error": error,
-        "density_max_defect": density_defect,
-        "history_max_defect": history_defect,
-        "compiler": compiler,
-        "solver_seconds": timings,
-    }
+    return result, ColdWorkerReport(
+        record={
+            "passed": True,
+            "runtime": _runtime_identity(),
+            "source_acceptance": acceptance,
+            "field_names": ["u", "density", "history"],
+            "accepted_fields_bitwise_preserved": True,
+            "prepared_fe_caches_serialized": False,
+            "continued_physical_L2_error": error,
+            "density_max_defect": density_defect,
+            "history_max_defect": history_defect,
+            "compiler": compiler,
+            "solver_seconds": timings,
+        },
+        read_seconds=read_seconds,
+    )
 
 
 def _envelope_qualification_cold_reanalysis(
-    source: phx.meshing.NativeSurfaceEnvelopeSource,
+    source: phx.meshing.NativeSurfaceEnvelopeSource | phx.meshing.NativePlcSource,
     result: phx.meshing.CellMeshingResult,
     specification: phx.meshing.VolumeMeshingSpec,
     generation_options: phx.meshing.NativeMeshingOptions,
@@ -664,7 +734,18 @@ def _envelope_qualification_cold_reanalysis(
         "accepted_target": result,
         "accepted_data": {"accepted_epochs": history},
     }
-    with TemporaryDirectory(prefix="phydrax-native-envelope-source-") as directory:
+    with (
+        TemporaryDirectory(prefix="phydrax-native-envelope-source-") as directory,
+        prepare_cold_worker(
+            "tools.meshing_qualification.scenarios.envelope",
+            deadline=deadline,
+            ledger=StageLedger(
+                record,
+                deadline=deadline,
+                cold_phase="fresh_process_source_allfield_history_continued_PDE",
+            ),
+        ) as cold_worker,
+    ):
         receipt, timing = _ledger.run(
             "allfield_history_checkpoint_publication",
             lambda: _measured(
@@ -680,7 +761,7 @@ def _envelope_qualification_cold_reanalysis(
             specification.specification_id,
             array_tree_fingerprint(fields),
         )
-        # The scenario module owns its worker command.
+        # The scenario module owns its cold consumer.
         remaining = deadline.expires_at - perf_counter()
         if remaining <= 0.0:
             raise phx.meshing.MeshingFailure(
@@ -691,21 +772,14 @@ def _envelope_qualification_cold_reanalysis(
 
         cold_started = perf_counter()
         try:
-            cold = run_cold_worker(
-                "scenarios.envelope",
-                (
-                    str(receipt.path),
-                    receipt.content_id,
-                    json.dumps(expected),
-                    str(args.repeats),
-                    str(args.target_error),
-                ),
-                deadline=deadline,
-                ledger=StageLedger(
-                    record,
-                    deadline=deadline,
-                    cold_phase="fresh_process_source_allfield_history_continued_PDE",
-                ),
+            cold = cold_worker.execute(
+                receipt.path,
+                receipt.content_id,
+                {
+                    "expected": list(expected),
+                    "repeats": args.repeats,
+                    "target_error": args.target_error,
+                },
             )
             timing = {"wall_seconds": perf_counter() - cold_started}
         except ColdWorkerTimeout as error:
@@ -717,7 +791,7 @@ def _envelope_qualification_cold_reanalysis(
             ) from error
         record["stages_seconds"][record["active_phase"]] = timing["wall_seconds"]
         # Worker return-code evidence is retained by StageLedger.
-        # Parsed and process-validated by run_cold_worker.
+        # Parsed and process-bound by ColdWorker.execute.
         if (
             not isinstance(cold, dict)
             or cold.get("passed") is not True
@@ -732,12 +806,14 @@ def _envelope_qualification_cold_reanalysis(
             )
         record["checkpoint"] = {
             **cold,
+            "status": "passed",
             "content_id": receipt.content_id,
             "container_bytes": receipt.path.stat().st_size,
             "archive_limits": {
                 "members": limits.max_members,
                 "nesting": limits.max_manifest_nesting,
                 "rank": limits.max_array_rank,
+                "manifest_bytes": limits.max_manifest_bytes,
             },
             "source_authority_stripped": False,
         }
@@ -778,6 +854,9 @@ def _envelope_qualification_lifecycle(args: QualificationControls) -> dict[str, 
         },
         "epochs": [],
         "stages_seconds": {},
+        # Replaced only by an independent cold continuation; an earlier failure
+        # leaves this proof explicitly unreached rather than absent or failed.
+        "checkpoint": {"status": "unreached", "blocked_by_phase": None},
         "time_to_target_error_seconds": None,
         "mandatory_workflow_completion": "incomplete",
         "release_evidence": "unassessed",
@@ -847,10 +926,12 @@ def _envelope_qualification_lifecycle(args: QualificationControls) -> dict[str, 
                 "must satisfy the requested association/domain contract without source stripping."
             )
     finally:
+        if record["checkpoint"]["status"] == "unreached":
+            record["checkpoint"]["blocked_by_phase"] = record["active_phase"]
         record["native_phases"] = _phase_recordings(phases)
         record["end_to_end_seconds"] = perf_counter() - started
-        record["peak_process_resident_bytes"] = peak_resident_bytes(resource.RUSAGE_SELF)
-        record["process_peak_scope"] = "process-lifetime"
+        record["peak_process_resident_bytes"] = peak_resident_bytes()
+        record["process_peak_scope"] = PEAK_RESIDENT_SCOPE
         record["device_memory"] = [
             {
                 "device_id": device.id,
@@ -869,19 +950,40 @@ def _envelope_qualification_lifecycle(args: QualificationControls) -> dict[str, 
     return record
 
 
-def worker(argv: tuple[str, ...]) -> dict[str, Any]:
-    """Decode process arguments and run the scenario-owned cold consumer."""
-    return _envelope_qualification_cold_worker(
-        argv[0], argv[1], tuple(json.loads(argv[2])), int(argv[3]), float(argv[4])
+def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
+    """Run the scenario-owned cold consumer on its one control packet."""
+    controls = packet.controls
+    started = perf_counter()
+    archive = _read_meshing_source_archive(
+        packet.archive_path, expected_content_id=packet.content_id
     )
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] != "worker":
-        raise ValueError(
-            "qualification.subcommand must equal worker; got " + repr(sys.argv[1:])
-        )
-    print(json.dumps(worker(tuple(sys.argv[2:]))))
+    raw = read_meshing_source_execution_controls(
+        packet.archive_path,
+        expected_content_id=packet.content_id,
+        _authenticated_archive=archive,
+    )
+    request = execute_native_request(
+        raw.execution_evidence,
+        raw.limits,
+        lambda budget: _envelope_qualification_cold_request(
+            archive,
+            tuple(controls["expected"]),
+            int(controls["repeats"]),
+            float(controls["target_error"]),
+            budget,
+            started,
+        ),
+        target=lambda value: value[0],
+        failure_factory=qualification_failure,
+        workflow_remaining_seconds=packet.deadline.remaining(),
+    )
+    report = request.value[1]
+    # The restored carrier's archived receipt is history. Only the ended fresh
+    # request can bind complete cold restoration, preparation and physical work.
+    return ColdWorkerReport(
+        record={**report.record, "restored_result": _result_identity(request.result)},
+        read_seconds=report.read_seconds,
+    )
 
 
 def run(args: QualificationControls) -> dict[str, object]:

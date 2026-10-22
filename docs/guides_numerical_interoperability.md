@@ -2590,9 +2590,11 @@ raw observation of every resolved node, the campaign observation, and
 `QualificationEvidence` checked by `validate_qualification_causality`. Records use a
 logical clock and content addresses. Per-node durations and per-route wall times are
 reported beside them and never enter a content address. The report also carries the
-git revision and worktree state, the source/build fingerprint of
-`benchmarks/_runtime.py`, a build ID over the package, the referenced tests, test
-support, and the runner, and the captured runtime environment.
+git revision and worktree state, the source/build fingerprint computed by
+`benchmarks/_runtime.py` over the project metadata, package Python sources,
+native sources and the selected provider-source tree, a build ID over the
+package, the referenced tests, test support, and the runner, and the captured
+runtime environment.
 
 | Scenario outcome | When |
 |---|---|

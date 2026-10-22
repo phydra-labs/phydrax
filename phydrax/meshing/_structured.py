@@ -32,6 +32,12 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import nonnegative_integer
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
+from ..discretization._cell_geometry import affine_geometry_construction_bounds
+from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
+from ..discretization._cell_mesh import (
+    cell_block_construction_bounds,
+    cell_mesh_construction_bounds,
+)
 from ..optim import (
     MinimizationResult,
     minimize,
@@ -151,6 +157,32 @@ class StructuredConstruction:
     block_id: str
 
 
+def _fill_tensor_cells(
+    nodes: np.ndarray,
+    cells: np.ndarray,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> None:
+    """Gather C-order tensor corners directly, without a local connectivity bank."""
+    if nodes.ndim != 3 or any(size < 2 for size in nodes.shape):
+        raise ValueError("tensor_grid.nodes must be a three-axis node lattice")
+    shape = tuple(size - 1 for size in nodes.shape)
+    if cells.shape != (prod(shape), 8):
+        raise ValueError("tensor_grid.cells must cover every lattice cell")
+    corners = (
+        (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+        (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+    )
+    with scope.batch(cells.size) as ticket:
+        target = cells.reshape((*shape, 8))
+        for corner, offset in enumerate(corners):
+            ticket.consume(prod(shape))
+            target[..., corner] = nodes[
+                tuple(slice(start, start + size) for start, size in zip(offset, shape, strict=True))
+            ]
+
+
 @checked
 def logical_cell_bank(
     shape: tuple[int, ...], /, *, scope: NativeExecutionScope
@@ -185,31 +217,57 @@ def logical_cell_bank(
         )
     cell_shape = tuple(n - 1 for n in shape)
     count = prod(cell_shape)
-    work_upper = len(shape) * count * (2 + 3 * len(offsets))
+    row_count = min(count, 4096)
+    # Each axis decodes, scales and accumulates one base index per cell.
+    # Corner offsets are immutable grid operands, not per-cell arithmetic.
+    corner_work = 2 * len(shape) * len(offsets)
+    work_upper = (
+        (4 * len(shape) + len(offsets)) * count
+        + count - row_count + corner_work
+    )
     with scope.batch(work_upper) as ticket, scope.host_workspace() as workspace:
-        # NumPy's arange owns one temporary index vector. All remaining large
-        # connectivity banks are admitted native allocations and use out=.
-        workspace.set_bound(count * 8 + 4096)
-        flat = np.arange(count, dtype=np.int64)
-        coordinate = _dependency_phydrax_meshing__host_banks.family_host_array(
-            (count,), np.int64, scope=scope
+        # Stream C-order rows through a fixed-size index bank. Connectivity is
+        # retained in full, but temporary indices do not scale with the mesh.
+        workspace.set_bound(row_count * 8 + 4096)
+        strides = tuple(prod(shape[axis + 1 :]) for axis in range(len(shape)))
+        ticket.consume(corner_work)
+        corner_strides = tuple(
+            sum(offset * stride for offset, stride in zip(corner, strides, strict=True))
+            for corner in offsets
         )
-        contribution = _dependency_phydrax_meshing__host_banks.family_host_array(
-            (count,), np.int64, scope=scope
+        flat = np.arange(row_count, dtype=np.int64)
+        coordinate = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (row_count,), np.int64, scope=scope
+        )
+        base = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (row_count,), np.int64, scope=scope
         )
         cells = _dependency_phydrax_meshing__host_banks.family_host_array(
             (count, len(offsets)), np.int32, scope=scope
         )
-        cells.fill(0)
-        for axis in range(len(shape)):
-            ticket.consume(2 * count)
-            np.floor_divide(flat, prod(cell_shape[axis + 1 :]), out=coordinate)
-            np.remainder(coordinate, cell_shape[axis], out=coordinate)
-            for corner, offset in enumerate(offsets):
-                ticket.consume(3 * count)
-                np.add(coordinate, offset[axis], out=contribution)
-                np.multiply(contribution, prod(shape[axis + 1 :]), out=contribution)
-                np.add(cells[:, corner], contribution, out=cells[:, corner])
+        for start in range(0, count, row_count):
+            stop = min(start + row_count, count)
+            width = stop - start
+            base[:width].fill(0)
+            if start:
+                ticket.consume(width)
+                np.add(flat[:width], row_count, out=flat[:width])
+            for axis in range(len(shape)):
+                ticket.consume(4 * width)
+                np.floor_divide(
+                    flat[:width], prod(cell_shape[axis + 1 :]),
+                    out=coordinate[:width],
+                )
+                np.remainder(
+                    coordinate[:width], cell_shape[axis], out=coordinate[:width]
+                )
+                np.multiply(
+                    coordinate[:width], strides[axis], out=coordinate[:width]
+                )
+                np.add(base[:width], coordinate[:width], out=base[:width])
+            for corner, stride in enumerate(corner_strides):
+                ticket.consume(width)
+                np.add(base[:width], stride, out=cells[start:stop, corner])
         return cells
 
 
@@ -222,11 +280,19 @@ def curve_values(
 ) -> np.ndarray:
     curve = control.curve
     first, last = control.parameter_range
-    values = np.linspace(first, last, control.intervals + 1, dtype=np.float64)
-    if control.reversed:
-        values = values[::-1]
-    with scope.batch(values.size, queries_upper=values.size) as ticket:
-        ticket.consume(values.size, geometry_queries=values.size)
+    count = control.intervals + 1
+    # One curve evaluation per sampled node.
+    with (
+        scope.batch(count, queries_upper=count) as ticket,
+        scope.host_workspace() as workspace,
+    ):
+        # The parameter vector is the one host temporary; sampled values remain
+        # in their JAX owner.
+        workspace.set_bound(8 * count + 4096)
+        values = np.linspace(first, last, count, dtype=np.float64)
+        if control.reversed:
+            values = values[::-1]
+        ticket.consume(count, geometry_queries=count)
         return np.asarray(
             curve.evaluate(jnp.asarray(values, dtype=jnp.float64)), dtype=np.float64
         )
@@ -240,24 +306,35 @@ def _face_values(
 ) -> np.ndarray:
     surface = control.surface
     shape = tuple(n + 1 for n in control.intervals)
-    logical = _dependency_phydrax_meshing__host_banks.family_host_array(
-        (*shape, 2), np.float64, scope=scope
-    )
-    logical[..., 0] = np.linspace(0.0, 1.0, shape[0], dtype=np.float64)[:, None]
-    logical[..., 1] = np.linspace(0.0, 1.0, shape[1], dtype=np.float64)[None, :]
-    parameters = _dependency_phydrax_meshing__host_banks.family_host_array(
-        logical.shape, np.float64, scope=scope
-    )
-    box = np.asarray(control.parameter_box, dtype=np.float64)
-    for axis, parameter_axis in enumerate(control.permutation):
-        coordinate = (
-            1.0 - logical[..., axis] if control.flips[axis] else logical[..., axis]
-        )
-        parameters[..., parameter_axis] = box[0, parameter_axis] + coordinate * (
-            box[1, parameter_axis] - box[0, parameter_axis]
-        )
     count = shape[0] * shape[1]
-    with scope.batch(count, queries_upper=count) as ticket:
+    # One surface evaluation per node.
+    with (
+        scope.batch(count, queries_upper=count) as ticket,
+        scope.host_workspace() as workspace,
+    ):
+        # The two logical spacing vectors are the only unpooled temporaries.
+        workspace.set_bound(8 * sum(shape) + 4096)
+        logical = _dependency_phydrax_meshing__host_banks.family_host_array(
+            (*shape, 2), np.float64, scope=scope
+        )
+        logical[..., 0] = np.linspace(0.0, 1.0, shape[0], dtype=np.float64)[:, None]
+        logical[..., 1] = np.linspace(0.0, 1.0, shape[1], dtype=np.float64)[None, :]
+        parameters = _dependency_phydrax_meshing__host_banks.family_host_array(
+            logical.shape, np.float64, scope=scope
+        )
+        box = np.asarray(control.parameter_box, dtype=np.float64)
+        for axis, parameter_axis in enumerate(control.permutation):
+            coordinate = parameters[..., parameter_axis]
+            if control.flips[axis]:
+                np.subtract(1.0, logical[..., axis], out=coordinate)
+            else:
+                np.copyto(coordinate, logical[..., axis])
+            np.multiply(
+                coordinate,
+                box[1, parameter_axis] - box[0, parameter_axis],
+                out=coordinate,
+            )
+            np.add(coordinate, box[0, parameter_axis], out=coordinate)
         ticket.consume(count, geometry_queries=count)
         return np.asarray(
             surface.evaluate(jnp.asarray(parameters, dtype=jnp.float64)), dtype=np.float64
@@ -290,6 +367,8 @@ def boundary_lattice(
         raise ValueError(
             f"structured.boundaries must have ambient dimension at least the block dimension; got {ambient} for {len(shape)} logical axes"
         )
+    sizes = tuple(prod(values.shape[:-1]) for values in sampled)
+    largest = max(sizes)
     lattice = _dependency_phydrax_meshing__host_banks.family_host_array(
         (*shape, ambient), np.float64, scope=scope
     )
@@ -298,23 +377,41 @@ def boundary_lattice(
         shape, np.bool_, scope=scope
     )
     assigned.fill(False)
+    # Every face reuses one pooled difference, distance and vacancy bank.
+    differences = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (largest, ambient), np.float64, scope=scope
+    )
+    distances = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (largest,), np.float64, scope=scope
+    )
+    vacancies = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (largest,), np.bool_, scope=scope
+    )
     residual = 0.0
-    for face, values in enumerate(sampled):
+    for face, (values, count) in enumerate(zip(sampled, sizes, strict=True)):
         axis, side = divmod(face, 2)
         selector = tuple(
             (0 if side == 0 else -1) if i == axis else slice(None)
             for i in range(len(shape))
         )
+        target = lattice[selector]
         existing = assigned[selector]
-        differences = np.linalg.norm(lattice[selector] - values, axis=-1)
-        mismatch = float(np.max(differences[existing], initial=0.0))
+        difference = differences[:count].reshape(values.shape)
+        distance = distances[:count].reshape(values.shape[:-1])
+        vacant = vacancies[:count].reshape(values.shape[:-1])
+        np.subtract(target, values, out=difference)
+        np.square(difference, out=difference)
+        np.sum(difference, axis=-1, out=distance)
+        np.sqrt(distance, out=distance)
+        mismatch = float(np.max(distance, where=existing, initial=0.0))
         residual = max(residual, mismatch)
         if mismatch > block.tolerance:
             raise ValueError(
                 f"structured.boundaries must agree within tolerance {block.tolerance}; got incompatible boundary charts at face {face} of {block.name!r}, residual {mismatch}"
             )
-        lattice[selector] = np.where(existing[..., None], lattice[selector], values)
-        assigned[selector] = True
+        np.logical_not(existing, out=vacant)
+        np.copyto(target, values, where=vacant[..., None])
+        existing.fill(True)
     return lattice, assigned, residual
 
 
@@ -380,17 +477,42 @@ def certify_constructed_mesh(
     certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
     | None = None,
     geometry: CellGeometrySpec | None = None,
+    predecessor: CellGeometryPredecessor | None = None,
     scope: NativeExecutionScope,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
     _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate,
     _dependency_phydrax_geometry__global_embedding.GlobalEmbeddingCertificate,
 ]:
-    """Independent positivity and whole-complex collision acceptance."""
-    geometry = CellGeometrySpec.affine(mesh) if geometry is None else geometry
-    with family_execution_owner.coordinate_phase(scope=scope, budget=budget):
+    """Independent positivity and whole-complex collision acceptance.
+
+    A request-owned ``predecessor`` lets both certificates import its
+    authenticated unchanged rows and root theorem (see their owners).
+    """
+    if geometry is None:
+        mesh_shapes = tuple(
+            (cell_block.cell_kind, cell_block.cell_count, cell_block.arity)
+            for cell_block in mesh.blocks
+        )
+        with scope.host_workspace() as workspace:
+            workspace.set_bound(
+                affine_geometry_construction_bounds(
+                    mesh.coordinates.shape[0],
+                    mesh.ambient_dimension,
+                    mesh_shapes,
+                )
+            )
+            geometry = CellGeometrySpec.affine(mesh)
+    with (
+        family_execution_owner.coordinate_phase(scope=scope, budget=budget),
+        budget.polynomial_preparation_scope(),
+    ):
         validity = _dependency_phydrax_discretization__cell_geometry_validity.certify_cell_geometry_validity(
-            geometry, mesh=mesh, policy=validity_policy, budget=budget
+            geometry,
+            mesh=mesh,
+            policy=validity_policy,
+            budget=budget,
+            predecessor=predecessor,
         )
     bad = (
         np.asarray(validity.status)
@@ -404,10 +526,18 @@ def certify_constructed_mesh(
             stage="structured_validity",
             entity_ids=tuple(int(i) for i in ids[bad]),
         )
-    with family_execution_owner.coordinate_phase(scope=scope, budget=budget):
+    with (
+        family_execution_owner.coordinate_phase(scope=scope, budget=budget),
+        budget.polynomial_preparation_scope(),
+    ):
         embedding = (
             _dependency_phydrax_geometry__global_embedding.certify_global_embedding(
-                mesh, geometry, validity, limits=certificate_limits, budget=budget
+                mesh,
+                geometry,
+                validity,
+                limits=certificate_limits,
+                budget=budget,
+                predecessor=predecessor,
             )
         )
     if embedding.status != "certified":
@@ -443,51 +573,76 @@ def construct_structured_block(
     optimization_steps = nonnegative_integer(optimization_steps, "optimization_steps")
     boundary, assigned, residual = boundary_lattice(block, scope=scope)
     lattice = _transfinite(boundary, scope=scope)
-    lattice[assigned] = boundary[assigned]
     shape = lattice.shape[:-1]
-    points = lattice.reshape(-1, lattice.shape[-1])
+    ambient = lattice.shape[-1]
+    # Declared boundary nodes keep their sampled coordinates exactly.
+    np.copyto(lattice, boundary, where=assigned[..., None])
+    points = lattice.reshape(-1, ambient)
     optimization = None
-    free = np.flatnonzero(~assigned.reshape(-1)).astype(np.int32)
-    if optimization_steps and free.size:
-        method = NewtonTrustRegion()
-        edge_count = sum(
-            (n - 1) * prod(shape[:axis] + shape[axis + 1 :])
-            for axis, n in enumerate(shape)
-        )
-        # Two objective/three gradient traversals and at most the declared
-        # CG actions plus its final model action per Newton step. Final
-        # value/gradient publication is separately included in admission.
-        work_upper = edge_count * (
-            optimization_steps * (5 + method.subproblem.maximum_steps + 1) + 2
-        )
-        with scope.batch(work_upper) as ticket:
-            base = jnp.asarray(points, dtype=jnp.float64)
-            rows = jnp.asarray(free, dtype=jnp.int32)
-            optimization = minimize(
-                _elliptic_objective,
-                base[rows],
-                method=method,
-                termination=OptimizationTermination(maximum_steps=optimization_steps),
-                args=(base, rows, shape),
-            )
-            if not optimization.diagnostics.counts_complete:
-                raise RuntimeError(
-                    "structured.optimization.diagnostics must report measured work counts; got counts_complete=False"
+    if optimization_steps:
+        nodes = assigned.size
+        with scope.host_workspace() as workspace:
+            # The vacancy mask and the free-row index vector are the phase's
+            # unpooled host banks. JAX copies of the lattice and rows are device
+            # memory outside managed bytes.
+            workspace.set_bound(9 * nodes + 4096)
+            free = np.flatnonzero(~assigned.reshape(-1))
+            if free.size:
+                method = NewtonTrustRegion()
+                edge_count = sum(
+                    (n - 1) * prod(shape[:axis] + shape[axis + 1 :])
+                    for axis, n in enumerate(shape)
                 )
-            objectives, gradients, actions = jax.device_get(
-                (
-                    optimization.diagnostics.objective_evaluations,
-                    optimization.diagnostics.gradient_evaluations,
-                    optimization.diagnostics.hvp_evaluations,
+                # Two objective/three gradient traversals and at most the
+                # declared CG actions plus its final model action per Newton
+                # step. Final value/gradient publication is separately included
+                # in admission.
+                work_upper = edge_count * (
+                    optimization_steps * (5 + method.subproblem.maximum_steps + 1) + 2
                 )
-            )
-            ticket.consume(edge_count * (int(objectives) + int(gradients) + int(actions)))
-        points = np.asarray(base.at[rows].set(optimization.parameters), dtype=np.float64)
+                with scope.batch(work_upper) as ticket:
+                    base = jnp.asarray(points, dtype=jnp.float64)
+                    rows = jnp.asarray(free, dtype=jnp.int32)
+                    optimization = minimize(
+                        _elliptic_objective,
+                        base[rows],
+                        method=method,
+                        termination=OptimizationTermination(
+                            maximum_steps=optimization_steps
+                        ),
+                        args=(base, rows, shape),
+                    )
+                    if not optimization.diagnostics.counts_complete:
+                        raise RuntimeError(
+                            "structured.optimization.diagnostics must report measured work counts; got counts_complete=False"
+                        )
+                    objectives, gradients, actions = jax.device_get(
+                        (
+                            optimization.diagnostics.objective_evaluations,
+                            optimization.diagnostics.gradient_evaluations,
+                            optimization.diagnostics.hvp_evaluations,
+                        )
+                    )
+                    ticket.consume(
+                        edge_count * (int(objectives) + int(gradients) + int(actions))
+                    )
+                    # Interior rows return into the pooled lattice; declared
+                    # boundary rows never move.
+                    points[free] = np.asarray(optimization.parameters, dtype=np.float64)
     kind = "quadrilateral" if len(shape) == 2 else "hexahedron"
-    mesh = CellMesh(
-        points, (CellBlock(block.name, kind, logical_cell_bank(shape, scope=scope)),)
-    )
-    geometry = CellGeometrySpec.affine(mesh)
+    cells = logical_cell_bank(shape, scope=scope)
+    vertex_count = points.shape[0]
+    shapes = ((kind, cells.shape[0], cells.shape[1]),)
+    # Each constructor's host temporaries end before the next one starts.
+    with scope.host_workspace() as workspace:
+        workspace.set_bound(cell_block_construction_bounds(*cells.shape))
+        cell_block = CellBlock(block.name, kind, cells)
+        workspace.set_bound(cell_mesh_construction_bounds(vertex_count, ambient, shapes))
+        mesh = CellMesh(points, (cell_block,))
+        workspace.set_bound(
+            affine_geometry_construction_bounds(vertex_count, ambient, shapes)
+        )
+        geometry = CellGeometrySpec.affine(mesh)
     validity, embedding = certify_constructed_mesh(
         mesh,
         geometry=geometry,

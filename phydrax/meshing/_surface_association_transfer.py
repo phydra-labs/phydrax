@@ -33,12 +33,7 @@ from .._geometry_predicates import orient2d, PredicateMode
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry_transition_types import MaterialChartDeformation
-from ..discretization._chart_geometry import area
 from ..discretization._coordinate_budget import CoordinateEnclosureBudget
-from ..discretization._coordinate_enclosure import (
-    expression_evaluate,
-    require_rational_reference_scalar,
-)
 from ..geometry._domain_boundary import MeshingDomainBoundarySource
 from ..geometry._domain_coverage import DomainCoverageCertificate
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
@@ -96,7 +91,7 @@ class _TrimChartPhase(StrictModule):
     coordinates: np.ndarray
     triangles: np.ndarray
     physical_vertices: dict[int, int]
-    edges: dict[tuple[int, int], list[tuple[int, int]]]
+    edges: dict[tuple[int, int], list[tuple[int, int, int, int]]]
 
 
 class _TrimBoundaryPhase(StrictModule):
@@ -107,12 +102,50 @@ class _TrimBoundaryPhase(StrictModule):
 def _prepare_trim_chart(
     uv_cells: np.ndarray,
     cells: np.ndarray,
+    coedges: np.ndarray,
     budget: CoordinateEnclosureBudget,
 ) -> _TrimChartPhase:
-    uv, inverse = np.unique(uv_cells.reshape(-1, 2), axis=0, return_inverse=True)
+    # Only authored interior incidence glues chart corners. Coincident boundary
+    # coordinates, including repeated uses of one physical edge, remain distinct.
+    parents = np.arange(cells.size, dtype=np.int64)
+    interior: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
+    for row, cell in enumerate(cells):
+        for side, (first, last) in enumerate(((0, 1), (1, 2), (2, 0))):
+            if np.all(coedges[row, side] == -1):
+                a, b = int(cell[first]), int(cell[last])
+                key = (min(a, b), max(a, b))
+                interior.setdefault(key, []).append((row, first, last))
+
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = int(parents[index])
+        return index
+
+    for uses in interior.values():
+        if len(uses) != 2:
+            raise ValueError(
+                "SurfaceCurveCover.occurrences must label every noninterior cell side"
+            )
+        left, right = uses
+        for slot in left[1:]:
+            target = next(
+                slot_
+                for slot_ in right[1:]
+                if cells[right[0], slot_] == cells[left[0], slot]
+            )
+            if not np.array_equal(uv_cells[left[0], slot], uv_cells[right[0], target]):
+                raise ValueError(
+                    "SurfaceCurveCover.interior must preserve shared chart coordinates"
+                )
+            first, last = root(3 * left[0] + slot), root(3 * right[0] + target)
+            parents[max(first, last)] = min(first, last)
+    roots = np.asarray([root(index) for index in range(cells.size)], dtype=np.int64)
+    representatives, inverse = np.unique(roots, return_inverse=True)
+    uv = uv_cells.reshape(-1, 2)[representatives]
     triangles = inverse.reshape(-1, 3)
     physical_vertices: dict[int, int] = {}
-    edges: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    edges: dict[tuple[int, int], list[tuple[int, int, int, int]]] = {}
 
     orientation = orient2d(
         uv_cells[:, 0],
@@ -138,9 +171,10 @@ def _prepare_trim_chart(
                     "SurfaceCurveCover.vertices must retain distinct physical vertex identities; got merged physical vertices"
                 )
             physical_vertices[int(vertex)] = int(original)
-        for first, last in ((0, 1), (1, 2), (2, 0)):
+        for side, (first, last) in enumerate(((0, 1), (1, 2), (2, 0))):
             a, b = int(triangle[first]), int(triangle[last])
-            edges.setdefault((min(a, b), max(a, b)), []).append((a, b))
+            source_side = 2 - side if signs[row] < 0 else side
+            edges.setdefault((min(a, b), max(a, b)), []).append((a, b, row, source_side))
     return _TrimChartPhase(
         coordinates=uv,
         triangles=triangles,
@@ -156,42 +190,45 @@ def _prepare_trim_boundary(
     kinds: np.ndarray,
     rows: np.ndarray,
     values: np.ndarray,
-    budget: CoordinateEnclosureBudget,
+    coedges: np.ndarray,
 ) -> _TrimBoundaryPhase:
-    domain = witness.support.domain
-    uv, physical_vertices, edges = chart.coordinates, chart.physical_vertices, chart.edges
+    physical_vertices, edges = chart.physical_vertices, chart.edges
     boundary, provenance = [], []
     for occurrences in edges.values():
         if len(occurrences) == 2:
+            if any(np.any(coedges[row, side] != -1) for _, _, row, side in occurrences):
+                raise ValueError(
+                    "SurfaceCurveCover.occurrence must not label an interior side"
+                )
             continue
         if len(occurrences) != 1:
             raise ValueError(
                 "SurfaceCurveCover.edges must have one boundary or two interior occurrences; got a nonmanifold trim edge"
             )
-        a, b = occurrences[0]
+        a, b, cell, side = occurrences[0]
         endpoints = np.asarray(
             (physical_vertices[a], physical_vertices[b]), dtype=np.int64
         )
-        curve, first, last = witness.edge_interval(
-            kinds[endpoints], rows[endpoints], values[endpoints]
-        )
-        matches = []
-        for loop_index, loop in enumerate(domain.patches[int(patch)].loops):
-            for use_index, use in enumerate(loop):
-                if not isinstance(use, PatchCurveUse) or use.curve != curve:
-                    continue
-                budget.reserve_geometry_queries(2)
-                source_charts = np.asarray(
-                    use.charts(np.asarray((first, last), dtype=np.float64))
-                )
-                if np.array_equal(source_charts, uv[[a, b]]):
-                    matches.append((loop_index, use_index, first, last))
-        if len(matches) != 1:
+        loop, ordinal, orientation = map(int, coedges[cell, side])
+        loops = witness.support.domain.patches[patch].loops
+        if not 0 <= loop < len(loops) or not 0 <= ordinal < len(loops[loop]):
+            raise ValueError("SurfaceCurveCover.occurrence must name a source use")
+        use = loops[loop][ordinal]
+        if not isinstance(use, PatchCurveUse) or orientation != (
+            1 if use.last > use.first else -1
+        ):
             raise ValueError(
-                "SurfaceCurveCover.coedges must identify one coedge occurrence; got ambiguous boundary provenance"
+                "SurfaceCurveCover.occurrence must preserve its source orientation"
+            )
+        curve, first, last = witness.edge_interval(
+            kinds[endpoints], rows[endpoints], values[endpoints], curve=use.curve
+        )
+        if curve != use.curve:
+            raise ValueError(
+                "SurfaceCurveCover.occurrence must agree with vertex curve strata"
             )
         boundary.append((a, b))
-        provenance.append(matches[0])
+        provenance.append((loop, ordinal, first, last))
     return _TrimBoundaryPhase(
         edges=np.asarray(boundary, dtype=np.int64).reshape(-1, 2),
         provenance=np.asarray(provenance, dtype=np.float64).reshape(-1, 4),
@@ -209,6 +246,7 @@ def prepare_surface_curve_chart_cover(
     /,
     *,
     source_chart_cover: MeshingDomainBoundarySource,
+    cell_coedges: np.ndarray,
     budget: CoordinateEnclosureBudget,
 ) -> MeshingDomainBoundarySource:
     """Retain current coedge parameters for the trim-ribbon proof.
@@ -246,18 +284,24 @@ def prepare_surface_curve_chart_cover(
             "SurfaceCurveCover.strata must contain one stratum token per physical vertex; got misaligned stratum arrays"
         )
     declared = np.asarray(charts.cell_global_ids)
-    order = np.searchsorted(declared, ids)
-    if np.any(order >= declared.size) or not np.array_equal(declared[order], ids):
+    order = key_rows(declared[:, None], ids[:, None])
+    if np.any(order < 0):
         raise ValueError(
             "SurfaceCurveCover.cells must represent every physical cell; got an omitted cell ID"
         )
+    cell_coedges = np.asarray(cell_coedges)
+    if cell_coedges.shape != (declared.size, 3, 3):
+        raise ValueError("SurfaceCurveCover.occurrences must align with cell sides")
     records = []
     for patch in np.unique(np.asarray(charts.patches)):
         selected = np.flatnonzero(np.asarray(charts.patches)[order] == patch)
+        selected = selected[np.argsort(ids[selected], kind="stable")]
         uv_cells = np.asarray(charts.charts)[order[selected]]
-        chart = _prepare_trim_chart(uv_cells, cells[selected], budget)
+        chart = _prepare_trim_chart(
+            uv_cells, cells[selected], cell_coedges[order[selected]], budget
+        )
         boundary = _prepare_trim_boundary(
-            witness, int(patch), chart, kinds, rows, values, budget
+            witness, int(patch), chart, kinds, rows, values, cell_coedges[order[selected]]
         )
         uv, triangles = chart.coordinates, chart.triangles
         physical = domain.evaluate(np.full(uv.shape[0], int(patch), dtype=np.int32), uv)
@@ -280,6 +324,9 @@ def prepare_surface_curve_chart_cover(
         tuple(record[0] for record in records),
         resolution=source_chart_cover.resolution,
         chart_triangulations=tuple(records),
+        boundary_cell_ids=declared,
+        boundary_patch_ids=np.asarray(charts.patches),
+        boundary_occurrences=cell_coedges,
     )
 
 
@@ -302,6 +349,7 @@ class PreparedSurfaceCurveWitness(StrictModule, NonTrainableState):
     support: PreparedSurfaceSourceSupport
     source_mesh: cell_mesh_owner.CellMesh
     source_association: GeometryAssociation
+    boundary_source: MeshingDomainBoundarySource
     topology_id: str = eqx.field(static=True)
     vertex_global_ids: Array
     source_dimensions: Array
@@ -315,6 +363,16 @@ class PreparedSurfaceCurveWitness(StrictModule, NonTrainableState):
         self.support.require_current()
         mesh, association = self.source_mesh, self.source_association
         domain = self.support.domain
+        if self.boundary_source.domain.domain_id != domain.domain_id:
+            raise ValueError(
+                "SurfaceCurveWitness.occurrences must retain the source domain"
+            )
+        self.boundary_source.domain.require_current(
+            domain.source_id, domain.source_revision
+        )
+        self.cell_coedges(
+            np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
+        )
         if not isinstance(mesh, cell_mesh_owner.CellMesh) or not isinstance(
             association, GeometryAssociation
         ):
@@ -392,6 +450,33 @@ class PreparedSurfaceCurveWitness(StrictModule, NonTrainableState):
             raise ValueError(
                 "SurfaceCurveWitness.entities must name declared source entities; got different entity bindings"
             )
+
+    def cell_coedges(
+        self, cell_ids: np.ndarray, patches: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Resolve nominal cell-side rows, without using geometry as a key."""
+        source = self.boundary_source
+        source.require_current()
+        if source.boundary_cell_ids is None or source.boundary_occurrences is None:
+            raise ValueError(
+                "SurfaceCurveWitness.occurrences must retain authored cell sides"
+            )
+        if np.unique(cell_ids).size != np.asarray(cell_ids).size:
+            raise ValueError("SurfaceCurveWitness.occurrences must not repeat cell IDs")
+        rows = key_rows(
+            np.asarray(source.boundary_cell_ids)[:, None], np.asarray(cell_ids)[:, None]
+        )
+        if np.any(rows < 0):
+            raise ValueError(
+                "SurfaceCurveWitness.occurrences must include every source cell"
+            )
+        if patches is not None and not np.array_equal(
+            np.asarray(source.boundary_patch_ids)[rows], patches
+        ):
+            raise ValueError(
+                "SurfaceCurveWitness.occurrences must preserve owning patches"
+            )
+        return np.asarray(source.boundary_occurrences)[rows]
 
     def require_bound(self, mesh: cell_mesh_owner.CellMesh, /) -> None:
         self.validate_restored()
@@ -485,9 +570,11 @@ class PreparedSurfaceCurveWitness(StrictModule, NonTrainableState):
         indices: np.ndarray,
         parameters: np.ndarray,
         /,
+        *,
+        curve: int | None = None,
     ) -> tuple[int, float, float]:
         """Return a source curve interval, refusing ambiguous or collapsed endpoints."""
-        result = self._resolve_edge_interval(dimensions, indices, parameters)
+        result = self._resolve_edge_interval(dimensions, indices, parameters, curve=curve)
         if result.interval is None:
             raise ValueError(result.reason)
         return result.interval
@@ -499,12 +586,22 @@ class PreparedSurfaceCurveWitness(StrictModule, NonTrainableState):
         indices: np.ndarray,
         parameters: np.ndarray,
         /,
+        *,
+        curve: int | None = None,
     ) -> tuple[int, float, float] | None:
         """Return an eligible source interval, or None for unsupported endpoint tokens."""
-        return self._resolve_edge_interval(dimensions, indices, parameters).interval
+        return self._resolve_edge_interval(
+            dimensions, indices, parameters, curve=curve
+        ).interval
 
     def _resolve_edge_interval(
-        self, dimensions: np.ndarray, indices: np.ndarray, parameters: np.ndarray, /
+        self,
+        dimensions: np.ndarray,
+        indices: np.ndarray,
+        parameters: np.ndarray,
+        /,
+        *,
+        curve: int | None = None,
     ) -> _CurveIntervalResolution:
         """Resolve two retained source-stratum tokens, including born nodes.
 
@@ -524,6 +621,13 @@ class PreparedSurfaceCurveWitness(StrictModule, NonTrainableState):
         curves = {
             int(index) for kind, index in zip(kinds, rows, strict=True) if kind == 1
         }
+        if curve is not None:
+            if not 0 <= curve < len(self.support.domain.curves) or curves - {curve}:
+                return _CurveIntervalResolution(
+                    interval=None,
+                    reason="SurfaceCurveWitness.occurrence must agree with endpoint curve strata",
+                )
+            curves = {curve}
         if not curves and np.all(kinds == 0) and (rows[0] != rows[1]):
             curves = {
                 curve
@@ -598,11 +702,33 @@ def prepare_surface_curve_witness(
         ],
         dtype=np.int32,
     )
+    if source.certification is None:
+        raise ValueError(
+            "SurfaceCurveWitness.occurrences require a retained source certificate"
+        )
+    boundary = source.certification.request.source
+    if isinstance(boundary, surface_boundary_sources_owner.SurfaceChartBoundarySource):
+        if not isinstance(boundary.deformation, PreparedSurfaceChartDeformation):
+            raise TypeError(
+                "SurfaceCurveWitness.occurrences require a parametric chart epoch"
+            )
+        boundary = boundary.deformation.target_chart_cover
+    if isinstance(boundary, SurfaceNativeRestrictionBoundarySource):
+        boundary = boundary.root
+    if isinstance(
+        boundary, surface_boundary_sources_owner.SurfaceSubdivisionBoundarySource
+    ):
+        boundary = boundary.current_boundary_source
+    if not isinstance(boundary, MeshingDomainBoundarySource):
+        raise ValueError(
+            "SurfaceCurveWitness.occurrences require current nominal boundary ownership"
+        )
     return PreparedSurfaceCurveWitness(
         support=support,
         topology_id=source.mesh.topology_id,
         source_mesh=source.mesh,
         source_association=vertex,
+        boundary_source=boundary,
         vertex_global_ids=jnp.asarray(ids),
         source_dimensions=jnp.asarray(dimensions),
         source_indices=jnp.asarray(indices),
@@ -752,60 +878,65 @@ def _sphere_vertex_weights(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> dict[int, surface_boundary_operations_owner.SurfaceVertexWeights]:
-    """Return rational source-reference support from native pieces."""
+    """Return rational source-reference support from native pieces.
 
-    vertices = (
-        (Fraction(0), Fraction(0)),
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1)),
-    )
+    A target corner inside a closed fan piece is an extreme point of the
+    target cone, hence a vertex of that piece; the piece's proven exact source
+    vertex at the same slot is its unique projective preimage. The source
+    barycentric weights are therefore read from the proven pieces without
+    another inverse map.
+    """
+
+    corners = {
+        (Fraction(0), Fraction(0)): 0,
+        (Fraction(1), Fraction(0)): 1,
+        (Fraction(0), Fraction(1)): 2,
+    }
     candidates: dict[
         int, tuple[int, surface_boundary_operations_owner.SurfaceVertexWeights]
     ] = {}
     visits = 0
-    for piece in deformation.pieces:
-        new_row = deformation.target_atlas.cell_row(piece.target_cell_global_id)
-        old_row = deformation.source_atlas.cell_row(piece.source_cell_global_id)
-        inverse = deformation.target_atlas.projective_reference_map(
-            piece.target_cell_global_id,
-            deformation.source_atlas,
-            piece.source_cell_global_id,
-            budget=budget,
-        )
-        arguments = inverse.reference_expressions()
-        triangle = piece.exact_target_reference_vertices
-        sign = area(triangle)
-        for local, point in enumerate(vertices):
-            visits += 1
-            if visits > maximum_visits:
-                raise AssociationPropagationError(
-                    "SurfaceAssociation.sphere_queries must fit the source query allowance; got exhausted query allowance",
-                    np.asarray((piece.target_cell_global_id,), dtype=np.int64),
-                )
-            if any(
-                area((triangle[index], triangle[(index + 1) % 3], point)) * sign < 0
-                for index in range(3)
-            ):
-                continue
-            u, v = (
-                require_rational_reference_scalar(
-                    expression_evaluate(argument, point, budget=budget)
-                )
-                for argument in arguments
+    source_atlas, target_atlas = deformation.source_atlas, deformation.target_atlas
+    # One host view of each atlas: equinox method access re-flattens a module.
+    source_rows, target_rows = (
+        {int(value): row for row, value in enumerate(np.asarray(atlas.cell_global_ids))}
+        for atlas in (source_atlas, target_atlas)
+    )
+    source_corners = np.asarray(source_atlas.physical_corner_global_ids)
+    target_corners = np.asarray(target_atlas.physical_corner_global_ids)
+    for piece in deformation.pieces.iter_pieces(budget=budget):
+        new_row = target_rows.get(int(piece.target_cell_global_id))
+        old_row = source_rows.get(int(piece.source_cell_global_id))
+        if new_row is None or old_row is None:
+            raise ValueError(
+                "sphere_material.cell_global_id must identify a prepared cell; got absent identifier"
             )
-            barycentric = (1 - u - v, u, v)
+        # Each of the three target corner functionals is tested once against
+        # the piece: one exact corner comparison per piece vertex.
+        visits += 3
+        if visits > maximum_visits:
+            raise AssociationPropagationError(
+                "SurfaceAssociation.sphere_queries must fit the source query allowance; got exhausted query allowance",
+                np.asarray((piece.target_cell_global_id,), dtype=np.int64),
+            )
+        budget.reserve(3)
+        for point, source in zip(
+            piece.exact_target_reference_vertices,
+            piece.exact_source_reference_vertices,
+            strict=True,
+        ):
+            local = corners.get(point)
+            if local is None:
+                continue
+            # Two subtractions and three sign tests.
+            budget.reserve(5)
+            barycentric = (1 - source[0] - source[1], source[0], source[1])
             if any(value < 0 for value in barycentric):
                 raise ValueError(
                     "SurfaceAssociation.sphere_functional must lie in its source reference cell; got off-cell birth functional"
                 )
-            identifier = int(
-                np.asarray(deformation.target_atlas.physical_corner_global_ids)[
-                    new_row, local
-                ]
-            )
-            parents = np.asarray(deformation.source_atlas.physical_corner_global_ids)[
-                old_row
-            ]
+            identifier = int(target_corners[new_row, local])
+            parents = source_corners[old_row]
             weights = tuple(
                 (int(parent), weight)
                 for parent, weight in zip(parents, barycentric, strict=True)
@@ -1163,6 +1294,8 @@ def _residual(
     index: int,
     parameters: np.ndarray,
     point: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> float:
     if kind == 0:
         value = support.domain.corner_points[index]
@@ -1177,7 +1310,7 @@ def _residual(
         )[0]
     else:
         value = support.domain.evaluate(
-            np.asarray((index,), dtype=np.int64), parameters[None, :2]
+            np.asarray((index,), dtype=np.int64), parameters[None, :2], budget=budget
         )[0]
     return float(np.linalg.norm(np.asarray(value) - point))
 
@@ -1390,7 +1523,13 @@ def _prepare_chart_surface_proof(
     budget: CoordinateEnclosureBudget,
 ) -> _SurfaceProofPhase:
     sphere_bindings = None
-    deformation.require_bound(source.mesh, source.geometry, target, geometry)
+    if isinstance(deformation, PreparedSphereChartDeformation):
+        # Reuses the producer's proof when this request prepared the record.
+        deformation.require_bound(
+            source.mesh, source.geometry, target, geometry, budget=budget
+        )
+    else:
+        deformation.require_bound(source.mesh, source.geometry, target, geometry)
     if deformation.domain_id != support.domain.domain_id:
         raise ValueError(
             "SurfaceAssociation.deformation must preserve the support domain ID; got different deformation domain"
@@ -1675,22 +1814,29 @@ def _publish_surface_vertices(
     target: cell_mesh_owner.CellMesh,
     vertex: GeometryAssociation,
     vertices: _SurfaceVertexPhase,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> GeometryAssociation:
     dims, indices, parameters = vertices.dimensions, vertices.indices, vertices.parameters
     target_ids = vertices.identifiers
     parent_dims, parent_ids = vertices.parent_dimensions, vertices.parent_ids
-    residuals = np.asarray(
-        [
-            _residual(support, int(kind), int(index), value, point)
-            for kind, index, value, point in zip(
-                dims.tolist(),
-                indices.tolist(),
-                parameters,
-                np.asarray(target.coordinates),
-                strict=True,
-            )
-        ]
-    )
+    residuals = np.empty(dims.size, dtype=np.float64)
+    physical = np.asarray(target.coordinates)
+    patch_rows = np.flatnonzero(dims == 2)
+    if patch_rows.size:
+        values = support.domain.evaluate(
+            indices[patch_rows], parameters[patch_rows, :2], budget=budget
+        )
+        residuals[patch_rows] = np.linalg.norm(values - physical[patch_rows], axis=1)
+    for row in np.flatnonzero(dims != 2).tolist():
+        residuals[row] = _residual(
+            support,
+            int(dims[row]),
+            int(indices[row]),
+            parameters[row],
+            physical[row],
+            budget=budget,
+        )
     paths = tuple(
         support.domain.source_occurrences[int(kind)][int(index)]
         for kind, index in zip(dims, indices, strict=True)
@@ -1812,6 +1958,8 @@ def _prepare_edge_parameters(
     current_cells: np.ndarray,
     patch_by_cell: Mapping[int, int],
     proof_rows: Mapping[int, int],
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _SurfaceEntityPhase:
     ids, kinds, source_indices = rows.identifiers, rows.dimensions, rows.indices
     params, errors = rows.parameters, rows.residuals
@@ -1839,7 +1987,7 @@ def _prepare_edge_parameters(
             support, curve, int(dims[b]), int(indices[b]), parameters[b], av
         )
         params[row, 0] = float((Fraction(first) + Fraction(last)) / 2)
-        errors[row] = _residual(support, 1, curve, params[row], midpoint)
+        errors[row] = _residual(support, 1, curve, params[row], midpoint, budget=budget)
     else:
         patch = int(source_indices[row])
         # Seam and pole copies are chart gauges: both endpoints are
@@ -1864,7 +2012,7 @@ def _prepare_edge_parameters(
             tuple(float((ends[0][axis] + ends[1][axis]) / 2) for axis in range(2)),
             dtype=np.float64,
         )
-        errors[row] = _residual(support, 2, patch, params[row], midpoint)
+        errors[row] = _residual(support, 2, patch, params[row], midpoint, budget=budget)
     return rows
 
 
@@ -1877,6 +2025,8 @@ def _prepare_surface_edges(
     proof: SurfaceRestrictionRows | SurfaceChartAssociationRows,
     vertices_phase: _SurfaceVertexPhase,
     rows: _SurfaceEntityPhase,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _SurfaceEntityPhase:
     target_proof = proof
     patch_by_cell = dict(
@@ -1954,6 +2104,7 @@ def _prepare_surface_edges(
             current_cells,
             patch_by_cell,
             proof_rows,
+            budget=budget,
         )
     return rows
 
@@ -2074,7 +2225,7 @@ def propagate(
     vertices = _certify_surface_features(
         support, source, vertex, old, proof, vertices, deformation
     )
-    output = [_publish_surface_vertices(support, target, vertex, vertices)]
+    output = [_publish_surface_vertices(support, target, vertex, vertices, budget=budget)]
     for dimension in dimensions:
         previous = association_for_dimension(source, dimension)
         rows = _prepare_surface_entity(lineage, target, dimension)
@@ -2083,7 +2234,15 @@ def propagate(
                 rows = _prepare_surface_cells(proof.target, rows)
             case 1:
                 rows = _prepare_surface_edges(
-                    support, source, lineage, target, old, proof.target, vertices, rows
+                    support,
+                    source,
+                    lineage,
+                    target,
+                    old,
+                    proof.target,
+                    vertices,
+                    rows,
+                    budget=budget,
                 )
             case _:
                 raise ValueError(
@@ -2160,7 +2319,7 @@ def successor_certification_inputs(
                 "SurfaceAssociation.certification.fidelity must retain predecessor fidelity evidence; got missing fidelity certificate"
             )
         chart_source = surface_boundary_sources_owner.SurfaceChartBoundarySource(
-            root, support, deformation, source.certification.fidelity
+            root, support, deformation, source.certification.fidelity, budget=budget
         )
         return MeshCertificationInputs(
             source.mesh,

@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from dataclasses import replace
-from typing import Any, final
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
+from typing import Any, final, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.experimental import multihost_utils
+from jax.sharding import PartitionSpec, Sharding, SingleDeviceSharding
 
 from phydrax import ArrayArchiveLimits, BranchDifferentiationPolicy, StrictModule
 from phydrax._frozendict import frozendict
@@ -26,13 +28,22 @@ from phydrax.discretization import (
     FiniteElementPrecisionPolicy,
     lagrange_element,
 )
+from phydrax.execution import ExecutionGroup
 from phydrax.lifecycle import (
+    CheckpointManifest,
     MeshingArrayRole,
     MeshingCheckpointState,
     MeshingFieldStateRole,
     MeshingFiniteElementFieldDeclaration,
 )
+from phydrax.lifecycle._distributed_checkpoint import (
+    _meshing_checkpoint_record_paths,
+    _validate_meshing_owner_states,
+    meshing_checkpoint_array_layouts,
+)
+from phydrax.lifecycle._meshing_checkpoint_binding import source_logical_array_name
 from phydrax.lifecycle._meshing_sources import (
+    meshing_source_local_restore_phase,
     meshing_source_shared_array_aliases,
     MeshingSourceClosure,
     register_meshing_source_artifacts,
@@ -41,13 +52,14 @@ from phydrax.meshing import (
     CellMeshingResult,
     CollectiveMeshEvidence,
     MeshAdaptationResult,
-    MeshPart,
     NativeMeshingOptions,
     NativePlanarSource,
     SurfaceMeshingSpec,
 )
-from phydrax.meshing._certification import MeshCertificationReport
 from phydrax.meshing._device_adaptation import restore_partitioned_mesh_state
+from phydrax.meshing._distributed_planar_generation import (
+    PreparedDistributedPlanarGeneration,
+)
 from phydrax.meshing._distribution_forest import forest_vertex_record_owners
 from phydrax.typing import checked
 from phydrax.units import KELVIN
@@ -70,6 +82,7 @@ class DistributedCheckpointSourceArrays(StrictModule):
     bank: dict[str, jax.Array]
     bindings: dict[str, str]
     missing: list[str]
+    missing_details: tuple[tuple[str, str, tuple[int, ...], str], ...]
 
 
 @final
@@ -86,19 +99,24 @@ def prepare_distributed_checkpoint_source_closure(
     author: NativePlanarSource,
     request: SurfaceMeshingSpec,
     options: NativeMeshingOptions,
-    source: CellMeshingResult,
+    generation: PreparedDistributedPlanarGeneration,
     results: tuple[MeshAdaptationResult, ...],
     physical: FiniteElementDiscretization,
     roles: tuple[MeshingFieldStateRole, ...],
     fields: Mapping[str, jax.Array | np.ndarray],
     fe_fields: tuple[FiniteElementFieldSpec, ...],
     precision: FiniteElementPrecisionPolicy,
-    certification: MeshCertificationReport,
     *,
     part_name: str,
     mesh_epoch: int,
 ) -> dict[str, Any]:
-    """Build and register the accepted scientific source closure for archival."""
+    """Build and register the accepted scientific source closure for archival.
+
+    The owner-local planar root retains its authored generation inputs (source,
+    request, tile schedule and layout); its collective theorem is the target's
+    original source, never a fabricated serial certification report.
+    """
+    generation.require_binding(author, request)
     target = results[0].target
     space = physical.field_spaces[0]
     declaration = MeshingFiniteElementFieldDeclaration(
@@ -117,12 +135,10 @@ def prepare_distributed_checkpoint_source_closure(
         precision_policy=precision,
     )
     closure = {
-        "certification_inputs": certification.request,
-        "report": certification,
-        "associations": source.associations,
-        "generation_part": MeshPart(part_name, source),
         "generation_source": author,
         "generation_specification": request,
+        "generation_schedule": generation.schedule,
+        "generation_layout": generation.layout,
         "generation_options": options,
         "collective_target": target,
         "field_declarations": {part_name: declaration},
@@ -137,7 +153,7 @@ def bind_distributed_checkpoint_source_arrays(
     closure: Mapping[str, Any], limits: ArrayArchiveLimits
 ) -> DistributedCheckpointSourceArrays:
     """Bind model recipe arrays to the source closure's scientific alias bank."""
-    _, _, values = prepare_model_recipe_catalog(
+    _, catalog, values = prepare_model_recipe_catalog(
         closure, prefix="source-record", limits=limits
     )
     bank, aliases = meshing_source_shared_array_aliases(
@@ -154,7 +170,14 @@ def bind_distributed_checkpoint_source_arrays(
         and name not in bindings
     ]
     return DistributedCheckpointSourceArrays(
-        bank=bank, bindings=bindings, missing=missing
+        bank=bank,
+        bindings=bindings,
+        missing=missing,
+        missing_details=tuple(
+            (entry.name, entry.path, entry.shape, entry.dtype)
+            for entry in catalog
+            if entry.name in missing
+        ),
     )
 
 
@@ -228,6 +251,185 @@ def distributed_checkpoint_host_array_names(
         )
         if entry.backend == "numpy"
     }
+
+
+type DistributedRestorePlacementKind = Literal[
+    "owner-sharded", "replicated", "process-local-owner-record"
+]
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class DistributedRestorePlacement:
+    """Restart destinations and the logical bytes each one places on this process.
+
+    Shared logical banks and scientific arrays are split by their leading axis
+    across the restart group when it divides evenly. ``source_owners`` retains
+    every archived owner row currently addressable on this process. Every assigned
+    typed source record is reconstructed so restart retains complete associations.
+    """
+
+    shardings: dict[str, Sharding]
+    placements: dict[str, DistributedRestorePlacementKind]
+    global_bytes: dict[str, int]
+    addressable_bytes: dict[str, int]
+    decoded_owners: tuple[int, ...]
+    source_owners: tuple[int, ...]
+
+
+def _distributed_restore_owner_layouts(
+    states: Sequence[MeshingCheckpointState],
+    manifest: CheckpointManifest,
+    group: ExecutionGroup,
+    limits: ArrayArchiveLimits,
+    /,
+) -> tuple[dict[str, tuple[tuple[int, ...], np.dtype[Any]]], tuple[int, ...]]:
+    """Admit archived owner coverage against actual current device-slice maps."""
+    with meshing_source_local_restore_phase():
+        owner_count = len(_meshing_checkpoint_record_paths(manifest))
+        if len(states) != owner_count or tuple(
+            state.source_owner_index for state in states
+        ) != tuple(range(owner_count)):
+            raise ValueError(
+                "qualification.distributed.states must contain each archived source "
+                "owner exactly once in canonical order."
+            )
+        _validate_meshing_owner_states(
+            states,
+            {owner: state.checkpoint_state_id for owner, state in enumerate(states)},
+            0,
+        )
+        aliases = states[0].source_logical_array_names
+        projection_names = {
+            source_logical_array_name(name)
+            for name in aliases if "/geometry_projection/" in name
+        }
+        if not projection_names:
+            raise ValueError(
+                "qualification.distributed.projection must retain its authenticated "
+                "collective geometry storage banks."
+            )
+        layouts = meshing_checkpoint_array_layouts(
+            manifest, tuple(source_logical_array_name(name) for name in aliases),
+            limits=limits,
+        )
+        (axis,) = group.mesh.axis_names
+        sharding = group.named_sharding(PartitionSpec(axis))
+        source_owners: tuple[int, ...] | None = None
+        for name in sorted(projection_names):
+            shape, _ = layouts[name]
+            if not shape or shape[0] != owner_count:
+                raise ValueError(
+                    "qualification.distributed.projection must retain the complete "
+                    "archived source-owner axis; got foreign storage layout."
+                )
+            rows: list[int] = []
+            for index in sharding.addressable_devices_indices_map(shape).values():
+                selection = index[0]
+                if not isinstance(selection, slice) or selection.step not in (None, 1):
+                    raise ValueError(
+                        "qualification.distributed.projection must expose contiguous "
+                        "current source-owner slices."
+                    )
+                rows.extend(range(*selection.indices(owner_count)))
+            current = tuple(sorted(rows))
+            if (
+                not current or len(set(current)) != len(current)
+                or (source_owners is not None and current != source_owners)
+            ):
+                raise ValueError(
+                    "qualification.distributed.projection must bind the same unique "
+                    "process-addressable source owners in every geometry bank."
+                )
+            source_owners = current
+        if source_owners is None:
+            raise ValueError(
+                "qualification.distributed.projection must retain current owner storage."
+            )
+        local_coverage = np.zeros(owner_count, dtype=np.int32)
+        local_coverage[np.asarray(source_owners, dtype=np.int64)] = 1
+    coverage = np.asarray(
+        multihost_utils.process_allgather(local_coverage, tiled=False)
+    ).reshape((-1, owner_count))
+    with meshing_source_local_restore_phase():
+        if not np.all(np.sum(coverage, axis=0) == 1):
+            raise ValueError(
+                "qualification.distributed.projection must cover every archived "
+                "source owner exactly once across the current process set."
+            )
+    return layouts, source_owners
+
+
+@checked
+def prepare_distributed_restore_placement(
+    states: Sequence[MeshingCheckpointState],
+    manifest: CheckpointManifest,
+    group: ExecutionGroup,
+    limits: ArrayArchiveLimits,
+    /,
+) -> DistributedRestorePlacement:
+    """Reconstruct historical-owner placement before reading scientific payloads."""
+    layouts, source_owners = _distributed_restore_owner_layouts(
+        states, manifest, group, limits
+    )
+    with meshing_source_local_restore_phase():
+        # Each assigned archived closure contributes its authenticated scientific
+        # rows; a representative root alone cannot reconstruct changed ownership.
+        decoded = source_owners
+        bank = set(layouts)
+        names = {
+            name for owner in decoded for name, _ in states[owner].array_roles
+        } | bank
+        host: set[str] = set()
+        records: set[str] = set()
+        for owner in decoded:
+            state = states[owner]
+            recipe = state.source_recipe_json
+            if recipe is None:
+                raise ValueError(
+                    "qualification.distributed.states must retain every decoded owner's source recipe; "
+                    f"got none for owner {owner}"
+                )
+            host |= distributed_checkpoint_host_array_names(state, recipe, limits)
+            records |= {
+                state.source_array_name(entry.name)
+                for entry in model_recipe_array_inventory(
+                    json.loads(recipe), prefix="source-record", limits=limits
+                )
+            } - bank
+        layouts.update(
+            meshing_checkpoint_array_layouts(
+                manifest, tuple(sorted(names - host - bank)), limits=limits
+            )
+        )
+        (axis,) = group.mesh.axis_names
+        count = int(group.mesh.shape[axis])
+        local_devices = sum(
+            device.process_index == jax.process_index() for device in group.devices
+        )
+        process_local = SingleDeviceSharding(jax.local_devices()[0])
+        shardings: dict[str, Sharding] = {}
+        placements: dict[str, DistributedRestorePlacementKind] = {}
+        global_bytes: dict[str, int] = {}
+        addressable_bytes: dict[str, int] = {}
+        for name, (shape, dtype) in layouts.items():
+            size = int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
+            global_bytes[name] = size
+            if name in records:
+                shardings[name] = process_local
+                placements[name] = "process-local-owner-record"
+                addressable_bytes[name] = size
+            elif shape and shape[0] % count == 0:
+                shardings[name] = group.named_sharding(PartitionSpec(axis))
+                placements[name] = "owner-sharded"
+                addressable_bytes[name] = size // count * local_devices
+            else:
+                shardings[name] = group.named_sharding(PartitionSpec())
+                placements[name] = "replicated"
+                addressable_bytes[name] = size
+        return DistributedRestorePlacement(
+            shardings, placements, global_bytes, addressable_bytes, decoded, source_owners
+        )
 
 
 @checked

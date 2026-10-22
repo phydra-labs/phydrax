@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from typing import Any
 
 import jax
@@ -11,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax._bvh as owner
 from phydrax._bvh import (
     bvh_host_minima,
     bvh_nearest_items,
@@ -19,10 +21,16 @@ from phydrax._bvh import (
     bvh_overlap_pairs_host,
     BVHBuildKind,
     BVHBuildPolicy,
+    PackedBVH,
     point_select_leaf_items,
     prepare_bvh,
     ray_select_leaf_items,
     refit_packed_bvh_bounds,
+)
+from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
 )
 
 
@@ -334,6 +342,105 @@ def test_bvh_visit_refusal_precedes_first_overlap_result() -> None:
     with pytest.raises(ValueError, match="original work allowance"):
         next(bvh_overlap_pair_blocks(tree, tree, visit=refuse))
     assert calls == [1]
+
+
+def _storage_bounded_pair_blocks(
+    first: PackedBVH, second: PackedBVH, memory: int, touching: bool,
+) -> tuple[list[tuple[np.ndarray, np.ndarray]], int, list[int]]:
+    blocks: list[tuple[np.ndarray, np.ndarray]] = []
+    visits: list[int] = []
+    with HostBatchTicket(1_000_000, bytes_upper=memory) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=1_000_000, maximum_memory_bytes=memory
+        )
+        with budget.activate():
+            with budget.live_storage() as live:
+                with closing(
+                    bvh_overlap_pair_blocks(
+                        first, second, include_touching=touching,
+                        visit=visits.append, traversal_storage=live.set_bound,
+                    )
+                ) as iterator:
+                    for block in iterator:
+                        # Promote the already admitted yielded copies. Generator
+                        # scratch expires, while these real aliases remain owned.
+                        budget.retain_owner(block, temporary_storage_credit=live)
+                        blocks.append(block)
+            assert budget.temporary_bytes_upper == 0
+            retained = budget.retained_basis_bytes
+            assert retained > 0
+            for block in blocks:
+                for array in block:
+                    assert budget.retained_owner_objects[id(array)] is array
+                    budget.retain_owner(array)
+            assert budget.retained_basis_bytes == retained
+            required = budget.peak_bytes_upper
+    return blocks, required, visits
+
+
+@pytest.mark.parametrize("touching", (False, True))
+def test_actual_traversal_storage_boundary_preserves_sparse_pair_schedule(
+    touching: bool,
+) -> None:
+    lower = np.zeros((384, 3), dtype=np.float64)
+    lower[:, 0] = 4.0 * np.arange(lower.shape[0])
+    first = prepare_bvh(lower, lower + 1.0, dtype=np.float64)
+    second = prepare_bvh(lower + 0.125, lower + 1.125, dtype=np.float64)
+    expected_visits: list[int] = []
+    expected = list(
+        bvh_overlap_pair_blocks(
+            first, second, include_touching=touching, visit=expected_visits.append
+        )
+    )
+    observed, required, visits = _storage_bounded_pair_blocks(
+        first, second, 81_920_000, touching
+    )
+    exact, repeated, repeated_visits = _storage_bounded_pair_blocks(
+        first, second, required, touching
+    )
+    assert repeated == required < 81_920_000
+    assert visits == repeated_visits == expected_visits
+    for reference, actual, replay in zip(expected, observed, exact, strict=True):
+        for reference_array, actual_array, replay_array in zip(
+            reference, actual, replay, strict=True
+        ):
+            np.testing.assert_array_equal(actual_array, reference_array)
+            np.testing.assert_array_equal(replay_array, reference_array)
+    pairs = [
+        (int(first_row), int(second_row))
+        for first_rows, second_rows in observed
+        for first_row, second_row in zip(first_rows, second_rows, strict=True)
+    ]
+    assert sorted(pairs) == [(row, row) for row in range(lower.shape[0])]
+    with pytest.raises(CoordinateEnclosureResourceError) as refusal:
+        _storage_bounded_pair_blocks(first, second, required - 1, touching)
+    assert refusal.value.resource == "polynomial_storage"
+    assert refusal.value.limit == required - 1
+    assert refusal.value.requested == required
+
+
+def test_traversal_storage_refusal_precedes_first_size_vector_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lower = np.asarray(((0.0, 0.0), (4.0, 0.0)))
+    tree = prepare_bvh(lower, lower + 1.0, dtype=np.float64)
+
+    def unadmitted(*args: object, **kwargs: object) -> None:
+        pytest.fail("traversal allocated a size vector before storage admission")
+
+    monkeypatch.setattr(owner.np, "sum", unadmitted)
+    with pytest.raises(CoordinateEnclosureResourceError):
+        _storage_bounded_pair_blocks(tree, tree, 1, False)
+
+
+def test_pending_frontier_storage_keeps_full_shared_numpy_root_once() -> None:
+    root = np.arange(100, dtype=np.int64)
+    pending = [(root[99:], root[:1])]
+    bound = owner._host_pair_frontier_bytes(pending, None)
+    assert bound >= root.nbytes
+    # Two extra view headers, but no second admission of the shared root bank.
+    with_active = owner._host_pair_frontier_bytes(pending, (root[50:], root[25:]))
+    assert with_active - bound == 2 * 256
 
 
 @pytest.mark.parametrize("kind", _KINDS)

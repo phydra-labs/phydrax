@@ -29,14 +29,18 @@ from __future__ import annotations
 import math
 import sys
 from contextlib import nullcontext
+from dataclasses import dataclass, fields
 from fractions import Fraction
 from typing import (
     assert_never,
+    Literal,
     NamedTuple,
 )
+from weakref import ref, ReferenceType
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from numpy.typing import NDArray
 
 import phydrax.discretization.fem._reference_rules as reference_rules_owner
@@ -60,6 +64,7 @@ from ..linalg import (
     SmallLinearSolvePlan,
     solve_small_linear,
 )
+from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..linalg._small_batched import cofactor_determinant_3
 from ..typing import checked
 from . import (
@@ -78,6 +83,7 @@ from ._cell_geometry import (
     cell_geometry_preparation_query_upper,
     CellGeometryRestrictionSource,
     CellGeometrySpec,
+    exact_barycentric_action,
     LayerColumnCellGeometryElement,
     owned_coordinate_preparation,
     PolynomialComposedCellGeometryElement,
@@ -103,6 +109,14 @@ from ._coordinate_enclosure import (
     rounded_point,
     scale,
     source_basis,
+)
+from ._coordinate_identity import coordinate_scope_key
+from ._coordinate_operands import (
+    _coordinate_operand_request,
+    coordinate_input_owner_fields,
+    OwnerFields,
+    require_coordinate_input_containers,
+    require_coordinate_input_owners,
 )
 from ._exact_algebraic_geometry import (
     coefficient_bits,
@@ -183,8 +197,17 @@ def _barycentric(points: np.ndarray, /) -> np.ndarray:
     return np.concatenate((1.0 - np.sum(points, axis=-1, keepdims=True), points), axis=-1)
 
 
+# Polynomial simplex coordinate maps whose mapped hat measures are algebraic.
+type _PolynomialSimplexElement = (
+    reference_types_owner.FiniteElementSpec
+    | BarycentricCellGeometryElement
+    | RestrictedCellGeometryElement
+    | PolynomialComposedCellGeometryElement
+)
+
+
 def _tabulate(
-    element: reference_types_owner.FiniteElementSpec, points: np.ndarray, /
+    element: _PolynomialSimplexElement, points: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     flat = points.reshape((-1, points.shape[-1]))
     values, gradients = element.tabulate(flat)
@@ -260,11 +283,24 @@ def _densities(
 ) -> np.ndarray:
     """Jacobian measure density ``sqrt(det(J^T J))`` of every cell at every point."""
 
-    _, gradients = _tabulate(block.element, points)
-    jacobian = np.asarray(contract("cmD,qmd->cqDd", coordinates[block.routes], gradients))
+    return _element_densities(
+        block.element, block.routes, block.dimension, coordinates, points
+    )
+
+
+def _element_densities(
+    element: _PolynomialSimplexElement,
+    routes: NDArray[np.int64],
+    dimension: int,
+    coordinates: np.ndarray,
+    points: np.ndarray,
+    /,
+) -> np.ndarray:
+    _, gradients = _tabulate(element, points)
+    jacobian = np.asarray(contract("cmD,qmd->cqDd", coordinates[routes], gradients))
     gram = np.swapaxes(jacobian, -1, -2) @ jacobian
     determinant = np.asarray(
-        determinant_small_linear(SmallLinearSolvePlan(block.dimension), gram)
+        determinant_small_linear(SmallLinearSolvePlan(dimension), gram)
     )
     return np.sqrt(np.maximum(determinant, 0.0))
 
@@ -354,7 +390,11 @@ def vertex_rows(
 
 
 def _witness(
-    witnesses: transition_types.NestedReferenceWitnesses | None, dimension: int, /
+    witnesses: transition_types.NestedReferenceWitnesses | None,
+    dimension: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> transition_types.NestedReferenceWitnesses:
     if witnesses is None:
         empty = np.zeros((0,), dtype=np.int64)
@@ -373,7 +413,28 @@ def _witness(
         raise ValueError(
             "geometry_transition.witnesses must be finite aligned cell and reference-corner arrays; got incompatible arrays"
         )
-    return transition_types.NestedReferenceWitnesses(fine, coarse, vertices)
+    bank = transition_types.require_reference_homogeneous(
+        vertices,
+        witnesses.fine_reference_homogeneous,
+        "geometry_transition.witnesses",
+        budget=budget,
+    )
+    return transition_types.NestedReferenceWitnesses(fine, coarse, vertices, bank)
+
+
+def _admit_transition_banks(
+    *banks: NDArray[np.float64] | None, budget: CoordinateEnclosureBudget
+) -> None:
+    """Charge `CellGeometryTransition`'s rational bank checks before construction."""
+    for bank in banks:
+        if bank is None:
+            continue
+        rows = int(np.count_nonzero(np.any(np.asarray(bank) != 0.0, axis=-1)))
+        budget.reserve(
+            *transition_types.reference_homogeneous_preparation_bounds(
+                rows, int(np.asarray(bank).shape[-1])
+            )
+        )
 
 
 def _excursion(vertices: np.ndarray, /) -> float:
@@ -385,6 +446,65 @@ def _excursion(vertices: np.ndarray, /) -> float:
             np.max(barycentric - 1.0, initial=0.0),
         )
     )
+
+
+def _witness_excursion(witnesses: transition_types.NestedReferenceWitnesses, /) -> float:
+    """Barycentric excursion, exact zero for source-owned homogeneous corners.
+
+    Nonnegative homogeneous weights lie in the closed reference simplex exactly;
+    only their rounded execution corners may leave it.
+    """
+    vertices = witnesses.fine_reference_vertices
+    if vertices.shape[0] == 0:
+        return 0.0
+    barycentric = _barycentric(vertices)
+    defects = np.maximum(
+        np.max(-barycentric, axis=-1, initial=0.0),
+        np.max(barycentric - 1.0, axis=-1, initial=0.0),
+    )
+    bank = witnesses.fine_reference_homogeneous
+    if bank is not None:
+        defects = np.where(np.any(bank != 0.0, axis=-1), 0.0, defects)
+    return float(np.max(defects, initial=0.0))
+
+
+def _exact_witness_corners(
+    witnesses: transition_types.NestedReferenceWitnesses, row: int, /
+) -> tuple[tuple[Fraction, ...], ...]:
+    bank = witnesses.fine_reference_homogeneous
+    return transition_types.exact_reference_corners(
+        witnesses.fine_reference_vertices[row], None if bank is None else bank[row]
+    )
+
+
+def _witness_affine_arguments(
+    witnesses: transition_types.NestedReferenceWitnesses,
+    row: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[imported_coordinate_enclosure.Polynomial, ...]:
+    """Child-to-parent reference map of one certificate in rational arithmetic."""
+    return _exact_corner_affine_arguments(
+        _exact_witness_corners(witnesses, row), budget=budget
+    )
+
+
+def _exact_corner_affine_arguments(
+    corners: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[imported_coordinate_enclosure.Polynomial, ...]:
+    """Simplex reference map ``corner_0 + sum_j xi_j (corner_j - corner_0)``."""
+    dimension = len(corners[0])
+    origin = np.empty(dimension, dtype=object)
+    matrix = np.empty((dimension, len(corners) - 1), dtype=object)
+    for axis in range(dimension):
+        origin[axis] = corners[0][axis]
+        for column, corner in enumerate(corners[1:]):
+            matrix[axis, column] = corner[axis] - corners[0][axis]
+    return affine_arguments(origin, matrix, budget=budget)
 
 
 def _empty_values(
@@ -404,6 +524,7 @@ class _Restricted(NamedTuple):
     parents: NDArray[np.int64]
     reference: NDArray[np.float64]
     evaluations: int
+    homogeneous: NDArray[np.float64] | None
 
 
 def _restrict(
@@ -425,10 +546,17 @@ def _restrict(
     dimension = target_blocks[0].dimension
     parents = np.full((target_index.ids.size,), -1, dtype=np.int64)
     reference = np.zeros((target_index.ids.size, dimension + 1, dimension))
+    homogeneous = (
+        None
+        if refinement.fine_reference_homogeneous is None
+        else np.zeros((target_index.ids.size, dimension + 1, dimension + 1))
+    )
     targets = _locate(target_index, refinement.fine_cell_ids, "Refinement")
     sources = _locate(source_index, refinement.coarse_cell_ids, "Refinement")
     parents[targets] = refinement.coarse_cell_ids
     reference[targets] = refinement.fine_reference_vertices
+    if homogeneous is not None:
+        homogeneous[targets] = refinement.fine_reference_homogeneous
     widest = max(block.element.local_dof_count for block in source_blocks)
     work = _budget(
         sum(
@@ -459,7 +587,7 @@ def _restrict(
             values[int(target_block)][target_index.rows[targets[group]]] = _evaluate(
                 parent.element, parent_nodes, points
             )
-    return _Restricted(parents, reference, work)
+    return _Restricted(parents, reference, work, homogeneous)
 
 
 def _fine_choices(
@@ -582,10 +710,8 @@ def _coarsen(
                     raise ValueError(
                         "geometry_transition.coarsening must provide source-polynomial bounds; got missing source basis"
                     )
-                arguments = affine_arguments(
-                    corners[member, 0],
-                    (corners[member, 1:] - corners[member, :1]).T,
-                    budget=budget,
+                arguments = _witness_affine_arguments(
+                    coarsening, int(member), budget=budget
                 )
                 for parent_map, child_map in zip(
                     parent_polynomials, child_polynomials, strict=True
@@ -609,7 +735,7 @@ def _transition(
     target_mesh: CellMesh,
     geometry: CellGeometrySpec,
     placed: PlacedGeometryNodes,
-    parents: tuple[np.ndarray, np.ndarray],
+    restricted: _Restricted,
     coarsening: transition_types.NestedReferenceWitnesses,
     evidence: transition_types.CellGeometryTransitionEvidence,
     policy: transition_types.CellGeometryTransitionPolicy,
@@ -623,7 +749,9 @@ def _transition(
     order = np.argsort(target_ids, kind="stable")
     rank = np.empty_like(order)
     rank[order] = np.arange(order.size)
-    parent_ids, reference = parents
+    parent_ids, reference = restricted.parents, restricted.reference
+    parent_bank = None if restricted.homogeneous is None else restricted.homogeneous[rank]
+    coarse_bank = coarsening.fine_reference_homogeneous
     vertex_coordinates = vertex_rows(
         target_mesh,
         simplex_blocks(target_mesh, geometry, "target", budget=budget),
@@ -631,24 +759,17 @@ def _transition(
     )
     source_id = cell_geometry_id(source_geometry)
     target_id = cell_geometry_id(geometry)
-    return transition_types.CellGeometryTransition(
-        source_topology_id=source_mesh.topology_id,
-        target_topology_id=target_mesh.topology_id,
-        source_geometry_id=source_id,
-        target_geometry_id=target_id,
-        geometry=geometry,
-        vertex_coordinates=jnp.asarray(vertex_coordinates),
-        target_cell_ids=jnp.asarray(target_ids),
-        parent_cell_ids=jnp.asarray(parent_ids[rank]),
-        parent_reference_vertices=jnp.asarray(reference[rank]),
-        coarsened_cell_ids=jnp.asarray(coarsening.fine_cell_ids),
-        coarsened_into_ids=jnp.asarray(coarsening.coarse_cell_ids),
-        coarsened_reference_vertices=jnp.asarray(coarsening.fine_reference_vertices),
-        node_owner_cells=jnp.asarray(placed.owner_cells),
-        node_owner_locals=jnp.asarray(placed.owner_locals),
-        evidence=evidence,
-        policy_id=policy.policy_id,
-        transition_id=canonical_fingerprint(
+    _admit_transition_banks(parent_bank, coarse_bank, budget=budget)
+    stored_targets = jnp.asarray(target_ids)
+    stored_parents = jnp.asarray(parent_ids[rank])
+    stored_reference = jnp.asarray(reference[rank])
+    stored_coarsened = jnp.asarray(coarsening.fine_cell_ids)
+    stored_into = jnp.asarray(coarsening.coarse_cell_ids)
+    stored_coarse_reference = jnp.asarray(coarsening.fine_reference_vertices)
+    parent_homogeneous = None if parent_bank is None else jnp.asarray(parent_bank)
+    coarsened_homogeneous = None if coarse_bank is None else jnp.asarray(coarse_bank)
+    transition_id = (
+        canonical_fingerprint(
             {
                 "kind": "cell-geometry-transition",
                 "source_topology": source_mesh.topology_id,
@@ -669,7 +790,47 @@ def _transition(
                 "evidence": evidence.evidence_id,
                 "policy": policy.policy_id,
             }
-        ),
+        )
+        if parent_homogeneous is None and coarsened_homogeneous is None
+        # Unrounded source-owned corners use the deterministic replay-checked
+        # identity over the stored arrays themselves.
+        else transition_types.exact_root_transition_id(
+            source_topology_id=source_mesh.topology_id,
+            target_topology_id=target_mesh.topology_id,
+            source_geometry_id=source_id,
+            target_geometry_id=target_id,
+            target_cell_ids=stored_targets,
+            parent_cell_ids=stored_parents,
+            parent_reference_vertices=stored_reference,
+            parent_reference_homogeneous=parent_homogeneous,
+            coarsened_cell_ids=stored_coarsened,
+            coarsened_into_ids=stored_into,
+            coarsened_reference_vertices=stored_coarse_reference,
+            coarsened_reference_homogeneous=coarsened_homogeneous,
+            evidence_id=evidence.evidence_id,
+            policy_id=policy.policy_id,
+        )
+    )
+    return transition_types.CellGeometryTransition(
+        source_topology_id=source_mesh.topology_id,
+        target_topology_id=target_mesh.topology_id,
+        source_geometry_id=source_id,
+        target_geometry_id=target_id,
+        geometry=geometry,
+        vertex_coordinates=jnp.asarray(vertex_coordinates),
+        target_cell_ids=stored_targets,
+        parent_cell_ids=stored_parents,
+        parent_reference_vertices=stored_reference,
+        coarsened_cell_ids=stored_coarsened,
+        coarsened_into_ids=stored_into,
+        coarsened_reference_vertices=stored_coarse_reference,
+        node_owner_cells=jnp.asarray(placed.owner_cells),
+        node_owner_locals=jnp.asarray(placed.owner_locals),
+        evidence=evidence,
+        policy_id=policy.policy_id,
+        parent_reference_homogeneous=parent_homogeneous,
+        coarsened_reference_homogeneous=coarsened_homogeneous,
+        transition_id=transition_id,
     )
 
 
@@ -707,6 +868,89 @@ def _rational_plc_point(
         rational_coefficient(value, role="plc_transition.source_coordinates")
         for value in point
     )
+
+
+def _plc_reference_node_weights(
+    element: reference_types_owner.FiniteElementSpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[tuple[int, Fraction], ...], ...]:
+    """Compile the existing binary64 barycentric node rule once per element."""
+    dimension = _SIMPLEX_DIMENSIONS[element.cell_kind]
+    budget.reserve(0, 128 + element.local_dof_count * (64 + (dimension + 1) * 448))
+    return tuple(
+        tuple(
+            (corner, Fraction(float(weight)))
+            for corner, weight in enumerate(weights)
+            if weight
+        )
+        for weights in _barycentric(np.asarray(element.reference_nodes, dtype=np.float64))
+    )
+
+
+def _plc_node_reference_point(
+    weights: tuple[tuple[int, Fraction], ...],
+    corners: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> tuple[Fraction, ...]:
+    """Select unit rows exactly; retain rational arithmetic for all other rows."""
+    if len(weights) == 1 and weights[0][1] == 1:
+        return corners[weights[0][0]]
+    return tuple(
+        sum(
+            (weight * corners[corner][axis] for corner, weight in weights),
+            Fraction(0),
+        )
+        for axis in range(len(corners[0]))
+    )
+
+
+def _plc_affine_point(
+    corners: tuple[tuple[imported_coordinate_enclosure.ExactScalar, ...], ...],
+    tail: tuple[Fraction, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[imported_coordinate_enclosure.ExactScalar, ...]:
+    """Evaluate the exact affine corner law used by PLC correspondence proofs."""
+    with budget.temporary_scope():
+        # A common denominator divides the product of the input denominators.
+        # Include construction of 1 - sum(tail) and all weighted partial sums
+        # before allocating any new rational weights or coordinate values.
+        bits = (
+            sum(coefficient_bits(value) for point in corners for value in point)
+            + 2 * sum(coefficient_bits(value) for value in tail)
+            + 16
+        )
+        reserve_polynomial(0, 12, 0, bits, budget=budget)
+        weights = (Fraction(1) - sum(tail, Fraction(0)), *tail)
+        budget.reserve(6 + 3 * sum(bool(weight) for weight in weights))
+        # Cardinal reference points select an existing source authority. Keep
+        # the same admission for the inspected affine row, but do not rebuild
+        # its rational coordinates by multiplying by one and adding zeros.
+        for index, weight in enumerate(weights):
+            if weight == 1 and all(
+                value == 0 for other, value in enumerate(weights) if other != index
+            ):
+                return corners[index]
+        if any(
+            isinstance(value, RadicalElement)
+            for point in corners
+            for value in point
+        ):
+            reserve_algebraic_work(corners, 12, 12, 1, budget=budget)
+        return tuple(
+            sum(
+                (
+                    weight * point[axis]
+                    for weight, point in zip(weights, corners, strict=True)
+                    if weight
+                ),
+                Fraction(0),
+            )
+            for axis in range(3)
+        )
 
 
 def _plc_nested_coordinates(
@@ -760,6 +1004,10 @@ def _plc_nested_coordinates(
         refined.coarse_cell_ids,
         refined.fine_reference_vertices,
     )
+    homogeneous = None
+    if refined.fine_reference_homogeneous is not None:
+        homogeneous = np.zeros((target_index.ids.size, 4, 4), dtype=np.float64)
+        homogeneous[targets] = refined.fine_reference_homogeneous
     exact_work = ExactPlcBudget(
         min(source.maximum_work, policy.maximum_evaluations),
         source.maximum_bits,
@@ -780,41 +1028,104 @@ def _plc_nested_coordinates(
             tuple[tuple[int, int], tuple[int, int]] | None,
         ],
     ] = {}
+    # Children reuse their parent's exact noncardinal point evaluations.
+    # Cardinal roots already share the source-owned bank and need no extra memo.
+    # Only completed evaluations are charged; each retained memo row is admitted.
+    parent_points: dict[tuple[int, tuple[Fraction, ...]], tuple[Fraction, ...]] = {}
+    memo_storage = 128 + 6 * (128 + 2 * ((source.maximum_bits + 7) // 8))
+    node_weights: dict[str, tuple[tuple[tuple[int, Fraction], ...], ...]] = {}
+    for block in target_blocks:
+        key = block.element.element_id
+        if key not in node_weights:
+            node_weights[key] = _plc_reference_node_weights(
+                block.element, budget=budget
+            )
+    source_corner_nodes: dict[str, dict[tuple[Fraction, ...], int]] = {}
+    affine_corner_nodes: dict[str, tuple[int, ...] | None] = {}
+    for block in source_blocks:
+        key = block.element.element_id
+        if key in source_corner_nodes:
+            continue
+        nodes = imported_cell_geometry._cardinal_corner_nodes(
+            block.element, budget=budget
+        )
+        budget.reserve(0, 256 + (0 if nodes is None else len(nodes) * 1024))
+        source_corner_nodes[key] = (
+            {}
+            if nodes is None
+            else {
+                tuple(Fraction(float(value)) for value in corner): node
+                for corner, node in zip(
+                    reference_cell_topology(block.element.cell_kind).vertices,
+                    nodes,
+                    strict=True,
+                )
+            }
+        )
+        affine_corner_nodes[key] = (
+            nodes
+            if nodes is not None
+            and imported_coordinate_enclosure.affine_simplex_source(
+                block.element, budget=budget
+            )
+            else None
+        )
     order = np.argsort(refined.fine_cell_ids, kind="stable")
-    for child, parent, corners in zip(
+    for row, child, parent in zip(
+        order.tolist(),
         targets[order],
         sources[order],
-        refined.fine_reference_vertices[order],
         strict=True,
     ):
         target = target_blocks[int(target_index.blocks[child])]
         coarse = source_blocks[int(source_index.blocks[parent])]
         route = coarse.routes[int(source_index.rows[parent])]
-        polynomials = _plc_parent_polynomials(
-            int(parent),
-            coarse.element,
-            bank,
-            route,
-            parent_polynomials,
-            budget=budget,
-        )
-        local_points = (
-            _barycentric(np.asarray(target.element.reference_nodes, dtype=np.float64))
-            @ corners
-        )
+        corner_nodes = source_corner_nodes[coarse.element.element_id]
+        affine_nodes = affine_corner_nodes[coarse.element.element_id]
+        # Exact source-owned child corners, never their rounded execution view.
+        corners = _exact_witness_corners(refined, row)
+        nodes = node_weights[target.element.element_id]
         target_route = target.routes[int(target_index.rows[child])]
-        for vertex, local in zip(target_route, local_points, strict=True):
-            reference_point = rational_vector(local)
-            point = _rational_plc_point(
-                tuple(
-                    imported_coordinate_enclosure.evaluate(
-                        polynomial,
-                        reference_point,
-                        budget=budget,
-                    )
-                    for polynomial in polynomials
-                )
-            )
+        for vertex, weights in zip(target_route, nodes, strict=True):
+            reference_point = _plc_node_reference_point(weights, corners)
+            source_node = corner_nodes.get(reference_point)
+            if source_node is not None:
+                # Preparation already authenticated these rational root rows.
+                # Reuse that authority, not a per-parent copy/memo of it.
+                point = bank[int(route[source_node])]
+            else:
+                point_key = (int(parent), reference_point)
+                point = parent_points.get(point_key)
+                if point is None:
+                    budget.reserve(0, memo_storage)
+                    if affine_nodes is not None:
+                        point = _rational_plc_point(
+                            _plc_affine_point(
+                                tuple(bank[int(route[node])] for node in affine_nodes),
+                                reference_point,
+                                budget=budget,
+                            )
+                        )
+                    else:
+                        polynomials = _plc_parent_polynomials(
+                            int(parent),
+                            coarse.element,
+                            bank,
+                            route,
+                            parent_polynomials,
+                            budget=budget,
+                        )
+                        point = _rational_plc_point(
+                            tuple(
+                                imported_coordinate_enclosure.evaluate(
+                                    polynomial,
+                                    reference_point,
+                                    budget=budget,
+                                )
+                                for polynomial in polynomials
+                            )
+                        )
+                    parent_points[point_key] = point
             if len(point) != 3:
                 raise ValueError(
                     "plc_transition.source must have three coordinate dimensions; got incompatible source dimension"
@@ -871,7 +1182,11 @@ def _plc_nested_coordinates(
     placed = place(
         target_blocks, [coordinates[block.routes] for block in target_blocks], count
     )
-    return placed, _Restricted(parents, reference, exact_work.work), successor
+    return (
+        placed,
+        _Restricted(parents, reference, exact_work.work, homogeneous),
+        successor,
+    )
 
 
 @checked
@@ -887,6 +1202,9 @@ def plc_nested_approximation(
 ) -> tuple[float, float]:
 
     ledger = budget
+    # Unrounded source-owned corners are authenticated before any algebraic bound.
+    refined = _witness(refined, 3, budget=budget)
+    coarsened = _witness(coarsened, 3, budget=budget)
 
     cells = []
     for mesh, geometry in (
@@ -941,37 +1259,17 @@ def _plc_nested_bound(
             tuple[imported_coordinate_enclosure.ExactScalar, ...],
         ] = {}
         budget.reserve(0, 64)
-        for fine_id, coarse_id, corners in zip(
-            witnesses.fine_cell_ids,
-            witnesses.coarse_cell_ids,
-            witnesses.fine_reference_vertices,
-            strict=True,
+        for row, (fine_id, coarse_id) in enumerate(
+            zip(witnesses.fine_cell_ids, witnesses.coarse_cell_ids, strict=True)
         ):
             fine, coarse = fine_cells[int(fine_id)], coarse_cells[int(coarse_id)]
-            for actual, reference in zip(fine, np.asarray(corners), strict=True):
-                tail = rational_vector(reference)
+            for actual, tail in zip(
+                fine, _exact_witness_corners(witnesses, row), strict=True
+            ):
                 key = (int(coarse_id), tail)
                 expected = expected_points.get(key)
                 if expected is None:
-                    weights = (Fraction(1) - sum(tail, Fraction(0)), *tail)
-                    budget.reserve(6 + 3 * sum(bool(weight) for weight in weights))
-                    if any(
-                        isinstance(value, RadicalElement)
-                        for point in coarse
-                        for value in point
-                    ):
-                        reserve_algebraic_work(coarse, 12, 12, 1, budget=budget)
-                    expected = tuple(
-                        sum(
-                            (
-                                weight * point[axis]
-                                for weight, point in zip(weights, coarse, strict=True)
-                                if weight
-                            ),
-                            Fraction(0),
-                        )
-                        for axis in range(3)
-                    )
+                    expected = _plc_affine_point(coarse, tail, budget=budget)
                     budget.reserve(
                         0,
                         256
@@ -988,24 +1286,26 @@ def _plc_nested_bound(
                         ),
                     )
                     expected_points[key] = expected
-                # Every seam comparison remains, including shared reference corners.
-                bound = max(
-                    bound,
-                    *(
-                        abs(first - second)
-                        for first, second in zip(actual, expected, strict=True)
-                    ),
-                )
+                # Every seam comparison remains, including shared reference
+                # corners. Equal exact authorities have zero defect without
+                # allocating three rational differences for every incidence.
+                if actual != expected:
+                    bound = max(
+                        bound,
+                        *(
+                            abs(first - second)
+                            for first, second in zip(actual, expected, strict=True)
+                        ),
+                    )
     return bound
 
 
 def _exact_tetra_reference_weight(
-    corners: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    points: tuple[tuple[Fraction, ...], ...], /, *, budget: CoordinateEnclosureBudget
 ) -> Fraction:
-    """algebraic determinant of one binary64 child-to-parent tetrahedron map."""
+    """Rational determinant of one unrounded child-to-parent tetrahedron map."""
 
-    budget.reserve(corners.size)
-    points = tuple(rational_vector(point) for point in corners)
+    budget.reserve(3 * len(points))
     bits = max(
         abs(value.numerator).bit_length() + value.denominator.bit_length()
         for point in points
@@ -1040,22 +1340,30 @@ def _require_exact_refinement_partition(
 ) -> None:
     """Prove repeated child patterns partition each source cell."""
     rows = refined.fine_reference_vertices
+    bank = refined.fine_reference_homogeneous
     with budget.temporary_scope():
         budget.reserve(
             2 * rows.shape[0],
             512 + rows.shape[0] * (256 + rows.shape[1] * rows.shape[2] * 8),
         )
-        weights: dict[bytes, Fraction] = {}
-        counts: dict[int, dict[bytes, int]] = {}
-        for parent, corners in zip(
-            refined.coarse_cell_ids,
-            rows,
-            strict=True,
-        ):
-            contiguous = np.ascontiguousarray(corners, dtype=np.float64)
-            key = contiguous.view(np.uint64).tobytes()
+        weights: dict[tuple[tuple[Fraction, ...], ...], Fraction] = {}
+        counts: dict[int, dict[tuple[tuple[Fraction, ...], ...], int]] = {}
+        for row, parent in enumerate(refined.coarse_cell_ids):
+            key = _exact_witness_corners(refined, row)
+            if bank is not None and np.any(bank[row] != 0.0):
+                # Exact source-owned keys exceed one binary64 word per coordinate.
+                budget.reserve(
+                    0,
+                    sum(
+                        128
+                        + (abs(value.numerator).bit_length() + 7) // 8
+                        + (value.denominator.bit_length() + 7) // 8
+                        for corner in key
+                        for value in corner
+                    ),
+                )
             if key not in weights:
-                weights[key] = _exact_tetra_reference_weight(contiguous, budget=budget)
+                weights[key] = _exact_tetra_reference_weight(key, budget=budget)
             parent_counts = counts.setdefault(int(parent), {})
             parent_counts[key] = parent_counts.get(key, 0) + 1
         expected = {int(identifier) for identifier in source_cell_ids.tolist()}
@@ -1102,6 +1410,63 @@ def _transition_exact_plc_geometry(
         )
 
 
+def _require_plc_successor_corners(
+    blocks: tuple[SimplexGeometryBlock, ...],
+    bank: imported_coordinate_enclosure.CoordinateSourceBank,
+    coordinates: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Check every exact incidence, rounding each distinct authority only once."""
+    with budget.temporary_scope():
+        budget.reserve(0, 1024 + coordinates.shape[0] * 33)
+        carrier_bits = np.ascontiguousarray(coordinates, dtype=np.float64).view(
+            np.uint64
+        )
+        used = np.zeros(coordinates.shape[0], dtype=np.bool_)
+        for block in blocks:
+            nodes = imported_cell_geometry._cardinal_corner_nodes(
+                block.element, budget=budget
+            )
+            budget.reserve(block.routes.size)
+            if nodes == tuple(range(block.element.local_dof_count)):
+                # The shared cardinal proof makes each image the very same
+                # bank[vertex] authority, not merely an equal rounded carrier.
+                used[block.routes] = True
+                continue
+            for route in block.routes:
+                images = (
+                    tuple(bank[int(route[node])] for node in nodes)
+                    if nodes is not None
+                    else imported_coordinate_enclosure.coordinate_corner_images(
+                        block.element,
+                        tuple(bank[int(vertex)] for vertex in route),
+                        budget=budget,
+                    )
+                )
+                if images is None:
+                    raise ValueError(
+                        "plc_transition.successor must retain the affine corner map; got absent corner images"
+                    )
+                for vertex, image in zip(route, images, strict=True):
+                    if image != bank[int(vertex)]:
+                        raise ValueError(
+                            "plc_transition.continuity must agree at shared successor corners; got unequal rational coordinates"
+                        )
+                    used[vertex] = True
+        for vertex in np.flatnonzero(used):
+            if not np.array_equal(
+                imported_coordinate_enclosure.rounded_point(bank[int(vertex)]).view(
+                    np.uint64
+                ),
+                carrier_bits[vertex],
+            ):
+                raise ValueError(
+                    "plc_transition.carrier_corners must be correctly rounded map images; got different binary64 corner coordinates"
+                )
+
+
 def _execute_exact_plc_geometry(
     source_mesh: CellMesh,
     source_geometry: CellGeometrySpec,
@@ -1131,7 +1496,8 @@ def _execute_exact_plc_geometry(
         raise ValueError(
             "plc_transition.layout must preserve affine tetrahedral layouts; got incompatible coordinate layout"
         )
-    refined, coarsened = _witness(refinement, 3), _witness(coarsening, 3)
+    refined = _witness(refinement, 3, budget=budget)
+    coarsened = _witness(coarsening, 3, budget=budget)
     target_ids = np.concatenate([block.cell_ids for block in target_blocks])
     covered = np.concatenate(
         (refined.fine_cell_ids, np.unique(coarsened.coarse_cell_ids))
@@ -1163,33 +1529,9 @@ def _execute_exact_plc_geometry(
     # association transfer or candidate publication can consume the seam.
 
     successor_bank = geometry.source_coordinates(budget=budget)
-    carrier_bits = np.ascontiguousarray(candidate.coordinates, dtype=np.float64).view(
-        np.uint64
+    _require_plc_successor_corners(
+        target_blocks, successor_bank, np.asarray(candidate.coordinates), budget=budget
     )
-    for block in target_blocks:
-        for route in block.routes:
-            budget.reserve(route.size)
-            images = imported_coordinate_enclosure.coordinate_corner_images(
-                block.element,
-                tuple(successor_bank[int(vertex)] for vertex in route),
-                budget=budget,
-            )
-            if images is None:
-                raise ValueError(
-                    "plc_transition.successor must retain the affine corner map; got absent corner images"
-                )
-            for vertex, image in zip(route, images, strict=True):
-                if image != successor_bank[int(vertex)]:
-                    raise ValueError(
-                        "plc_transition.continuity must agree at shared successor corners; got unequal rational coordinates"
-                    )
-                if not np.array_equal(
-                    imported_coordinate_enclosure.rounded_point(image).view(np.uint64),
-                    carrier_bits[vertex],
-                ):
-                    raise ValueError(
-                        "plc_transition.carrier_corners must be correctly rounded map images; got different binary64 corner coordinates"
-                    )
     refinement_bound, coarsening_bound = plc_nested_approximation(
         source_mesh,
         source_geometry,
@@ -1242,8 +1584,8 @@ def _execute_exact_plc_geometry(
         target_measure = math.fsum(target_values)
         target_error = math.fsum(target_errors) + abs(float(np.spacing(target_measure)))
     containment = max(
-        _excursion(refined.fine_reference_vertices),
-        _excursion(coarsened.fine_reference_vertices),
+        _witness_excursion(refined),
+        _witness_excursion(coarsened),
     )
     evidence = transition_types.CellGeometryTransitionEvidence(
         "coarsening_interpolation"
@@ -1274,12 +1616,104 @@ def _execute_exact_plc_geometry(
         candidate,
         geometry,
         placed,
-        (restricted.parents, restricted.reference),
+        restricted,
         coarsened,
         evidence,
         policy,
         budget=budget,
     )
+
+
+def _nested_producer(
+    source_mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    target_mesh: CellMesh,
+    target_layout: CellGeometrySpec,
+    /,
+) -> Literal["exact_plc", "restricted", "interpolated"]:
+    """Select the nested coordinate producer for one source and target layout."""
+    simplex_layout = (
+        all(
+            block.cell_kind in _SIMPLEX_DIMENSIONS
+            for block in (*source_mesh.blocks, *target_mesh.blocks)
+        )
+        and not any(
+            isinstance(
+                element,
+                (BarycentricCellGeometryElement, RestrictedCellGeometryElement),
+            )
+            for element in source_geometry.elements
+        )
+        and {element.element_id for element in source_geometry.elements}
+        == {element.element_id for element in target_layout.elements}
+    )
+    if (
+        isinstance(source_geometry.exact_source, ExactPlcCellGeometrySource)
+        and simplex_layout
+        and source_geometry.restriction_source is None
+        and all(block.cell_kind == "tetrahedron" for block in source_mesh.blocks)
+    ):
+        return "exact_plc"
+    if not simplex_layout or source_geometry.exact_source is not None:
+        return "restricted"
+    return "interpolated"
+
+
+@checked
+def nested_edge_midpoints_admitted(
+    source_mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    edges: NDArray[np.int64],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> NDArray[np.bool_]:
+    """Whether nested splits publish each edge's exact chart midpoint as authority.
+
+    ``edges`` are ``(E, 2)`` source vertex rows split by a kind-preserving
+    nested refinement into the affine target layout. Restricted producers keep
+    the exact source map, whose split node is the chart image itself.
+    The exact PLC simplex producer rebinds each split node to a source row and
+    admits only carriers inside that row's original bound; the same location,
+    rounding and bound decide each exact midpoint here. Interpolating simplex
+    producers publish binary64 nodes and admit none.
+    """
+    rows = np.asarray(edges, dtype=np.int64).reshape((-1, 2))
+    layout = CellGeometrySpec.affine(source_mesh)
+    match _nested_producer(source_mesh, source_geometry, source_mesh, layout):
+        case "restricted":
+            return np.ones(rows.shape[0], dtype=np.bool_)
+        case "interpolated":
+            return np.zeros(rows.shape[0], dtype=np.bool_)
+        case "exact_plc":
+            pass
+        case producer:
+            assert_never(producer)
+    source = source_geometry.exact_source
+    if (
+        not isinstance(source, ExactPlcCellGeometrySource)
+        or source_geometry.geometry_layout_id != layout.geometry_layout_id
+    ):
+        # Degree-one tetrahedral PLC banks are vertex rows only in this layout.
+        return np.zeros(rows.shape[0], dtype=np.bool_)
+    bank = source.prepare(source_geometry.coordinates, budget=budget).vertices
+    exact_work = ExactPlcBudget(source.maximum_work, source.maximum_bits, budget=budget)
+    locator = source.prepare_witness_locator(exact_work, budget=budget)
+    admitted = np.zeros(rows.shape[0], dtype=np.bool_)
+    for index, (first, second) in enumerate(rows.tolist()):
+        # The affine corner law at the reference edge midpoint.
+        point = tuple(
+            (left + right) / 2
+            for left, right in zip(
+                _rational_plc_point(bank[first]),
+                _rational_plc_point(bank[second]),
+                strict=True,
+            )
+        )
+        admitted[index] = source.admits_located_witness(
+            point, exact_work, locator=locator, budget=budget
+        )
+    return admitted
 
 
 @checked
@@ -1326,27 +1760,10 @@ def transition_nested_cell_geometry(
         ) as budget,
         transition_budget_owner.charged_geometry_transition(policy_, budget=budget),
     ):
-        simplex_layout = (
-            all(
-                block.cell_kind in _SIMPLEX_DIMENSIONS
-                for block in (*source_mesh.blocks, *target_mesh.blocks)
-            )
-            and not any(
-                isinstance(
-                    element,
-                    (BarycentricCellGeometryElement, RestrictedCellGeometryElement),
-                )
-                for element in source_geometry.elements
-            )
-            and {element.element_id for element in source_geometry.elements}
-            == {element.element_id for element in target_layout.elements}
+        producer = _nested_producer(
+            source_mesh, source_geometry, target_mesh, target_layout
         )
-        if (
-            isinstance(source_geometry.exact_source, ExactPlcCellGeometrySource)
-            and simplex_layout
-            and source_geometry.restriction_source is None
-            and all(block.cell_kind == "tetrahedron" for block in source_mesh.blocks)
-        ):
+        if producer == "exact_plc":
             return _transition_exact_plc_geometry(
                 source_mesh,
                 source_geometry,
@@ -1357,7 +1774,7 @@ def transition_nested_cell_geometry(
                 policy_,
                 budget=budget,
             )
-        if not simplex_layout or source_geometry.exact_source is not None:
+        if producer == "restricted":
             return _transition_mixed_nested_geometry(
                 source_mesh,
                 source_geometry,
@@ -1382,8 +1799,8 @@ def transition_nested_cell_geometry(
             raise ValueError(
                 "geometry_transition.elements must retain the source coordinate elements; got different target dimension or elements"
             )
-        refined = _witness(refinement, dimension)
-        coarsened = _witness(coarsening, dimension)
+        refined = _witness(refinement, dimension, budget=budget)
+        coarsened = _witness(coarsening, dimension, budget=budget)
         target_ids = np.concatenate([block.cell_ids for block in target_blocks])
         covered = np.concatenate(
             (refined.fine_cell_ids, np.unique(coarsened.coarse_cell_ids))
@@ -1445,8 +1862,8 @@ def transition_nested_cell_geometry(
         source_measure, measure_exact = _measure(source_blocks, source_coordinates)
         target_measure, _ = _measure(target_blocks, placed.coordinates)
         containment = max(
-            _excursion(refined.fine_reference_vertices),
-            _excursion(coarsened.fine_reference_vertices),
+            _witness_excursion(refined),
+            _witness_excursion(coarsened),
         )
         evidence = transition_types.CellGeometryTransitionEvidence(
             "coarsening_interpolation"
@@ -1473,12 +1890,165 @@ def transition_nested_cell_geometry(
             target_mesh,
             geometry,
             placed,
-            (restricted.parents, restricted.reference),
+            restricted,
             coarsened,
             evidence,
             policy_,
             budget=budget,
         )
+
+
+type _DisplacedMeasures = tuple[float, float, float | None, float | None, bool]
+
+
+@dataclass(frozen=True, slots=True)
+class _DisplacedMeasureIssue:
+    """Numerics earned by one actual transition; no reconstructed proof authority."""
+
+    source_mesh: CellMesh
+    source_geometry: CellGeometrySpec
+    target_mesh: CellMesh
+    target_geometry_id: str
+    names: tuple[str, ...]
+    values: tuple[object, ...]
+    owners: OwnerFields
+    containers: tuple[tuple[list[object], tuple[object, ...]], ...]
+    immutable_arrays: tuple[Array, ...]
+    mutable_arrays: tuple[tuple[np.ndarray, str, tuple[int, ...], bytes], ...]
+    measures: _DisplacedMeasures
+    metadata_bytes: int
+
+
+# Identity keys avoid Equinox value equality. Neither the seal nor its callback
+# owns the transition: copies, decoded records and collected owners have no issue.
+_ISSUED_DISPLACED_MEASURES: dict[
+    int, tuple[ReferenceType[transition_types.CellGeometryTransition], _DisplacedMeasureIssue]
+] = {}
+
+
+def _issue_displaced_measures(
+    transition: transition_types.CellGeometryTransition,
+    source_mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    target_mesh: CellMesh,
+    measures: _DisplacedMeasures,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> None:
+    if not budget.capture_coordinate_operands or not budget.capture_measure_operands:
+        return
+    from .._meshcore import NativeBatchTicket, NativeScopeTicket
+
+    if not isinstance(budget.ticket, (NativeBatchTicket, NativeScopeTicket)):
+        return
+    _coordinate_operand_request(budget)
+    names = tuple(member.name for member in fields(transition))
+    budget.reserve(len(names), 128 + 32 * len(names))
+    values = tuple(getattr(transition, name) for name in names)
+    arrays: list[Array | np.ndarray] = []
+    containers: list[tuple[list[object], tuple[object, ...]]] = []
+    owners = coordinate_input_owner_fields(
+        (source_mesh, source_geometry, target_mesh, *values),
+        budget,
+        arrays=arrays,
+        containers=containers,
+    )
+    if owners is None:
+        return
+    immutable_arrays = tuple(array for array in arrays if isinstance(array, Array))
+    if any(array.is_deleted() for array in immutable_arrays):
+        return
+    mutable_arrays = []
+    for array in arrays:
+        if type(array) is np.ndarray:
+            budget.reserve(array.size + 1, array.nbytes + 256)
+            mutable_arrays.append(
+                (array, array.dtype.str, array.shape, array.tobytes(order="C"))
+            )
+    metadata = (
+        1024 + 64 * len(names) + 16 * len(immutable_arrays)
+        + sum(256 + 64 * len(names_) for _, _, names_, _ in owners)
+        + sum(128 + 16 * len(children) for _, children in containers)
+        + sum(256 + len(payload) for _, _, _, payload in mutable_arrays)
+    )
+    budget.retain_operand_metadata(metadata)
+    # This exact numeric tuple becomes a kernel operand profile in the actual
+    # earning budget. Only a paid, privately issued PreparedCoordinateOperands
+    # containing that profile can authorize its later use.
+    budget.retain_basis(measures, operand=True, _kernel_operands=True)
+    issue = _DisplacedMeasureIssue(
+        source_mesh, source_geometry, target_mesh, transition.target_geometry_id,
+        names, values, owners, tuple(containers), immutable_arrays,
+        tuple(mutable_arrays), measures, metadata,
+    )
+    identity = id(transition)
+    _ISSUED_DISPLACED_MEASURES[identity] = (
+        ref(transition, lambda _: _ISSUED_DISPLACED_MEASURES.pop(identity, None)),
+        issue,
+    )
+
+
+def _displaced_measures_for(
+    transition: transition_types.CellGeometryTransition | None,
+    source_mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    target_mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _DisplacedMeasures | None:
+    if type(transition) is not transition_types.CellGeometryTransition:
+        return None
+    budget.reserve(1)
+    entry = _ISSUED_DISPLACED_MEASURES.get(id(transition))
+    if entry is None or entry[0]() is not transition:
+        return None
+    issue = entry[1]
+    prepared = budget._prepared_coordinate_operands
+    if (
+        issue.source_mesh is not source_mesh
+        or issue.source_geometry is not source_geometry
+        or issue.target_mesh is not target_mesh
+        or prepared is None
+        or prepared.mesh is not target_mesh
+    ):
+        return None
+    budget.reserve(len(prepared._profiles) + len(issue.names))
+    if (
+        not any(profile.basis is issue.measures for profile in prepared._profiles)
+        or any(
+            getattr(transition, name) is not value
+            for name, value in zip(issue.names, issue.values, strict=True)
+        )
+    ):
+        return None
+    with budget.temporary_scope():
+        budget.reserve(0, issue.metadata_bytes)
+        if (
+            not require_coordinate_input_owners(issue.owners, budget)
+            or not require_coordinate_input_containers(issue.containers, budget)
+        ):
+            return None
+        budget.reserve(len(issue.immutable_arrays))
+        if any(array.is_deleted() for array in issue.immutable_arrays):
+            return None
+        for array, dtype, shape, payload in issue.mutable_arrays:
+            with budget.temporary_scope():
+                budget.reserve(array.size + 1, array.nbytes + 256)
+                if (
+                    array.dtype.str != dtype
+                    or array.shape != shape
+                    or array.dtype.hasobject
+                    or array.tobytes(order="C") != payload
+                ):
+                    return None
+        if cell_geometry_id(geometry) != issue.target_geometry_id:
+            return None
+        prepared.require(
+            target_mesh, prepared.geometry, prepared.earning_receipt, budget,
+            coordinate_contract=prepared._coordinate_contract,
+        )
+        return issue.measures
 
 
 @checked
@@ -1490,6 +2060,7 @@ def transition_displaced_cell_geometry(
     *,
     policy: transition_types.CellGeometryTransitionPolicy | None = None,
     budget: CoordinateEnclosureBudget | None = None,
+    _issued_transition: transition_types.CellGeometryTransition | None = None,
 ) -> transition_types.CellGeometryTransition:
     """Move a coordinate map with its mesh vertices on an unchanged topology.
 
@@ -1498,6 +2069,11 @@ def transition_displaced_cell_geometry(
     nodes land on the moved vertices and the curved part of each map is kept.
     A shared node moves identically from every incident cell because the
     displacement on a shared entity depends only on that entity's corners.
+    Exact PLC ancestry admits only unstratified interior-node displacement.
+    Every stratified source row stays fixed and the target retains the same
+    exact source graph. A live issued transition may supply only its paid numeric
+    measure tuple after current owner and operand admission; geometry, witnesses,
+    evidence and identities are always reconstructed.
     """
 
     policy_ = (
@@ -1507,12 +2083,10 @@ def transition_displaced_cell_geometry(
         raise ValueError(
             "geometry_transition.target_topology must equal the source topology; got different topology ID"
         )
-    if isinstance(
-        source_geometry.exact_source,
-        (ExactPlcCellGeometrySource, ExactPlcCellGeometryConvexSource),
-    ):
+    plc = isinstance(source_geometry.exact_source, ExactPlcCellGeometrySource)
+    if isinstance(source_geometry.exact_source, ExactPlcCellGeometryConvexSource):
         raise ValueError(
-            "geometry_transition.source must support coefficient displacement; got PLC source ancestry"
+            "geometry_transition.source must support coefficient displacement; got convex PLC source ancestry"
         )
     with (
         (
@@ -1531,17 +2105,40 @@ def transition_displaced_cell_geometry(
             sum(block.routes.size * (block.dimension + 1) for block in blocks), policy_
         )
         source_coordinates = np.asarray(source_geometry.coordinates, dtype=np.float64)
-        displacement = np.asarray(target_mesh.coordinates, dtype=np.float64) - np.asarray(
-            source_mesh.coordinates, dtype=np.float64
-        )
-        values = []
-        for mesh_block, block in zip(source_mesh.blocks, blocks, strict=True):
-            nodes = np.asarray(block.element.reference_nodes, dtype=np.float64)
-            corners = displacement[np.asarray(mesh_block.vertices, dtype=np.int64)]
-            values.append(
-                source_coordinates[block.routes]
-                + np.asarray(contract("nk,ckD->cnD", _barycentric(nodes), corners))
+        if plc:
+            source = source_geometry.exact_source
+            assert isinstance(source, ExactPlcCellGeometrySource)
+            target_coordinates = np.asarray(target_mesh.coordinates, dtype=np.float64)
+            if (
+                source_coordinates.shape != target_coordinates.shape
+                or not np.array_equal(source_coordinates, source_mesh.coordinates)
+                or any(block.degree != 1 for block in blocks)
+            ):
+                raise ValueError(
+                    "geometry_transition.PLC displacement requires the unchanged affine vertex-node layout"
+                )
+            stratified = np.asarray(source.vertex_strata) != 0
+            if not np.array_equal(
+                target_coordinates[stratified], source_coordinates[stratified]
+            ):
+                raise ValueError(
+                    "geometry_transition.PLC displacement must retain every stratified source row, including embedded features and interfaces"
+                )
+            # These are exact free-node binary64 authorities, not a rounded
+            # source + (target - source) arithmetic reconstruction.
+            values = [target_coordinates[block.routes] for block in blocks]
+        else:
+            displacement = np.asarray(target_mesh.coordinates, dtype=np.float64) - np.asarray(
+                source_mesh.coordinates, dtype=np.float64
             )
+            values = []
+            for mesh_block, block in zip(source_mesh.blocks, blocks, strict=True):
+                nodes = np.asarray(block.element.reference_nodes, dtype=np.float64)
+                corners = displacement[np.asarray(mesh_block.vertices, dtype=np.int64)]
+                values.append(
+                    source_coordinates[block.routes]
+                    + np.asarray(contract("nk,ckD->cnD", _barycentric(nodes), corners))
+                )
         placed = place(blocks, values, source_coordinates.shape[0])
         slack = policy_.continuity_tolerance * _extent(source_coordinates)
         if placed.continuity > slack:
@@ -1553,13 +2150,42 @@ def transition_displaced_cell_geometry(
             )
         elements, routes, _ = source_geometry.resolve(source_mesh, budget=budget)
         names = tuple(block.name for block in source_mesh.blocks)
-        geometry = CellGeometrySpec(
-            dict(zip(names, elements, strict=True)),
-            dict(zip(names, routes, strict=True)),
-            placed.coordinates,
+        geometry = (
+            source_geometry.with_coordinates(placed.coordinates, budget=budget)
+            if plc
+            else CellGeometrySpec(
+                dict(zip(names, elements, strict=True)),
+                dict(zip(names, routes, strict=True)),
+                placed.coordinates,
+            )
         )
-        source_measure, measure_exact = _measure(blocks, source_coordinates)
-        target_measure, _ = _measure(blocks, placed.coordinates)
+        measures = (
+            _displaced_measures_for(
+                _issued_transition, source_mesh, source_geometry, target_mesh,
+                geometry, budget,
+            )
+            if plc else None
+        )
+        source_error = target_error = None
+        if measures is not None:
+            source_measure, target_measure, source_error, target_error, measure_exact = measures
+        elif plc:
+            source_values, source_errors, source_exact = (
+                mapped_measure_owner.certified_cell_measures(
+                    source_mesh, source_geometry, budget=budget
+                )
+            )
+            target_values, target_errors, target_exact = (
+                mapped_measure_owner.certified_cell_measures(
+                    target_mesh, geometry, budget=budget
+                )
+            )
+            source_measure, target_measure = math.fsum(source_values), math.fsum(target_values)
+            source_error, target_error = math.fsum(source_errors), math.fsum(target_errors)
+            measure_exact = source_exact and target_exact
+        else:
+            source_measure, measure_exact = _measure(blocks, source_coordinates)
+            target_measure, _ = _measure(blocks, placed.coordinates)
         # Witnesses follow ascending cell IDs: every cell is its own identity parent.
         identity = np.sort(np.concatenate([block.cell_ids for block in blocks]))
         dimension = source_mesh.topological_dimension
@@ -1583,20 +2209,29 @@ def transition_displaced_cell_geometry(
             target_measure=target_measure,
             measure_exact=measure_exact,
             coverage_defect=None,
+            source_measure_error_bound=source_error,
+            target_measure_error_bound=target_error,
         )
-        return _transition(
+        transition = _transition(
             "vertex_displacement",
             source_mesh,
             source_geometry,
             target_mesh,
             geometry,
             placed,
-            (identity, reference),
-            _witness(None, dimension),
+            _Restricted(identity, reference, 0, None),
+            _witness(None, dimension, budget=budget),
             evidence,
             policy_,
             budget=budget,
         )
+        if plc and measures is None:
+            _issue_displaced_measures(
+                transition, source_mesh, source_geometry, target_mesh,
+                (source_measure, target_measure, source_error, target_error, measure_exact),
+                budget,
+            )
+        return transition
 
 
 @checked
@@ -1609,7 +2244,14 @@ def is_affine_cell_geometry(
 ) -> bool:
     """Prove a full affine source map bound to its approved numerical carrier."""
     if budget is not None:
-        return _affine_source_carrier(mesh, geometry, budget=budget)
+        key = coordinate_scope_key(mesh, geometry)
+        if key in budget.affine_source_carrier_cache:
+            return True
+        admitted = _affine_source_carrier(mesh, geometry, budget=budget)
+        if admitted:
+            budget.retain_basis((key,))
+            budget.affine_source_carrier_cache.add(key)
+        return admitted
     work_upper, bytes_upper = cell_geometry_preparation_bounds(geometry)
     # Convex source layout authentication and the coefficient bank may each
     # prepare the source; all other source routes use no more repetitions.
@@ -1632,6 +2274,38 @@ def _affine_source_carrier(
         mesh, exact_source_prepared=True, budget=budget
     )
     carrier = np.asarray(mesh.coordinates, dtype=np.float64)
+    structural = tuple(
+        not isinstance(element, imported_cell_geometry.CellVertexGeometryElement)
+        and imported_coordinate_enclosure.affine_simplex_source(element, budget=budget)
+        for element in elements
+    )
+    # Authenticate all incident structural simplex charts together. This evaluates
+    # each distinct routed corner operation once, including shared-vertex equality,
+    # rather than rebuilding a complete local coefficient key for every cell.
+    if all(structural):
+        images = imported_coordinate_enclosure.prepared_coordinate_vertex_images(
+            mesh, geometry,
+            mismatch="Affine source charts must agree on every shared vertex; got unequal exact images.",
+            budget=budget,
+        )
+        if images is not None:
+            selected = [index for index, image in enumerate(images) if image is not None]
+            if not selected:
+                return True
+            rounded = np.asarray(
+                [[float(value) for value in image] for image in images if image is not None],
+                dtype=np.float64,
+            )
+            actual = carrier[selected]
+            if np.array_equal(rounded.view(np.uint64), actual.view(np.uint64)):
+                return True
+            if isinstance(geometry.exact_source, ExactPlcCellGeometrySource):
+                approved = np.asarray(geometry.coordinates, dtype=np.float64)[selected]
+                return (
+                    all(images[index] == bank[index] for index in selected)
+                    and np.array_equal(approved.view(np.uint64), actual.view(np.uint64))
+                )
+            return False
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         vertices = np.asarray(block.vertices)
         rows = np.asarray(route)
@@ -1650,21 +2324,34 @@ def _affine_source_carrier(
             ):
                 return False
             continue
+        # A degree-one simplex root proves every restricted/barycentric row
+        # affine once; its rows then need only their exact corner images.
+        structural = imported_coordinate_enclosure.affine_simplex_source(
+            element, budget=budget
+        )
         for row, corners in zip(rows, vertices, strict=True):
             local = tuple(bank[int(index)] for index in row if index >= 0)
-            polynomials = imported_coordinate_enclosure.coordinate_polynomials(
-                element, local, budget=budget
+            images = (
+                imported_coordinate_enclosure.coordinate_corner_images(
+                    element, local, budget=budget
+                )
+                if structural
+                else None
             )
-            if polynomials is None or any(
-                sum(exponent) > 1
-                for polynomial in polynomials
-                for exponent, coefficient in polynomial.items()
-                if coefficient
-            ):
-                return False
-            images = imported_coordinate_enclosure.corner_images(
-                polynomials, block.cell_kind, budget=budget
-            )
+            if images is None:
+                polynomials = imported_coordinate_enclosure.coordinate_polynomials(
+                    element, local, budget=budget
+                )
+                if polynomials is None or any(
+                    sum(exponent) > 1
+                    for polynomial in polynomials
+                    for exponent, coefficient in polynomial.items()
+                    if coefficient
+                ):
+                    return False
+                images = imported_coordinate_enclosure.corner_images(
+                    polynomials, block.cell_kind, budget=budget
+                )
             rounded = np.asarray(
                 [[float(value) for value in image] for image in images],
                 dtype=np.float64,
@@ -1689,6 +2376,235 @@ def _affine_source_carrier(
                     case _:
                         return False
     return True
+
+
+@checked
+def affine_vertex_positions(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[imported_coordinate_enclosure.ExactScalar, ...], ...]:
+    """Exact positions of every scientific vertex under an affine source map.
+
+    Row ``i`` is the vertex ``mesh.vertex_global_ids[i]``. Every incident cell's
+    affine source law (any admitted family: P1, coefficient actions, restricted
+    or composed charts, unrounded PLC/rational/algebraic sources) is evaluated at its
+    reference corners through the coordinate-source owner, keeping its
+    `ExactScalar` field values, and all incident cells must agree exactly on the
+    same vertex. The binary64 carrier must be the round-to-nearest view of each
+    position (the same rounding `is_affine_cell_geometry` admits), except where
+    an unrounded PLC source approves its own certified carrier.
+    """
+    bank = imported_coordinate_enclosure.prepared_coordinate_source_bank(
+        geometry, budget=budget
+    )
+    elements, routes, _ = geometry._resolve(
+        mesh, exact_source_prepared=True, budget=budget
+    )
+    carrier = np.asarray(mesh.coordinates, dtype=np.float64)
+    witness_carrier = isinstance(geometry.exact_source, ExactPlcCellGeometrySource)
+    count = int(carrier.shape[0])
+    budget.reserve(count, 64 + 8 * count)
+    positions: list[tuple[imported_coordinate_enclosure.ExactScalar, ...] | None] = [
+        None
+    ] * count
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        if block.cell_kind not in _SIMPLEX_DIMENSIONS:
+            raise ValueError(
+                "affine_vertex_positions.mesh must contain simplex cells; got non-simplex block"
+            )
+        for row, corners in zip(
+            np.asarray(route), np.asarray(block.vertices), strict=True
+        ):
+            local = tuple(bank[int(index)] for index in row if index >= 0)
+            polynomials = imported_coordinate_enclosure.coordinate_polynomials(
+                element, local, budget=budget
+            )
+            if polynomials is None or any(
+                sum(exponent) > 1
+                for polynomial in polynomials
+                for exponent, coefficient in polynomial.items()
+                if coefficient
+            ):
+                raise ValueError(
+                    "affine_vertex_positions.geometry must be an affine source map; got non-affine cell"
+                )
+            images = imported_coordinate_enclosure.corner_images(
+                polynomials, block.cell_kind, budget=budget
+            )
+            for vertex, image in zip(corners.tolist(), images, strict=True):
+                point = tuple(image)
+                previous = positions[int(vertex)]
+                if previous is not None and previous != point:
+                    raise ValueError(
+                        "affine_vertex_positions.geometry must agree at shared vertices; got unequal unrounded positions"
+                    )
+                if (
+                    previous is None
+                    and not witness_carrier
+                    and (
+                        tuple(_rounded_scalar(value, budget=budget)[0] for value in point)
+                        != tuple(carrier[int(vertex), :].tolist())
+                    )
+                ):
+                    raise ValueError(
+                        "affine_vertex_positions.mesh.coordinates must be the round-to-nearest view of the exact source vertices; got different carrier"
+                    )
+                positions[int(vertex)] = point
+    result: list[tuple[imported_coordinate_enclosure.ExactScalar, ...]] = []
+    for point in positions:
+        if point is None:
+            raise ValueError(
+                "affine_vertex_positions.mesh must reference every vertex row; got unreferenced vertex"
+            )
+        result.append(point)
+    return tuple(result)
+
+
+def _rounded_scalar(
+    value: imported_coordinate_enclosure.ExactScalar,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[float, Fraction]:
+    """Round-to-nearest binary64 view and a rational bound of its error.
+
+    Rational values (including rational-subfield field elements) have their
+    rational error, zero iff representable; irrational values use the field
+    owner's certified budgeted rounding.
+    """
+    if isinstance(value, RadicalElement):
+        if not value.terms or (len(value.terms) == 1 and value.terms[0][0] == 1):
+            value = rational_coefficient(value, role="exact_root.coordinate")
+        else:
+            return value.rounded(budget=budget)
+    rounded = float(value)
+    return rounded, abs(Fraction(rounded) - value)
+
+
+@checked
+def vertex_positions_are_carrier(
+    positions: tuple[tuple[imported_coordinate_enclosure.ExactScalar, ...], ...],
+    mesh: CellMesh,
+    /,
+) -> bool:
+    """Whether exact vertex positions are exactly the mesh's binary64 carrier."""
+    carrier = np.asarray(mesh.coordinates, dtype=np.float64)
+    return len(positions) == carrier.shape[0] and all(
+        len(point) == carrier.shape[1]
+        and all(
+            value == Fraction(float(rounded))
+            for value, rounded in zip(point, carrier[index, :].tolist(), strict=True)
+        )
+        for index, point in enumerate(positions)
+    )
+
+
+@checked
+def affine_geometry_is_carrier(mesh: CellMesh, geometry: CellGeometrySpec, /) -> bool:
+    """Source-owner proof that the geometry is the mesh's own binary64 P1 carrier.
+
+    True only for the standard affine layout with no unrounded, periodic,
+    restriction, or storage source and bitwise-equal coordinates, so the unrounded
+    vertex positions are the carrier itself. False means "not proved", and
+    callers must then use `affine_vertex_positions`.
+    """
+    return (
+        geometry.exact_source is None
+        and geometry.periodic_source is None
+        and geometry.restriction_source is None
+        and geometry.storage is None
+        and geometry.geometry_layout_id
+        == imported_cell_geometry.CellGeometrySpec.affine(mesh).geometry_layout_id
+        and np.array_equal(
+            np.asarray(geometry.coordinates, dtype=np.float64).view(np.uint64),
+            np.asarray(mesh.coordinates, dtype=np.float64).view(np.uint64),
+        )
+    )
+
+
+@checked
+def exact_root_points(
+    positions: tuple[tuple[imported_coordinate_enclosure.ExactScalar, ...], ...],
+    sources: NDArray[np.int64] | NDArray[np.int32],
+    homogeneous: NDArray[np.float64],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Round-to-nearest carriers and certified deviations of exact P1 roots.
+
+    Root ``r`` is ``S = (h[r,0] P[s0] + h[r,1] P[s1]) / (h[r,0] + h[r,1])`` over
+    exact source positions ``P`` from `affine_vertex_positions` (rational or
+    multiquadratic field values); its carrier is ``RNE(S)`` and its deviation an
+    upward-rounded Euclidean ``|carrier - S|`` (zero iff equal), the norm of
+    `LevelSetEvidence.root_deviations`.
+    """
+    rows = np.asarray(sources)
+    weights = np.asarray(homogeneous, dtype=np.float64)
+    if (
+        rows.ndim != 2
+        or rows.shape[1] != 2
+        or weights.shape != rows.shape
+        or not np.all(np.isfinite(weights))
+        or np.any(np.signbit(weights))
+        or not np.all(np.any(weights != 0.0, axis=1))
+    ):
+        raise ValueError(
+            "exact_root_points.inputs must be aligned (roots, 2) sources and positive-signed homogeneous rows; got incompatible arrays"
+        )
+    if any(
+        not isinstance(value, (Fraction, RadicalElement))
+        or len(point) != len(positions[0])
+        for point in positions
+        for value in point
+    ):
+        raise TypeError(
+            "exact_root_points.positions must be aligned unrounded coordinate rows; got incompatible positions"
+        )
+    if np.any(rows < 0) or np.any(rows >= len(positions)):
+        raise ValueError(
+            "exact_root_points.sources must index mesh vertex rows; got out-of-range source"
+        )
+    ambient = len(positions[0]) if positions else 0
+    count = rows.shape[0]
+    used = {int(index) for index in rows.reshape(-1).tolist()}
+    profile = tuple(positions[index] for index in sorted(used))
+    bits = max(
+        (coefficient_bits(value) for point in profile for value in point), default=1
+    )
+    # Two products, one sum and one quotient per component; carriers and
+    # deviations are the only escaping storage.
+    budget.reserve(
+        6 * count * max(ambient, 1),
+        count * max(ambient, 1) * (256 + 2 * ((bits + 2 * 1076 + 64 + 7) // 8)),
+    )
+    if any(isinstance(value, RadicalElement) for point in profile for value in point):
+        # Field products, quotients and certified rounding of each component.
+        reserve_algebraic_work(
+            profile,
+            6 * count * max(ambient, 1),
+            count * max(ambient, 1),
+            2,
+            budget=budget,
+        )
+    carriers = np.empty((count, ambient), dtype=np.float64)
+    deviations = np.zeros(count, dtype=np.float64)
+    for root in range(count):
+        first, second = (Fraction(float(value)) for value in weights[root, :].tolist())
+        total = first + second
+        start, end = positions[int(rows[root, 0])], positions[int(rows[root, 1])]
+        squared = Fraction(0)
+        for axis in range(ambient):
+            exact = (first * start[axis] + second * end[axis]) / total
+            rounded, error = _rounded_scalar(exact, budget=budget)
+            carriers[root, axis] = rounded
+            squared += error**2
+        _, upper = fraction_sqrt_interval(squared, budget=budget)
+        deviations[root] = fraction_endpoint(upper, upper=True)
+    return carriers, deviations
 
 
 @checked
@@ -1767,8 +2683,11 @@ def cell_geometry_vertex_measures(
 ) -> np.ndarray:
     """Integral of every mesh-vertex P1 hat function over the mapped cells.
 
-    The rule is algebraic for full-dimensional polynomial coordinate maps (hat degree
-    one plus the Jacobian determinant degree).
+    Full simplex Lagrange maps and their polynomial restrictions
+    (barycentric actions, restricted and composed charts, as published by
+    nested refinement) are measured. The rule is algebraic for full-dimensional
+    polynomial coordinate maps (hat degree one plus the Jacobian determinant
+    degree).
     """
 
     if budget is None:
@@ -1781,16 +2700,50 @@ def cell_geometry_vertex_measures(
     else:
         request = nullcontext(budget)
     with request as budget:
-        blocks = simplex_blocks(mesh, geometry, "measured", budget=budget)
+        elements, routes, _ = geometry.resolve(mesh, budget=budget)
         coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
         measures = np.zeros((mesh.coordinates.shape[0],), dtype=np.float64)
-        for mesh_block, block in zip(mesh.blocks, blocks, strict=True):
-            points, weights = _rule(block, 1)
+        for mesh_block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+            measured: _PolynomialSimplexElement
+            cell_dimension: int
+            match element, _SIMPLEX_DIMENSIONS.get(mesh_block.cell_kind):
+                case reference_types_owner.FiniteElementSpec(), int() as dimension:
+                    if (
+                        element.element_id
+                        != imported_cell_geometry.coordinate_lagrange_element(
+                            mesh_block.cell_kind, element.degree
+                        ).element_id
+                    ):
+                        raise ValueError(
+                            f"geometry_transition.measured.elements must span the full Lagrange space; got incompatible element in block {mesh_block.name!r}"
+                        )
+                    measured, cell_dimension = element, dimension
+                case (
+                    BarycentricCellGeometryElement()
+                    | RestrictedCellGeometryElement()
+                    | PolynomialComposedCellGeometryElement(),
+                    int() as dimension,
+                ) if element.cell_kind == mesh_block.cell_kind:
+                    measured, cell_dimension = element, dimension
+                case _:
+                    raise ValueError(
+                        f"geometry_transition.measured.elements must be full simplex Lagrange maps or their polynomial restrictions; got {mesh_block.cell_kind} block {mesh_block.name!r}"
+                    )
+            points, weights = reference_rules_owner.host_degree_aware_reference_rule(
+                mesh_block.cell_kind, 1 + cell_dimension * max(measured.degree - 1, 0)
+            )
+            points = np.asarray(points, dtype=np.float64)
             local = np.asarray(
                 contract(
                     "cq,q,qk->ck",
-                    _densities(block, coordinates, points),
-                    weights,
+                    _element_densities(
+                        measured,
+                        np.asarray(route, dtype=np.int64),
+                        cell_dimension,
+                        coordinates,
+                        points,
+                    ),
+                    np.asarray(weights, dtype=np.float64),
                     _barycentric(points),
                 )
             )
@@ -1894,6 +2847,113 @@ def _restricted_element(
     return RestrictedCellGeometryElement(element, kind, matrix, offset)
 
 
+def _nondyadic_homogeneous_rows(
+    corners: NDArray[np.float64], bank: NDArray[np.float64] | None, /
+) -> NDArray[np.bool_]:
+    """Corners whose validated exact coordinate is not its binary64 view."""
+    mask = np.zeros(corners.shape[0], dtype=np.bool_)
+    if bank is None:
+        return mask
+    for index in range(min(bank.shape[0], corners.shape[0])):
+        point = transition_types.homogeneous_reference_point(bank[index, :])
+        mask[index] = point is not None and any(
+            Fraction(float(value)) != value for value in point
+        )
+    return mask
+
+
+def _homogeneous_child_element(
+    element: CellGeometryElement,
+    kind: str,
+    source_kind: str,
+    corners: tuple[tuple[Fraction, ...], ...],
+    bank: NDArray[np.float64],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> BarycentricCellGeometryElement | PolynomialComposedCellGeometryElement:
+    """Exact coordinate map of one source-owned nested simplex.
+
+    Full P1 coefficient sources retain an exact barycentric action: row ``i``
+    holds the parent barycentric coordinates of child corner ``i``, retained
+    homogeneous rows authenticate their rounded execution rows, and zero rows
+    must be exactly representable in binary64. Every other admitted parent
+    (restricted, composed, or curved) is pulled back through the exact rational
+    P1 chart of the child corners, so no rounded restriction is ever published.
+    """
+    if kind != source_kind or kind not in _SIMPLEX_DIMENSIONS:
+        raise ValueError(
+            "nested_geometry.reference_homogeneous must restrict a simplex to the same simplex family; got different cell kind"
+        )
+    match element:
+        case (
+            reference_types_owner.FiniteElementSpec()
+            | BarycentricCellGeometryElement() as source
+        ) if source.degree == 1 and source.local_dof_count == len(corners):
+            rows = tuple(
+                (Fraction(1) - sum(corner, Fraction(0)), *corner) for corner in corners
+            )
+            if any(
+                not bank[index, :].any()
+                and any(Fraction(float(value)) != value for value in row)
+                for index, row in enumerate(rows)
+            ):
+                raise ValueError(
+                    "nested_geometry.reference_homogeneous must retain every non-binary64 corner; got inexact binary corner action"
+                )
+            # The constructor re-proves every retained row exactly.
+            budget.reserve(
+                *imported_cell_geometry.barycentric_homogeneous_preparation_bounds(
+                    len(rows)
+                )
+            )
+            return BarycentricCellGeometryElement(
+                source,
+                np.asarray(
+                    [[float(value) for value in row] for row in rows], dtype=np.float64
+                ),
+                bank,
+            )
+        case (
+            reference_types_owner.FiniteElementSpec()
+            | BarycentricCellGeometryElement()
+            | RestrictedCellGeometryElement()
+            | PolynomialComposedCellGeometryElement()
+            | RationalComposedCellGeometryElement()
+            | SplineCellGeometryElement()
+            | LayerColumnCellGeometryElement() as source
+        ):
+            # Rational static (numerator, denominator) chart nodes; the composed
+            # owner certifies the source expressions under them.
+            budget.reserve(
+                len(corners) * len(corners[0]),
+                sum(
+                    128
+                    + (abs(value.numerator).bit_length() + 7) // 8
+                    + (value.denominator.bit_length() + 7) // 8
+                    for corner in corners
+                    for value in corner
+                ),
+            )
+            numerators = np.empty((len(corners), len(corners[0])), dtype=object)
+            denominators = np.empty_like(numerators)
+            for row, corner in enumerate(corners):
+                for column, value in enumerate(corner):
+                    numerators[row, column] = int(value.numerator)
+                    denominators[row, column] = int(value.denominator)
+            return PolynomialComposedCellGeometryElement(
+                source,
+                imported_cell_geometry.coordinate_lagrange_element(kind, 1),
+                numerators,
+                denominators,
+                budget=budget,
+            )
+        case _:
+            raise ValueError(
+                "nested_geometry.reference_homogeneous must restrict a scalar coordinate source; got unsupported source element"
+            )
+
+
 def _reference_containment_defect(kind: str, points: NDArray[np.float64]) -> float:
     match kind:
         case "tetrahedron":
@@ -1932,7 +2992,7 @@ class _RestoredCoordinateCell(StrictModule):
 
 
 def _restore_coordinate_siblings(
-    siblings: list[tuple[int, NDArray[np.float64]]],
+    siblings: list[_MixedReference],
     target_kind: str,
     source_mesh: CellMesh,
     source_elements: tuple[CellGeometryElement, ...],
@@ -1945,10 +3005,53 @@ def _restore_coordinate_siblings(
     budget: CoordinateEnclosureBudget,
 ) -> _RestoredCoordinateCell:
     candidates = []
-    for fine, corners in siblings:
+    for fine, corners, bank in siblings:
         index, fine_row = source_index[fine]
         restricted = source_elements[index]
-        matrix, offset = _reference_affine(source_mesh.blocks[index].cell_kind, corners)
+        fine_kind = source_mesh.blocks[index].cell_kind
+        arity = len(reference_cell_topology(fine_kind).vertices)
+        if isinstance(restricted, BarycentricCellGeometryElement):
+            # Full P1 coefficient actions, including source-owned roots, are
+            # restored by exact rational action equality only.
+            exact = transition_types.exact_reference_corners(
+                corners[:arity], None if bank is None else bank[:arity]
+            )
+            expected = tuple(
+                (Fraction(1) - sum(corner, Fraction(0)), *corner) for corner in exact
+            )
+            budget.reserve(
+                *imported_cell_geometry.barycentric_homogeneous_preparation_bounds(
+                    len(expected)
+                )
+            )
+            if fine_kind != target_kind or (
+                exact_barycentric_action(restricted) != expected
+            ):
+                raise transition_types.CellGeometryTransitionError(
+                    "approximation_bound",
+                    "nested_geometry.child_action must equal the recorded rational coefficient action; got different barycentric action",
+                    measured=math.inf,
+                    limit=policy.coarsening_tolerance,
+                )
+            candidates.append(
+                (
+                    restricted.source_element,
+                    np.asarray(source_routes[index][fine_row], dtype=np.int64),
+                )
+            )
+            continue
+        nondyadic = _nondyadic_homogeneous_rows(corners[:arity], bank).any()
+        if nondyadic and not isinstance(
+            restricted,
+            (PolynomialComposedCellGeometryElement, RationalComposedCellGeometryElement),
+        ):
+            raise transition_types.CellGeometryTransitionError(
+                "approximation_bound",
+                "nested_geometry.child_action must retain an exact coefficient action for source-owned roots; got rounded restriction",
+                measured=math.inf,
+                limit=policy.coarsening_tolerance,
+            )
+        matrix, offset = _reference_affine(fine_kind, corners)
         match restricted:
             case RestrictedCellGeometryElement():
                 if not np.array_equal(
@@ -1968,8 +3071,17 @@ def _restore_coordinate_siblings(
                 authored = imported_coordinate_enclosure.reference_composition_arguments(
                     restricted, budget=budget
                 )
-                expected = imported_coordinate_enclosure.affine_arguments(
-                    offset, matrix, budget=budget
+                expected = (
+                    _exact_corner_affine_arguments(
+                        transition_types.exact_reference_corners(
+                            corners[:arity], None if bank is None else bank[:arity]
+                        ),
+                        budget=budget,
+                    )
+                    if nondyadic
+                    else imported_coordinate_enclosure.affine_arguments(
+                        offset, matrix, budget=budget
+                    )
                 )
                 if authored != expected:
                     raise transition_types.CellGeometryTransitionError(
@@ -2016,7 +3128,7 @@ def _restore_coordinate_siblings(
             source_index[fine][1]
         ]
         != ancestor
-        for fine, _ in siblings
+        for fine, *_ in siblings
     ):
         raise ValueError(
             "nested_geometry.source_parent must be common to all siblings; got different scientific parent IDs"
@@ -2080,6 +3192,68 @@ class _MixedGeometryCells(StrictModule):
     continuity: float
     containment: float
     coarsening: transition_types.NestedReferenceWitnesses | None
+    homogeneous: NDArray[np.float64] | None
+
+
+def _require_mixed_refinement_partition(
+    source_mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    target_mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    prepared: _MixedGeometryCells,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Prove total-measure equality by the canonical oriented reference tiling.
+
+    The mixed coordinate builder has already established each exact source
+    restriction. The independent nested-reference owner proves containment,
+    positive orientation, interior-facet cancellation and full parent coverage;
+    equality of child determinant sums alone would not suffice.
+    """
+    # Deferred: the reference owner also consumes geometry-transition records.
+    from ._nested_reference import nested_reference_pairs
+
+    source_count = sum(block.cell_count for block in source_mesh.blocks)
+    target_count = prepared.target_ids.size
+    budget.reserve(
+        source_count + target_count,
+        512
+        + 256 * source_count
+        + 512 * target_count
+        + prepared.reference.nbytes
+        + (0 if prepared.homogeneous is None else prepared.homogeneous.nbytes),
+    )
+    source_ids = np.concatenate([np.asarray(block.global_ids) for block in source_mesh.blocks])
+    target_ids = np.concatenate([np.asarray(block.global_ids) for block in target_mesh.blocks])
+    if set(source_ids.tolist()) != set(prepared.parents.tolist()):
+        raise ValueError(
+            "nested_geometry.partition must cover every source cell; got missing source parents"
+        )
+    source_rows = {int(identifier): row for row, identifier in enumerate(source_ids)}
+    witness_rows = {
+        int(identifier): row for row, identifier in enumerate(prepared.target_ids)
+    }
+    if len(witness_rows) != target_count or set(target_ids.tolist()) != set(witness_rows):
+        raise ValueError(
+            "nested_geometry.partition must bind every target cell once; got unequal witness IDs"
+        )
+    order = np.asarray([witness_rows[int(identifier)] for identifier in target_ids], dtype=np.int64)
+    parents = np.asarray(
+        [source_rows[int(prepared.parents[row])] for row in order], dtype=np.int64
+    )
+    nested_reference_pairs(
+        source_mesh,
+        source_geometry,
+        target_mesh,
+        geometry,
+        parent_cells=parents,
+        parent_reference_vertices=prepared.reference[order],
+        parent_reference_homogeneous=None
+        if prepared.homogeneous is None
+        else prepared.homogeneous[order],
+        budget=budget,
+    )
 
 
 def _mixed_transition_evidence(
@@ -2092,6 +3266,7 @@ def _mixed_transition_evidence(
     slack: float,
     node_count: int,
     *,
+    starting_work_units: int,
     budget: CoordinateEnclosureBudget,
 ) -> transition_types.CellGeometryTransitionEvidence:
     ledger = budget
@@ -2107,14 +3282,22 @@ def _mixed_transition_evidence(
                 budget=budget,
             )
         )
-        target_values, target_errors, target_measure_exact = (
-            mapped_measure_owner.certified_cell_measures(
-                target_mesh,
-                geometry,
-                budget=budget,
+        if coarsened:
+            target_values, target_errors, target_measure_exact = (
+                mapped_measure_owner.certified_cell_measures(
+                    target_mesh,
+                    geometry,
+                    budget=budget,
+                )
             )
-        )
-    work = ledger.work_units
+        else:
+            _require_mixed_refinement_partition(
+                source_mesh, source_geometry, target_mesh, geometry, prepared, budget=budget
+            )
+            target_values, target_errors, target_measure_exact = (
+                source_values, source_errors, measure_exact
+            )
+    work = ledger.work_units - starting_work_units
     source_measure, target_measure = math.fsum(source_values), math.fsum(target_values)
     source_error = math.fsum(source_errors) + abs(float(np.spacing(source_measure)))
     target_error = math.fsum(target_errors) + abs(float(np.spacing(target_measure)))
@@ -2147,6 +3330,7 @@ def _publish_mixed_nested_geometry(
     policy: transition_types.CellGeometryTransitionPolicy,
     prepared: _MixedGeometryCells,
     *,
+    starting_work_units: int,
     budget: CoordinateEnclosureBudget,
 ) -> transition_types.CellGeometryTransition:
     source_coordinates = prepared.source_coordinates
@@ -2232,6 +3416,7 @@ def _publish_mixed_nested_geometry(
         policy,
         slack,
         used.size,
+        starting_work_units=starting_work_units,
         budget=budget,
     )
     empty = np.zeros(0, dtype=np.int64)
@@ -2242,19 +3427,69 @@ def _publish_mixed_nested_geometry(
         if coarsening is None
         else coarsening
     )
+    _admit_transition_banks(
+        prepared.homogeneous,
+        coarse_witness.fine_reference_homogeneous,
+        budget=budget,
+    )
+    source_id, target_id = cell_geometry_id(source_geometry), cell_geometry_id(geometry)
+    stored_targets = jnp.asarray(target_ids)
+    stored_parents = jnp.asarray(parents)
+    stored_reference = jnp.asarray(reference)
+    stored_coarsened = jnp.asarray(coarse_witness.fine_cell_ids)
+    stored_into = jnp.asarray(coarse_witness.coarse_cell_ids)
+    stored_coarse_reference = jnp.asarray(coarse_witness.fine_reference_vertices)
+    parent_homogeneous = (
+        None if prepared.homogeneous is None else jnp.asarray(prepared.homogeneous)
+    )
+    coarsened_homogeneous = (
+        None
+        if coarse_witness.fine_reference_homogeneous is None
+        else jnp.asarray(coarse_witness.fine_reference_homogeneous)
+    )
+    transition_id = (
+        canonical_fingerprint(
+            {
+                "kind": "mixed-coordinate-restriction",
+                "source": source_id,
+                "target": target_id,
+                "source_topology": source_mesh.topology_id,
+                "target_topology": target_mesh.topology_id,
+                "policy": policy.policy_id,
+                "evidence": evidence.evidence_id,
+            }
+        )
+        if parent_homogeneous is None and coarsened_homogeneous is None
+        else transition_types.exact_root_transition_id(
+            source_topology_id=source_mesh.topology_id,
+            target_topology_id=target_mesh.topology_id,
+            source_geometry_id=source_id,
+            target_geometry_id=target_id,
+            target_cell_ids=stored_targets,
+            parent_cell_ids=stored_parents,
+            parent_reference_vertices=stored_reference,
+            parent_reference_homogeneous=parent_homogeneous,
+            coarsened_cell_ids=stored_coarsened,
+            coarsened_into_ids=stored_into,
+            coarsened_reference_vertices=stored_coarse_reference,
+            coarsened_reference_homogeneous=coarsened_homogeneous,
+            evidence_id=evidence.evidence_id,
+            policy_id=policy.policy_id,
+        )
+    )
     return transition_types.CellGeometryTransition(
         source_topology_id=source_mesh.topology_id,
         target_topology_id=target_mesh.topology_id,
-        source_geometry_id=cell_geometry_id(source_geometry),
-        target_geometry_id=cell_geometry_id(geometry),
+        source_geometry_id=source_id,
+        target_geometry_id=target_id,
         geometry=geometry,
         vertex_coordinates=vertex_coordinates,
-        target_cell_ids=jnp.asarray(target_ids),
-        parent_cell_ids=jnp.asarray(parents),
-        parent_reference_vertices=jnp.asarray(reference),
-        coarsened_cell_ids=jnp.asarray(coarse_witness.fine_cell_ids),
-        coarsened_into_ids=jnp.asarray(coarse_witness.coarse_cell_ids),
-        coarsened_reference_vertices=jnp.asarray(coarse_witness.fine_reference_vertices),
+        target_cell_ids=stored_targets,
+        parent_cell_ids=stored_parents,
+        parent_reference_vertices=stored_reference,
+        coarsened_cell_ids=stored_coarsened,
+        coarsened_into_ids=stored_into,
+        coarsened_reference_vertices=stored_coarse_reference,
         node_owner_cells=jnp.asarray(
             [owner[int(node)][0] for node in used], dtype=jnp.int64
         ),
@@ -2263,16 +3498,31 @@ def _publish_mixed_nested_geometry(
         ),
         evidence=evidence,
         policy_id=policy.policy_id,
-        transition_id=canonical_fingerprint(
-            {
-                "kind": "mixed-coordinate-restriction",
-                "source": cell_geometry_id(source_geometry),
-                "target": cell_geometry_id(geometry),
-                "source_topology": source_mesh.topology_id,
-                "target_topology": target_mesh.topology_id,
-                "policy": policy.policy_id,
-                "evidence": evidence.evidence_id,
-            }
+        parent_reference_homogeneous=parent_homogeneous,
+        coarsened_reference_homogeneous=coarsened_homogeneous,
+        transition_id=transition_id,
+    )
+
+
+type _MixedReference = tuple[int, np.ndarray, np.ndarray | None]
+
+
+def _validated_mixed_witness(
+    witnesses: transition_types.NestedReferenceWitnesses | None,
+    name: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> transition_types.NestedReferenceWitnesses | None:
+    if witnesses is None:
+        return None
+    vertices = np.asarray(witnesses.fine_reference_vertices, dtype=np.float64)
+    return transition_types.NestedReferenceWitnesses(
+        np.asarray(witnesses.fine_cell_ids, dtype=np.int64),
+        np.asarray(witnesses.coarse_cell_ids, dtype=np.int64),
+        vertices,
+        transition_types.require_reference_homogeneous(
+            vertices, witnesses.fine_reference_homogeneous, name, budget=budget
         ),
     )
 
@@ -2284,39 +3534,48 @@ def _mixed_nested_dispositions(
     coarsening: transition_types.NestedReferenceWitnesses | None,
 ) -> tuple[
     dict[int, tuple[int, int]],
-    dict[int, tuple[int, np.ndarray]],
-    dict[int, list[tuple[int, np.ndarray]]],
+    dict[int, _MixedReference],
+    dict[int, list[_MixedReference]],
     np.ndarray,
 ]:
-    """Index source rows and require exactly one disposition per target cell."""
+    """Index source rows and require exactly one disposition per target cell.
+
+    Each reference record keeps its validated unrounded homogeneous row, if any.
+    """
     source_index = {
         int(identifier): (index, row)
         for index, block in enumerate(source_mesh.blocks)
         for row, identifier in enumerate(np.asarray(block.global_ids))
     }
-    refined = (
-        {}
-        if refinement is None
-        else {
-            int(fine): (int(coarse), np.asarray(reference))
-            for fine, coarse, reference in zip(
+    refined: dict[int, _MixedReference] = {}
+    if refinement is not None:
+        bank = refinement.fine_reference_homogeneous
+        for row, (fine, coarse, reference) in enumerate(
+            zip(
                 refinement.fine_cell_ids,
                 refinement.coarse_cell_ids,
                 refinement.fine_reference_vertices,
                 strict=True,
             )
-        }
-    )
-    coarsened: dict[int, list[tuple[int, np.ndarray]]] = {}
+        ):
+            refined[int(fine)] = (
+                int(coarse),
+                np.asarray(reference),
+                None if bank is None else bank[row],
+            )
+    coarsened: dict[int, list[_MixedReference]] = {}
     if coarsening is not None:
-        for fine, coarse, reference in zip(
-            coarsening.fine_cell_ids,
-            coarsening.coarse_cell_ids,
-            coarsening.fine_reference_vertices,
-            strict=True,
+        bank = coarsening.fine_reference_homogeneous
+        for row, (fine, coarse, reference) in enumerate(
+            zip(
+                coarsening.fine_cell_ids,
+                coarsening.coarse_cell_ids,
+                coarsening.fine_reference_vertices,
+                strict=True,
+            )
         ):
             coarsened.setdefault(int(coarse), []).append(
-                (int(fine), np.asarray(reference))
+                (int(fine), np.asarray(reference), None if bank is None else bank[row])
             )
     target_ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks]
@@ -2372,6 +3631,7 @@ def _transition_mixed_nested_geometry(
     validity must be accepted separately by the geometry certification owner.
     """
 
+    starting_work_units = budget.work_units
     source_elements, source_routes, source_coordinates_ = source_geometry.resolve(
         source_mesh, budget=budget
     )
@@ -2395,6 +3655,12 @@ def _transition_mixed_nested_geometry(
             "nested_geometry.elements must provide scalar coordinate maps; got unsupported source element"
         )
     source_coordinates = np.asarray(source_coordinates_, dtype=np.float64)
+    refinement = _validated_mixed_witness(
+        refinement, "nested_geometry.refinement", budget=budget
+    )
+    coarsening = _validated_mixed_witness(
+        coarsening, "nested_geometry.coarsening", budget=budget
+    )
     source_index, refined, coarsened, target_ids = _mixed_nested_dispositions(
         source_mesh, target_mesh, refinement, coarsening
     )
@@ -2410,6 +3676,11 @@ def _transition_mixed_nested_geometry(
     parents = np.full(target_ids.size, -1, dtype=np.int64)
     dimension = target_mesh.topological_dimension
     reference = np.zeros((target_ids.size, 8, dimension), dtype=np.float64)
+    homogeneous = (
+        None
+        if refinement is None or refinement.fine_reference_homogeneous is None
+        else np.zeros((target_ids.size, 8, dimension + 1), dtype=np.float64)
+    )
     # Published carrier corners are the correctly rounded binary64 images of the
     # algebraic restricted maps; the maps, not these floats, are the geometry.
     exact_vertices: dict[int, tuple[imported_coordinate_enclosure.ExactScalar, ...]] = {}
@@ -2429,34 +3700,60 @@ def _transition_mixed_nested_geometry(
         vertices = np.asarray(
             reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
         )
+        arity = vertices.shape[0]
         for identifier_, row in zip(
             np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
         ):
             identifier = int(identifier_)
             if identifier in refined:
-                parent, corners = refined[identifier]
+                parent, corners, bank = refined[identifier]
                 index, parent_row = source_index[parent]
-                action_key = (block.cell_kind, corners.shape, corners.tobytes())
-                action = reference_actions.get(action_key)
-                if action is None:
-                    action = _reference_affine(block.cell_kind, corners)
-                    reference_actions[action_key] = action
-                matrix, offset = action
-                element_key = (index, action_key)
-                element = restricted_elements.get(element_key)
-                if element is None:
-                    element = _restricted_element(
-                        source_elements[index], block.cell_kind, matrix, offset
+                source_kind = source_mesh.blocks[index].cell_kind
+                exact_rows = _nondyadic_homogeneous_rows(corners[:arity], bank)
+                if exact_rows.any():
+                    # Source-owned roots: the rational P1 coefficient action owns
+                    # the child map; rounded corners are execution views only.
+                    assert bank is not None
+                    element_key = (
+                        index,
+                        (block.cell_kind, bank.shape, bank[:arity].tobytes()),
                     )
-                    restricted_elements[element_key] = element
+                    element = restricted_elements.get(element_key)
+                    if element is None:
+                        element = _homogeneous_child_element(
+                            source_elements[index],
+                            block.cell_kind,
+                            source_kind,
+                            transition_types.exact_reference_corners(
+                                corners[:arity], bank[:arity]
+                            ),
+                            bank[:arity],
+                            budget=budget,
+                        )
+                        restricted_elements[element_key] = element
+                else:
+                    action_key = (block.cell_kind, corners.shape, corners.tobytes())
+                    action = reference_actions.get(action_key)
+                    if action is None:
+                        action = _reference_affine(block.cell_kind, corners)
+                        reference_actions[action_key] = action
+                    matrix, offset = action
+                    element_key = (index, action_key)
+                    element = restricted_elements.get(element_key)
+                    if element is None:
+                        element = _restricted_element(
+                            source_elements[index], block.cell_kind, matrix, offset
+                        )
+                        restricted_elements[element_key] = element
                 route = source_routes[index][parent_row]
                 ancestry_row = parent_row
                 parents[row_index] = parent
                 reference[row_index, : corners.shape[0]] = corners
-                points = corners[: vertices.shape[0]]
-                defect = _reference_containment_defect(
-                    source_mesh.blocks[index].cell_kind, points
-                )
+                if homogeneous is not None and bank is not None:
+                    homogeneous[row_index, : bank.shape[0]] = bank
+                # Nonnegative homogeneous corners lie in the parent exactly.
+                points = corners[:arity][~exact_rows]
+                defect = _reference_containment_defect(source_kind, points)
                 containment = max(containment, defect)
             else:
                 restored = _restore_coordinate_siblings(
@@ -2522,6 +3819,7 @@ def _transition_mixed_nested_geometry(
         continuity,
         containment,
         coarsening,
+        homogeneous,
     )
     return _publish_mixed_nested_geometry(
         source_mesh,
@@ -2529,6 +3827,7 @@ def _transition_mixed_nested_geometry(
         target_mesh,
         policy,
         prepared,
+        starting_work_units=starting_work_units,
         budget=budget,
     )
 
@@ -2539,6 +3838,7 @@ __all__ = [
     "reconstruct_parametric_surface_cell_geometry",
     "cell_geometry_vertex_measures",
     "is_affine_cell_geometry",
+    "nested_edge_midpoints_admitted",
     "nested_geometry_degree",
     "transition_displaced_cell_geometry",
     "transition_nested_cell_geometry",
@@ -3276,6 +4576,15 @@ def reconstruct_parametric_surface_cell_geometry(
         )
         if target_mesh.periodic_topology is not None:
             geometry = geometry.with_periodic_source(target_mesh)
+        # Publish the reconstructed nodal map's carrier before endpoint
+        # certification. The staged edit still carries the controller's source
+        # evaluations, which need not have the same binary64 evaluation path.
+        vertex_coordinates = jnp.asarray(
+            vertex_rows(target_mesh, blocks, placed.coordinates)
+        )
+        target_mesh = target_mesh.with_coordinates(
+            vertex_coordinates, numeric_version=target_mesh.numeric_version
+        )
         reconstruction_id = canonical_fingerprint(
             {
                 "kind": "parametric-surface-geometry-reconstruction",
@@ -3305,9 +4614,7 @@ def reconstruct_parametric_surface_cell_geometry(
             cell_occurrence_paths=tuple(cell_occurrence_paths[index] for index in order),
             geometry=geometry,
             target_mesh=target_mesh,
-            vertex_coordinates=jnp.asarray(
-                vertex_rows(target_mesh, blocks, placed.coordinates)
-            ),
+            vertex_coordinates=vertex_coordinates,
             cell_global_ids=jnp.asarray(target_ids),
             cell_patches=jnp.asarray(patches),
             cell_charts=jnp.asarray(charts),
@@ -3335,6 +4642,7 @@ def transition_chart_deformed_cell_geometry(
     /,
     *,
     policy: transition_types.CellGeometryTransitionPolicy,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> transition_types.CellGeometryTransition:
     """Accept a declared bounded material chart deformation with full evidence.
 
@@ -3377,9 +4685,19 @@ def transition_chart_deformed_cell_geometry(
             )
         case invalid, _:
             assert_never(invalid)
-    deformation.require_bound(
-        source_mesh, source_geometry, target_mesh, reconstruction.geometry
-    )
+    if isinstance(deformation, sphere_chart_owner.PreparedSphereChartDeformation):
+        # The owning request's ledger reuses its producer's proof.
+        deformation.require_bound(
+            source_mesh,
+            source_geometry,
+            target_mesh,
+            reconstruction.geometry,
+            budget=budget,
+        )
+    else:
+        deformation.require_bound(
+            source_mesh, source_geometry, target_mesh, reconstruction.geometry
+        )
     if (
         reconstruction.source_geometry_id,
         reconstruction.source_topology_id,

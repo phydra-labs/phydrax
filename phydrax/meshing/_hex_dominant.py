@@ -21,7 +21,7 @@ import phydrax.discretization._cell_mesh as cell_mesh_owner
 import phydrax.discretization._reference_cell_types as reference_cell_types_owner
 from phydrax.meshing._host_banks import ancestry, entities, failure, family_host_array
 
-from .._meshcore import exact_orient3d, NativeExecutionScope
+from .._meshcore import exact_orient3d, NativeBatchTicket, NativeExecutionScope
 from .._strict import StrictModule
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import certify_cell_geometry_validity
@@ -30,7 +30,11 @@ from ..typing import checked
 from ._contracts import CellFamilyPolicy, MeshingLimits
 from ._dual_extraction import DualExtraction
 from ._family_execution import check_family_limits, coordinate_phase
-from ._hex_generation import extract_volume_hexes, parent_coordinate_geometry
+from ._hex_generation import (
+    DualHexCandidate,
+    extract_dual_hex_candidate,
+    parent_coordinate_geometry,
+)
 
 
 # Host incidence/fan dictionaries and source-coordinate rows use this admitted
@@ -72,12 +76,21 @@ class _HexTransitionCompaction(StrictModule):
     parents: np.ndarray
 
 
+class _HexCoreAdmission(StrictModule):
+    requested: np.ndarray
+    count: int = eqx.field(static=True)
+    scratch: int = eqx.field(static=True)
+    work: int = eqx.field(static=True)
+    selection_scratch: int = eqx.field(static=True)
+
+
 def _admit_hex_core(
     source: cell_mesh_owner.CellMesh,
     limits: MeshingLimits,
     policy: CellFamilyPolicy,
     requested: np.ndarray,
-) -> _HexCoreSelection:
+) -> _HexCoreAdmission:
+    """Bound the transition envelope from topology counts before any host bank."""
     if not policy.allow_mixed:
         raise failure(
             "policy.allow_mixed must permit hex-dominant transitions; got False"
@@ -87,6 +100,27 @@ def _admit_hex_core(
         raise ValueError(
             f"hex_dominant.hex_core_cells must be a nonempty integer source ID vector; got shape {requested.shape}, dtype {requested.dtype}"
         )
+    count = source.topology.entities(3).count
+    scratch = (
+        _TRANSITION_CELL_SCRATCH_BYTES * count
+        + _TRANSITION_VERTEX_SCRATCH_BYTES * source.coordinates.shape[0]
+    )
+    work = _TRANSITION_CELL_WORK_UNITS * count
+    check_family_limits(limits, 0, source.coordinates.shape[0], 0, scratch, work)
+    # Selection banks: padded corner rows and their concatenation (64 bytes per
+    # tetrahedron), host IDs and the selection mask (9), one sorted copy of the
+    # request (16 per ID) and the two sort-based membership tests, each holding
+    # a concatenation, its order and sorted copy, flags and result (40 bytes per
+    # combined row).
+    selection_scratch = 73 * count + 16 * requested.size + 80 * (count + requested.size)
+    return _HexCoreAdmission(requested, count, scratch, work, selection_scratch)
+
+
+def _select_hex_core(
+    source: cell_mesh_owner.CellMesh, admission: _HexCoreAdmission, /
+) -> _HexCoreSelection:
+    """Resolve the requested source IDs inside the admitted transition ticket."""
+    requested = admission.requested
     cells = entities(source, 3)
     source_ids = np.asarray(
         jax.device_get(source.topology.entities(3).entity_ids), dtype=np.int64
@@ -98,19 +132,14 @@ def _admit_hex_core(
             f"hex_dominant.hex_core_cells must uniquely name source tetrahedra; got duplicate or unknown IDs in {requested.tolist()}"
         )
     selected = np.isin(source_ids, requested)
-    count = cells.shape[0]
-    scratch = (
-        _TRANSITION_CELL_SCRATCH_BYTES * count
-        + _TRANSITION_VERTEX_SCRATCH_BYTES * source.coordinates.shape[0]
+    return _HexCoreSelection(
+        cells, selected, admission.count, admission.scratch, admission.work
     )
-    work = _TRANSITION_CELL_WORK_UNITS * count
-    check_family_limits(limits, 0, source.coordinates.shape[0], 0, scratch, work)
-    return _HexCoreSelection(cells, selected, count, scratch, work)
 
 
 def _prepare_hex_transition_pieces(
     source: cell_mesh_owner.CellMesh,
-    dual: DualExtraction,
+    dual: DualHexCandidate,
     selection: _HexCoreSelection,
 ) -> _HexTransitionPieces:
     edges, faces = entities(source, 1), entities(source, 2)
@@ -178,9 +207,11 @@ def _prepare_hex_transition_pieces(
 
 
 def _prepare_hex_transition_blocks(
-    dual: DualExtraction,
+    dual: DualHexCandidate,
     pieces: _HexTransitionPieces,
     policy: CellFamilyPolicy,
+    ticket: NativeBatchTicket,
+    /,
 ) -> _HexTransitionBlocks:
     points = np.asarray(jax.device_get(dual.mesh.coordinates), dtype=np.float64)
     dual_ids = np.concatenate(
@@ -189,6 +220,7 @@ def _prepare_hex_transition_blocks(
             for block in dual.mesh.blocks
         ]
     )
+    # extract_hex_dominant admits these blocks' construction before this call.
     blocks = [
         reference_cell_types_owner.CellBlock(
             "hex_core",
@@ -211,6 +243,8 @@ def _prepare_hex_transition_blocks(
         if not rows:
             continue
         vertices = np.asarray(rows, dtype=np.int64)
+        # One exact orientation predicate per transition cone.
+        ticket.consume(vertices.shape[0])
         corners = points[vertices]
         signs = exact_orient3d(
             corners[:, 0], corners[:, 1], corners[:, 2], corners[:, -1]
@@ -245,7 +279,7 @@ def _prepare_hex_transition_blocks(
 
 
 def _compact_hex_transition(
-    dual: DualExtraction,
+    dual: DualHexCandidate,
     selection: _HexCoreSelection,
     transition: _HexTransitionBlocks,
     limits: MeshingLimits,
@@ -276,6 +310,7 @@ def _compact_hex_transition(
     vertex_ids = family_host_array((used.size,), np.int64, scope=scope)
     np.take(transition.points, used, axis=0, out=coordinates)
     np.take(np.asarray(jax.device_get(dual.mesh.vertex_global_ids)), used, out=vertex_ids)
+    # extract_hex_dominant admits the compact blocks' construction beforehand.
     target_blocks = tuple(
         reference_cell_types_owner.CellBlock(
             block.name,
@@ -301,10 +336,10 @@ def _compact_hex_transition(
 
 def _certify_hex_transition(
     source: cell_mesh_owner.CellMesh,
-    dual: DualExtraction,
+    dual: DualHexCandidate,
     source_geometry: CellGeometrySpec,
     compact: _HexTransitionCompaction,
-    selection: _HexCoreSelection,
+    work: int,
     limits: MeshingLimits,
     *,
     scope: NativeExecutionScope,
@@ -329,7 +364,10 @@ def _certify_hex_transition(
                 resource=True,
             )
     dimensions, local_ancestry = ancestry(source, mesh, compact.supports)
-    with coordinate_phase(scope=scope, budget=budget):
+    with (
+        coordinate_phase(scope=scope, budget=budget),
+        budget.polynomial_preparation_scope(),
+    ):
         validity = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     if validity.invalid_count or validity.unresolved_count:
         raise failure(
@@ -371,7 +409,7 @@ def _certify_hex_transition(
         boundary,
         singular,
         None,
-        selection.work,
+        work,
         geometry,
         source_geometry,
     )
@@ -390,24 +428,68 @@ def extract_hex_dominant(
     budget: CoordinateEnclosureBudget,
 ) -> DualExtraction:
     """Close stable source-cell IDs into a hex core with conforming transitions."""
-    selection = _admit_hex_core(source, limits, policy, hex_core_cells)
-    dual = extract_volume_hexes(
-        source, limits, source_geometry=source_geometry, scope=scope, budget=budget
-    )
-    if dual.source_geometry is None:
-        raise failure(
-            "dual.source_geometry must retain the tetrahedral coordinate law; got None"
+    admission = _admit_hex_core(source, limits, policy, hex_core_cells)
+    # Fully split faces carry three quads and partially split faces at most a
+    # five-triangle fan, so each complement tetrahedron cones at most 20 pieces.
+    cone_upper = 20 * admission.count
+    # Each source tetrahedron's transition closure is charged once and each
+    # cone carries one exact orientation predicate.
+    with (
+        scope.batch(admission.work + cone_upper) as ticket,
+        scope.host_workspace() as workspace,
+    ):
+        workspace.set_bound(admission.selection_scratch)
+        selection = _select_hex_core(source, admission)
+        # Only the selected core hexes are published; the transition
+        # certificate below proves exactly those cells, so the discarded dual
+        # complement is never certified.
+        dual = extract_dual_hex_candidate(
+            source, limits, source_geometry=source_geometry, scope=scope, budget=budget
         )
-    pieces = _prepare_hex_transition_pieces(source, dual, selection)
-    transition = _prepare_hex_transition_blocks(dual, pieces, policy)
-    compact = _compact_hex_transition(dual, selection, transition, limits, scope=scope)
-    return _certify_hex_transition(
-        source,
-        dual,
-        dual.source_geometry,
-        compact,
-        selection,
-        limits,
-        scope=scope,
-        budget=budget,
-    )
+        # Incidence/fan dictionaries and transition rows coexist with the
+        # selection banks until the closure is certified.
+        workspace.set_bound(admission.selection_scratch + admission.scratch)
+        pieces = _prepare_hex_transition_pieces(source, dual, selection)
+        # Published cell and connectivity counts are known from the pieces;
+        # refuse before the transition banks are built.
+        check_family_limits(
+            limits,
+            pieces.hexes.shape[0] + len(pieces.pyramids) + len(pieces.tetrahedra),
+            0,
+            pieces.hexes.size + 5 * len(pieces.pyramids) + 4 * len(pieces.tetrahedra),
+            admission.scratch,
+            admission.work,
+        )
+        counts = tuple(
+            (count, arity)
+            for count, arity in (
+                (pieces.hexes.shape[0], 8),
+                (len(pieces.pyramids), 5),
+                (len(pieces.tetrahedra), 4),
+            )
+            if count
+        )
+        # One construction of each transition block.
+        block_bounds = tuple(
+            cell_mesh_owner.cell_block_construction_bounds(count, arity)
+            for count, arity in counts
+        )
+        # One block's temporaries at a time, beside the transition banks.
+        workspace.set_bound(
+            admission.selection_scratch + admission.scratch + max(block_bounds, default=0)
+        )
+        transition = _prepare_hex_transition_blocks(dual, pieces, policy, ticket)
+        ticket.consume(admission.work)
+        compact = _compact_hex_transition(
+            dual, selection, transition, limits, scope=scope
+        )
+        return _certify_hex_transition(
+            source,
+            dual,
+            dual.source_geometry,
+            compact,
+            admission.work + len(pieces.pyramids) + len(pieces.tetrahedra),
+            limits,
+            scope=scope,
+            budget=budget,
+        )

@@ -1411,6 +1411,7 @@ class PeriodicQuotientOwner final {
     request.per_item.work=bound;
     request.per_item.cavity=2*cavity_bound+4;
     request.arena_bytes_per_chunk=65536+1024*cells_.size()+8192*cavity_bound;
+    request.outputs_retain_arena=true;
     int best_class=2;
     if (beam) beam->reserve(8);
     // Candidate outputs retain their chunk's allocator owner. Fold in bounded

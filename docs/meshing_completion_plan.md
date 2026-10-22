@@ -1,0 +1,166 @@
+# Native meshing completion plan
+
+## Contract and scope
+
+This is the execution plan for finishing the existing work, not another redesign. It supplements `docs/meshing_implementation_plan.md`; it does not replace its W00–W15 requirements. Planning does not authorize resuming implementation.
+
+Work remains in `/home/ubuntu/phydra-labs/.worktrees/native-meshing-20260929`. Preserve current edits and evidence. No automatic commit, merge, parent-checkout edit, or wholesale rollback.
+
+The current `tests/data/meshing/campaigns.json` declares **13 mandatory positive workflow families and 114 mandatory positive profiles**. That matrix, its source registrations, and the owning controls are the acceptance inventory. Additional deliberate negative cases remain required. The old 25-item and expanded 28-item administrative trackers are not engineering completion percentages.
+
+Completion means the registered source-to-mesh-to-physics lifecycle, every declared field/history, required adaptation and rollback, archive, independent fresh-process continuation, and applicable resource evidence. Required routine, larger, and combined cases stay in scope. A component pass, safe refusal, larger-budget diagnostic, or historical pass on different code is not final qualification.
+
+Retain the explicitly approved changes: per-complete-request work/query accounting; image sizing tolerance; fixed-boundary P2; exact-affine image interpretation; polyhedral physical units; certified periodic roundoff admission; explicit native/managed versus separately measured compiler/device/process resources; CPU-only allocator-peak limitation; canonical numerical banks; and certified implicit material-map transfer. Do not broaden these approvals. Same-request preparation remains paid, ancestors remain provenance, and the original whole-workflow deadline never resets.
+
+## Execution rules
+
+1. Finish the two shared prerequisite milestones below before launching another broad workflow campaign.
+2. Then allow at most **three active workflow owners**, one workflow per owner. Add a narrow helper only for an independent, explicitly owned file set. Do not restart the previous fifteen-owner fan-out.
+3. One owner per shared implementation file. A shared-interface change stops affected consumers until its implementation, callers, and focused verification are coherent.
+4. Every change must name a currently failing mandatory profile, the failed stage, the owning invariant, and the expected eliminated work or corrected behavior. No speculative new cache, registry, proof layer, selector, or storage format.
+5. Use known failures as the baseline. Inspect existing logs first. If attribution is missing, make one targeted diagnostic with the original scientific inputs and clearly separate its overhead from qualification. Do not rerun unchanged failures or vary caps until a run passes.
+6. Complete a coherent slice before formatter, lint, tests, or smoke runs. Run its actual consumer path, then the conservative affected regressions. Do not substitute unit tests for the workflow.
+7. Preserve independently required checks. Optimization may eliminate duplicate numerical work or unnecessary storage, not scientific validation, failure evidence, accepted fields, or requested marks.
+8. No new implementation begins until the user explicitly resumes coding. Existing workers remain paused during this plan.
+
+## Milestone 1 — Restore a coherent publication, resource, and cold-restore path
+
+**Goal:** eliminate the half-integrated interfaces that currently block unrelated workflows. One integration owner coordinates the storage owner and archive owner; this is not permission to redesign lifecycle.
+
+| File | Required work |
+| --- | --- |
+| `phydrax/_meshcore.py` | Complete the existing metadata-only native storage reservation lifecycle. Admit metadata bytes and traversal work while the original scope is live; transfer the existing token to the final weakly held source; release on failure or source collection. Do not retain the entire input workspace or a source/scope reference cycle. No post-end resize, fresh allowance, or invented managed-peak observation. Preserve the existing FFI observation coverage rules. |
+| `phydrax/meshing/_native_preparation.py` | Finish the single publication-stage/completed-source issue implementation already selected. Keep the module-level issue helpers separate from ledger accounting, but under one coordinated file owner. Bind actual source, fields, frame, request ownership, and ended receipt. Issue metadata is not scientific proof authority. Complete the four missing symbols referenced by the unfinished tests without placeholders or alternate registries. |
+| `phydrax/meshing/providers/_native.py`, `providers/_native_publication.py`, and `phydrax/meshing/_adaptation.py` | Wire generation and adaptation only after the real helpers exist. Prepare all completion work before ending the scope, then bind the actual ended receipt. Preserve atomic storage handover and cleanup; keep internal phases within the same request. |
+| `phydrax/lifecycle/_meshing_sources.py` | Complete paid warm publication and full cold restoration staging. Extract the actual accepted target once within the paid operation. The archived publication prefix and the complete ended warm receipt remain distinct. Cold reading, reproof, field preparation, and continuation use the same actual cold request and inherited absolute deadline. |
+| `phydrax/lifecycle/_meshing_field_records.py`, `_meshing_registration.py` | Finish current field/history and constructor registrations. Retain the complete accepted epoch sequence and canonical roles. No duplicate history vocabulary, old-schema aliases, or restoration defaults that fabricate missing state. |
+| `phydrax/geometry/_supermesh.py` | Finish common-refinement restoration: preserve the historical evidence, independently obtain fresh current reconstruction evidence, and authenticate unchanged scientific content. Under an explicit cold-request budget, keep the fresh observation live through phase sealing so its current counters reach the receipt; the returned canonical object retains historical evidence. Standalone `budget=None` reproof may release its temporary fresh object after strict comparison because it creates no live proof authority or resource receipt. Historical and current observed working-memory values may differ; neither may be overwritten to manufacture equality. Do not weaken the generic record comparator or add a side registry. |
+| `phydrax/geometry/_domain_coverage.py`, `_mesh_certificates.py`, `_source_fidelity.py` | Finish and verify the in-flight canonical current-input authentication change. Validate actual limits and embedding contents, not cached IDs alone. Keep coverage limits independent of embedding-proof limits. Share the owning binding predicate, preserve ordinary cache misses, and propagate malformed-input and resource errors. Remove duplicate validation only after the shared owner enforces it. |
+| `tools/meshing_qualification/_records.py`, `_campaign.py`, `_runtime.py`, `scenarios/native_corpus.py` | Complete resource consumers without optimistic success. Missing admission observations remain unknown. Source-prefix evidence remains limited to its declared scope. Preserve genuine compiler phase measurements and explicit missing phases; CPU allocator limitations do not excuse other gaps. |
+
+### Required checks
+
+- Repair collection of `tests/unit/meshing/test_native_completed_source_publication.py` by completing its real implementation, not skipping it.
+- Exercise `test_native_qualification_completion_binding.py`, `test_polyhedral_publication_handover.py`, `test_polyhedral_generation_host_resources.py`, `tests/unit/geometry/test_supermesh_restore.py`, `test_domain_coverage.py`, and the affected source-fidelity/qualification tests.
+- Cover exact-budget success and one-unit-short refusal, failed completion cleanup, source collection, cross-scope/foreign-frame refusal, changed bytes with stale IDs, same-request versus completed-ancestor accounting, and cold restoration with no live issuer registry.
+- Fix tests that assume an unproved managed peak; retain tests that require genuine proof. Do not add source-text, forwarding-only, or mock-echo tests.
+- Actual runtime witnesses: fixed-boundary P2 accepted-state cold continuation; material-L generation/regeneration through the previously failing archive restore; two-slab image through fresh cold reproof. These are shared-path witnesses, not a substitute for the remaining profile matrix.
+
+**Exit:** affected imports and collection are coherent; no missing production helpers; all three real witnesses traverse the changed boundary under their original controls; every resource or scientific failure remains visible.
+
+## Milestone 2 — Finish the already-started numerical preparation changes
+
+**Goal:** finish the minimum existing numerical work needed by the blocked profiles, not introduce a new optimization framework.
+
+| File | Required work |
+| --- | --- |
+| `phydrax/discretization/_coordinate_operands.py` | Complete actual coordinate-contract binding, current source/array authentication, closed signed batches, and expiry/lifetime behavior. Separate same-request preparation from numerical input earned by a genuinely completed ancestor. Reuse numeric data only; cold decoding does not restore live proof authority. |
+| `phydrax/discretization/_coordinate_identity.py`, `_coordinate_enclosure.py` | Finish the existing producer/consumer path and remove redundant actual arithmetic where demonstrated. Preserve nonbinary exact data, operation order where required, mutation checks, and original operation prices. Do not trust public Fraction objects or read-only flags. |
+| `phydrax/discretization/fem/_local_provider.py` | Finish the partially wired indexed coordinate-table bank and bounded streamed evaluation. Retain one actual bank plus cell selectors rather than expanding source-by-target or bank-by-cell products. Admit the actual retained and temporary storage. |
+| `phydrax/equations/fem/_lowering.py` | Finish lowering compatibility with indexed tables and preserve heterogeneous ordered worksets. Keep numerical leaves dynamic and use stable compiled callables. Do not introduce runtime JIT factories or guessed compiler hard bounds. |
+| `phydrax/meshing/qualification/_hybrid.py`, `_layer_continuation.py`, `_moving_overset.py`, `_family.py`, `_envelope.py` | Migrate only the real consumers of these completed helpers. Resolve the unfinished template-cache hook through existing preparation ownership; do not add a general weak-reference/storage feature merely to support an optional cache. Keep the ordinary correct path until a replacement is complete. |
+
+### Required checks
+
+- `tests/unit/discretization/test_fem_geometry_compile_reuse.py`: independent curved P2 stiffness, actual values/gradients/Hessians, mixed prism/tetrahedron widths, nonuniform worksets, and same-budget refusal.
+- Existing coordinate/transfer tests plus signed positive/negative measures, stale/expired batches, foreign frames, nonbinary rows, public bank mutation, and independent numerical equivalence.
+- Actual changed-path runs: hybrid unit-box through its previously failing all-field stage; quarter extrusion through paid preparation; larger design through all proposal solves and selection. Count actual compiles and record actual retained/temporary bytes.
+- If a proposed optimization changes interpolation rounding, numerical branch selection, error ordering, or source-location validation, it is not a transparent cache optimization. Do not land the proposed sphere constant-metric/deferred-lineage shortcut under this milestone.
+
+**Exit:** no half-wired bank or optional cache hooks; affected actual consumers run; specific measured work/storage reductions explain the gain. Full workflow completion remains a separate gate.
+
+## Milestone 3 — Close the workflow matrix in three bounded queues
+
+Each queue has one active workflow. Complete all registered profiles for that workflow before taking the next, unless a concrete shared dependency blocks it; then record the dependency and take an independent ready item. Shared file edits remain exclusive. Functional evidence obtained during ongoing changes is provisional until the final frozen run.
+
+- **Queue A, geometry/native:** planar features → constrained solids → implicit domains.
+- **Queue B, FE-heavy:** general quads/hexes → hybrid layers → imperfect surfaces → design loop.
+- **Queue C, lifecycle/interchange:** labeled image → moving overset → polyhedral systems → periodic systems → CAD → distributed lifecycle.
+
+This ordering starts from the repaired archive/numerical paths and limits concurrent schema changes. It does not reduce the registered scope.
+Path shorthand in the workflow table: `scenarios/` means `tools/meshing_qualification/scenarios/`; `qualification/` means `phydrax/meshing/qualification/`; `geometry/` means `phydrax/geometry/`. Adjacent bare filenames share the preceding directory.
+
+
+| Workflow and profile count | Files and direct remaining implementation | Completion evidence |
+| --- | --- | --- |
+| Planar features — 17 | `phydrax/meshing/qualification/_native_lifecycle.py`, `_surface.py`; `phydrax/meshing/_surface_metric.py`; `phydrax/geometry/_planar_coverage.py`; `tools/meshing_qualification/scenarios/native_lifecycle.py`, `surface.py`. Remove demonstrated duplicate exact source/image preparation and unnecessary live scratch in the largest planar path. In the sphere surface path, finish source/target image preparation after the now-completed exact overlay without changing metric interpolation or lineage failures. | All registered planar and curved-surface cases, including largest planar, thin channel, features, and larger sphere/torus/sheets; independent geometry/PDE checks, all fields, archive, and cold continuation. The 4M planar diagnostic is not evidence of original-cap completion. |
+| Constrained solid — 9 | `phydrax/meshing/_adaptation.py`, `_volume_generation.py`; `phydrax/geometry/_domain_coverage.py`; `qualification/_native_lifecycle.py`; `scenarios/native_lifecycle.py`. Complete the actual full-star scheduling and current-source coverage path with the original marks. Reduce real source classification/authentication duplication and actual retained graph size; preserve complete regional/interface proofs. | Disconnected, fixed-P2, material cavity routine/larger, nonconvex, sliver-rich, small-angle, thin-channel, and triple-junction lifecycles. Retain exact fixed facets, quality floor, all material labels, and manufactured-solution targets. |
+| Implicit domain — 3 | Complete the coordinated native/material-map cutover in Milestone 4, then `phydrax/meshing/_implicit_volume.py`, `_surface_metric.py`; `phydrax/geometry/_source_fidelity.py`; `scenarios/implicit.py`. Retain actual original discovery, permit only certified projected geometry transitions, and fix the larger-sphere/torus adaptation path rather than exhausting unchanged ineffective proposals. | Routine sphere, multi-round sphere refinement, and anisotropic offset torus: original source/discovery, metric/fidelity targets, conservative all-field/history transfer, physical convergence, archive and fresh cold reproof. The existing routine pass does not close this family. |
+| Labeled image — 2 | `phydrax/meshing/_compartments.py`; `tools/neurofluid_qualification.py`; `scenarios/image.py`; shared archive/coverage files from Milestone 1. Finish fresh coverage handover and current-budget cold admission. Preserve approved exact-affine outer/material geometry and the input matrix and labels. | Two-slab and oblique junction transport with interface flux/inventory balance, full history, cold continuation, and original deadlines. Oblique size 6 supplies the already-approved larger/combined evidence only if the complete run passes. |
+| Moving overset — 3 | `qualification/_moving_overset.py`, `scenarios/overset.py`, completed coordinate-batch consumers and archive path. Finish actual signed measure reuse and paid writer/cold completion. Retain the distinction between interpolative and certified conservative routes. | Routine, larger, and combined motion cases; actual accepted PDE updates, donor/hole coverage, conservation where claimed, rollback, history, archive, and cold continuation. Warm errors alone are insufficient. |
+| Polyhedral system — 6 | `scenarios/polyhedral.py`, `qualification/_polyhedral.py`, `geometry/_supermesh.py`, `geometry/_planar_coverage.py`, existing resource/publication owners. Finish strict common-refinement restoration, reuse source-facet numeric preparation where genuinely reusable, and close current managed-admission gaps. Preserve approved one-meter normalization and all derived physical units. | Material-L, periodic cube, and stretched-L, each routine/larger: genuine source E0, regeneration, FE/VEM/FV, conservative remap, every history field, archive/cold, and separately valid resource evidence. Source-prefix proof cannot silently become full-request proof. |
+| Periodic system — 4 | `scenarios/periodic.py`, `qualification/_periodic.py`, `phydrax/geometry/_periodic_embedding.py`, `_affine_mapped_contact.py`, `_planar_coverage.py`. Finish actual coverage work reduction after periodic contact checks; retain exact directed trace/orbit authorization. Verify approved roundoff handling rejects physically incompatible loads. | Routine/larger exact-algebraic skew lattice and skew material-feature cases, orbit-preserving adaptation, vector/flux transfer, PDE, all-field archive and cold continuation. |
+| General quads/hexes — 18 | `phydrax/meshing/_hex_generation.py`, `_structured.py`; `qualification/_family.py`; `scenarios/family.py`; FE files from Milestone 2. Finish actual axis-shared/sparse basis coordinate construction and bounded row streaming. Verify the missing specification provenance fix. Replace resource-inefficient chosen grids with a lawful bounded construction, not looser size/entity bounds. | All 16 routine profiles and both larger curved cavity/material profiles, including nonsweepable and curved quarter extrusion; positive maps, exact family policy, physical FE/FV results, refine/coarsen, archive and cold continuation. An oversized current grid is not proof that the original contract is impossible. |
+| Hybrid layers — 25 | `qualification/_hybrid.py`, `_layer_continuation.py`, `_layer_lineage.py`; `scenarios/hybrid.py`; coordinate/FE owners from Milestone 2. Finish actual template/geometry reuse before it is rebuilt, remove duplicate coordinate-expression work only with demonstrated equivalence, and complete unit-box and concave cold lifecycles. | Every registered positive wall/layer/core and periodic profile, including larger concave and curved-periodic cases; immutable core/cap, requested layers/order, all compatible fields, original-u, histories, conservation, rollback, and cold continuation. Keep all declared rejection cases negative. |
+| Imperfect surface — 7 | `qualification/_envelope.py`, `scenarios/envelope.py`, `scenarios/reconstruction.py`; canonical coordinate banks and native feature protection as needed. Finish reconstruction adaptation and cold runtime, reusing actual completed-source numerical input without importing ancestor work again. If native protection remains the demonstrated bottleneck, use a bounded conservative spatial search with exact fallback, not weaker distance/fidelity tests. | Envelope plus lobed sphere, torus, and rotated ellipsoid routine/larger; explicit repair/geometry-change evidence, original quality/fidelity thresholds, PDE, all fields, archive/cold. Historical lobed-sphere success predates later shared changes and is not final evidence. |
+| Design loop — 3 | `tools/meshing_design_source.py`, `scenarios/design.py`, `qualification/_design_oracle.py`; completed FE table preparation. Finish proposal selection and accepted reanalysis within the original deadline after eliminating repeated actual assembly/compilation. | Routine sphere, larger sphere, combined target; independent derivative oracle, real fresh assembly/solve, trusted proposal checks, native event/transfer, accepted physical objective, histories and cold continuation. Preserve event-boundary derivative limitations explicitly. |
+| CAD — 15 | `phydrax/geometry/brep/_model.py`, `geometry/_source_fidelity.py`, `scenarios/cad.py`, `qualification/_brep_benchmarks.py`, existing native CAD format/query owners. Verify the nested BRepGeometry restoration fix, then remove demonstrated duplicate actual publication reconstruction under one surface-volume request. Retain complete source/facet trace and continuous fidelity validation. | All five registered CAD cases across BRep, STEP, and IGES; actual native construction/import/query/partition/meshing/curving/solve, including external-routine and external-combined inputs without delegating native geometry to an external engine, plus archive and cold continuation. |
+| Distributed lifecycle — 2 | `phydrax/meshing/_device_adaptation.py`, `_result.py`, `_distribution.py`; `phydrax/discretization/_distributed_field.py`; `scenarios/distributed.py`, `_distributed_euler.py`; shared source archive. First inspect the already-finished `distributed-p6-r3-integrated-issued8` failure, not rerun it. Finish current packed-state forwarding and remaining allocation/publication/checkpoint work at its actual owner. Preserve compact complete ancestry, current exterior flags, graph proofs and owner-local execution. | Original 4→2 and larger 6→3 runs: generation, prebalance where necessary, refine/coarsen/repartition, every declared role/history/RNG/clock, process-local checkpoint, changed-placement fresh restart and continued solve. Retain original whole deadline and the separately identified 12GiB execution-group ceiling. No global host gather or reseeding. |
+
+### Per-workflow verification
+
+Use existing owning tests, not a new parallel test vocabulary. Relevant anchors include `test_qualification_runtime.py`, `test_source_checkpoints.py`, `test_meshing_source_authority.py`, `test_cad_qualification_cases.py`, `test_overset_qualification_oracles.py`, `test_design_qualification.py`, `test_surface_reconstruction_qualification.py`, `test_hex_generation.py`, `test_nonsweepable_family_source.py`, `test_high_order_hybrid.py`, `test_native_periodic_vem.py`, `test_periodic_mapped_embedding.py`, `test_native_distributed.py`, and `test_distributed_rng_lineage.py`.
+
+Select exact affected nodes from the implementation delta and direct consumers. Include boundaries that could plausibly fail: noncontiguous/permuted IDs, shared material sides, empty or masked local lanes, reversed orientation, nonbinary coordinates, stale mutable data, insufficient work/storage, failed-owner collective agreement, rollback, and replay on changed placement. Do not add redundant cases merely to increase counts.
+
+A new test must expose a consumer-visible defect or uncertain contract. Existing source-spelling, helper-wiring, or incidental-default tests are not acceptance criteria.
+
+## Milestone 4 — Complete the required native and implicit material-map cutover
+
+This work is required for the approved larger implicit behavior, but it must stay isolated until coherent. It runs within Queue A, not as an unlimited fourth workstream. Existing staged files are design/implementation material, not qualified replacements.
+
+| File or explicit staged destination | Required work |
+| --- | --- |
+| `native/meshcore/include/phydrax_meshcore.h`; `src/tet_mesh.hpp`, `tet_mesh_state.cpp`, `tet_mesh_source.cpp`, `tet_mesh.cpp` | Complete canonical source-bank history and projected-edit API ownership. Preserve exact source rows, IDs, chronological coverage semantics, actual generation/state ownership, and bounded storage. Change ABI identity honestly. |
+| `native/meshcore/src/tet_mesh_collapse.cpp`, `tet_mesh_refinement.cpp`, `tet_mesh_insertion.cpp`, `improve3d.cpp`, `facet_coverage.hpp`, `arrangement.cpp` | Finish retained and projected edit validation and exact coverage. Preserve native inward/public outward claim compatibility where the existing API allows it. Reject duplicate/nonmember rows, altered coordinates/bounds, stale generation, invalid source unions and incomplete coverage. Do not publish a candidate before every required proof passes. |
+| `phydrax/_meshcore.py` | Matching ABI bindings, truthful configuration checks, explicit argument/ownership validation, and complete failure propagation. No old-binary fallback. |
+| `phydrax/geometry/_source_fidelity.py`, `phydrax/meshing/_implicit_volume.py` | Retain the actual already-earned `ImplicitVolumeQuery` in the projection source where history needs it. Validate query/profile/source/frame/extent relationships and admit retained storage. Do not replace missing original discovery with a newly computed history claim. |
+| Staged `phydrax/geometry/_volume_material_map.py` and `phydrax/meshing/_projected_material_map.py` | Complete paired source/target atlas, exact intersections/coverage, material-map validity, typed refusal propagation and honest transition identity. No live imports before the complete implementation and canonical registrations exist. |
+| `phydrax/discretization/_transfer.py`, `fem/_topology_transfer.py`, `finite_volume/_automatic_remap.py`, `_unstructured_remap.py`, `_remap_evidence.py` | Complete actual mapped FE and conservative FV transfer through the owning APIs. Retain every accepted field/history, independent physical error/content evidence, and rollback. No extrapolated stencils, exterior fill, clipping or reseeding. |
+| `phydrax/lifecycle/_meshing_registration.py`, `_meshing_sources.py` | Register acyclic original-source/discovery/history statements. Cold reconstruction re-earns current mathematical authority; stored records do not claim a past live native issuer. Validate complete restored values. |
+| `native/meshcore/tests/test_curved_collapse.cpp`, `test_refine3d.cpp`; `tests/unit/meshing/test_tetra_metric_curved.py`; staged material-map and transfer tests | Actual raw-native and public Python inspect→commit, retained/fresh equivalence, malformed claims, positive and negative map coverage, conservative contents, FE errors, failure rollback, original discovery retention and cold reconstruction. |
+
+**Exit:** focused native/Python tests and actual larger implicit lifecycle pass with one matching source/binary pair; affected Release, ASAN/UBSAN and TSAN checks pass; no missing live imports or staged-only dependencies. Then integrate native, Python, archive registrations and tests together. The final package pin changes only after the integrated barrier, not after an individual native test pass.
+
+## Milestone 5 — Freeze and run the full acceptance matrix
+
+1. Freeze the integrated source tree, native binary/source/configuration identity, registrations, dependencies, backend, devices and precision. Finish configured formatting before source-identity-sensitive verification.
+2. Reconcile all 114 positive profiles against their actual required controls; keep every registered deliberate negative. Do not regenerate the matrix to hide missing profiles or convert failures into negatives.
+3. Run the actual qualification CLI/campaign with each profile's registered resolution scale, minimum adaptation rounds and scenario controls. Preserve original numerical/work/storage/query/entity/deadline limits and the approved scoped exceptions.
+4. Record generation, independent acceptance, field/history transfer, PDE, rollback, archive, fresh continuation, resource evidence and final verdict separately. Missing or contradictory stages fail closed.
+5. Run final deadline/performance acceptance without competing builds, tests, or benchmark workers. Distributed topology cases get dedicated subprocesses and memory limits; ordinary tests use natural topology.
+6. If a final run fails, fix its actual cause, run the focused regression, and rerun only evidence invalidated by that delta. A shared ABI/schema/execution change can invalidate multiple families; account for that explicitly.
+
+**Exit:** all mandatory positive profiles complete, all owning negative contracts retain the right failures, all required larger/combined controls pass, and no report relies on warm/cold code drift or an unqualified binary.
+
+## Milestone 6 — Complete repository, installation, performance and documentation gates
+
+| Surface | Required final action |
+| --- | --- |
+| Public facades and typing | Migrate every affected export/caller with no aliases. Run `python tools/check_typing.py check`, the selector audit, checked-boundary audit, Strict declaration checks, and relevant import-boundary checks. Use `tests/typing/installed/meshing.py` and `python -m tools.check_installed_typing` for changed public annotations. |
+| Generated records | After the last implementation/merge change, use `tools/generate_public_api_manifest.py` and `tools/generate_capability_inventory.py`, then their corresponding check tools. Regenerate affected corpus/campaign/theorem data through its owning generator, not hand edits. Preserve canonical deterministic IDs and ordering. |
+| Installed native isolation | Build/install the final matching package and meshcore in a clean environment without external geometry/mesh/partition engines. Use `tools/check_native_dependency_isolation.py` and the planned actual native workflows. Base import without meshcore is a separate truthful availability/refusal check, not a native capability pass. |
+| Benchmarks and scientific qualification | Use `tools/meshing_benchmarks.py`, existing native benchmarks and campaign tooling. Measure lowering, compile, first/warm execution, compiler temporary/output/code bytes, retained bytes, actual process/device observations, and scaling capacities separately. Respect cache policy. Compare unchanged baseline inputs and candidate under the same environment, uncontended. Complete the original preregistered external comparisons where available; missing providers or an unmet performance objective remain explicit, not a native leadership claim. |
+| Documentation | Update `docs/guides_meshing.md`, `docs/guides_finite_elements.md`, affected API/interchange/geometry/distributed guides and examples, `CHANGELOG.md`, and generated capability records. Describe actual native/managed enforcement and external measurements separately, CPU allocator limitations, derivative scope, certified versus interpolative transfer, source/archive identity changes and any remaining unsupported domains. Never describe an unresolved mandatory positive as supported. |
+| Evidence ledger | Maintain one integration-owned record of exact command/profile, relevant source/native/environment identity, pass/fail/skip, failure stage/node, resource scope and evidence artifact. Reuse valid unchanged evidence; do not aggregate component counts into a completion percentage. |
+
+Run the conservative affected tests since the repository's required comparison point, including transitive shared consumers. Full-suite runs are reserved for demonstrated global collection/configuration/shared-substrate impact. Final native ABI/packaging changes receive their appropriate integrated native and installed checks. No benchmark runs concurrently with the affected suite.
+
+The original plan separates functional completion from performance leadership. Both must be accounted for; an unachieved leadership objective cannot be replaced by a capability-count claim.
+
+## Completion and escalation rules
+
+- A milestone closes on observed behavior, not implemented files or passing isolated tests.
+- A workflow closes only after all its required profiles and lifecycle/resource gates pass on the final coherent configuration.
+- A repeated budget failure is not proof of infeasibility. Conversely, do not promise that a cache or better scheduler will solve the larger all-hex, singular CAD, or implicit-fidelity research boundary without evidence.
+- If a required positive cannot be achieved with the original contract, identify the exact obstruction and alternatives for a user decision. Do not quietly narrow scope, add a new tolerance, or reinterpret refusal as success.
+- Proposed changes beyond this bounded plan require an explicit connection to a failed mandatory profile and a scope decision before implementation.
+
+## First implementation batch after authorization
+
+1. Finish the metadata lease and publication issue helper/consumer boundary together; restore affected test collection.
+2. Complete current-input coverage authentication and strict common-refinement cold restoration, preserving all historical and current evidence.
+3. Prove the fixed-P2, material-L and two-slab cold witnesses under the original controls.
+4. Finish the existing indexed FE/coordinate operand consumers, then open the three bounded workflow queues.
+
+Do not resume every old worker, integrate the staged native/material-map feature early, run the entire campaign against broken collection, or start another repository-wide audit before this batch is complete.

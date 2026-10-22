@@ -1,7 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
-from time import perf_counter
+from time import monotonic, perf_counter
 
 
 _IMPORT_STARTED = perf_counter()
@@ -16,6 +16,8 @@ import jax
 from phydrax.meshing import BisectionCompatibility
 from tools._meshing_cases import CASE_NAMES, POLYHEDRAL_CASE_NAMES
 from tools.meshing_qualification._controls import (
+    _periodic_qualification_profile_contracts,
+    add_case_arguments,
     FAMILY_CASES,
     HYBRID_PROFILES,
     QualificationControls,
@@ -23,11 +25,16 @@ from tools.meshing_qualification._controls import (
     SURFACE_CASES,
 )
 from tools.meshing_qualification._records import _finalize_mandatory_cli_record
+from tools.meshing_qualification._runtime import (
+    launch_deadline_expired,
+    REPORTING_GRACE_SECONDS,
+)
 
 
 def main() -> None:
 
     parser = argparse.ArgumentParser()
+    add_case_arguments(parser)
     parser.add_argument("--scenario", choices=tuple(SCENARIO_MODULES), default="manifold")
     parser.add_argument("--executable", default="vc_mesh")
     parser.add_argument("--worker", default=None)
@@ -65,8 +72,8 @@ def main() -> None:
     parser.add_argument("--cad-format", choices=("step", "iges", "brep"), default="step")
     parser.add_argument(
         "--periodic-case",
-        choices=("skew-lattice", "skew-material-feature"),
-        default="skew-lattice",
+        choices=tuple(_periodic_qualification_profile_contracts()),
+        default=QualificationControls().periodic_case,
     )
     parser.add_argument("--maximum-memory-bytes", type=int, default=8 * 1024**3)
     parser.add_argument("--maximum-condition", type=float, default=1.0e12)
@@ -80,9 +87,9 @@ def main() -> None:
     parser.add_argument("--hybrid-archive")
     parser.add_argument("--hybrid-content-id")
     parser.add_argument(
-        "--hybrid-region-densities", type=float, nargs="+", default=(2.0, 3.0)
+        "--hybrid-region-densities", type=float, nargs="+", default=None
     )
-    parser.add_argument("--hybrid-material-site", default="two-material-density")
+    parser.add_argument("--hybrid-material-site", default=None)
     parser.add_argument("--hybrid-core-size", type=float, default=0.1)
     parser.add_argument("--first-thickness", type=float, default=0.1)
     parser.add_argument("--layer-growth", type=float, default=1.0)
@@ -128,16 +135,37 @@ def main() -> None:
         "tools.meshing_qualification." + SCENARIO_MODULES[args.scenario]
     )
     _IMPORT_SECONDS = perf_counter() - _IMPORT_STARTED
-    record = _finalize_mandatory_cli_record(args, scenario_module.run(args))
+    record = scenario_module.run(args)
+    science_returned_at = monotonic()
+    expired = launch_deadline_expired()
+    # The clock origin is process evidence only; it never enters controls or requests.
+    record["deadline_policy"] = {
+        "scientific_deadline_seconds": args.timeout,
+        "origin": "scenario-start" if expired is None else "campaign-launch",
+        "includes_interpreter_and_import_startup": expired is not None,
+        "reporting_allowance_seconds": None
+        if expired is None
+        else REPORTING_GRACE_SECONDS,
+        "reporting_allowance_scope": "launcher watchdog only; never extends the scientific deadline",
+        "science_returned_before_deadline": None if expired is None else not expired,
+        "science_returned_monotonic_seconds": science_returned_at,
+    }
+    if expired:
+        # The launch deadline also bounds work outside ledger stage checks.
+        record["status_before_launch_deadline"] = record.get("status")
+        if record.get("status") != "timeout":
+            record["status"] = "timeout"
     record["import_seconds"] = _IMPORT_SECONDS
     record["peak_resident_unit"] = "bytes"
+    record = _finalize_mandatory_cli_record(args, record)
     record_directory = os.environ.get("PHYDRAX_MESHING_RECORD_DIRECTORY")
     if args.scenario == "native-distributed-lifecycle" and record_directory is not None:
-        process_id = jax.process_index()
-        jax.distributed.shutdown()
-        Path(record_directory, f"process-{process_id}.json").write_text(
+        # Persist this process's phase-resolved record before the shutdown
+        # barrier, which aborts the whole process when any peer has failed.
+        Path(record_directory, f"process-{jax.process_index()}.json").write_text(
             json.dumps(record, indent=2), encoding="utf-8"
         )
+        jax.distributed.shutdown()
     else:
         print(json.dumps(record, indent=2))
     if record.get("status") in ("failed", "timeout"):

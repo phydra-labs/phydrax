@@ -9,7 +9,8 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from fractions import Fraction
 from typing import assert_never, final, Literal, Protocol, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
@@ -45,6 +46,7 @@ from ._mesh_check_names import MeshCertificateCheck
 if TYPE_CHECKING:
     from ..discretization._cell_geometry_predecessor import CellGeometryPredecessor
     from ._global_embedding import MappedBoundaryDegreeEvidence
+    from ._periodic_mapped_restriction import PeriodicMappedRestrictionEvidence
 
 MeshFindingStatus: TypeAlias = Literal["violated", "unresolved"]
 
@@ -400,7 +402,7 @@ class MeshCertificateFinding(StrictModule, NonTrainableState):
 
 @dataclass(frozen=True)
 class Facets:
-    """Oriented facet occurrences (outward from their cell) and their pairing."""
+    """Oriented facet occurrences with pairing stored as packed occurrence ranges."""
 
     rows: np.ndarray
     signs: np.ndarray
@@ -408,7 +410,17 @@ class Facets:
     group: np.ndarray
     counts: np.ndarray
     order: np.ndarray
-    groups: tuple[np.ndarray, ...]
+    group_offsets: np.ndarray
+
+    @property
+    def groups(self) -> Iterator[np.ndarray]:
+        """Yield read-only occurrence views in canonical facet-group order."""
+        for index in range(self.group_offsets.size - 1):
+            group = self.order[
+                self.group_offsets[index] : self.group_offsets[index + 1]
+            ]
+            group.flags.writeable = False
+            yield group
 
     @property
     def boundary(self) -> np.ndarray:
@@ -548,7 +560,10 @@ def mesh_facets(
     if source_key is not None:
         ledger.reserve(incidence.size, 256 + 32 * incidence.size)
     order = np.argsort(incidence, kind="stable")
-    groups = tuple(np.split(order, np.flatnonzero(np.diff(incidence[order])) + 1))
+    group_offsets = np.empty((counts.size + 1,), dtype=np.int64)
+    group_offsets[0] = 0
+    group_offsets[1:-1] = np.flatnonzero(np.diff(incidence[order])) + 1
+    group_offsets[-1] = order.size
     prepared = Facets(
         facet_rows,
         np.concatenate(signs),
@@ -556,7 +571,7 @@ def mesh_facets(
         incidence,
         counts,
         order,
-        groups,
+        group_offsets,
     )
     if source_key is not None:
         arrays = (
@@ -566,10 +581,11 @@ def mesh_facets(
             prepared.group,
             prepared.counts,
             prepared.order,
+            prepared.group_offsets,
         )
-        for array in (*arrays, *prepared.groups):
+        for array in arrays:
             array.flags.writeable = False
-        ledger.retain_basis((source_key, prepared, arrays, prepared.groups))
+        ledger.retain_basis((source_key, prepared, arrays))
         ledger.facet_cache[source_key] = prepared
     return prepared
 
@@ -739,6 +755,293 @@ class PeriodicAffineQuotientEvidence(StrictModule, NonTrainableState):
 
 
 @final
+class PeriodicAffineTorusDegreeEvidence(StrictModule, NonTrainableState):
+    """Bind current affine-torus premises and compute degree from exact areas."""
+
+    mesh_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    periodic_topology_id: str = eqx.field(static=True)
+    input_binding_id: str = eqx.field(static=True)
+    affinity_certificate_id: str = eqx.field(static=True)
+    manifold_certificate_id: str = eqx.field(static=True)
+    trace_certificate_id: str = eqx.field(static=True)
+    orientation_certificate_id: str = eqx.field(static=True)
+    pullback_area: tuple[int, int] = eqx.field(static=True)
+    lattice_area: tuple[int, int] = eqx.field(static=True)
+    covering_degree: int = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mesh_id: str,
+        geometry_id: str,
+        periodic_topology_id: str,
+        input_binding_id: str,
+        affinity_certificate_id: str,
+        manifold_certificate_id: str,
+        trace_certificate_id: str,
+        orientation_certificate_id: str,
+        pullback_area: tuple[int, int],
+        lattice_area: tuple[int, int],
+    ) -> None:
+        names = (
+            "mesh_id", "geometry_id", "periodic_topology_id", "input_binding_id",
+            "affinity_certificate_id", "manifold_certificate_id",
+            "trace_certificate_id", "orientation_certificate_id",
+        )
+        values = tuple(
+            canonical_identifier(value, f"PeriodicAffineTorusDegreeEvidence.{name}")
+            for name, value in zip(
+                names,
+                (mesh_id, geometry_id, periodic_topology_id, input_binding_id,
+                 affinity_certificate_id, manifold_certificate_id,
+                 trace_certificate_id, orientation_certificate_id),
+                strict=True,
+            )
+        )
+        areas = tuple(
+            Fraction(
+                positive_integer(value[0], f"PeriodicAffineTorusDegreeEvidence.{name}.numerator"),
+                positive_integer(value[1], f"PeriodicAffineTorusDegreeEvidence.{name}.denominator"),
+            )
+            for name, value in (("pullback_area", pullback_area), ("lattice_area", lattice_area))
+        )
+        degree = areas[0] / areas[1]
+        if degree.denominator != 1 or degree.numerator != 1:
+            raise ValueError(
+                "PeriodicAffineTorusDegreeEvidence.exact_integral must compute integer degree one; "
+                f"got {degree}"
+            )
+        (
+            self.mesh_id, self.geometry_id, self.periodic_topology_id,
+            self.input_binding_id, self.affinity_certificate_id,
+            self.manifold_certificate_id, self.trace_certificate_id,
+            self.orientation_certificate_id,
+        ) = values
+        self.pullback_area = (areas[0].numerator, areas[0].denominator)
+        self.lattice_area = (areas[1].numerator, areas[1].denominator)
+        self.covering_degree = degree.numerator
+        self.evidence_id = canonical_fingerprint({
+            "kind": "periodic-affine-torus-degree-one",
+            **dict(zip(names, values, strict=True)),
+            "pullback_area": self.pullback_area,
+            "lattice_area": self.lattice_area,
+            "covering_degree": self.covering_degree,
+        })
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls, value: PeriodicAffineTorusDegreeEvidence, /
+    ) -> PeriodicAffineTorusDegreeEvidence:
+        rebuilt = cls(
+            value.mesh_id, value.geometry_id, value.periodic_topology_id,
+            value.input_binding_id, value.affinity_certificate_id,
+            value.manifold_certificate_id, value.trace_certificate_id,
+            value.orientation_certificate_id, value.pullback_area, value.lattice_area,
+        )
+        if any(getattr(rebuilt, field.name) != getattr(value, field.name) for field in fields(value)):
+            raise ValueError(
+                "PeriodicAffineTorusDegreeEvidence.fields must bind the current exact degree and every premise; got changed stored evidence"
+            )
+        return rebuilt
+
+
+def _exact_fraction(value: tuple[int, int], name: str, /) -> Fraction:
+    numerator, denominator = value
+    if type(numerator) is not int or type(denominator) is not int or denominator <= 0:
+        raise ValueError(f"{name} must be an exact integer ratio; got {value!r}")
+    result = Fraction(numerator, denominator)
+    if (result.numerator, result.denominator) != (numerator, denominator):
+        raise ValueError(f"{name} must be a reduced integer ratio; got {value!r}")
+    return result
+
+
+type PeriodicPartitionDirection = Literal["refine", "coarsen"]
+
+
+@final
+class PeriodicRestrictionPartitionEvidence(StrictModule, NonTrainableState):
+    """Bind the exact parent partition that transfers a source quotient embedding.
+
+    ``direction`` identifies whether the current target consists of the children
+    (refinement) or parents (coarsening). Each child names one partition parent,
+    its closed sign cell and exact volume. Every parent's volume equals its
+    children's sum; all source-certificate bindings remain in source orientation.
+    """
+
+    mesh_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    periodic_topology_id: str = eqx.field(static=True)
+    validity_certificate_id: str = eqx.field(static=True)
+    facet_trace_certificate_id: str = eqx.field(static=True)
+    boundary_subdivision_certificate_id: str = eqx.field(static=True)
+    identification_id: str = eqx.field(static=True)
+    source_mesh_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
+    source_validity_certificate_id: str = eqx.field(static=True)
+    source_embedding_certificate_id: str = eqx.field(static=True)
+    planes: tuple[tuple[tuple[int, int], ...], ...] = eqx.field(static=True)
+    child_cell_ids: tuple[int, ...] = eqx.field(static=True)
+    parent_cell_ids: tuple[int, ...] = eqx.field(static=True)
+    sign_vectors: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    child_volumes: tuple[tuple[int, int], ...] = eqx.field(static=True)
+    partition_cell_ids: tuple[int, ...] = eqx.field(static=True)
+    partition_volumes: tuple[tuple[int, int], ...] = eqx.field(static=True)
+    direction: PeriodicPartitionDirection = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mesh_id: str,
+        geometry_id: str,
+        periodic_topology_id: str,
+        validity_certificate_id: str,
+        facet_trace_certificate_id: str,
+        boundary_subdivision_certificate_id: str,
+        identification_id: str,
+        source_mesh_id: str,
+        source_geometry_id: str,
+        source_validity_certificate_id: str,
+        source_embedding_certificate_id: str,
+        planes: tuple[tuple[tuple[int, int], ...], ...],
+        child_cell_ids: tuple[int, ...],
+        parent_cell_ids: tuple[int, ...],
+        sign_vectors: tuple[tuple[int, ...], ...],
+        child_volumes: tuple[tuple[int, int], ...],
+        partition_cell_ids: tuple[int, ...],
+        partition_volumes: tuple[tuple[int, int], ...],
+        *,
+        direction: PeriodicPartitionDirection,
+    ) -> None:
+        names = (
+            "mesh_id", "geometry_id", "periodic_topology_id",
+            "validity_certificate_id", "facet_trace_certificate_id",
+            "boundary_subdivision_certificate_id", "identification_id", "source_mesh_id",
+            "source_geometry_id", "source_validity_certificate_id",
+            "source_embedding_certificate_id",
+        )
+        identifiers = tuple(
+            canonical_identifier(value, f"PeriodicRestrictionPartitionEvidence.{name}")
+            for name, value in zip(
+                names,
+                (
+                    mesh_id, geometry_id, periodic_topology_id,
+                    validity_certificate_id, facet_trace_certificate_id,
+                    boundary_subdivision_certificate_id, identification_id, source_mesh_id,
+                    source_geometry_id, source_validity_certificate_id,
+                    source_embedding_certificate_id,
+                ),
+                strict=True,
+            )
+        )
+        prefix = "PeriodicRestrictionPartitionEvidence"
+        direction = parse(direction, PeriodicPartitionDirection, f"{prefix}.direction")
+        exact_planes = tuple(
+            tuple(_exact_fraction(value, f"{prefix}.planes") for value in row)
+            for row in planes
+        )
+        if not exact_planes or any(
+            len(row) != 4 or not any(row[:3]) for row in exact_planes
+        ) or len(set(exact_planes)) != len(exact_planes):
+            raise ValueError(
+                f"{prefix}.planes must be distinct exact planes with nonzero normals; got {planes!r}"
+            )
+        count = len(child_cell_ids)
+        if not count or (
+            len(parent_cell_ids), len(sign_vectors), len(child_volumes)
+        ) != (count, count, count) or len(set(child_cell_ids)) != count:
+            raise ValueError(
+                f"{prefix}.children must name each partition child once with one parent, sign vector and volume; got {count} children"
+            )
+        if not partition_cell_ids or len(partition_volumes) != len(partition_cell_ids) or len(
+            set(partition_cell_ids)
+        ) != len(partition_cell_ids):
+            raise ValueError(f"{prefix}.partition_cells must name each parent once with its volume")
+        parents = dict(
+            zip(
+                partition_cell_ids,
+                (_exact_fraction(value, f"{prefix}.partition_volumes") for value in partition_volumes),
+                strict=True,
+            )
+        )
+        totals = dict.fromkeys(parents, Fraction(0))
+        signs: dict[int, set[tuple[int, ...]]] = {parent: set() for parent in parents}
+        for parent, vector, volume in zip(
+            parent_cell_ids, sign_vectors, child_volumes, strict=True
+        ):
+            exact = _exact_fraction(volume, f"{prefix}.child_volumes")
+            if (
+                parent not in parents
+                or exact <= 0
+                or len(vector) != len(planes)
+                or any(value not in (-1, 1) for value in vector)
+                or vector in signs[parent]
+            ):
+                raise ValueError(
+                    f"{prefix}.children must be positive closed sign cells, unique within one declared parent; got parent {parent!r}"
+                )
+            signs[parent].add(vector)
+            totals[parent] += exact
+        if any(totals[parent] != volume or volume <= 0 for parent, volume in parents.items()):
+            raise ValueError(
+                f"{prefix}.partition_volumes must equal the exact sum of their children's volumes"
+            )
+        (
+            self.mesh_id, self.geometry_id, self.periodic_topology_id,
+            self.validity_certificate_id, self.facet_trace_certificate_id,
+            self.boundary_subdivision_certificate_id, self.identification_id,
+            self.source_mesh_id, self.source_geometry_id,
+            self.source_validity_certificate_id, self.source_embedding_certificate_id,
+        ) = identifiers
+        self.planes = tuple(tuple(tuple(value) for value in row) for row in planes)
+        self.child_cell_ids = tuple(int(value) for value in child_cell_ids)
+        self.parent_cell_ids = tuple(int(value) for value in parent_cell_ids)
+        self.sign_vectors = tuple(tuple(int(value) for value in row) for row in sign_vectors)
+        self.child_volumes = tuple(tuple(value) for value in child_volumes)
+        self.partition_cell_ids = tuple(int(value) for value in partition_cell_ids)
+        self.partition_volumes = tuple(tuple(value) for value in partition_volumes)
+        self.direction = direction
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "periodic-restriction-partition-evidence",
+                **dict(zip(names, identifiers, strict=True)),
+                "direction": direction,
+                "planes": self.planes,
+                "children": tuple(
+                    zip(
+                        self.child_cell_ids, self.parent_cell_ids, self.sign_vectors,
+                        self.child_volumes, strict=True,
+                    )
+                ),
+                "parents": tuple(zip(self.partition_cell_ids, self.partition_volumes, strict=True)),
+            }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls, value: PeriodicRestrictionPartitionEvidence, /
+    ) -> PeriodicRestrictionPartitionEvidence:
+        """Recompute the exact partition arithmetic and every binding."""
+        rebuilt = cls(
+            value.mesh_id, value.geometry_id, value.periodic_topology_id,
+            value.validity_certificate_id, value.facet_trace_certificate_id,
+            value.boundary_subdivision_certificate_id, value.identification_id,
+            value.source_mesh_id, value.source_geometry_id,
+            value.source_validity_certificate_id, value.source_embedding_certificate_id,
+            value.planes, value.child_cell_ids, value.parent_cell_ids,
+            value.sign_vectors, value.child_volumes, value.partition_cell_ids,
+            value.partition_volumes, direction=value.direction,
+        )
+        if any(getattr(rebuilt, field.name) != getattr(value, field.name) for field in fields(value)):
+            raise ValueError(
+                "PeriodicRestrictionPartitionEvidence.fields must bind the exact partition and every premise; got changed stored evidence"
+            )
+        return rebuilt
+
+
+@final
 class MappedRestrictionRootEmbeddingEvidence(StrictModule, NonTrainableState):
     """Bind an imported root-union certificate to the target's positive validity."""
 
@@ -812,6 +1115,9 @@ class EmbeddingState:
     closed_cell_orientation: bool = False
     boundary_degree: MappedBoundaryDegreeEvidence | None = None
     periodic_affine: PeriodicAffineQuotientEvidence | None = None
+    periodic_affine_degree: PeriodicAffineTorusDegreeEvidence | None = None
+    periodic_restriction: PeriodicRestrictionPartitionEvidence | None = None
+    periodic_mapped_restriction: PeriodicMappedRestrictionEvidence | None = None
     imported_root_embedding_certificate_id: str | None = None
 
     def add(

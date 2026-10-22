@@ -3,6 +3,15 @@
 #
 """Certify mapped-volume coverage through retained source reference charts.
 
+Independent nonperiodic P1 triangulations may instead use a common-affine
+specialization: every actual source root polynomial must equal one invertible
+exact affine image of its declared referencephysical polynomial coefficientwise.
+The actual target maps are pulled back into the canonical rational source owner,
+then independently checked for validity, embedding, material interfaces and
+ordinary reference PLC coverage. Source and target physical embedding premises
+remain mandatory; neither rounded corner fitting nor invented root ancestry is
+evidence. Unsupported laws retain the strict source-root route below.
+
 Mesh certificate checks
 -----------------------
 [
@@ -279,12 +288,14 @@ End mesh certificate checks
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from fractions import Fraction
-from typing import assert_never
+from typing import assert_never, cast, final
 
 import equinox as eqx
+import jax
 import numpy as np
 
 import phydrax.discretization._periodic_cell as periodic_cell_owner
@@ -293,7 +304,10 @@ import phydrax.discretization.fem._reference_types as reference_types_owner
 import phydrax.geometry._domain_coverage as domain_coverage_owner
 import phydrax.geometry._global_embedding as global_embedding_owner
 import phydrax.geometry._mapped_reference_domain as mapped_reference_domain_owner
-from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from phydrax.discretization._reference_cell_types import (
     CellBlock,
     CellGeometryElement,
@@ -308,6 +322,12 @@ from phydrax.geometry._embedding_state import (
 from phydrax.geometry._mapped_corners import mapped_source_corner_coordinates
 from phydrax.geometry._planar_primitives import project, rational_points, signed_measure
 
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
+from .._identity import strict_module_payload
 from .._strict import StrictModule
 from ..discretization import _coordinate_enclosure as algebra
 from ..discretization._cell_geometry import (
@@ -321,10 +341,17 @@ from ..discretization._cell_geometry import (
 )
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
+    CellValidityCertificate,
     certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._exact_rational_geometry import (
+    ExactRationalCellGeometrySource,
+    rational_source_layouts,
+)
 from ..discretization._reference_cell import reference_cell_topology
+from ..linalg._hermitian_spectral import fraction_matrix_profile, reserve_fraction_work
+from ..linalg._small_batched import prepare_exact_small_linear_actions
 from ..typing import checked
 from ._mapped_coverage import integrate, map_domain
 from ._mesh_certificates import active_expression_work, MeshCertificateBinding
@@ -377,7 +404,7 @@ def source_roots(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> dict[int, _Root]:
-    elements, routes, _ = domain.source_geometry.resolve(domain.reference_mesh)
+    elements, routes, _ = domain.source_geometry.resolve(domain.reference_mesh, budget=budget)
     values = algebra.prepared_coordinate_source_bank(
         domain.source_geometry, budget=budget
     )
@@ -430,6 +457,237 @@ def physical_source_mesh(
     )
 
 
+def _source_owner_binding(value: object) -> tuple[tuple[int, ...], str]:
+    """Bind an issued graph's owners and all numerical fields, including static banks."""
+    pending = [value]
+    seen: dict[int, object] = {}
+    arrays = []
+    while pending:
+        item = pending.pop()
+        identity = id(item)
+        if identity in seen:
+            continue
+        seen[identity] = item
+        if isinstance(item, (np.ndarray, jax.Array)):
+            arrays.append(item)
+        elif is_dataclass(item) and not isinstance(item, type):
+            pending.extend(getattr(item, field.name) for field in fields(item))
+        elif isinstance(item, Mapping):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, (tuple, list)):
+            pending.extend(item)
+    return tuple(seen), canonical_fingerprint(array_tree_fingerprint(tuple(arrays)))
+
+
+def _source_snapshot_id(
+    domain: mapped_reference_domain_owner.MappedReferenceDomain,
+) -> str:
+    # Root owners define semantics; the full numerical tree also catches stale IDs.
+    return canonical_fingerprint(
+        {
+            "domain": domain.domain_id,
+            "source": (domain.source_id, domain.source_revision),
+            "reference_domain": domain.reference_domain.domain_id,
+            "region_ids": domain.region_ids,
+            "reference_mesh": domain.reference_mesh.mesh_id,
+            "reference_blocks": tuple(
+                (block.name, block.cell_kind, block.block_id)
+                for block in domain.reference_mesh.blocks
+            ),
+            "source_geometry": cell_geometry_id(domain.source_geometry),
+            "numerical_banks": array_tree_fingerprint(domain),
+        }
+    )
+
+
+@final
+class MappedReferenceSourceEvidence(StrictModule):
+    """Independent source theorems, distinct from every target's coverage proof."""
+
+    domain: mapped_reference_domain_owner.MappedReferenceDomain
+    limits: MeshCertificateLimits
+    physical_mesh: CellMesh
+    reference_validity: CellValidityCertificate
+    reference_embedding: global_embedding_owner.GlobalEmbeddingCertificate
+    reference_coverage: domain_coverage_owner.DomainCoverageCertificate
+    physical_validity: CellValidityCertificate
+    physical_embedding: global_embedding_owner.GlobalEmbeddingCertificate
+    source_snapshot_id: str = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        domain: mapped_reference_domain_owner.MappedReferenceDomain,
+        limits: MeshCertificateLimits,
+        physical_mesh: CellMesh,
+        reference_validity: CellValidityCertificate,
+        reference_embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+        reference_coverage: domain_coverage_owner.DomainCoverageCertificate,
+        physical_validity: CellValidityCertificate,
+        physical_embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+    ) -> None:
+        self.domain = domain
+        self.limits = limits
+        self.physical_mesh = physical_mesh
+        self.reference_validity = reference_validity
+        self.reference_embedding = reference_embedding
+        self.reference_coverage = reference_coverage
+        self.physical_validity = physical_validity
+        self.physical_embedding = physical_embedding
+        self.source_snapshot_id = _source_snapshot_id(domain)
+        self.evidence_id = _source_evidence_identity(self)
+        self.require_current(domain, limits)
+
+    @checked
+    def require_current(
+        self,
+        domain: mapped_reference_domain_owner.MappedReferenceDomain,
+        limits: MeshCertificateLimits,
+    ) -> None:
+        """Bind live banks, material/periodic topology, policy and all proof premises."""
+        if (
+            not tree_content_equal(self.domain, domain)
+            or not tree_content_equal(self.limits, limits)
+            or self.source_snapshot_id != _source_snapshot_id(domain)
+            or self.evidence_id != _source_evidence_identity(self)
+        ):
+            raise ValueError(
+                "MappedReferenceSourceEvidence.source must retain its exact source "
+                "banks, topology, material assignments and certificate limits."
+            )
+        reference_geometry = CellGeometrySpec.affine(domain.reference_mesh)
+        self.reference_validity.require_bound(
+            reference_geometry, mesh=domain.reference_mesh
+        )
+        self.physical_validity.require_bound(
+            domain.source_geometry, mesh=self.physical_mesh
+        )
+        self.reference_embedding.binding.require(domain.reference_mesh, reference_geometry)
+        self.reference_coverage.binding.require(domain.reference_mesh, reference_geometry)
+        self.physical_embedding.binding.require(self.physical_mesh, domain.source_geometry)
+        if (
+            not self.reference_validity.all_certified
+            or not self.physical_validity.all_certified
+            or any(
+                certificate.status != "certified"
+                or certificate.binding.limits_id != limits.limits_id
+                for certificate in (
+                    self.reference_embedding,
+                    self.reference_coverage,
+                    self.physical_embedding,
+                )
+            )
+            or self.reference_embedding.validity_certificate_id
+            != self.reference_validity.certificate_id
+            or self.physical_embedding.validity_certificate_id
+            != self.physical_validity.certificate_id
+            or self.reference_coverage.embedding_certificate_id
+            != self.reference_embedding.certificate_id
+            or self.reference_coverage.domain_id != domain.reference_domain.domain_id
+        ):
+            raise ValueError(
+                "MappedReferenceSourceEvidence.certificates must independently certify "
+                "the bound reference partition and physical source."
+            )
+
+    @checked
+    def require_live(
+        self,
+        domain: mapped_reference_domain_owner.MappedReferenceDomain,
+        limits: MeshCertificateLimits,
+    ) -> None:
+        """Require actual issuing-process proof authority, not constructor-valid IDs."""
+        issued = _ISSUED_SOURCE_EVIDENCE.get(id(self))
+        if (
+            type(self) is not MappedReferenceSourceEvidence
+            or issued is None
+            or issued[0]() is not self
+            or issued[1] != self.evidence_id
+            or issued[2] != _source_owner_binding(self)
+        ):
+            raise ValueError(
+                "MappedReferenceSourceEvidence.authority must be issued by an actual "
+                "independent source proof; constructor-valid records are not authority."
+            )
+        self.require_current(domain, limits)
+
+
+_ISSUED_SOURCE_EVIDENCE: dict[
+    int,
+    tuple[
+        weakref.ReferenceType[MappedReferenceSourceEvidence],
+        str,
+        tuple[tuple[int, ...], str],
+    ],
+] = {}
+
+
+def _issue_source_evidence(
+    evidence: MappedReferenceSourceEvidence,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> MappedReferenceSourceEvidence:
+    identity = id(evidence)
+    reference = weakref.ref(
+        evidence, lambda _: _ISSUED_SOURCE_EVIDENCE.pop(identity, None)
+    )
+    binding = _source_owner_binding(evidence)
+    budget.retain_basis(binding)
+    # The global seal retains no numerical owners, only a weak reference and IDs.
+    _ISSUED_SOURCE_EVIDENCE[identity] = reference, evidence.evidence_id, binding
+    return evidence
+
+
+def _source_evidence_identity(evidence: MappedReferenceSourceEvidence) -> str:
+    certificates = (
+        evidence.reference_validity,
+        evidence.reference_embedding,
+        evidence.reference_coverage,
+        evidence.physical_validity,
+        evidence.physical_embedding,
+    )
+    return canonical_fingerprint(
+        {
+            "kind": "mapped-reference-source-evidence",
+            "source_snapshot": evidence.source_snapshot_id,
+            "limits": strict_module_payload(evidence.limits)["numeric_content_id"],
+            "certificates": tuple(value.certificate_id for value in certificates),
+            "physical_mesh": evidence.physical_mesh.mesh_id,
+            "proof_banks": array_tree_fingerprint((evidence.physical_mesh, certificates)),
+        }
+    )
+
+
+def retained_mapped_reference_source_evidence(
+    domain: mapped_reference_domain_owner.MappedReferenceDomain,
+    limits: MeshCertificateLimits,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> MappedReferenceSourceEvidence | None:
+    key = (domain.domain_id, limits.limits_id, _source_snapshot_id(domain))
+    evidence = budget.mapped_reference_source_evidence.get(key)
+    if evidence is not None:
+        evidence.require_live(domain, limits)
+    return evidence
+
+
+def retain_mapped_reference_source_evidence(
+    evidence: MappedReferenceSourceEvidence,
+    domain: mapped_reference_domain_owner.MappedReferenceDomain,
+    limits: MeshCertificateLimits,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Admit an authenticated live source proof into the consuming request."""
+    evidence.require_live(domain, limits)
+    key = (domain.domain_id, limits.limits_id, evidence.source_snapshot_id)
+    budget.retain_owner(evidence)
+    budget.retain_basis(key)
+    budget.mapped_reference_source_evidence[key] = evidence
+
+
 @checked
 def certify_mapped_reference_source(
     domain: mapped_reference_domain_owner.MappedReferenceDomain,
@@ -442,9 +700,16 @@ def certify_mapped_reference_source(
     domain_coverage_owner.DomainCoverageCertificate,
 ]:
     """Independently establish the source reference partition and physical embedding."""
-    reference_geometry = CellGeometrySpec.affine(domain.reference_mesh)
+    retained = retained_mapped_reference_source_evidence(domain, limits, budget=budget)
+    if retained is not None:
+        return (
+            retained.physical_mesh,
+            retained.physical_embedding,
+            retained.reference_coverage,
+        )
+    reference_geometry = CellGeometrySpec.affine(domain.reference_mesh, budget=budget)
     reference_validity = certify_cell_geometry_validity(
-        reference_geometry, mesh=domain.reference_mesh
+        reference_geometry, mesh=domain.reference_mesh, budget=budget
     )
     reference_embedding = global_embedding_owner.certify_global_embedding(
         domain.reference_mesh,
@@ -464,7 +729,7 @@ def certify_mapped_reference_source(
     )
     physical_mesh = physical_source_mesh(domain, budget=budget)
     physical_validity = certify_cell_geometry_validity(
-        domain.source_geometry, mesh=physical_mesh
+        domain.source_geometry, mesh=physical_mesh, budget=budget
     )
     physical_embedding = global_embedding_owner.certify_global_embedding(
         physical_mesh,
@@ -473,7 +738,112 @@ def certify_mapped_reference_source(
         limits=limits,
         budget=budget,
     )
+    if (
+        reference_validity.all_certified
+        and physical_validity.all_certified
+        and reference_embedding.status
+        == reference_coverage.status
+        == physical_embedding.status
+        == "certified"
+    ):
+        retain_mapped_reference_source_evidence(
+            _issue_source_evidence(
+                MappedReferenceSourceEvidence(
+                    domain,
+                    limits,
+                    physical_mesh,
+                    reference_validity,
+                    reference_embedding,
+                    reference_coverage,
+                    physical_validity,
+                    physical_embedding,
+                ),
+                budget=budget,
+            ),
+            domain,
+            limits,
+            budget=budget,
+        )
     return physical_mesh, physical_embedding, reference_coverage
+
+
+def _source_scientific_content(evidence: MappedReferenceSourceEvidence) -> tuple[object, ...]:
+    receipts = {
+        "source_expression_work_units",
+        "source_expression_required_work_units",
+        "source_expression_peak_bytes",
+    }
+    return (
+        evidence.domain,
+        evidence.limits,
+        evidence.physical_mesh,
+        evidence.reference_validity,
+        evidence.physical_validity,
+        *(
+            {
+                field.name: getattr(certificate, field.name)
+                for field in fields(certificate)
+                if field.name not in receipts
+            }
+            for certificate in (
+                evidence.reference_embedding,
+                evidence.reference_coverage,
+                evidence.physical_embedding,
+            )
+        ),
+    )
+
+
+@checked
+def reprove_mapped_reference_source_evidence(
+    stored: MappedReferenceSourceEvidence,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> MappedReferenceSourceEvidence:
+    """Cold-rebuild once per request, then compare the complete scientific identity.
+
+    The caller must invoke this before seeding any imported evidence into this
+    request. Cache entries originate only from an actual proof or authenticated
+    live-owner retention; archive deserialization itself is not such authority.
+    """
+    stored.require_current(stored.domain, stored.limits)
+    certify_mapped_reference_source(stored.domain, stored.limits, budget=budget)
+    fresh = retained_mapped_reference_source_evidence(
+        stored.domain, stored.limits, budget=budget
+    )
+    if (
+        fresh is None
+        or fresh.evidence_id != stored.evidence_id
+        or not tree_content_equal(
+            _source_scientific_content(stored), _source_scientific_content(fresh)
+        )
+    ):
+        raise ValueError(
+            "MappedReferenceSourceEvidence.cold_proof must reproduce the retained "
+            "source theorems and numerical proof banks."
+        )
+    # Postorder readers still hold this exact stored object in their parent records.
+    # Its authority is issued only after the independent proof and content match.
+    _issue_source_evidence(stored, budget=budget)
+    return fresh
+
+
+@checked
+def restore_mapped_reference_source_evidence(
+    stored: MappedReferenceSourceEvidence,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> MappedReferenceSourceEvidence:
+    """Admit a live proof or cold-reprove and seal the exact postorder stored owner."""
+    stored.require_current(stored.domain, stored.limits)
+    issued = _ISSUED_SOURCE_EVIDENCE.get(id(stored))
+    if issued is not None and issued[0]() is stored:
+        stored.require_live(stored.domain, stored.limits)
+        retain_mapped_reference_source_evidence(
+            stored, stored.domain, stored.limits, budget=budget
+        )
+        return stored
+    return reprove_mapped_reference_source_evidence(stored, budget=budget)
 
 
 class _AffineTransform(StrictModule):
@@ -685,7 +1055,7 @@ class PreparedPolynomialReferenceCharts:
         budget: CoordinateEnclosureBudget,
     ) -> PolynomialReferenceChart | None:
         """Reuse a composed reference element only after full current input binding."""
-        key = algebra.element_identity(element), algebra.element_identity(root_element)
+        key = algebra.element_identity(element, budget=budget), algebra.element_identity(root_element, budget=budget)
         prepared = self._charts.get(key)
         if prepared is None:
             prepared = polynomial_reference_chart(element, root_element, budget=budget)
@@ -818,7 +1188,7 @@ def _target_charts(
     ):
         state.add("mapped_domain_source_identity", "violated", "mesh")
         return None
-    elements, routes, _ = geometry.resolve(mesh)
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
     values = geometry.source_coordinates(budget=budget)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     parents = record.block_parent_cell_ids
@@ -1218,9 +1588,12 @@ def _root_domain(
 
 
 def _facet_identities(
-    mesh: CellMesh, *, budget: CoordinateEnclosureBudget
+    mesh: CellMesh,
+    *,
+    geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[dict[int, tuple[int, ...]], dict[tuple[int, ...], int]]:
-    facets = mesh_facets(mesh, budget=budget)
+    facets = mesh_facets(mesh, geometry=geometry, budget=budget)
     entities = facet_entity_ids(mesh, facets.rows)
     vertices = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     identities = {
@@ -1243,14 +1616,28 @@ def _compose_fragment_relations(
     covering: set[int],
     *,
     budget: CoordinateEnclosureBudget,
+    vertex_images: tuple[int, ...] | None = None,
 ) -> None:
     chart_facets, _ = _facet_identities(chart_mesh, budget=budget)
     root_faces = reference_cell_topology(root.kind).entities[domain.ambient_dimension - 1]
     source_rows: dict[int, list[tuple[int, tuple[int, ...], float]]] = {}
-    for facet, source, axes, _, upper, _, _ in source_coverage.facet_source_overlaps:
-        source_rows.setdefault(facet, []).append((source, axes, upper))
-    for chart_facet, piece, _, _, _, _, _ in chart_coverage.facet_source_overlaps:
-        target = target_facets[chart_facets[chart_facet]]
+    source_overlaps = source_coverage.facet_source_overlaps
+    for facet, source, axes, upper in zip(
+        source_overlaps.facets.tolist(),
+        source_overlaps.sources.tolist(),
+        source_overlaps.axes.tolist(),
+        source_overlaps.upper.tolist(),
+        strict=True,
+    ):
+        source_rows.setdefault(facet, []).append((source, tuple(axes), upper))
+    chart_overlaps = chart_coverage.facet_source_overlaps
+    for chart_facet, piece in zip(
+        chart_overlaps.facets.tolist(), chart_overlaps.sources.tolist(), strict=True
+    ):
+        vertices = chart_facets[chart_facet]
+        target = target_facets[
+            vertices if vertex_images is None else tuple(sorted(vertex_images[v] for v in vertices))
+        ]
         if target not in covering:
             continue
         source_face = tuple(
@@ -1296,6 +1683,7 @@ class _RootPartition(StrictModule):
     mesh: CellMesh
     coverage: domain_coverage_owner.DomainCoverageCertificate
     face_owners: tuple[int, ...] = eqx.field(static=True)
+    vertex_images: tuple[int, ...] | None = eqx.field(static=True)
 
 
 def _periodic_source_premises(
@@ -1338,7 +1726,7 @@ def _direct_root_measures(
     *,
     budget: CoordinateEnclosureBudget,
 ) -> dict[int, Fraction | None]:
-    target_elements, target_routes, _ = geometry.resolve(mesh)
+    target_elements, target_routes, _ = geometry.resolve(mesh, budget=budget)
     target_values = geometry.source_coordinates(budget=budget)
     direct: dict[int, Fraction | None] = {cell_id: Fraction(0) for cell_id in roots}
     record = geometry.restriction_source
@@ -1357,24 +1745,13 @@ def _direct_root_measures(
         for parent, local in zip(
             np.asarray(parents[block.name]), local_values, strict=True
         ):
-            polynomial = algebra.coordinate_polynomials(element, local, budget=budget)
+            measure = domain_coverage_owner.polynomial_cell_measure(
+                element, local, block.cell_kind, dimension, budget=budget
+            )
             current = direct[int(parent)]
-            if polynomial is None:
-                direct[int(parent)] = None
-            elif current is not None:
-                jacobian = tuple(
-                    tuple(
-                        algebra.derivative(value, axis, budget=budget)
-                        for axis in range(dimension)
-                    )
-                    for value in polynomial
-                )
-                direct[int(parent)] = current + integrate(
-                    algebra.determinant(jacobian, budget=budget),
-                    map_domain(block.cell_kind),
-                    dimension,
-                    budget=budget,
-                )
+            direct[int(parent)] = (
+                None if measure is None or current is None else current + measure
+            )
     return direct
 
 
@@ -1386,11 +1763,42 @@ def _root_partition(
     limits: MeshCertificateLimits,
     *,
     budget: CoordinateEnclosureBudget,
+    partitions: dict[tuple[object, ...], _RootPartition],
 ) -> _RootPartition | None:
     cell_id = root.cell_id
     if not charts:
         state.add("mapped_domain_missing_root", "violated", "source_cell", (cell_id,))
         return None
+    # Coverage of a reference partition is independent of global cell/vertex
+    # names and of the physical root map. Normalize only those names; retain
+    # every exact affine chart, its incidence and its block grouping.
+    vertex_images: tuple[int, ...] | None = None
+    partition_key: tuple[object, ...] | None = None
+    if all(isinstance(chart, AffineReferenceChart) for chart in charts):
+        affine = [chart for chart in charts if isinstance(chart, AffineReferenceChart)]
+        vertex_images = tuple(sorted({vertex for chart in affine for vertex in chart.vertices}))
+        vertices = {vertex: row for row, vertex in enumerate(vertex_images)}
+        blocks = {name: f"chart_{row}" for row, name in enumerate(sorted({chart.block for chart in affine}))}
+        normalized = [
+            AffineReferenceChart(
+                blocks[chart.block], row, chart.kind,
+                tuple(vertices[vertex] for vertex in chart.vertices),
+                chart.matrix, chart.offset,
+            )
+            for row, chart in enumerate(affine)
+        ]
+        partition_key = (
+            root.kind,
+            tuple(
+                (chart.block, chart.kind, chart.vertices, chart.matrix, chart.offset)
+                for chart in normalized
+            ),
+        )
+        budget.retain_basis((partition_key,))
+        cached = partitions.get(partition_key)
+        if cached is not None:
+            return _RootPartition(cached.mesh, cached.coverage, cached.face_owners, vertex_images)
+        charts = list(normalized)
     chart_view = _chart_mesh(charts, domain.ambient_dimension, budget=budget)
     if chart_view is None:
         state.add(
@@ -1401,7 +1809,9 @@ def _root_partition(
         )
         return None
     chart_mesh, chart_geometry = chart_view
-    chart_validity = certify_cell_geometry_validity(chart_geometry, mesh=chart_mesh)
+    chart_validity = certify_cell_geometry_validity(
+        chart_geometry, mesh=chart_mesh, budget=budget
+    )
     chart_embedding = global_embedding_owner.certify_global_embedding(
         chart_mesh, chart_geometry, chart_validity, limits=limits, budget=budget
     )
@@ -1415,7 +1825,430 @@ def _root_partition(
         limits=limits,
         budget=budget,
     )
-    return _RootPartition(chart_mesh, chart_coverage, face_owners)
+    partition = _RootPartition(chart_mesh, chart_coverage, face_owners, vertex_images)
+    if partition_key is not None and chart_coverage.status == "certified":
+        budget.retain_owner(partition)
+        partitions[partition_key] = partition
+    return partition
+
+
+def _affine_polynomial_image(
+    coordinates: tuple[algebra.Polynomial, ...],
+    transform: _AffineTransform,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[algebra.Polynomial, ...]:
+    dimension = len(coordinates)
+    return tuple(
+        algebra.add(
+            algebra.constant(offset, dimension, budget=budget),
+            algebra.sum_polynomials(
+                tuple(
+                    algebra.scale(value, weight, budget=budget)
+                    for value, weight in zip(coordinates, row, strict=True)
+                ),
+                budget=budget,
+            ),
+            budget=budget,
+        )
+        for row, offset in zip(transform.matrix, transform.offset, strict=True)
+    )
+
+
+def _common_affine_source(
+    domain: mapped_reference_domain_owner.MappedReferenceDomain,
+    roots: dict[int, _Root],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[_AffineTransform, Fraction] | None:
+    """Prove one law against every coefficient, never against fitted corner samples."""
+    dimension = domain.ambient_dimension
+    reference = CellGeometrySpec.affine(domain.reference_mesh, budget=budget)
+    elements, routes, _ = reference.resolve(domain.reference_mesh, budget=budget)
+    bank = cast(
+        tuple[tuple[Fraction, ...], ...],
+        algebra.prepared_coordinate_source_bank(reference, budget=budget),
+    )
+    source_elements, source_routes, _ = domain.source_geometry.resolve(
+        domain.reference_mesh, budget=budget
+    )
+    standard_source = all(
+        isinstance(element, reference_types_owner.FiniteElementSpec)
+        and algebra.coordinate_source_signature(element)
+        == algebra.coordinate_source_signature(coordinate_lagrange_element(block.cell_kind, 1))
+        for block, element in zip(domain.reference_mesh.blocks, source_elements, strict=True)
+    )
+    forward: _AffineTransform | None = None
+    inverse: _AffineTransform | None = None
+    determinant = Fraction(0)
+    zero = (0,) * dimension
+    linear = tuple(
+        tuple(int(axis == column) for axis in range(dimension))
+        for column in range(dimension)
+    )
+    for block, element, route in zip(
+        domain.reference_mesh.blocks, elements, routes, strict=True
+    ):
+        for cell_id, indices in zip(
+            np.asarray(block.global_ids), np.asarray(route), strict=True
+        ):
+            actual = roots[int(cell_id)].polynomial
+            declared = algebra.coordinate_polynomials(
+                element, tuple(bank[int(index)] for index in indices), budget=budget
+            )
+            if declared is None or any(
+                not isinstance(value, Fraction)
+                for polynomial in (*actual, *declared)
+                for value in polynomial.values()
+            ):
+                return None
+            if forward is None:
+                # Solve R_linear.T @ A.T = P_linear.T. The later full
+                # polynomial equality is the premise, not this candidate solve.
+                coefficients = tuple(
+                    tuple(cast(Fraction, value.get(exponent, Fraction(0))) for value in declared)
+                    for exponent in linear
+                )
+                right = tuple(
+                    tuple(cast(Fraction, value.get(exponent, Fraction(0))) for value in actual)
+                    for exponent in linear
+                )
+                candidate = prepare_exact_small_linear_actions(
+                    coefficients, right, budget=budget
+                )
+                if candidate.actions is None:
+                    return None
+                matrix = tuple(zip(*candidate.actions, strict=True))
+                untranslated = _affine_polynomial_image(
+                    declared,
+                    _AffineTransform(matrix, (Fraction(0),) * dimension),
+                    budget=budget,
+                )
+                budget.reserve(dimension)
+                offset = tuple(
+                    physical.get(zero, Fraction(0)) - mapped.get(zero, Fraction(0))
+                    for physical, mapped in zip(actual, untranslated, strict=True)
+                )
+                if any(not isinstance(value, Fraction) for value in offset):
+                    return None
+                forward = _AffineTransform(matrix, cast(tuple[Fraction, ...], offset))
+                solved = prepare_exact_small_linear_actions(
+                    matrix,
+                    tuple(
+                        tuple(Fraction(row == column) for column in range(dimension))
+                        for row in range(dimension)
+                    ),
+                    budget=budget,
+                )
+                if solved.actions is None:
+                    return None
+                determinant = solved.determinant
+                translated = _affine_polynomial_image(
+                    tuple(
+                        algebra.constant(-value, dimension, budget=budget)
+                        for value in offset
+                    ),
+                    _AffineTransform(solved.actions, (Fraction(0),) * dimension),
+                    budget=budget,
+                )
+                inverse_offset = tuple(value.get(zero, Fraction(0)) for value in translated)
+                if any(not isinstance(value, Fraction) for value in inverse_offset):
+                    return None
+                inverse = _AffineTransform(
+                    solved.actions, cast(tuple[Fraction, ...], inverse_offset)
+                )
+                if standard_source:
+                    source_bank = algebra.prepared_coordinate_source_bank(
+                        domain.source_geometry, budget=budget
+                    )
+                    if all(isinstance(value, Fraction) for point in source_bank for value in point):
+                        # Both actual routes use the identical standard nodal
+                        # basis. Prove every routed coefficient, not merely the
+                        # geometric corners: linearity and partition of unity
+                        # then lift A*r+b to the complete coordinate polynomial.
+                        pairs: set[tuple[int, int]] = set()
+                        for declared_route, actual_route in zip(routes, source_routes, strict=True):
+                            if np.asarray(declared_route).shape != np.asarray(actual_route).shape:
+                                return None
+                            for declared_row, actual_row in zip(
+                                np.asarray(declared_route), np.asarray(actual_route), strict=True
+                            ):
+                                budget.reserve(len(declared_row))
+                                for declared_index, actual_index in zip(
+                                    declared_row, actual_row, strict=True
+                                ):
+                                    pair = (int(declared_index), int(actual_index))
+                                    budget.retain_basis((pair,))
+                                    pairs.add(pair)
+                        numeric_bank = cast(tuple[tuple[Fraction, ...], ...], source_bank)
+                        numerator_bits, denominator_bits = fraction_matrix_profile(
+                            (bank, numeric_bank, forward.matrix, (forward.offset,)), budget
+                        )
+                        reserve_fraction_work(
+                            budget, len(pairs) * dimension * (2 * dimension + 1),
+                            len(pairs) * (dimension + 1),
+                            (dimension + 2) * (numerator_bits + denominator_bits + 2),
+                        )
+                        for declared_index, actual_index in pairs:
+                            expected_row = tuple(
+                                sum(
+                                    (weight * value for weight, value in zip(
+                                        row, bank[declared_index], strict=True
+                                    )),
+                                    offset,
+                                )
+                                for row, offset in zip(forward.matrix, forward.offset, strict=True)
+                            )
+                            budget.reserve(dimension)
+                            if numeric_bank[actual_index] != expected_row:
+                                return None
+                        return inverse, abs(determinant)
+            expected = _affine_polynomial_image(declared, forward, budget=budget)
+            budget.reserve(sum(len(value) for value in (*actual, *expected)))
+            if actual != expected:
+                return None
+    return None if inverse is None else (inverse, abs(determinant))
+
+
+def _inverse_affine_target(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: mapped_reference_domain_owner.MappedReferenceDomain,
+    inverse: _AffineTransform,
+    *,
+    limits: MeshCertificateLimits,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[CellMesh, CellGeometrySpec] | None:
+    """Retain rational inverse images under the declared coverage theorem limits.
+
+    The exact source includes its work bound in scientific identity. The caller's
+    ledger pays every operation, but its request-wide allowance is not that bound.
+    """
+    dimension = domain.ambient_dimension
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    if any(
+        not isinstance(element, reference_types_owner.FiniteElementSpec)
+        or algebra.coordinate_source_signature(element)
+        != algebra.coordinate_source_signature(coordinate_lagrange_element(block.cell_kind, 1))
+        for block, element in zip(mesh.blocks, elements, strict=True)
+    ):
+        return None
+    source_bank = algebra.prepared_coordinate_source_bank(geometry, budget=budget)
+    if any(not isinstance(value, Fraction) for point in source_bank for value in point):
+        return None
+    bank = cast(tuple[tuple[Fraction, ...], ...], source_bank)
+    numerator_bits, denominator_bits = fraction_matrix_profile(
+        (bank, inverse.matrix, (inverse.offset,)), budget
+    )
+    bits = (dimension + 2) * (numerator_bits + denominator_bits + 2)
+    reserve_fraction_work(
+        budget,
+        len(bank) * dimension * (2 * dimension + 1),
+        len(bank) * (dimension + 1),
+        bits,
+    )
+    pulled = tuple(
+        tuple(
+            sum(
+                (weight * value for weight, value in zip(row, point, strict=True)),
+                offset,
+            )
+            for row, offset in zip(inverse.matrix, inverse.offset, strict=True)
+        )
+        for point in bank
+    )
+    positions: dict[int, tuple[Fraction, ...]] = {}
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        for vertices, indices in zip(
+            np.asarray(block.vertices), np.asarray(route), strict=True
+        ):
+            if block.cell_kind in ("triangle", "tetrahedron"):
+                # On the admitted standard simplex P1 basis there are no
+                # higher-degree coefficients. Every actual bank row was
+                # transformed above, and sum(N_i)=1, hence interpolation
+                # commutes exactly with this affine map on the entire cell.
+                # Tensor-product P1 retains the generic degree check below:
+                # its mixed coefficients need not vanish.
+                budget.reserve(len(indices))
+                for vertex, index in zip(vertices, indices, strict=True):
+                    position = pulled[int(index)]
+                    if int(vertex) in positions and positions[int(vertex)] != position:
+                        return None
+                    positions[int(vertex)] = position
+                continue
+            # Tensor-product P1 also commutes with the bank transformation.
+            # Retain only its independent affine-degree admission; unlike
+            # simplex P1, standard Q1 can contain nonzero mixed coefficients.
+            with budget.temporary_scope():
+                original = algebra.coordinate_polynomials(
+                    element, tuple(bank[int(index)] for index in indices), budget=budget
+                )
+                if original is None:
+                    return None
+                budget.reserve(sum(len(value) for value in original))
+                matches = not any(
+                    sum(exponent) > 1 for value in original for exponent in value
+                )
+                del original
+                if not matches:
+                    return None
+                for vertex, index in zip(vertices, indices, strict=True):
+                    position = pulled[int(index)]
+                    if int(vertex) in positions and positions[int(vertex)] != position:
+                        return None
+                    positions[int(vertex)] = position
+    if len(positions) != mesh.coordinates.shape[0]:
+        return None
+    # A literal simplex frame is only the existing rational source's coefficient
+    # carrier. Its identity binds both actual source and target, not historical IDs.
+    identity = canonical_fingerprint(
+        (
+            "inverse-common-affine",
+            _source_snapshot_id(domain),
+            cell_geometry_id(geometry),
+            tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in inverse.matrix
+            ),
+            tuple((value.numerator, value.denominator) for value in inverse.offset),
+        )
+    )
+    name = f"inverse-affine-frame-{identity}"
+    frame_kind = "triangle" if dimension == 2 else "tetrahedron"
+    frame = np.vstack((np.eye(dimension), np.zeros((1, dimension))))
+    parent = CellGeometrySpec(
+        {name: coordinate_lagrange_element(frame_kind, 1)},
+        {name: np.arange(dimension + 1, dtype=np.int32)[None]},
+        frame,
+        budget=budget,
+    )
+    reserve_fraction_work(budget, len(pulled) * (dimension + 1), len(pulled), bits * 2)
+    actions = tuple(
+        tuple(
+            (index, value.numerator, value.denominator)
+            for index, value in enumerate((*point, 1 - sum(point, Fraction(0))))
+            if value
+        )
+        for point in pulled
+    )
+    element_map = dict(zip((block.name for block in mesh.blocks), elements, strict=True))
+    route_map = dict(zip((block.name for block in mesh.blocks), routes, strict=True))
+    exact = ExactRationalCellGeometrySource(
+        parent,
+        actions,
+        rational_source_layouts(element_map, route_map),
+        maximum_work=limits.maximum_work_units,
+        maximum_bits=bits * 2,
+        budget=budget,
+    )
+    pulled_geometry = CellGeometrySpec(
+        element_map,
+        route_map,
+        np.asarray(tuple(tuple(float(value) for value in point) for point in pulled)),
+        exact_source=exact,
+        budget=budget,
+    )
+    pulled_mesh = mesh.with_coordinates(
+        np.asarray(
+            tuple(tuple(float(value) for value in positions[index]) for index in range(len(positions)))
+        ),
+        numeric_version=identity,
+    )
+    return pulled_mesh, pulled_geometry
+
+
+def _independent_affine_coverage(
+    state: EmbeddingState,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: mapped_reference_domain_owner.MappedReferenceDomain,
+    roots: dict[int, _Root],
+    regions: np.ndarray,
+    limits: MeshCertificateLimits,
+    binding: MeshCertificateBinding,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+    requested: tuple[Fraction, ...],
+    premises: list[str],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> domain_coverage_owner.DomainCoverageCertificate | None:
+    # Explicit root-parent declarations and every periodic path retain the
+    # original strict route. Unsupported affine laws do not add positive evidence.
+    if (
+        geometry.restriction_source is not None
+        or domain.ambient_dimension not in (2, 3)
+        or mesh.periodic_topology is not None
+        or domain.reference_mesh.periodic_topology is not None
+    ):
+        return None
+    common = _common_affine_source(domain, roots, budget=budget)
+    if common is None:
+        return None
+    inverse, determinant = common
+    target = _inverse_affine_target(
+        mesh, geometry, domain, inverse, limits=limits, budget=budget
+    )
+    if target is None:
+        return None
+    pulled_mesh, pulled_geometry = target
+    validity = certify_cell_geometry_validity(
+        pulled_geometry, mesh=pulled_mesh, budget=budget
+    )
+    pulled_embedding = global_embedding_owner.certify_global_embedding(
+        pulled_mesh, pulled_geometry, validity, limits=limits, budget=budget
+    )
+    premises.extend((embedding.certificate_id, pulled_embedding.certificate_id))
+    coverage = domain_coverage_owner.certify_domain_coverage(
+        pulled_mesh,
+        pulled_geometry,
+        domain.reference_domain,
+        regions,
+        embedding=pulled_embedding,
+        limits=limits,
+        budget=budget,
+    )
+    premises.append(coverage.certificate_id)
+    # Preserve the actual failed checks (including resource receipts), not only
+    # a generic dependency failure. Target entity IDs survive the pullback.
+    state.findings.extend(pulled_embedding.findings)
+    state.findings.extend(coverage.findings)
+    for check, certificate in (
+        ("embedding_premise", pulled_embedding),
+        ("mapped_domain_reference_coverage_premise", coverage),
+    ):
+        if certificate.status != "certified":
+            state.add(check, certificate.status, "mesh")
+    measured, _ = domain_coverage_owner.mapped_coverage_measures(
+        state, pulled_mesh, pulled_geometry, regions, budget=budget
+    )
+    budget.reserve(len(measured))
+    achieved = tuple(None if value is None else determinant * value for value in measured)
+    achieved = (*achieved, *(Fraction(0) for _ in range(len(requested) - len(achieved))))
+    overlaps = coverage.facet_source_overlaps
+    budget.reserve(len(overlaps.facets))
+    relations: dict[domain_coverage_owner.CoverageOverlapKey, Fraction] = {
+        (int(facet), int(source), tuple(int(axis) for axis in axes), "candidate", "reference"):
+        Fraction(float(upper))
+        for facet, source, axes, upper in zip(
+            overlaps.facets, overlaps.sources, overlaps.axes, overlaps.upper, strict=True
+        )
+    }
+    complete = (
+        not state.findings
+        and embedding.status == pulled_embedding.status == coverage.status == "certified"
+    )
+    return domain_coverage_owner.coverage_result(
+        binding,
+        embedding,
+        domain,
+        state,
+        requested,
+        achieved,
+        domain.facets.shape[0] if complete else 0,
+        relations,
+        tuple(premises),
+        expression_work=active_expression_work(budget=budget),
+    )
 
 
 @checked
@@ -1444,12 +2277,41 @@ def certify_mapped_reference_coverage(
         if certificate.status != "certified":
             state.add(check, certificate.status, "mesh")
     roots = source_roots(domain, budget=budget)
+    try:
+        # Close this real proof phase before constructing a refusal finding;
+        # the enclosing owner's measurement has not unwound at this catch.
+        with budget.measurement():
+            independent = _independent_affine_coverage(
+                state, mesh, geometry, domain, roots, regions, limits, binding, embedding,
+                requested, premises, budget=budget,
+            )
+    except CoordinateEnclosureResourceError as error:
+        try:
+            state.add(
+                "mapped_coverage_resource_budget",
+                "unresolved",
+                "mesh",
+                resource_error=error,
+                expression_budget=budget,
+            )
+            return domain_coverage_owner.coverage_result(
+                binding, embedding, domain, state, requested,
+                tuple(None for _ in requested), 0, {}, tuple(premises),
+                expression_work=active_expression_work(budget=budget),
+            )
+        except CoordinateEnclosureResourceError as reporting_error:
+            error.add_note(
+                f"Completed mapped coverage premise certificates: {tuple(premises)!r}"
+            )
+            raise error from reporting_error
+    if independent is not None:
+        return independent
     charts = _target_charts(state, mesh, geometry, regions, domain, roots, budget=budget)
     achieved: list[Fraction | None] = [Fraction(0) for _ in domain.region_ids]
     relations: dict[domain_coverage_owner.CoverageOverlapKey, Fraction] = {}
     _, source_facets = _facet_identities(domain.reference_mesh, budget=budget)
-    _, target_facets = _facet_identities(mesh, budget=budget)
-    facets = mesh_facets(mesh, budget=budget)
+    _, target_facets = _facet_identities(mesh, geometry=geometry, budget=budget)
+    facets = mesh_facets(mesh, geometry=geometry, budget=budget)
     entities = facet_entity_ids(mesh, facets.rows)
     covering = set(int(value) for value in entities[facets.boundary])
     for group in np.unique(facets.group):
@@ -1488,9 +2350,10 @@ def certify_mapped_reference_coverage(
         == embedding.status
         == "certified"
     )
+    partitions: dict[tuple[object, ...], _RootPartition] = {}
     for cell_id, root in sorted(roots.items()):
         partition = _root_partition(
-            state, domain, root, charts[cell_id], limits, budget=budget
+            state, domain, root, charts[cell_id], limits, budget=budget, partitions=partitions
         )
         if partition is None:
             _add_measure(achieved, root.region, direct[cell_id])
@@ -1524,6 +2387,7 @@ def certify_mapped_reference_coverage(
             target_facets,
             covering,
             budget=budget,
+            vertex_images=partition.vertex_images,
         )
         actual = direct[cell_id]
         if actual is None:

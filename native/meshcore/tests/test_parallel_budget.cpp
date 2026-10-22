@@ -109,7 +109,7 @@ void settlement_releases_unused_resources() {
   PHX_CHECK(reserved[3] < before[3] - 2 * bytes);
   std::array<NativeChunkEvidence, 2> evidence;
   {
-    NativeDetachedExecution child(batch.chunk_allowance(0), batch.chunk_owner(0));
+    NativeDetachedExecution child(batch.chunk_allowance(0), batch.arena_owner(0));
     native_execution_charge(3, 2);
     PHX_CHECK(child.execution().charge_external(2, 1));
     PHX_CHECK(native_execution_cavity(2));
@@ -121,7 +121,7 @@ void settlement_releases_unused_resources() {
     evidence[0] = child.evidence();
   }
   {
-    NativeDetachedExecution child(batch.chunk_allowance(1), batch.chunk_owner(1));
+    NativeDetachedExecution child(batch.chunk_allowance(1), batch.arena_owner(1));
     native_execution_charge(1, 1);
     PHX_CHECK(native_execution_cavity(3));
     native_execution_primitive_query();
@@ -151,7 +151,7 @@ void bound_defect(std::size_t resource) {
   PHX_CHECK(batch.status() == PHX_MC_OK);
   std::array<NativeChunkEvidence, 1> evidence;
   {
-    NativeDetachedExecution child(batch.chunk_allowance(0), batch.chunk_owner(0));
+    NativeDetachedExecution child(batch.chunk_allowance(0), batch.arena_owner(0));
     native_execution_charge(1, 1);
     bool refused = false;
     if (resource == 0 || resource == 1) {
@@ -205,7 +205,7 @@ void nested_parent_ticket_routing() {
       PHX_CHECK(batch.status() == PHX_MC_OK);
       std::array<NativeChunkEvidence, 2> evidence;
       for (std::size_t index = 0; index < evidence.size(); ++index) {
-        NativeDetachedExecution child(batch.chunk_allowance(index), batch.chunk_owner(index));
+        NativeDetachedExecution child(batch.chunk_allowance(index), batch.arena_owner(index));
         native_execution_charge(2, 1);
         PHX_CHECK(child.execution().charge_external(1, 1));
         PHX_CHECK(native_execution_cavity(1));
@@ -244,7 +244,7 @@ void workers_leave_parent_unchanged() {
                               NativeChunkAllowance{4, 3, 2, bytes}};
   NativeParallelBatch batch(allowances);
   PHX_CHECK(batch.status() == PHX_MC_OK);
-  std::array owners{batch.chunk_owner(0), batch.chunk_owner(1)};
+  std::array owners{batch.arena_owner(0), batch.arena_owner(1)};
   const auto counters = parent.evidence();
   const auto memory = parent.memory_evidence();
   std::array<NativeChunkEvidence, 2> evidence;
@@ -286,7 +286,7 @@ void arena_recycling_and_alignment() {
   PHX_CHECK(batch.status() == PHX_MC_OK);
   std::array<NativeChunkEvidence, 1> evidence;
   {
-    NativeDetachedExecution child(batch.chunk_allowance(0), batch.chunk_owner(0));
+    NativeDetachedExecution child(batch.chunk_allowance(0), batch.arena_owner(0));
     auto* resource = scratch_memory_resource();
     for (std::size_t iteration = 0; iteration < 100; ++iteration) {
       void* first = resource->allocate(32, 64);
@@ -317,10 +317,10 @@ void arena_outlives_batch_and_parent_scope() {
     const std::array allowances{NativeChunkAllowance{0, 0, 0, bytes}};
     NativeParallelBatch batch(allowances);
     PHX_CHECK(batch.status() == PHX_MC_OK);
-    arena_lifetime = batch.chunk_owner(0);
+    arena_lifetime = batch.arena_owner(0);
     std::array<NativeChunkEvidence, 1> evidence;
     {
-      NativeDetachedExecution child(batch.chunk_allowance(0), batch.chunk_owner(0));
+      NativeDetachedExecution child(batch.chunk_allowance(0), batch.arena_owner(0));
       escaped.emplace(4, 37);
       evidence[0] = child.evidence();
     }
@@ -345,7 +345,7 @@ void exception_evidence_releases_reservation() {
   const auto owner = scratch_memory_owner();
   std::array<NativeChunkEvidence, 1> evidence;
   {
-    NativeDetachedExecution child(batch.chunk_allowance(0), batch.chunk_owner(0));
+    NativeDetachedExecution child(batch.chunk_allowance(0), batch.arena_owner(0));
     try {
       NativeVector<uint64_t> temporary(4, 1);
       native_execution_charge(2, 1);
@@ -413,7 +413,7 @@ void timeout_preserves_completed_chunk_evidence() {
   PHX_CHECK(batch.status() == PHX_MC_OK);
   std::array<NativeChunkEvidence, 2> evidence;
   {
-    NativeDetachedExecution child(batch.chunk_allowance(0), batch.chunk_owner(0));
+    NativeDetachedExecution child(batch.chunk_allowance(0), batch.arena_owner(0));
     native_execution_charge(2, 1);
     evidence[0] = child.evidence();
   }
@@ -454,7 +454,7 @@ void implicit_parent_restores_affinity() {
     PHX_CHECK(batch.status() == PHX_MC_OK);
     std::array<NativeChunkEvidence, 1> evidence;
     {
-      NativeDetachedExecution child(batch.chunk_allowance(0), batch.chunk_owner(0));
+      NativeDetachedExecution child(batch.chunk_allowance(0), batch.arena_owner(0));
       native_execution_charge(2, 1);
       evidence[0] = child.evidence();
     }

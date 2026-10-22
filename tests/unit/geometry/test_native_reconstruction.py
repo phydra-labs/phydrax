@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.reconstruction import _poisson_octree as octree_owner
 from phydrax.units import METER
 from tests._support.import_isolation import run_without_imports
 
@@ -532,3 +533,107 @@ def test_native_reconstruction_loads_no_external_reconstruction_engine() -> None
         ("pyvista", "vtk", "vtkmodules", "scipy.spatial"),
         prepare="prepare_native_reconstruction",
     )
+
+
+def _adaptive_projection_tree() -> octree_owner._Octree:
+    points = np.asarray(
+        ((0.125, 0.125, 0.125), (0.375, 0.125, 0.125),
+         (0.75, 0.625, 0.5), (0.875, 0.875, 0.875)),
+        dtype=np.float64,
+    )
+    return octree_owner.build_octree(points, 0.125, 2, 10_000)
+
+
+@pytest.mark.parametrize("sites", ("interior", "boundary", "both"))
+def test_octree_normal_projection_matches_independent_constrained_mass(
+    sites: str,
+) -> None:
+    tree = _adaptive_projection_tree()
+    assert tree.hanging_count > 0
+    assert np.any(tree.sizes == 1) and np.any(tree.sizes > 1)
+    extent = (1 << tree.depth) + 1
+    lattice = np.column_stack(
+        (tree.node_keys // extent**2, tree.node_keys // extent % extent,
+         tree.node_keys % extent)
+    )
+    boundary = np.any((lattice == 0) | (lattice == extent - 1), axis=1)
+    assert np.any(boundary)
+    points = tree.origin + tree.spacing * lattice
+    if sites == "interior":
+        points = points[~boundary]
+    elif sites == "boundary":
+        points = points[boundary]
+    normals = np.eye(3, dtype=np.float64)[np.arange(len(points)) % 3]
+    areas = (np.arange(len(points), dtype=np.float64) + 1) / 64
+    leaves, weights = tree.locate(points)
+    widths = tree.spacing * tree.sizes.astype(np.float64)
+    actual = octree_owner._project_sample_normals(
+        tree, leaves, weights, areas, normals, widths
+    )
+    # Independent dense P and scalar leaf/sample assembly, not the production
+    # restrict/prolong/bincount implementation.
+    prolongation = np.zeros((tree.node_count, tree.free_count), dtype=np.float64)
+    for node, free, weight in zip(
+        tree.prolongation_nodes, tree.prolongation_free,
+        tree.prolongation_weights, strict=True,
+    ):
+        prolongation[node, free] += weight
+    np.testing.assert_array_equal(prolongation.sum(axis=1), np.ones(tree.node_count))
+    mass = np.zeros(tree.node_count)
+    for nodes, width in zip(tree.leaf_nodes, widths, strict=True):
+        for node in nodes:
+            mass[node] += width**3 / 8
+    assert np.all(mass > 0) and np.all(mass[boundary] > 0)
+    load = np.zeros((tree.node_count, 3))
+    for leaf, basis, area, normal in zip(leaves, weights, areas, normals, strict=True):
+        for node, weight in zip(tree.leaf_nodes[leaf], basis, strict=True):
+            load[node] += weight * area * normal
+    free_mass = prolongation.T @ mass
+    expected = prolongation @ ((prolongation.T @ load) / free_mass[:, None])
+    np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-14)
+    np.testing.assert_allclose(
+        mass @ actual, np.sum(areas[:, None] * normals, axis=0),
+        rtol=1e-13, atol=1e-14,
+    )
+
+
+def test_octree_normal_projection_reproduces_constant_on_all_adaptive_nodes() -> None:
+    tree = _adaptive_projection_tree()
+    extent = (1 << tree.depth) + 1
+    lattice = np.column_stack(
+        (tree.node_keys // extent**2, tree.node_keys // extent % extent,
+         tree.node_keys % extent)
+    )
+    points = tree.origin + tree.spacing * lattice
+    widths = tree.spacing * tree.sizes.astype(np.float64)
+    mass = np.zeros(tree.node_count)
+    for nodes, width in zip(tree.leaf_nodes, widths, strict=True):
+        for node in nodes:
+            mass[node] += width**3 / 8
+    leaves, weights = tree.locate(points)
+    normals = np.broadcast_to(np.asarray((1.0, 0.0, 0.0)), (len(points), 3))
+    actual = octree_owner._project_sample_normals(
+        tree, leaves, weights, mass, normals, widths
+    )
+    np.testing.assert_allclose(actual, normals, rtol=1e-13, atol=1e-14)
+    volume = (tree.spacing * (1 << tree.depth)) ** 3
+    np.testing.assert_allclose(mass @ actual, (volume, 0, 0), rtol=1e-13, atol=1e-14)
+
+
+def test_uniform_interior_normal_projection_preserves_original_formula() -> None:
+    centers = (np.arange(4, dtype=np.float64) + 0.5) / 4
+    cloud = np.stack(np.meshgrid(centers, centers, centers, indexing="ij"), axis=-1).reshape((-1, 3))
+    tree = octree_owner.build_octree(cloud, 0.25, 0, 10_000)
+    assert tree.hanging_count == 0 and np.all(tree.sizes == 1)
+    points = np.asarray(((0.375, 0.375, 0.375),), dtype=np.float64)
+    normals = np.asarray(((1.0, 0.0, 0.0),), dtype=np.float64)
+    areas = np.asarray((0.125,), dtype=np.float64)
+    leaves, weights = tree.locate(points)
+    widths = tree.spacing * tree.sizes.astype(np.float64)
+    original = octree_owner.splat_field(
+        tree.leaf_nodes[leaves], weights,
+        areas[:, None] * normals / widths[leaves, None] ** 3, tree.node_count,
+    )
+    actual = octree_owner._project_sample_normals(tree, leaves, weights, areas, normals, widths)
+    bits = np.dtype((np.void, actual.dtype.itemsize))
+    np.testing.assert_array_equal(actual.view(bits), original.view(bits))

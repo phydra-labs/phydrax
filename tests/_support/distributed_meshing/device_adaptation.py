@@ -270,20 +270,14 @@ def _public_preparation(
         ),
     )
     partitioned = partition_adaptive_simplex(prepared)
-    first = refine_adaptive_simplex_parts(
-        partitioned.layout,
-        partitioned.parts,
-        partitioned.states,
-        partitioned.cell_marks(marks),
-    )
+    first = refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), partitioned.states,
+    partitioned.cell_marks(marks),)
     return source, partition, marks, prepared, partitioned, first
 
 
 def public_capacity() -> dict[str, Any]:
     _, _, marks, _, partitioned, first = _public_preparation(True)
-    refused = refine_adaptive_simplex_parts(
-        partitioned.layout, partitioned.parts, first.state, partitioned.cell_marks(marks)
-    )
+    refused = refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), first.state, partitioned.cell_marks(marks))
     category = None
     try:
         commit_partitioned_adaptive_simplex(partitioned, first.state)
@@ -305,9 +299,7 @@ def public_identity() -> dict[str, Any]:
     source, partition, marks, prepared, partitioned, first = _public_preparation(False)
     again = np.asarray(first.state.mesh.cell_active).copy()
     again[1:] = False
-    second = refine_adaptive_simplex_parts(
-        partitioned.layout, partitioned.parts, first.state, again
-    )
+    second = refine_adaptive_simplex_parts(partitioned.layout, type(partitioned).execution_parts(partitioned), first.state, again)
     result = commit_partitioned_adaptive_simplex(partitioned, second.state)
     held = np.asarray(first.state.mesh.cell_ids[0])[again[0]]
     single = refine_adaptive_simplex(

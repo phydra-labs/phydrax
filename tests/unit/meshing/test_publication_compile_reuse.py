@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from itertools import combinations
+
 import jax
 import numpy as np
 import pytest
@@ -13,17 +15,23 @@ from phydrax.discretization import (
     CellGeometrySpec,
     CellGeometryStorageProjection,
     CellMesh,
+    CellMeshStorage,
+    FiniteElementFieldSpec,
+    FiniteElementPlan,
+    form_element,
+    lagrange_element,
 )
 from phydrax.discretization._adaptive_simplex import MaskedSimplexMesh
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.discretization.fem._de_rham import _boundary_entity_closure
 from phydrax.geometry._collective_domain_coverage import _epoch_cell_inventory
 from phydrax.meshing import _device_adaptation as adaptation_owner
+from phydrax.meshing import _result as result_owner
 from phydrax.meshing._collective_geometry import _geometry_bank_membership
 from phydrax.meshing._collective_organization import _original_vertex_ancestry_values
 from phydrax.meshing._device_adaptation import (
     _compact_logical_values,
     _first_appearance_order,
-    _logical_boundary_masks,
     _logical_multiblock_topology_id,
     _LogicalPresentation,
     canonical_rows,
@@ -34,6 +42,7 @@ from phydrax.meshing._publication_lowering import (
     _addressable_arrays,
     _project,
     addressable,
+    logical_boundary_masks,
 )
 from tests._support import cell_meshes
 from tests._support.forced_devices import run_on_forced_devices
@@ -68,7 +77,7 @@ def test_identical_publication_tables_compile_nothing_when_warm() -> None:
             lexicographic_bound(searchable, keys, False),
             lexicographic_bound(searchable, keys, True),
             _first_appearance_order(keys, valid, vertices, 3),
-            _logical_boundary_masks(cells, 1, tables, (3, 3, 1)),
+            logical_boundary_masks(cells, 1, tables, (3, 3, 1)),
         )
 
     jax.clear_caches()
@@ -143,6 +152,7 @@ def test_second_identical_collective_publication_compiles_zero(source_kind: str)
     assert receipt["warm_count"] == 0, receipt["warm_callsites"]
     assert receipt["raw_partition_warm_count"] == 0
     assert len(receipt["result_ids"]) == 2
+    assert receipt["constructor_fields_preserved"]
 
 
 def test_ancestry_publication_keeps_rank_and_epoch_identifiers_dynamic() -> None:
@@ -369,18 +379,21 @@ def test_publication_projection_keeps_accepted_counts_dynamic() -> None:
         jax.device_put(np.asarray(rows, dtype=np.int64))
         for rows in (
             ((0,), (1,), (2,), (3,)),
-            ((0, 1), (0, 2), (1, 2), (-1, -1)),
+            ((0, 1), (0, 2), (1, 2), (1, 3), (2, 3)),
             ((11,), (13,)),
         )
     )
     identities = tuple(
         jax.device_put(np.asarray(values, dtype=np.int64))
-        for values in ((0, 1, 2, 3), (0, 1, 2, -1), (11, 13))
+        for values in ((0, 1, 2, 3), (0, 1, 2, 3, 4), (11, 13))
     )
     owners = tuple(
         jax.device_put(np.zeros(value.shape, dtype=np.int32)) for value in identities
     )
     arrays = {
+        "cell_vertices": jax.device_put(
+            np.asarray(((0, 1, 2), (1, 3, 2)), dtype=np.int64)
+        ),
         "closure/cell_vertices": jax.device_put(
             np.asarray((((0, 1, 2),), ((0, 1, 2),)), dtype=np.int64)
         ),
@@ -413,7 +426,7 @@ def test_publication_projection_keeps_accepted_counts_dynamic() -> None:
                 tables,
                 identities,
                 owners,
-                counts=(4, 3, 2),
+                counts=(4, 5, 2),
                 vertex_capacity=4,
                 organization_degrees=(("marker/membership", 0),),
             )
@@ -421,7 +434,166 @@ def test_publication_projection_keeps_accepted_counts_dynamic() -> None:
     assert compiler.count == 0
     assert bool(valid) and bool(next_valid)
     for name, value in first.items():
-        np.testing.assert_array_equal(repeated[name], value)
+        if name == "entity/1/physical_boundary":
+            np.testing.assert_array_equal(value, ((True, True, True),) * 2)
+            np.testing.assert_array_equal(repeated[name], ((True, True, False),) * 2)
+        else:
+            np.testing.assert_array_equal(repeated[name], value)
+
+
+def test_restart_publication_fuses_global_incidence_and_retains_refusals() -> None:
+    ids = jax.device_put(np.asarray((11, 23, -1), dtype=np.int64))
+    cells = jax.device_put(np.asarray(((0, 1, 2), (1, 3, 2), (-1, -1, -1)), dtype=np.int64))
+    facets = jax.device_put(
+        np.asarray(((0, 1), (0, 2), (1, 2), (1, 3), (2, 3), (-1, -1)), dtype=np.int64)
+    )
+    targets = jax.device_put(np.asarray(((11, 23, -1),), dtype=np.int64))
+    first_active = jax.device_put(np.asarray(((True, False, False),)))
+    next_active = jax.device_put(np.asarray(((True, True, False),)))
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(
+            adaptation_owner._restart_publication_values(
+                ids, cells, facets, 1, 3, targets, first_active
+            )
+        )
+    assert cold.count == 1
+    np.testing.assert_array_equal(first[0], (((True, True, True), (False,) * 3, (False,) * 3),))
+    np.testing.assert_array_equal(first[1], ((11, -1, -1),))
+    assert bool(first[2]) and bool(first[3])
+    with CompileCounter() as warm:
+        second = jax.block_until_ready(
+            adaptation_owner._restart_publication_values(
+                ids, cells, facets, 2, 5, targets, next_active
+            )
+        )
+    assert warm.count == 0
+    np.testing.assert_array_equal(
+        second[0], (((False, True, True), (True, False, True), (False,) * 3),)
+    )
+    np.testing.assert_array_equal(second[1], ((11, 23, -1),))
+    assert bool(second[2]) and bool(second[3])
+    missing_cells = adaptation_owner._restart_publication_values(
+        ids, cells, facets, 2, 5, targets.at[0, 1].set(99), next_active
+    )
+    assert not bool(missing_cells[2])
+    missing_facets = adaptation_owner._restart_publication_values(
+        ids, cells, facets, 2, 2, targets, next_active
+    )
+    assert not bool(missing_facets[3])
+
+
+@pytest.mark.parametrize("degree", (1, 2))
+@pytest.mark.parametrize("order", ((1, 5, 4), (4, 1, 5)))
+@pytest.mark.parametrize("family", ("H1", "Hdiv", "Hcurl"))
+def test_global_boundary_projection_retains_nonresident_physical_facets(
+    degree: int, order: tuple[int, ...], family: str
+) -> None:
+    points = np.asarray([(x, y) for y in (0.0, 0.5, 1.0) for x in (0.0, 0.5, 1.0)])
+    vertex_ids = np.asarray((97, 43, 211, 19, 151, 73, 307, 131, 59), dtype=np.int64)
+    cells = np.asarray(
+        [
+            triangle
+            for lower in (0, 1, 3, 4)
+            for triangle in ((lower, lower + 1, lower + 4), (lower, lower + 4, lower + 3))
+        ],
+        dtype=np.int32,
+    )
+    dense = CellMesh(
+        points,
+        (CellBlock("cells", "triangle", cells),),
+        vertex_global_ids=vertex_ids,
+    )
+    tables, identities = [], []
+    for dimension in range(3):
+        keys = entity_keys(dense, dimension)
+        indices = np.lexsort(keys.T[::-1])
+        tables.append(jax.device_put(keys[indices]))
+        identities.append(jax.device_put(np.asarray(dense.entity_set(dimension).entity_ids)[indices]))
+    counts = tuple(entity.count for entity in dense.topology.entity_sets)
+    selected = np.asarray(order)
+    # This resident triangle touches the global boundary only at two vertices.
+    # None of its three edges is a physical facet of the global mesh.
+    cell_id = np.asarray(dense.blocks[0].global_ids)[3]
+    arrays = {
+        "cell_vertices": jax.device_put(vertex_ids[cells]),
+        "coordinates": jax.device_put(points[np.argsort(vertex_ids)]),
+        "closure/cell_vertices": jax.device_put(vertex_ids[selected][None, None, :]),
+        "closure/cell_ids": jax.device_put(np.asarray(((cell_id,),))),
+        "closure/cell_valid": jax.device_put(np.ones((1, 1), dtype=np.bool_)),
+        "closure/cell_owner": jax.device_put(np.zeros((1, 1), dtype=np.int32)),
+    }
+    projected, passed = _project(
+        arrays,
+        tuple(tables),
+        tuple(identities),
+        tuple(jax.device_put(np.zeros(value.shape, dtype=np.int32)) for value in identities),
+        counts=counts,
+        vertex_capacity=3,
+        organization_degrees=(),
+    )
+    assert bool(passed)
+    probe = CellMesh(
+        points[selected],
+        (
+            CellBlock(
+                "cells",
+                "triangle",
+                np.asarray(((0, 1, 2),)),
+                global_ids=np.asarray((cell_id,), dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=vertex_ids[selected],
+    )
+    ids, boundary = [], []
+    for dimension in range(3):
+        active = np.asarray(projected[f"entity/{dimension}/valid"])[0]
+        keys = np.asarray(projected[f"entity/{dimension}/keys"])[0][active]
+        rows = np.asarray(
+            key_positions(jax.device_put(keys), jax.device_put(entity_keys(probe, dimension)))
+        )
+        ids.append(np.asarray(projected[f"entity/{dimension}/ids"])[0][active][rows])
+        boundary.append(
+            np.asarray(projected[f"entity/{dimension}/physical_boundary"])[0][active][rows]
+        )
+    assert not np.any(boundary[1])
+    np.testing.assert_array_equal(boundary[0], selected != 4)
+    storage = CellMeshStorage(
+        counts,
+        ids,
+        tuple(np.zeros(value.shape, dtype=np.int32) for value in ids),
+        partition_index=0,
+        partition_count=1,
+        logical_topology_id=dense.topology_id,
+        logical_geometry_id=dense.geometry_id,
+        evidence_id=dense.topology_id,
+        logical_arrays=(("coordinates", dense.coordinates),),
+        local_coordinates=probe.coordinates,
+        local_blocks=probe.blocks,
+        local_physical_boundary_entities=boundary,
+    )
+    restored = CellMeshStorage.from_stored_fields(storage)
+    assert restored.storage_id == storage.storage_id
+    mesh = CellMesh(probe.coordinates, probe.blocks, storage=restored)
+    trace_boundary = _boundary_entity_closure(mesh, None)
+    for actual, expected_mask in zip(trace_boundary, boundary, strict=True):
+        np.testing.assert_array_equal(actual, expected_mask)
+    element = (
+        lagrange_element("triangle", degree)
+        if family == "H1"
+        else form_element(
+            "triangle",
+            1,
+            degree,
+            twist="twisted" if family == "Hdiv" else "untwisted",
+            proxy="flux" if family == "Hdiv" else "circulation",
+        )
+    )
+    dofs = FiniteElementPlan(mesh, FiniteElementFieldSpec("u", element)).prepare().dof_maps[0]
+    expected = np.zeros(dofs.boundary_dof_mask.shape, dtype=np.bool_)
+    if family == "H1":
+        expected[:3] = selected != 4
+    np.testing.assert_array_equal(dofs.boundary_dof_mask, expected)
 
 
 def test_retained_protection_kernels_preserve_codes_and_reuse_dynamic_scopes() -> None:
@@ -583,3 +755,277 @@ def test_addressable_publication_arrays_fuse_local_projection_and_reuse_indices(
         assert np.asarray(actual).tobytes() == np.asarray(expected).tobytes()
     with pytest.raises(ValueError, match="process-addressable"):
         _addressable_arrays(values, 2)
+
+
+def test_block_admission_fuses_primitives_and_keeps_block_count_dynamic() -> None:
+    identifiers = jax.device_put(np.asarray(((5, 7, 9, 11, -1, 13),), dtype=np.int64))
+    active = jax.device_put(np.asarray(((True, False, False, False, False, True),)))
+    retired = jax.device_put(np.asarray(((False, False, True, True, False, False),)))
+    blocks = jax.device_put(np.asarray(((0, 1, -9, -8, -7, 1),), dtype=np.int32))
+    invalid = jax.device_put(np.asarray(((-1, 1, -9, -8, -7, 1),), dtype=np.int32))
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        passed = result_owner._invalid_collective_blocks(
+            identifiers, active, retired, blocks, 2
+        ).block_until_ready()
+    with CompileCounter() as warm:
+        reduced = result_owner._invalid_collective_blocks(
+            identifiers, active, retired, blocks, 1
+        ).block_until_ready()
+        altered = result_owner._invalid_collective_blocks(
+            identifiers, active, retired, invalid, 2
+        ).block_until_ready()
+    assert cold.count == 1
+    assert warm.count == 0
+    assert not bool(passed)
+    assert bool(reduced) and bool(altered)
+
+
+def test_uniform_owner_join_reuses_compilation_and_checks_every_source_leaf() -> None:
+    raw = np.asarray(((11, 13, 21, -1),) * 2, dtype=np.int64)
+    published = jax.device_put(np.asarray(((5, 21, -1, -1),) * 2, dtype=np.int64))
+    active = jax.device_put(np.asarray(((True, True, False, False),) * 2))
+    owners = np.asarray(((3, 1, 2, -1), (1, 0, 3, -1)), dtype=np.int32)
+    roots = jax.device_put(np.asarray((5,), dtype=np.int64))
+    siblings = jax.device_put(np.asarray(((11, 13),), dtype=np.int64))
+    missing_ids = raw.copy()
+    missing_ids[1, 1] = 17
+    missing_owners = owners.copy()
+    missing_owners[0, 1] = -1
+    variants = tuple(
+        (jax.device_put(ids), jax.device_put(values))
+        for ids, values in (
+            (raw, owners),
+            (raw, owners + np.int32(2)),
+            (missing_ids, owners),
+            (raw, missing_owners),
+        )
+    )
+
+    def join(index: int) -> tuple[jax.Array, jax.Array]:
+        ids, values = variants[index]
+        return result_owner._uniform_publication_owner_values(
+            ids, published, active, values, roots, siblings
+        )
+
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first, missing = jax.block_until_ready(join(0))
+    with CompileCounter() as warm:
+        changed, changed_missing = jax.block_until_ready(join(1))
+        _, absent_child = jax.block_until_ready(join(2))
+        _, absent_owner = jax.block_until_ready(join(3))
+    assert cold.count == 1
+    assert warm.count == 0
+    assert not bool(missing) and not bool(changed_missing)
+    assert bool(absent_child) and bool(absent_owner)
+    expected = np.asarray(((1, 2, -1, -1), (0, 3, -1, -1)), dtype=np.int32)
+    assert np.asarray(first).tobytes() == expected.tobytes()
+    expected[:, :2] += 2
+    assert np.asarray(changed).tobytes() == expected.tobytes()
+
+
+@pytest.mark.parametrize("capacity", (4, 6))
+def test_class_content_order_preserves_allocated_tail_bytes(capacity: int) -> None:
+    identifiers = np.asarray(((31, -1, 11), (23, 19, -1)), dtype=np.int64)
+    active = np.asarray(((True, False, True), (True, False, False)))
+    changed_active = np.asarray(((False, False, True), (True, True, False)))
+    classes = np.arange(6, dtype=np.int32).reshape((2, 3))
+    facets = np.arange(18, dtype=np.int32).reshape((2, 3, 3))
+    arrays = tuple(jax.device_put(value) for value in (identifiers, classes, facets))
+    masks = tuple(jax.device_put(value) for value in (active, changed_active))
+
+    def prepare(index: int) -> tuple[jax.Array, jax.Array]:
+        ids, cells, faces = arrays
+        return result_owner._publication_class_values(
+            ids, masks[index], cells, faces, capacity=capacity
+        )
+
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(prepare(0))
+    with CompileCounter() as warm:
+        changed = jax.block_until_ready(prepare(1))
+    assert cold.count == 1
+    assert warm.count == 0
+    for result, mask in ((first, active), (changed, changed_active)):
+        order = np.argsort(
+            np.where(mask.ravel(), identifiers.ravel(), np.iinfo(np.int64).max),
+            kind="stable",
+        )[:capacity]
+        for actual, expected in zip(
+            result, (classes.ravel()[order], facets.reshape((-1, 3))[order]), strict=True
+        ):
+            assert np.asarray(actual).tobytes() == expected.tobytes()
+
+
+@pytest.mark.parametrize("width,degree", ((3, 1), (4, 1), (4, 2)))
+def test_entity_preparation_keeps_canonical_padding_and_epoch_counts_dynamic(
+    width: int, degree: int
+) -> None:
+    rows = np.asarray(
+        (tuple(range(width)), tuple(range(1, width + 1)), (0,) * width), dtype=np.int64
+    )
+    owners = np.asarray((1, 0, -1), dtype=np.int32)
+    device_rows, device_owners = jax.device_put(rows), jax.device_put(owners)
+    columns = np.asarray(tuple(combinations(range(width), degree + 1)), dtype=np.int32)
+    keys = np.sort(rows[:, columns], axis=2).reshape((-1, degree + 1))
+
+    def prepare(count: int) -> tuple[jax.Array, ...]:
+        return adaptation_owner._logical_entity_values(
+            device_rows, count, device_owners, degree=degree
+        )
+
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(prepare(2))
+    with CompileCounter() as warm:
+        changed = jax.block_until_ready(prepare(1))
+    assert cold.count == 1
+    assert warm.count == 0
+    for result, count in ((first, 2), (changed, 1)):
+        valid = np.repeat(np.arange(rows.shape[0]) < count, columns.shape[0])
+        sentinel = np.iinfo(np.int64).max
+        padded = np.where(valid[:, None], keys, sentinel)
+        order = np.lexsort(padded.T[::-1])
+        ordered = padded[order]
+        fresh = np.concatenate(
+            (np.asarray((True,)), np.any(ordered[1:] != ordered[:-1], axis=1))
+        ) & np.all(ordered != sentinel, axis=1)
+        used = np.count_nonzero(fresh)
+        selected = np.full(keys.shape[0], keys.shape[0] - 1, dtype=np.int64)
+        selected[:used] = np.flatnonzero(fresh)
+        table = np.where(
+            (np.arange(keys.shape[0]) < used)[:, None], ordered[selected], -1
+        )
+        routing = np.repeat(owners, columns.shape[0])[order[selected]]
+        assert int(result[2]) == used
+        assert np.asarray(result[0]).tobytes() == table.tobytes()
+        assert np.asarray(result[1]).tobytes() == routing.tobytes()
+
+
+def test_presentation_group_join_counts_only_valid_dynamic_prefix() -> None:
+    table = jax.device_put(np.asarray(((10,), (20,)), dtype=np.int64))
+    groups = jax.device_put(np.asarray((1, 0), dtype=np.int64))
+    keys = jax.device_put(np.asarray(((20,), (10,), (-1,), (20,)), dtype=np.int64))
+    order = jax.device_put(np.asarray((1, 3, 0, 2), dtype=np.int64))
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(
+            adaptation_owner._presentation_group_values(table, groups, keys, order, 3)
+        )
+    with CompileCounter() as warm:
+        changed = jax.block_until_ready(
+            adaptation_owner._presentation_group_values(table, groups, keys, order, 1)
+        )
+        missing = jax.block_until_ready(
+            adaptation_owner._presentation_group_values(table, groups, keys, order, 4)
+        )
+    assert cold.count == 1
+    assert warm.count == 0
+    np.testing.assert_array_equal(first[0], (1, 0, 0, -1))
+    np.testing.assert_array_equal(first[1], (True, True, True, False))
+    np.testing.assert_array_equal(first[2], (2, 1))
+    np.testing.assert_array_equal(changed[2], (0, 1))
+    # An unknown active presentation still leaves the host coverage test short.
+    assert int(np.sum(missing[2])) == 3
+
+
+def test_closure_coordinate_join_preserves_bits_and_rejects_active_missing_vertex() -> None:
+    identifiers = jax.device_put(np.asarray(((10,), (20,), (30,), (-1,)), dtype=np.int64))
+    bits = np.asarray(
+        ((0, 0x8000000000000000), (0x7FF8000000000001, 0x7FF8000000000002),
+         (0x3FF0000000000000, 0), (0, 0)),
+        dtype=np.uint64,
+    )
+    coordinates = jax.device_put(bits.view(np.float64))
+    vertices = jax.device_put(np.asarray((((20, 30, 10), (99, -1, -1)),), dtype=np.int64))
+    inactive = jax.device_put(np.asarray(((True, False),)))
+    active = jax.device_put(np.asarray(((True, True),)))
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first, missing = jax.block_until_ready(
+            adaptation_owner._canonical_neighborhood_coordinate_values(
+                identifiers, coordinates, vertices, inactive
+            )
+        )
+    with CompileCounter() as warm:
+        repeated, rejected = jax.block_until_ready(
+            adaptation_owner._canonical_neighborhood_coordinate_values(
+                identifiers, coordinates, vertices, active
+            )
+        )
+    assert cold.count == 1
+    assert warm.count == 0
+    assert not bool(missing) and bool(rejected)
+    expected = bits[np.asarray((((1, 2, 0), (0, 0, 0)),))]
+    assert np.asarray(first).tobytes() == expected.tobytes()
+    assert np.asarray(repeated).tobytes() == expected.tobytes()
+
+
+def test_entity_receipt_leaf_ordering_fuses_gathers_without_changing_bytes() -> None:
+    identifiers = tuple(
+        jax.device_put(np.asarray(value, dtype=np.int64))
+        for value in ((11, 7, -1), (29, 23, 19, -1))
+    )
+    masks = tuple(
+        jax.device_put(np.asarray(value, dtype=np.bool_))
+        for value in ((True, False, False), (False, True, True, False))
+    )
+    orders = tuple(
+        jax.device_put(np.asarray(value, dtype=np.int64))
+        for value in ((1, 0, 2), (2, 1, 0, 3))
+    )
+    changed_orders = tuple(
+        jax.device_put(np.arange(value.shape[0], dtype=np.int64)) for value in identifiers
+    )
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        first = jax.block_until_ready(
+            adaptation_owner._ordered_entity_set_values(identifiers, masks, orders)
+        )
+    with CompileCounter() as warm:
+        changed = jax.block_until_ready(
+            adaptation_owner._ordered_entity_set_values(identifiers, masks, changed_orders)
+        )
+    assert cold.count == 1
+    assert warm.count == 0
+    for result, selected in ((first, orders), (changed, changed_orders)):
+        for (ids, boundary, active), source, mask, order in zip(
+            result, identifiers, masks, selected, strict=True
+        ):
+            assert np.asarray(ids).tobytes() == np.asarray(source)[order].tobytes()
+            assert np.asarray(boundary).tobytes() == np.asarray(mask)[order].tobytes()
+            np.testing.assert_array_equal(active, np.ones(source.shape, dtype=np.bool_))
+
+
+def test_counter_preparation_preserves_exact_work_and_monotonicity_checks() -> None:
+    from phydrax.discretization._adaptive_simplex import AdaptiveSimplexCounter
+
+    baseline = np.arange(20, dtype=np.int64).reshape((2, 10))
+    counters = baseline + 2
+    negative = baseline.copy()
+    negative[0, 0] = -1
+    backwards = counters.copy()
+    backwards[1, 9] = baseline[1, 9] - 1
+    inputs = tuple(
+        (jax.device_put(before), jax.device_put(after))
+        for before, after in ((baseline, counters), (negative, counters), (baseline, backwards))
+    )
+    jax.clear_caches()
+    with CompileCounter() as cold:
+        valid, work = jax.block_until_ready(
+            adaptation_owner._partitioned_counter_values(*inputs[0])
+        )
+    with CompileCounter() as warm:
+        invalid_baseline, _ = jax.block_until_ready(
+            adaptation_owner._partitioned_counter_values(*inputs[1])
+        )
+        invalid_delta, _ = jax.block_until_ready(
+            adaptation_owner._partitioned_counter_values(*inputs[2])
+        )
+    assert cold.count == 1
+    assert warm.count == 0
+    assert bool(valid) and not bool(invalid_baseline) and not bool(invalid_delta)
+    index = AdaptiveSimplexCounter.BISECTIONS
+    assert int(work) == int(np.sum(counters[:, index] - baseline[:, index]))

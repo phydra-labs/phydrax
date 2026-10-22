@@ -21,10 +21,13 @@ import phydrax.discretization._coordinate_budget as _dependency_phydrax_discreti
 import phydrax.geometry._certified_implicit as _owner_phydrax_geometry__certified_implicit
 import phydrax.geometry._domain_boundary as domain_boundary_owner
 import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._domain_planar_boundary as cad_domain_owner
 import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._mapped_reference_coverage as mapped_reference_coverage_owner
 import phydrax.geometry._mapped_reference_domain as _dependency_phydrax_geometry__mapped_reference_domain
 import phydrax.geometry._source_boundary_records as source_boundary_records_owner
 import phydrax.geometry._source_fidelity as source_fidelity_owner
+import phydrax.geometry._surface_source_support as surface_source_support_owner
 import phydrax.geometry.implicit._analytic_profile as _owner_phydrax_geometry_implicit__analytic_profile
 import phydrax.meshing._audit as _dependency_phydrax_meshing__audit
 import phydrax.meshing._certification as _owner_phydrax_meshing__certification
@@ -37,6 +40,7 @@ from .._fingerprint import (
     canonical_fingerprint,
     tree_content_equal,
 )
+from .._host_storage import immutable_host_array
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_integer
@@ -128,11 +132,14 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
 
     Source fidelity and declared approximation-domain coverage have distinct
     identities. Renewal re-evaluates both obligations on the target geometry.
+    ``cell_global_ids`` is a read-only C-contiguous int64 host array of the
+    bound mesh's cell IDs in block order; ``request_id`` hashes its content.
     """
 
     schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule
     domain: (
         domain_coverage_owner.PiecewiseLinearDomain
+        | cad_domain_owner.CadSourceDomain
         | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
         | None
     )
@@ -148,12 +155,15 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         ...,
     ]
     limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    mapped_source_evidence: (
+        mapped_reference_coverage_owner.MappedReferenceSourceEvidence | None
+    )
     fidelity_tolerance: float | None = eqx.field(static=True)
     fidelity_sample_order: int = eqx.field(static=True)
     mesh_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
-    cell_global_ids: tuple[int, ...] = eqx.field(static=True)
+    cell_global_ids: np.ndarray
     entity_set_ids: tuple[tuple[int, str], ...] = eqx.field(static=True)
     source_id: str | None = eqx.field(static=True)
     source_revision: str | None = eqx.field(static=True)
@@ -170,6 +180,7 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         *,
         domain: domain_coverage_owner.PiecewiseLinearDomain
         | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+        | cad_domain_owner.CadSourceDomain
         | None = None,
         cell_regions: ArrayLike | None = None,
         source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
@@ -186,6 +197,8 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             ],
             ...,
         ] = (),
+        mapped_source_evidence: mapped_reference_coverage_owner.MappedReferenceSourceEvidence
+        | None = None,
         budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
         | None = None,
     ) -> None:
@@ -261,6 +274,28 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             for (query, _, tolerance), selected in zip(scopes, device_scopes, strict=True)
         )
         self.limits = limits_
+        if isinstance(
+            self.domain,
+            _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+        ):
+            if mapped_source_evidence is None and budget is not None:
+                mapped_source_evidence = (
+                    mapped_reference_coverage_owner.retained_mapped_reference_source_evidence(
+                        self.domain, limits_, budget=budget
+                    )
+                )
+            if mapped_source_evidence is not None:
+                mapped_source_evidence.require_live(self.domain, limits_)
+                if budget is not None:
+                    mapped_reference_coverage_owner.retain_mapped_reference_source_evidence(
+                        mapped_source_evidence, self.domain, limits_, budget=budget
+                    )
+        elif mapped_source_evidence is not None:
+            raise ValueError(
+                "MeshCertificationInputs.mapped_source_evidence must bind a mapped "
+                "reference domain; got another domain kind."
+            )
+        self.mapped_source_evidence = mapped_source_evidence
         self.fidelity_tolerance = fidelity_tolerance
         self.fidelity_sample_order = int(fidelity_sample_order)
         self.mesh_id = mesh.mesh_id
@@ -274,7 +309,9 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             (dimension, mesh.entity_set(dimension).entity_set_id)
             for dimension in range(mesh.topological_dimension + 1)
         )
-        self.cell_global_ids = tuple(identifiers.tolist())
+        self.cell_global_ids = immutable_host_array(
+            np.ascontiguousarray(identifiers, dtype=np.int64)
+        )
         self.source_id = None if source is None else source.source_id
         self.source_revision = None if source is None else source.source_revision
         self.domain_id = None if domain is None else domain.domain_id
@@ -302,6 +339,15 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             raise ValueError(
                 "MeshCertificationInputs.policy must match its reconstructed policy; got changed policy fields"
             )
+        cell_ids = self.cell_global_ids
+        if (
+            type(cell_ids) is not np.ndarray
+            or cell_ids.dtype != np.int64
+            or cell_ids.ndim != 1
+        ):
+            raise TypeError(
+                "MeshCertificationInputs.cell_global_ids must be a one-dimensional int64 host array; got another cell-ID representation"
+            )
         if _request_identity(self) != self.request_id:
             raise ValueError(
                 f"MeshCertificationInputs.request_id must match its assignments and bindings; got {self.request_id!r}"
@@ -309,6 +355,16 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         domain = self.domain
         if domain is not None:
             _validate_domain_integrity(domain, budget=budget)
+        if self.mapped_source_evidence is not None:
+            if not isinstance(
+                domain,
+                _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+            ):
+                raise ValueError(
+                    "MeshCertificationInputs.mapped_source_evidence must retain its "
+                    "mapped reference domain."
+                )
+            self.mapped_source_evidence.require_live(domain, self.limits)
         source = self.source
         if source is not None:
             _validate_query_integrity(source, budget=budget)
@@ -419,6 +475,7 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             limits=self.limits,
             junction_vertices=junctions,
             scoped_fidelity=tuple(scoped),
+            mapped_source_evidence=self.mapped_source_evidence,
             budget=budget,
         )
 
@@ -440,30 +497,33 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
     ) -> _owner_phydrax_meshing__certification.MeshCertificationReport:
         """Renew acceptance using the source request and target evidence."""
 
-        request = self.transition_request(
-            mesh,
-            geometry,
-            lineage=lineage,
-            cell_regions=cell_regions,
-            junction_vertices=junction_vertices,
-            budget=budget,
-        )
-        return _owner_phydrax_meshing__certification.certify_meshing_acceptance(
-            mesh,
-            geometry,
-            audit,
-            schedule=request.schedule,
-            domain=request.domain,
-            cell_regions=request.cell_regions,
-            source=request.source,
-            fidelity_tolerance=request.fidelity_tolerance,
-            fidelity_sample_order=request.fidelity_sample_order,
-            limits=request.limits,
-            junction_vertices=request.junction_vertices,
-            scoped_fidelity=request.scoped_fidelity,
-            prepared=prepared,
-            budget=budget,
-        )
+        with _dependency_phydrax_geometry__embedding_state.coordinate_certificate_request(
+            self.limits, budget=budget
+        ) as ledger:
+            request = self.transition_request(
+                mesh,
+                geometry,
+                lineage=lineage,
+                cell_regions=cell_regions,
+                junction_vertices=junction_vertices,
+                budget=ledger,
+            )
+            return _owner_phydrax_meshing__certification.certify_meshing_acceptance(
+                mesh,
+                geometry,
+                audit,
+                schedule=request.schedule,
+                domain=request.domain,
+                cell_regions=request.cell_regions,
+                source=request.source,
+                fidelity_tolerance=request.fidelity_tolerance,
+                fidelity_sample_order=request.fidelity_sample_order,
+                limits=request.limits,
+                junction_vertices=request.junction_vertices,
+                scoped_fidelity=request.scoped_fidelity,
+                prepared=prepared,
+                budget=ledger,
+            )
 
 
 def _renew_transition_scopes(
@@ -529,43 +589,65 @@ def _renew_transition_regions(
     regions = cell_regions
     if self.cell_regions is not None and regions is None:
         relations = lineage.entity_lineage(mesh.topological_dimension)
-        old = dict(
-            zip(
-                self.cell_global_ids,
-                np.asarray(self.cell_regions, dtype=np.int64).tolist(),
-                strict=True,
+        source_ids = np.asarray(self.cell_global_ids, dtype=np.int64)
+        source_regions = np.asarray(self.cell_regions, dtype=np.int64)
+        if source_regions.shape != source_ids.shape:
+            raise ValueError(
+                f"MeshCertificationInputs.cell_regions must have one entry per retained cell ID; got shape={source_regions.shape}"
             )
+        # A repeated source ID keeps its last assignment, as a mapping update would.
+        known_ids, reversed_rows = np.unique(source_ids[::-1], return_index=True)
+        known_regions = source_regions[source_ids.size - 1 - reversed_rows]
+        relation_sources = np.asarray(relations.source_global_ids, dtype=np.int64)
+        relation_targets = np.asarray(relations.target_global_ids, dtype=np.int64)
+        if relation_sources.shape != relation_targets.shape:
+            raise ValueError(
+                "MeshCertificationInputs.lineage must pair every source and target cell; got unequal relation rows"
+            )
+        source_rows, known = _sorted_rows(known_ids, relation_sources)
+        if not np.all(known):
+            unknown = int(relation_sources[np.flatnonzero(~known)[0]])
+            raise ValueError(
+                f"MeshCertificationInputs.cell_regions must use known source-cell ancestry; got {unknown!r}"
+            )
+        pairs = np.unique(
+            np.stack((relation_targets, known_regions[source_rows]), axis=1), axis=0
         )
-        target: dict[int, set[int]] = {}
-        for source_id, target_id in zip(
-            np.asarray(relations.source_global_ids).tolist(),
-            np.asarray(relations.target_global_ids).tolist(),
-            strict=True,
-        ):
-            if source_id not in old:
-                raise ValueError(
-                    f"MeshCertificationInputs.cell_regions must use known source-cell ancestry; got {source_id!r}"
-                )
-            target.setdefault(target_id, set()).add(old[source_id])
+        targets, first_pair, pair_counts = np.unique(
+            pairs[:, 0], return_index=True, return_counts=True
+        )
         identifiers = np.concatenate(
             [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
         )
-        if any(
-            identifier not in target or len(target[identifier]) != 1
-            for identifier in identifiers.tolist()
-        ):
+        target_rows, found = _sorted_rows(targets, identifiers)
+        single = np.zeros(found.shape, dtype=np.bool_)
+        single[found] = pair_counts[target_rows[found]] == 1
+        if not np.all(single):
             raise ValueError(
                 f"MeshCertificationInputs.cell_regions must provide explicit assignments for new or cross-material cells; got {identifiers.size} targets with missing or ambiguous ancestry"
             )
-        regions = np.asarray(
-            [next(iter(target[identifier])) for identifier in identifiers.tolist()],
-            dtype=np.int64,
-        )
+        regions = pairs[first_pair[target_rows], 1]
     return _TransitionRegions(regions)
+
+
+def _sorted_rows(keys: np.ndarray, queries: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Rows of sorted unique ``keys`` equal to each query and whether one exists."""
+    if keys.size == 0:
+        return np.zeros(queries.shape, dtype=np.int64), np.zeros(
+            queries.shape, dtype=np.bool_
+        )
+    rows = np.minimum(np.searchsorted(keys, queries), keys.size - 1)
+    return rows, keys[rows] == queries
 
 
 def _immutable_host_leaf(value: object) -> object:
     if isinstance(value, np.ndarray):
+        if (
+            type(value) is np.ndarray
+            and not value.dtype.hasobject
+            and value.dtype.kind in "biufc"
+        ):
+            return immutable_host_array(value)
         snapshot = np.array(value, copy=True)
         snapshot.setflags(write=False)
         return snapshot
@@ -574,7 +656,8 @@ def _immutable_host_leaf(value: object) -> object:
 
 def _validate_domain_integrity(
     domain: domain_coverage_owner.PiecewiseLinearDomain
-    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+    | cad_domain_owner.CadSourceDomain,
     *,
     budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
     | None,
@@ -593,8 +676,20 @@ def _validate_domain_integrity(
                 domain.cell_regions,
                 source_id=domain.source_id,
                 source_revision=domain.source_revision,
+                certificate_limits=domain.certificate_limits,
                 budget=budget,
             )
+        case cad_domain_owner.CadSourceDomain():
+            from ..lifecycle._meshing_sources import (
+                meshing_source_owner_reconstruction_scope,
+                reconstruct_meshing_source,
+                register_meshing_source_artifacts,
+            )
+
+            register_meshing_source_artifacts()
+            with meshing_source_owner_reconstruction_scope(budget=budget):
+                restored = reconstruct_meshing_source(domain)
+            rebuilt = domain if restored is None else restored
         case _:
             raise TypeError(
                 "MeshCertificationInputs.domain must have a supported restoration kind; got unsupported domain"
@@ -628,7 +723,9 @@ def _validate_query_integrity(
                 source.geometry, source_id=source.source_id, spacing=source.spacing
             )
         case _owner_phydrax_geometry_implicit__analytic_profile.AnalyticImplicitProfile():
-            source.require_bound(source.geometry, source.coordinate_contract)
+            source.require_bound(
+                source.geometry, source.coordinate_contract, budget=budget
+            )
             rebuilt = _owner_phydrax_geometry_implicit__analytic_profile.AnalyticImplicitProfile(
                 source.geometry,
                 source.coordinate_contract,
@@ -636,11 +733,12 @@ def _validate_query_integrity(
                 cover_radius=source.cover_radius,
                 source_id=source.source_id,
                 source_revision=source.source_revision,
+                budget=budget,
             )
         case source_fidelity_owner.ImplicitProjectionBoundarySource():
             _validate_query_integrity(source.profile, budget=budget)
             rebuilt = source_fidelity_owner.ImplicitProjectionBoundarySource(
-                source.profile
+                source.profile, budget=budget
             )
         case source_fidelity_owner.MappedDomainBoundarySource():
             domain = source.domain
@@ -674,6 +772,21 @@ def _validate_query_integrity(
                 source.patches,
                 resolution=source.resolution,
                 chart_triangulations=source.chart_triangulations,
+                boundary_occurrences=source.boundary_occurrences,
+                boundary_cell_ids=source.boundary_cell_ids,
+                boundary_patch_ids=source.boundary_patch_ids,
+            )
+        case surface_source_support_owner.SurfaceNativeRestrictionBoundarySource():
+            _validate_query_integrity(source.root, budget=budget)
+            surface_source_support_owner.SurfaceNativeRestrictionBoundarySource.require_current(source)
+            geometry = _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.from_stored_fields(
+                source.geometry, budget=budget
+            )
+            _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.resolve(
+                geometry, source.mesh, budget=budget
+            )
+            rebuilt = surface_source_support_owner.SurfaceNativeRestrictionBoundarySource(
+                source.root, source.support, source.mesh, geometry
             )
         case (
             surface_boundary_sources_owner.SurfaceSubdivisionBoundarySource()
@@ -706,13 +819,16 @@ def _request_identity(inputs: MeshCertificationInputs) -> str:
             if inputs.cell_regions is None
             else array_tree_fingerprint(inputs.cell_regions),
             "entity_sets": inputs.entity_set_ids,
-            "cell_ids": inputs.cell_global_ids,
+            "cell_ids": array_tree_fingerprint(inputs.cell_global_ids),
             "junctions": None
             if inputs.junction_vertices is None
             else array_tree_fingerprint(inputs.junction_vertices),
             "tolerance": inputs.fidelity_tolerance,
             "sample_order": inputs.fidelity_sample_order,
             "limits": inputs.limits.limits_id,
+            "mapped_source_evidence": None
+            if inputs.mapped_source_evidence is None
+            else inputs.mapped_source_evidence.evidence_id,
             "scoped_fidelity": tuple(
                 (query.source_scope_id, array_tree_fingerprint(identifiers), tolerance)
                 for query, identifiers, tolerance in inputs.scoped_fidelity

@@ -155,12 +155,71 @@ persistence. Do not use an external `.brep` extension to imply that archive
 format. Format-specific `read_step`, `read_iges`, `read_brep_text` and their
 writers remain explicit entry points when the format profile is already known.
 
+Explicit intersection-curve exports use a self-describing bounded
+representation, not a relaxed import of the original source. The descriptor
+retains source and approximation identities, unchanged export distance and
+parameter limits, and a certified surface-Jacobian Lipschitz bound over the
+whole source-to-fit UV homotopy. Its declared carrier-gap allowance follows
+`distance_limit + surface_jacobian_lipschitz * parameter_limit`; achieved
+residuals cannot enlarge those frozen limits. STEP carries that length bound
+as its representation-context uncertainty together with the complete
+descriptor. IGES carries the descriptor separately in Start text: Global
+parameter 19 is coordinate discernibility (minimum resolution), not a
+general edge-to-surface gap allowance.
+
+Readers validate the complete declaration and independently certify the
+actual emitted carrier-to-surface gaps before admitting stored gap bounds.
+A marker, source provenance, or larger ordinary format uncertainty alone
+never authorizes bounded admission. Import and export report the explicit
+interpretation loss and artifact SHA under a new representation identity;
+the original source's `1e-8` default relative correspondence policy remains
+unchanged.
+
+Within one admitted coordinate request, format-independent export preparations,
+the complete bounded-representation descriptor, and independently earned
+whole-coedge bounds may be reused for the same source owner and complete
+fitting/tolerance premises. Preparation and descriptor reuse freshly bind the
+actual carrier arrays, model/geometry state, host-side report, policy, and
+approximation evidence; declared IDs alone do not authorize reuse. Their retained
+storage remains charged to that request. A new request, restored owner, changed
+source, or changed export policy does not inherit an unearned proof. Every emitted
+artifact still receives its independent final import correspondence proof.
+For a real curve carrier the unused fallback vertex point is not a residual-proof
+premise. For a collapsed point carrier, that point remains content-bound and a
+changed point requires a fresh proof.
+Correspondence reuse canonicalizes a decomposition box only after a fresh
+whole-range outward p-curve enclosure is entirely contained in the supplied box.
+Overlap alone keeps the supplied box distinct. Generating checks and new proof
+worksets still use the original supplied box. A retained complete residual bound
+must satisfy the current requested tolerance; partial outcomes are never reused.
+The full live carrier definitions, closed range, algorithm and interval cap stay
+bound to the request-local cache.
+Within each emitted-carrier correspondence query, rational quotient jets share
+their lower-order hulls, and the first- and second-order chain rules share the
+same full-interval surface Jacobian. Center value/derivative and full-interval
+first/second derivative bounds remain independently present in the unchanged
+mean-value/Taylor proof; no state is borrowed from another artifact or proof.
+An outward center residual interval wholly outside the requested tolerance in
+any component disproves the whole-domain bound. This early refusal is used only
+when the supporting surface piece contains the complete center UV enclosure;
+mere overlap cannot authorize it. It produces unresolved evidence, never a
+positive certificate, and leaves the original tolerance and work caps unchanged.
+When the three fitted carriers have identical knots and identical nominal and
+outward-enclosed homogeneous denominator coefficients on a source span, their
+numerator columns share one componentwise rational-jet evaluation. The resulting
+3D/UV slices preserve the individual directed-rounding bounds. Unequal knots,
+domains, or denominator coefficients retain the independent evaluation route;
+the private grouped coefficients live only within that certificate and their
+storage is admitted before construction.
+
 Mapped STEP assemblies retain shared native solid definitions. Nested
-`MAPPED_ITEM`/`REPRESENTATION_MAP` placements compose in occurrence order;
-the zero-deviation default requires exactly certified proper orthonormal
-binary64 axes and exactly unit scale. It does not round a scaled/reflected
-operator into a rigid placement. Rounded oblique source frames require the
-explicit near-rigid declaration described below.
+`MAPPED_ITEM`/`REPRESENTATION_MAP` placements compose in occurrence order.
+Mapping origins, operators, assembly usage frames, inverses, and compositions
+all obey the same zero-deviation default: certified proper orthonormal
+binary64 axes and unit scale. No scaled/reflected operator is rounded into a
+rigid placement. Rounded oblique source frames require the explicit near-rigid
+declaration described below, including nominal quarter turns emitted with
+inexact direction ratios by an external writer.
 
 
 STEP imports retain authored product and representation-item names, RGB surface-fill
@@ -274,6 +333,17 @@ and meshio, round-trips native CAD codecs and persistence, checks native exact
 box queries, and measures a CAD-derived native cell mesh. This is evidence for
 the named executed workflows, not proof that every native numerical route or
 every external CAD entity has been implemented.
+
+The consumer's process guard inspects `subprocess`, `os.system`, `os.exec*`
+and `os.posix_spawn` launches. It refuses a named external meshing engine
+whether invoked directly, by resolved path, or through `env`, a shell `-c`
+command, or a recognized launcher such as `nice`, `timeout`, `taskset`,
+`systemd-run`, `mpirun` or `uv`. Launch text it cannot read literally (shell
+expansions, `env -S`, shell standard input) refuses. Arguments of other
+programs are data, and processes started later by an admitted program are not
+observed; the guard is evidence for these launch forms, not a sandbox. The
+installed source-build fingerprint must equal the staged checkout's, computed
+over the same provider-source tree that runtime provider lookup selects.
 
 SciPy remains permitted numerical infrastructure. Its statistics/distance
 imports can load the bundled Qhull module, so the consumer blocks Qhull geometry

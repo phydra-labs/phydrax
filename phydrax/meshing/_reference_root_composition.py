@@ -61,7 +61,7 @@ def affine_reference_root_frame(
 
 @checked
 def exact_reference_chart_controls(
-    target: np.ndarray,
+    target: np.ndarray | tuple[tuple[Fraction, ...], ...],
     root: np.ndarray,
     root_kind: str,
     chart: FiniteElementSpec,
@@ -74,22 +74,38 @@ def exact_reference_chart_controls(
     Corner containment proves whole-cell containment because degree-one target
     shape functions are nonnegative on the reference cell. The chart retains
     source coefficients without fitting or rounding them.
+
+    Immutable rational target rows are placement provenance earned before
+    carrier rounding; callers authenticate their round-to-nearest carrier.
+    Numerical arrays retain the original exact lift of their current values.
     """
     target_topology = reference_cell_topology(chart.cell_kind)
-    if (
-        target.shape != (len(target_topology.vertices), 3)
-        or chart.degree != 1
-        or chart.cell_kind not in ("tetrahedron", "prism", "hexahedron")
-        or not np.all(np.isfinite(target))
-    ):
+    if chart.degree != 1 or chart.cell_kind not in ("tetrahedron", "prism", "hexahedron"):
         raise ValueError(
-            f"ReferenceRootComposition.target must contain finite degree-one three-dimensional corners; got shape {target.shape!r}, degree {chart.degree}, kind {chart.cell_kind!r}, finite {bool(np.all(np.isfinite(target)))}"
+            "ReferenceRootComposition.target must use a supported degree-one chart."
         )
     matrix, origin = affine_reference_root_frame(root, root_kind)
-    right = [
-        [Fraction(float(point[axis])) - origin[axis] for point in target]
-        for axis in range(3)
-    ]
+    if isinstance(target, np.ndarray):
+        if target.shape != (len(target_topology.vertices), 3) or not np.all(np.isfinite(target)):
+            raise ValueError(
+                f"ReferenceRootComposition.target must contain finite degree-one three-dimensional corners; got shape {target.shape!r}."
+            )
+        right = [
+            [Fraction(float(point[axis])) - origin[axis] for point in target]
+            for axis in range(3)
+        ]
+    else:
+        if len(target) != len(target_topology.vertices) or any(
+            len(point) != 3 or any(type(value) is not Fraction for value in point)
+            for point in target
+        ):
+            raise ValueError(
+                "ReferenceRootComposition.target must contain complete immutable rational corner rows."
+            )
+        right = [
+            [point[axis] - origin[axis] for point in target]
+            for axis in range(3)
+        ]
 
     ticket = budget.ticket
     if ticket.remaining_work_units < 1 or ticket.remaining_geometry_queries < 1:

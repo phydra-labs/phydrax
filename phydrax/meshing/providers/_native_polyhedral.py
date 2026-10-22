@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from fractions import Fraction
-from typing import assert_never, final, Literal
+from math import prod
+from typing import Any, assert_never, final, Literal
 
 import equinox as eqx
 import jax
@@ -21,6 +22,7 @@ from phydrax.meshing._association_state import (
 )
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import (
+    MeshingLimits,
     MeshingProviderInfo,
     VolumeFillStrategy,
     VolumeMeshingSpec,
@@ -30,6 +32,7 @@ from phydrax.meshing._host_banks import entity_key
 from phydrax.typing import checked, parse
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_storage import declared_integer_storage_bytes
 from ..._meshcore import (
     MeshcoreError,
     MeshcoreStatus,
@@ -39,15 +42,16 @@ from ..._meshcore import (
     RestrictedPowerFailure,
 )
 from ..._physical import SpatialCoordinateContract
-from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
+from ...discretization._coordinate_operands import CoordinateOperandCollector
 from ...geometry._periodic_power_preparation import PeriodicPowerImageCapacityRefusal
 from ...geometry._triangulation import PeriodicPowerSourceRefusal
+from .._association_routes import AssociationPropagationError
 from .._measurements import (
     measure_phase,
     NativeMeshingPhaseMeasurement,
@@ -56,10 +60,11 @@ from .._measurements import (
     record_elapsed,
 )
 from .._organization_records import MeshLabel, MeshPatch, MeshZone, MeshZoneRole
+from .._plc_mapped_support import certify_mapped_plc_associations
+from .._plc_source import PiecewiseLinearComplex
 from .._polyhedral_generation import (
     generate_polyhedral_volume,
     NativePolyhedralSchedule,
-    polyhedral_periodic_group,
     PolyhedralConstruction,
     PolyhedralGenerationError,
     require_polyhedral_connectivity,
@@ -77,11 +82,15 @@ from .._trace import (
 )
 from .._volume_generation import (
     native_volume_checkpoint,
+    prepare_plc_source,
+    PreparedPlcSource,
     recovery_failure,
     region_seed_points,
 )
 from . import _native_sources as sources_owner, _native_volume as volume_owner
 from ._native_publication import (
+    coordinate_budget,
+    coordinate_phase,
     NativeCertificationRequest,
     NativePublicationExecution,
     NativePublicationOrganization,
@@ -111,6 +120,7 @@ def polyhedral_support_issues(
     specification: VolumeMeshingSpec,
     /,
 ) -> list[str]:
+    """Check structural support; numerical periodic proof uses the execution ledger."""
     issues = [
         issue
         for issue in volume_owner.volume_support_issues(source, specification)
@@ -147,22 +157,9 @@ def polyhedral_support_issues(
                 or np.any(identifiers >= source.complex.facet_count)
             ):
                 issues.append("periodic scopes bound to original PLC facets")
-    try:
-        limits = specification.limits
-        with HostBatchTicket(
-            limits.maximum_work_units, bytes_upper=limits.maximum_scratch_bytes
-        ) as ticket:
-            budget = CoordinateEnclosureBudget(
-                ticket,
-                maximum_work_units=limits.maximum_work_units,
-                maximum_memory_bytes=limits.maximum_scratch_bytes,
-            )
-            with budget.activate():
-                polyhedral_periodic_group(
-                    tuple(specification.periodic_constraints), budget=budget
-                )
-    except (TypeError, ValueError) as error:
-        issues.append(f"proper commuting periodic source actions: {error}")
+    # Exact commuting-action admission belongs to generation's actual request
+    # ledger. A standalone preparation ticket neither enforces that request nor
+    # earns reusable preparation evidence.
     return issues
 
 
@@ -256,6 +253,36 @@ def _protected_vertices(specification: VolumeMeshingSpec) -> tuple[int, ...]:
             }
         )
     )
+
+
+def _polyhedral_construction_inputs(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
+    """Admit the seed stack and protected-vertex set before materializing them."""
+    seeds = len(specification.region_seeds) + len(specification.hole_seeds)
+    protected = sum(
+        feature.scope.entity_ids.size
+        for feature in specification.protected_features
+        if feature.scope.entity_dimension == 0
+    )
+    integer = declared_integer_storage_bytes(
+        max(source.complex.vertices.shape[0], 1).bit_length()
+    )
+    output = 4 * 256 + 3 * 16 + 28 * seeds + (16 + integer) * protected
+    # Two seed pointer lists, borrowed coordinate views, stack and astype
+    # copies; protected set, sorted list and final tuple coexist at conversion.
+    scratch = 4 * 256 + seeds * (2 * 16 + 256 + 2 * 24 + integer)
+    scratch += 3 * (256 + protected * (64 + integer))
+    with budget.temporary_scope(), budget.live_storage() as storage:
+        storage.set_bound(output, work=seeds + protected)
+        budget.reserve(0, scratch)
+        points, regions = region_seed_points(source.complex, specification)
+        result = points, regions, _protected_vertices(specification)
+        budget.retain_owner(result, temporary_storage_credit=storage)
+        return result
 
 
 def _vertex_association(
@@ -388,8 +415,126 @@ def _vertex_association(
     )
 
 
+def _polyhedral_organization_bounds(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec | None,
+    construction: PolyhedralConstruction,
+) -> tuple[int, int, int]:
+    """Declared host bounds from bank shapes, not process/device memory estimates.
+
+    Association rows have ten numeric banks, a dictionary entry triple and
+    expanded name/role/path columns. All four strata are bounded by their full
+    mesh entity counts, including rows that subsequently prove interior. Scope
+    memberships include every requested patch, even overlapping patches.
+    """
+    mesh = construction.mesh
+    c = require_polyhedral_connectivity(mesh)
+    vertices, edges, faces, cells = (
+        mesh.coordinates.shape[0], c.edge_count, c.face_count, c.cell_count
+    )
+    rows = vertices + edges + faces + cells
+    patch_controls = () if specification is None else specification.patch_controls
+    records = len(source.complex.region_ids) + source.complex.facet_count
+    records += len(patch_controls) + 4
+    memberships = cells + (4 + len(patch_controls)) * faces + edges
+    # entity_key is revision:role:index. Decimal index width is bounded by the
+    # concrete source bank lengths; no expanded association array is built here.
+    index_width = len(str(max(
+        source.complex.vertices.shape[0], source.complex.segments.shape[0],
+        construction.feature_source_edges.shape[0], source.complex.facet_count,
+        len(source.complex.region_ids), 1,
+    )))
+    key_width = len(source.source_revision) + len("region") + index_width + 2
+    names = sum(len(name) for name in source.complex.region_ids)
+    names += sum(
+        len(control.name) + sum(map(len, control.adjacent_region_names))
+        for control in patch_controls
+    )
+    if specification is not None:
+        for values in (specification.region_seeds, specification.region_controls):
+            names += sum(
+                len(value.material_id) if value.material_id is not None else 0
+                for value in values
+            )
+    # Each record and its scope have at most 32 fixed scalar/string/container
+    # owners (256-byte declared metadata, 64-character digest text); memberships
+    # allow an int64 bank plus its logical array owner. Association entry triples
+    # allow three container owners and generated key text per row, without
+    # relying on interning or dictionary deduplication.
+    record_storage = records * 32 * (256 + 4 * 64)
+    scope_storage = 2 * (256 * records + 8 * memberships)
+    association_storage = 4 * (16 * 256 + 10 * 256)
+    association_storage += rows * (
+        10 * 8 + 3 * (256 + 3 * 16) + 256 + 4 * key_width
+    )
+    output = (
+        256 + 16 * records + record_storage + scope_storage
+        + association_storage + 4 * names
+        + 4 * (256 + 4 * (len(source.source_id) + len(source.source_revision)))
+    )
+    # Host coordinate/connectivity copies; per-row masks, index selections and
+    # numeric association validation banks; edge lookup dict/tuple/int owners.
+    incidence = c.face_vertex_values.size + c.cell_vertex_values.size
+    bank_copies = 24 * vertices + 16 * edges + 8 * (cells + faces + incidence)
+    numeric_scratch = 4 * (10 * 256 + 10 * 8 * rows)
+    # At most eight loop coordinate triples coexist in gathered, rolled,
+    # difference, cross-product and normal-reduction banks.
+    numeric_scratch += 16 * memberships + 8 * 24 * incidence
+    integer = declared_integer_storage_bytes(max(vertices, edges, 1).bit_length())
+    feature_entries = 0 if specification is None else sum(
+        feature.scope.entity_ids.size for feature in specification.protected_features
+    )
+    # Protected-source ID expansion can exceed a single mesh stratum when
+    # controls overlap. Bound the declared entries, not only distinct IDs.
+    numeric_scratch += feature_entries * (3 * 8 + 64 + 256 + integer)
+    edge_lookup = 256 + edges * (64 + 256 + 2 * 16 + 3 * integer)
+    vertex_lookup = 256 + vertices * (64 + 2 * integer)
+    carrier_width = construction.diagram.construction.vertex_carriers.shape[1]
+    numeric_scratch += 3 * 256 + (4 + 1 + 4) * carrier_width
+    # Constructor normalization, role expansion and fingerprint text use the
+    # same Unicode/UTF-8 buffer allowance as association reconstruction.
+    text_scratch = 24 * rows * (2 * key_width + len("region") + 16)
+    # Vertex-carrier displacement compares three binary64 components exactly.
+    # Binary64 numerator/denominator widths are <=1075; differences, squares and
+    # their three-term sum fit eight such widths. At most 32 scalar fractions
+    # (metadata plus numerator and denominator) coexist during that expression.
+    rational_scratch = 32 * (
+        256 + 2 * declared_integer_storage_bytes(8 * 1075)
+    )
+    scratch = (
+        bank_copies + numeric_scratch + edge_lookup + vertex_lookup + text_scratch
+        + rational_scratch + 32 * 256
+    )
+    work = rows + incidence + memberships + edges + feature_entries
+    work += cells * len(source.complex.region_ids)
+    work += faces * (source.complex.facet_count + len(patch_controls))
+    return output, scratch, work
+
+
 @checked
 def organization(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec | None,
+    construction: PolyhedralConstruction,
+    tolerance: float,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> NativeRouteMetadata:
+    """Build source rows after admitting their concrete topology and text bounds."""
+    if budget is None:
+        return _organization(source, specification, construction, tolerance)
+    output, scratch, work = _polyhedral_organization_bounds(
+        source, specification, construction
+    )
+    with budget.temporary_scope(), budget.live_storage() as storage:
+        storage.set_bound(output, work=work)
+        budget.reserve(0, scratch)
+        result = _organization(source, specification, construction, tolerance)
+        budget.retain_owner(result, temporary_storage_credit=storage)
+        return result
+
+
+def _organization(
     source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
     specification: VolumeMeshingSpec | None,
     construction: PolyhedralConstruction,
@@ -514,6 +659,31 @@ def _native_resource_quantities(error: MeshcoreError, /) -> tuple[tuple[str, flo
             (f"native_memory:{name}", float(value))
             for name, value in error.memory_counters.items()
         )
+    axes = ("work_units", "geometry_queries", "cavity_cells", "scratch_bytes")
+    for prefix, values in (
+        ("native_requested", error.batch_requested_upper),
+        ("native_admitted", error.batch_admitted_upper),
+    ):
+        if values is not None:
+            quantities.extend(
+                (f"{prefix}:{axis}", float(value))
+                for axis, value in zip(axes, values, strict=True)
+            )
+    if error.batch_refusal_evidence is not None:
+        quantities.extend(
+            (f"native_remaining:{axis}", float(value))
+            for axis, value in zip(
+                axes, error.batch_refusal_evidence[:4], strict=True
+            )
+        )
+        quantities.extend(
+            (f"native_refusal_slot:{index}", float(value))
+            for index, value in enumerate(error.batch_refusal_evidence[4:], start=4)
+        )
+    if error.elapsed_seconds is not None:
+        quantities.append(("native_elapsed_seconds", error.elapsed_seconds))
+    if error.maximum_seconds is not None:
+        quantities.append(("native_maximum_seconds", error.maximum_seconds))
     return tuple(quantities)
 
 
@@ -595,6 +765,9 @@ def construction_failure(
                 entity_ids=tuple(
                     int(value) for value in error.failure[1:3] if value >= 0
                 ),
+                requested=() if error.capacity is None else (
+                    (f"maximum_{error.capacity.axis}", error.capacity.remaining),
+                ),
                 achieved=(
                     *_native_resource_quantities(error),
                     *tuple(
@@ -605,6 +778,14 @@ def construction_failure(
                         (f"power_counter_{index}", float(value))
                         for index, (_, value) in enumerate(error.counters.items())
                     ),
+                    *tuple(
+                        (f"native_preflight:{name}", float(value))
+                        for name, value in error.preflight.items()
+                    ),
+                    *(() if error.capacity is None else (
+                        (f"required_{error.capacity.axis}", error.capacity.required),
+                        (f"remaining_{error.capacity.axis}", error.capacity.remaining),
+                    )),
                 ),
             )
         case PolyhedralGenerationError():
@@ -659,6 +840,7 @@ def _execute_polyhedral_route(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> CellMeshingResult:
     "Construct, independently certify, and publish the result."
     if (
@@ -669,49 +851,109 @@ def _execute_polyhedral_route(
             "PreparedPolyhedralVolume.binding must match the source and specification IDs; got mismatched IDs"
         )
     started = scope.operation_started
-    phase = _construct_polyhedral_route(
-        source, specification, prepared, started, record_phase, scope
+    # Construction and publication share one request ledger, so publication
+    # reuses source witnesses this request already earned and retained.
+    budget = coordinate_budget(specification.limits)
+    budget.capture_coordinate_operands = coordinate_operands is not None
+    budget.capture_polynomial_operands = (
+        coordinate_operands is not None and coordinate_operands.capture_polynomials
     )
-    construction = phase.construction
-    mesh = phase.mesh
-    c = phase.c
-    phase = _polyhedral_compliance(construction, specification, record_phase)
-    compliance = phase.compliance
+    budget.capture_signed_determinant_operands = (
+        coordinate_operands is not None and coordinate_operands.capture_signed_determinants
+    )
+    with budget.retained_storage(lambda _size: scope.ticket_view()):
+        with budget.temporary_scope():
+            with budget.bind_ticket(scope.ticket_view()):
+                # Route wrappers borrow the scientific owners admitted below.
+                budget.reserve(
+                    0, 128 * (256 + 4 * 64)
+                    + 4 * (
+                        len(source.source_id) + len(source.source_revision) + len(plan_id)
+                    ),
+                )
+            result = _publish_polyhedral_route(
+                source,
+                specification,
+                prepared,
+                coordinate_contract,
+                provider,
+                plan_id,
+                _construct_polyhedral_route(
+                    source, specification, prepared, started, record_phase, scope, budget
+                ),
+                record_phase=record_phase,
+                scope=scope,
+                workspace=workspace,
+                budget=budget,
+            )
+            if coordinate_operands is not None:
+                with coordinate_phase(scope, specification.limits, budget):
+                    coordinate_operands.capture(
+                        result.mesh, result.geometry, budget, scope,
+                        input_owners=(source, specification, prepared),
+                        coordinate_contract=result.coordinate_contract,
+                    )
+        # Retire route scratch before transferring the still-live retained
+        # reservation. The old ledger cannot mutate it after this point.
+        budget.handover_retained_storage(workspace.adopt_retained_storage)
+        return result
+
+
+def _publish_polyhedral_route(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    prepared: PreparedPolyhedralVolume,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: MeshingProviderInfo,
+    plan_id: str,
+    constructed: _PolyhedralConstructionPhase,
+    /,
+    *,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
+    budget: CoordinateEnclosureBudget,
+) -> CellMeshingResult:
+    "Associate, independently certify, and publish one constructed route."
+    started = scope.operation_started
+    construction, mesh = constructed.construction, constructed.mesh
+    with budget.bind_ticket(scope.ticket_view()):
+        compliance = _polyhedral_compliance(
+            construction, specification, record_phase, budget=budget
+        ).compliance
     with measure_phase(record_phase, "geometry_association"):
-        metadata = organization(
-            source, specification, construction, prepared.schedule.feature_tolerance
-        )
+        with budget.bind_ticket(scope.ticket_view()):
+            metadata = organization(
+                source, specification, construction, prepared.schedule.feature_tolerance,
+                budget=budget,
+            )
         zones = metadata.zones
         patches = metadata.patches
         labels = metadata.labels
-        associations = metadata.associations
-    data = construction.diagram.construction
-    diagnostics = (
-        MeshingDiagnostic(
-            MeshingDiagnosticSeverity.INFO,
-            "Reciprocal restricted components; non-star-visible sites decomposed into convex pieces. Site ancestry is not a field interpolation stencil.",
-            quantities=tuple(
-                (f"power_counter_{i}", float(x), float(x))
-                for i, (_, x) in enumerate(data.counters.items())
+        certified = certify_polyhedral_associations(
+            source,
+            coordinate_contract,
+            construction,
+            metadata.associations,
+            NativeCertificationRequest(
+                MeshCertificationSchedule("volume_plc"),
+                source.source_id,
+                source.source_revision,
+                specification.limits,
+                domain=construction.domain,
+                cell_regions=construction.cell_regions,
             ),
-        ),
-    )
-    stages = (
-        MeshingStageReport(
-            MeshingStageKind.SOURCE_INSPECTION,
-            MeshingStageStatus.PASSED,
-            input_ids=(source.binding_id,),
-            output_ids=(prepared.prepared_id,),
-        ),
-        MeshingStageReport(
-            MeshingStageKind.VOLUME_FILL,
-            MeshingStageStatus.PASSED,
-            input_ids=(prepared.prepared_id,),
-            output_ids=(construction.construction_id, mesh.mesh_id),
-            created_count=c.cell_count,
-            diagnostics=diagnostics,
-        ),
-    )
+            record_phase=record_phase,
+            scope=scope,
+            budget=budget,
+        )
+        associations = certified.associations
+    with budget.bind_ticket(scope.ticket_view()):
+        stages = _polyhedral_stage_reports(source, prepared, construction, budget=budget)
+    with budget.bind_ticket(scope.ticket_view()):
+        provenance = _polyhedral_provenance(
+            source, prepared, plan_id, construction, budget=budget
+        )
     check_deadline(started, specification.limits, MeshingStageKind.GEOMETRY_AUDIT)
     return publish_native_result(
         mesh,
@@ -719,83 +961,333 @@ def _execute_polyhedral_route(
         compliance,
         stages,
         provider,
-        {
-            "kind": "native-polyhedral-volume-mesh",
-            "route": "plc_restricted_power",
-            "source": source.binding_id,
-            "plan": plan_id,
-            "construction": construction.construction_id,
-            "site_ancestry": construction.site_parents.tolist(),
-            "cell_sites": construction.cell_sites.tolist(),
-            "cell_components": construction.component_ids.tolist(),
-            "cell_regions": construction.cell_regions.tolist(),
-            "face_facets": construction.face_facets.tolist(),
-            "face_recovery_triangles": construction.face_recovery_triangles.tolist(),
-            "feature_edge_sources": construction.feature_edge_sources.tolist(),
-            "feature_source_edges": construction.feature_source_edges.tolist(),
-            "carrier_points": construction.recovery.points.tolist(),
-            "carrier_tetrahedra": construction.recovery.tetrahedra.tolist(),
-            "vertex_carriers": construction.diagram.construction.vertex_carriers.tolist(),
-            "feature_distance_upper": construction.feature_maximum_distance.tolist(),
-            "feature_coverage_gap_upper": construction.feature_coverage_gap.tolist(),
-            "feature_tolerance": prepared.schedule.feature_tolerance,
-            "requested_site_volumes": construction.requested_site_volumes.tolist(),
-            "achieved_site_volumes": construction.achieved_site_volumes.tolist(),
-            "weight_relative_residual": construction.optimization_relative_residual,
-            "refinement_steps": construction.refinement_steps,
-            "lloyd_steps": construction.lloyd_steps,
-            "work_units": construction.work_units,
-            "construction_cell_volumes": data.cell_volumes[
-                np.asarray(c.cell_global_ids)
-            ].tolist(),
-            "construction_cell_first_moments": data.cell_moments[
-                np.asarray(c.cell_global_ids)
-            ].tolist(),
-            "construction_cell_site_second_moments": data.cell_second_moments[
-                np.asarray(c.cell_global_ids)
-            ].tolist(),
-            "piece_sites": construction.diagram.piece_original_sites.tolist(),
-            "piece_image_sites": data.piece_sites.tolist(),
-            "piece_tetrahedra": data.piece_tets.tolist(),
-            "piece_cells": data.piece_cells.tolist(),
-            "piece_volumes": data.piece_volumes.tolist(),
-            "cell_image_sites": data.cell_sites[np.asarray(c.cell_global_ids)].tolist(),
-            "cell_image_exponents": construction.diagram.cell_image_exponents[
-                np.asarray(c.cell_global_ids)
-            ].tolist(),
-            "piece_image_exponents": construction.diagram.piece_image_exponents.tolist(),
-            "periodic_constraints": [
-                value.constraint_id for value in construction.periodic_constraints
-            ],
-            "periodic_seam_faces": None
-            if construction.seam_face_pairs is None
-            else construction.seam_face_pairs.tolist(),
-            "periodic_seam_vertices": None
-            if construction.seam_vertex_pairs is None
-            else construction.seam_vertex_pairs.tolist(),
-            "source_work_units": data.source_work_units,
-            "preparation_work_units": construction.diagram.preparation_work_units,
-            "adjacency_work_units": construction.diagram.adjacency_work_units,
-            "site_points": construction.diagram.points.tolist(),
-            "site_weights": construction.diagram.weights.tolist(),
-        },
-        NativeCertificationRequest(
-            MeshCertificationSchedule("volume_plc"),
-            source.source_id,
-            source.source_revision,
-            specification.limits,
-            domain=construction.domain,
-            cell_regions=construction.cell_regions,
-        ),
+        provenance,
+        certified.request,
         policy=publication_policy("polyhedral"),
         organization=NativePublicationOrganization(
             patches=patches, zones=zones, labels=labels, associations=associations
         ),
         execution=NativePublicationExecution(
-            scope=scope, workspace=workspace, record_phase=record_phase
+            scope=scope, workspace=workspace, record_phase=record_phase, budget=budget
         ),
         geometry=construction.geometry,
+        covered_coordinate_storage=True,
     )
+
+
+def _polyhedral_stage_reports(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    prepared: PreparedPolyhedralVolume,
+    construction: PolyhedralConstruction,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[MeshingStageReport, ...]:
+    """Own the fixed report records and concrete native-counter diagnostics."""
+    data = construction.diagram.construction
+    # The canonical field bank already exists on the counter record's type.
+    # items() constructs tuples, so defer that expansion until after admission.
+    count = len(type(data.counters).__dataclass_fields__)
+    key_width = len("power_counter_") + len(str(max(count, 1)))
+    # Two stage records, one diagnostic, their enums, IDs and tuple fields fit
+    # 64 fixed metadata/string owners. Counter rows add a triple, generated
+    # name and two boxed float values each.
+    output = 64 * (256 + 4 * 64)
+    output += count * (256 + 3 * 16 + 256 + 4 * key_width + 2 * 256)
+    with budget.temporary_scope(), budget.live_storage() as storage:
+        storage.set_bound(output, work=count)
+        # Input/normalized report tuples coexist during construction; UTF-8 and
+        # Unicode fingerprint buffers use the declared text-width allowance.
+        budget.reserve(0, output + 24 * (1024 + count * (key_width + 64)))
+        diagnostics = (
+            MeshingDiagnostic(
+                MeshingDiagnosticSeverity.INFO,
+                "Reciprocal restricted components; non-star-visible sites decomposed into convex pieces. Site ancestry is not a field interpolation stencil.",
+                quantities=tuple(
+                    (f"power_counter_{i}", float(x), float(x))
+                    for i, (_, x) in enumerate(data.counters.items())
+                ),
+            ),
+        )
+        stages = (
+            MeshingStageReport(
+                MeshingStageKind.SOURCE_INSPECTION,
+                MeshingStageStatus.PASSED,
+                input_ids=(source.binding_id,),
+                output_ids=(prepared.prepared_id,),
+            ),
+            MeshingStageReport(
+                MeshingStageKind.VOLUME_FILL,
+                MeshingStageStatus.PASSED,
+                input_ids=(prepared.prepared_id,),
+                output_ids=(construction.construction_id, construction.mesh.mesh_id),
+                created_count=require_polyhedral_connectivity(construction.mesh).cell_count,
+                diagnostics=diagnostics,
+            ),
+        )
+        budget.retain_owner(stages, temporary_storage_credit=storage)
+        return stages
+
+
+def _tolist_storage_upper(shape: tuple[int, ...], dtype: np.dtype) -> int:
+    """Bound ndarray.tolist's actual nested lists and boxed numeric leaves."""
+    containers, slots, parents = 0, 0, 1
+    for width in shape:
+        containers += parents
+        slots += parents * width
+        parents *= width
+    scalar = max(256, declared_integer_storage_bytes(dtype.itemsize * 8))
+    return 256 * containers + 16 * slots + scalar * parents
+
+
+def _polyhedral_provenance_arrays(
+    construction: PolyhedralConstruction,
+) -> tuple[tuple[str, np.ndarray, bool], ...]:
+    """Borrow numeric banks; the boolean marks publication-order selection."""
+    data = construction.diagram.construction
+    return (
+        ("site_ancestry", construction.site_parents, False),
+        ("cell_sites", construction.cell_sites, False),
+        ("cell_components", construction.component_ids, False),
+        ("cell_regions", construction.cell_regions, False),
+        ("face_facets", construction.face_facets, False),
+        ("face_recovery_triangles", construction.face_recovery_triangles, False),
+        ("feature_edge_sources", construction.feature_edge_sources, False),
+        ("feature_source_edges", construction.feature_source_edges, False),
+        ("carrier_points", construction.recovery.points, False),
+        ("carrier_tetrahedra", construction.recovery.tetrahedra, False),
+        ("vertex_carriers", data.vertex_carriers, False),
+        ("feature_distance_upper", construction.feature_maximum_distance, False),
+        ("feature_coverage_gap_upper", construction.feature_coverage_gap, False),
+        ("requested_site_volumes", construction.requested_site_volumes, False),
+        ("achieved_site_volumes", construction.achieved_site_volumes, False),
+        ("construction_cell_volumes", data.cell_volumes, True),
+        ("construction_cell_first_moments", data.cell_moments, True),
+        ("construction_cell_site_second_moments", data.cell_second_moments, True),
+        ("piece_sites", construction.diagram.piece_original_sites, False),
+        ("piece_image_sites", data.piece_sites, False),
+        ("piece_tetrahedra", data.piece_tets, False),
+        ("piece_cells", data.piece_cells, False),
+        ("piece_volumes", data.piece_volumes, False),
+        ("cell_image_sites", data.cell_sites, True),
+        ("cell_image_exponents", construction.diagram.cell_image_exponents, True),
+        ("piece_image_exponents", construction.diagram.piece_image_exponents, False),
+        ("site_points", construction.diagram.points, False),
+        ("site_weights", construction.diagram.weights, False),
+    )
+
+
+def _polyhedral_provenance(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    prepared: PreparedPolyhedralVolume,
+    plan_id: str,
+    construction: PolyhedralConstruction,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> dict[str, Any]:
+    """Admit every boxed provenance payload before indexing or calling tolist.
+
+    Retained storage is declared Python-list/scalar structure and logical output
+    banks. This does not describe compiler, device, or process-RSS enforcement.
+    """
+    c = require_polyhedral_connectivity(construction.mesh)
+    data = construction.diagram.construction
+    with budget.temporary_scope(), budget.live_storage() as storage:
+        # The descriptor tuple has exactly 28 triples and borrows its keys.
+        # It precedes no numeric payload allocation.
+        budget.reserve(0, 256 + 28 * (16 + 256 + 3 * 16))
+        arrays = _polyhedral_provenance_arrays(construction)
+        # At most 48 mapping fields, scalar metadata and <=64-character keys.
+        # Count every key and value independently, including borrowed strings.
+        output = 256 + 64 * 48 + 48 * 2 * (256 + 4 * 64)
+        output += 4 * (
+            len(source.binding_id) + len(plan_id) + len(prepared.specification_id)
+            + len(construction.construction_id)
+        )
+        output += sum(
+            declared_integer_storage_bytes(int(value).bit_length())
+            for value in (
+                construction.refinement_steps, construction.lloyd_steps,
+                construction.work_units, data.source_work_units,
+                construction.diagram.preparation_work_units,
+                construction.diagram.adjacency_work_units,
+            )
+        )
+        work, scratch = 0, 256 + 8 * c.cell_count
+        for _, array, selected in arrays:
+            shape = (c.cell_count, *array.shape[1:]) if selected else array.shape
+            output += _tolist_storage_upper(shape, array.dtype)
+            work += prod(shape)
+            if selected:
+                scratch = max(
+                    scratch,
+                    512 + 8 * c.cell_count + prod(shape) * array.dtype.itemsize,
+                )
+        constraints = construction.periodic_constraints
+        output += 256 + 16 * len(constraints)
+        output += sum(256 + 4 * len(value.constraint_id) for value in constraints)
+        for pairs in (construction.seam_face_pairs, construction.seam_vertex_pairs):
+            if pairs is not None:
+                output += _tolist_storage_upper(pairs.shape, pairs.dtype)
+                work += pairs.size
+        storage.set_bound(output, work=work)
+        budget.reserve(0, scratch)
+        provenance: dict[str, Any] = {
+            "kind": "native-polyhedral-volume-mesh",
+            "route": "plc_restricted_power",
+            "source": source.binding_id,
+            "plan": plan_id,
+            "specification": prepared.specification_id,
+            "construction": construction.construction_id,
+            "feature_tolerance": prepared.schedule.feature_tolerance,
+            "weight_relative_residual": construction.optimization_relative_residual,
+            "refinement_steps": construction.refinement_steps,
+            "lloyd_steps": construction.lloyd_steps,
+            "work_units": construction.work_units,
+            "periodic_constraints": [value.constraint_id for value in constraints],
+            "periodic_seam_faces": None if construction.seam_face_pairs is None
+            else construction.seam_face_pairs.tolist(),
+            "periodic_seam_vertices": None if construction.seam_vertex_pairs is None
+            else construction.seam_vertex_pairs.tolist(),
+            "source_work_units": data.source_work_units,
+            "preparation_work_units": construction.diagram.preparation_work_units,
+            "adjacency_work_units": construction.diagram.adjacency_work_units,
+        }
+        order = np.asarray(c.cell_global_ids)
+        for name, array, selected in arrays:
+            provenance[name] = (array[order] if selected else array).tolist()
+        budget.retain_owner(provenance, temporary_storage_credit=storage)
+        return provenance
+
+
+@final
+class CertifiedPolyhedralAssociations(StrictModule):
+    """Exact source rows and the acceptance request carrying their support proof."""
+
+    associations: tuple[GeometryAssociation, ...]
+    request: NativeCertificationRequest
+
+
+def certify_polyhedral_associations(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    coordinate_contract: SpatialCoordinateContract,
+    construction: PolyhedralConstruction,
+    associations: tuple[GeometryAssociation, ...],
+    request: NativeCertificationRequest,
+    /,
+    *,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> CertifiedPolyhedralAssociations:
+    """Earn exact PLC rows on the published exact power geometry.
+
+    Construction rows name declared strata with rounded residual evidence. They
+    are republished as exact only after every vertex, edge, face loop and cell
+    is proved against the named stratum of the authored PLC on the rational
+    exact-power vertices; the proof's acceptance evidence is reused by
+    certification instead of being recomputed.
+    """
+    limits = request.limits
+    support_source = _polyhedral_support_source(
+        source.complex, source.source_id, source.source_revision, coordinate_contract,
+        limits, record_phase, scope=scope, budget=budget,
+    )
+    if support_source.association_transfer.domain.domain_id != construction.domain.domain_id:
+        raise MeshingFailure(
+            MeshingFailureCategory.ASSOCIATION_FAILED,
+            "polyhedral.support.domain_id must equal publication.domain_id; got different PLC domains",
+            stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+        )
+    try:
+        output, scratch, work = _polyhedral_organization_bounds(
+            source, None, construction
+        )
+        with (
+            coordinate_phase(scope, limits, budget),
+            budget.temporary_scope(),
+            budget.live_storage() as storage,
+        ):
+            # Mapped source proof constructs replacement source columns and
+            # association rows too; its exact arithmetic keeps its own charges
+            # on this same ledger, while these nonrational banks coexist.
+            storage.set_bound(output, work=work)
+            budget.reserve(0, scratch)
+            proof = certify_mapped_plc_associations(
+                support_source.association_transfer,
+                construction.mesh,
+                construction.geometry,
+                associations,
+                certificate_limits=request.certificate_limits,
+                budget=budget,
+            )
+            budget.retain_owner(proof.associations, temporary_storage_credit=storage)
+    except AssociationPropagationError as error:
+        raise MeshingFailure(
+            MeshingFailureCategory.ASSOCIATION_FAILED,
+            str(error),
+            stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+            entity_ids=tuple(int(identifier) for identifier in error.target_ids.tolist()),
+        ) from error
+    except ValueError as error:
+        raise MeshingFailure(
+            MeshingFailureCategory.ASSOCIATION_FAILED,
+            str(error),
+            stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+        ) from error
+    return CertifiedPolyhedralAssociations(
+        proof.associations, replace(request, prepared=proof.support.prepared)
+    )
+
+
+def _polyhedral_support_source(
+    plc: PiecewiseLinearComplex,
+    source_id: str,
+    source_revision: str,
+    coordinate_contract: SpatialCoordinateContract,
+    limits: MeshingLimits,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> PreparedPlcSource:
+    """Bound the source-only host tables around native PLC source admission."""
+    vertices, incidence = plc.vertices.shape[0], plc.polygon_vertices.size
+    # A source polygon has at most its corner count triangles. Its original
+    # edges and all triangulation edges, plus authored segments, bound the
+    # source edge union without first constructing that union.
+    triangles, edges = incidence, 4 * incidence + plc.segments.shape[0]
+    facets, regions = plc.facet_count, plc.region_count
+    table_bytes = (
+        24 * vertices + 16 * edges + 24 * triangles + 8 * triangles
+        + 16 * facets + 8 * (vertices + edges + regions)
+    )
+    integer = declared_integer_storage_bytes(max(vertices, edges, 1).bit_length())
+    # Incidence validation uses triangle/edge tuple keys and scalar index
+    # columns. Three corners per triangle and two per edge are explicit.
+    incidence_records = 3 * triangles + 2 * edges
+    scratch = 4 * (table_bytes + 12 * 256)
+    scratch += incidence_records * (64 + 256 + 3 * (16 + integer))
+    with (
+        budget.bind_ticket(scope.ticket_view()),
+        budget.temporary_scope(),
+        budget.live_storage() as storage,
+    ):
+        budget.reserve(0, 2 * 256)
+        borrowed = budget.live_object_storage_upper(plc)
+        borrowed += budget.live_object_storage_upper(coordinate_contract)
+        # Transfer geometry tables, domain snapshot, source polygon indices,
+        # and fixed prepared-source/domain/transfer metadata owners.
+        output = borrowed + 3 * table_bytes + 8 * triangles + 64 * 256
+        storage.set_bound(output, work=vertices + incidence_records)
+        budget.reserve(0, scratch)
+        with budget.ticket.native_target():
+            result = prepare_plc_source(
+                plc, source_id, source_revision, coordinate_contract,
+                limits=limits, record_phase=record_phase, scope=scope,
+                coordinate_budget=budget,
+            )
+        budget.retain_owner(result, temporary_storage_credit=storage)
+        return result
 
 
 @checked
@@ -811,6 +1303,7 @@ def execute_polyhedral_route(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     scope: NativeExecutionScope,
     workspace: NativeHostStorageWorkspace,
+    coordinate_operands: CoordinateOperandCollector | None = None,
 ) -> CellMeshingResult:
     "Keep construction, association and publication in one scope."
     try:
@@ -827,6 +1320,7 @@ def execute_polyhedral_route(
             record_phase=record_phase,
             scope=scope,
             workspace=workspace,
+            coordinate_operands=coordinate_operands,
         )
         native_volume_checkpoint(
             specification.limits, MeshingStageKind.CERTIFICATION, scope=scope
@@ -1011,8 +1505,47 @@ def _polyhedral_compliance(
     construction: PolyhedralConstruction,
     specification: VolumeMeshingSpec,
     record_phase: NativeMeshingPhaseRecorder | None,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> _PolyhedralCompliancePhase:
-    """Polyhedral compliance."""
+    """Admit coordinate copies, vector/length/growth banks and report text."""
+    if budget is None:
+        return _unbudgeted_polyhedral_compliance(construction, specification, record_phase)
+    output, scratch, work = _polyhedral_compliance_bounds(construction, specification)
+    with budget.temporary_scope(), budget.live_storage() as storage:
+        storage.set_bound(output, work=work)
+        budget.reserve(0, scratch)
+        result = _unbudgeted_polyhedral_compliance(
+            construction, specification, record_phase
+        )
+        budget.retain_owner(result, temporary_storage_credit=storage)
+        return result
+
+
+def _polyhedral_compliance_bounds(
+    construction: PolyhedralConstruction, specification: VolumeMeshingSpec
+) -> tuple[int, int, int]:
+    c = require_polyhedral_connectivity(construction.mesh)
+    vertices, edges = construction.mesh.coordinates.shape[0], c.edge_count
+    # Coordinate/edge host copies, two gathered endpoints, vectors and norm
+    # multiplication/reduction; length/quantile copies; vertex min/max/ratio
+    # banks and masks. Count all banks together rather than assuming aliasing.
+    scratch = 24 * vertices + 16 * edges + 4 * 24 * edges
+    scratch += 4 * 8 * edges + 5 * 8 * vertices + 3 * vertices + 16 * 256
+    # At most four requested and eight achieved/issue entries, with key text
+    # derived from the actual control ID and the longest fixed metric suffix.
+    text = len(specification.size_controls[0].control_id) + 64
+    output = 32 * (256 + 4 * text + 256 + 2 * 16)
+    output += 8 * 256 + 4 * len(specification.specification_id)
+    return output, scratch, vertices + 8 * edges
+
+
+def _unbudgeted_polyhedral_compliance(
+    construction: PolyhedralConstruction,
+    specification: VolumeMeshingSpec,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> _PolyhedralCompliancePhase:
+    """Compute the unchanged uniform-size evidence on admitted host banks."""
     mesh = construction.mesh
     c = require_polyhedral_connectivity(mesh)
     compliance_started = phase_started(record_phase)
@@ -1133,6 +1666,7 @@ def _construct_polyhedral_route(
     started: float,
     record_phase: NativeMeshingPhaseRecorder | None,
     scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
 ) -> _PolyhedralConstructionPhase:
     """Construct polyhedral route."""
 
@@ -1151,7 +1685,10 @@ def _construct_polyhedral_route(
 
     construction_started = phase_started(record_phase)
     try:
-        local_seeds, seed_regions = region_seed_points(source.complex, specification)
+        with budget.bind_ticket(scope.ticket_view()):
+            local_seeds, seed_regions, protected = _polyhedral_construction_inputs(
+                source, specification, budget=budget
+            )
         construction = generate_polyhedral_volume(
             source.complex,
             sites=prepared.sites,
@@ -1160,10 +1697,12 @@ def _construct_polyhedral_route(
             source_id=source.source_id,
             seeds=local_seeds,
             seed_regions=seed_regions,
-            protected_vertices=_protected_vertices(specification),
+            protected_vertices=protected,
             periodic_constraints=specification.periodic_constraints,
             record_native_phase=None if record_phase is None else native_phase,
             scope=scope,
+            budget=budget,
+            limits=specification.limits,
         )
     except (
         MeshcoreError,

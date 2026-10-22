@@ -18,6 +18,8 @@ from tools.meshing_qualification._runtime import (
     _runtime_identity,
     qualification_failure,
     StageLedger,
+    StageLedgerAggregate,
+    StageMeasurement,
 )
 
 
@@ -50,8 +52,8 @@ class _ConstrainedRecord(TypedDict):
     limited_steiner_points: int
     evidence_id: str
     repeat_equal: bool
-    resources: NotRequired[dict[str, dict[str, float]]]
-    stage_measurements: dict[str, dict[str, float | int | str]]
+    resources: NotRequired[dict[str, StageMeasurement]]
+    stage_measurements: dict[str, StageLedgerAggregate]
 
 
 def _simplex_measures(points: np.ndarray, simplices: np.ndarray, /) -> np.ndarray:
@@ -236,7 +238,7 @@ def _constrained_record() -> tuple[
 ]:
     """Plate with a hole and an interior crack: CDT, refinement, and certification."""
 
-    stage_measurements: dict[str, dict[str, float | int | str]] = {}
+    stage_measurements: dict[str, StageLedgerAggregate] = {}
     measurements: dict[str, object] = {"stage_measurements": stage_measurements}
     _ledger = StageLedger(measurements)
 
@@ -382,7 +384,12 @@ def _reciprocal_faces(cells: phx.geometry.DiagramCells, /) -> bool:
 
 
 def _diagram_record(
-    diagram: Any, repeated: Any, lower: np.ndarray, upper: np.ndarray, stage: dict, /
+    diagram: Any,
+    repeated: Any,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    stage: StageMeasurement,
+    /,
 ) -> dict[str, object]:
     """Box coverage, reciprocity, centroid, and repeat checks of one diagram."""
 

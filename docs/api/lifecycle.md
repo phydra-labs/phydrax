@@ -104,6 +104,15 @@ consumer boundaries. Runtime source, native provider, precision, topology, and
 placement identities belong to evidence; a successful read does not qualify the
 numerical method that produced the artifact.
 
+`SemanticProvenance.content_kind` is the authored top-level string `kind`, not a
+classification inferred from nested values or display text. It is static metadata
+derived during construction and authenticated during restoration. Owners can use
+it to dispatch without repeatedly decoding unrelated semantic JSON; envelope
+repair claims still require their full source and evidence authentication.
+The field changes the stored recipe layout, not the existing content or semantic
+ID formulas. Archives with earlier field sets require an explicit migration;
+there is no automatic compatibility restore.
+
 Manifest decoding retains at most eight metadata-sized payloads per repository
 instance. Payloads larger than 8 MiB are decoded without retention. Repeated reads
 still revalidate durable bytes, the current artifact pointer, checksums, and

@@ -35,6 +35,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..linalg import (
     determinant_small_linear,
     hermitian_inverse_sqrt,
@@ -878,26 +879,39 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
 
 
 def _inverted_count(
-    plan: TargetMatrixOptimizationPlan, coordinates: Array, determinants: Array, /
+    plan: TargetMatrixOptimizationPlan,
+    coordinates: Array,
+    determinants: Array,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> int:
     corners = int(np.count_nonzero(np.asarray(determinants) <= 0.0))
     cells = int(
         np.count_nonzero(
-            ~np.asarray(evaluate_cell_quality(plan.mesh, coordinates).sampled_valid)
+            ~np.asarray(
+                evaluate_cell_quality(plan.mesh, coordinates, budget=budget).sampled_valid
+            )
         )
     )
     return max(corners, cells)
 
 
 def _audit_passed(
-    plan: TargetMatrixOptimizationPlan, coordinates: Array, numeric_version: str, /
+    plan: TargetMatrixOptimizationPlan,
+    coordinates: Array,
+    numeric_version: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[bool, cell_mesh_owner.CellMesh]:
     candidate = plan.mesh.with_coordinates(coordinates, numeric_version=numeric_version)
-    geometry = cell_geometry_owner.CellGeometrySpec.affine(candidate)
+    geometry = cell_geometry_owner.CellGeometrySpec.affine(candidate, budget=budget)
     audit = audit_cell_mesh(
         candidate,
         geometry,
         policy=plan.audit_policy,
+        budget=budget,
     )
     return audit.passed, candidate
 
@@ -910,6 +924,8 @@ def _untangle(
     initial_count: int,
     numeric_version: str,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[Array, MeshUntanglingEvidence]:
     free = jnp.asarray(np.flatnonzero(~np.asarray(plan.fixed_vertices)), dtype=jnp.int32)
     epsilon = policy.regularization_threshold
@@ -932,10 +948,12 @@ def _untangle(
         minimizations.append(minimization)
         regularizations.append(delta)
         _, determinants = _evaluate_energy(plan.energy, coordinates)
-        count = _inverted_count(plan, coordinates, determinants)
+        count = _inverted_count(plan, coordinates, determinants, budget=budget)
         if count:
             continue
-        audit_passed = _audit_passed(plan, coordinates, numeric_version)[0]
+        audit_passed = _audit_passed(
+            plan, coordinates, numeric_version, budget=budget
+        )[0]
         # A valid stage that did not converge is not accepted unless the plan
         # permits it; an unaudited or refused iterate continues to the next
         # regularization stage.
@@ -960,6 +978,7 @@ def optimize_cell_mesh(
     /,
     *,
     numeric_version: str = "mesh-optimized",
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> MeshOptimizationResult:
     """Untangle when needed, optimize free coordinates, audit, and certify.
 
@@ -971,11 +990,16 @@ def optimize_cell_mesh(
     converged, ``VALID_NONCONVERGED`` when it did not and the plan accepts valid
     non-convergence, and ``NONCONVERGED`` otherwise. Every non-accepted status
     returns the unmodified input coordinates.
+
+    A supplied ``budget`` owns every inversion-quality check, untangling audit,
+    affine geometry preparation and accepted publication on the caller's live
+    ledger. No helper renews its work or storage allowance. ``None`` preserves
+    ordinary standalone optimization's host preparation contract.
     """
     original = jnp.asarray(plan.mesh.coordinates, dtype=plan.energy.reference.dtype)
     initial_value, determinants = _evaluate_energy(plan.energy, original)
     initial = float(np.asarray(initial_value))
-    inverted = _inverted_count(plan, original, determinants)
+    inverted = _inverted_count(plan, original, determinants, budget=budget)
 
     def failure(
         status: MeshOptimizationStatus,
@@ -1007,6 +1031,7 @@ def optimize_cell_mesh(
             determinants,
             inverted,
             numeric_version,
+            budget=budget,
         )
         if not untangling.succeeded:
             return failure(
@@ -1027,8 +1052,10 @@ def optimize_cell_mesh(
     )
     final_value, final_determinants = _evaluate_energy(plan.energy, optimized)
     converged = bool(np.asarray(minimization.successful))
-    count = _inverted_count(plan, optimized, final_determinants)
-    passed, candidate = _audit_passed(plan, optimized, numeric_version)
+    count = _inverted_count(plan, optimized, final_determinants, budget=budget)
+    passed, candidate = _audit_passed(
+        plan, optimized, numeric_version, budget=budget
+    )
     if count or not passed:
         return failure(
             MeshOptimizationStatus.AUDIT_FAILED, count, minimization, untangling
@@ -1036,7 +1063,7 @@ def optimize_cell_mesh(
     if not (converged or plan.accept_valid_nonconverged):
         return failure(MeshOptimizationStatus.NONCONVERGED, 0, minimization, untangling)
     result = certify_cell_mesh(
-        candidate, coordinate_contract, audit_policy=plan.audit_policy
+        candidate, coordinate_contract, audit_policy=plan.audit_policy, budget=budget
     )
     return MeshOptimizationResult(
         plan,

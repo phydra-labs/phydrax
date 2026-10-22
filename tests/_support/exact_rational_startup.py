@@ -1,5 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Fresh-process admission of the exact source facade before other geometry owners."""
+"""Fresh-process admission of the rational source facade before other geometry owners."""
 
 
 def source_facade_first() -> dict[str, bool]:

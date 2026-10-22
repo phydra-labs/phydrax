@@ -16,7 +16,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.brep import _intersection as intersection_owner
 from phydrax.geometry.brep import OffsetSurface, TorusPatch
+from phydrax.geometry.brep._boolean_arrangement import arc_area_bounds, arc_area_bounds_batch
+from phydrax.geometry.brep._coordinate_request import coordinate_source_request
 from phydrax.geometry.brep._intersection import (
     BranchRootEndpoint,
     CurveSurfaceIntersectionRoot,
@@ -24,6 +27,7 @@ from phydrax.geometry.brep._intersection import (
     NativePeriodEndpoint,
     original_curve_surface_root_preparation,
     TrimIntersectionRoot,
+    TripleSurfaceIntersectionRoot,
     TrimRootEndpoint,
 )
 from phydrax.geometry.brep._intersection_curve import (
@@ -34,6 +38,7 @@ from phydrax.geometry.brep._intersection_curve import (
     PeriodicPCurve,
 )
 from phydrax.geometry.brep._patches import SurfaceIsoparametricCurve
+from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
 
 
 geometry = phx.geometry
@@ -84,6 +89,152 @@ def _assert_on_both(
     assert np.max(np.linalg.norm(on_first - on_second, axis=1)) <= tolerance
     assert np.all(np.isfinite(np.asarray(sample.parameter_bound)))
     return np.asarray(sample.point)
+
+
+@pytest.mark.parametrize("kind", ("curve_surface", "triple_surface"))
+def test_spatial_root_request_reuses_exact_contractions(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    yz = geometry.SurfaceRegion(
+        geometry.PlanePatch((0, 0, 0), (0, 1, 0), (0, 0, 1)),
+        ((-1, -1), (1, 1)),
+    )
+    request = TrimRequestPreparations()
+    if kind == "curve_surface":
+        root = CurveSurfaceIntersectionRoot(
+            geometry.LineCurve((0, 0, 0), (1, 0, 0)),
+            yz,
+            parameter_lower=np.full(3, -0.1),
+            parameter_upper=np.full(3, 0.1),
+        )
+        request.curve_surface_roots[id(root)] = (root, None, {})
+    else:
+        xy = geometry.SurfaceRegion(
+            geometry.PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+            ((-1, -1), (1, 1)),
+        )
+        xz = geometry.SurfaceRegion(
+            geometry.PlanePatch((0, 0, 0), (1, 0, 0), (0, 0, 1)),
+            ((-1, -1), (1, 1)),
+        )
+        root = TripleSurfaceIntersectionRoot(
+            xy,
+            yz,
+            xz,
+            parameter_lower=np.full(6, -0.1),
+            parameter_upper=np.full(6, 0.1),
+        )
+        request.triple_roots[id(root)] = (root, None, {})
+    expected = root.parameter_enclosure()
+    contract = intersection_owner._contract
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs["maximum_steps"])
+        return contract(*args, **kwargs)
+
+    monkeypatch.setattr(intersection_owner, "_contract", counted)
+    first = root.parameter_enclosure(preparations=request)
+    np.testing.assert_array_equal(first, expected)
+    first[:] = np.nan
+    np.testing.assert_array_equal(root.parameter_enclosure(preparations=request), expected)
+    assert calls == [16]
+    with pytest.raises(TypeError, match="maximum_steps"):
+        root.parameter_enclosure(maximum_steps=16.0, preparations=request)
+    assert calls == [16]
+    root.parameter_enclosure(maximum_steps=8, preparations=request)
+    assert calls == [16, 8]
+    np.testing.assert_array_equal(root.parameter_enclosure(), expected)
+    assert calls == [16, 8, 16]
+
+
+def test_trim_arc_request_reuses_reverse_cover_without_recertification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    carrier = geometry.CircleCurve((0, 0), (1, 0), (0, 1), 1.0)
+    forward = geometry.CurveTrimSegment(carrier, 0.0, 2 * PI)
+    reverse = geometry.CurveTrimSegment(carrier, 0.0, 2 * PI, reversed=True)
+    expected = geometry.CurveTrimLoop((reverse,), tolerance=0.25)
+    request = TrimRequestPreparations()
+    geometry.CurveTrimLoop((forward,), tolerance=0.25, preparations=request)
+    enclosures = geometry.CurveTrimSegment.enclosures
+    calls = []
+
+    def counted(self, *args, **kwargs):
+        calls.append(self)
+        return enclosures(self, *args, **kwargs)
+
+    monkeypatch.setattr(geometry.CurveTrimSegment, "enclosures", counted)
+    actual = geometry.CurveTrimLoop((reverse,), tolerance=0.25, preparations=request)
+    assert not calls
+    for name in ("arc_first", "arc_last", "arc_lower", "arc_upper", "chords"):
+        np.testing.assert_array_equal(getattr(actual, name), getattr(expected, name))
+    with pytest.raises(ValueError, match="maximum_arcs"):
+        geometry.CurveTrimLoop(
+            (reverse,), tolerance=0.25, maximum_arcs=1, preparations=request
+        )
+
+
+def test_intersection_chart_batch_matches_separate_source_enclosures() -> None:
+    plane = _plane([-2, -2, 0.5], [4, 0, 0], [0, 4, 0])
+    sphere = _sphere([0, 0, 0])
+    (curve,) = geometry.intersect_surface_regions(plane, sphere).curves
+    requests = tuple(
+        (first, last, 0, None, False)
+        for first, last in ((0.0, 0.0), (0.125, 0.5), (0.5, 1.0), (0.125, 0.5))
+    )
+    expected = [curve.parameter_enclosures(first, last) for first, last, *_ in requests]
+    actual = curve.parameter_enclosure_batch(requests)
+    for batched, separate in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(batched, separate)
+
+
+def test_batched_trim_area_preparation_preserves_scalar_interval_rounding() -> None:
+    plane = _plane([-2, -2, 0.5], [4, 0, 0], [0, 4, 0])
+    sphere = _sphere([0, 0, 0])
+    (curve,) = geometry.intersect_surface_regions(plane, sphere).curves
+    pcurve = curve.p_curve("first")
+    forward = geometry.CurveTrimSegment(pcurve, 0.0, 1.0)
+    reverse = geometry.CurveTrimSegment(pcurve, 0.0, 1.0, reversed=True)
+    cells = ((forward, 0.1, 0.2), (forward, 0.2, 0.4), (reverse, 0.5, 0.75))
+    with coordinate_source_request((curve,)) as budget:
+        expected = [
+            arc_area_bounds(trim, first, last, budget=budget)
+            for trim, first, last in cells
+        ]
+        request = TrimRequestPreparations()
+        actual = arc_area_bounds_batch(cells, preparations=request, budget=budget)
+        np.testing.assert_array_equal(actual, expected)
+        assert any(
+            preparation.chart_jets for _, preparation in request.branch_objects.values()
+        )
+
+
+def test_branch_point_batch_bounds_match_independent_scalar_contractions() -> None:
+    plane = _plane([-2, -2, 0.5], [4, 0, 0], [0, 4, 0])
+    sphere = _sphere([0, 0, 0])
+    (curve,) = geometry.intersect_surface_regions(plane, sphere).curves
+    parameters = np.linspace(0.0, curve.num_charts, 70)
+    with coordinate_source_request((curve, parameters)) as budget:
+        evaluated = curve.evaluate(
+            parameters, preparations=TrimRequestPreparations(), budget=budget
+        )
+        coupled = np.concatenate(
+            (evaluated.first_parameters, evaluated.second_parameters), axis=1
+        )
+        scalar_preparations = TrimRequestPreparations()
+        expected = []
+        for parameter, point in zip(parameters, coupled, strict=True):
+            boxes = curve.parameter_enclosures(
+                float(parameter),
+                float(parameter),
+                preparations=scalar_preparations,
+                budget=budget,
+            )
+            expected.append(
+                np.nextafter(np.max(np.nextafter(np.abs(boxes - point), np.inf)), np.inf)
+            )
+        np.testing.assert_array_equal(evaluated.parameter_bound, expected)
 
 
 def test_line_circle_transversal_points_are_certified() -> None:
@@ -151,7 +302,9 @@ def test_curve_owned_phase_roundtrip_retains_exact_source_authority() -> None:
         NativePeriodEndpoint(geometry.LineCurve((0.0, 0.0), (1.0, 0.0)))
 
 
-def test_spatial_root_lift_retains_source_endpoint_and_refuses_unrelated_pcurve() -> None:
+def test_spatial_root_lift_retains_source_endpoint_and_refuses_unrelated_pcurve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = geometry.SurfaceRegion(
         geometry.PlanePatch((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
         ((0.0, -1.0), (1.0, 1.0)),
@@ -212,10 +365,30 @@ def test_spatial_root_lift_retains_source_endpoint_and_refuses_unrelated_pcurve(
         )
         assert np.all(restored_lower <= (0.3, 0.0))
         assert np.all(np.asarray((0.3, 0.0)) <= restored_upper)
+        assert preparations.root_endpoints[id(endpoint)][0] is endpoint
+        assert preparations.root_endpoints[id(restored)][0] is restored
+        expected_scalar = endpoint.parameter_enclosure(preparations=preparations)
+        expression = TrimRootEndpoint._expression
+        evaluated = []
+
+        def counted_expression(self, *args, **kwargs):
+            evaluated.append(kwargs["maximum_steps"])
+            return expression(self, *args, **kwargs)
+
+        monkeypatch.setattr(TrimRootEndpoint, "_expression", counted_expression)
+        assert endpoint.parameter_enclosure(preparations=preparations) == expected_scalar
+        assert not evaluated
+        endpoint.parameter_enclosure(maximum_steps=8, preparations=preparations)
+        assert evaluated == [8]
+        with pytest.raises(TypeError, match="maximum_steps"):
+            endpoint.parameter_enclosure(maximum_steps=16.0, preparations=preparations)
+        assert evaluated == [8]
     np.testing.assert_array_equal(segment.enclosure(0.0, 0.0), (lower, upper))
 
 
-def test_rooted_branch_enclosure_authorizes_only_source_endpoint_uncertainty() -> None:
+def test_rooted_branch_enclosure_authorizes_only_source_endpoint_uncertainty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     first = geometry.SurfaceRegion(
         geometry.PlanePatch((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
         ((0.0, -1.0), (1.0, 1.0)),
@@ -266,6 +439,23 @@ def test_rooted_branch_enclosure_authorizes_only_source_endpoint_uncertainty() -
         branch.bounding_box(outside, 0.1)
     with pytest.raises(ValueError, match="IntersectionCurve.rooted_range"):
         branch.bounding_box(-0.01, 0.1, endpoint_roots=(endpoint, None))
+    with original_curve_surface_root_preparation((endpoint,)) as preparations:
+        scalar = endpoint.parameter_enclosure(preparations=preparations)
+        source_image = BranchRootEndpoint.source_image
+        evaluated = []
+
+        def counted_image(self, *args, **kwargs):
+            evaluated.append(kwargs["maximum_steps"])
+            return source_image(self, *args, **kwargs)
+
+        monkeypatch.setattr(BranchRootEndpoint, "source_image", counted_image)
+        assert endpoint.parameter_enclosure(preparations=preparations) == scalar
+        assert not evaluated
+        endpoint.parameter_enclosure(maximum_steps=8, preparations=preparations)
+        assert evaluated == [8]
+        with pytest.raises(TypeError, match="maximum_steps"):
+            endpoint.parameter_enclosure(maximum_steps=16.0, preparations=preparations)
+        assert evaluated == [8]
 
 
 def test_tangent_line_circle_reports_tangent_contact() -> None:

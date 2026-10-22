@@ -56,7 +56,7 @@ from ._patches import (
     coefficient_enclosures,
     LineCurve,
     PlanePatch,
-    rational_piece_jet_bounds,
+    rational_piece_jets,
     RationalBezierPiece,
 )
 from ._placed import PlacedCurve, PlacedSurface, same_source_pose
@@ -130,6 +130,14 @@ class _IntervalEvaluator(Protocol):
     ) -> tuple[np.ndarray, np.ndarray]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _SurfaceJetPrograms:
+    surface: AbstractSurfacePatch
+    value: _IntervalEvaluator
+    jacobian: _IntervalEvaluator
+    hessian: _IntervalEvaluator
+
+
 class RationalCurveSurfaceJets:
     """Enclose curve/surface chain-rule jets with homogeneous rational hulls.
 
@@ -155,28 +163,40 @@ class RationalCurveSurfaceJets:
         ]
         | None = None,
         observe_curve_jet: Callable[[], None] | None = None,
+        surface_programs: _SurfaceJetPrograms | None = None,
     ) -> None:
         self.curve, self.pcurve, self.point = curve, pcurve, point
         self.observe_curve_jet = observe_curve_jet
-        coefficients = coefficient_enclosures(surface)
+        if surface_programs is not None:
+            if surface_programs.surface is not surface:
+                raise ValueError("Surface jet programs must bind the same source patch.")
+            programs = surface_programs
+        else:
+            coefficients = coefficient_enclosures(surface)
 
-        def program(function: Callable[[Array], Array]) -> _IntervalEvaluator:
-            if prepare is None:
-                return prepare_interval_function(
-                    function, 2, batch_capacity=1, constant_bounds=coefficients
-                )
-            return prepare(function, 2, coefficients)
+            def program(function: Callable[[Array], Array]) -> _IntervalEvaluator:
+                if prepare is None:
+                    return prepare_interval_function(
+                        function, 2, batch_capacity=1, constant_bounds=coefficients
+                    )
+                return prepare(function, 2, coefficients)
 
-        self.value = program(surface.evaluate)
-        self.jacobian = program(jax.jacfwd(surface.evaluate))
-        self.hessian = program(jax.jacfwd(jax.jacfwd(surface.evaluate)))
+            programs = _SurfaceJetPrograms(
+                surface, program(surface.evaluate),
+                program(jax.jacfwd(surface.evaluate)),
+                program(jax.jacfwd(jax.jacfwd(surface.evaluate))),
+            )
+        self.surface_programs = programs
+        self.value, self.jacobian, self.hessian = (
+            programs.value, programs.jacobian, programs.hessian
+        )
 
-    def _curve_jet(
+    def _curve_jets(
         self, piece: RationalBezierPiece, first: float, last: float, order: int
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
         if self.observe_curve_jet is not None:
             self.observe_curve_jet()
-        return rational_piece_jet_bounds(piece, first, last, order=order)
+        return rational_piece_jets(piece, first, last, order)
 
     @checked
     def jet(
@@ -206,58 +226,156 @@ class RationalCurveSurfaceJets:
             raise ValueError(
                 f"RationalCurveSurfaceJets.order must be zero, one or two; got {order!r}"
             )
-        uv = self._curve_jet(self.pcurve, first, last, 0)
+        return self._jet_orders(
+            first, last, (order,), budget=budget, preparations=preparations
+        )[0]
+
+    def _jet_orders(
+        self,
+        first: float,
+        last: float,
+        orders: tuple[int, ...],
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None,
+    ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+        """Share lower-order quotient hulls and surface jets within one query."""
+        maximum = max(orders)
+        uv_jets = self._curve_jets(self.pcurve, first, last, maximum)
+        uv = uv_jets[0]
         expected = (
-            self._curve_jet(self.curve, first, last, order)
+            self._curve_jets(self.curve, first, last, maximum)
             if self.curve is not None
-            else ((self.point, self.point) if order == 0 else (np.zeros(3), np.zeros(3)))
+            else (
+                (self.point, self.point),
+                *((np.zeros(3), np.zeros(3)) for _ in range(maximum)),
+            )
         )
-        if order == 0:
-            value = evaluate_interval(
-                self.value,
-                uv[0][None],
-                uv[1][None],
-                budget=budget,
-                preparations=preparations,
+        value = (
+            evaluate_interval(
+                self.value, uv[0][None], uv[1][None],
+                budget=budget, preparations=preparations,
             )
-            lower, upper = interval_subtract((value[0][0], value[1][0]), expected)
-            return np.asarray(lower, dtype=np.float64), np.asarray(
-                upper, dtype=np.float64
-            )
-        jacobian = evaluate_interval(
-            self.jacobian,
-            uv[0][None],
-            uv[1][None],
-            budget=budget,
-            preparations=preparations,
+            if 0 in orders else None
         )
-        direction = self._curve_jet(self.pcurve, first, last, order)
-        result = (np.zeros(3), np.zeros(3))
-        for axis in range(2):
-            result = interval_add(
-                result,
-                interval_multiply(
-                    (jacobian[0][0, :, axis], jacobian[1][0, :, axis]),
-                    (direction[0][axis], direction[1][axis]),
-                ),
+        jacobian = (
+            evaluate_interval(
+                self.jacobian, uv[0][None], uv[1][None],
+                budget=budget, preparations=preparations,
             )
-        if order == 2:
-            first_jet = self._curve_jet(self.pcurve, first, last, 1)
-            hessian = self.hessian.evaluate(uv[0][None], uv[1][None])
-            for i in range(2):
-                for j in range(2):
-                    product = interval_multiply(
-                        (first_jet[0][i], first_jet[1][i]),
-                        (first_jet[0][j], first_jet[1][j]),
-                    )
-                    result = interval_add(
-                        result,
-                        interval_multiply(
-                            (hessian[0][0, :, i, j], hessian[1][0, :, i, j]), product
-                        ),
-                    )
-        lower, upper = interval_subtract(result, expected)
+            if maximum > 0 else None
+        )
+        hessian = (
+            evaluate_interval(
+                self.hessian, uv[0][None], uv[1][None],
+                budget=budget, preparations=preparations,
+            )
+            if maximum == 2 else None
+        )
+        return tuple(
+            curve_surface_chain_jet(
+                order,
+                expected[order],
+                value=None if value is None else (value[0][0], value[1][0]),
+                jacobian=None if jacobian is None else (jacobian[0][0], jacobian[1][0]),
+                direction=None if order == 0 else uv_jets[order],
+                hessian=None if hessian is None else (hessian[0][0], hessian[1][0]),
+                velocity=None if order != 2 else uv_jets[1],
+            )
+            for order in orders
+        )
+
+    def residual_jets_batch(
+        self,
+        starts: np.ndarray,
+        ends: np.ndarray,
+        centers: np.ndarray,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None,
+    ) -> tuple[
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+    ]:
+        """All four Taylor premises, without retaining state across queries."""
+        rows: list[tuple[tuple[np.ndarray, np.ndarray], ...]] = []
+        for start, end, center in zip(starts, ends, centers, strict=True):
+            center_value, center_derivative = self._jet_orders(
+                float(center[0]), float(center[0]), (0, 1),
+                budget=budget, preparations=preparations,
+            )
+            derivative, second = self._jet_orders(
+                float(start[0]), float(end[0]), (1, 2),
+                budget=budget, preparations=preparations,
+            )
+            rows.append((center_value, derivative, center_derivative, second))
+
+        def batch(index: int, order: int) -> tuple[np.ndarray, np.ndarray]:
+            shape = (len(rows), 3) + (1,) * order
+            return (
+                np.asarray([row[index][0] for row in rows]).reshape(shape),
+                np.asarray([row[index][1] for row in rows]).reshape(shape),
+            )
+
+        return batch(0, 0), batch(1, 1), batch(2, 1), batch(3, 2)
+
+
+type _JetInterval = tuple[np.ndarray, np.ndarray]
+
+
+def curve_surface_chain_jet(
+    order: int,
+    expected: _JetInterval,
+    *,
+    value: _JetInterval | None = None,
+    jacobian: _JetInterval | None = None,
+    direction: _JetInterval | None = None,
+    hessian: _JetInterval | None = None,
+    velocity: _JetInterval | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(S o uv)^(order) - expected`` from enclosed surface/p-curve jet rows.
+
+    ``value``/``jacobian``/``hessian`` enclose the surface over the p-curve's
+    order-zero box; ``direction`` is the p-curve jet of ``order`` and
+    ``velocity`` its first jet (second order only).
+    """
+    if order == 0:
+        if value is None:
+            raise ValueError("curve_surface_chain_jet.value must enclose order zero")
+        lower, upper = interval_subtract(value, expected)
         return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+    if jacobian is None or direction is None:
+        raise ValueError(
+            "curve_surface_chain_jet.jacobian and direction must enclose positive orders"
+        )
+    result = (np.zeros(3), np.zeros(3))
+    for axis in range(2):
+        result = interval_add(
+            result,
+            interval_multiply(
+                (jacobian[0][:, axis], jacobian[1][:, axis]),
+                (direction[0][axis], direction[1][axis]),
+            ),
+        )
+    if order == 2:
+        if hessian is None or velocity is None:
+            raise ValueError(
+                "curve_surface_chain_jet.hessian and velocity must enclose order two"
+            )
+        for i in range(2):
+            for j in range(2):
+                product = interval_multiply(
+                    (velocity[0][i], velocity[1][i]),
+                    (velocity[0][j], velocity[1][j]),
+                )
+                result = interval_add(
+                    result,
+                    interval_multiply((hessian[0][:, i, j], hessian[1][:, i, j]), product),
+                )
+    lower, upper = interval_subtract(result, expected)
+    return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
 
 
 @checked
@@ -277,24 +395,23 @@ class _CorrespondenceJetMap:
     def __init__(self, jets: RationalCurveSurfaceJets, order: int) -> None:
         self.jets, self.order = jets, order
 
-    def evaluate(
-        self, lower: np.ndarray, upper: np.ndarray, /
+    def evaluate_scope(
+        self, lower: np.ndarray, upper: np.ndarray, /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        with coordinate_source_request(
-            (
-                self,
-                lower,
-                upper,
+        values = [
+            self.jets.jet(
+                float(a[0]), float(b[0]), self.order,
+                budget=budget, preparations=preparations,
             )
-        ) as budget:
-            values = [
-                self.jets.jet(float(a[0]), float(b[0]), self.order, budget=budget)
-                for a, b in zip(lower, upper, strict=True)
-            ]
-            shape = (len(values), 3) + (1,) * self.order
-            return np.asarray([value[0] for value in values]).reshape(shape), np.asarray(
-                [value[1] for value in values]
-            ).reshape(shape)
+            for a, b in zip(lower, upper, strict=True)
+        ]
+        shape = (len(values), 3) + (1,) * self.order
+        return np.asarray([value[0] for value in values]).reshape(shape), np.asarray(
+            [value[1] for value in values]
+        ).reshape(shape)
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,7 +421,11 @@ class _PreparedCorrespondence:
     second_derivative: PreparedIntervalFunction | _CorrespondenceJetMap
 
 
-def _prepare(system: _CorrespondenceSystem, /) -> _PreparedCorrespondence:
+def _prepare(
+    system: _CorrespondenceSystem,
+    /,
+    surface_programs: _SurfaceJetPrograms | None = None,
+) -> _PreparedCorrespondence:
     match (system.curve, system.pcurve):
         case (
             (BernsteinCurvePiece() | None) as curve,
@@ -315,6 +436,7 @@ def _prepare(system: _CorrespondenceSystem, /) -> _PreparedCorrespondence:
                 bernstein_rational_piece(pcurve),
                 system.surface,
                 point=np.asarray(system.point),
+                surface_programs=surface_programs,
             )
             return _PreparedCorrespondence(
                 _CorrespondenceJetMap(jets, 0),
@@ -511,6 +633,7 @@ def _execute_correspondence_workset(
 ) -> CurveSurfaceCorrespondence:
     pending = workset.pending
     cache: dict[tuple[int, int, int], _PreparedCorrespondence] = {}
+    surface_programs: dict[int, _SurfaceJetPrograms] = {}
 
     def enclose(
         intervals: list[tuple[float, float]],
@@ -525,6 +648,8 @@ def _execute_correspondence_workset(
             cache,
             preparations=preparations,
             budget=budget,
+            tolerance=tolerance,
+            surface_programs=surface_programs,
         )
 
     # Batched breadth-first enclosures are replayed through the depth-first
@@ -533,6 +658,9 @@ def _execute_correspondence_workset(
     level = list(pending)
     while level and len(outcomes) + len(level) <= maximum_intervals:
         outcomes.update(enclose(level))
+        unsupported = tuple(interval for interval in level if outcomes[interval] is None)
+        if unsupported:
+            return CurveSurfaceCorrespondence.unproved(unsupported, len(outcomes))
         level = [
             child
             for start, end in level
@@ -565,6 +693,60 @@ def _execute_correspondence_workset(
     )
 
 
+
+def _correspondence_key(
+    curve: AbstractCurve | None,
+    pcurve: AbstractCurve,
+    surface: AbstractSurfacePatch,
+    parameter_box: np.ndarray,
+    first: float,
+    last: float,
+    point: np.ndarray,
+    maximum_intervals: int,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> str:
+    # iter_array_bytes uses at most a 65536-byte noncontiguous-array buffer.
+    budget.reserve(0, 65536)
+    # The residual's expected value is the actual curve when present; its
+    # fallback point participates only in the collapsed point-carrier case.
+    expected_point = point if curve is None else None
+    # Only collapse decomposition domains after a fresh, whole-range outward
+    # enclosure proves that both supplied domains contain the same p-curve.
+    # Mere overlap or a toleranced containment test cannot authorize reuse.
+    uv_box = np.asarray(
+        pcurve.bounding_box(
+            first, last, preparations=preparations, budget=budget
+        ),
+        dtype=np.float64,
+    )
+    covered_box = (
+        uv_box
+        if np.all(uv_box[0] >= parameter_box[0])
+        and np.all(uv_box[1] <= parameter_box[1])
+        else parameter_box
+    )
+    carrier_owner.admit_carrier_fingerprint(
+        (
+            curve, pcurve, surface, covered_box, first, last, expected_point,
+            maximum_intervals,
+        ),
+        budget,
+    )
+    return canonical_fingerprint(
+        {
+            "algorithm": "closed-source-directed-mean-value-taylor-v2",
+            "curve": None if curve is None else carrier_owner.carrier_payload(curve),
+            "pcurve": carrier_owner.carrier_payload(pcurve),
+            "surface": carrier_owner.carrier_payload(surface),
+            "parameter_box": covered_box,
+            "range": (first, last),
+            "point": expected_point,
+            "maximum_intervals": maximum_intervals,
+        }
+    )
+
+
 def _certify_native_curve_surface(
     curve: AbstractCurve | None,
     pcurve: AbstractCurve,
@@ -584,18 +766,34 @@ def _certify_native_curve_surface(
     generating = _generating_correspondence(
         curve, pcurve, surface, parameter_box, first, last, point, preparations, budget
     )
+    budget.ticket.checkpoint()
     if generating is not None:
         return generating
     if tolerance == 0.0:
         # Subdivision encloses residuals but cannot prove a generating identity
         # between independently rounded source carriers.
         return CurveSurfaceCorrespondence.unproved(((first, last),))
-    workset = _prepare_correspondence_workset(
-        curve, pcurve, surface, parameter_box, first, last, preparations, budget
-    )
-    return _execute_correspondence_workset(
-        workset, curve, point, tolerance, maximum_intervals, preparations, budget
-    )
+    with budget.temporary_scope():
+        key = _correspondence_key(
+            curve, pcurve, surface, parameter_box, first, last, point,
+            maximum_intervals, preparations, budget,
+        )
+        cached = budget.brep_correspondence_cache.get(key)
+        if cached is not None and cached.complete and cached.deviation_bound <= tolerance:
+            budget.ticket.checkpoint()
+            return cached
+        workset = _prepare_correspondence_workset(
+            curve, pcurve, surface, parameter_box, first, last, preparations, budget
+        )
+        result = _execute_correspondence_workset(
+            workset, curve, point, tolerance, maximum_intervals, preparations, budget
+        )
+        budget.ticket.checkpoint()
+        if result.complete:
+            budget.retain_owner((key, result))
+            budget.ticket.checkpoint()
+            budget.brep_correspondence_cache[key] = result
+        return result
 
 
 @checked
@@ -623,6 +821,10 @@ def certify_curve_surface(
     enclosure of the residual. A center value is itself interval-enclosed;
     neither sampled values nor local numerical convergence prove this result.
     Interval transcendental evaluations assume the documented four-ulp libm bound.
+
+    Complete native proofs are retained only by the supplied request budget.
+    Reuse binds the live carriers, closed source range, parameter box, point and
+    controls; range and generating-source checks still precede every lookup.
     """
     if preparations is None:
         preparations = TrimRequestPreparations()
@@ -745,14 +947,19 @@ def _residual_interval_bounds(
     *,
     preparations: TrimRequestPreparations | None = None,
     budget: CoordinateEnclosureBudget,
+    tolerance: float,
+    surface_programs: dict[int, _SurfaceJetPrograms] | None = None,
 ) -> dict[tuple[float, float], float | None]:
-    """Mean-value/Taylor residual bounds of closed intervals; None without support.
+    """Mean-value/Taylor bounds; None without support or with a proved violation.
 
     Intervals sharing one prepared curve/p-curve/surface piece triple are
     enclosed as one batch. Interval programs act row by row on fixed-capacity
     chunks, so each row is enclosed exactly as it would be alone.
     """
+    if surface_programs is None:
+        surface_programs = {}
     bounds: dict[tuple[float, float], float] = {}
+    contradicted: set[tuple[float, float]] = set()
     groups: dict[tuple[int, int, int], list[tuple[float, float]]] = {}
     for start, end in intervals:
         midpoint = 0.5 * (start + end)
@@ -790,8 +997,12 @@ def _residual_interval_bounds(
                         parameter_piece.evaluator,
                         patch.evaluator,
                         jnp.asarray(point, dtype=jnp.float64),
-                    )
+                    ),
+                    surface_programs.get(patch.index),
                 )
+                value = cache[key].value
+                if isinstance(value, _CorrespondenceJetMap):
+                    surface_programs[patch.index] = value.jets.surface_programs
             groups.setdefault(key, []).append((start, end))
     for key, members in groups.items():
         prepared = cache[key]
@@ -800,13 +1011,54 @@ def _residual_interval_bounds(
         centers = np.asarray(
             [[0.5 * (start + end)] for start, end in members], dtype=np.float64
         )
-        low, high = evaluate_interval(
-            prepared.value, centers, centers, budget=budget, preparations=preparations
-        )
-        derivative_low, derivative_high = prepared.derivative.evaluate(starts, ends)
-        center_low, center_high = prepared.derivative.evaluate(centers, centers)
-        second_low, second_high = prepared.second_derivative.evaluate(starts, ends)
+        if (
+            isinstance(prepared.value, _CorrespondenceJetMap)
+            and isinstance(prepared.derivative, _CorrespondenceJetMap)
+            and isinstance(prepared.second_derivative, _CorrespondenceJetMap)
+            and prepared.value.jets is prepared.derivative.jets
+            and prepared.value.jets is prepared.second_derivative.jets
+        ):
+            (
+                (low, high),
+                (derivative_low, derivative_high),
+                (center_low, center_high),
+                (second_low, second_high),
+            ) = prepared.value.jets.residual_jets_batch(
+                starts, ends, centers, budget=budget, preparations=preparations
+            )
+        else:
+            low, high = evaluate_interval(
+                prepared.value, centers, centers, budget=budget, preparations=preparations
+            )
+            derivative_low, derivative_high = evaluate_interval(
+                prepared.derivative, starts, ends, budget=budget, preparations=preparations
+            )
+            center_low, center_high = evaluate_interval(
+                prepared.derivative, centers, centers, budget=budget, preparations=preparations
+            )
+            second_low, second_high = evaluate_interval(
+                prepared.second_derivative, starts, ends,
+                budget=budget, preparations=preparations,
+            )
         for row, (start, end) in enumerate(members):
+            if (start, end) in contradicted:
+                continue
+            # A single source point outside the requested residual ball
+            # disproves a whole-domain upper-bound claim. These are outward
+            # center intervals, not sampled residuals. The supporting piece
+            # must own that entire center UV enclosure.
+            if np.any(low[row] > tolerance) or np.any(high[row] < -tolerance):
+                parameter_piece = next(
+                    item for item in parameter_segments if item.index == key[1]
+                )
+                patch = next(item for item in patches if item.index == key[2])
+                midpoint = 0.5 * (start + end)
+                uv = parameter_piece.evaluator.bounding_box(
+                    midpoint, midpoint, preparations=preparations, budget=budget
+                )
+                if np.all(uv[0] >= patch.lower) and np.all(uv[1] <= patch.upper):
+                    contradicted.add((start, end))
+                    continue
             midpoint = 0.5 * (start + end)
             magnitude = np.maximum(np.abs(low[row]), np.abs(high[row]))
             derivative = np.maximum(
@@ -834,7 +1086,10 @@ def _residual_interval_bounds(
             bounds[start, end] = max(
                 previous, norm_upper(np.minimum(error, taylor_error))
             )
-    return {interval: bounds.get(interval) for interval in intervals}
+    return {
+        interval: None if interval in contradicted else bounds.get(interval)
+        for interval in intervals
+    }
 
 
 # ------------------------------------------------ carrier parameter maps

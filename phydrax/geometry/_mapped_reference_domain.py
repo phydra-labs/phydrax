@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from fractions import Fraction
 from typing import final
 
@@ -51,6 +52,7 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
     reference_mesh: CellMesh
     source_geometry: CellGeometrySpec
     cell_regions: HostInt64[_MappedSourceCellDim]
+    certificate_limits: embedding_state_owner.MeshCertificateLimits
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     domain_id: str = eqx.field(static=True)
@@ -66,6 +68,7 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
         *,
         source_id: str,
         source_revision: str,
+        certificate_limits: embedding_state_owner.MeshCertificateLimits | None = None,
         budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
 
@@ -104,10 +107,15 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
             raise ValueError(
                 "MappedReferenceDomain.cell_regions must assign a declared region to every root; got invalid shape or region index"
             )
+        limits = (
+            embedding_state_owner.MeshCertificateLimits()
+            if certificate_limits is None
+            else certificate_limits
+        )
         with embedding_state_owner.coordinate_certificate_request(
-            embedding_state_owner.MeshCertificateLimits(), budget=budget
+            limits, budget=budget
         ) as budget:
-            elements, routes, _ = source_geometry.resolve(reference_mesh)
+            elements, routes, _ = source_geometry.resolve(reference_mesh, budget=budget)
             values = source_geometry.source_coordinates(budget=budget)
             for block, element, route in zip(
                 reference_mesh.blocks, elements, routes, strict=True
@@ -149,6 +157,7 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
             self.reference_mesh = reference_mesh
             self.source_geometry = source_geometry
             self.cell_regions = regions
+            self.certificate_limits = limits
             self.source_id = source
             self.source_revision = revision
             self.domain_id = canonical_fingerprint(
@@ -165,6 +174,10 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
                         source_geometry
                     ),
                     "cell_regions": array_tree_fingerprint(regions),
+                    "certificate_limits": {
+                        field.name: getattr(limits, field.name)
+                        for field in fields(limits)
+                    },
                 }
             )
 
@@ -224,9 +237,9 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
         """Integrate the physical root Jacobians, including collapsed pyramids."""
 
         with embedding_state_owner.coordinate_certificate_request(
-            embedding_state_owner.MeshCertificateLimits(), budget=budget
+            self.certificate_limits, budget=budget
         ) as budget:
-            elements, routes, _ = self.source_geometry.resolve(self.reference_mesh)
+            elements, routes, _ = self.source_geometry.resolve(self.reference_mesh, budget=budget)
             values = self.source_geometry.source_coordinates(budget=budget)
             totals = [Fraction(0) for _ in self.region_ids]
             cursor = 0

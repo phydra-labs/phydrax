@@ -21,10 +21,11 @@ import functools as functools_owner
 import itertools as itertools_owner
 import math as math_owner
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import final, TYPE_CHECKING
-from weakref import WeakValueDictionary
+from weakref import ReferenceType, WeakKeyDictionary, WeakValueDictionary, ref
 
 import equinox as eqx
 import jax
@@ -36,7 +37,9 @@ from jax.typing import ArrayLike
 from phydrax.linalg._exact import solve_exact
 
 from .. import _bvh as bvh_owner
+from .. import _geometry_predicates as geometry_predicates_owner
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._issued_proofs import IssuedProofs
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, positive_integer
@@ -65,10 +68,180 @@ type ExactMatrix = tuple[tuple[Fraction, ...], ...]
 
 _NONE, _SEGMENT, _TRIANGLE = 0, 1, 2
 
+@dataclass(frozen=True, slots=True, eq=False)
+class _PlcEntityFrame:
+    """Actual exact edge/normal operands of one source entity, not a verdict."""
+
+    corners: tuple[ExactPoint, ...]
+    edges: tuple[ExactPoint, ...]
+    normal: tuple[Fraction, ...]
+
+
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
+class _PreparedPlcEntityFrames:
+    """Nonportable numerical rows; caller-bound issued operands authorize reuse."""
+
+    triangles: tuple[_PlcEntityFrame, ...]
+    segments: tuple[_PlcEntityFrame, ...]
+    storage_bytes_upper: int
+
+    def __reduce__(self) -> tuple[object, ...]:
+        raise TypeError("PLC entity frames must re-earn at archive and cold boundaries.")
+
+
+# Verification-only weak producer seals. There is no source-ID lookup or
+# cross-request numerical reuse here, and a seal never retains its root key.
+@dataclass(frozen=True, slots=True)
+class _PlcEntityFrameSeal:
+    source: ReferenceType[ExactPlcCellGeometrySource]
+    arrays: tuple[Array, ...]
+    policy: tuple[str, str, int, int]
+    numeric_fields: tuple[object, ...]
+
+
+_ENTITY_FRAME_SEALS: WeakKeyDictionary[
+    _PreparedPlcEntityFrames, _PlcEntityFrameSeal
+] = WeakKeyDictionary()
+
+_ENTITY_SOURCE_ARRAY_NAMES = (
+    "source_points", "source_triangles", "source_segments",
+    "source_triangle_ids", "source_triangle_bounds",
+    "source_segment_ids", "source_segment_bounds",
+)
+
+
+def _entity_frame_fields(frames: _PreparedPlcEntityFrames, /) -> tuple[object, ...]:
+    fields: list[object] = [
+        frames.triangles, frames.segments, frames.storage_bytes_upper
+    ]
+    for frame in (*frames.triangles, *frames.segments):
+        if type(frame) is not _PlcEntityFrame:
+            raise ValueError("PLC entity frames must retain their actual numeric row type.")
+        fields.extend((frame, frame.corners, frame.edges, frame.normal))
+    return tuple(fields)
+
+
+def _plc_entity_frame_basis(
+    frames: _PreparedPlcEntityFrames, /, *,
+    source: ExactPlcCellGeometrySource | None = None,
+) -> tuple[object, ...]:
+    """Authenticate actual numeric rows and their original constructor source."""
+    seal = _ENTITY_FRAME_SEALS.get(frames) if type(frames) is _PreparedPlcEntityFrames else None
+    if seal is None or any(
+        current is not expected
+        for current, expected in zip(
+            (frames.triangles, frames.segments, frames.storage_bytes_upper),
+            seal.numeric_fields[:3], strict=True,
+        )
+    ):
+        raise ValueError("PLC entity preparation must retain its actual producer binding.")
+    actual_source = seal.source()
+    if (
+        actual_source is None or (source is not None and actual_source is not source)
+        or any(
+            getattr(actual_source, name) is not expected or expected.is_deleted()
+            for name, expected in zip(_ENTITY_SOURCE_ARRAY_NAMES, seal.arrays, strict=True)
+        )
+        or (
+            actual_source.domain_source_id, actual_source.domain_source_revision,
+            actual_source.maximum_work, actual_source.maximum_bits,
+        ) != seal.policy
+    ):
+        raise ValueError("PLC entity preparation must bind its actual original source and policy.")
+    actual = _entity_frame_fields(frames)
+    if len(actual) != len(seal.numeric_fields) or any(
+        current is not expected
+        for current, expected in zip(actual, seal.numeric_fields, strict=True)
+    ):
+        raise ValueError("PLC entity preparation numeric rows changed after their earning operation.")
+    return actual
+
+
+def _require_plc_entity_frame_source(
+    frames: _PreparedPlcEntityFrames, source: ExactPlcCellGeometrySource, /
+) -> None:
+    _plc_entity_frame_basis(frames, source=source)
+
+
+def _issue_plc_entity_frames(
+    source: ExactPlcCellGeometrySource,
+    triangles: tuple[_PlcEntityFrame, ...],
+    segments: tuple[_PlcEntityFrame, ...],
+    storage_bytes_upper: int,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _PreparedPlcEntityFrames:
+    # The graph and seal storage were admitted before the earning row
+    # operations. Only the actual small producer-index work is added here.
+    budget.reserve(3 + 4 * (len(triangles) + len(segments)))
+    frames = _PreparedPlcEntityFrames(triangles, segments, storage_bytes_upper)
+    _ENTITY_FRAME_SEALS[frames] = _PlcEntityFrameSeal(
+        ref(source),
+        tuple(getattr(source, name) for name in _ENTITY_SOURCE_ARRAY_NAMES),
+        (
+            source.domain_source_id, source.domain_source_revision,
+            source.maximum_work, source.maximum_bits,
+        ),
+        _entity_frame_fields(frames),
+    )
+    return frames
+
+
+def _plc_entity_frame_wrapper_storage_upper(row_count: int, /) -> int:
+    """Bound new wrapper/source seal/index metadata around already-owned rows."""
+    return 4096 + 128 * row_count
+
+
+def _plc_entity_frame_storage_upper(
+    triangle_count: int, segment_count: int, dimension: int, maximum_bits: int, /
+) -> int:
+    # Inputs are normalized binary64 before row preparation. Only valid rows
+    # survive their unchanged maximum_bits guard; differences and normal minors
+    # need at most eight input numerator/denominator bit extents plus carries.
+    allocation_bits = 8 * min(1075, maximum_bits) + 16
+    integer_upper = 64 + 4 * ((allocation_bits + 29) // 30)
+    fraction_upper = 128 + 2 * integer_upper
+    triangle_scalars = 5 * dimension + (1 if dimension == 2 else 3)
+    segment_scalars = 3 * dimension
+    return (
+        4096
+        + triangle_count * (1024 + triangle_scalars * fraction_upper)
+        + segment_count * (1024 + segment_scalars * fraction_upper)
+    )
+
+
+def _plc_entity_numeric_frame(
+    corners: tuple[ExactPoint, ...], dimension: int, /
+) -> _PlcEntityFrame:
+    origin = corners[0]
+    edges = tuple(
+        tuple(corner[axis] - origin[axis] for axis in range(dimension))
+        for corner in corners[1:]
+    )
+    if len(edges) == 1:
+        normal: tuple[Fraction, ...] = ()
+    else:
+        first, second = edges
+        normal = (
+            (first[0] * second[1] - first[1] * second[0],)
+            if dimension == 2 else (
+                first[1] * second[2] - first[2] * second[1],
+                first[2] * second[0] - first[0] * second[2],
+                first[0] * second[1] - first[1] * second[0],
+            )
+        )
+    return _PlcEntityFrame(corners, edges, normal)
+
+
+
 
 _WITNESS_LOCATORS: WeakValueDictionary[int, _PreparedWitnessLocator] = (
     WeakValueDictionary()
 )
+# Issued witness banks, weakly keyed by their source object (see ``IssuedProofs``).
+_ISSUED_WITNESSES: IssuedProofs[
+    ExactPlcCellGeometrySource, PreparedExactPlcGeometry
+] = IssuedProofs()
 
 
 def _witness_storage(size: int, *, budget: CoordinateEnclosureBudget) -> None:
@@ -153,6 +326,7 @@ class _PreparedWitnessLocator:
     metadata: tuple[str, str, int, int]
     source_id: str
     rows: tuple[tuple[int, int, tuple[ExactPoint, ...]], ...]
+    normals: tuple[ExactPoint | None, ...]
     packed: _WitnessPackedSnapshot | None
     hierarchy: PackedBVH | None
 
@@ -163,7 +337,7 @@ class _PreparedWitnessLocator:
         exact_work: ExactPlcBudget,
         *,
         budget: CoordinateEnclosureBudget,
-    ) -> tuple[tuple[int, int, tuple[ExactPoint, ...]], ...]:
+    ) -> Iterator[tuple[int, int, tuple[ExactPoint, ...]]]:
         exact_work.charge(16, point)
         if (
             _WITNESS_LOCATORS.get(id(self)) is not self
@@ -200,7 +374,7 @@ class _PreparedWitnessLocator:
         packed = self.packed
         if packed is None:
             _witness_storage(0, budget=budget)
-            return ()
+            return
         pending = [0]
         candidates = []
         while pending:
@@ -246,7 +420,54 @@ class _PreparedWitnessLocator:
 
         _witness_storage(64 * len(candidates), budget=budget)
         candidates.sort(key=functools_owner.cmp_to_key(compare))
-        return tuple(self.rows[index] for index in candidates)
+        for index in candidates:
+            normal = self.normals[index]
+            if normal is not None:
+                # A noncoplanar point cannot belong to this closed triangle.
+                # The source-owned normal was prepared once, rather than
+                # rebuilt by every full triangle membership predicate.
+                exact_work.charge(9, point + normal)
+                origin = self.rows[index][2][0]
+                if sum(
+                    (
+                        normal[axis] * (point[axis] - origin[axis])
+                        for axis in range(3)
+                    ),
+                    Fraction(0),
+                ):
+                    continue
+            yield self.rows[index]
+
+
+def _prepare_witness_normal(
+    corners: tuple[ExactPoint, ...],
+    maximum_ratio_bits: int,
+    exact_work: ExactPlcBudget,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> ExactPoint | None:
+    """Prepare an exact plane only when the original rational-bit cap admits it."""
+    # Each normal component subtracts products of differences of source
+    # rationals. This bound also covers arbitrary denominator products, not
+    # only the dyadic denominators of the binary64 source.
+    bits = 8 * maximum_ratio_bits + 16
+    if len(corners) != 3 or len(corners[0]) != 3 or bits > exact_work.maximum_bits:
+        return None
+    storage, _ = plc_storage_bounds(3, bits)
+    _witness_storage(storage, budget=budget)
+    # Six edge differences, six products, three differences, three zero tests.
+    exact_work.charge(18)
+    origin, first, second = corners
+    a = tuple(first[axis] - origin[axis] for axis in range(3))
+    b = tuple(second[axis] - origin[axis] for axis in range(3))
+    normal = (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+    exact_work.charge(0, normal)
+    # Preserve the existing membership predicate's degeneracy refusal point.
+    return normal if any(normal) else None
 
 
 def _prepare_source_witness_locator(
@@ -261,7 +482,7 @@ def _prepare_source_witness_locator(
         _witness_storage(int(leaf.size) * int(leaf.dtype.itemsize), budget=budget)
     identity = source.source_id
     points = np.asarray(source.source_points)
-    rows, boxes = [], []
+    rows, normals, boxes = [], [], []
 
     for stratum, table in (
         (_SEGMENT, source.source_segments),
@@ -284,6 +505,13 @@ def _prepare_source_witness_locator(
             _witness_storage(bank_upper, budget=budget)
             corners = tuple(rational_vector(points[int(index)]) for index in indices)
             exact_work.charge(0, tuple(value for corner in corners for value in corner))
+            normals.append(
+                _prepare_witness_normal(
+                    corners, maximum_ratio_bits, exact_work, budget=budget
+                )
+                if stratum == _TRIANGLE
+                else None
+            )
             lower = tuple(
                 min(float(corner[axis]) for corner in corners)
                 for axis in range(points.shape[1])
@@ -313,7 +541,7 @@ def _prepare_source_witness_locator(
             _reserve_storage=reserve_storage,
         )
         packed = _witness_packed_snapshot(hierarchy, exact_work, budget=budget)
-    _witness_storage(256 + 32 * len(rows), budget=budget)
+    _witness_storage(256 + 64 * len(rows), budget=budget)
     locator = _PreparedWitnessLocator(
         source,
         leaves,
@@ -325,6 +553,7 @@ def _prepare_source_witness_locator(
         ),
         identity,
         tuple(rows),
+        tuple(normals),
         packed,
         hierarchy,
     )
@@ -345,6 +574,10 @@ def _canonical_parameter_ratios(
             f"ExactPlcCellGeometrySource.vertex_parameter_ratios must align per vertex; got {len(ratios)} rows"
         )
     result: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    records: dict[
+        tuple[tuple[int, int], tuple[int, int]],
+        tuple[tuple[int, int], tuple[int, int]],
+    ] = {}
     for vertex, row in enumerate(ratios):
         if len(row) != 2:
             raise ValueError(
@@ -369,7 +602,10 @@ def _canonical_parameter_ratios(
                     f"ExactPlcCellGeometrySource.vertex_parameter_ratios must round to vertex_parameters; got row {vertex}, weight {axis}"
                 )
             canonical.append((value.numerator, value.denominator))
-        result.append((canonical[0], canonical[1]))
+        normalized = canonical[0], canonical[1]
+        # Integer ratio records are immutable metadata. Share identical rows
+        # after every row's original type, reduction and display checks.
+        result.append(records.setdefault(normalized, normalized))
     return tuple(result)
 
 
@@ -432,7 +668,7 @@ def _validate_plc_witness_rows(
     return ratios
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class PreparedExactPlcGeometry:
     """Return PLC rational coordinates and bounded preparation evidence.
 
@@ -530,6 +766,7 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
         maximum_work: int = 10_000_000,
         maximum_bits: int = 4096,
         budget: CoordinateEnclosureBudget,
+        _entity_origin: ExactPlcCellGeometrySource | None = None,
     ) -> None:
         identity = canonical_identifier(domain_source_id, "domain_source_id")
         revision = canonical_identifier(domain_source_revision, "domain_source_revision")
@@ -625,45 +862,88 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
         )
         maximum_work = positive_integer(maximum_work, "maximum_work")
         maximum_bits = positive_integer(maximum_bits, "maximum_bits")
-        exact_work = ExactPlcBudget(maximum_work, maximum_bits, budget=budget)
-        for table in (triangles, segments):
-            for row_index in range(table.shape[0]):
-                row = table[row_index]
-                corners = tuple(
-                    rational_vector(points[row[axis]]) for axis in range(row.shape[0])
-                )
-                exact_work.charge(
-                    64, tuple(value for corner in corners for value in corner)
-                )
-                in_entity(corners[0], corners)
-        (
-            self.source_points,
-            self.source_triangles,
-            self.source_segments,
-            self.source_triangle_ids,
-            self.source_triangle_bounds,
-            self.source_segment_ids,
-            self.source_segment_bounds,
-            self.vertex_strata,
-            self.vertex_rows,
-            self.vertex_parameters,
-        ) = jax.device_put(
-            (
-                points,
-                triangles,
-                segments,
-                triangle_ids,
-                triangle_bounds,
-                segment_ids,
-                segment_bounds,
-                strata.astype(np.int8),
-                rows,
-                parameters,
-            )
+        from ._coordinate_operands import (
+            _plc_entity_frames_for,
+            _record_plc_entity_frames,
         )
-        self.vertex_parameter_ratios = ratios
-        self.domain_source_id, self.domain_source_revision = identity, revision
-        self.maximum_work, self.maximum_bits = maximum_work, maximum_bits
+
+        prepared_entities = _plc_entity_frames_for(
+            _entity_origin,
+            (points, triangles, segments, triangle_ids, triangle_bounds, segment_ids, segment_bounds),
+            (identity, revision, maximum_work, maximum_bits),
+            budget,
+        )
+        capture = budget.capture_coordinate_operands
+        exact_work = ExactPlcBudget(maximum_work, maximum_bits, budget=budget)
+        with budget.live_storage() as credit, budget.temporary_scope():
+            if capture:
+                if prepared_entities is None:
+                    storage_upper = _plc_entity_frame_storage_upper(
+                        triangles.shape[0], segments.shape[0], points.shape[1], maximum_bits
+                    )
+                    credit.set_bound(storage_upper)
+                    # Temporary input ratios/rank arithmetic may reach binary64's
+                    # full exponent range before the unchanged operand-bit guard.
+                    row_storage, row_scratch = plc_storage_bounds(3, 1075)
+                    budget.reserve(0, row_storage + row_scratch)
+                else:
+                    storage_upper = prepared_entities.storage_bytes_upper
+                    credit.set_bound(_plc_entity_frame_wrapper_storage_upper(
+                        triangles.shape[0] + segments.shape[0]
+                    ))
+            triangle_frames: list[_PlcEntityFrame] = []
+            segment_frames: list[_PlcEntityFrame] = []
+            if prepared_entities is None:
+                for table, target in (
+                    (triangles, triangle_frames), (segments, segment_frames)
+                ):
+                    for row_index in range(table.shape[0]):
+                        row = table[row_index]
+                        corners = tuple(
+                            rational_vector(points[row[axis]]) for axis in range(row.shape[0])
+                        )
+                        # This remains the original WHOLE-ROW tariff, including
+                        # local/enclosure work and every original operand-bit guard.
+                        exact_work.charge(
+                            64, tuple(value for corner in corners for value in corner)
+                        )
+                        frame = _plc_entity_numeric_frame(corners, points.shape[1])
+                        _in_entity_frame(corners[0], frame)
+                        if capture:
+                            target.append(frame)
+            (
+                self.source_points,
+                self.source_triangles,
+                self.source_segments,
+                self.source_triangle_ids,
+                self.source_triangle_bounds,
+                self.source_segment_ids,
+                self.source_segment_bounds,
+                self.vertex_strata,
+                self.vertex_rows,
+                self.vertex_parameters,
+            ) = jax.device_put(
+                (
+                    points, triangles, segments, triangle_ids, triangle_bounds,
+                    segment_ids, segment_bounds, strata.astype(np.int8), rows, parameters,
+                )
+            )
+            self.vertex_parameter_ratios = ratios
+            self.domain_source_id, self.domain_source_revision = identity, revision
+            self.maximum_work, self.maximum_bits = maximum_work, maximum_bits
+            if capture:
+                # A new source receives a new constructor-bound wrapper, even
+                # when its immutable numerical entity rows are already owned.
+                frames = _issue_plc_entity_frames(
+                    self,
+                    tuple(triangle_frames) if prepared_entities is None else prepared_entities.triangles,
+                    tuple(segment_frames) if prepared_entities is None else prepared_entities.segments,
+                    storage_upper,
+                    budget,
+                )
+                _record_plc_entity_frames(
+                    self, frames, budget, temporary_storage_credit=credit
+                )
 
     @classmethod
     @checked
@@ -671,6 +951,8 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
         cls: type[ExactPlcCellGeometrySource],
         value: ExactPlcCellGeometrySource,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> ExactPlcCellGeometrySource:
         """Rebuild PLC source fields under their bounded constructor admission."""
         points = np.asarray(value.source_points, dtype=np.float64)
@@ -679,14 +961,18 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
                 "ExactPlcCellGeometrySource.source_points must be nonempty "
                 f"(P, 2) or (P, 3); got {points.shape}"
             )
-        work_upper, bytes_upper = cell_geometry_owner.exact_source_preparation_bounds(
-            value, value.vertex_strata.shape[0], points.shape[1]
-        )
-        with cell_geometry_owner.owned_coordinate_preparation(
-            work_upper,
-            bytes_upper,
-            maximum_geometry_queries=value.preparation_query_upper(),
-        ) as budget:
+        if budget is None:
+            work_upper, bytes_upper = cell_geometry_owner.exact_source_preparation_bounds(
+                value, value.vertex_strata.shape[0], points.shape[1]
+            )
+            preparation = cell_geometry_owner.owned_coordinate_preparation(
+                work_upper,
+                bytes_upper,
+                maximum_geometry_queries=value.preparation_query_upper(),
+            )
+        else:
+            preparation = nullcontext(budget)
+        with preparation as admission:
             return cls(
                 value.source_points,
                 value.source_triangles,
@@ -703,7 +989,7 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
                 vertex_parameter_ratios=value.vertex_parameter_ratios,
                 maximum_work=value.maximum_work,
                 maximum_bits=value.maximum_bits,
-                budget=budget,
+                budget=admission,
             )
 
     def exact_vertex_parameters(self) -> tuple[tuple[Fraction, Fraction], ...]:
@@ -757,6 +1043,7 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
             maximum_work=self.maximum_work,
             maximum_bits=self.maximum_bits,
             budget=budget,
+            _entity_origin=self,
         )
 
     @checked
@@ -848,6 +1135,59 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
             ((0, 1), (0, 1)) if self.vertex_parameter_ratios is not None else None,
         )
 
+    @checked
+    def admits_located_witness(
+        self,
+        point: ExactPoint,
+        exact_work: ExactPlcBudget,
+        /,
+        *,
+        locator: _PreparedWitnessLocator,
+        budget: CoordinateEnclosureBudget,
+    ) -> bool:
+        """Whether ``point`` binds a source row whose original bound admits its carrier.
+
+        Applies the nested producer's own row location, round-to-nearest carrier
+        of the located authority and declared row-bound admission. A point
+        outside every segment and triangle binds no source row and is refused.
+        """
+        stratum, row, parameters, authority, ratios = self.locate_witness(
+            point, exact_work, locator=locator, budget=budget
+        )
+        if stratum == _NONE:
+            return False
+        if stratum == _SEGMENT:
+            indices, bound = self.source_segments[row], self.source_segment_bounds[row]
+        else:
+            indices, bound = (
+                self.source_triangles[row],
+                self.source_triangle_bounds[row],
+            )
+        points = np.asarray(self.source_points)
+        corners = tuple(
+            rational_vector(points[int(index)]) for index in np.asarray(indices)
+        )
+        weights = (
+            tuple(Fraction(*ratio) for ratio in ratios[: len(corners) - 1])
+            if ratios is not None
+            else tuple(Fraction(value) for value in parameters[: len(corners) - 1])
+        )
+        carrier = tuple(Fraction(float(value)) for value in authority)
+        exact_work.charge(
+            64, carrier + tuple(value for corner in corners for value in corner)
+        )
+        return not isinstance(
+            _row_witness(
+                carrier,
+                corners,
+                weights,
+                float(bound),
+                exact_work,
+                rational_weights=ratios is not None,
+            ),
+            str,
+        )
+
     @property
     def source_id(self) -> str:
         payload = {
@@ -911,7 +1251,11 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
     def prepare(
         self, rounded_vertices: ArrayLike, /, *, budget: CoordinateEnclosureBudget
     ) -> PreparedExactPlcGeometry:
-        """Prepare source-row coordinates once per request and carrier contents."""
+        """Prepare source-row coordinates once per request and carrier contents.
+
+        A bank already issued in this process for this source object and these
+        carrier coordinates is reused while another owner still retains it.
+        """
         if any(
             isinstance(value, core.Tracer) for value in jax.tree_util.tree_leaves(self)
         ):
@@ -934,25 +1278,111 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
         if cached is not None:
             ledger.reserve(0)
             return cached
-        proof = self.prepare_witnesses(
-            rounded,
-            np.asarray(self.vertex_strata),
-            np.asarray(self.vertex_rows),
-            np.asarray(self.vertex_parameters),
-            vertex_parameter_ratios=self.vertex_parameter_ratios,
-            budget=budget,
-        )
-        prepared = PreparedExactPlcGeometry(
-            proof.vertices,
-            proof.on_entity,
-            identity,
-            proof.operation_count,
-            proof.maximum_integer_bits,
-            proof.maximum_rounding_error,
-        )
+        issued_key = "/".join(key)
+        prepared = _ISSUED_WITNESSES.get(self, issued_key)
+        if prepared is None:
+            proof = self.prepare_witnesses(
+                rounded,
+                np.asarray(self.vertex_strata),
+                np.asarray(self.vertex_rows),
+                np.asarray(self.vertex_parameters),
+                vertex_parameter_ratios=self.vertex_parameter_ratios,
+                budget=budget,
+            )
+            prepared = PreparedExactPlcGeometry(
+                proof.vertices,
+                proof.on_entity,
+                identity,
+                proof.operation_count,
+                proof.maximum_integer_bits,
+                proof.maximum_rounding_error,
+            )
+            _ISSUED_WITNESSES.record(self, issued_key, prepared)
+        # A bank issued for this source object and still owned elsewhere is not
+        # proved again; every request admits and retains the bank it holds.
         ledger.retain_basis((key, prepared))
         ledger.plc_witness_cache[key] = prepared
         return prepared
+
+    def _binary64_memberships(
+        self, rounded: np.ndarray, strata: np.ndarray, rows: np.ndarray,
+        exact_work: ExactPlcBudget,
+    ) -> np.ndarray:
+        """Prove closed row membership by the canonical exact binary predicates."""
+        budget = exact_work.enclosure
+        budget.reserve(0, 1024 * rounded.shape[0] + 256)
+        proved = np.zeros((rounded.shape[0],), dtype=np.bool_)
+        points = np.asarray(self.source_points)
+        if rounded.dtype != np.float64 or points.dtype != np.float64:
+            return proved
+        mode = geometry_predicates_owner.PredicateMode.EXACT
+        ambient = rounded.shape[1]
+        if ambient not in (2, 3):
+            return proved
+        axes = ((0, 1),) if ambient == 2 else ((0, 1), (1, 2), (2, 0))
+        for stratum, table in (
+            (_SEGMENT, np.asarray(self.source_segments)),
+            (_TRIANGLE, np.asarray(self.source_triangles)),
+        ):
+            selected = np.flatnonzero(
+                (strata == stratum) & (rows >= 0) & (rows < table.shape[0])
+            )
+            if not selected.size:
+                continue
+            corners = points[table[rows[selected]]]
+            carriers = rounded[selected]
+            if stratum == _SEGMENT:
+                inside = (
+                    np.any(corners[:, 0] != corners[:, 1], axis=1)
+                    & np.all(carriers >= np.minimum(corners[:, 0], corners[:, 1]), axis=1)
+                    & np.all(carriers <= np.maximum(corners[:, 0], corners[:, 1]), axis=1)
+                )
+                for projection in axes:
+                    exact_work.charge(selected.size)
+                    signs = geometry_predicates_owner.orient2d_host(
+                        corners[:, 0, projection], corners[:, 1, projection],
+                        carriers[:, projection], mode=mode, budget=budget,
+                    )
+                    inside &= signs.certain & (signs.signs == 0)
+                proved[selected] = inside
+                continue
+            coplanar = np.ones((selected.size,), dtype=np.bool_)
+            if ambient == 3:
+                exact_work.charge(selected.size)
+                signs = geometry_predicates_owner.orient3d_host(
+                    corners[:, 0], corners[:, 1], corners[:, 2], carriers,
+                    mode=mode, budget=budget,
+                )
+                coplanar = signs.certain & (signs.signs == 0)
+            pending = np.flatnonzero(coplanar)
+            for projection in axes:
+                if not pending.size:
+                    break
+                projected = corners[pending][:, :, projection]
+                exact_work.charge(pending.size)
+                orientation = geometry_predicates_owner.orient2d_host(
+                    projected[:, 0], projected[:, 1], projected[:, 2],
+                    mode=mode, budget=budget,
+                )
+                usable = orientation.certain & (orientation.signs != 0)
+                active = pending[usable]
+                if not active.size:
+                    continue
+                triangle = projected[usable]
+                point = carriers[active][:, projection]
+                inside = np.ones((active.size,), dtype=np.bool_)
+                for first, second in ((0, 1), (1, 2), (2, 0)):
+                    exact_work.charge(active.size)
+                    side = geometry_predicates_owner.orient2d_host(
+                        triangle[:, first], triangle[:, second], point,
+                        mode=mode, budget=budget,
+                    )
+                    inside &= side.certain & (
+                        side.signs * orientation.signs[usable] >= 0
+                    )
+                proved[selected[active]] = inside
+                pending = pending[~usable]
+        return proved
 
     @checked
     def prepare_witnesses(
@@ -983,27 +1413,41 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
         )
         exact_work = ExactPlcBudget(self.maximum_work, self.maximum_bits, budget=budget)
 
-        minimum_work = sum(1 if stratum == _NONE else 64 for stratum in strata)
-        if minimum_work > self.maximum_work:
-            raise coordinate_budget_owner.CoordinateEnclosureResourceError(
-                "coefficient_work", self.maximum_work, minimum_work, 0
-            )
-
         ledger = budget
+
         bank_upper, arithmetic_scratch_upper = plc_storage_bounds(
             rounded.shape[0], self.maximum_bits
         )
-        ledger.admit_work_bound(
-            minimum_work, storage_upper=bank_upper + arithmetic_scratch_upper
-        )
-        with ledger.temporary_scope():
-            ledger.reserve(0, bank_upper + arithmetic_scratch_upper)
+        with ledger.temporary_scope(), ledger.live_storage() as scalar_storage:
+            ledger.reserve(
+                0, bank_upper + arithmetic_scratch_upper + rounded.shape[0] + 256
+            )
+            with ledger.temporary_scope():
+                on_entity = (
+                    self._binary64_memberships(rounded, strata, rows, exact_work)
+                    if vertex_parameter_ratios is None
+                    else np.zeros((rounded.shape[0],), dtype=np.bool_)
+                )
+            minimum_work = sum(
+                1 if stratum == _NONE or proved else 64
+                for stratum, proved in zip(strata, on_entity, strict=True)
+            )
+            if exact_work.work + minimum_work > self.maximum_work:
+                raise coordinate_budget_owner.CoordinateEnclosureResourceError(
+                    "coefficient_work", self.maximum_work,
+                    exact_work.work + minimum_work, exact_work.work,
+                )
+            ledger.admit_work_bound(minimum_work)
             prepared = self._build_witnesses(
-                rounded, strata, rows, parameter_rows, exact_work, vertex_parameter_ratios
+                rounded, strata, rows, parameter_rows, exact_work, scalar_storage,
+                vertex_parameter_ratios, on_entity,
             )
             # The pre-admitted bank stays live while retention establishes
             # ownership through the rest of the request's theorem.
-            ledger.retain_basis((prepared.vertices, prepared.on_entity))
+            ledger.retain_basis(
+                (prepared.vertices, prepared.on_entity), operand=True,
+                _kernel_operands=True,
+            )
             return prepared
 
     def _build_witnesses(
@@ -1014,30 +1458,83 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
         parameter_rows: np.ndarray,
         exact_work: ExactPlcBudget,
         /,
+        scalar_storage: coordinate_budget_owner.CoordinateLiveStorage,
         vertex_parameter_ratios: tuple[tuple[tuple[int, int], tuple[int, int]], ...]
         | None = None,
+        on_entity_proof: np.ndarray | None = None,
     ) -> ExactPlcWitnessProof:
         points = np.asarray(self.source_points)
         tables = {
             _SEGMENT: np.asarray(self.source_segments),
             _TRIANGLE: np.asarray(self.source_triangles),
         }
+        bounds = {
+            _SEGMENT: np.asarray(self.source_segment_bounds, dtype=np.float64),
+            _TRIANGLE: np.asarray(self.source_triangle_bounds, dtype=np.float64),
+        }
         vertices: list[ExactPoint] = []
         on_entity: list[bool] = []
         rounding_error = Fraction(0)
+        # The kernel's exact scalar bank factors repeated lattice coordinates.
+        # Only immutable Fraction values are shared; carriers and source IDs,
+        # row witnesses and their original arithmetic charges remain unchanged.
+        float_scalars: dict[float, Fraction] = {}
+        exact_scalars: dict[tuple[int, int], Fraction] = {}
+        source_corners: dict[int, ExactPoint] = {}
+        scalar_storage.set_bound(1024)
+
+        def reserve_scalar_slots() -> None:
+            scalar_storage.set_bound(
+                1024
+                + 384 * (len(float_scalars) + len(exact_scalars) + 2)
+                + 256 * (len(source_corners) + 1)
+            )
+
+        def exact_scalar(value: Fraction) -> Fraction:
+            exact_work.enclosure.reserve(1)
+            key = value.numerator, value.denominator
+            cached = exact_scalars.get(key)
+            if cached is None:
+                reserve_scalar_slots()
+                exact_scalars[key] = value
+                return value
+            return cached
+
+        def lift(values: np.ndarray) -> ExactPoint:
+            lifted = []
+            for value in values:
+                represented = float(value)
+                exact_work.enclosure.reserve(1)
+                cached = float_scalars.get(represented)
+                if cached is None:
+                    reserve_scalar_slots()
+                    cached = exact_scalar(Fraction(represented))
+                    float_scalars[represented] = cached
+                lifted.append(cached)
+            return tuple(lifted)
+
+        def source_corner(index: int) -> ExactPoint:
+            exact_work.enclosure.reserve(1)
+            cached = source_corners.get(index)
+            if cached is None:
+                reserve_scalar_slots()
+                cached = lift(points[index])
+                source_corners[index] = cached
+            return cached
+
         for vertex in range(rounded.shape[0]):
             carrier_row = rounded[vertex]
             stratum = strata[vertex]
             row = rows[vertex]
             parameters = parameter_rows[vertex : vertex + 1].reshape((2,))
-            carrier = rational_vector(carrier_row)
+            carrier = lift(carrier_row)
             if stratum == _NONE:
                 exact_work.charge(1, carrier)
                 vertices.append(carrier)
                 on_entity.append(True)
                 continue
             source_indices = tables[stratum][row : row + 1].reshape((-1,))
-            corners = tuple(rational_vector(points[index]) for index in source_indices)
+            corners = tuple(source_corner(int(index)) for index in source_indices)
             weights = (
                 tuple(
                     Fraction(*ratio)
@@ -1052,41 +1549,32 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
                 raise ValueError(
                     "ExactPlcCellGeometrySource.vertex_parameters must lie in the closed source entity; got weights outside its barycentric domain"
                 )
-            exact_work.charge(
-                64, carrier + tuple(value for corner in corners for value in corner)
-            )
-            if vertex_parameter_ratios is None and in_entity(carrier, corners):
+            if on_entity_proof is not None and on_entity_proof[vertex]:
+                exact_work.charge(1, carrier)
                 vertices.append(carrier)
                 on_entity.append(True)
                 continue
-            exact = _witness_point(corners, weights)
-            exact_work.charge(16, exact)
-            if vertex_parameter_ratios is None and any(
-                float(value) != float(coordinate)
-                for value, coordinate in zip(exact, carrier_row, strict=True)
-            ):
-                raise ValueError(
-                    "ExactPlcCellGeometrySource.rounded_vertices must lie on their source entity or equal rounded constructed coordinates; got another carrier point"
+            exact_work.charge(
+                64, carrier + tuple(value for corner in corners for value in corner)
+            )
+            witness = _row_witness(
+                carrier,
+                corners,
+                weights,
+                float(bounds[stratum][row]),
+                exact_work,
+                rational_weights=vertex_parameter_ratios is not None,
+            )
+            if isinstance(witness, str):
+                raise ValueError(witness)
+            exact, carrier_on_entity = witness
+            if not carrier_on_entity:
+                rounding_error = max(
+                    rounding_error,
+                    *(abs(value - rne) for value, rne in zip(exact, carrier, strict=True)),
                 )
-            declared_bound = (
-                self.source_segment_bounds[row]
-                if stratum == _SEGMENT
-                else self.source_triangle_bounds[row]
-            )
-            error_squared = sum(
-                ((value - rne) ** 2 for value, rne in zip(exact, carrier, strict=True)),
-                Fraction(0),
-            )
-            if error_squared > Fraction(float(declared_bound)) ** 2:
-                raise ValueError(
-                    "ExactPlcCellGeometrySource.source_row_bounds must cover the carrier displacement; got a carrier outside its declared row bound"
-                )
-            rounding_error = max(
-                rounding_error,
-                *(abs(value - rne) for value, rne in zip(exact, carrier, strict=True)),
-            )
-            vertices.append(exact)
-            on_entity.append(False)
+            vertices.append(tuple(exact_scalar(value) for value in exact))
+            on_entity.append(carrier_on_entity)
         prepared_vertices = tuple(vertices)
         prepared_on_entity = tuple(on_entity)
         # The caller owns admission and the returned bank lifetime.
@@ -1697,18 +2185,24 @@ class ExactPlcCellGeometryConvexSource(StrictModule, NonTrainableState):
         cls: type[ExactPlcCellGeometryConvexSource],
         value: ExactPlcCellGeometryConvexSource,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> ExactPlcCellGeometryConvexSource:
         """Rebuild convex support fields under their parent proof admission."""
-        work_upper, bytes_upper = cell_geometry_owner.exact_source_preparation_bounds(
-            value,
-            value.support_vertices.shape[0],
-            value.parent_geometry.coordinates.shape[1],
-        )
-        with cell_geometry_owner.owned_coordinate_preparation(
-            work_upper,
-            bytes_upper,
-            maximum_geometry_queries=value.preparation_query_upper(),
-        ) as budget:
+        if budget is None:
+            work_upper, bytes_upper = cell_geometry_owner.exact_source_preparation_bounds(
+                value,
+                value.support_vertices.shape[0],
+                value.parent_geometry.coordinates.shape[1],
+            )
+            preparation = cell_geometry_owner.owned_coordinate_preparation(
+                work_upper,
+                bytes_upper,
+                maximum_geometry_queries=value.preparation_query_upper(),
+            )
+        else:
+            preparation = nullcontext(budget)
+        with preparation as admission:
             return cls(
                 value.parent_mesh,
                 value.parent_geometry,
@@ -1717,7 +2211,7 @@ class ExactPlcCellGeometryConvexSource(StrictModule, NonTrainableState):
                 value.support_coefficients,
                 value.target_mesh,
                 value.cell_parent_ids,
-                budget=budget,
+                budget=admission,
             )
 
     @staticmethod
@@ -1969,6 +2463,40 @@ def _witness_point(
     return tuple(coordinate(axis) for axis in range(len(corners[0])))
 
 
+def _row_witness(
+    carrier: ExactPoint,
+    corners: tuple[ExactPoint, ...],
+    weights: tuple[Fraction, ...],
+    declared_bound: float,
+    exact_work: ExactPlcBudget,
+    /,
+    *,
+    rational_weights: bool,
+) -> tuple[ExactPoint, bool] | str:
+    """Return a row carrier's source vertex and on-entity flag, or its refusal.
+
+    Binary64 weights let an on-entity carrier stand for itself; otherwise the
+    carrier must be the rounded construction. Any off-entity carrier must lie
+    within the row's declared bound of the exact row point.
+    """
+    if not rational_weights and in_entity(carrier, corners):
+        return carrier, True
+    exact = _witness_point(corners, weights)
+    exact_work.charge(16, exact)
+    if not rational_weights and any(
+        float(value) != float(coordinate)
+        for value, coordinate in zip(exact, carrier, strict=True)
+    ):
+        return "ExactPlcCellGeometrySource.rounded_vertices must lie on their source entity or equal rounded constructed coordinates; got another carrier point"
+    error_squared = sum(
+        ((value - rne) ** 2 for value, rne in zip(exact, carrier, strict=True)),
+        Fraction(0),
+    )
+    if error_squared > Fraction(declared_bound) ** 2:
+        return "ExactPlcCellGeometrySource.source_row_bounds must cover the carrier displacement; got a carrier outside its declared row bound"
+    return exact, False
+
+
 def _row_parameters(
     point: ExactPoint, corners: tuple[ExactPoint, ...], /
 ) -> tuple[Fraction, ...]:
@@ -1994,12 +2522,13 @@ def _row_parameters(
 
 def in_entity(point: ExactPoint, corners: tuple[ExactPoint, ...], /) -> bool:
     """Return closed segment or triangle membership using rational predicates."""
+    return _in_entity_frame(point, _plc_entity_numeric_frame(corners, len(point)))
+
+
+def _in_entity_frame(point: ExactPoint, frame: _PlcEntityFrame, /) -> bool:
+    corners, edges = frame.corners, frame.edges
     origin = corners[0]
     offset = tuple(point[axis] - origin[axis] for axis in range(len(point)))
-    edges = tuple(
-        tuple(corner[axis] - origin[axis] for axis in range(len(point)))
-        for corner in corners[1:]
-    )
     if len(edges) == 1:
         (direction,) = edges
         if not any(direction):
@@ -2017,18 +2546,14 @@ def in_entity(point: ExactPoint, corners: tuple[ExactPoint, ...], /) -> bool:
         return 0 <= along <= sum(value * value for value in direction)
     first, second = edges
     if len(point) == 2:
-        determinant = first[0] * second[1] - first[1] * second[0]
+        (determinant,) = frame.normal
         if determinant == 0:
             raise ValueError(
                 "in_entity.corners must span a triangle; got collinear corners"
             )
         weights = _row_parameters(point, corners)
         return min(weights) >= 0 and sum(weights, Fraction(0)) <= 1
-    normal = (
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
-    )
+    normal = frame.normal
     if not any(normal):
         raise ValueError("in_entity.corners must span a triangle; got collinear corners")
     if sum(a * b for a, b in zip(offset, normal, strict=True)) != 0:

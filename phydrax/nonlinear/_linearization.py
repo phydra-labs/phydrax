@@ -381,7 +381,10 @@ def _can_share_autodiff_preparation(
 ) -> bool:
     """Return whether callback execution and args are proven keyed runtime state."""
     return (
-        _keyed_autodiff_state(problem)
+        # Domain callbacks execute in the same tape but are not covered by the
+        # residual callback's execution-state proof or static code key.
+        problem.trial_validity_function is None
+        and _keyed_autodiff_state(problem)
         and _keyed_autodiff_state(args)
         and _keyed_autodiff_state(state)
         and _keyed_autodiff_call(problem.residual_function, state, args)

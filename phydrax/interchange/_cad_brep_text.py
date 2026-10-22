@@ -69,6 +69,10 @@ from .._external_resource import (
 from .._fingerprint import canonical_fingerprint
 from .._publication import PublicationMode, publish_bytes
 from .._strict import StrictModule
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from ..geometry.brep._model import (
     BRepAssemblyContainer,
     BRepEntityId,
@@ -1957,6 +1961,7 @@ def _source_tolerances(
     provenance: list[tuple[str, str]],
     factor: float,
     unit: UnitDefinition,
+    coordinate_budget: CoordinateEnclosureBudget | None,
 ) -> _SourceTolerances:
     """Retain source declarations and compare them with the enforced model limit."""
     declared: list[tuple[BRepEntityId | None, float]] = []
@@ -2010,6 +2015,7 @@ def _source_tolerances(
         build_cad_import_tolerance_evidence(
             model,
             declared,
+            coordinate_budget=coordinate_budget,
             unrepresentable_losses=tuple(
                 unrepresentable[external] for external in sorted(unrepresentable)
             ),
@@ -2020,7 +2026,8 @@ def _source_tolerances(
 
 
 def _import(
-    resource: BoundedResource, policy: CadImportPolicy, unit: UnitDefinition, /
+    resource: BoundedResource, policy: CadImportPolicy, unit: UnitDefinition, /, *,
+    coordinate_budget: CoordinateEnclosureBudget | None,
 ) -> CadImportResult:
     unit_meters = Fraction(unit.scale_to_reference)
     factor = length_factor(unit_meters, policy.coordinate_contract)
@@ -2049,6 +2056,7 @@ def _import(
         import_policy_id=policy.policy_id,
         tessellation=policy.tessellation,
         default_occurrences=default_occurrences,
+        coordinate_budget=coordinate_budget,
     )
     geometry = model.geometry
     if geometry is None:
@@ -2066,7 +2074,7 @@ def _import(
     ]
     discarded_loss_count = len(losses)
     tolerances = _source_tolerances(
-        decoded, model, resolver.stage.provenance, factor, unit
+        decoded, model, resolver.stage.provenance, factor, unit, coordinate_budget
     )
     losses.extend(tolerances.evidence.losses)
     resource = account_bounded_resource(
@@ -2158,6 +2166,7 @@ def decode_brep_text_resource(
     /,
     *,
     source_length_unit: UnitDefinition,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Decode a bounded OCCT BRep text resource into a native `BRepModel`.
 
@@ -2175,12 +2184,20 @@ def decode_brep_text_resource(
             f"resource.manifest.limits must equal policy.limits; got {resource.manifest.limits!r}"
         )
     try:
-        return _import(resource, policy, source_length_unit)
+        if coordinate_budget is not None:
+            coordinate_budget.ticket.checkpoint()
+        return _import(
+            resource, policy, source_length_unit, coordinate_budget=coordinate_budget
+        )
     except CadInterchangeError as error:
         error.resource_manifest = resource.manifest
         raise
     except ResourceReadError as error:
         resource_refusal(error)
+    except CoordinateEnclosureResourceError as error:
+        failure = refuse("limit", "coordinate-budget", str(error))
+        failure.resource_manifest = resource.manifest
+        raise failure from error
     except (ValueError, TypeError, OverflowError) as error:
         malformed = refuse("malformed", "resource", str(error))
         malformed.resource_manifest = resource.manifest
@@ -2194,13 +2211,18 @@ def decode_brep_text_bytes(
     *,
     source_length_unit: UnitDefinition,
     source_path: str | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Bound and decode in-memory OCCT BRep text bytes."""
     return decode_cad_bytes(
         data,
         policy,
-        decoder=partial(decode_brep_text_resource, source_length_unit=source_length_unit),
+        decoder=partial(
+            decode_brep_text_resource, source_length_unit=source_length_unit,
+            coordinate_budget=coordinate_budget,
+        ),
         source_path=source_path,
+        coordinate_budget=coordinate_budget,
     )
 
 
@@ -2211,13 +2233,18 @@ def read_brep_text(
     *,
     trusted_root: str | os.PathLike[str],
     source_length_unit: UnitDefinition,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Descriptor-read and decode one bounded local OCCT BRep text file."""
     return read_cad_file(
         path,
         policy,
-        decoder=partial(decode_brep_text_resource, source_length_unit=source_length_unit),
+        decoder=partial(
+            decode_brep_text_resource, source_length_unit=source_length_unit,
+            coordinate_budget=coordinate_budget,
+        ),
         trusted_root=trusted_root,
+        coordinate_budget=coordinate_budget,
     )
 
 
@@ -2542,6 +2569,7 @@ class _Writer:
     model: BRepModel
     version: BRepTextVersion
     policy: CadExportPolicy
+    coordinate_budget: CoordinateEnclosureBudget | None = None
     curves2d: list[str] = field(default_factory=list)
     curves: list[str] = field(default_factory=list)
     surfaces: list[str] = field(default_factory=list)
@@ -2772,6 +2800,7 @@ class _Writer:
             geometry,
             self.policy,
             format_name=_FORMAT,
+            coordinate_budget=self.coordinate_budget,
         )
         normalized: list[tuple[AbstractCurve, float]] = []
         for index, curve in enumerate(geometry.curves):
@@ -2791,7 +2820,9 @@ class _Writer:
             text, factor = _surface_record(patch, f"face:{face}")
             self.surfaces.append(text)
             surface_factors.append(factor)
-        tolerances = certified_cad_export_tolerances(self.model, self.approximations)
+        tolerances = certified_cad_export_tolerances(
+            self.model, self.approximations, coordinate_budget=self.coordinate_budget
+        )
         return _PreparedCarriers(
             geometry, tuple(normalized), tuple(surface_factors), tolerances
         )
@@ -3040,6 +3071,7 @@ def write_brep_text(
     policy: CadExportPolicy | None = None,
     version: BRepTextVersion = "V3",
     mode: PublicationMode = "exclusive",
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadExportResult:
     """Atomically publish native carriers as an OCCT BRep text file.
 
@@ -3050,9 +3082,11 @@ def write_brep_text(
     Declared container membership is preserved; scientific path names normalize
     with reported loss. Intersection fitting requires an explicit policy.
     """
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     policy_ = CadExportPolicy() if policy is None else policy
     version_ = parse(version, BRepTextVersion, "version")
-    writer = _Writer(model, version_, policy_)
+    writer = _Writer(model, version_, policy_, coordinate_budget=coordinate_budget)
     try:
         data = writer.encode()
     except CadInterchangeError as error:
@@ -3064,6 +3098,8 @@ def write_brep_text(
             error.refusal.message,
             (f"model:{model.model_id}", error.refusal.entity),
         ) from error
+    if coordinate_budget is not None:
+        coordinate_budget.ticket.checkpoint()
     receipt = publish_bytes(path, data, maximum_bytes=policy_.maximum_bytes, mode=mode)
     counts = {kind: 0 for kind in ("Ve", "Ed", "Wi", "Fa", "Sh", "So", "Co")}
     for kind, _, _ in writer.records:

@@ -5,7 +5,7 @@
 """Describe interval-evaluable source pieces without importing carrier classes."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from fractions import Fraction
 from typing import Generic, TypeVar
 
@@ -15,7 +15,9 @@ import numpy as np
 from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint
+from ..._host_storage import declared_object_storage_bytes
 from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...typing import checked
 
 
@@ -30,6 +32,42 @@ def carrier_payload(carrier: StrictModule, /) -> dict[str, object]:
         "structure": str(jax.tree_util.tree_structure(carrier)),
         "arrays": array_tree_fingerprint(carrier),
     }
+
+
+def admit_carrier_fingerprint(
+    source: object,
+    budget: CoordinateEnclosureBudget,
+    ancestors: tuple[int, ...] = (),
+) -> None:
+    """Admit live payload metadata and host transfers before fingerprinting.
+
+    Carrier payloads retain paths and PyTree static construction metadata, not
+    whole-array encodings. Each nesting level can appear in every descendant's
+    path; the structural allowance covers those paths, escaped JSON and its
+    simultaneously live UTF-8 representation. Array transfers are additional.
+    This is byte admission only, not a new scientific work charge.
+    """
+    depth = len(ancestors) + 1
+    budget.reserve(0, 32 * depth * declared_object_storage_bytes(source))
+    if id(source) in ancestors:
+        raise ValueError("Correspondence fingerprint source must be acyclic.")
+    ancestors = (*ancestors, id(source))
+    if isinstance(source, (Array, np.ndarray)):
+        budget.reserve(0, source.nbytes)
+    elif is_dataclass(source) and not isinstance(source, type):
+        for field in fields(source):
+            admit_carrier_fingerprint(field.name, budget, ancestors)
+            admit_carrier_fingerprint(getattr(source, field.name), budget, ancestors)
+    elif isinstance(source, dict):
+        for key, value in source.items():
+            admit_carrier_fingerprint(key, budget, ancestors)
+            admit_carrier_fingerprint(value, budget, ancestors)
+    elif isinstance(source, (tuple, list, set, frozenset)):
+        for value in source:
+            admit_carrier_fingerprint(value, budget, ancestors)
+    elif isinstance(source, Fraction):
+        admit_carrier_fingerprint(source.numerator, budget, ancestors)
+        admit_carrier_fingerprint(source.denominator, budget, ancestors)
 
 
 class CoefficientEnclosureSource(ABC):
@@ -157,6 +195,7 @@ class CurvePiece(Generic[_CarrierT]):
 
 
 __all__ = [
+    "admit_carrier_fingerprint",
     "AffineTrimChordEvidence",
     "carrier_payload",
     "child_coefficient_enclosures",

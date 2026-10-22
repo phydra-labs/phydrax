@@ -26,10 +26,13 @@ from phydrax.meshing.qualification import (
     prepare_corrected_periodic_layer_source,
 )
 from tools._meshing_cases import load_curved_periodic_source_registration
+from tools.meshing_qualification._campaign import corpus_phase_evidence
 from tools.meshing_qualification._controls import _hybrid_qualification_profile_contracts
 from tools.meshing_qualification._records import _corpus_profiles
 from tools.meshing_qualification.scenarios.hybrid import (
     _hybrid_qualification_original_curved_refusal_profile,
+    _hybrid_record_cold_epochs,
+    _HybridContinuationEvidence,
 )
 
 
@@ -238,3 +241,246 @@ def test_corrected_and_original_profiles_have_distinct_corpus_admission() -> Non
         positive["source_reference"]["source_revision"]
         != negative["source_reference"]["source_revision"]
     )
+
+
+def test_cold_continuation_epochs_publish_campaign_phase_evidence() -> None:
+    def epoch(index: int, name: str, compiled: bool) -> dict[str, object]:
+        stages = {"solver_warm_execution": 0.25}
+        if compiled:
+            stages.update(
+                solver_lowering=0.5, solver_compile=1.5, solver_first_execution=0.75
+            )
+        return {
+            "epoch": index,
+            "name": name,
+            "result": {"result_id": name},
+            "dofs": 9,
+            "compiler": {
+                "temporary_bytes": 64,
+                "output_bytes": 8,
+                "generated_code_bytes": 0,
+                "warm_samples_seconds": [0.25],
+                "compilation_count": int(compiled),
+            },
+            "stages_seconds": stages,
+            "retained_bytes": 128,
+        }
+
+    continued = _HybridContinuationEvidence(
+        1.0e-12,
+        (
+            epoch(0, "initial", True),
+            epoch(1, "refine", True),
+            epoch(2, "coarsen", False),
+        ),
+        {"result_id": "source"},
+    )
+    record: dict[str, object] = {"epochs": [], "stages_seconds": {}}
+    for cycle in range(2):
+        _hybrid_record_cold_epochs(record, continued, cycle)
+    epochs = record["epochs"]
+    assert isinstance(epochs, list)
+    assert [value["epoch"] for value in epochs] == list(range(6))
+    assert [value["name"] for value in epochs] == [
+        "initial_0",
+        "refine_0",
+        "coarsen_0",
+        "initial_1",
+        "refine_1",
+        "coarsen_1",
+    ]
+    assert [value["continuation_epoch"] for value in epochs] == [0, 1, 2] * 2
+    compilers = corpus_phase_evidence(record, 20_000)["compiler_epochs"]
+    assert [value["compile_seconds"] for value in compilers] == [1.5, 1.5, None] * 2
+    assert [value["first_execution_seconds"] for value in compilers] == [
+        0.75,
+        0.75,
+        None,
+    ] * 2
+    assert all(value["logical_retained_bytes"] == 128 for value in compilers)
+    assert all(value["warm_samples_seconds"] == [0.25] for value in compilers)
+
+
+def test_mapped_source_evidence_reuses_only_current_live_source(
+    corrected_source: tuple[AuthoredPeriodicLayerSource, phx.meshing.CellMeshingResult],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gc
+    import weakref
+    from typing import Any
+
+    import phydrax.geometry._global_embedding as embedding_owner
+    import phydrax.geometry._mapped_reference_coverage as source_owner
+    from phydrax.geometry._embedding_state import coordinate_certificate_request
+
+    authored, result = corrected_source
+    assert result.certification is not None
+    evidence = result.certification.request.mapped_source_evidence
+    assert evidence is not None and authored.source.mapped_domain is not None
+    domain, limits = authored.source.mapped_domain, evidence.limits
+    calls = []
+    original = embedding_owner.certify_global_embedding
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args[0].mesh_id)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(embedding_owner, "certify_global_embedding", counted)
+    with coordinate_certificate_request(limits) as budget:
+        source_owner.retain_mapped_reference_source_evidence(
+            evidence, domain, limits, budget=budget
+        )
+        physical, embedding, coverage = source_owner.certify_mapped_reference_source(
+            domain, limits, budget=budget
+        )
+        assert physical is evidence.physical_mesh
+        assert embedding is evidence.physical_embedding
+        assert coverage is evidence.reference_coverage
+        assert calls == []
+
+    with coordinate_certificate_request(limits) as cold_budget:
+        fresh = source_owner.reprove_mapped_reference_source_evidence(
+            evidence, budget=cold_budget
+        )
+        assert fresh.evidence_id == evidence.evidence_id
+        assert fresh is not evidence
+        first_count = len(calls)
+        assert first_count >= 2
+        assert source_owner.reprove_mapped_reference_source_evidence(
+            evidence, budget=cold_budget
+        ) is fresh
+        assert len(calls) == first_count
+    reference = weakref.ref(fresh)
+    del fresh, cold_budget
+    gc.collect()
+    assert reference() is None
+
+
+@pytest.mark.parametrize("changed", ("coordinates", "materials", "periodic", "limits"))
+def test_mapped_source_evidence_refuses_changed_banks_and_policy(
+    corrected_source: tuple[AuthoredPeriodicLayerSource, phx.meshing.CellMeshingResult],
+    changed: str,
+) -> None:
+    from dataclasses import replace
+
+    import equinox as eqx
+    import jax.numpy as jnp
+
+    _, result = corrected_source
+    assert result.certification is not None
+    evidence = result.certification.request.mapped_source_evidence
+    assert evidence is not None
+    domain, limits = evidence.domain, evidence.limits
+    if changed == "coordinates":
+        coordinates = np.asarray(domain.source_geometry.coordinates).copy()
+        coordinates.flat[0] = np.nextafter(coordinates.flat[0], np.inf)
+        domain = eqx.tree_at(
+            lambda value: value.source_geometry.coordinates,
+            domain,
+            jnp.asarray(coordinates),
+        )
+    elif changed == "materials":
+        regions = np.asarray(domain.cell_regions).copy()
+        regions[0] = 1 - regions[0]
+        domain = eqx.tree_at(lambda value: value.cell_regions, domain, regions)
+    elif changed == "periodic":
+        topology = domain.reference_mesh.periodic_topology
+        assert topology is not None
+        shifts = np.asarray(topology.vertex_shifts).copy()
+        shifts[0, 0] += 1
+        changed_topology = eqx.tree_at(
+            lambda value: value.vertex_shifts, topology, jnp.asarray(shifts)
+        )
+        domain = eqx.tree_at(
+            lambda value: value.reference_mesh.periodic_topology,
+            domain,
+            changed_topology,
+        )
+    else:
+        limits = replace(limits, maximum_work_units=limits.maximum_work_units + 1)
+    with pytest.raises(ValueError, match="exact source"):
+        evidence.require_live(domain, limits)
+
+
+def test_mapped_source_consumer_refuses_caller_minted_proof(
+    corrected_source: tuple[AuthoredPeriodicLayerSource, phx.meshing.CellMeshingResult],
+) -> None:
+    from phydrax.geometry._embedding_state import coordinate_certificate_request
+    from phydrax.geometry._global_embedding import (
+        EmbeddingCounts,
+        GlobalEmbeddingCertificate,
+    )
+    from phydrax.geometry._mapped_reference_coverage import (
+        MappedReferenceSourceEvidence,
+        restore_mapped_reference_source_evidence,
+        retain_mapped_reference_source_evidence,
+    )
+
+    _, result = corrected_source
+    assert result.certification is not None
+    request = result.certification.request
+    issued = request.mapped_source_evidence
+    assert issued is not None
+    forged = MappedReferenceSourceEvidence(
+        issued.domain,
+        issued.limits,
+        issued.physical_mesh,
+        issued.reference_validity,
+        issued.reference_embedding,
+        issued.reference_coverage,
+        issued.physical_validity,
+        issued.physical_embedding,
+    )
+    # Matching certified records and IDs do not mint issuing-process authority.
+    assert forged.evidence_id == issued.evidence_id
+    with coordinate_certificate_request(issued.limits) as budget:
+        with pytest.raises(ValueError, match="issued"):
+            retain_mapped_reference_source_evidence(
+                forged, issued.domain, issued.limits, budget=budget
+            )
+        with pytest.raises(ValueError, match="issued"):
+            phx.meshing.MeshCertificationInputs(
+                result.mesh,
+                result.geometry,
+                request.schedule,
+                domain=request.domain,
+                cell_regions=request.cell_regions,
+                source=request.source,
+                fidelity_tolerance=request.fidelity_tolerance,
+                fidelity_sample_order=request.fidelity_sample_order,
+                limits=request.limits,
+                junction_vertices=request.junction_vertices,
+                scoped_fidelity=request.scoped_fidelity,
+                mapped_source_evidence=forged,
+                budget=budget,
+            )
+        fresh = restore_mapped_reference_source_evidence(forged, budget=budget)
+        assert fresh is not forged
+        assert fresh.evidence_id == forged.evidence_id
+        forged.require_live(issued.domain, issued.limits)
+        assert restore_mapped_reference_source_evidence(forged, budget=budget) is forged
+
+        fabricated_embedding = GlobalEmbeddingCertificate(
+            issued.physical_embedding.binding,
+            issued.physical_validity.certificate_id,
+            (),
+            (),
+            counts=EmbeddingCounts(
+                issued.physical_embedding.cell_count, 0, 0, 0, 0, 0
+            ),
+        )
+        assert fabricated_embedding.status == "certified"
+        fabricated = MappedReferenceSourceEvidence(
+            issued.domain,
+            issued.limits,
+            issued.physical_mesh,
+            issued.reference_validity,
+            issued.reference_embedding,
+            issued.reference_coverage,
+            issued.physical_validity,
+            fabricated_embedding,
+        )
+        with pytest.raises(ValueError, match="cold_proof"):
+            restore_mapped_reference_source_evidence(fabricated, budget=budget)
+        with pytest.raises(ValueError, match="issued"):
+            fabricated.require_live(issued.domain, issued.limits)

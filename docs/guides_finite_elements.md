@@ -199,6 +199,23 @@ cell residual/energy/bilinear actions, exterior and interior numerical fluxes,
 SIPG facet actions, and prepared global operator actions. The compiled
 `WorksetProgram` is the authoritative residual execution schedule.
 
+For request-owned FE preparation, pass the original
+`CoordinateEnclosureBudget` as `budget=` to `compile_finite_element_problem`,
+`CompiledFiniteElementProblem`, or `compile_finite_element_functional`.
+The same ledger reaches `FiniteElementDiscretization.prepare_local_regions`:
+host selection/gather buffers, scalar-DG source preparation, and transient
+table/fingerprint/coalescing storage consume that request's existing allowance
+and clock. A single local region is reused without coalescing or fingerprinting
+it again. No replacement helper ticket is opened when a ledger is supplied.
+`budget=None` preserves standalone preparation; providers without explicit
+coordinate admission reject a supplied ledger instead of silently ignoring it.
+The explicit admission path requires prepared-local FE cell actions; legacy
+rule/trace/custom-action routes likewise refuse that ledger until their own
+host preparation has an explicit admission contract.
+The ledger is not stored in compiled problems or numerical callbacks.
+Compiler, device and process resources remain separately measured runtime
+resources, not guarantees supplied by these native/managed counters.
+
 Coefficients may be physical point functions or arrays explicitly bound to
 cell entities, facet entities and sides, quadrature rules, or field DOFs.
 Non-point coefficients retain exact support, entity-set, field-space, rule,
@@ -516,6 +533,10 @@ reference iterates as JAX inputs. Integer indices retain block identity;
 `block_index=None` prepares one homogeneous whole-support map through the same
 canonical owner. Evaluation returns physical points, Jacobians, left inverses,
 determinant/measure and validity margins; curved location reuses this map.
+Its numerical operand recursively projects coordinate tabulation to dynamic
+chart arrays. Form projection, mapped FV quadrature and local variational
+actions reuse numerical buckets across distinct exact chart/source identities;
+the prepared owner still retains and authenticates those scientific identities.
 
 ## Field views
 

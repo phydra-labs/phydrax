@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
@@ -114,7 +115,7 @@ from ._source_ownership import AbstractFiniteElementSourceOwnership
 
 
 if TYPE_CHECKING:
-    from ._cell_map import PreparedFiniteElementCellMap
+    from ._cell_map import NumericalFiniteElementCellMap
 
 
 def _field_element_assignments(
@@ -1287,7 +1288,13 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
 
     @classmethod
     @checked
-    def from_stored_fields(cls, value: FiniteElementPlan, /) -> FiniteElementPlan:
+    def from_stored_fields(
+        cls,
+        value: FiniteElementPlan,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> FiniteElementPlan:
         """Reconstruct a plan within its coordinate preparation resource bounds."""
         work_upper, bytes_upper = cell_geometry_owner.cell_geometry_preparation_bounds(
             value.coordinate_spec
@@ -1295,8 +1302,12 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         query_upper = cell_geometry_owner.cell_geometry_preparation_query_upper(
             value.coordinate_spec
         )
-        with cell_geometry_owner.owned_coordinate_preparation(
-            work_upper, bytes_upper, maximum_geometry_queries=query_upper
+        with (
+            nullcontext(budget)
+            if budget is not None
+            else cell_geometry_owner.owned_coordinate_preparation(
+                work_upper, bytes_upper, maximum_geometry_queries=query_upper
+            )
         ) as budget:
             return cls(
                 value.mesh,
@@ -1607,7 +1618,7 @@ def _finite_element_domains(
 
 @eqx.filter_jit
 def _project_form_block(
-    cell_map: PreparedFiniteElementCellMap,
+    cell_map: NumericalFiniteElementCellMap,
     element: FiniteElementSpec,
     coordinates: Array,
     transforms: Array,
@@ -2142,7 +2153,9 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     ) -> None:
         """Replay the consumer, including geometry and field caches."""
         for dof_map in self.dof_maps:
-            dof_map.validate_restored(validation_context=validation_context)
+            FiniteElementDofMap.validate_restored(
+                dof_map, validation_context=validation_context, budget=budget
+            )
         rebuilt = FiniteElementDiscretization(
             self.construction_plan,
             numeric_version=self.numeric_version,
@@ -2207,6 +2220,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         field_names: tuple[str, ...],
         maximum_derivative_order: int,
         kernel_mode: str,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[PreparedLocalRegion, ...]:
 
         return local_provider_owner.FiniteElementLocalProvider(
@@ -2216,6 +2230,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             field_names=field_names,
             maximum_derivative_order=maximum_derivative_order,
             kernel_mode=kernel_mode,
+            budget=budget,
         )
 
     def validate_local_runtime(self, runtime: object, /) -> None:
@@ -2379,7 +2394,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             for block_index, element in enumerate(self.elements[field_index]):
                 cell_map = cell_map_owner.PreparedFiniteElementCellMap(self, block_index)
                 local = _project_form_block(
-                    cell_map,
+                    cell_map.numerical,
                     element,
                     realized.coordinates,
                     dofs.cell_transforms[block_index],

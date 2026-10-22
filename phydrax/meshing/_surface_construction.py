@@ -47,6 +47,7 @@ class SurfaceConstruction(StrictModule, NonTrainableState):
     curve_edge_deviations: np.ndarray
     curve_edge_deviation_bounds: np.ndarray
     unresolved: np.ndarray
+    boundary_occurrences: np.ndarray
     chart_triangulations: tuple[
         tuple[
             int,

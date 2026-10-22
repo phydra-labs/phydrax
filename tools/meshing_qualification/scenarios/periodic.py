@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import os
-import resource
-import sys
 from dataclasses import asdict
+from fractions import Fraction
+from math import floor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
@@ -18,6 +18,7 @@ import numpy as np
 import phydrax as phx
 from examples.native_surface_meshing import zero_mean_constraint
 from phydrax import (
+    array_tree_fingerprint,
     ArrayArchiveLimits,
     canonical_fingerprint,
     model_array_bytes,
@@ -32,14 +33,20 @@ from phydrax.lifecycle import (
     validate_meshing_accepted_epochs,
     write_meshing_source_closure,
 )
+from phydrax.lifecycle._meshing_field_records import (
+    rebind_meshing_adaptation_execution_endpoints,
+)
 from phydrax.meshing import NativeMeshingPhaseMeasurement
 from phydrax.meshing.qualification import (
+    execute_native_request,
     periodic_field_templates,
     prepare_periodic_accepted_epoch,
 )
 from tools.meshing_qualification._controls import (
+    _periodic_qualification_profile_contracts,
     _periodic_qualification_requirements,
     capacity_meshing_limits,
+    meshing_limit_values,
     QualificationControls,
 )
 from tools.meshing_qualification._physics import _compiled_solver_stages
@@ -52,11 +59,14 @@ from tools.meshing_qualification._records import (
 from tools.meshing_qualification._runtime import (
     _measured,
     _runtime_identity,
+    ColdControlPacket,
+    ColdWorkerReport,
     ColdWorkerTimeout,
     Deadline,
     peak_resident_bytes,
+    PEAK_RESIDENT_SCOPE,
+    prepare_cold_worker,
     qualification_failure,
-    run_cold_worker,
     StageLedger,
 )
 from tools.meshing_qualification.scenarios.bisection import (
@@ -65,20 +75,8 @@ from tools.meshing_qualification.scenarios.bisection import (
 )
 
 
-def _periodic_qualification_fixture(
-    args: QualificationControls,
-) -> tuple[
-    phx.meshing.NativePeriodicSource,
-    phx.meshing.SurfaceMeshingSpec,
-    phx.meshing.NativeMeshingOptions,
-    dict[str, Any],
-]:
-    """Freeze a skew torus source, including represented materials and feature orbits."""
-
-    M, D = phx.meshing, phx.discretization
-    vectors = np.asarray(((1.0, 0.0), (0.25, 1.0)), dtype=np.float64)
-    cell = D.PeriodicCell(vectors)
-    count = args.resolution
+def _periodic_source_payload(base_case: str, count: int) -> dict[str, Any]:
+    """Author the original dyadic source once for both representations and registry."""
     lattice = np.stack(
         np.meshgrid(
             np.arange(count, dtype=np.int64),
@@ -87,22 +85,13 @@ def _periodic_qualification_fixture(
         ),
         axis=-1,
     ).reshape((-1, 2))
-    points = (lattice / count) @ vectors
     payload: dict[str, Any] = {
-        "case": args.periodic_case,
-        "vectors": vectors.tolist(),
+        "case": base_case,
+        "vectors": [[1.0, 0.0], [0.25, 1.0]],
         "fractional_seed_numerators": lattice.tolist(),
         "denominator": count,
     }
-    regions = np.asarray((0,), dtype=np.int64)
-    features: tuple[phx.meshing.ProtectedFeature, ...] = ()
-    controls: tuple[phx.meshing.RegionControl, ...] = ()
-    if args.periodic_case == "skew-lattice":
-        domain = M.PeriodicPointOrbits(points, cell)
-        source = M.NativePeriodicSource(
-            domain, "qualification-skew-torus", canonical_fingerprint(payload)
-        )
-    elif args.periodic_case == "skew-material-feature":
+    if base_case == "skew-material-feature":
         corners: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = []
         assignments: list[int] = []
         for i in range(count):
@@ -117,21 +106,105 @@ def _periodic_qualification_fixture(
         simplices = (integer_corners[..., 0] % count) * count + integer_corners[
             ..., 1
         ] % count
-        domain = M.publish_periodic_simplices(
-            points, simplices, integer_corners // count, cell
-        )
         payload.update(
-            {
-                "simplices": simplices.tolist(),
-                "shifts": (integer_corners // count).tolist(),
-                "cell_regions": assignments,
-            }
+            simplices=simplices.tolist(),
+            shifts=(integer_corners // count).tolist(),
+            cell_regions=assignments,
+        )
+    elif base_case != "skew-lattice":
+        raise ValueError(f"periodic.base_case is unsupported: {base_case!r}")
+    return payload
+
+
+def _periodic_source_revision(payload: dict[str, Any], profile: dict[str, Any]) -> str:
+    if profile["carrier_representation"] == "binary64":
+        return canonical_fingerprint(payload)
+    return canonical_fingerprint(
+        {
+            "authored_source": payload,
+            "carrier_representation": profile["carrier_representation"],
+        }
+    )
+
+
+def _periodic_qualification_source_reference(
+    profile_name: str, resolution: int
+) -> dict[str, object]:
+    profile = _periodic_qualification_profile_contracts()[profile_name]
+    payload = _periodic_source_payload(profile["base_case"], resolution)
+    revision = _periodic_source_revision(payload, profile)
+    descriptor = {
+        "source_id": profile["source_id"],
+        "source_revision": revision,
+        "authored_source": payload,
+        "carrier_representation": profile["carrier_representation"],
+    }
+    digest = canonical_fingerprint(descriptor)
+    return {
+        "kind": "authored-skew-periodic-source",
+        **descriptor,
+        "source_digest": digest,
+        "authored_geometry_digest": canonical_fingerprint(payload),
+        "source_artifact": {
+            "locator": "tools/meshing_qualification/scenarios/periodic.py::_periodic_source_payload",
+            "media_type": "text/x-python",
+            "descriptor_sha256": digest,
+            "license": "LicenseRef-PHYDRA-Proprietary",
+        },
+        "source_provenance": {
+            "author": "PHYDRA, Inc.",
+            "license": "LicenseRef-PHYDRA-Proprietary",
+            "origin": "Original dyadic skew torus; exact representation changes no authored geometry.",
+            "redistribution": "repository-internal",
+        },
+        "independent_reference": {
+            "kind": "exact-coordinate-row-oracle-and-manufactured-periodic-Poisson",
+            "fundamental_measure": "1",
+            "period_vectors": payload["vectors"],
+            "binary64_negative_scope": "zero-tolerance-dyadic-target-quantile-exclusion",
+        },
+    }
+
+
+def _periodic_qualification_fixture(
+    args: QualificationControls,
+) -> tuple[
+    phx.meshing.NativePeriodicSource,
+    phx.meshing.SurfaceMeshingSpec,
+    phx.meshing.NativeMeshingOptions,
+    dict[str, Any],
+]:
+    """Freeze a skew torus source, including represented materials and feature orbits."""
+
+    M, D = phx.meshing, phx.discretization
+    profile = _periodic_qualification_profile_contracts()[args.periodic_case]
+    count = args.resolution
+    payload = _periodic_source_payload(profile["base_case"], count)
+    vectors = np.asarray(payload["vectors"], dtype=np.float64)
+    cell = D.PeriodicCell(vectors)
+    lattice = np.asarray(payload["fractional_seed_numerators"], dtype=np.int64)
+    points = (lattice / count) @ vectors
+    regions = np.asarray((0,), dtype=np.int64)
+    features: tuple[phx.meshing.ProtectedFeature, ...] = ()
+    controls: tuple[phx.meshing.RegionControl, ...] = ()
+    if profile["base_case"] == "skew-lattice":
+        domain = M.PeriodicPointOrbits(points, cell)
+        source = M.NativePeriodicSource(
+            domain, profile["source_id"], _periodic_source_revision(payload, profile)
+        )
+    elif profile["base_case"] == "skew-material-feature":
+        assignments = np.asarray(payload["cell_regions"], dtype=np.int64)
+        domain = M.publish_periodic_simplices(
+            points,
+            np.asarray(payload["simplices"], dtype=np.int64),
+            np.asarray(payload["shifts"], dtype=np.int64),
+            cell,
         )
         source = M.NativePeriodicSource(
             domain,
-            "qualification-skew-material-torus",
-            canonical_fingerprint(payload),
-            cell_regions=np.asarray(assignments, dtype=np.int64),
+            profile["source_id"],
+            _periodic_source_revision(payload, profile),
+            cell_regions=assignments,
         )
         regions = np.asarray((0, 1), dtype=np.int64)
         connectivity = domain.connectivity
@@ -198,6 +271,9 @@ def _periodic_qualification_fixture(
     limits = capacity_meshing_limits(
         capacity,
         args.timeout,
+        maximum_work_units=args.maximum_work_units,
+        maximum_geometry_queries=args.maximum_geometry_queries,
+        scratch_bytes_limit=args.maximum_scratch_bytes,
         cells=8,
         edges=8,
         faces=8,
@@ -232,10 +308,14 @@ def _periodic_qualification_fixture(
         M.NativeMeshingOptions("periodic_delaunay"),
         {
             **payload,
+            "profile": args.periodic_case,
+            "authored_geometry_digest": canonical_fingerprint(payload),
+            "carrier_representation": profile["carrier_representation"],
+            "source_id": source.source_id,
             "source_revision": source.source_revision,
             "source_binding_id": source.binding_id,
             "provenance": "PHYDRA original dyadic-skew translational torus fixture",
-            "expected_admission": "positive",
+            "expected_admission": profile["expected_admission"],
             "expected_measure": 1.0,
             "expected_material_measures": {"material-0": 0.5, "material-1": 0.5}
             if controls
@@ -244,26 +324,173 @@ def _periodic_qualification_fixture(
             if features
             else None,
             "protected_feature_ids": [feature.feature_id for feature in features],
-            "resource_limits": {
-                "maximum_vertices": capacity,
-                "maximum_cells": 8 * capacity,
-                "maximum_edges": 8 * capacity,
-                "maximum_faces": 8 * capacity,
-                "maximum_connectivity_entries": 64 * capacity,
-                "maximum_data_bytes": 1024 * capacity,
-                "maximum_scratch_bytes": 4096 * capacity,
-                "maximum_work_units": 2048 * capacity,
-                "maximum_cavity_cells": capacity,
-                "maximum_geometry_queries": 64 * capacity,
-                "maximum_wall_seconds": args.timeout,
-            },
+            "resource_limits": meshing_limit_values(limits),
             "frozen_size_control": {
                 "target_size": 1.0 / count,
                 "maximum_size": 1.5 / count,
                 "strength": "hard",
+                "minimum_size": None,
+                "target_statistics": list(specification.size_compliance.target_statistics),
+                "absolute_tolerance": specification.size_compliance.absolute_tolerance,
+                "relative_tolerance": specification.size_compliance.relative_tolerance,
+                "scope": "initial-generation-request",
             },
         },
     )
+
+
+def _periodic_exact_generation_oracle(
+    result: phx.meshing.CellMeshingResult,
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    """Integrate the emitted exact rows independently of the construction proof."""
+    D = phx.discretization
+    exact = result.geometry.exact_source
+    mesh, periodic = result.mesh, result.mesh.periodic_topology
+    if not isinstance(exact, D.ExactAlgebraicCellGeometrySource) or periodic is None:
+        raise qualification_failure(
+            "_periodic_exact_generation_oracle",
+            "The algebraic positive requires an authenticated exact coordinate bank.",
+            {"exact_source": exact},
+        )
+    rows = exact.coefficients
+    if len(rows) != len(mesh.coordinates):
+        raise qualification_failure(
+            "_periodic_exact_generation_oracle",
+            "The original affine coordinate bank must address every lifted vertex.",
+            {"coordinate_rows": len(rows), "vertices": len(mesh.coordinates)},
+        )
+    vectors = tuple(tuple(Fraction(x) for x in row) for row in case["vectors"])
+    (ax, ay), (bx, by) = vectors
+    determinant = ax * by - ay * bx
+    root_rows = np.asarray(periodic.orbit_representatives(0))
+    fractional = [
+        ((x * by - y * bx) / determinant, (y * ax - x * ay) / determinant)
+        for x, y in (rows[int(index)] for index in root_rows)
+    ]
+    root_keys = {(x - floor(x), y - floor(y)) for x, y in fractional}
+    denominator = case["denominator"]
+    seeds = {
+        (
+            D.RadicalElement(Fraction(i, denominator)),
+            D.RadicalElement(Fraction(j, denominator)),
+        )
+        for i, j in case["fractional_seed_numerators"]
+    }
+    areas = []
+    for block in mesh.blocks:
+        for first, second, third in np.asarray(block.vertices):
+            a, b, c = rows[int(first)], rows[int(second)], rows[int(third)]
+            areas.append(
+                ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2
+            )
+    orientation = all(area > 0 for area in areas)
+    total_measure = sum(areas, D.RadicalElement())
+    material_measures = {}
+    cells = np.asarray(mesh.entity_set(2).entity_ids)
+    for zone in result.zones:
+        mask = np.isin(cells, np.asarray(zone.scope.entity_ids))
+        material_measures[zone.material_id] = sum(
+            (area for area, selected in zip(areas, mask, strict=True) if selected),
+            D.RadicalElement(),
+        )
+    material_passed = set(material_measures) == set(
+        case["expected_material_measures"]
+    ) and all(
+        material_measures[name] == Fraction(value)
+        for name, value in case["expected_material_measures"].items()
+    )
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, D.PolygonalConnectivity):
+        raise TypeError("periodic.exact_oracle requires polygonal edge connectivity")
+    edges = np.asarray(connectivity.edges)
+    leaders = np.asarray(periodic.orbit_representatives(1))
+    squares = sorted(
+        sum(
+            ((rows[int(b)][d] - rows[int(a)][d]) ** 2 for d in (0, 1)),
+            D.RadicalElement(),
+        )
+        for a, b in edges[leaders]
+    )
+    target = Fraction(case["frozen_size_control"]["target_size"]) ** 2
+    quantiles = {}
+    for quantile in (0.5, 0.95):
+        rank = float(np.float64(quantile) * np.float64(len(squares) - 1))
+        lower = int(rank)
+        upper = min(lower + int(rank != lower), len(squares) - 1)
+        quantiles[str(quantile)] = squares[lower] == target and squares[upper] == target
+    maximum = Fraction(case["frozen_size_control"]["maximum_size"]) ** 2
+    feature_passed = {}
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids)
+    for feature_id in case["protected_feature_ids"]:
+        labels = [
+            label
+            for label in result.labels
+            if label.name == f"periodic-feature:{feature_id}"
+        ]
+        selected = (
+            np.isin(edge_ids[leaders], np.asarray(labels[0].scope.entity_ids))
+            if len(labels) == 1
+            else np.zeros(leaders.size, dtype=bool)
+        )
+        winding = D.RadicalElement()
+        aligned = True
+        for a, b in edges[leaders[selected]]:
+            dx, dy = (rows[int(b)][d] - rows[int(a)][d] for d in (0, 1))
+            aligned = aligned and dx * by == dy * bx
+            x, y = rows[int(a)]
+            transverse = (x * by - y * bx) / determinant
+            aligned = aligned and transverse - floor(transverse) in (
+                D.RadicalElement(),
+                D.RadicalElement(Fraction(1, 2)),
+            )
+            winding += abs((dy * ax - dx * ay) / determinant)
+        feature_passed[feature_id] = aligned and winding == 2
+    checks = {
+        "authored_source_identity": bool(result.associations) and all(
+            association.source_id == case["source_id"]
+            and association.source_revision == case["source_revision"]
+            for association in result.associations
+        ),
+        "authored_seeds_retained": seeds <= root_keys,
+        "positive_exact_cell_orientation": orientation,
+        "exact_fundamental_measure": total_measure == determinant,
+        "exact_material_inventory": material_passed,
+        "exact_protected_interface_winding": all(feature_passed.values()),
+        "exact_p50_and_p95": all(quantiles.values()),
+        "exact_maximum_size": squares[-1] <= maximum,
+    }
+    if not all(checks.values()):
+        raise qualification_failure(
+            "_periodic_exact_generation_oracle",
+            "Original exact periodic source or hard controls failed the independent row oracle.",
+            {"checks": checks},
+        )
+    return {
+        "passed": True,
+        "checks": checks,
+        "source_binding_id": case["source_binding_id"],
+        "geometry_source_id": exact.source_id,
+        "coordinate_bank_fingerprint": array_tree_fingerprint(exact),
+        "quotient_vertices": len(root_rows),
+        "quotient_edges": len(squares),
+        "cells": len(areas),
+        "exact_total_measure": [
+            [radicand, value.numerator, value.denominator]
+            for radicand, value in total_measure.terms
+        ],
+        "exact_material_measures": {
+            name: [
+                [radicand, value.numerator, value.denominator]
+                for radicand, value in measure.terms
+            ]
+            for name, measure in material_measures.items()
+        },
+        "target_squared": str(target),
+        "maximum_squared": str(maximum),
+        "quantiles": quantiles,
+        "feature_winding": feature_passed,
+    }
 
 
 def _periodic_qualification_acceptance(
@@ -287,6 +514,21 @@ def _periodic_qualification_acceptance(
             {"result": result},
         )
     periodic.require_lift(mesh.coordinates)
+    if (
+        not isinstance(periodic.cell, phx.discretization.PeriodicCell)
+        or not np.array_equal(np.asarray(periodic.cell.vectors), case["vectors"])
+        or not result.associations
+        or any(
+            association.source_id != case["source_id"]
+            or association.source_revision != case["source_revision"]
+            for association in result.associations
+        )
+    ):
+        raise qualification_failure(
+            "_periodic_qualification_acceptance",
+            "Accepted periodic state changed the authored lattice or source identity.",
+            {"source_id": case["source_id"], "source_revision": case["source_revision"]},
+        )
     declared = result.geometry if result.geometry.exact_source is not None else None
     orbit_measures = phx.discretization.periodic_orbit_measures(mesh, geometry=declared)
     measure = float(orbit_measures.total_measure)
@@ -395,6 +637,9 @@ def _periodic_qualification_acceptance(
             )
     return {
         "passed": True,
+        "source_id": case["source_id"],
+        "source_revision": case["source_revision"],
+        "period_vectors": np.asarray(periodic.cell.vectors).tolist(),
         "quotient_id": periodic.periodic_topology_id,
         "quotient_counts": [entities.count for entities in periodic.quotient.entity_sets],
         "euler_characteristic": periodic.euler_characteristic,
@@ -659,6 +904,7 @@ def _periodic_qualification_transfer(
                         adaptation.parent_cells,
                         field_name=name,
                         parent_reference_vertices=adaptation.parent_reference_vertices,
+                        parent_reference_homogeneous=adaptation.parent_reference_homogeneous,
                         source_geometry=adaptation.source.geometry,
                         target_geometry=adaptation.target.geometry,
                     )
@@ -728,6 +974,8 @@ def _periodic_qualification_transfer(
         )
         record["stages_seconds"][record["active_phase"]] = measured["wall_seconds"]
         field_record["execution"] = measured
+        field_record["source_state_fingerprint"] = array_tree_fingerprint(state[name])
+        field_record["target_state_fingerprint"] = array_tree_fingerprint(values)
         if not np.all(np.isfinite(np.asarray(values))):
             raise qualification_failure(
                 "_periodic_qualification_transfer",
@@ -781,6 +1029,9 @@ def _periodic_qualification_solve(
 
     _ledger = StageLedger(record, deadline=Deadline(started + args.timeout))
     epoch = len(record["epochs"])
+    incoming_fields = {
+        name: array_tree_fingerprint(value) for name, value in state.items()
+    }
 
     seed = _ledger.run(
         f"solver_execution_epoch_{epoch}",
@@ -836,6 +1087,10 @@ def _periodic_qualification_solve(
             "result": _result_identity(result),
             "l2_error": error,
             "mean": mean,
+            "incoming_field_fingerprints": incoming_fields,
+            "field_fingerprints": {
+                name: array_tree_fingerprint(value) for name, value in state.items()
+            },
             "compatible_field_l2_norms": field_norms,
             "seed_origin": "zero"
             if seed_error is None
@@ -850,19 +1105,36 @@ def _periodic_qualification_solve(
     )
 
 
-@meshing_source_owner_reconstruction_scope()
+def _periodic_archive_limits(args: QualificationControls) -> ArrayArchiveLimits:
+    """Lower the exact recipe control to the archive's existing metadata bound."""
+    return (
+        ArrayArchiveLimits()
+        if args.maximum_recipe_bytes is None
+        else ArrayArchiveLimits(max_manifest_bytes=args.maximum_recipe_bytes)
+    )
+
+
+def _periodic_archive_policy(limits: ArrayArchiveLimits) -> dict[str, Any]:
+    policy = asdict(limits)
+    policy["allowed_dtype_kinds"] = sorted(limits.allowed_dtype_kinds)
+    return policy
+
+
 def _periodic_qualification_cold_process(
-    path: str,
+    path: Path,
     content_id: str,
     expected: dict[str, Any],
     case: dict[str, Any],
-    controls: dict[str, Any],
-) -> dict[str, Any]:
+    args: QualificationControls,
+    deadline: Deadline,
+    *,
+    archive_limits: ArrayArchiveLimits,
+) -> ColdWorkerReport:
     """Renew the entire accepted chain and continue its final real physical state."""
 
-    started = perf_counter()
+    began = perf_counter()
     restored = read_meshing_source_closure(
-        Path(path), expected_content_id=content_id, limits=ArrayArchiveLimits()
+        path, expected_content_id=content_id, limits=archive_limits
     )
     epochs = validate_meshing_accepted_epochs(restored)
     identities = {
@@ -871,6 +1143,10 @@ def _periodic_qualification_cold_process(
         "options": restored["generation_options"].options_id,
         "epochs": [epoch.epoch_id for epoch in epochs],
         "carriers": [_result_identity(epoch.carrier) for epoch in epochs],
+        "fields": [
+            {name: array_tree_fingerprint(value) for name, value in epoch.fields.items()}
+            for epoch in epochs
+        ],
     }
     identities = json.loads(json.dumps(identities))
     if identities != expected:
@@ -879,6 +1155,7 @@ def _periodic_qualification_cold_process(
             ("Cold periodic restart changed source, accepted history or raw fields."),
             {"expected": expected, "identities": identities},
         )
+    read_seconds = perf_counter() - began
     renewed = []
     for epoch in epochs:
         carrier = epoch.carrier
@@ -894,7 +1171,7 @@ def _periodic_qualification_cold_process(
             carrier.mesh,
             carrier.geometry,
             carrier.audit,
-            archive_limits=ArrayArchiveLimits(),
+            archive_limits=archive_limits,
         )
         report.require_passed()
         if report.report_id != certification.report_id:
@@ -914,6 +1191,7 @@ def _periodic_qualification_cold_process(
             }
         )
     final = epochs[-1]
+    exact_oracle = _periodic_exact_generation_oracle(epochs[0].carrier, case)
     spaces, problem, kept, weights = _periodic_qualification_spaces(final.carrier, case)
     state = {
         name: jnp.asarray(final.fields[f"periodic:{name}"])
@@ -925,18 +1203,33 @@ def _periodic_qualification_cold_process(
         "case": case,
         "time_to_target_error_seconds": None,
     }
-    args = QualificationControls.from_record(controls)
+    # The inherited absolute expiry is the original workflow deadline; the cold
+    # process continues that allowance and never restarts it.
     _periodic_qualification_solve(
-        final.carrier, spaces, problem, kept, weights, state, args, record, started
+        final.carrier,
+        spaces,
+        problem,
+        kept,
+        weights,
+        state,
+        args,
+        record,
+        deadline.expires_at - args.timeout,
     )
-    return {
-        "process_id": os.getpid(),
-        "runtime": _runtime_identity(),
-        "identities": identities,
-        "renewed_epochs": renewed,
-        "continued_solver_epoch": record["epochs"][-1],
-        "wall_seconds": perf_counter() - started,
-    }
+    return ColdWorkerReport(
+        record={
+            "runtime": _runtime_identity(),
+            "archive_limits": _periodic_archive_policy(archive_limits),
+            "requested_maximum_recipe_bytes": args.maximum_recipe_bytes,
+            "maximum_recipe_bytes": archive_limits.max_manifest_bytes,
+            "identities": identities,
+            "renewed_epochs": renewed,
+            "exact_source_oracle": exact_oracle,
+            "continued_solver_epoch": record["epochs"][-1],
+            "wall_seconds": perf_counter() - began,
+        },
+        read_seconds=read_seconds,
+    )
 
 
 def _periodic_qualification_checkpoint(
@@ -952,9 +1245,8 @@ def _periodic_qualification_checkpoint(
 
     _ledger = StageLedger(record, deadline=Deadline(started + args.timeout))
 
-    limits = ArrayArchiveLimits()
-    policy = asdict(limits)
-    policy["allowed_dtype_kinds"] = sorted(limits.allowed_dtype_kinds)
+    limits = _periodic_archive_limits(args)
+    policy = _periodic_archive_policy(limits)
     result = epochs[-1].carrier
     certification = result.certification
     if certification is None:
@@ -975,18 +1267,32 @@ def _periodic_qualification_checkpoint(
     }
     evidence: dict[str, Any] = {
         "archive_limits": policy,
+        "requested_maximum_recipe_bytes": args.maximum_recipe_bytes,
+        "maximum_recipe_bytes": limits.max_manifest_bytes,
         "prepared_fe_caches_serialized": False,
     }
     record["checkpoint"] = evidence
-    with TemporaryDirectory(prefix="phydrax-native-periodic-source-") as directory:
-        receipt, timing = _ledger.run(
-            "native_checkpoint_publication",
-            lambda: _measured(
-                lambda: write_meshing_source_closure(
-                    Path(directory) / "periodic.checkpoint.zip", records, limits=limits
-                )
+    with (
+        TemporaryDirectory(prefix="phydrax-native-periodic-source-") as directory,
+        prepare_cold_worker(
+            "tools.meshing_qualification.scenarios.periodic",
+            deadline=Deadline(started + args.timeout),
+            ledger=StageLedger(
+                record,
+                deadline=Deadline(started + args.timeout),
+                cold_phase="native_checkpoint_fresh_process_restart",
             ),
-        )
+        ) as cold_worker,
+    ):
+        with meshing_source_owner_reconstruction_scope(archive_limits=limits):
+            receipt, timing = _ledger.run(
+                "native_checkpoint_publication",
+                lambda: _measured(
+                    lambda: write_meshing_source_closure(
+                        Path(directory) / "periodic.checkpoint.zip", records, limits=limits
+                    )
+                ),
+            )
         record["stages_seconds"][record["active_phase"]] = timing["wall_seconds"]
         evidence["content_id"] = receipt.content_id
         evidence["container_bytes"] = receipt.path.stat().st_size
@@ -1001,16 +1307,13 @@ def _periodic_qualification_checkpoint(
             "options": options.options_id,
             "epochs": [epoch.epoch_id for epoch in epochs],
             "carriers": [_result_identity(epoch.carrier) for epoch in epochs],
+            "fields": [
+                {name: array_tree_fingerprint(value) for name, value in epoch.fields.items()}
+                for epoch in epochs
+            ],
         }
         expected = json.loads(json.dumps(expected))
-        controls = {**args.to_record(), "timeout": remaining}
-        payload = Path(directory) / "cold-input.json"
-        payload.write_text(
-            json.dumps(
-                {"expected": expected, "case": record["case"], "controls": controls}
-            )
-        )
-        # The scenario module owns its worker command.
+        # The scenario module owns its cold consumer.
 
         remaining = _ledger.run(
             "native_checkpoint_fresh_process_restart",
@@ -1021,15 +1324,15 @@ def _periodic_qualification_checkpoint(
                 f"periodic.remaining_seconds must be positive before cold restart; got {remaining!r}"
             )
         try:
-            cold = run_cold_worker(
-                "scenarios.periodic",
-                (str(receipt.path), receipt.content_id, str(payload)),
-                deadline=Deadline(started + args.timeout),
-                ledger=StageLedger(
-                    record,
-                    deadline=Deadline(started + args.timeout),
-                    cold_phase="native_checkpoint_fresh_process_restart",
-                ),
+            cold = cold_worker.execute(
+                receipt.path,
+                receipt.content_id,
+                {
+                    "expected": expected,
+                    "case": record["case"],
+                    "controls": args.to_record(),
+                    "archive_limits": policy,
+                },
             )
         except ColdWorkerTimeout as failure:
             evidence.update(
@@ -1050,7 +1353,7 @@ def _periodic_qualification_checkpoint(
             }
         )
         # Worker return-code evidence is retained by StageLedger.
-        # Parsed and process-validated by run_cold_worker.
+        # Parsed and process-bound by ColdWorker.execute.
         if cold["process_id"] == os.getpid() or cold["identities"] != expected:
             raise qualification_failure(
                 "_periodic_qualification_checkpoint",
@@ -1068,6 +1371,78 @@ def _periodic_qualification_checkpoint(
             and record["time_to_target_error_seconds"] is None
         ):
             record["time_to_target_error_seconds"] = perf_counter() - started
+
+
+def _periodic_qualification_adaptation(
+    result: phx.meshing.CellMeshingResult,
+    request: phx.meshing.MarkedMeshAdaptation,
+    policy: phx.meshing.MeshAdaptationPolicy,
+    operation: str,
+    index: int,
+    record: dict[str, Any],
+    ledger: StageLedger,
+    deadline: Deadline,
+) -> tuple[phx.meshing.CellMeshingResult, phx.meshing.MeshAdaptationResult, int]:
+    """Observe the actual adaptation request from preparation through publication."""
+    coarsen_count = np.asarray(request.coarsen_cell_ids).size
+
+    def adapt(
+        budget: phx.discretization.CoordinateEnclosureBudget,
+    ) -> phx.meshing.MeshAdaptationResult:
+        nonlocal coarsen_count
+        preparation, measured = ledger.run(
+            f"{operation}_prepare_transition_{index}",
+            lambda: _measured(
+                lambda: phx.meshing.prepare_mesh_adaptation(
+                    result, request, policy=policy, observe_managed_admission=True
+                )
+            ),
+        )
+        record["stages_seconds"][record["active_phase"]] = measured["wall_seconds"]
+        if operation == "coarsen":
+            preparation, measured = ledger.run(
+                f"coarsen_closed_prepare_transition_{index}",
+                lambda: _measured(
+                    lambda: phx.meshing.prepare_periodic_coarsening(
+                        preparation, observe_managed_admission=True
+                    )
+                ),
+            )
+            closed_request = preparation.request
+            if not isinstance(closed_request, phx.meshing.MarkedMeshAdaptation):
+                raise TypeError("periodic.coarsening must retain its marked request")
+            record["stages_seconds"][record["active_phase"]] = measured["wall_seconds"]
+            coarsen_count = np.asarray(closed_request.coarsen_cell_ids).size
+            if coarsen_count == 0:
+                raise qualification_failure(
+                    "_periodic_qualification_epochs",
+                    "No accuracy-admissible periodic sibling family can coarsen.",
+                    {"request": closed_request},
+                )
+        adaptation, measured = ledger.run(
+            f"{operation}_execute_transition_{index}",
+            lambda: _measured(
+                lambda: phx.meshing.execute_mesh_adaptation(
+                    preparation, observe_managed_admission=True
+                )
+            ),
+        )
+        record["stages_seconds"][record["active_phase"]] = measured["wall_seconds"]
+        return adaptation
+
+    completed = execute_native_request(
+        result,
+        policy.limits,
+        adapt,
+        target=lambda adaptation: adaptation.target,
+        failure_factory=qualification_failure,
+        workflow_remaining_seconds=deadline.remaining(),
+        observe_managed_admission=True,
+    )
+    adaptation = rebind_meshing_adaptation_execution_endpoints(
+        completed.value, result, completed.result
+    )
+    return completed.result, adaptation, coarsen_count
 
 
 def _periodic_qualification_epochs(
@@ -1170,62 +1545,16 @@ def _periodic_qualification_epochs(
                 hierarchy=history,
             )
 
-            adaptation_preparation, measured = _ledger.run(
-                f"{operation}_prepare_cycle_{cycle}",
-                lambda: _measured(
-                    lambda: phx.meshing.prepare_mesh_adaptation(
-                        result, request, policy=policy
-                    )
-                ),
+            target, adaptation, coarsen_count = _periodic_qualification_adaptation(
+                result, request, policy, operation, index, record, _ledger,
+                Deadline(started + args.timeout),
             )
-            record["stages_seconds"][record["active_phase"]] = measured["wall_seconds"]
-            if operation == "coarsen":
-                coarsen_ids, measured = _ledger.run(
-                    f"coarsen_select_cycle_{cycle}",
-                    lambda: _measured(
-                        lambda: phx.meshing.periodic_coarsening_cell_ids(
-                            adaptation_preparation
-                        )
-                    ),
-                )
-                record["stages_seconds"][record["active_phase"]] = measured[
-                    "wall_seconds"
-                ]
-                if coarsen_ids.size == 0:
-                    raise qualification_failure(
-                        "_periodic_qualification_epochs",
-                        ("No accuracy-admissible periodic sibling family can coarsen."),
-                        {"coarse_squared_errors": coarse_squared_errors},
-                    )
-                if not np.array_equal(coarsen_ids, np.asarray(request.coarsen_cell_ids)):
-                    request = phx.meshing.MarkedMeshAdaptation(
-                        empty, coarsen_ids, hierarchy=history
-                    )
-                    adaptation_preparation, measured = _ledger.run(
-                        f"coarsen_closed_prepare_cycle_{cycle}",
-                        lambda: _measured(
-                            lambda: phx.meshing.prepare_mesh_adaptation(
-                                result, request, policy=policy
-                            )
-                        ),
-                    )
-                    record["stages_seconds"][record["active_phase"]] = measured[
-                        "wall_seconds"
-                    ]
-
-            adaptation, measured = _ledger.run(
-                f"{operation}_execute_cycle_{cycle}",
-                lambda: _measured(
-                    lambda: phx.meshing.execute_mesh_adaptation(adaptation_preparation)
-                ),
-            )
-            record["stages_seconds"][record["active_phase"]] = measured["wall_seconds"]
             transition: dict[str, Any] = {
                 "cycle": cycle,
                 "operation": operation,
                 "status": adaptation.status.value,
                 "source": _result_identity(result),
-                "target": _result_identity(adaptation.target),
+                "target": _result_identity(target),
                 "evidence": (
                     None
                     if adaptation.evidence is None
@@ -1236,7 +1565,7 @@ def _periodic_qualification_epochs(
                     "indicator": "retained-coarse-Galerkin-cell-physical-L2",
                     "coarse_l2_error": float(np.sqrt(np.sum(coarse_squared_errors))),
                     "target_l2_error": args.target_error,
-                    "marked_coarsen_cells": coarsen_ids.size,
+                    "marked_coarsen_cells": coarsen_count,
                     "coarsening_requires_initial_topology": False,
                 },
             }
@@ -1265,7 +1594,6 @@ def _periodic_qualification_epochs(
             transition["retired_history_id"] = (
                 None if history.retired is None else history.retired.refinement_id
             )
-            target = adaptation.target
 
             acceptance, measured = _ledger.run(
                 f"independent_acceptance_transition_{index}",
@@ -1341,9 +1669,153 @@ def _periodic_qualification_epochs(
     )
 
 
+def _periodic_qualification_obligations(
+    record: dict[str, Any], args: QualificationControls
+) -> dict[str, bool]:
+    """Require emitted source, transition, solver and cold-state evidence together."""
+    transitions = record.get("transitions", [])
+    epochs = record.get("epochs", [])
+    checkpoint = record.get("checkpoint", {})
+    cold = checkpoint.get("cold_restart", {})
+    renewed = cold.get("renewed_epochs", [])
+    names = {"u", "vector", "flux"}
+    cycles = [
+        [item for item in transitions if item.get("cycle") == cycle]
+        for cycle in range(args.adaptation_rounds)
+    ]
+    adaptation = bool(cycles) and all(
+        len(items) >= 2
+        and items[-1].get("operation") == "coarsen"
+        and all(item.get("operation") == "refine" for item in items[:-1])
+        for items in cycles
+    ) and all(
+        item.get("status") == phx.meshing.MeshAdaptationStatus.COMPLETE.value
+        and item.get("lineage") is not None
+        and item.get("orbit_history_id") is not None
+        and item.get("independent_acceptance", {}).get("passed") is True
+        for item in transitions
+    )
+    transfers = len(epochs) == len(transitions) + 2 and bool(transitions)
+    if transfers:
+        for index, transition in enumerate(transitions):
+            fields = transition.get("transfers", {})
+            before = epochs[index].get("field_fingerprints", {})
+            after = epochs[index + 1].get("incoming_field_fingerprints", {})
+            transfers = transfers and set(fields) == names and all(
+                field.get("passed") is True
+                and field.get("evidence_id") is not None
+                and field.get("source_state_fingerprint") == before.get(name)
+                and field.get("target_state_fingerprint") == after.get(name)
+                and field.get("source_state_fingerprint") is not None
+                and field.get("target_state_fingerprint") is not None
+                for name, field in fields.items()
+            )
+    solved = bool(epochs) and all(
+        epoch.get("compiler", {}).get("solver", {}).get("successful") is True
+        and np.isfinite(epoch.get("l2_error", np.nan))
+        and abs(epoch.get("mean", np.inf)) <= 1.0e-10
+        and set(epoch.get("field_fingerprints", {})) == names
+        for epoch in epochs
+    ) and epochs[-1]["l2_error"] <= args.target_error
+    restored = (
+        checkpoint.get("content_id") is not None
+        and checkpoint.get("container_bytes", 0) > 0
+        and cold.get("process_id") is not None
+        and cold.get("process_id") != os.getpid()
+        and cold.get("exact_source_oracle", {}).get("passed") is True
+        and len(renewed) == len(transitions) + 1
+        and all(
+            item.get("report_id") is not None
+            and item.get("independent_acceptance", {}).get("passed") is True
+            for item in renewed
+        )
+        and len(epochs) >= 2
+        and epochs[-1].get("seed_origin") == "actual-cold-restored-accepted-scalar-state"
+        and epochs[-1].get("incoming_field_fingerprints")
+        == epochs[-2].get("field_fingerprints")
+        and all(
+            epochs[-1].get("field_fingerprints", {}).get(name)
+            == epochs[-2].get("field_fingerprints", {}).get(name)
+            for name in ("vector", "flux")
+        )
+    )
+    measured = bool(epochs) and all(
+        len(epoch.get("compiler", {}).get("warm_samples_seconds", ())) == args.repeats
+        and epoch.get("compiler", {}).get("compilation_count", 0) >= 1
+        and epoch.get("retained_bytes", 0) > 0
+        for epoch in epochs
+    )
+    return {
+        "original_exact_source_and_hard_controls": record.get("exact_source_oracle", {}).get("passed") is True
+        and record.get("independent_acceptance", {}).get("passed") is True,
+        "refinement_and_real_coarsening_cycles": adaptation,
+        "all_accepted_fields_transferred": transfers,
+        "independent_physical_solve_and_error": solved,
+        "checkpoint_cold_state_and_continued_solve": restored,
+        "runtime_phase_and_deadline_evidence": measured
+        and record.get("end_to_end_seconds", np.inf) <= args.timeout,
+    }
+
+
+def _periodic_binary64_exclusion(
+    source: phx.meshing.NativePeriodicSource,
+    specification: phx.meshing.SurfaceMeshingSpec,
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    """Prove the immutable binary64 claim impossible, not the exact-algebraic source."""
+    control = specification.size_controls[0]
+    if not isinstance(control, phx.meshing.UniformSizeControl):
+        raise ValueError("periodic.binary64_exclusion requires the original uniform control")
+    policy = specification.size_compliance
+    target = Fraction(control.target_size)
+    if (
+        case["carrier_representation"] != "binary64"
+        or target.numerator != 1
+        or target.denominator & (target.denominator - 1)
+        or policy.absolute_tolerance != 0.0
+        or policy.relative_tolerance != 0.0
+        or policy.target_statistics != ("p50", "p95")
+        or control.strength is not phx.meshing.SizeControlStrength.HARD
+    ):
+        raise ValueError("periodic.binary64_exclusion requires the original dyadic hard target")
+    # Scaling a dyadic edge of length 2^-k to integer coordinates and descending
+    # modulo four proves it is axis-aligned. A positive triangle has at most two
+    # such edges; two imply a third edge longer than the target. Counting target
+    # and long incidences on a closed triangular torus gives 2*A <= F + 2*L.
+    margins = []
+    for vertices in range(1, specification.limits.maximum_vertices + 1):
+        edges, faces = 3 * vertices, 2 * vertices
+        lower = int(float(np.float64(0.5) * np.float64(edges - 1)))
+        rank = float(np.float64(0.95) * np.float64(edges - 1))
+        upper = min(int(rank) + int(rank != int(rank)), edges - 1)
+        required_target_edges = upper - lower + 1
+        allowed_long_edges = edges - 1 - upper
+        margins.append(2 * required_target_edges - faces - 2 * allowed_long_edges)
+    if not margins or min(margins) <= 0:
+        raise ValueError("periodic.binary64_exclusion has no strict rank contradiction")
+    evidence = {
+        "passed": True,
+        "source_id": source.source_id,
+        "source_revision": source.source_revision,
+        "source_binding_id": source.binding_id,
+        "specification_id": specification.specification_id,
+        "claim_scope": "binary64-coordinate-closed-triangular-torus-only",
+        "authored_geometry_digest": case["authored_geometry_digest"],
+        "target_size": str(target),
+        "vertices_checked": [1, specification.limits.maximum_vertices],
+        "minimum_incidence_contradiction": min(margins),
+        "arithmetic_lemma": "dyadic-target-edges-axis-aligned-by-mod-four-descent",
+        "incidence_bound": "2*target_edges <= faces+2*long_edges",
+        "rank_rule": "binary64-linear-quantile-ranks-for-p50-and-p95",
+        "algebraic_carriers_excluded": False,
+    }
+    return {**evidence, "evidence_id": canonical_fingerprint(evidence)}
+
+
 def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, object]:
     """Run native source publication and accuracy-controlled conservative orbit cycles."""
 
+    profile = _periodic_qualification_profile_contracts()[args.periodic_case]
     if (
         args.resolution < 4
         or args.capacity < 1
@@ -1353,7 +1825,7 @@ def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, 
         or args.timeout <= 0.0
         or not np.isfinite(args.target_error)
         or args.target_error <= 0.0
-        or (args.periodic_case == "skew-material-feature" and args.resolution % 2)
+        or (profile["base_case"] == "skew-material-feature" and args.resolution % 2)
     ):
         raise ValueError(
             f"periodic.controls must have resolution >= 4 (even for materials), positive budgets and targets, and at least one cycle; got resolution={args.resolution!r}, capacity={args.capacity!r}, repeats={args.repeats!r}, rounds={args.adaptation_rounds!r}, timeout={args.timeout!r}, target_error={args.target_error!r}, case={args.periodic_case!r}"
@@ -1365,7 +1837,8 @@ def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, 
         "engine": "native",
         "status": "failed",
         "runtime": _runtime_identity(),
-        "expected_admission": "positive",
+        "expected_admission": profile["expected_admission"],
+        "contract": profile,
         "targets": {"l2_error": args.target_error, "wall_seconds": args.timeout},
         "control_capacities": {
             "resolution": args.resolution,
@@ -1414,6 +1887,20 @@ def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, 
                 },
             }
         )
+        if profile["expected_admission"] == "refusal":
+            exclusion = _ledger.run(
+                "immutable_binary64_source_exclusion",
+                lambda: _periodic_binary64_exclusion(source, specification, case),
+            )
+            record.update(
+                status="expected-refusal",
+                source_exclusion=exclusion,
+                failure_evidence_id=exclusion["evidence_id"],
+                independent_scientific_certification="passed",
+                requested={"expected_admission": "refusal"},
+                achieved={"binary64_zero_tolerance_claim_excluded": True},
+            )
+            return record
         provider = phx.meshing.NativeMeshingProvider(options)
 
         plan, measured = _ledger.run(
@@ -1443,6 +1930,10 @@ def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, 
         )
         record["independent_acceptance"] = acceptance
         record["stages_seconds"][record["active_phase"]] = measured["wall_seconds"]
+        record["exact_source_oracle"] = _ledger.run(
+            "independent_exact_source_oracle",
+            lambda: _periodic_exact_generation_oracle(result, case),
+        )
         _periodic_qualification_epochs(
             result, source, specification, options, args, record, started
         )
@@ -1478,8 +1969,8 @@ def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, 
         if record["epochs"]:
             record["physical_error"] = record["epochs"][-1]["l2_error"]
         record["end_to_end_seconds"] = perf_counter() - started
-        record["peak_process_resident_bytes"] = peak_resident_bytes(resource.RUSAGE_SELF)
-        record["process_peak_scope"] = "process-lifetime"
+        record["peak_process_resident_bytes"] = peak_resident_bytes()
+        record["process_peak_scope"] = PEAK_RESIDENT_SCOPE
         record["device_memory"] = [
             {
                 "device_id": device.id,
@@ -1494,29 +1985,50 @@ def _periodic_qualification_lifecycle(args: QualificationControls) -> dict[str, 
             for device in jax.local_devices()
             for statistics in (device.memory_stats(),)
         ]
-        if record["status"] != "passed":
+        if record["status"] not in ("passed", "expected-refusal"):
             record["failure_phase"] = record["active_phase"]
         if record["end_to_end_seconds"] > args.timeout:
             record["status"] = "timeout"
             record["failure_phase"] = record["active_phase"]
+        obligations = _periodic_qualification_obligations(record, args)
+        complete = record["status"] == "passed" and all(obligations.values())
+        record["profile_obligations"] = obligations
+        excluded = (
+            record["status"] == "expected-refusal"
+            and record.get("source_exclusion", {}).get("passed") is True
+        )
+        record["case_contract_completion"] = (
+            "complete" if complete or excluded else "incomplete"
+        )
+        record["mandatory_workflow_completion"] = "complete" if complete else "incomplete"
+        record["positive_completion"] = complete and record["expected_admission"] == "positive"
         del record["active_phase"]
     return record
 
 
-def worker(argv: tuple[str, ...]) -> dict[str, Any]:
-    """Decode process arguments and run the scenario-owned cold consumer."""
-    p = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
-    return _periodic_qualification_cold_process(
-        argv[0], argv[1], p["expected"], p["case"], p["controls"]
-    )
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] != "worker":
-        raise ValueError(
-            "qualification.subcommand must equal worker; got " + repr(sys.argv[1:])
+def cold_worker(packet: ColdControlPacket) -> ColdWorkerReport:
+    """Run the scenario-owned cold consumer on its one control packet."""
+    controls = packet.controls
+    args = QualificationControls.from_record(controls["controls"])
+    limits = _periodic_archive_limits(args)
+    policy = _periodic_archive_policy(limits)
+    producer_policy = controls.get("archive_limits")
+    if producer_policy != policy:
+        raise qualification_failure(
+            "periodic.cold.archive_limits",
+            "Cold archive limits must equal the original authored producer limits.",
+            {"producer_archive_limits": producer_policy, "receiving_archive_limits": policy},
         )
-    print(json.dumps(worker(tuple(sys.argv[2:]))))
+    with meshing_source_owner_reconstruction_scope(archive_limits=limits):
+        return _periodic_qualification_cold_process(
+            packet.archive_path,
+            packet.content_id,
+            controls["expected"],
+            controls["case"],
+            args,
+            packet.deadline,
+            archive_limits=limits,
+        )
 
 
 def run(args: QualificationControls) -> dict[str, object]:

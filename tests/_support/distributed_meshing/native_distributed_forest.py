@@ -417,8 +417,10 @@ def _forest(scenario: str) -> dict[str, Any]:
         checks.setdefault("forest_155", []).append(
             bool(prepared.forest_parts is not None)
         )
+        execution_parts = _require_present(prepared.forest_parts)
+        assert isinstance(execution_parts, AdaptiveSimplexParts)
         coarsened = coarsen_adaptive_simplex_parts(
-            layout, _require_present(prepared.forest_parts), forest, marks
+            layout, execution_parts, forest, marks
         )
         checks.setdefault("forest_157", []).append(
             bool(np.all(np.asarray(coarsened.report.status) == 0))

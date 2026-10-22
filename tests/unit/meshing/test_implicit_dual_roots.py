@@ -5,6 +5,7 @@ from __future__ import annotations
 from fractions import Fraction
 
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax._meshcore import (
@@ -16,6 +17,7 @@ from phydrax._meshcore import (
 )
 from phydrax.meshing._implicit_volume import (
     ImplicitDualIntervalClass,
+    ImplicitDualRootProofs,
     isolate_implicit_dual_roots,
     prepare_implicit_restricted_queries,
     prepare_implicit_volume_domain,
@@ -85,6 +87,69 @@ def test_tangential_dual_zero_is_pending_not_certified_empty() -> None:
     )
     assert np.all(work.classes[touches] == int(ImplicitDualIntervalClass.UNRESOLVED))
     assert not np.any(work.classes == int(ImplicitDualIntervalClass.UNIQUE_ROOT))
+
+
+def test_retained_dual_root_proofs_reproduce_terminals_without_queries() -> None:
+    radius = 0.371
+    query = implicit_query(
+        phx.geometry.Sphere((0.0, 0.0, 0.0), radius).compile(coordinate_unit=METER)
+    )
+    crossing = ((-1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    outside = ((0.5, 0.5, 0.5), (0.9, 0.5, 0.5))
+    proofs = ImplicitDualRootProofs(query.query_id, 0.01, 14, {})
+    first = isolate_implicit_dual_roots(
+        query,
+        np.asarray((crossing, outside), dtype=np.float64),
+        spatial_tolerance=0.01,
+        maximum_depth=14,
+        maximum_geometry_queries=3000,
+        proofs=proofs,
+    )
+    # Only the nontrivial crossing proof is retained; the depth-zero exclusion
+    # costs three queries and is recomputed.
+    assert len(proofs.rows) == 1
+    # The same duals in a new order: the crossing reuses its rows unchanged.
+    second = isolate_implicit_dual_roots(
+        query,
+        np.asarray((outside, crossing), dtype=np.float64),
+        spatial_tolerance=0.01,
+        maximum_depth=14,
+        maximum_geometry_queries=3000,
+        proofs=proofs,
+    )
+    fresh = isolate_implicit_dual_roots(
+        query,
+        np.asarray((outside, crossing), dtype=np.float64),
+        spatial_tolerance=0.01,
+        maximum_depth=14,
+        maximum_geometry_queries=3000,
+    )
+    assert_terminal_cover(second)
+    assert second.geometry_queries == 3
+    assert first.geometry_queries == fresh.geometry_queries > 3
+    for name in (
+        "segment_ids",
+        "parameter_intervals",
+        "classes",
+        "value_lower",
+        "value_upper",
+        "derivative_lower",
+        "derivative_upper",
+        "endpoint_value_lower",
+        "endpoint_value_upper",
+    ):
+        np.testing.assert_array_equal(getattr(second, name), getattr(fresh, name))
+    assert second.workset_id == fresh.workset_id
+    other = ImplicitDualRootProofs(query.query_id, 0.02, 14, {})
+    with pytest.raises(ValueError, match="proof binding"):
+        isolate_implicit_dual_roots(
+            query,
+            np.asarray((crossing,), dtype=np.float64),
+            spatial_tolerance=0.01,
+            maximum_depth=14,
+            maximum_geometry_queries=3000,
+            proofs=other,
+        )
 
 
 def test_dual_query_exhaustion_preserves_full_parameter_cover() -> None:

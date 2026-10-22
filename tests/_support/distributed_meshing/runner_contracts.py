@@ -24,4 +24,6 @@ def fail_with_diagnostics() -> dict[str, str]:
     """Refuse after emitting both child diagnostic streams."""
     print("runner stdout evidence", flush=True)
     print("runner stderr evidence", file=sys.stderr, flush=True)
-    raise RuntimeError("runner deliberate child refusal")
+    raise RuntimeError(
+        "runner.child must exit successfully; got deliberate child refusal."
+    )

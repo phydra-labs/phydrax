@@ -4,10 +4,13 @@
 // Tetrahedral improvement: sliver removal to a dihedral target after
 // refinement with constrained faces and region volumes preserved exactly,
 // and the operation-level API (2-3 / 3-2 flips, edge removal, relocation,
-// vertex removal) with its refusals.
+// vertex removal) with its refusals. Weighted exudation with per-visit reuse
+// is compared with a literal replay of the recomputing exudation.
+#include <algorithm>
 #include <cmath>
 #include <array>
 #include <cstdint>
+#include <span>
 #include <vector>
 #include <limits>
 #include <set>
@@ -15,6 +18,7 @@
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 #include "improve3d.hpp"
+#include "geometry3.hpp"
 #include "predicates.hpp"
 #include "tet_mesh.hpp"
 #include "tet_mesh_fixtures.hpp"
@@ -288,6 +292,46 @@ void test_conforming_curve_split_collapse_preserves_source_and_ghost_closure() {
   PHX_CHECK_NEAR(phx::mc::test::region_volume(restored, 0), 1.0 / 6.0, kSmallCavityVolumeTolerance);
   PHX_CHECK(handle_audit(handle));
   phx_mc_tet_mesh_free(handle);
+}
+
+void test_curve_collapse_work_depends_only_on_incident_segments() {
+  const Domain component = right_tetrahedron();
+  int64_t local_work = -1;
+  for (int components : {1, 33}) {
+    Domain domain;
+    for (int c = 0; c < components; ++c) {
+      for (std::size_t i = 0; i < component.points.size(); ++i)
+        domain.points.push_back(component.points[i] + (i % 3 == 0 ? 3.0 * c : 0.0));
+      for (int32_t v : component.tets) domain.tets.push_back(v + 4 * c);
+      domain.regions.push_back(c);
+      for (int32_t v : component.faces) domain.faces.push_back(v + 4 * c);
+      for (int32_t source : component.face_sources) domain.face_sources.push_back(source + 4 * c);
+      for (int32_t v : component.segments) domain.segments.push_back(v + 4 * c);
+      for (int32_t source : component.segment_sources)
+        domain.segment_sources.push_back(source + 6 * c);
+    }
+    phx_mc_tet_mesh* handle = phx::mc::test::create_mesh(
+        domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING, nullptr, 256, 2048);
+    PHX_CHECK(handle != nullptr);
+    if (handle == nullptr) continue;
+    const Exported before = phx::mc::test::export_mesh(handle);
+    const double midpoint[3] = {0.5, 0.0, 0.0};
+    int32_t inserted = -1;
+    PHX_CHECK(phx::mc::try_split_edge(*handle->mesh, 0, 1, midpoint, 0.0, inserted) ==
+              phx::mc::Insertion::kOk);
+    const int64_t start = handle->mesh->work();
+    PHX_CHECK(phx::mc::try_collapse_edge(*handle->mesh, inserted, 0, false));
+    const int64_t work = handle->mesh->work() - start;
+    if (local_work < 0) local_work = work;
+    PHX_CHECK(work == local_work);
+    const Exported after = phx::mc::test::export_mesh(handle);
+    PHX_CHECK(after.tets == before.tets && after.regions == before.regions);
+    PHX_CHECK(after.faces == before.faces && after.face_sources == before.face_sources);
+    PHX_CHECK(after.segments == before.segments && after.segment_sources == before.segment_sources);
+    PHX_CHECK(std::equal(before.points.begin(), before.points.end(), after.points.begin()));
+    PHX_CHECK(phx::mc::test::all_positive(after) && handle_audit(handle));
+    phx_mc_tet_mesh_free(handle);
+  }
 }
 
 void test_conforming_segment_relocation_preserves_exact_source_and_volume() {
@@ -627,6 +671,52 @@ void test_protection_ball_center_rejects_otherwise_legal_relocation() {
   phx_mc_tet_mesh_free(handle);
 }
 
+void test_coupled_relocation_cannot_enter_another_vertices_protecting_ball() {
+  const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 20, 1), 0.0);
+  auto* unprotected =
+      phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  PHX_CHECK(unprotected != nullptr);
+  if (unprotected == nullptr) return;
+  constexpr int32_t center = 13;
+  int32_t moving = -1;
+  double shortest = std::numeric_limits<double>::infinity();
+  for (int32_t vertex = 27; vertex < 47; ++vertex) {
+    const double distance = phx::mc::geometry::squared_distance(
+        unprotected->mesh->point(center), unprotected->mesh->point(vertex));
+    if (distance < shortest) {
+      shortest = distance;
+      moving = vertex;
+    }
+  }
+  PHX_CHECK(moving >= 0);
+  double position[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const double origin = unprotected->mesh->point(moving)[axis];
+    position[axis] = origin + 0x1p-20 * (unprotected->mesh->point(center)[axis] - origin);
+  }
+  const double next_distance = std::sqrt(phx::mc::geometry::squared_distance(
+      unprotected->mesh->point(center), position));
+  std::vector<double> radii(domain.points.size() / 3, 0.0);
+  radii[center] = 0.5 * (std::sqrt(shortest) + next_distance);
+  auto* protected_mesh = phx::mc::test::create_mesh(
+      domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING, radii.data());
+  PHX_CHECK(protected_mesh != nullptr);
+  if (protected_mesh == nullptr) {
+    phx_mc_tet_mesh_free(unprotected);
+    return;
+  }
+  const std::span<const int32_t> vertices(&moving, 1);
+  PHX_CHECK(phx::mc::try_relocate_vertices(*unprotected->mesh, vertices, position, 0.0, 0.0));
+  const Exported before = phx::mc::test::export_mesh(protected_mesh);
+  const int64_t generation = protected_mesh->mesh->accepted_generation();
+  PHX_CHECK(!phx::mc::try_relocate_vertices(*protected_mesh->mesh, vertices, position, 0.0, 0.0));
+  PHX_CHECK(phx::mc::test::export_mesh(protected_mesh) == before);
+  PHX_CHECK(protected_mesh->mesh->accepted_generation() == generation);
+  PHX_CHECK(handle_audit(protected_mesh));
+  phx_mc_tet_mesh_free(unprotected);
+  phx_mc_tet_mesh_free(protected_mesh);
+}
+
 void test_expanded_insertion_inspection_is_atomic_and_epoch_bound() {
   const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 20, 1), 0.0);
   phx_mc_tet_mesh* handle =
@@ -814,6 +904,55 @@ void test_expanded_insertion_inspection_is_atomic_and_epoch_bound() {
   phx_mc_tet_mesh_free(handle);
 }
 
+void test_coupled_relocation_is_atomic_at_the_exact_work_boundary() {
+  const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 2, 13), 0.0);
+  auto* reference = phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  auto* bounded = phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  PHX_CHECK(reference != nullptr && bounded != nullptr);
+  if (reference == nullptr || bounded == nullptr) {
+    phx_mc_tet_mesh_free(reference);
+    phx_mc_tet_mesh_free(bounded);
+    return;
+  }
+  const Exported before = phx::mc::test::export_mesh(bounded);
+  const int64_t generation = bounded->mesh->accepted_generation();
+  const int32_t vertices[2] = {13, 27};
+  double positions[6];
+  for (int row = 0; row < 2; ++row) {
+    std::copy_n(reference->mesh->point(vertices[row]), 3, positions + 3 * row);
+    positions[3 * row] += (row == 0 ? 1.0 : -1.0) * 0x1p-20;
+  }
+  const int64_t start = reference->mesh->work();
+  int32_t applied = -1;
+  PHX_CHECK(phx_mc_tet_mesh_relocate_vertices(
+      reference, 2, vertices, positions, 0.0, 0.0, 1000000, &applied) == PHX_MC_OK);
+  PHX_CHECK(applied == 1);
+  const int64_t required = reference->mesh->work() - start;
+  PHX_CHECK(required > 0);
+  PHX_CHECK(phx_mc_tet_mesh_relocate_vertices(
+      bounded, 2, vertices, positions, 0.0, 0.0, required - 1, &applied) ==
+      PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(applied == 0 && phx::mc::test::export_mesh(bounded) == before);
+  PHX_CHECK(bounded->mesh->accepted_generation() == generation);
+  PHX_CHECK(phx_mc_tet_mesh_relocate_vertices(
+      bounded, 2, vertices, positions, 0.0, 0.0, required, &applied) == PHX_MC_OK);
+  PHX_CHECK(applied == 1);
+  const Exported after = phx::mc::test::export_mesh(bounded);
+  PHX_CHECK(after == phx::mc::test::export_mesh(reference));
+  PHX_CHECK(phx::mc::test::all_positive(after));
+  PHX_CHECK(after.regions == before.regions && after.face_sources == before.face_sources);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, kUnitBoxMeasureTolerance);
+  // Invalid joint trials cannot publish the earlier valid row.
+  const int64_t accepted_generation = bounded->mesh->accepted_generation();
+  positions[3] = std::numeric_limits<double>::quiet_NaN();
+  PHX_CHECK(!phx::mc::try_relocate_vertices(*bounded->mesh, vertices, positions, 0.0, 0.0));
+  PHX_CHECK(phx::mc::test::export_mesh(bounded) == after);
+  PHX_CHECK(bounded->mesh->accepted_generation() == accepted_generation);
+  PHX_CHECK(handle_audit(reference) && handle_audit(bounded));
+  phx_mc_tet_mesh_free(reference);
+  phx_mc_tet_mesh_free(bounded);
+}
+
 void test_shared_work_refusal_is_not_geometric_edit_refusal() {
   const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 20, 1), 0.0);
   phx_mc_tet_mesh* handle =
@@ -944,9 +1083,8 @@ void test_construction_three_ring_repair_preserves_exact_source_boundary() {
   phx_mc_tet_mesh_free(handle);
 }
 
-void test_determinant_floor_hinge_receives_certified_interior_vertex() {
+void test_determinant_floor_hinge_receives_certified_interior_vertex(const Domain& domain) {
   constexpr double kFloor = kReconstructionFloor;
-  const Domain domain = phx::mc::test::reconstruction_hinge_domain();
   phx_mc_tet_mesh* handle = phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_FIXED);
   PHX_CHECK(handle != nullptr);
   if (handle == nullptr) return;
@@ -983,7 +1121,8 @@ void test_determinant_floor_hinge_receives_certified_interior_vertex() {
   // geometric failure, and the accepted state is unchanged.
   int32_t status = -1;
   phx_mc_tet_mesh* capped = phx::mc::test::create_mesh(
-      domain, PHX_MC_TET_MESH_BOUNDARY_FIXED, nullptr, 6, 1 << 10, &status);
+      domain, PHX_MC_TET_MESH_BOUNDARY_FIXED, nullptr,
+      static_cast<int64_t>(domain.points.size() / 3), 1 << 10, &status);
   PHX_CHECK(status == PHX_MC_OK && capped != nullptr);
   if (capped == nullptr) return;
   PHX_CHECK(phx_mc_tet_mesh_improve(capped, 0.0, kFloor, 1, 100000, counters) ==
@@ -1086,8 +1225,41 @@ void check_octahedron_cluster_rejections(phx::mc::TetMesh& mesh, int32_t cell) {
     }
     begin = end;
   }
+  // Literal uncached replay of the shared boundary/early losing-cone
+  // calculation. Keep the exact edge-proof saving oracle below independent
+  // of the now separately factorized multiface boundary work.
+  PHX_CHECK(mesh.spend(static_cast<int64_t>(8 * cavity.size())));
+  std::sort(cavity.begin(), cavity.end());
+  std::vector<std::pair<std::array<int32_t, 4>, int>> boundary;
+  double baseline = 180.0;
+  for (int32_t entry : cavity) {
+    const auto& tet = mesh.tet(entry);
+    const double* corners[4];
+    mesh.corners(tet.v, corners);
+    baseline = std::min(baseline, phx::mc::geometry::minimum_dihedral(corners));
+    for (int slot = 0; slot < 4; ++slot) {
+      if (!std::binary_search(cavity.begin(), cavity.end(), tet.n[slot])) {
+        boundary.push_back({{tet.v[0], tet.v[1], tet.v[2], tet.v[3]}, slot});
+      }
+    }
+  }
   for (int32_t apex = 0; apex < 6; ++apex) {
-    PHX_CHECK(!phx::mc::try_multiface_removal(mesh, cavity, apex, true));
+    bool rejected = false;
+    for (const auto& [vertices, slot] : boundary) {
+      PHX_CHECK(mesh.spend(1));
+      if (std::find(vertices.begin(), vertices.end(), apex) != vertices.end() &&
+          vertices[slot] != apex) continue;
+      auto cone = vertices;
+      cone[slot] = apex;
+      const double* corners[4];
+      mesh.corners(cone.data(), corners);
+      if (!mesh.positive(cone.data()) ||
+          !(phx::mc::geometry::minimum_dihedral(corners) > baseline + 1e-9)) {
+        rejected = true;
+        break;
+      }
+    }
+    PHX_CHECK(rejected);
   }
 }
 
@@ -1196,12 +1368,293 @@ void test_completed_negative_vertex_searches_fit_reduced_work() {
   phx_mc_tet_mesh_free(bounded);
 }
 
+// ------------------------------------------------- recomputing exudation replay
+// The weighted exudation before per-visit reuse, replayed literally through
+// public operations with its charges: every trial weight re-ran each star
+// cell's 2-3 trial (16 units, power test, size/floor admission, flip) and
+// each neighbor's weighted edge removal (its own star walk, ring and ring
+// triangulation), and every sliver vertex was revisited from scratch.
+
+bool replay_size_targets(const phx::mc::TetMesh& mesh, const std::array<int32_t, 4>& cell,
+                         double ratio_bound) {
+  const double* p[4];
+  mesh.corners(cell.data(), p);
+  double center[3];
+  if (!phx::mc::geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], center)) {
+    return false;
+  }
+  const double radius2 = phx::mc::geometry::squared_distance(center, p[0]);
+  double shortest2 = std::numeric_limits<double>::infinity();
+  double target = 0.0;
+  for (int i = 0; i < 4; ++i) {
+    target += 0.25 * mesh.size(cell[static_cast<std::size_t>(i)]);
+    for (int j = i + 1; j < 4; ++j) {
+      shortest2 = std::min(shortest2, phx::mc::geometry::squared_distance(p[i], p[j]));
+    }
+  }
+  return std::isfinite(radius2) && radius2 <= ratio_bound * ratio_bound * shortest2 &&
+         (target == 0.0 || radius2 <= target * target);
+}
+
+bool replay_above_floor(const phx::mc::TetMesh& mesh, const std::array<int32_t, 4>& cell,
+                        double floor) {
+  if (!(floor > 0.0)) return true;
+  const double* corners[4];
+  mesh.corners(cell.data(), corners);
+  double score = 0.0;
+  return phx::mc::canonical_relative_floor(cell.data(), corners, floor, &score) > 0;
+}
+
+struct ReplaySliver {
+  double quality;
+  int32_t slot;
+  std::array<int32_t, 4> v;
+};
+
+// Cells below the angle target, with an uncertain canonical-chart
+// orientation, or at/below the floor; ordered as exudation schedules them.
+std::vector<ReplaySliver> replay_slivers(const phx::mc::TetMesh& mesh, double target,
+                                         double floor) {
+  std::vector<ReplaySliver> slivers;
+  const auto slots = static_cast<int32_t>(mesh.complex().tets.size());
+  for (int32_t t = 0; t < slots; ++t) {
+    if (!mesh.complex().live(t) || !mesh.finite(t)) continue;
+    const int32_t* v = mesh.tet(t).v;
+    const double* corners[4];
+    mesh.corners(v, corners);
+    const double q = phx::mc::geometry::minimum_dihedral(corners);
+    int perm[4];
+    phx::mc::canonical_permutation(v, 4, perm);
+    double axes[4][3];
+    for (int corner = 0; corner < 4; ++corner) {
+      axes[corner][0] = corners[perm[corner]][1];
+      axes[corner][1] = corners[perm[corner]][2];
+      axes[corner][2] = corners[perm[corner]][0];
+    }
+    bool uncertain =
+        (-phx::mc::orient3d_approx(axes[1], axes[2], axes[3], axes[0])).certified_sign() != 1;
+    if (floor > 0.0) {
+      double score = 0.0;
+      uncertain = uncertain || phx::mc::canonical_relative_floor(v, corners, floor, &score) <= 0;
+    }
+    if (uncertain || !std::isfinite(q) || q < target) {
+      ReplaySliver entry{q, t, {v[0], v[1], v[2], v[3]}};
+      std::sort(entry.v.begin(), entry.v.end());
+      slivers.push_back(entry);
+    }
+  }
+  std::sort(slivers.begin(), slivers.end(), [](const ReplaySliver& a, const ReplaySliver& b) {
+    const bool finite = std::isfinite(a.quality), other_finite = std::isfinite(b.quality);
+    if (finite != other_finite) return !finite;
+    if (finite && a.quality != b.quality) return a.quality < b.quality;
+    return std::lexicographical_compare(a.v.begin(), a.v.end(), b.v.begin(), b.v.end());
+  });
+  return slivers;
+}
+
+bool replay_current(const phx::mc::TetMesh& mesh, const ReplaySliver& entry) {
+  if (!mesh.complex().live(entry.slot) || !mesh.finite(entry.slot)) return false;
+  std::array<int32_t, 4> v = {mesh.tet(entry.slot).v[0], mesh.tet(entry.slot).v[1],
+                              mesh.tet(entry.slot).v[2], mesh.tet(entry.slot).v[3]};
+  std::sort(v.begin(), v.end());
+  return v == entry.v;
+}
+
+struct ExudeReplay {
+  int64_t trials = 0;
+  int64_t flips = 0;
+  int64_t passes = 0;
+};
+
+bool replay_exude_vertex(phx::mc::TetMesh& mesh, int32_t vertex,
+                         const phx::mc::ExudeOptions& options, std::vector<double>& weights,
+                         ExudeReplay& replay) {
+  if (mesh.dimension(vertex) != 3 || mesh.protection(vertex) > 0.0) return false;
+  std::vector<int32_t> star;
+  if (!mesh.vertex_star(vertex, star)) return false;
+  const auto weight = [&](int32_t v) { return weights[static_cast<std::size_t>(v)]; };
+  double shortest2 = std::numeric_limits<double>::infinity();
+  for (int32_t t : star) {
+    for (int32_t v : mesh.tet(t).v) {
+      if (v != vertex && v >= 0) {
+        shortest2 = std::min(
+            shortest2, phx::mc::geometry::squared_distance(mesh.point(vertex), mesh.point(v)));
+      }
+    }
+  }
+  const double bound = options.max_weight_fraction * shortest2;
+  for (int exponent = -12; exponent <= 0; ++exponent) {
+    const double trial = std::ldexp(bound, exponent);
+    if (!(trial > weight(vertex)) || !phx::mc::weight_in_domain(trial)) continue;
+    for (int32_t t : star) {
+      if (!mesh.spend(16)) return false;
+      ++replay.trials;
+      const phx::mc::Tetrahedron old = mesh.tet(t);
+      const int slot = phx::mc::vertex_slot(old, vertex);
+      const int32_t other = old.n[slot];
+      if (!mesh.finite(other) || mesh.complex().constraint(t, slot) != phx::mc::kNoConstraint) {
+        continue;
+      }
+      const phx::mc::Tetrahedron neighbor = mesh.tet(other);
+      const int back = phx::mc::neighbor_slot(neighbor, t);
+      const double* p[4];
+      mesh.corners(other, p);
+      if (phx::mc::power3d(p[0], p[1], p[2], p[3], mesh.point(vertex), weight(neighbor.v[0]),
+                           weight(neighbor.v[1]), weight(neighbor.v[2]), weight(neighbor.v[3]),
+                           trial) <= 0) {
+        continue;
+      }
+      const double new_edge_bound =
+          options.max_weight_fraction *
+          phx::mc::geometry::squared_distance(mesh.point(vertex), mesh.point(neighbor.v[back]));
+      bool size_valid = trial <= new_edge_bound && weight(neighbor.v[back]) <= new_edge_bound;
+      for (int k = 0; k < 4; ++k) {
+        if (k == back) continue;
+        std::array<int32_t, 4> proposed = {neighbor.v[0], neighbor.v[1], neighbor.v[2],
+                                           neighbor.v[3]};
+        proposed[static_cast<std::size_t>(k)] = vertex;
+        size_valid = size_valid && replay_size_targets(mesh, proposed, options.radius_edge_bound) &&
+                     replay_above_floor(mesh, proposed, options.minimum_relative_determinant);
+      }
+      if (size_valid && phx::mc::try_face_removal(mesh, t, slot, true)) {
+        weights[static_cast<std::size_t>(vertex)] = trial;
+        ++replay.flips;
+        return true;
+      }
+    }
+    std::vector<int32_t> neighbors;
+    for (int32_t t : star) {
+      for (int32_t v : mesh.tet(t).v) {
+        if (v != vertex && v >= 0) neighbors.push_back(v);
+      }
+    }
+    std::sort(neighbors.begin(), neighbors.end());
+    neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+    const double saved_weight = weight(vertex);
+    weights[static_cast<std::size_t>(vertex)] = trial;
+    for (int32_t other : neighbors) {
+      ++replay.trials;
+      if (phx::mc::try_edge_removal(mesh, vertex, other, true, std::span<const double>(weights),
+                                    options.radius_edge_bound, options.max_weight_fraction, false,
+                                    options.minimum_relative_determinant)) {
+        ++replay.flips;
+        return true;
+      }
+    }
+    weights[static_cast<std::size_t>(vertex)] = saved_weight;
+  }
+  return false;
+}
+
+ExudeReplay replay_exude(phx::mc::TetMesh& mesh, const phx::mc::ExudeOptions& options,
+                         std::vector<double>& weights) {
+  ExudeReplay replay;
+  weights.assign(static_cast<std::size_t>(mesh.vertex_count()), 0.0);
+  for (int32_t pass = 0; pass < options.max_passes; ++pass) {
+    const std::vector<ReplaySliver> slivers = replay_slivers(
+        mesh, options.min_dihedral_degrees, options.minimum_relative_determinant);
+    if (slivers.empty()) break;
+    ++replay.passes;
+    bool progress = false;
+    for (const ReplaySliver& entry : slivers) {
+      if (!replay_current(mesh, entry)) continue;
+      const std::array<int32_t, 4> vertices = {mesh.tet(entry.slot).v[0], mesh.tet(entry.slot).v[1],
+                                               mesh.tet(entry.slot).v[2], mesh.tet(entry.slot).v[3]};
+      for (int32_t vertex : vertices) {
+        if (replay_exude_vertex(mesh, vertex, options, weights, replay)) {
+          progress = true;
+          break;
+        }
+      }
+      if (mesh.broken() || mesh.work_exhausted()) break;
+    }
+    if (!progress || mesh.broken() || mesh.work_exhausted()) break;
+  }
+  return replay;
+}
+
+// Exudation with per-visit reuse against the recomputing replay on an
+// identical mesh: identical flips, weights, trials, passes and output mesh,
+// with strictly fewer charged work units. Returns the accepted flips.
+int64_t check_exudation_matches_replay(const Domain& domain, const phx::mc::ExudeOptions& options,
+                                       bool force_sliver) {
+  phx_mc_tet_mesh* replayed =
+      phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  phx_mc_tet_mesh* reused =
+      phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  PHX_CHECK(replayed != nullptr && reused != nullptr);
+  if (replayed == nullptr || reused == nullptr) {
+    phx_mc_tet_mesh_free(replayed);
+    phx_mc_tet_mesh_free(reused);
+    return -1;
+  }
+  if (force_sliver) {
+    // The 2-3 flip of the interior face (1, 28, 46) creates the sliver that
+    // a weighted 3-2 restoration removes again.
+    for (phx_mc_tet_mesh* handle : {replayed, reused}) {
+      int32_t t = -1;
+      int slot = -1;
+      PHX_CHECK(handle->mesh->find_face(1, 28, 46, t, slot));
+      PHX_CHECK(phx::mc::try_face_removal(*handle->mesh, t, slot, false));
+    }
+  }
+  PHX_CHECK(phx::mc::test::export_mesh(replayed) == phx::mc::test::export_mesh(reused));
+  phx::mc::TetMesh& reference = *replayed->mesh;
+  const int64_t replay_start = reference.work();
+  std::vector<double> replay_weights;
+  const ExudeReplay replay = replay_exude(reference, options, replay_weights);
+  const int64_t replay_work = reference.work() - replay_start;
+  PHX_CHECK(!reference.work_exhausted() && !reference.broken());
+  phx::mc::NativeVector<double> weights;
+  phx::mc::TetMeshExudeCounters counters;
+  const int32_t status = phx::mc::exude_mesh(*reused->mesh, options, weights, counters);
+  PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_REFINEMENT_LIMIT);
+  PHX_CHECK(phx::mc::test::export_mesh(reused) == phx::mc::test::export_mesh(replayed));
+  PHX_CHECK(std::equal(weights.begin(), weights.end(), replay_weights.begin(),
+                       replay_weights.end()));
+  PHX_CHECK(counters.flips == replay.flips);
+  PHX_CHECK(counters.trials == replay.trials);
+  PHX_CHECK(counters.passes == replay.passes);
+  PHX_CHECK(counters.trials > 0);
+  PHX_CHECK(counters.work_units > 0 && counters.work_units < replay_work);
+  PHX_CHECK(handle_audit(replayed) && handle_audit(reused));
+  phx_mc_tet_mesh_free(replayed);
+  phx_mc_tet_mesh_free(reused);
+  return counters.flips;
+}
+
+void test_exudation_reuse_matches_recomputing_replay_on_forced_sliver() {
+  phx::mc::ExudeOptions options;
+  options.min_dihedral_degrees = 20.0;
+  options.max_weight_fraction = 0.25;
+  options.max_passes = 2;
+  const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 20, 1), 0.0);
+  PHX_CHECK(check_exudation_matches_replay(domain, options, true) > 0);
+}
+
+void test_exudation_reuse_matches_recomputing_replay_on_sliver_rich_box() {
+  const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 60, 13), 0.0);
+  for (const double floor : {0.0, 1e-2}) {
+    phx::mc::ExudeOptions options;
+    options.min_dihedral_degrees = 20.0;
+    options.max_weight_fraction = 0.25;
+    options.minimum_relative_determinant = floor;
+    options.max_passes = 3;
+    PHX_CHECK(check_exudation_matches_replay(domain, options, false) >= 0);
+  }
+}
+
 }  // namespace
 
 int main() {
+  test_exudation_reuse_matches_recomputing_replay_on_forced_sliver();
+  test_exudation_reuse_matches_recomputing_replay_on_sliver_rich_box();
   test_completed_negative_vertex_searches_fit_reduced_work();
   test_unchanged_edge_rejections_reuse_geometric_proofs();
-  test_determinant_floor_hinge_receives_certified_interior_vertex();
+  test_determinant_floor_hinge_receives_certified_interior_vertex(
+      phx::mc::test::reconstruction_hinge_domain());
+  test_determinant_floor_hinge_receives_certified_interior_vertex(
+      phx::mc::test::reconstruction_narrow_hinge_domain());
   test_relative_floor_uses_the_publishing_canonical_chart_only();
   test_nonconvex_construction_ring_refuses_illegal_children();
   test_construction_three_ring_repair_preserves_exact_source_boundary();
@@ -1212,6 +1665,7 @@ int main() {
   test_relocation_and_vertex_removal();
   test_directional_split_collapse_preserves_fixed_boundary();
   test_conforming_curve_split_collapse_preserves_source_and_ghost_closure();
+  test_curve_collapse_work_depends_only_on_incident_segments();
   test_conforming_segment_relocation_preserves_exact_source_and_volume();
   test_scheduled_segment_relocation_preserves_source_and_volume();
   test_conforming_curve_collapse_work_refusal_preserves_accepted_state();
@@ -1224,6 +1678,8 @@ int main() {
   test_protection_ball_center_rejects_otherwise_legal_relocation();
   test_expanded_insertion_inspection_is_atomic_and_epoch_bound();
   test_shared_work_refusal_is_not_geometric_edit_refusal();
+  test_coupled_relocation_is_atomic_at_the_exact_work_boundary();
+  test_coupled_relocation_cannot_enter_another_vertices_protecting_ball();
   test_exude_allocation_refusal_publishes_actual_weight_state();
   return phx::mc::test::finish("test_improve3d");
 }

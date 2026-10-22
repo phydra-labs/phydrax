@@ -644,13 +644,22 @@ and periodic-image embedding certification, or construction-time periodic
 layer/core filling. Those remain separate owning generation/certificate
 obligations of the complete W06 gate.
 
-The native skew-lattice point-source route now constructs representable frontal
-sites whose measured hard p50 and p95 lengths equal the authored target exactly;
-it does not add comparison slack. Finite-element geometry preparation and
-compatible moment projection use fused numerical batches, and the periodic
-manufactured forcing retains its lattice coefficients as dynamic leaves.
-Repreparation of an unchanged carrier preserves the actual compiled static
-structure and continued coefficients.
+The original `skew-lattice` and `skew-material-feature` binary64 source claims
+retain their nonpositive zero-tolerance hard-p50/p95 disposition. Dyadic target
+edges are axis-aligned, and the closed triangular torus incidence bound
+contradicts the required quantile plateau; rounded edge norms do not overturn
+that exact exclusion. The separate `skew-lattice-exact-algebraic` and
+`skew-material-feature-exact-algebraic` profiles bind
+`qualification-skew-torus-exact-algebraic` and
+`qualification-skew-material-torus-exact-algebraic`. They preserve the original
+periods, seed coordinates, represented material cells, protected feature orbits,
+and hard controls, but admit exact algebraic generated carrier coordinates under
+distinct source identities. An independent emitted-coordinate oracle checks
+seeds, orientation, area, material inventory, protected winding and exact edge
+statistics. Profile completion additionally requires real refinement/coarsening,
+all-field transfer fingerprints, physical Poisson error, and a source-recertified
+cold continued solve within the original deadline. A construction pass or the
+original negative proof alone is not lifecycle or mandatory-family completion.
 
 The geometry-owned periodic image certificate now encloses full polynomial and
 rational source maps, enumerates sufficient translation/finite-rotation image

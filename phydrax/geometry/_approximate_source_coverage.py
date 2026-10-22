@@ -192,15 +192,20 @@ End mesh certificate checks
 from __future__ import annotations
 
 import math
-from typing import final
+from typing import final, Self
 
 import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax.geometry._domain_boundary as domain_boundary_owner
 import phydrax.geometry._domain_planar_boundary as domain_planar_boundary_owner
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
@@ -227,7 +232,8 @@ from ._mesh_certificates import (
     MeshCertificateBinding,
     MeshCertificateStatus,
 )
-from ._source_fidelity import analytic_boundary_proof, SourceFidelityCertificate
+from ._source_boundary_records import SourceBoundaryQuery
+from . import _source_fidelity as source_fidelity_owner
 
 
 @final
@@ -244,7 +250,8 @@ class ApproximateSourceCoverageCertificate(StrictModule, NonTrainableState):
 
     binding: MeshCertificateBinding
     embedding: GlobalEmbeddingCertificate
-    fidelity: SourceFidelityCertificate
+    fidelity: source_fidelity_owner.SourceFidelityCertificate
+    domain: domain_planar_boundary_owner.CadSourceDomain
     region_ids: tuple[str, ...] = eqx.field(static=True)
     cell_regions: HostInt64[MeshCellDim]
     boundary_degree_id: str | None = eqx.field(static=True)
@@ -258,7 +265,7 @@ class ApproximateSourceCoverageCertificate(StrictModule, NonTrainableState):
         self,
         binding: MeshCertificateBinding,
         embedding: GlobalEmbeddingCertificate,
-        fidelity: SourceFidelityCertificate,
+        fidelity: source_fidelity_owner.SourceFidelityCertificate,
         domain: domain_planar_boundary_owner.CadSourceDomain,
         cell_regions: ArrayLike,
         findings: tuple[MeshCertificateFinding, ...],
@@ -333,6 +340,7 @@ class ApproximateSourceCoverageCertificate(StrictModule, NonTrainableState):
         self.binding = binding
         self.embedding = embedding
         self.fidelity = fidelity
+        self.domain = domain
         self.region_ids = domain.region_ids
         self.cell_regions = regions
         self.boundary_degree_id = boundary_degree_id
@@ -355,6 +363,66 @@ class ApproximateSourceCoverageCertificate(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[Self],
+        value: ApproximateSourceCoverageCertificate,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Self:
+        """Rebuild every physical premise; reconstruction never issues a live theorem."""
+        if type(value) is not cls:
+            raise TypeError("ApproximateSourceCoverageCertificate.stored_fields must retain its owner type")
+        domain = domain_planar_boundary_owner.CadSourceDomain.from_stored_fields(
+            value.domain, budget=budget
+        )
+        embedding = GlobalEmbeddingCertificate.from_stored_fields(
+            value.embedding, budget=budget
+        )
+        fidelity = source_fidelity_owner.SourceFidelityCertificate.from_stored_fields(value.fidelity)
+        rebuilt = cls(
+            value.binding, embedding, fidelity, domain, value.cell_regions, value.findings,
+            boundary_degree_id=value.boundary_degree_id,
+            distance_upper=value.distance_upper,
+        )
+        if not tree_content_equal(value, rebuilt):
+            raise ValueError("ApproximateSourceCoverageCertificate.stored_fields must retain its physical premises")
+        return rebuilt
+
+
+def _bound_boundary_source(
+    domain: domain_planar_boundary_owner.CadSourceDomain,
+    source: SourceBoundaryQuery | None,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> SourceBoundaryQuery:
+    """Retain the supplied proof chain only for the exact authored boundary."""
+    authored = domain.boundary_source(budget=budget)
+    if source is None:
+        return authored
+    match source, authored:
+        case (
+            domain_boundary_owner.MeshingDomainBoundarySource(),
+            domain_boundary_owner.MeshingDomainBoundarySource(),
+        ):
+            if source.patches == authored.patches and tree_content_equal(
+                source.domain, authored.domain
+            ):
+                return source
+        case (
+            domain_planar_boundary_owner.EmbeddedPlanarBoundarySource(),
+            domain_planar_boundary_owner.EmbeddedPlanarBoundarySource(),
+        ):
+            if tree_content_equal(source, authored):
+                return source
+    raise ValueError(
+        "certify_approximate_source_coverage.source must retain the complete "
+        "authored CAD boundary, authority, source revision and trim bindings"
+    )
+
 
 @checked
 def certify_approximate_source_coverage(
@@ -365,7 +433,8 @@ def certify_approximate_source_coverage(
     /,
     *,
     embedding: GlobalEmbeddingCertificate,
-    fidelity: SourceFidelityCertificate,
+    fidelity: source_fidelity_owner.SourceFidelityCertificate,
+    source: SourceBoundaryQuery | None = None,
     limits: MeshCertificateLimits | None = None,
     budget: CoordinateEnclosureBudget | None = None,
 ) -> ApproximateSourceCoverageCertificate:
@@ -373,15 +442,22 @@ def certify_approximate_source_coverage(
 
     Each cell belongs to exactly one explicit source region. Global embedding
     supplies positive orientation and disjoint cell interiors. The same
-    boundary-polynomial projection argument used by source fidelity proves that
-    the straight boundary homotopy is bounded and has the source's signed
-    degree on every component. Its swept image contains the symmetric
-    difference and is within ``distance_upper`` of both regions.
+    boundary-degree argument used by source fidelity proves a bounded, oriented
+    boundary homotopy. Its swept image contains the symmetric difference and
+    is within ``distance_upper`` of both regions.
 
-    Source seam displacement is already included in the fidelity certificate's
-    directed bounds and therefore in the maximum below. A positive B-Rep gap
-    cannot supply the boundary-degree identity required by this theorem;
-    bounded surface fidelity alone never establishes region equality.
+    A toleranced B-Rep additionally needs authenticated oriented incidence
+    ribbons to a closed representative, retaining the original native vertex,
+    edge and face atoms and their admitted gap envelopes. The ribbon
+    displacement is included in both directed fidelity bounds. A scalar gap
+    allowance or bounded surface fidelity alone never supplies this degree
+    evidence, and a positive gap is never relabeled exact coincidence.
+
+    ``source`` retains the chain-bound boundary used by source fidelity. Its
+    complete authored domain is checked independently of the derived chart
+    witness; the witness is never stored in ``CadSourceDomain`` or substituted
+    into that domain's identity. Omitting it selects the authored, chain-free
+    boundary and does not manufacture a general curved-BRep degree proof.
     """
     embedding.binding.require(mesh, geometry)
     fidelity.binding.require(mesh, geometry)
@@ -412,15 +488,6 @@ def certify_approximate_source_coverage(
             "certify_approximate_source_coverage.cell_regions must assign each cell a region or -1; "
             f"got {regions.size} assignments for {cell_ids.size} cells"
         )
-    source = domain.boundary_source()
-    if (fidelity.binding.source_id, fidelity.binding.source_revision) != (
-        source.source_id,
-        source.source_revision,
-    ):
-        raise ValueError(
-            "certify_approximate_source_coverage.fidelity must bind the CAD source revision; "
-            f"got {fidelity.binding.source_id!r}, {fidelity.binding.source_revision!r}"
-        )
     limits_ = MeshCertificateLimits() if limits is None else limits
     state = EmbeddingState([], ["approximate_source_coverage"])
     if embedding.status != "certified":
@@ -449,6 +516,7 @@ def certify_approximate_source_coverage(
     with coordinate_certificate_request(limits_, budget=budget) as budget:
         scope = embedding.binding.coordinate_scope
         proof = None
+        imported_closure = None
         try:
             with (
                 budget.measurement(),
@@ -457,28 +525,59 @@ def certify_approximate_source_coverage(
                     limits_.maximum_work_units, limits_.maximum_scratch_bytes
                 ),
             ):
+                source = _bound_boundary_source(domain, source, budget=budget)
+                if (fidelity.binding.source_id, fidelity.binding.source_revision) != (
+                    source.source_id,
+                    source.source_revision,
+                ):
+                    raise ValueError(
+                        "certify_approximate_source_coverage.fidelity must bind the CAD source revision; "
+                        f"got {fidelity.binding.source_id!r}, {fidelity.binding.source_revision!r}"
+                    )
                 scope = coordinate_scope(mesh, geometry, budget=budget).coordinate_scope
                 if not state.findings:
-                    proof = analytic_boundary_proof(
-                        mesh, geometry, source, fidelity.tolerance, limits_, budget=budget
-                    )
-                    if proof is None:
-                        state.add(
-                            "approximate_source_boundary_theorem_premise",
-                            "unresolved",
-                            "mesh",
+                    closure = fidelity.cad_closure
+                    if closure is not None:
+                        if not isinstance(source, domain_boundary_owner.MeshingDomainBoundarySource):
+                            raise ValueError(
+                                "approximate_source_coverage.cad_closure requires its actual native chart source"
+                            )
+                        source_fidelity_owner.require_issued_cad_boundary_closure(
+                            mesh, geometry, closure, limits_, source=source, budget=budget
                         )
-                    else:
-                        state.findings.extend(proof.findings)
                         if (
-                            proof.boundary_degree_id is None
-                            or proof.boundary_degree_id != fidelity.boundary_degree_id
+                            closure.authority_id != domain.model.model_id
+                            or closure.source_scope_id != source.source_scope_id
+                            or fidelity.boundary_degree_id is None
+                            or closure.homotopy_distance_upper > fidelity.tolerance
                         ):
+                            raise ValueError(
+                                "approximate_source_coverage.cad_closure must retain the "
+                                "issued complete authored boundary, source scope and tolerance"
+                            )
+                        budget.retain_owner(closure)
+                        imported_closure = closure
+                    else:
+                        proof = source_fidelity_owner.boundary_degree_proof(
+                            mesh, geometry, source, fidelity.tolerance, limits_, budget=budget
+                        )
+                        if proof is None:
                             state.add(
-                                "approximate_source_boundary_degree_binding",
+                                "approximate_source_boundary_theorem_premise",
                                 "unresolved",
                                 "mesh",
                             )
+                        else:
+                            state.findings.extend(proof.findings)
+                            if (
+                                proof.boundary_degree_id is None
+                                or proof.boundary_degree_id != fidelity.boundary_degree_id
+                            ):
+                                state.add(
+                                    "approximate_source_boundary_degree_binding",
+                                    "unresolved",
+                                    "mesh",
+                                )
         except CoordinateEnclosureResourceError as error:
             state.add(
                 "approximate_source_expression_resource",
@@ -495,12 +594,21 @@ def certify_approximate_source_coverage(
             source_id=domain.source_id,
             source_revision=domain.source_revision,
         )
-        degree_id = None if proof is None else proof.boundary_degree_id
+        degree_id = (
+            fidelity.boundary_degree_id
+            if imported_closure is not None
+            else None if proof is None else proof.boundary_degree_id
+        )
+        proof_upper = (
+            imported_closure.homotopy_distance_upper
+            if imported_closure is not None
+            else math.inf if proof is None else proof.distance_upper
+        )
         upper = (
             math.inf
-            if state.findings or proof is None
+            if state.findings or degree_id is None
             else max(
-                proof.distance_upper,
+                proof_upper,
                 fidelity.mesh_to_source_upper,
                 fidelity.source_to_mesh_upper,
             )

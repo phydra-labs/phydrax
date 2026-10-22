@@ -21,19 +21,39 @@ import pytest
 import phydrax as phx
 from phydrax._array_archive import ArrayArchiveLimits
 from phydrax._external_resource import ResourceLimits
+from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.geometry._atlas import CurveTrimLoop, TrimDomain
+from phydrax.geometry.brep._coordinate_request import coordinate_source_request
 from phydrax.geometry.brep._curve_approximation_bounds import (
+    _Budget,
+    _SourceJets,
     ApproximationDeviationError,
     certify_coupled_approximation,
 )
 from phydrax.geometry.brep._curve_approximation_topology import (
+    branch_homotopy_box,
     BranchApproximationTopologyResourceError,
+    BranchTrimJunction,
+    BranchTrimSeparationEvidence,
     certify_branch_approximation_topology,
     certify_branch_trim_separation,
+    prepare_root_gauge,
+)
+from phydrax.geometry.brep._intersection_curve import (
+    coupled_cell_source_jets,
+    intersection_derivative_bounds,
+    IntersectionJetPreparation,
+    PeriodicPCurve,
 )
 from phydrax.geometry.brep._patches import BSplineCurve, LineCurve
 from phydrax.geometry.brep._placement import materialize_brep_occurrences
-from phydrax.interchange import CadCoverage
+from phydrax.geometry.brep._request_preparations import TrimRequestPreparations
+from phydrax.interchange import (
+    _cad as cad_owner,
+    CadCoverage,
+)
+from phydrax.interchange._cad import _export_sheet_pcurve, CadInterchangeError
 from tests._support.cad_models import (
     native_assembly,
     native_empty_model,
@@ -740,9 +760,102 @@ def test_archive_decode_is_bounded(tmp_path: Path) -> None:
         )
 
 
-def test_intersection_curve_approximation_certifies_continuous_coupled_bounds() -> None:
+def test_export_descriptor_reuses_only_live_request_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = native_intersection_cap(realize=False)
+    geometry = model.require_geometry()
+    policy = interchange.CadExportPolicy(intersection_approximation=FIT)
+    with coordinate_source_request((model,), queries_upper=100_000) as budget:
+        prepared, domains, approximations = cad_owner.prepare_cad_export_geometry(
+            model, geometry, policy, coordinate_budget=budget
+        )
+        descriptor = cad_owner.bounded_approximation_descriptor(
+            model, approximations, policy, coordinate_budget=budget
+        )
+        assert descriptor is not None
+
+        def refuse_reproof(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("independent source proof reached")
+
+        monkeypatch.setattr(cad_owner, "certified_cad_export_tolerances", refuse_reproof)
+        assert cad_owner.bounded_approximation_descriptor(
+            model, approximations, policy, coordinate_budget=budget
+        ) == descriptor
+        reused = cad_owner.prepare_cad_export_geometry(
+            model, geometry, policy, coordinate_budget=budget
+        )
+        assert reused[0] is prepared
+        assert reused[1] is domains
+        assert reused[2] is approximations
+
+        # Declared IDs remain unchanged, but a changed live certificate cannot
+        # inherit the descriptor earned by its prior numerical contents.
+        changed = replace(
+            approximations[0],
+            continuous_evidence=replace(
+                approximations[0].continuous_evidence,
+                distance_bound=2.0 * FIT.tolerance * approximations[0].distance_scale,
+            ),
+        )
+        with pytest.raises(CadInterchangeError, match="unchanged frozen export bounds"):
+            cad_owner.bounded_approximation_descriptor(
+                model, (changed, *approximations[1:]), policy,
+                coordinate_budget=budget,
+            )
+
+        # A report is host-side state: owner identity and cached model IDs alone
+        # must not authorize preparation reuse after its premises change.
+        original = model.report.curve_surface_tolerance
+        monkeypatch.setattr(cad_owner, "validate_export_trims", refuse_reproof)
+        object.__setattr__(model.report, "curve_surface_tolerance", original * 2.0)
+        try:
+            with pytest.raises(RuntimeError, match="independent source proof reached"):
+                cad_owner.prepare_cad_export_geometry(
+                    model, geometry, policy, coordinate_budget=budget
+                )
+        finally:
+            object.__setattr__(model.report, "curve_surface_tolerance", original)
+
+    with coordinate_source_request((model,), queries_upper=100_000) as fresh:
+        with pytest.raises(RuntimeError, match="independent source proof reached"):
+            cad_owner.bounded_approximation_descriptor(
+                model, approximations, policy, coordinate_budget=fresh
+            )
+
+
+@pytest.mark.parametrize("supplied_budget", (False, True))
+def test_intersection_curve_approximation_certifies_continuous_coupled_bounds(
+    supplied_budget: bool,
+) -> None:
     policy = FIT
-    approximation = interchange.approximate_intersection_curve(_branch(), policy)
+    source = _branch()
+    if supplied_budget:
+        with HostBatchTicket(
+            100_000_000, bytes_upper=256 << 20, queries_upper=100_000
+        ) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket, maximum_work_units=100_000_000,
+                maximum_memory_bytes=256 << 20,
+            )
+            with budget.activate():
+                approximation = interchange.approximate_intersection_curve(
+                    source, policy, coordinate_budget=budget
+                )
+                assert ticket.geometry_queries > policy.check_samples
+                queries, work = ticket.geometry_queries, budget.work_units
+                # A second export of the same live branch and policy reuses the
+                # complete certificate instead of refitting or recertifying.
+                assert (
+                    interchange.approximate_intersection_curve(
+                        source, policy, coordinate_budget=budget
+                    )
+                    is approximation
+                )
+                assert ticket.geometry_queries == queries
+                assert budget.work_units == work
+    else:
+        approximation = interchange.approximate_intersection_curve(source, policy)
     continuous = approximation.continuous_evidence
     assert continuous.distance_bound <= policy.tolerance * approximation.distance_scale
     assert continuous.parameter_bound <= policy.tolerance * approximation.parameter_scale
@@ -775,6 +888,127 @@ def test_intersection_curve_approximation_certifies_continuous_coupled_bounds() 
         plane.evaluate(approximation.second_pcurve.evaluate(parameters))
     )
     np.testing.assert_allclose(on_plane, points, atol=_FITTED_BRANCH_PCURVE_POINT_ATOL)
+
+
+def test_batched_cell_source_jets_equal_single_cell_queries() -> None:
+    source = _branch()
+    count = source.num_charts
+    cells = [
+        (chart, first, last, first + 0.5 * (last - first))
+        for chart in (0, count // 2, count - 1)
+        for first, last in ((float(chart), chart + 1.0), (chart + 0.25, chart + 0.375))
+    ]
+    with coordinate_source_request((source,)) as budget:
+        # Production charges every evaluated row through the observed hooks.
+        proof = _Budget(1 << 20, 32, 1 << 28)
+        observed = _SourceJets(source, proof).cells(
+            cells, preparations=TrimRequestPreparations(), budget=budget
+        )
+        assert proof.jets >= 5 * len(cells)
+        memoizing = IntersectionJetPreparation(source, budget=budget)
+        batched = coupled_cell_source_jets(
+            memoizing, cells, preparations=TrimRequestPreparations(), budget=budget
+        )
+        for (chart, first, last, center), result, charged in zip(
+            cells, batched, observed, strict=True
+        ):
+            box = source.parameter_enclosures(
+                center, center, minimum_chart=chart, maximum_chart=chart, budget=budget
+            )[0]
+            np.testing.assert_array_equal(result.center_box, box)
+            np.testing.assert_array_equal(charged.center_box, box)
+            system = memoizing.pairs[0][int(memoizing.pairs[1][chart])]
+            point = memoizing.program(
+                chart, "spatial-value", system.first.evaluate, 2
+            ).evaluate(box[None, 0, :2], box[None, 1, :2])
+            for value in (result, charged):
+                np.testing.assert_array_equal(value.center_point.lower, point[0][0])
+                np.testing.assert_array_equal(value.center_point.upper, point[1][0])
+            for name, (a, b, order) in (
+                ("first", (first, last, 1)),
+                ("second", (first, last, 2)),
+                ("center_first", (center, center, 1)),
+            ):
+                lower, upper = intersection_derivative_bounds(
+                    source, a, b, order, "all",
+                    minimum_chart=chart, maximum_chart=chart, budget=budget,
+                )
+                for value in (result, charged):
+                    np.testing.assert_array_equal(getattr(value, name).lower, lower)
+                    np.testing.assert_array_equal(getattr(value, name).upper, upper)
+
+
+@cache
+def _crossed_cylinder_branches() -> tuple[brep.IntersectionCurve, ...]:
+    exact = brep.BRepTessellationPolicy(realize=False)
+    regions = []
+    for radius, height, base, axis in (
+        (1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
+        (0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ):
+        model = brep.brep_cylinder(
+            radius,
+            height,
+            base_center=base,
+            axis=axis,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+            tessellation=exact,
+        )
+        face = next(
+            index
+            for index, patch in enumerate(model.patches)
+            if isinstance(patch, brep.CylinderPatch)
+        )
+        regions.append(
+            brep.SurfaceRegion(
+                model.patches[face], np.asarray(model.parameter_bounds)[face]
+            )
+        )
+    result = brep.intersect_surface_regions(*regions)
+    assert result.complete
+    return tuple(result.curves)
+
+
+def test_seam_crossing_branch_fits_its_lift_and_exports_each_sheet() -> None:
+    branch = next(
+        curve
+        for curve in _crossed_cylinder_branches()
+        if np.any(prepare_root_gauge(curve).gauge[:, :2])
+    )
+    gauge = prepare_root_gauge(branch).gauge
+    changes = [
+        float(chart)
+        for chart in range(1, branch.num_charts)
+        if np.any(gauge[chart] != gauge[chart - 1])
+    ]
+    policy = interchange.CadCurveFitPolicy(tolerance=6.0e-7)
+    approximation = interchange.approximate_intersection_curve(
+        branch, policy, required_parameters=changes
+    )
+    continuous = approximation.continuous_evidence
+    assert continuous.distance_bound <= policy.tolerance * approximation.distance_scale
+    assert continuous.parameter_bound <= policy.tolerance * approximation.parameter_scale
+    nodes = [0.0, *changes, float(branch.num_charts)]
+    tolerance = policy.tolerance * approximation.parameter_scale
+    transported = 0
+    for first, last in zip(nodes[:-1], nodes[1:], strict=True):
+        pcurve = _export_sheet_pcurve(
+            branch, "first", approximation.first_pcurve, (first, last), 0, ()
+        )
+        transported += isinstance(pcurve, PeriodicPCurve)
+        parameters = jnp.linspace(first, last, 33)
+        source = brep.IntersectionPCurve(branch, "first", first=first, last=last)
+        np.testing.assert_allclose(
+            np.asarray(pcurve.evaluate(parameters)),
+            np.asarray(source.evaluate(parameters)),
+            atol=tolerance,
+        )
+    assert transported
+    with pytest.raises(CadInterchangeError) as refused:
+        _export_sheet_pcurve(
+            branch, "first", approximation.first_pcurve, (nodes[0], nodes[-1]), 0, ()
+        )
+    assert refused.value.refusal.reason == "inexact-export"
 
 
 def _between_check_loop(curve: BSplineCurve) -> BSplineCurve:
@@ -900,6 +1134,81 @@ def test_trim_contact_cannot_obtain_separation_certificate() -> None:
             maximum_depth=FIT.maximum_certificate_depth,
             maximum_bytes=FIT.maximum_certificate_bytes,
         )
+
+
+def _vertex_junctions(
+    approximation: interchange.CadCurveApproximation,
+    source: brep.IntersectionCurve,
+    trim: LineCurve,
+) -> tuple[BranchTrimJunction, BranchTrimJunction]:
+    """Both branch sides at the closed branch's seam vertex, where ``trim`` starts."""
+    fits = (approximation.curve, approximation.first_pcurve, approximation.second_pcurve)
+    first, last = source.parameter_interval
+    preparations = TrimRequestPreparations()
+    with coordinate_source_request((source, *fits, trim)) as budget:
+        start = branch_homotopy_box(
+            source,
+            fits,
+            first,
+            float(np.nextafter(first, last)),
+            preparations=preparations,
+            coordinate_budget=budget,
+        )
+        end = branch_homotopy_box(
+            source,
+            fits,
+            float(np.nextafter(last, first)),
+            last,
+            preparations=preparations,
+            coordinate_budget=budget,
+        )
+        vertex = trim.bounding_box(
+            0.0, float(np.nextafter(0.0, 1.0)), preparations=preparations, budget=budget
+        )
+    return (
+        BranchTrimJunction(first, 1, start, 0.0, 1, vertex),
+        BranchTrimJunction(last, -1, end, 0.0, 1, vertex),
+    )
+
+
+def test_shared_vertex_junction_bounds_contact_to_parameter_tolerance() -> None:
+    source = _branch()
+    approximation = interchange.approximate_intersection_curve(source, FIT)
+    center = np.asarray((0.5, 0.5))
+    endpoint = np.asarray(approximation.second_pcurve.control_points)[0]
+    contact = LineCurve(endpoint, center - endpoint)
+    junctions = _vertex_junctions(approximation, source, contact)
+
+    def separate(
+        trim: LineCurve, uses: tuple[BranchTrimJunction, ...]
+    ) -> BranchTrimSeparationEvidence:
+        return certify_branch_trim_separation(
+            approximation.topology_evidence,
+            trim,
+            side="second",
+            first=0.0,
+            last=1.0,
+            maximum_cells=FIT.maximum_certificate_cells,
+            maximum_depth=FIT.maximum_certificate_depth,
+            maximum_bytes=FIT.maximum_certificate_bytes,
+            junctions=uses,
+        )
+
+    evidence = separate(contact, junctions)
+    # Both branch sides meet the trim only inside the vertex neighborhood.
+    assert set(evidence.junction_evidence[:, 5].astype(int)) == {0, 1}
+    assert 0.0 < evidence.junction_diameter_upper_bound
+    assert evidence.junction_diameter_upper_bound <= FIT.tolerance * (
+        approximation.parameter_scale
+    )
+    assert evidence.separation_lower_bound > 0.0
+    # One branch side alone leaves the other side's contact unresolved.
+    with pytest.raises(BranchApproximationTopologyResourceError):
+        separate(contact, junctions[:1])
+    # A chord through the circle meets the branch again away from the vertex.
+    crossing = LineCurve(endpoint, 2.2 * (center - endpoint))
+    with pytest.raises(BranchApproximationTopologyResourceError):
+        separate(crossing, _vertex_junctions(approximation, source, crossing))
 
 
 def test_archive_preserves_native_branch_edge_and_pcurve_incidence(
