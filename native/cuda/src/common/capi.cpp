@@ -4,7 +4,12 @@
 namespace {
 thread_local std::string last_error;
 template<class Function> int32_t guard(Function&& function) noexcept {
-  try { function(); last_error.clear(); return PHX_CUDA_SUCCESS; }
+  try {
+    last_error.clear();
+    function();
+    // Destructors cannot throw; cleanup failures use this same error channel.
+    return last_error.empty() ? PHX_CUDA_SUCCESS : PHX_CUDA_PROVIDER_ERROR;
+  }
   catch (const std::invalid_argument& error) { phx::cuda::set_last_error(error.what()); return PHX_CUDA_INVALID_ARGUMENT; }
   catch (const std::exception& error) { phx::cuda::set_last_error(error.what()); return PHX_CUDA_PROVIDER_ERROR; }
   catch (...) { phx::cuda::set_last_error("Unknown native CUDA failure"); return PHX_CUDA_PROVIDER_ERROR; }

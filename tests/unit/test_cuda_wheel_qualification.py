@@ -2,6 +2,7 @@
 
 import json
 import sys
+from hashlib import sha256
 from pathlib import Path
 from typing import NoReturn
 from xml.etree import ElementTree
@@ -18,6 +19,10 @@ def evidence(tmp_path: Path) -> qualification.Evidence:
         "completed_at": "",
         "major": 13,
         "required_gpus": 1,
+        "command_timeout_seconds": qualification.DEFAULT_COMMAND_TIMEOUT,
+        "libraries": [],
+        "library_qualification": None,
+        "artifact_directory": "",
         "selected_devices": [0],
         "coverage": {},
         "venv": str(tmp_path),
@@ -78,15 +83,22 @@ def test_required_native_coverage_cannot_skip(
         *,
         environment: dict[str, str] | None = None,
         cwd: Path = qualification.ROOT,
+        timeout: float = qualification.DEFAULT_COMMAND_TIMEOUT,
     ) -> qualification.CommandEvidence:
         _provider_report(
             tmp_path / "native-provider-results.xml", list(range(required_gpus))
         )
         return {
             "command": command,
+            "cwd": str(cwd),
+            "timed_out": False,
             "returncode": 0,
             "stdout": f"SKIPPED [1] tests/provider.py:1: {skip_reason}\n",
             "stderr": "",
+            "stdout_path": str(tmp_path / "command.stdout"),
+            "stderr_path": str(tmp_path / "command.stderr"),
+            "stdout_sha256": "0" * 64,
+            "stderr_sha256": "0" * 64,
         }
 
     monkeypatch.setattr(qualification, "run", completed_tests)
@@ -94,7 +106,7 @@ def test_required_native_coverage_cannot_skip(
     assert bool(evidence["errors"]) is refused
 
 
-@pytest.mark.parametrize("required_gpus", [1, 2, 4])
+@pytest.mark.parametrize("required_gpus", [1, 2, 4, 8])
 def test_qualification_requires_exact_per_case_device_coverage(
     tmp_path: Path, evidence: qualification.Evidence, required_gpus: int
 ) -> None:
@@ -161,7 +173,7 @@ def test_four_gpu_qualification_rejects_incomplete_hardware_cases(
     assert name not in evidence["coverage"]
 
 
-@pytest.mark.parametrize("required_gpus", [1, 2, 4])
+@pytest.mark.parametrize("required_gpus", [1, 2, 4, 8])
 @pytest.mark.parametrize(
     "name", ["test_quda_refuses_second_device", "test_quda_refuses_multiple_processes"]
 )
@@ -213,7 +225,16 @@ def test_audit_rejects_provider_refusal(
         raise _cuda_native.CudaNativeUnavailableError(issue)
 
     monkeypatch.setattr(_cuda_native, "load_cuda_component", unavailable)
-    monkeypatch.setattr(sys, "argv", ["audit", "1"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "audit",
+            "1",
+            qualification.DEFAULT_HOSTILE_LIBRARY_PATH if hostile else "",
+            "hostile" if hostile else "clean",
+        ],
+    )
     if hostile:
         monkeypatch.setenv("LD_LIBRARY_PATH", qualification.DEFAULT_HOSTILE_LIBRARY_PATH)
     else:
@@ -229,3 +250,35 @@ def test_audit_rejects_provider_refusal(
             "message": issue.message,
         }
     }
+
+
+def test_selected_wheel_identity_overrides_same_named_cached_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name = "phydrax-0.2.2-py3-none-any.whl"
+    selected = tmp_path / name
+    selected.write_bytes(b"selected artifact")
+    wheelhouse = tmp_path / "cached"
+    wheelhouse.mkdir()
+    (wheelhouse / name).write_bytes(b"older cached artifact")
+    existing_venv = tmp_path / "existing-venv"
+    existing_venv.mkdir()
+    output = tmp_path / "evidence.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "qualify_cuda_wheels",
+            "--venv",
+            str(existing_venv),
+            "--phydrax-wheel",
+            str(selected),
+            "--wheelhouse",
+            str(wheelhouse),
+            "--evidence",
+            str(output),
+        ],
+    )
+    assert qualification.main() == 1
+    evidence = json.loads(output.read_text())
+    assert evidence["wheels"][name] == sha256(b"selected artifact").hexdigest()

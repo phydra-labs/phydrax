@@ -19,6 +19,8 @@ requires = [
   "nvidia-nvml-dev>=13.4.92,<14",
   "nvidia-cuda-profiler-api>=13.4.92,<14",
   "nvidia-cudss-cu13>=0.8,<0.9",
+  "cutensor-cu13==2.8.1",
+  "cutensornet-cu13==2.14.0",
 ]
 build-backend = "_build_backend"
 backend-path = ["."]
@@ -27,7 +29,7 @@ backend-path = ["."]
 name = "phydrax-cuda13"
 # Released in lockstep with phydrax, which pins and verifies this exact version.
 version = "0.2.2"
-description = "CUDA 13 native cuDSS, AmgX, and QUDA components for Phydrax (plain C ABI)."
+description = "CUDA 13 native numerical components for Phydrax (plain C ABI)."
 requires-python = ">=3.13,<3.14"
 authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
 license = {text = "Phydra Non-Production License (PNPL)"}
@@ -48,6 +50,8 @@ cmake.version = ">=4.4.3,<5"
 ninja.version = ">=1.13.2,<2"
 cmake.build-type = "Release"
 cmake.source-dir = "../cuda"
+# The static-cudart exclusion audit requires the non-runtime ELF symbol table.
+install.strip = false
 # ctypes loads the component libraries without a CPython extension ABI.
 wheel.py-api = "py3"
 wheel.packages = ["python/phydrax_cuda13"]

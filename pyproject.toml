@@ -98,6 +98,16 @@ cuda13 = [
   "phydrax-cuda-major==13.*",
   "phydrax-cuda13==0.2.2; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
 ]
+cutensor = [
+  "cutensor-cu13==2.8.1; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+]
+cutensornet = [
+  "cutensor-cu13==2.8.1; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+  "cutensornet-cu13==2.14.0; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+]
+cuest = [
+  "phydrax-cuest==0.2.2; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+]
 metal = [
   "phydrax-metal==0.2.2",
 ]
@@ -285,6 +295,7 @@ conflicts = [
 phydrax-meshcore = { path = "native/meshcore" }
 phydrax-cuda-major = { path = "packaging/cuda-major/13", extra = "cuda13" }
 phydrax-cuda13 = { path = "native/cuda13", extra = "cuda13" }
+phydrax-cuest = { path = "native/cuest_runtime", extra = "cuest" }
 phydrax-metal = { path = "native/metal", extra = "metal" }
 
 [tool.uv.extra-build-variables]

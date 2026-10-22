@@ -10725,6 +10725,1329 @@
       "public_symbols": []
     },
     {
+      "capability": "cuda-cudecomp-direct-slabs",
+      "declaration_id": "e041a2a551d7b4ba631fdc51a8f58c8bf22f961d198838334b781cb8e46a4fe7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md",
+        "docs/api/execution.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "same-host-one-gpu-per-rank-direct-three-dimensional-slab-transposes"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "available-is-not-qualified",
+        "native-pencil-transposes-remain-native",
+        "no-certified-vendor-host-or-total-resident-memory-bound",
+        "no-cudecomp-pencil-or-hidden-slab-fallback",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "no-topology-qualification-from-build-or-mpi-query",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.spectral",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-cudecomp-direct-slabs.profile",
+          "profile_id": "27ae00df8cbddaad38e0821520feb2370211ac7b304b5dd2444189fe8c0e1979",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "all-rank-device-mapping-and-peer-integrity",
+            "all-rank-failure-and-supervised-retirement",
+            "compiled-failure-propagation",
+            "direct-slab-roundtrip-spectral-and-adjoint-reference",
+            "external-scratch-and-packing-admission",
+            "installed-native-artifact",
+            "installed-wheel",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "phase-separated-performance",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference",
+            "site-mpi-cuda-and-thread-multiple",
+            "staged-artifact-and-identical-collective-schedule",
+            "vendor-pencil-endpoint-and-ordered-device-proof"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "derivatives": "linear-permutation-inverse-transpose",
+                "device_count": 2,
+                "devices_per_rank": 1,
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "mesh_rank": 1,
+                "packing": "explicit-leading-component-serial-3d",
+                "platform": "cuda",
+                "process_count": 2,
+                "provider": "cudecomp",
+                "resident_bound": "not-certified-all-process",
+                "schedule": "direct-three-dimensional-slab",
+                "transform_precision": "complex128",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudecomp-direct-slabs",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "044c61d9587eb4282894395535a78f2b0902e6b2c1821083a77d6d8bb06929a2"
+            },
+            {
+              "attributes": {
+                "derivatives": "linear-permutation-inverse-transpose",
+                "device_count": 8,
+                "devices_per_rank": 1,
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "mesh_rank": 1,
+                "packing": "explicit-leading-component-serial-3d",
+                "platform": "cuda",
+                "process_count": 8,
+                "provider": "cudecomp",
+                "resident_bound": "not-certified-all-process",
+                "schedule": "direct-three-dimensional-slab",
+                "transform_precision": "complex64",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudecomp-direct-slabs",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "05dd5a69c8a89bb3440499e1f6e430bdad47bb7fb8b0d6296e39739b103accf3"
+            },
+            {
+              "attributes": {
+                "derivatives": "linear-permutation-inverse-transpose",
+                "device_count": 4,
+                "devices_per_rank": 1,
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "mesh_rank": 1,
+                "packing": "explicit-leading-component-serial-3d",
+                "platform": "cuda",
+                "process_count": 4,
+                "provider": "cudecomp",
+                "resident_bound": "not-certified-all-process",
+                "schedule": "direct-three-dimensional-slab",
+                "transform_precision": "complex128",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudecomp-direct-slabs",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0b59f8b59391e70e06251c8b4dd836b8fefc33589cd47b18cc552c0de309211e"
+            },
+            {
+              "attributes": {
+                "derivatives": "linear-permutation-inverse-transpose",
+                "device_count": 4,
+                "devices_per_rank": 1,
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "mesh_rank": 1,
+                "packing": "explicit-leading-component-serial-3d",
+                "platform": "cuda",
+                "process_count": 4,
+                "provider": "cudecomp",
+                "resident_bound": "not-certified-all-process",
+                "schedule": "direct-three-dimensional-slab",
+                "transform_precision": "complex64",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudecomp-direct-slabs",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "85e8d2dff8098c45e9f4a6b0a4becd36bf258afc20da111000fa47804d9d1d76"
+            },
+            {
+              "attributes": {
+                "derivatives": "linear-permutation-inverse-transpose",
+                "device_count": 8,
+                "devices_per_rank": 1,
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "mesh_rank": 1,
+                "packing": "explicit-leading-component-serial-3d",
+                "platform": "cuda",
+                "process_count": 8,
+                "provider": "cudecomp",
+                "resident_bound": "not-certified-all-process",
+                "schedule": "direct-three-dimensional-slab",
+                "transform_precision": "complex128",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudecomp-direct-slabs",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b720968223953a4a63bf654f7516b1076322ba1ad8a0bceca8434f420da0a135"
+            },
+            {
+              "attributes": {
+                "derivatives": "linear-permutation-inverse-transpose",
+                "device_count": 2,
+                "devices_per_rank": 1,
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "mesh_rank": 1,
+                "packing": "explicit-leading-component-serial-3d",
+                "platform": "cuda",
+                "process_count": 2,
+                "provider": "cudecomp",
+                "resident_bound": "not-certified-all-process",
+                "schedule": "direct-three-dimensional-slab",
+                "transform_precision": "complex64",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudecomp-direct-slabs",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "eb95e3083d87f20b8306b7e4068451358c72f588e1add168f4614cf402108f0c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.discretization.spectral.CudecompTransposeEvidence",
+        "phydrax.discretization.spectral.DistributedSpectralExecutionPlan"
+      ]
+    },
+    {
+      "capability": "cuda-cudss-local",
+      "declaration_id": "761691f7a68b425d4f5d806c035b9ae3dadab3f7bdfb8296854af686cef084ed",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "explicit-local-device-or-hybrid-sparse-ldlt"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "analysis-estimates-use-one-rhs-and-exclude-retired-factors-and-caller-buffers",
+        "available-is-not-qualified",
+        "hybrid-device-limit-does-not-bound-analysis",
+        "no-enforceable-host-limit-or-certified-resident-bound",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "not-release-authorized",
+        "provider-estimate-is-not-certified-all-phase-memory-bound"
+      ],
+      "owner": "phydrax.linalg",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-cudss-local.profile",
+          "profile_id": "0c244e4526fa27d65aff6b23e3e1e74d214e3aa9440830c53c03700275c967a4",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-failure-propagation",
+            "hybrid-limit-scope-and-unknown-estimate-preservation",
+            "installed-native-artifact",
+            "installed-wheel",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "phase-separated-performance",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference",
+            "true-residual-inertia-and-implicit-derivative-reference"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 1,
+                "execution": "local",
+                "hybrid_device_limit_scope": "post-analysis-factorization-and-solve-only",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-local",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0d0528692535d8270ac7deae4cd5887acc47dcc628a93b38fcc877ccdeab9c68"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 1,
+                "execution": "local",
+                "hybrid_device_limit_scope": "post-analysis-factorization-and-solve-only",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "hybrid",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-local",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "52b915429b3407135d30cf89080cf90a1e5ce5101d760ed4a664bb6cac8b66ed"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 1,
+                "execution": "local",
+                "hybrid_device_limit_scope": "post-analysis-factorization-and-solve-only",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "hybrid",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-local",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ce0812cea06545aa7d3c6faa0fbde203ca1e911b25a4090fa73a59e257ba21ba"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 1,
+                "execution": "local",
+                "hybrid_device_limit_scope": "post-analysis-factorization-and-solve-only",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-local",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e3a5059d4f3170d3629d14600cbec65bce1f8d8a1539eb06b98f36cfbd8c5af3"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.linalg.CudssExecutionPolicy",
+        "phydrax.linalg.CudssMemoryEvidence",
+        "phydrax.linalg.CudssMemoryPolicy",
+        "phydrax.linalg.SparseLDLT"
+      ]
+    },
+    {
+      "capability": "cuda-cudss-mg",
+      "declaration_id": "af94a093fec3e6f015a3c08f21bb003547c9bf570b16a31d2e59112cbf7411fb",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "explicit-single-process-ordered-multi-gpu-sparse-ldlt"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "available-is-not-qualified",
+        "mg-host-estimates-are-not-additive",
+        "no-exclusive-os-gpu-ownership-claim",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-hybrid-plus-mg",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "no-sharded-input-or-matrix-batches",
+        "no-topology-qualification-from-device-local-success",
+        "not-release-authorized",
+        "provider-estimate-is-not-certified-all-phase-memory-bound"
+      ],
+      "owner": "phydrax.linalg",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-cudss-mg.profile",
+          "profile_id": "7c39403088001236de9b6e782bf9d4d1382ce0406d0e813c597eec49c401d450",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-failure-propagation",
+            "installed-native-artifact",
+            "installed-wheel",
+            "mg-true-residual-inertia-and-implicit-derivative-reference",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "ordered-reservation-and-peer-integrity",
+            "phase-separated-performance",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 4,
+                "execution": "mg",
+                "host_count": 1,
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "full-input-output-on-first-reserved-device",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cudss",
+                "reservation": "ordered-vendor-allocations-not-os-exclusive",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown-nonadditive-per-device-estimates"
+              },
+              "capability": "cuda-cudss-mg",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "50cf7561da205af8e4881bad6c68b0d00f0cf5ca2020a13f34335943118bd575"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 2,
+                "execution": "mg",
+                "host_count": 1,
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "full-input-output-on-first-reserved-device",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cudss",
+                "reservation": "ordered-vendor-allocations-not-os-exclusive",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown-nonadditive-per-device-estimates"
+              },
+              "capability": "cuda-cudss-mg",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "69ebde8d603a2a93358071b053ac66115cb0b2da6f4f607b155bfa5f04b05d18"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 8,
+                "execution": "mg",
+                "host_count": 1,
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "full-input-output-on-first-reserved-device",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cudss",
+                "reservation": "ordered-vendor-allocations-not-os-exclusive",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown-nonadditive-per-device-estimates"
+              },
+              "capability": "cuda-cudss-mg",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e661539618420aa4fb6bfcdf20f2bdf6f0c4d702f76457935423454435fc7c86"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 4,
+                "execution": "mg",
+                "host_count": 1,
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "full-input-output-on-first-reserved-device",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cudss",
+                "reservation": "ordered-vendor-allocations-not-os-exclusive",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown-nonadditive-per-device-estimates"
+              },
+              "capability": "cuda-cudss-mg",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e782e8a52fad36880bd5013357d02a831f08b47b16b762ef71de395d8476bc7d"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 8,
+                "execution": "mg",
+                "host_count": 1,
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "full-input-output-on-first-reserved-device",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cudss",
+                "reservation": "ordered-vendor-allocations-not-os-exclusive",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown-nonadditive-per-device-estimates"
+              },
+              "capability": "cuda-cudss-mg",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f16658afc700a01276aca454661da251668cf019d10e5ef22c59594ae8bc9f83"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "implicit-linear-solve",
+                "device_count": 2,
+                "execution": "mg",
+                "host_count": 1,
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "full-input-output-on-first-reserved-device",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cudss",
+                "reservation": "ordered-vendor-allocations-not-os-exclusive",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown-nonadditive-per-device-estimates"
+              },
+              "capability": "cuda-cudss-mg",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fa8f40697fa01d437cb23d2713296d6e01d193d8241eaa2bb911e43969d2c831"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "cuda-cudss-mgmn",
+      "declaration_id": "5452733929ff4069fe8b1768acac961986fa3177929b4f2820b3722c1de625ec",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md",
+        "docs/api/execution.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "same-host-one-gpu-per-rank-owned-distributed-sparse-ldlt"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "available-is-not-qualified",
+        "no-certified-host-or-total-resident-memory-bound",
+        "no-cross-rank-transformation-schedule-divergence",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-hybrid-plus-mgmn",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "no-topology-qualification-from-build-or-mpi-query",
+        "not-release-authorized",
+        "provider-estimate-is-not-certified-all-phase-memory-bound"
+      ],
+      "owner": "phydrax.linalg",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-cudss-mgmn.profile",
+          "profile_id": "0aab5e4e122ac2c67c2978bac10421542f8c2942fdf4d92aff0f01e4a9bf8d98",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "all-rank-device-mapping-and-peer-integrity",
+            "all-rank-failure-and-supervised-retirement",
+            "compiled-failure-propagation",
+            "exact-site-communication-library-provenance",
+            "installed-native-artifact",
+            "installed-wheel",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "owned-row-residual-and-collective-implicit-ad-reference",
+            "phase-separated-performance",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference",
+            "site-mpi-cuda-and-thread-multiple",
+            "staged-artifact-and-identical-collective-schedule",
+            "zero-cotangent-participation-and-symbolic-activity-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "collective-implicit-linear-solve",
+                "device_count": 4,
+                "devices_per_rank": 1,
+                "execution": "mgmn",
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "rank-owned-distributed-csr",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 4,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-mgmn",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0fe610c044c4b727516577f25fa75b7b4f0e69c711fdac48fe993c7ad46d0021"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "collective-implicit-linear-solve",
+                "device_count": 2,
+                "devices_per_rank": 1,
+                "execution": "mgmn",
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "rank-owned-distributed-csr",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 2,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-mgmn",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7c3dfe81d7f77819903edfeac01cb51dd64ff0ceafedc63df42f599fa005511c"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "collective-implicit-linear-solve",
+                "device_count": 4,
+                "devices_per_rank": 1,
+                "execution": "mgmn",
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "rank-owned-distributed-csr",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 4,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-mgmn",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9c838b2fa1a9b413de3559fc0a6cc56cc3c38103b3ece8038206159c0e0e071a"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "collective-implicit-linear-solve",
+                "device_count": 8,
+                "devices_per_rank": 1,
+                "execution": "mgmn",
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "rank-owned-distributed-csr",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 8,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-mgmn",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ab5e551271cc8091dc7643a29e1c57116ad2f7af7f552bf283aa9ac382b5be08"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "collective-implicit-linear-solve",
+                "device_count": 8,
+                "devices_per_rank": 1,
+                "execution": "mgmn",
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "rank-owned-distributed-csr",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 8,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-mgmn",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "abfaf469b070633ee8b4c2965a96084943524f3a880853b3b368b57570e88ae9"
+            },
+            {
+              "attributes": {
+                "certified_bounds": false,
+                "derivatives": "collective-implicit-linear-solve",
+                "device_count": 2,
+                "devices_per_rank": 1,
+                "execution": "mgmn",
+                "host_count": 1,
+                "invocation": "staged-artifact-only-collective-lease",
+                "memory_evidence": "provider_estimate",
+                "memory_mode": "device",
+                "placement": "rank-owned-distributed-csr",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 2,
+                "provider": "cudss",
+                "resident_bound": "unknown",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-cudss-mgmn",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e08093764b838e6bd8ddb581fe832f33577975270e7e36c69d9fa870a2263ce0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.linalg.DistributedCSRLinearOperator",
+        "phydrax.linalg.DistributedCSRStorage"
+      ]
+    },
+    {
+      "capability": "cuda-cuest-df-rhf",
+      "declaration_id": "f8c8628874908f6ce8fe321cfb482b51082c95ca4b441c1e532c5ea88a49543f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/backends.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "explicit-full-range-df-rhf-energy-and-analytic-first-forces"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "available-is-not-qualified",
+        "fitting-cutoff-is-not-metric-rank-or-energy-error-certificate",
+        "no-arbitrary-jvp-vjp-basis-derivatives-or-hessian",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "no-periodic-dft-open-shell-or-range-separated-model-claim",
+        "no-vendor-scf",
+        "not-release-authorized",
+        "owned-workspace-budget-is-not-total-resident-memory-bound",
+        "runtime-cache-ids-and-weakrefs-are-not-portable-scientific-identity"
+      ],
+      "owner": "phydrax.operators.quantum.gaussian",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-cuest-df-rhf.profile",
+          "profile_id": "d951c277882f28f398bbe0f949d90cf2512e8af853578c8f488b5af9128cd845",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "actual-density-psd-factorization-reference",
+            "bound-geometry-content-identity-and-retirement",
+            "compiled-failure-propagation",
+            "df-rhf-energy-and-analytic-first-force-reference",
+            "installed-native-artifact",
+            "installed-wheel",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "phase-separated-performance",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference",
+            "unsupported-ad-hessian-and-model-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "automatic_differentiation": false,
+                "basis": "explicit-orbital-and-auxiliary-gaussian",
+                "device_count": 1,
+                "forces": "contracted-analytic-first-nuclear",
+                "geometry": "explicit-bound-dynamic-recipe-and-content-key",
+                "hessian": false,
+                "method": "full-range-nonperiodic-df-rhf",
+                "occupations": "integer-ground-state",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cuest",
+                "resident_bound": "unknown-outside-owned-workspaces",
+                "system": "unpadded-all-electron",
+                "vendor_host_bound": "unknown",
+                "x64_enabled": true
+              },
+              "capability": "cuda-cuest-df-rhf",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0a9f5003c6c449d45e695d1e6ca1f8cd4e01f7777ce9bf887f7a0802b0854669"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.chemistry.MolecularHartreeFockPlan",
+        "phydrax.chemistry.MolecularRHFProvider",
+        "phydrax.operators.quantum.gaussian.CuestGeometry",
+        "phydrax.operators.quantum.gaussian.CuestIntegralPlan",
+        "phydrax.operators.quantum.gaussian.MolecularIntegralPlan"
+      ]
+    },
+    {
+      "capability": "cuda-prepared-tensor",
+      "declaration_id": "7b7d05f734605d7cd5f85a8810f4bcc1103a82ccaf2b38e0b6c9e3c39900d2a6",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/tensor_network.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "explicit-device-local-prepared-tensor-contractions"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "available-is-not-qualified",
+        "no-certified-vendor-host-or-total-resident-memory-bound",
+        "no-differentiable-host-slice-or-checkpoint-orchestration",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "no-vendor-autodiff-or-derivatives-beyond-order-two",
+        "not-release-authorized",
+        "ordinary-ein-contract-unchanged"
+      ],
+      "owner": "phydrax.tensor_network",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-prepared-tensor.profile",
+          "profile_id": "c4e4337c11fd0649a75a8a1263bdd823fb21d7ee5c9582ed00284df3e1e8c337",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-failure-propagation",
+            "installed-native-artifact",
+            "installed-wheel",
+            "jvp-vjp-second-order-and-batching-reference",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "phase-separated-performance",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "complex64",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "088c32d8b13dfeb6bf3de7a61e900dd0ece72b119d2b89a8504a5a159328127d"
+            },
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0d9ad398ebaaed0aad8818d4d4bc436ca137ea38a4e93a5ec82c00e7d5f162aa"
+            },
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "complex64",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "43f3048b0707b73027350bc647945df7f410791962910b2931038bd0b39931d5"
+            },
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4eaf784d52262e2ec9cfbce77345318f72d7900f885990dd4501f187db95fe23"
+            },
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "complex128",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "804c4921e1eaed651f048031d0fd17478400c5d958b5af80f9e58fba334cc5f3"
+            },
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8c869a915188e97f5e8042aee8db314c94bb9bf185e5e480770185a1e8a4c5c6"
+            },
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "99b6c04e094815ccb1a4b3296070d2688413122f9b64f466a510872c87402cbc"
+            },
+            {
+              "attributes": {
+                "batching": "bounded-serial-device-local-lanes",
+                "derivatives": "native-owned-jvp-vjp-through-order-two",
+                "device_count": 1,
+                "numerical_cache": false,
+                "path": "native-or-explicit-imported-ssa",
+                "placement": "device-local",
+                "platform": "cuda",
+                "precision": "complex128",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-prepared-tensor",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f9921bc4667f709fb213940e0a9f8165b5a3ac26655a69c7bf8fb90c3cd41a32"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.tensor_network.ContractionExecutionPolicy",
+        "phydrax.tensor_network.execute_contraction",
+        "phydrax.tensor_network.prepare_contraction",
+        "phydrax.tensor_network.refresh_contraction"
+      ]
+    },
+    {
+      "capability": "cuda-tensor-host-slices",
+      "declaration_id": "f228e7f54012631deac9ed048f6eafceae591f6028e460b3803d8f652a3bf6df",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/tensor_network.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "explicit-host-orchestrated-device-local-slices"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "available-is-not-qualified",
+        "no-certified-vendor-host-or-total-resident-memory-bound",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-host-orchestration-autodiff",
+        "no-implicit-distributed-slice-launch",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.tensor_network",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-tensor-host-slices.profile",
+          "profile_id": "5f685cfa05e40e8410db5bb8bcb8d7727cf0c01891a8e214de49e12ef15036e1",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-failure-propagation",
+            "host-orchestration-ad-refusal",
+            "installed-native-artifact",
+            "installed-wheel",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "phase-separated-performance",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference",
+            "slice-coverage-checkpoint-identity-and-merge-reference"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "23b39c14902774ec5aca46e28c214c2730383fb6078a2c13fe751a3b7d0b114c"
+            },
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "complex128",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "532924600a3ea170382984152d0b43367fab24face99d82be7c68b7f74264151"
+            },
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "float64",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6f16f19567551f116f2a855f7acf0cf5a9c7cf3275f4f97d22852a2fbb7b1bb4"
+            },
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7342fbf198a58ea64a510dcc01010afedbcceefd10fe2571a836c8caa7579c67"
+            },
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "float32",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "76063e24a4dfbe2b4759e7cbd34220006036c362527db15b485934f8fed55a0a"
+            },
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "complex128",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "98980b4fd096dcc62fd332392c94b3157a6c49ae68000c2ca5c70a78e91d1206"
+            },
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "complex64",
+                "process_count": 1,
+                "provider": "cutensor",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cdf767d96648a76cc5035722d18f8180cb7e76532f41ae8bd794e137923abbec"
+            },
+            {
+              "attributes": {
+                "derivatives": "not-admitted-through-host-orchestration",
+                "device_count": 1,
+                "orchestration": "explicit-host-slices-and-checkpoints",
+                "placement": "device-local-residual-executor",
+                "platform": "cuda",
+                "precision": "complex64",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "resident_bound": "not-certified-all-process",
+                "vendor_host_bound": "unknown"
+              },
+              "capability": "cuda-tensor-host-slices",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e9e78f51aad5154641a17173205eb697607f2263d2cc31c019bcdc42c0c617d0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.tensor_network.PreparedSlicedContraction",
+        "phydrax.tensor_network.execute_sliced_contraction",
+        "phydrax.tensor_network.merge_slice_checkpoints",
+        "phydrax.tensor_network.prepare_sliced_contraction"
+      ]
+    },
+    {
+      "capability": "cuda-tensor-path-planning",
+      "declaration_id": "b5d20179c936cccca15c83b7fe2c820f67204b31823f21a1ed0f373db4f73359",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/api/tensor_network.md"
+      ],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-shape-only-cutensornet-path-search"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "available-is-not-qualified",
+        "no-certified-vendor-host-memory-bound",
+        "no-hardware-qualification-from-installation-or-build",
+        "no-implicit-host-transfer-or-native-numerical-fallback",
+        "no-implicit-provider-selection-or-native-default-change",
+        "no-multi-host",
+        "no-optimality-or-energy-objective-certificate",
+        "no-planner-selected-slicing",
+        "not-release-authorized",
+        "planner-is-not-the-numerical-executor"
+      ],
+      "owner": "phydrax.tensor_network",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cuda-tensor-path-planning.profile",
+          "profile_id": "edfab8264a26c5b5497607ab88d3157a7dbe27c136e75c6f21632ebdccc80628",
+          "provider": "phydrax-cuda",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compiled-failure-propagation",
+            "installed-native-artifact",
+            "installed-wheel",
+            "native-build-and-vendor-library-identity",
+            "native-lifecycle-release-and-rebuild",
+            "phase-separated-performance",
+            "planner-deadline-worker-cleanup-and-path-validation",
+            "precision-and-placement-refusal",
+            "real-device",
+            "real-device-topology",
+            "resource-evidence-and-refusal",
+            "scientific-identity-and-forward-reference"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "device_count": 1,
+                "numerical_execution": false,
+                "objective": "flops",
+                "phase": "shape-only-host-preparation",
+                "platform": "cuda",
+                "process_count": 1,
+                "provider": "cutensornet",
+                "slicing": false,
+                "vendor_host_bound": "unknown",
+                "worker": "spawned-deadline-bounded"
+              },
+              "capability": "cuda-tensor-path-planning",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "35718338c0e61cc5ed1155e49f15484691947ed939acb40aee924d4689b88128"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.tensor_network.ContractionPathPlanner",
+        "phydrax.tensor_network.plan_contraction"
+      ]
+    },
+    {
       "capability": "diagnostic-photon-forward-model",
       "declaration_id": "748b2e852838957ad94746f204e7249754207a7d5c935b71841351c488a1df3f",
       "dependencies": [],

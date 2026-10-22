@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Sequence
 from math import prod
+from numbers import Integral
 
 import equinox as eqx
 import opt_einsum as oe
@@ -69,14 +70,16 @@ def planner_search_state_bound(operand_count: int, optimizer: str, /) -> int:
     count = int(operand_count)
     if count < 1:
         raise ValueError("operand_count must be positive.")
+    if optimizer not in ("greedy", "optimal"):
+        raise ValueError("optimizer must be 'greedy' or 'optimal'.")
+    if count <= 2:
+        return 0
     if optimizer == "greedy":
         return sum(size * (size - 1) // 2 for size in range(2, count + 1))
-    if optimizer == "optimal":
-        states = 1
-        for size in range(count, 1, -1):
-            states *= size * (size - 1) // 2
-        return states
-    raise ValueError("optimizer must be 'greedy' or 'optimal'.")
+    states = 1
+    for size in range(count, 1, -1):
+        states *= size * (size - 1) // 2
+    return states
 
 
 def _symbols(structure: ContractionStructure) -> dict[str, str]:
@@ -100,10 +103,16 @@ def build_contraction_schedule(
         raise TypeError("structure must be ContractionStructure.")
     path_ = tuple(tuple(step) for step in path)
     if any(
-        len(step) < 2 or len(set(step)) != len(step) or min(step) < 0 for step in path_
+        not step
+        or any(
+            not isinstance(index, Integral) or isinstance(index, bool) for index in step
+        )
+        or len(set(step)) != len(step)
+        or min(step) < 0
+        for step in path_
     ):
         raise ValueError(
-            "Every contraction path step needs at least two distinct non-negative indices."
+            "Every contraction path step needs distinct nonnegative integer indices."
         )
     dimensions = dict(zip(structure.labels, structure.dimensions, strict=True))
     symbols = _symbols(structure)
@@ -295,21 +304,25 @@ def reverse_schedule_evidence(
     rematerialization: str,
     operand_bytes: int,
     output_bytes: int,
+    intermediate_dtype: str | None = None,
 ) -> ReverseScheduleEvidence:
     if rematerialization not in ("store", "rematerialize"):
         raise ValueError("rematerialization must be 'store' or 'rematerialize'.")
+    dtype = schedule.dtype if intermediate_dtype is None else intermediate_dtype
+    forward_bytes = schedule.peak_live_elements * precision_itemsize(dtype)
     retained = (
-        schedule.peak_live_bytes
+        forward_bytes
         if rematerialization == "store"
         else int(operand_bytes) + int(output_bytes)
     )
-    reverse_peak = retained + schedule.peak_live_bytes
+    reverse_peak = retained + forward_bytes
     reverse_id = canonical_fingerprint(
         {
             "kind": "reverse-contraction-schedule",
             "forward": schedule.schedule_id,
             "rematerialization": rematerialization,
             "retained": retained,
+            "intermediate_dtype": dtype,
         }
     )
     return ReverseScheduleEvidence(

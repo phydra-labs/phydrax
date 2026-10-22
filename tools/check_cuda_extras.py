@@ -47,6 +47,7 @@ NVIDIA_FAMILIES = (
     "nccl",
     "nvshmem",
     "cudss",
+    "cuest",
     "cuda-cccl",
     "cuda-crt",
     "cuda-nvcc",
@@ -77,6 +78,12 @@ NVIDIA_MAJORS = {
         for major in (12, 13)
     },
     **dict.fromkeys(UNSUFFIXED_CUDA13, 13),
+    **{
+        f"{family}-cu{major}": major
+        for family in ("cutensor", "cutensornet")
+        for major in (12, 13)
+    },
+    "phydrax-cuest": 13,
 }
 
 
@@ -216,7 +223,11 @@ def resolution_errors(resolved: dict[str, str], platform: str, version: str) -> 
     if resolved.get("phydrax-cuda-major", "").split(".")[0] != "13":
         errors.append("Missing or incorrect CUDA 13 marker")
     nvidia = {
-        name: version for name, version in resolved.items() if name.startswith("nvidia-")
+        name: version
+        for name, version in resolved.items()
+        if name.startswith("nvidia-")
+        or name == "phydrax-cuest"
+        or re.fullmatch(r"(?:cutensor|cutensornet)-cu\d+", name)
     }
     plugins = [
         name for name in resolved if re.fullmatch(r"jax-cuda\d+-(plugin|pjrt)", name)
@@ -239,6 +250,10 @@ def resolution_errors(resolved: dict[str, str], platform: str, version: str) -> 
     elif companions:
         errors.append(
             f"Companion resolved off supported Linux architectures: {companions}"
+        )
+    if "phydrax-cuest" in resolved and resolved["phydrax-cuest"] != version:
+        errors.append(
+            f"Expected phydrax-cuest=={version}, resolved {resolved['phydrax-cuest']}"
         )
     if set(plugins) != {"jax-cuda13-plugin", "jax-cuda13-pjrt"}:
         errors.append(f"Expected CUDA 13 JAX plugin and PJRT, resolved {plugins}")

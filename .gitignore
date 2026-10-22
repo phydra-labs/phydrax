@@ -33,6 +33,8 @@
 .venv313
 .venv-rocm*/
 .tmp
+/command-*.stdout
+/command-*.stderr
 .notes
 .prompts
 .testmon*
@@ -62,6 +64,13 @@ benchmarks/*
 !benchmarks/spark_qualification.json
 # Single-B300 CUDA artifacts, scientific qualification, and recovery evidence.
 !benchmarks/b300_qualification.json
+# Explicit CUDA-library drivers and observed A40 qualification evidence.
+!benchmarks/cuda_tensor_contraction.py
+!benchmarks/cudss_execution.py
+!benchmarks/cuest_molecular.py
+!benchmarks/_cuest_kernels.py
+!benchmarks/cuest_molecular_campaign.py
+!benchmarks/a40_qualification.json
 # Apple GPU primitive/scientific drivers and retained build/performance evidence.
 !benchmarks/metal_execution_scaling.py
 !benchmarks/m1_max_qualification.json

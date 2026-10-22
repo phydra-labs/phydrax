@@ -62,11 +62,46 @@
 
 ::: phydrax.chemistry.MolecularHartreeFockPlan
 
+The `integrals` keyword takes
+`phydrax.operators.quantum.gaussian.MolecularIntegralPlan`; native exact dense
+ERIs remain the default. Native screened direct J/K, fixed factorized ERIs, and
+optional cuEST DF are explicit sources of that owner, not separate HF keyword
+arguments. Unsupported gradients, response, stability, or correlation must not
+substitute a different integral definition.
+
+::: phydrax.chemistry.MolecularRHFProvider
+
+::: phydrax.chemistry.PreparedMolecularRHFCalculation
+
+The typed RHF provider admits native exact or optional cuEST integer,
+all-electron, nonperiodic RHF energy/first-force tasks. Bind a model chemistry
+and use `numerical=provider.numerical` when constructing the calculation.
+Results use the system's energy and length units; atomic-unit HF calls use
+Hartree and bohr. Forces include Pulay and nuclear terms and require stationary
+density/orbital evidence, not merely a finite converged energy. The provider
+does not admit AD, batching, Hessians, external-field/embedding contexts, or
+fixed-factor/direct analytic-force substitution. See the
+[typed energy/force/PES example](../cookbook/production_computational_chemistry.md).
+
+::: phydrax.chemistry.ElectronicPotentialEnergySurface
+
+::: phydrax.chemistry.PotentialEnergySurfaceEvaluation
+
+
 ::: phydrax.chemistry.MolecularKohnShamPlan
 
 ::: phydrax.chemistry.SCFConvergencePlan
 
 ::: phydrax.chemistry.SCFAccelerationPlan
+
+::: phydrax.chemistry.SCFDIISEvidence
+
+`state.evidence.diis` retains the most recent constrained native SVD solve,
+including minimum-norm coefficients, affine-constraint residual/tolerance,
+original error scale, native status, rank, rank cutoff, and normal residual.
+Rank-deficient histories do not trigger diagonal jitter or silent DIIS removal.
+If DIIS has not run, this field is `None`.
+
 
 ::: phydrax.chemistry.ElectronicOccupationPlan
 

@@ -4,10 +4,20 @@
 
 from __future__ import annotations
 
-from typing import final
+from dataclasses import replace
+from typing import assert_never, final, Literal, TypeAlias
 
+from ..typing import parse
 from ._availability import probe_cuda_component
-from ._types import AbstractExternalBackend, BackendAvailability, BackendCapabilities
+from ._types import (
+    AbstractExternalBackend,
+    BackendAvailability,
+    BackendCapabilities,
+    BackendDistributionCapabilities,
+)
+
+
+CudssExecutionMode: TypeAlias = Literal["local", "mg", "mgmn"]
 
 
 CUDSS_CAPABILITIES = BackendCapabilities(
@@ -28,14 +38,60 @@ CUDSS_CAPABILITIES = BackendCapabilities(
 )
 
 
-def cudss_availability() -> BackendAvailability:
-    """Probe the lockstep CUDA companion before the first cuDSS call."""
+def cudss_availability(
+    *, execution_mode: CudssExecutionMode = "local"
+) -> BackendAvailability:
+    """Probe artifacts for one mode, not group, memory, or transport admission.
+
+    Installing cuDSS alone does not reserve peers or establish a live collective
+    lease. MGMN additionally requires the exact site-linked bridge/shim.
+    """
+    execution_mode = parse(execution_mode, CudssExecutionMode, "execution_mode")
+    match execution_mode:
+        case "local":
+            capabilities = CUDSS_CAPABILITIES
+            component = "cudss"
+        case "mg":
+            capabilities = replace(
+                CUDSS_CAPABILITIES,
+                distribution=BackendDistributionCapabilities(
+                    array_model="global",
+                    scopes=("single_process_multi_device",),
+                    platforms=("cuda",),
+                    transformations=("jit",),
+                    supports_process_local_input=True,
+                ),
+            )
+            component = "cudss"
+        case "mgmn":
+            capabilities = replace(
+                CUDSS_CAPABILITIES,
+                requires_explicit_release=True,
+                distribution=BackendDistributionCapabilities(
+                    array_model="rank_local",
+                    scopes=("same_host_multi_process_gpu",),
+                    platforms=("cuda",),
+                    collectives=("site_mpi",),
+                    transformations=("jit",),
+                    communicator_model="mpi",
+                    supports_process_local_input=True,
+                    supports_distributed_output=True,
+                ),
+            )
+            component = "cudss_mgmn"
+        case _:
+            assert_never(execution_mode)
     return probe_cuda_component(
-        CUDSS_CAPABILITIES,
-        component="cudss",
+        capabilities,
+        component=component,
         requirement=(
-            "install phydrax[cuda13] on Linux x86-64 "
-            "with an NVIDIA Turing-or-newer device"
+            "install phydrax[cuda13] on Linux x86-64 or aarch64 "
+            "with NVIDIA Turing-or-newer devices"
+            + (
+                " and exact site-built collective/cuDSS MGMN components using GPU-aware MPI"
+                if execution_mode == "mgmn"
+                else ""
+            )
         ),
     )
 
@@ -56,4 +112,9 @@ class CudssBackend(AbstractExternalBackend):
         return cudss_availability()
 
 
-__all__ = ["CUDSS_CAPABILITIES", "CudssBackend", "cudss_availability"]
+__all__ = [
+    "CUDSS_CAPABILITIES",
+    "CudssBackend",
+    "CudssExecutionMode",
+    "cudss_availability",
+]

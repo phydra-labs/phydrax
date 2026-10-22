@@ -34,6 +34,11 @@ from .._iteration import (
 from ._binding import LinearSolveTemplate
 from ._bordered import _bordered_structure
 from ._dense_pseudoinverse import fixed_rank_pseudoinverse_action
+from ._distributed_sparse import (
+    distributed_max,
+    distributed_sum,
+    DistributedCSRLinearOperator,
+)
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._initial_guess import _select_proposal, AbstractInitialGuessProvider
 from ._operators import AbstractLinearOperator, adjoint, transpose
@@ -864,8 +869,10 @@ def _solve_prepared(
     canonical_residual = (
         _canonical_action(prepared, problem, canonical_value) - canonical_rhs
     )
-    residual_norm = _coordinate_norm(problem.operator.target, canonical_residual)
-    rhs_norm = _coordinate_norm(problem.operator.target, canonical_rhs)
+    residual_norm = _solve_coordinate_norm(
+        prepared, problem.operator.target, canonical_residual
+    )
+    rhs_norm = _solve_coordinate_norm(prepared, problem.operator.target, canonical_rhs)
     relative_residual = jnp.where(
         rhs_norm > jnp.zeros((), dtype=rhs_norm.dtype),
         residual_norm / rhs_norm,
@@ -874,7 +881,7 @@ def _solve_prepared(
     roundoff_relative = (
         10.0
         * jnp.finfo(canonical_rhs.real.dtype).eps
-        * float(max(problem.operator.source.size, problem.operator.target.size))
+        * float(_solve_dimension(prepared, problem.operator))
     )
     relative_tolerance = (
         prepared.plan.policy.tolerance.relative
@@ -936,6 +943,9 @@ def _solve_prepared(
         jnp.all(jnp.isfinite(canonical_value), axis=-2)
         & jnp.isfinite(residual_norm)
         & jnp.isfinite(convergence_measure)
+    )
+    status, rhs_finite, value_finite = _collective_result_evidence(
+        prepared, status, rhs_finite, value_finite
     )
     finite = rhs_finite & value_finite
     status = jnp.where(
@@ -1107,6 +1117,9 @@ def _solve_prepared(
         deflated_rhs_count=deflated_rhs_count_out,
         refinement_steps=refinement_steps_out,
         singular_values=backend.singular_values,
+        external_memory=(
+            backend.memory_evidence if isinstance(backend, CudssBackendOutput) else None
+        ),
     )
     derivative_relative, derivative_absolute = _derivative_tolerances(
         prepared.plan.policy.derivative_solve, canonical_rhs.real.dtype
@@ -1940,13 +1953,17 @@ def _solve_prepared_transformed(
 
     image = transformed_operator.mv_block(canonical_value)
     residual = image - canonical_rhs
-    residual_norm = _coordinate_norm(transformed_operator.target, residual)
-    rhs_norm = _coordinate_norm(transformed_operator.target, canonical_rhs)
+    residual_norm = _solve_coordinate_norm(
+        prepared, transformed_operator.target, residual
+    )
+    rhs_norm = _solve_coordinate_norm(
+        prepared, transformed_operator.target, canonical_rhs
+    )
     relative = jnp.where(rhs_norm > 0.0, residual_norm / rhs_norm, residual_norm)
     roundoff_relative = (
         10.0
         * jnp.finfo(canonical_rhs.real.dtype).eps
-        * float(max(original.source.size, original.target.size))
+        * float(_solve_dimension(prepared, original))
     )
     effective_relative = jnp.maximum(
         prepared.plan.policy.tolerance.relative,
@@ -1961,6 +1978,9 @@ def _solve_prepared_transformed(
     rhs_finite = jnp.all(jnp.isfinite(canonical_rhs), axis=-2)
     value_finite = jnp.all(jnp.isfinite(canonical_value), axis=-2) & jnp.isfinite(
         residual_norm
+    )
+    status, rhs_finite, value_finite = _collective_result_evidence(
+        prepared, status, rhs_finite, value_finite
     )
     finite = rhs_finite & value_finite
     status = jnp.where(
@@ -1992,6 +2012,9 @@ def _solve_prepared_transformed(
         refinement_steps=_restore_rhs_axes(
             jnp.broadcast_to(transformed_refinement_steps, status.shape),
             layout,
+        ),
+        external_memory=(
+            backend.memory_evidence if isinstance(backend, CudssBackendOutput) else None
         ),
         finite=_restore_rhs_axes(finite, layout),
         converged=_restore_rhs_axes(status == int(LinearSolveStatus.SUCCESS), layout),
@@ -2351,6 +2374,48 @@ def _normal_residual(
         reference = _dense_svd_active_projection(prepared.state, reference)
     source = problem.operator.source
     return _coordinate_norm(source, normal), _coordinate_norm(source, reference)
+
+
+def _mgmn_owner(prepared: PreparedLinearSolve, /) -> DistributedCSRLinearOperator:
+    operator = prepared.problem.operator
+    if not isinstance(operator, DistributedCSRLinearOperator):
+        raise TypeError("MGMN prepared state requires its rank-local CSR owner.")
+    return operator
+
+
+def _solve_dimension(
+    prepared: PreparedLinearSolve, operator: AbstractLinearOperator, /
+) -> int:
+    if prepared.plan.backend == "cudss-mgmn":
+        return max(_mgmn_owner(prepared).storage.global_shape)
+    return max(operator.source.size, operator.target.size)
+
+
+def _solve_coordinate_norm(
+    prepared: PreparedLinearSolve, space: AbstractVectorSpace, coordinates: Array, /
+) -> Array:
+    if prepared.plan.backend != "cudss-mgmn":
+        return _coordinate_norm(space, coordinates)
+    # MGMN admission requires Euclidean owned coordinates, with disjoint,
+    # unpadded rows. Reduce contributions, never all-gather the full vector.
+    squared = jnp.sum(jnp.abs(coordinates) ** 2, axis=-2)
+    return jnp.sqrt(distributed_sum(_mgmn_owner(prepared).binding, squared))
+
+
+def _collective_result_evidence(
+    prepared: PreparedLinearSolve,
+    status: Array,
+    rhs_finite: Array,
+    value_finite: Array,
+    /,
+) -> tuple[Array, Array, Array]:
+    if prepared.plan.backend != "cudss-mgmn":
+        return status, rhs_finite, value_finite
+    binding = _mgmn_owner(prepared).binding
+    status = distributed_max(binding, status)
+    rhs_finite = distributed_max(binding, (~rhs_finite).astype(jnp.int32)) == 0
+    value_finite = distributed_max(binding, (~value_finite).astype(jnp.int32)) == 0
+    return status, rhs_finite, value_finite
 
 
 def _coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:

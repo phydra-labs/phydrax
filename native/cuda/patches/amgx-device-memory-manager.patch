@@ -1,0 +1,40 @@
+# Upstream: https://github.com/NVIDIA/AMGX/tree/91a8413
+# State: local independent-device allocator, pool and stream ownership fix.
+# Remove when the pinned upstream owns MemoryManager state per CUDA device.
+--- a/src/global_thread_handle.cu
++++ b/src/global_thread_handle.cu
+@@ -428,11 +428,31 @@
+ struct MemoryManager
+ {
+-    // Get the global instance.
++    // Select every pool, allocation ledger and thread stream by its CUDA owner.
++    // A process-wide pool can otherwise return another device's allocation.
+     static MemoryManager &get_instance()
+     {
+-        static MemoryManager s_instance;
+-        return s_instance;
++        int device;
++        const auto status = cudaGetDevice(&device);
++        if (status != cudaSuccess) FatalError(cudaGetErrorString(status), AMGX_ERR_CUDA_FAILURE);
++
++        // The owner must be queried on every call, but repeated allocations on
++        // the same thread/device need neither a map lookup nor another lock.
++        thread_local int cached_device = -1;
++        thread_local MemoryManager *cached_manager = nullptr;
++        if (cached_device == device) return *cached_manager;
++
++        // Resources explicitly destroy pools on their owning devices. Retain
++        // only manager metadata so no CUDA cleanup runs from static destructors.
++        static auto *instances = new std::map<int, std::unique_ptr<MemoryManager>>;
++        static std::mutex instances_mutex;
++        std::lock_guard<std::mutex> lock(instances_mutex);
++        auto found = instances->find(device);
++        if (found == instances->end())
++            found = instances->emplace(device, std::make_unique<MemoryManager>()).first;
++        cached_device = device;
++        cached_manager = found->second.get();
++        return *cached_manager;
+     }
+ 
+     // Ctor.
+     MemoryManager()

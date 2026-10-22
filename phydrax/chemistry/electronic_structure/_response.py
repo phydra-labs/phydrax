@@ -32,6 +32,7 @@ from ...operators.quantum.gaussian import (
     dipole_integrals,
     electron_repulsion_tensor,
     kinetic_matrix,
+    molecular_integral_definition_id,
     nuclear_attraction_matrix,
     nuclear_repulsion_energy,
     overlap_matrix,
@@ -114,6 +115,14 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
         field: Array,
         /,
     ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        if (
+            isinstance(calculation, MolecularHartreeFockPlan)
+            and calculation.integrals.source is not None
+        ):
+            raise NotImplementedError(
+                "HF response requires exact integrals; nonexact integral response "
+                "is not implemented."
+            )
         basis = calculation.basis
         charges = jnp.asarray(calculation.system.atomic_numbers, dtype=positions.dtype)
         overlap = overlap_matrix(basis, positions)
@@ -170,12 +179,24 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
     ) -> MeanFieldResponseResult:
         if not isinstance(calculation, (MolecularHartreeFockPlan, MolecularKohnShamPlan)):
             raise TypeError("Response requires a native molecular HF or KS plan.")
+        if (
+            isinstance(calculation, MolecularHartreeFockPlan)
+            and calculation.integrals.source is not None
+        ):
+            raise NotImplementedError(
+                "HF response requires exact integrals; nonexact integral response "
+                "is not implemented."
+            )
         if not isinstance(state, RestrictedMeanFieldState) or not bool(
             state.evidence.converged
         ):
             raise ValueError("Response requires a converged restricted mean-field state.")
         if state.owner_id != mean_field_owner_id(calculation.plan_id, positions):
             raise ValueError("Response state belongs to another plan or geometry.")
+        if state.integral_definition_id != molecular_integral_definition_id(
+            calculation.basis
+        ):
+            raise ValueError("Response state requires the exact integral definition.")
         coordinate = jnp.asarray(positions)
         zero_field = jnp.zeros((3,), dtype=coordinate.dtype)
         problem = NonlinearSystemProblem(
@@ -300,6 +321,14 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
     ) -> MeanFieldHessianResult:
         if not isinstance(calculation, (MolecularHartreeFockPlan, MolecularKohnShamPlan)):
             raise TypeError("Hessian response requires a native HF or KS plan.")
+        if (
+            isinstance(calculation, MolecularHartreeFockPlan)
+            and calculation.integrals.source is not None
+        ):
+            raise NotImplementedError(
+                "HF Hessian response requires exact integrals; nonexact integral "
+                "response is not implemented."
+            )
         if not isinstance(state, RestrictedMeanFieldState) or not bool(
             state.evidence.converged
         ):
@@ -307,6 +336,12 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
         if state.owner_id != mean_field_owner_id(calculation.plan_id, positions):
             raise ValueError(
                 "Hessian response state belongs to another plan or geometry."
+            )
+        if state.integral_definition_id != molecular_integral_definition_id(
+            calculation.basis
+        ):
+            raise ValueError(
+                "Hessian response state requires the exact integral definition."
             )
         coordinate = jnp.asarray(positions)
         zero_field = jnp.zeros((3,), dtype=coordinate.dtype)

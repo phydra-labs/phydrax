@@ -849,7 +849,7 @@ def test_substrate_hardware_expectations_fail_closed(
 @pytest.mark.parametrize(
     ("platform", "process_count", "devices_per_process"),
     [
-        (platform, processes, devices)
+        pytest.param(platform, processes, devices, id=f"{platform}-{processes}x{devices}")
         for platform in ("cpu", "gpu")
         for processes, devices in (
             (1, 1),
@@ -862,23 +862,12 @@ def test_substrate_hardware_expectations_fail_closed(
             (4, 1),
             (1, 5),
             (5, 1),
+            (1, 8),
+            (2, 4),
+            (4, 2),
+            (8, 1),
         )
-    ],
-    ids=[
-        f"{platform}-{processes}x{devices}"
-        for platform in ("cpu", "gpu")
-        for processes, devices in (
-            (1, 1),
-            (1, 2),
-            (2, 1),
-            (1, 3),
-            (3, 1),
-            (1, 4),
-            (2, 2),
-            (4, 1),
-            (1, 5),
-            (5, 1),
-        )
+        if platform == "gpu" or processes * devices <= 5
     ],
 )
 def test_local_substrate_launcher_preserves_device_ownership(
@@ -918,11 +907,11 @@ def test_local_substrate_launcher_preserves_device_ownership(
         )
         visible = os.environ.get(visibility_key)
         selected = (
-            visible.split(",")[:devices_per_process]
+            visible.split(",")[-devices_per_process:]
             if visible is not None
             else [
                 str(device.local_hardware_id)
-                for device in jax.local_devices()[:devices_per_process]
+                for device in jax.local_devices()[-devices_per_process:]
             ]
         )
         environment[visibility_key] = ",".join(selected)
@@ -944,6 +933,11 @@ def test_local_substrate_launcher_preserves_device_ownership(
             "--expected-local-devices",
             str(devices_per_process),
             *(["--expected-vendor", vendor] if vendor is not None else []),
+            *(
+                ["--required-gpus", str(process_count * devices_per_process)]
+                if platform == "gpu" and vendor == "nvidia"
+                else []
+            ),
         ],
         cwd=root,
         env=environment,
@@ -957,6 +951,16 @@ def test_local_substrate_launcher_preserves_device_ownership(
         return
     assert completed.returncode == 0, completed.stdout + completed.stderr
     report = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert report["passed"]
+    assert report["errors"] == []
+    ranks = report.get("ranks", [report])
+    assert [rank["runtime"]["process_index"] for rank in ranks] == list(
+        range(process_count)
+    )
+    assert all(rank["passed"] for rank in ranks)
+    if platform == "gpu":
+        uuids = [owner["gpu_uuid"] for rank in ranks for owner in rank["ownership"]]
+        assert len(set(uuids)) == process_count * devices_per_process
     runtime = report["runtime"]
     local_count = devices_per_process
     assert runtime["process_count"] == process_count
@@ -1172,3 +1176,502 @@ def test_five_rank_replicated_checkpoint_publication(
     assert [report["local_hardware_ids"] for report in reports] == (
         [[0]] * 5 if platform == "cpu" else [[rank] for rank in range(5)]
     )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
+def test_local_launcher_preserves_rank_output_and_device_bootstrap() -> None:
+    program = (
+        "import json, os, sys; "
+        "print(json.dumps({'rank': os.environ['PHYDRAX_PROCESS_ID'], "
+        "'count': os.environ['PHYDRAX_NUM_PROCESSES'], "
+        "'devices': os.environ['PHYDRAX_LOCAL_DEVICE_IDS'], "
+        "'argument': sys.argv[1]})); "
+        "print('rank-stderr', file=sys.stderr)"
+    )
+    results = launch_local_processes(
+        (sys.executable, "-c", program, "argument with spaces; no shell"),
+        LocalProcessLaunchPlan(2, "127.0.0.1:43210", devices_per_process=2),
+        timeout_seconds=10.0,
+    )
+    assert [result.process_id for result in results] == [0, 1]
+    assert [result.returncode for result in results] == [0, 0]
+    assert [json.loads(result.stdout) for result in results] == [
+        {
+            "rank": str(rank),
+            "count": "2",
+            "devices": f"{2 * rank},{2 * rank + 1}",
+            "argument": "argument with spaces; no shell",
+        }
+        for rank in range(2)
+    ]
+    assert all(result.stderr == b"rank-stderr\n" for result in results)
+
+
+def _assert_launcher_descendant_stopped(pid: int) -> None:
+    import time
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            return
+        if state == "Z":
+            return
+        time.sleep(0.01)
+    pytest.fail(f"launcher left descendant {pid} running")
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="uses Linux descendant state evidence"
+)
+@pytest.mark.parametrize("failure", [False, True])
+def test_local_launcher_couples_timeout_and_first_failure(
+    tmp_path: Path, failure: bool
+) -> None:
+    import time
+
+    from phydrax._execution_launch import LocalProcessLaunchError
+
+    program = """
+import json, os, pathlib, subprocess, sys, time
+rank = int(os.environ["PHYDRAX_PROCESS_ID"])
+root = pathlib.Path(sys.argv[1])
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+(root / str(rank)).write_text(json.dumps({"pid": os.getpid(), "child": child.pid}))
+print("ready-" + str(rank), flush=True)
+print("evidence-" + str(rank), file=sys.stderr, flush=True)
+if sys.argv[2] == "fail" and rank == 0:
+    deadline = time.monotonic() + 5
+    while not (root / "1").exists():
+        if time.monotonic() > deadline:
+            raise RuntimeError("second rank did not start")
+        time.sleep(0.01)
+    sys.exit(7)
+time.sleep(60)
+"""
+    started = time.monotonic()
+    with pytest.raises(LocalProcessLaunchError) as captured:
+        launch_local_processes(
+            (sys.executable, "-c", program, str(tmp_path), "fail" if failure else "wait"),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+            timeout_seconds=10.0 if failure else 2.0,
+        )
+    error = captured.value
+    assert time.monotonic() - started < (8.0 if failure else 5.0)
+    assert error.timed_out is not failure
+    assert [result.process_id for result in error.results] == [0, 1]
+    assert all(result.returncode != 0 for result in error.results)
+    if failure:
+        assert error.results[0].returncode == 7
+        assert error.reason == "rank 0 failed"
+    else:
+        assert "whole-job deadline" in error.reason
+    for rank, result in enumerate(error.results):
+        assert result.stdout == f"ready-{rank}\n".encode()
+        assert result.stderr == f"evidence-{rank}\n".encode()
+        report = json.loads((tmp_path / str(rank)).read_text())
+        _assert_launcher_descendant_stopped(report["pid"])
+        _assert_launcher_descendant_stopped(report["child"])
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="uses Linux descendant state evidence"
+)
+def test_local_launcher_cleans_descendants_after_successful_leader_exit() -> None:
+    import time
+
+    program = (
+        "import subprocess, sys; "
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import time; time.sleep(60)']); "
+        "print(child.pid, flush=True)"
+    )
+    started = time.monotonic()
+    results = launch_local_processes(
+        (sys.executable, "-c", program),
+        LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+        timeout_seconds=10.0,
+    )
+    assert time.monotonic() - started < 5.0
+    for result in results:
+        assert result.returncode == 0
+        _assert_launcher_descendant_stopped(int(result.stdout))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
+def test_local_launcher_refuses_output_overflow_with_bounded_evidence() -> None:
+    from phydrax._execution_launch import LocalProcessLaunchError
+
+    with pytest.raises(LocalProcessLaunchError) as captured:
+        launch_local_processes(
+            (
+                sys.executable,
+                "-c",
+                "import os, time; os.write(1, b'x' * 65536); time.sleep(60)",
+            ),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+            timeout_seconds=10.0,
+            max_output_bytes=128,
+        )
+    assert "max_output_bytes" in captured.value.reason
+    assert not captured.value.timed_out
+    assert any(result.output_truncated for result in captured.value.results)
+    assert all(
+        len(result.stdout) + len(result.stderr) <= 128
+        for result in captured.value.results
+    )
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf"), True, "1"])
+def test_local_launcher_rejects_nonfinite_or_noncanonical_timeout(timeout: Any) -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        launch_local_processes(
+            (sys.executable, "-c", "raise AssertionError('must not start')"),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+            timeout_seconds=timeout,
+        )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires inherited supervisor sockets")
+def test_local_launcher_confirms_live_supervision_per_rank() -> None:
+    program = """
+import json, os
+from phydrax._execution_launch import require_local_process_supervision
+supervisor = require_local_process_supervision()
+supervisor.require_active((1, 0), 1.0)
+try:
+    supervisor.require_active((0, 1), 1000.0)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("deadline overflow admitted")
+try:
+    supervisor.require_active((supervisor.process_id, supervisor.process_id), 1.0)
+except ValueError:
+    pass
+else:
+    raise AssertionError("duplicate membership admitted")
+print(json.dumps({"id": supervisor.supervisor_id, "rank": supervisor.process_id,
+                  "pid": supervisor.pid, "group": os.getpgrp(),
+                  "parent": supervisor.parent_pid}), flush=True)
+"""
+    results = launch_local_processes(
+        (sys.executable, "-c", program),
+        LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+        timeout_seconds=30.0,
+    )
+    reports = [json.loads(result.stdout) for result in results]
+    assert len({report["id"] for report in reports}) == 1
+    assert [report["rank"] for report in reports] == [0, 1]
+    assert all(report["pid"] == report["group"] for report in reports)
+    assert all(report["parent"] == os.getpid() for report in reports)
+
+
+def test_local_launcher_environment_boolean_is_not_supervision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._execution_launch import require_local_process_supervision
+
+    monkeypatch.delenv("PHYDRAX_LOCAL_SUPERVISOR_FD", raising=False)
+    monkeypatch.setenv("PHYDRAX_COUPLED_SUPERVISION", "1")
+    with pytest.raises(RuntimeError, match="supervisor"):
+        require_local_process_supervision()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires inherited supervisor sockets")
+def test_local_launcher_supervisor_failure_couples_all_ranks() -> None:
+    from phydrax._execution_launch import LocalProcessLaunchError
+
+    program = """
+import time
+from phydrax._execution_launch import require_local_process_supervision
+supervisor = require_local_process_supervision()
+if supervisor.process_id == 0:
+    supervisor.fail("collective lease failed")
+time.sleep(60)
+"""
+    with pytest.raises(LocalProcessLaunchError) as captured:
+        launch_local_processes(
+            (sys.executable, "-c", program),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+            timeout_seconds=30.0,
+        )
+    assert "collective lease failed" in captured.value.reason
+    assert not captured.value.timed_out
+    assert all(result.returncode != 0 for result in captured.value.results)
+
+
+@pytest.mark.skipif(
+    not hasattr(socket, "SO_PEERCRED"), reason="requires observable socket peer PID"
+)
+def test_local_launcher_refuses_supervisor_channel_not_owned_by_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._execution_launch import require_local_process_supervision
+
+    channel, peer = socket.socketpair()
+    with channel, peer:
+        # Both endpoints were created by this test process, not its parent.
+        monkeypatch.setenv("PHYDRAX_LOCAL_SUPERVISOR_FD", str(channel.fileno()))
+        with pytest.raises(RuntimeError, match="not owned"):
+            require_local_process_supervision()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
+def test_local_launcher_cleans_owned_ranks_when_later_spawn_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax._execution_launch as launch_module
+
+    original = subprocess.Popen
+    owned: list[subprocess.Popen[bytes] | subprocess.Popen[str]] = []
+
+    def spawn(
+        *args: Any, **kwargs: Any
+    ) -> subprocess.Popen[bytes] | subprocess.Popen[str]:
+        if owned:
+            raise OSError("second rank spawn refused")
+        process = original(*args, **kwargs)
+        owned.append(process)
+        return process
+
+    monkeypatch.setattr(launch_module.subprocess, "Popen", spawn)
+    with pytest.raises(OSError, match="second rank spawn refused"):
+        launch_local_processes(
+            (sys.executable, "-c", "import time; time.sleep(60)"),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210"),
+            timeout_seconds=10.0,
+        )
+    assert len(owned) == 1
+    assert owned[0].poll() is not None
+
+
+def _installed_site_mpi_launcher() -> tuple[str, ...]:
+    import importlib.util
+
+    if not sys.platform.startswith("linux"):
+        pytest.skip("authenticated local site MPI supervision requires Linux")
+    executable = os.environ.get("PHYDRAX_TEST_MPI_LAUNCHER")
+    if executable is None:
+        pytest.skip(
+            "requires explicit installed site Open MPI via PHYDRAX_TEST_MPI_LAUNCHER"
+        )
+    if not Path(executable).is_absolute() or not os.access(executable, os.X_OK):
+        pytest.fail(
+            "PHYDRAX_TEST_MPI_LAUNCHER must identify an installed absolute executable"
+        )
+    if importlib.util.find_spec("mpi4py") is None:
+        pytest.skip("requires mpi4py built against the selected site MPI")
+    flags = json.loads(os.environ.get("PHYDRAX_TEST_MPI_ARGUMENTS", "[]"))
+    if not isinstance(flags, list) or any(not isinstance(flag, str) for flag in flags):
+        pytest.fail(
+            "PHYDRAX_TEST_MPI_ARGUMENTS must be a JSON array of site launcher flags"
+        )
+    return (executable, *flags)
+
+
+def _site_mpi_test_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    environment.update(
+        PYTHONPATH=str(Path(__file__).parents[2]),
+        OMPI_ALLOW_RUN_AS_ROOT="1",
+        OMPI_ALLOW_RUN_AS_ROOT_CONFIRM="1",
+        OMP_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+    )
+    return environment
+
+
+def test_local_launcher_site_mpi_preserves_real_world_and_authenticates_workers() -> None:
+    mpi_launcher = _installed_site_mpi_launcher()
+    program = """
+import json, os
+import mpi4py
+mpi4py.rc.thread_level = "multiple"
+from mpi4py import MPI
+from phydrax._execution_launch import require_local_process_supervision
+world = MPI.COMM_WORLD
+supervisor = require_local_process_supervision()
+assert world.size == supervisor.num_processes == 2
+assert world.rank == supervisor.process_id
+assert int(os.environ["PHYDRAX_PROCESS_ID"]) == world.rank
+assert os.environ["PHYDRAX_LOCAL_DEVICE_IDS"] == str(world.rank)
+assert supervisor.parent_pid == os.getppid()
+assert supervisor.supervisor_pid != supervisor.parent_pid
+assert supervisor.pid == os.getpid() == os.getpgrp()
+supervisor.require_active(tuple(world.allgather(world.rank)), 1.0)
+print(json.dumps({"rank": world.rank, "size": world.size,
+                  "id": supervisor.supervisor_id,
+                  "parent": supervisor.parent_pid,
+                  "supervisor": supervisor.supervisor_pid}), flush=True)
+"""
+    results = launch_local_processes(
+        (sys.executable, "-c", program),
+        LocalProcessLaunchPlan(2, "127.0.0.1:43210", devices_per_process=1),
+        mpi_launcher=mpi_launcher,
+        environment=_site_mpi_test_environment(),
+        cwd=str(Path(__file__).parents[2]),
+        timeout_seconds=30.0,
+    )
+    reports = [json.loads(result.stdout) for result in results]
+    assert [result.returncode for result in results] == [0, 0]
+    assert [report["rank"] for report in reports] == [0, 1]
+    assert all(report["size"] == 2 for report in reports)
+    assert len({report["id"] for report in reports}) == 1
+    assert all(report["supervisor"] == os.getpid() for report in reports)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_local_launcher_site_mpi_couples_deadline_failure_and_descendants(
+    tmp_path: Path, failure: bool
+) -> None:
+    import time
+
+    from phydrax._execution_launch import LocalProcessLaunchError
+
+    mpi_launcher = _installed_site_mpi_launcher()
+    program = """
+import json, os, pathlib, subprocess, sys, time
+from mpi4py import MPI
+from phydrax._execution_launch import require_local_process_supervision
+world = MPI.COMM_WORLD
+supervisor = require_local_process_supervision()
+assert world.rank == supervisor.process_id and world.size == 2
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+pathlib.Path(sys.argv[1], str(world.rank)).write_text(
+    json.dumps({"pid": os.getpid(), "child": child.pid}))
+print("ready-" + str(world.rank), flush=True)
+world.Barrier()
+if sys.argv[2] == "fail" and world.rank == 0:
+    os._exit(7)
+time.sleep(60)
+"""
+    started = time.monotonic()
+    with pytest.raises(LocalProcessLaunchError) as captured:
+        launch_local_processes(
+            (sys.executable, "-c", program, str(tmp_path), "fail" if failure else "wait"),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210", devices_per_process=1),
+            mpi_launcher=mpi_launcher,
+            environment=_site_mpi_test_environment(),
+            cwd=str(Path(__file__).parents[2]),
+            timeout_seconds=20.0 if failure else 8.0,
+        )
+    error = captured.value
+    assert time.monotonic() - started < (15.0 if failure else 12.0)
+    assert error.timed_out is not failure
+    assert error.launcher_returncode is not None
+    assert error.launcher_returncode != 0
+    assert [result.process_id for result in error.results] == [0, 1]
+    assert all(result.returncode != 0 for result in error.results)
+    if failure:
+        assert error.results[0].returncode == 7
+    for rank, result in enumerate(error.results):
+        assert result.stdout == f"ready-{rank}\n".encode()
+        report = json.loads((tmp_path / str(rank)).read_text())
+        _assert_launcher_descendant_stopped(report["pid"])
+        _assert_launcher_descendant_stopped(report["child"])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX launcher admission")
+def test_local_launcher_rejects_implicit_mpi_executable_selection() -> None:
+    with pytest.raises(ValueError, match="explicit absolute executable"):
+        launch_local_processes(
+            (sys.executable, "-c", "raise AssertionError('must not start')"),
+            LocalProcessLaunchPlan(2, "127.0.0.1:43210", devices_per_process=1),
+            mpi_launcher=("mpiexec",),
+        )
+
+
+def test_local_launcher_mpi_bootstrap_import_is_stdlib_only() -> None:
+    root = Path(__file__).parents[2]
+    environment = dict(os.environ)
+    environment.update(OMPI_COMM_WORLD_SIZE="2", OMPI_COMM_WORLD_RANK="0")
+    result = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            "import runpy, sys; "
+            "runpy.run_path(sys.argv[1], run_name='mpi_bootstrap_import'); "
+            "assert 'phydrax' not in sys.modules; "
+            "assert 'jax' not in sys.modules",
+            str(root / "phydrax" / "_execution_launch.py"),
+        ),
+        env=environment,
+        capture_output=True,
+        check=False,
+        timeout=10.0,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+
+
+@pytest.mark.parametrize("monitor", [False, True])
+def test_local_launcher_mpi_bootstrap_excludes_script_directory_shadowing(
+    tmp_path: Path, monitor: bool
+) -> None:
+    from phydrax._execution_launch import _mpi_bootstrap_command
+
+    config_path = tmp_path / "bootstrap.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "num_processes": 2,
+                "coordinator_address": "127.0.0.1:43210",
+                "devices_per_process": 1,
+            }
+        )
+    )
+    environment = dict(os.environ)
+    environment.pop("OMPI_COMM_WORLD_SIZE", None)
+    environment.pop("OMPI_COMM_WORLD_RANK", None)
+    command = _mpi_bootstrap_command(str(config_path), monitor=monitor)
+    assert command[0] == sys.executable
+    assert command[1:3] == ("-I", "-S")
+    result = subprocess.run(
+        command,
+        env=environment,
+        capture_output=True,
+        check=False,
+        timeout=10.0,
+    )
+    assert result.returncode != 0
+    # The actual script must reach its closed rank-world validation without
+    # importing the adjacent phydrax.signal/typing modules as stdlib modules.
+    assert b"authoritative Open MPI rank world" in result.stderr
+    assert b"ImportError" not in result.stderr
+
+
+def test_local_launcher_error_exposes_bounded_stderr_without_losing_raw_status() -> None:
+    from phydrax._execution_launch import LocalProcessLaunchError, LocalProcessResult
+
+    rank_stderr = b"omitted-rank-prefix" + b"x" * 2100 + b"\nrank-root-cause\xff"
+    launcher_stderr = b"omitted-launcher-prefix" + b"y" * 2100 + b"\nMPI-root-cause"
+    results = (
+        LocalProcessResult(0, None, b"rank-output", rank_stderr),
+        LocalProcessResult(1, 7, b"", b"second-rank-root-cause"),
+    )
+    error = LocalProcessLaunchError(
+        results,
+        reason="MPI supervision failed",
+        launcher_returncode=13,
+        launcher_stdout=b"launcher-output",
+        launcher_stderr=launcher_stderr,
+        launcher_output_truncated=True,
+    )
+    message = str(error)
+    assert "rank 0 exited None" in message
+    assert "rank 1 exited 7" in message
+    assert "rank-root-cause\ufffd" in message
+    assert "second-rank-root-cause" in message
+    assert "MPI launcher exited 13 (output_truncated=True)" in message
+    assert "MPI-root-cause" in message
+    assert "last 2000 of" in message
+    assert "omitted-rank-prefix" not in message
+    assert "omitted-launcher-prefix" not in message
+    assert len(message) < 5000
+    assert error.results == results
+    assert error.results[0].stderr == rank_stderr
+    assert error.results[0].returncode is None
+    assert error.launcher_returncode == 13
+    assert error.launcher_stdout == b"launcher-output"
+    assert error.launcher_stderr == launcher_stderr

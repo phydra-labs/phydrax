@@ -23,23 +23,26 @@ from ...atomistic import AtomisticSystemPlan
 from ...ein import contract
 from ...linalg import (
     DenseLinearOperator,
-    DenseLU,
+    DenseSVD,
+    LeastSquaresProblem,
     LinearSolvePolicy,
-    LinearSystem,
     OperatorProperties,
+    RankPolicy,
     solve,
 )
 from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
 from ...nonlinear import Bisection, NonlinearTermination, scalar_root, ScalarRootProblem
 from ...operators.quantum.gaussian import (
+    CuestGeometry,
+    CuestIntegralPlan,
     electron_repulsion_tensor,
-    FactorizedERITensor,
     kinetic_matrix,
+    MolecularIntegralPlan,
     nuclear_attraction_matrix,
     nuclear_repulsion_energy,
     overlap_matrix,
-    PreparedDirectJK,
     PreparedGaussianBasis,
+    PreparedMolecularIntegrals,
 )
 from ...typing import checked
 from ...units import BOHR, conversion_factor, HARTREE
@@ -59,6 +62,7 @@ from ._mean_field import (
     SCFAccelerationPlan,
     SCFConvergenceEvidence,
     SCFConvergencePlan,
+    SCFDIISEvidence,
     SCFStabilityPlan,
     SCFStabilityResult,
     UnrestrictedMeanFieldState,
@@ -279,34 +283,83 @@ def _level_shift_fock(
     return fock + shift * overlap @ virtual_projector @ overlap
 
 
+class _SCFDIISSolveError(RuntimeError):
+    """Retain native failure/rank evidence rather than masking a DIIS failure."""
+
+    def __init__(self, evidence: SCFDIISEvidence, /) -> None:
+        self.evidence = evidence
+        native = evidence.linear_solve
+        super().__init__(
+            "SCF DIIS constrained least-squares failed: "
+            f"native_status={int(native.status)}, rank={int(native.diagnostics.rank)}, "
+            f"rank_cutoff={float(native.diagnostics.rank_cutoff)}, "
+            f"normal_residual={float(native.diagnostics.normal_residual_norm)}, "
+            f"constraint_residual={float(evidence.constraint_residual)}."
+        )
+
+
 def _diis_extrapolate(
     focks: list[Array], errors: list[Array], maximum_space: int, /
-) -> Array:
-    if len(focks) != len(errors) or len(focks) < 2:
+) -> tuple[Array, SCFDIISEvidence]:
+    """Minimize the error subject to sum(c)=1, with minimum-norm coefficients.
+
+    Helmert columns form an orthonormal basis for the affine constraint's
+    nullspace. Native SVD then solves E N y = -E c0 without a Gram matrix,
+    a singular bordered system, diagonal jitter, or a disabled DIIS phase.
+    Rank is measured relative to the original error scale, not cancellation
+    noise in the projected columns, and remains available in the evidence.
+    """
+    if len(focks) != len(errors) or len(focks) < 2 or maximum_space < 2:
         raise ValueError("DIIS requires at least two aligned Fock/error pairs.")
     focks_ = focks[-maximum_space:]
     errors_ = errors[-maximum_space:]
     count = len(focks_)
-    matrix = jnp.zeros((count + 1, count + 1), dtype=focks_[0].real.dtype)
-    for left in range(count):
-        for right in range(count):
-            matrix = matrix.at[left, right].set(
-                jnp.real(jnp.vdot(errors_[left], errors_[right]))
-            )
-    matrix = matrix.at[count, :count].set(-1.0)
-    matrix = matrix.at[:count, count].set(-1.0)
-    right = jnp.zeros((count + 1,), dtype=matrix.dtype).at[count].set(-1.0)
-    result = solve(
-        LinearSystem(DenseLinearOperator(matrix)),
-        right,
-        policy=LinearSolvePolicy(DenseLU()),
+    dtype = focks_[0].real.dtype
+    error_columns = jnp.stack(tuple(value.reshape(-1) for value in errors_), axis=1)
+    if jnp.issubdtype(error_columns.dtype, jnp.complexfloating):
+        error_columns = jnp.concatenate(
+            (jnp.real(error_columns), jnp.imag(error_columns)), axis=0
+        )
+    error_scale = jnp.max(jnp.abs(error_columns), initial=0.0)
+    normalized = error_columns / jnp.where(error_scale > 0.0, error_scale, 1.0)
+    rows = jnp.arange(count, dtype=jnp.int32)[:, None]
+    orders = jnp.arange(1, count, dtype=jnp.int32)[None, :]
+    orders_real = orders.astype(dtype)
+    denominator = jnp.sqrt(orders_real * (orders_real + 1.0))
+    nullspace = jnp.where(
+        rows < orders,
+        1.0 / denominator,
+        jnp.where(rows == orders, -orders_real / denominator, 0.0),
     )
-    if not bool(result.successful):
-        raise RuntimeError("SCF DIIS coefficient solve failed.")
-    return sum(
-        (result.value[index] * fock for index, fock in enumerate(focks_)),
+    initial = jnp.full((count,), 1.0 / count, dtype=dtype)
+    rank_cutoff = float(jnp.finfo(dtype).eps * max(normalized.shape[0], count))
+    result = solve(
+        LeastSquaresProblem(DenseLinearOperator(normalized @ nullspace)),
+        -(normalized @ initial),
+        policy=LinearSolvePolicy(
+            DenseSVD(),
+            rank=RankPolicy(
+                relative_cutoff=rank_cutoff,
+                absolute_cutoff=rank_cutoff,
+                require_full_rank=False,
+            ),
+        ),
+    )
+    coefficients = initial + nullspace @ result.value
+    constraint_residual = jnp.abs(jnp.sum(coefficients) - 1.0)
+    constraint_tolerance = (
+        jnp.finfo(dtype).eps * count * jnp.maximum(1.0, jnp.sum(jnp.abs(coefficients)))
+    )
+    evidence = SCFDIISEvidence(
+        coefficients, constraint_residual, constraint_tolerance, error_scale, result
+    )
+    if not bool(evidence.successful):
+        raise _SCFDIISSolveError(evidence)
+    fock = sum(
+        (coefficients[index] * value for index, value in enumerate(focks_)),
         start=jnp.zeros_like(focks_[0]),
     )
+    return fock, evidence
 
 
 class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
@@ -320,8 +373,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
     guess: InitialGuessPlan
     stability: SCFStabilityPlan
     linear_dependence_tolerance: float = eqx.field(static=True)
-    factorized_eri: FactorizedERITensor | None
-    direct_jk: PreparedDirectJK | None
+    integrals: MolecularIntegralPlan
+    prepared_integrals: PreparedMolecularIntegrals
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -339,8 +392,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         guess: InitialGuessPlan | None = None,
         stability: SCFStabilityPlan | None = None,
         linear_dependence_tolerance: float = 1.0e-9,
-        factorized_eri: FactorizedERITensor | None = None,
-        direct_jk: PreparedDirectJK | None = None,
+        integrals: MolecularIntegralPlan | None = None,
     ) -> None:
         if (
             not isinstance(basis, PreparedGaussianBasis)
@@ -398,15 +450,29 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         tolerance = float(linear_dependence_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("linear_dependence_tolerance must be positive finite.")
-        if factorized_eri is not None and direct_jk is not None:
-            raise ValueError("Choose at most one factorized or direct J/K route.")
-        if (
-            factorized_eri is not None
-            and factorized_eri.orbital_count != basis.basis_function_count
-        ):
-            raise ValueError("Factorized ERIs do not align with the Gaussian basis.")
-        if direct_jk is not None and direct_jk.basis.prepared_id != basis.prepared_id:
-            raise ValueError("Direct J/K plan belongs to another Gaussian basis.")
+        integrals_ = MolecularIntegralPlan() if integrals is None else integrals
+        if not isinstance(integrals_, MolecularIntegralPlan):
+            raise TypeError("integrals must be MolecularIntegralPlan.")
+        integrals_.validate_basis(basis)
+        if stability_.require_internal or stability_.require_external:
+            integrals_.require_exact("Orbital-Hessian stability")
+        if isinstance(integrals_.source, CuestIntegralPlan):
+            if system.cell is not None:
+                raise ValueError(
+                    "cuEST RHF requires a nonperiodic system without a cell."
+                )
+            if reference is not ElectronicReferenceKind.RESTRICTED:
+                raise NotImplementedError(
+                    "cuEST currently admits integer all-electron RHF only."
+                )
+            if occupation_.kind is not ElectronicOccupationKind.INTEGER:
+                raise NotImplementedError(
+                    "cuEST RHF requires integer ground-state occupations."
+                )
+            if not bool(np.all(np.asarray(system.active_mask))) or not bool(
+                np.all(np.asarray(system.element_mask))
+            ):
+                raise ValueError("cuEST RHF requires an unpadded all-element system.")
         self.system = system
         self.basis = basis
         self.sector = sector_
@@ -417,8 +483,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         self.guess = guess_
         self.stability = stability_
         self.linear_dependence_tolerance = tolerance
-        self.factorized_eri = factorized_eri
-        self.direct_jk = direct_jk
+        self.integrals = integrals_
+        self.prepared_integrals = integrals_.prepare(basis)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "molecular-hartree-fock-plan",
@@ -432,46 +498,38 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 "guess": guess_.plan_id,
                 "stability": stability_.plan_id,
                 "linear_dependence_tolerance": tolerance,
-                "factorized_eri": None
-                if factorized_eri is None
-                else factorized_eri.tensor_id,
-                "direct_jk": None if direct_jk is None else direct_jk.prepared_id,
+                "integrals": self.prepared_integrals.definition_id,
             }
         )
 
-    def _integrals(self, positions: Array, /) -> tuple[Array, Array, Array, Array | None]:
+    def _integrals(
+        self, positions: Array, /, *, geometry: CuestGeometry | None = None
+    ) -> tuple[Array, Array, Array, Array | None]:
         charges = jnp.asarray(self.system.atomic_numbers, dtype=positions.dtype)
-        overlap = overlap_matrix(self.basis, positions)
-        core = kinetic_matrix(self.basis, positions) + nuclear_attraction_matrix(
-            self.basis, positions, charges
+        one = (
+            self.prepared_integrals.one_electron(positions, charges)
+            if geometry is None
+            else geometry.one_electron()
         )
-        nuclear = nuclear_repulsion_energy(positions, charges)
-        dense = (
-            electron_repulsion_tensor(self.basis, positions)
-            if self.factorized_eri is None and self.direct_jk is None
-            else None
-        )
-        return overlap, core, nuclear, dense
+        dense = self.prepared_integrals.dense_tensor(positions)
+        return one.overlap, one.core_hamiltonian, one.nuclear_repulsion, dense
 
     def _jk(
-        self, positions: Array, density: Array, dense: Array | None, /
+        self,
+        positions: Array,
+        density: Array,
+        dense: Array | None,
+        /,
+        *,
+        factors: Array | None = None,
+        geometry: CuestGeometry | None = None,
     ) -> tuple[Array, Array, Array]:
-        if self.factorized_eri is not None:
-            return (
-                self.factorized_eri.coulomb(density),
-                self.factorized_eri.exchange(density),
-                jnp.asarray(True),
-            )
-        if self.direct_jk is not None:
-            result = self.direct_jk.evaluate(positions, density)
-            return result.coulomb, result.exchange, result.successful
-        if dense is None:
-            raise RuntimeError("Dense ERIs are unexpectedly absent.")
-        return (
-            contract("cd,abcd->ab", density, dense),
-            contract("cd,acbd->ab", density, dense),
-            jnp.asarray(True),
+        result = (
+            self.prepared_integrals.jk(positions, density, dense, factors=factors)
+            if geometry is None
+            else geometry.jk(density, factors=factors)
         )
+        return result.coulomb, result.exchange, result.successful
 
     def _initial_coefficients(
         self,
@@ -528,9 +586,24 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         *,
         initial_guess: ElectronicInitialGuessState | None = None,
     ) -> MeanFieldState:
+        state, _ = self._solve_with_geometry(positions, initial_guess=initial_guess)
+        return state
+
+    def _solve_with_geometry(
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        initial_guess: ElectronicInitialGuessState | None = None,
+    ) -> tuple[MeanFieldState, CuestGeometry | None]:
+        """Keep a bound integral lease local to one solve/force workflow."""
         coordinate = jnp.asarray(positions)
         guess_density = self._validated_initial_guess(initial_guess)
-        overlap, core, nuclear, dense = self._integrals(coordinate)
+        geometry = None
+        if self.prepared_integrals.vendor is not None:
+            charges = jnp.asarray(self.system.atomic_numbers, dtype=coordinate.dtype)
+            geometry = self.prepared_integrals.vendor.bind_geometry(coordinate, charges)
+        overlap, core, nuclear, dense = self._integrals(coordinate, geometry=geometry)
         orthogonalizer, _ = _orthogonalizer(overlap, self.linear_dependence_tolerance)
         if self.reference is ElectronicReferenceKind.RESTRICTED:
             state = self._solve_restricted(
@@ -541,9 +614,10 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 dense,
                 orthogonalizer,
                 guess_density,
+                geometry=geometry,
             )
             if not (self.stability.require_internal or self.stability.require_external):
-                return state
+                return state, geometry
             stability = self.stability_analysis(coordinate, state)
             stable = (
                 stability.successful
@@ -567,6 +641,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 stable,
                 state.evidence.finite,
                 state.evidence.plan_id,
+                diis=state.evidence.diis,
             )
             return RestrictedMeanFieldState(
                 state.density,
@@ -582,7 +657,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 evidence,
                 state.owner_id,
                 reference=state.reference,
-            )
+                integral_definition_id=state.integral_definition_id,
+            ), geometry
         if self.reference is ElectronicReferenceKind.UNRESTRICTED:
             return self._solve_unrestricted(
                 coordinate,
@@ -592,7 +668,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 dense,
                 orthogonalizer,
                 guess_density,
-            )
+            ), geometry
         if self.reference is ElectronicReferenceKind.RESTRICTED_OPEN_SHELL:
             return self._solve_rohf(
                 coordinate,
@@ -602,7 +678,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 dense,
                 orthogonalizer,
                 guess_density,
-            )
+            ), geometry
         return self._solve_generalized(
             coordinate,
             overlap,
@@ -611,7 +687,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             dense,
             orthogonalizer,
             guess_density,
-        )
+        ), geometry
 
     def _solve_restricted(
         self,
@@ -622,20 +698,32 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         dense: Array | None,
         orthogonalizer: Array,
         guess_density: Array | None,
+        *,
+        geometry: CuestGeometry | None = None,
     ) -> RestrictedMeanFieldState:
         energies, coefficients = self._initial_coefficients(core, overlap, orthogonalizer)
         occupations, _, entropy = _occupations(
             self.occupations, energies, self.sector.electron_count, 2.0
         )
         density = _density(coefficients, occupations)
+        density_factors = (
+            jnp.sqrt(occupations[: self.sector.alpha_electron_count])[:, None]
+            * coefficients[:, : self.sector.alpha_electron_count].T
+            if self.prepared_integrals.vendor is not None
+            else None
+        )
         if guess_density is not None:
             if guess_density.shape != density.shape:
                 raise ValueError("Restricted initial density has the wrong shape.")
             density = jnp.asarray(guess_density, dtype=density.dtype)
+            density_factors = None
         elif self.guess.kind is InitialGuessKind.ZERO:
             density = jnp.zeros_like(density)
+            if self.prepared_integrals.vendor is not None:
+                density_factors = jnp.zeros((0, density.shape[0]), dtype=density.dtype)
         previous_energy = jnp.asarray(jnp.inf, dtype=core.real.dtype)
         fock_history: list[Array] = []
+        diis_evidence: SCFDIISEvidence | None = None
         error_history: list[Array] = []
         energy_residual = density_residual = commutator_residual = jnp.asarray(
             jnp.inf, dtype=core.real.dtype
@@ -646,7 +734,9 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         fock = core
         completed = 0
         for iteration in range(self.convergence.maximum_iterations):
-            coulomb, exchange, jk_success = self._jk(positions, density, dense)
+            coulomb, exchange, jk_success = self._jk(
+                positions, density, dense, factors=density_factors, geometry=geometry
+            )
             fock = core + coulomb - 0.5 * exchange
             error = fock @ density @ overlap - overlap @ density @ fock
             fock_history.append(fock)
@@ -657,7 +747,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 and iteration >= self.acceleration.diis_start
                 and len(fock_history) >= 2
             ):
-                diagonal_fock = _diis_extrapolate(
+                diagonal_fock, diis_evidence = _diis_extrapolate(
                     fock_history, error_history, self.acceleration.diis_space
                 )
             diagonal_fock = _level_shift_fock(
@@ -682,6 +772,12 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 2.0,
             )
             proposed = _density(coefficients, occupations)
+            proposed_factors = (
+                jnp.sqrt(occupations[: self.sector.alpha_electron_count])[:, None]
+                * coefficients[:, : self.sector.alpha_electron_count].T
+                if self.prepared_integrals.vendor is not None
+                else None
+            )
             mixed = (
                 self.acceleration.damping * density
                 + (1.0 - self.acceleration.damping) * proposed
@@ -689,16 +785,37 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 and iteration < self.acceleration.diis_start
                 else proposed
             )
-            coulomb_new, exchange_new, new_success = self._jk(positions, mixed, dense)
+            if (
+                SCFAccelerationKind.DAMPING in self.acceleration.schedule
+                and iteration < self.acceleration.diis_start
+            ):
+                mixed_factors = (
+                    jnp.concatenate(
+                        (
+                            jnp.sqrt(self.acceleration.damping) * density_factors,
+                            jnp.sqrt(1.0 - self.acceleration.damping) * proposed_factors,
+                        ),
+                        axis=0,
+                    )
+                    if density_factors is not None and proposed_factors is not None
+                    else None
+                )
+            else:
+                mixed_factors = proposed_factors
+            coulomb_new, exchange_new, new_success = self._jk(
+                positions, mixed, dense, factors=mixed_factors, geometry=geometry
+            )
             electronic = contract("ab,ab->", mixed, core) + 0.5 * contract(
                 "ab,ab->", mixed, coulomb_new - 0.5 * exchange_new
             )
             total = electronic + nuclear
             energy_residual = jnp.abs(total - previous_energy)
             density_residual = jnp.max(jnp.abs(mixed - density), initial=0.0)
+            fock = core + coulomb_new - 0.5 * exchange_new
             commutator_residual = _commutator_norm(fock, mixed, overlap)
             finite = finite & jk_success & new_success & jnp.isfinite(total)
             density = mixed
+            density_factors = mixed_factors
             previous_energy = total
             completed = iteration + 1
             if bool(
@@ -709,6 +826,20 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             ):
                 converged = True
                 break
+        coulomb, exchange, final_success = self._jk(
+            positions, density, dense, factors=density_factors, geometry=geometry
+        )
+        fock = core + coulomb - 0.5 * exchange
+        energies = jnp.real(jnp.diag(jnp.conj(coefficients.T) @ fock @ coefficients))
+        commutator_residual = _commutator_norm(fock, density, overlap)
+        electronic = jnp.real(
+            contract("ab,ab->", density, core)
+            + 0.5 * contract("ab,ab->", density, coulomb - 0.5 * exchange)
+        )
+        finite = finite & final_success & jnp.isfinite(electronic)
+        converged = converged and bool(
+            finite & (commutator_residual <= self.convergence.commutator_tolerance)
+        )
         electron_residual = jnp.abs(
             jnp.real(contract("ab,ba->", density, overlap)) - self.sector.electron_count
         )
@@ -724,6 +855,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             jnp.asarray(stable),
             finite,
             self.convergence.plan_id,
+            diis=diis_evidence,
         )
         free = electronic + nuclear - self.occupations.smearing_energy * entropy
         return RestrictedMeanFieldState(
@@ -739,6 +871,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             free,
             evidence,
             mean_field_owner_id(self.plan_id, positions),
+            integral_definition_id=self.prepared_integrals.definition_id,
         )
 
     def _solve_unrestricted(
@@ -775,6 +908,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             beta_density = jnp.zeros_like(beta_density)
         previous_energy = jnp.asarray(jnp.inf, dtype=core.real.dtype)
         fock_history: list[Array] = []
+        diis_evidence: SCFDIISEvidence | None = None
         error_history: list[Array] = []
         energy_residual = density_residual = commutator_residual = jnp.asarray(
             jnp.inf, dtype=core.real.dtype
@@ -813,7 +947,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 and iteration >= self.acceleration.diis_start
                 and len(fock_history) >= 2
             ):
-                extrapolated = _diis_extrapolate(
+                extrapolated, diis_evidence = _diis_extrapolate(
                     fock_history, error_history, self.acceleration.diis_space
                 )
                 count = core.shape[0]
@@ -944,6 +1078,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             jnp.asarray(stable),
             finite,
             self.convergence.plan_id,
+            diis=diis_evidence,
         )
         entropy = alpha_entropy + beta_entropy
         free = electronic + nuclear - self.occupations.smearing_energy * entropy
@@ -965,6 +1100,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             free,
             evidence,
             mean_field_owner_id(self.plan_id, positions),
+            integral_definition_id=self.prepared_integrals.definition_id,
         )
 
     def _solve_rohf(
@@ -1007,6 +1143,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             jnp.inf, dtype=core.real.dtype
         )
         fock_history: list[Array] = []
+        diis_evidence: SCFDIISEvidence | None = None
         error_history: list[Array] = []
         electronic = jnp.asarray(jnp.nan, dtype=core.real.dtype)
         alpha_fock = beta_fock = core
@@ -1054,7 +1191,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 and iteration >= self.acceleration.diis_start
                 and len(fock_history) >= 2
             ):
-                effective = _diis_extrapolate(
+                effective, diis_evidence = _diis_extrapolate(
                     fock_history, error_history, self.acceleration.diis_space
                 )
             effective = _level_shift_fock(
@@ -1151,6 +1288,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             ),
             finite,
             self.convergence.plan_id,
+            diis=diis_evidence,
         )
         return UnrestrictedMeanFieldState(
             alpha_density,
@@ -1171,6 +1309,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             evidence,
             mean_field_owner_id(self.plan_id, positions),
             reference=ElectronicReferenceKind.RESTRICTED_OPEN_SHELL,
+            integral_definition_id=self.prepared_integrals.definition_id,
         )
 
     def _solve_generalized(
@@ -1229,6 +1368,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         electronic = jnp.asarray(jnp.nan, dtype=core.real.dtype)
         completed = 0
         fock_history: list[Array] = []
+        diis_evidence: SCFDIISEvidence | None = None
         error_history: list[Array] = []
         for iteration in range(self.convergence.maximum_iterations):
             blocks = density.reshape((2, count, 2, count)).transpose((0, 2, 1, 3))
@@ -1260,7 +1400,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 and iteration >= self.acceleration.diis_start
                 and len(fock_history) >= 2
             ):
-                diagonal_fock = _diis_extrapolate(
+                diagonal_fock, diis_evidence = _diis_extrapolate(
                     fock_history, error_history, self.acceleration.diis_space
                 )
             diagonal_fock = _level_shift_fock(
@@ -1327,6 +1467,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             ),
             finite,
             self.convergence.plan_id,
+            diis=diis_evidence,
         )
         return GeneralizedMeanFieldState(
             density,
@@ -1339,6 +1480,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             electronic + nuclear,
             evidence,
             mean_field_owner_id(self.plan_id, positions),
+            integral_definition_id=self.prepared_integrals.definition_id,
         )
 
     def stability_analysis(
@@ -1355,6 +1497,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             raise ValueError("Stability state belongs to another HF plan or geometry.")
         if self.occupations.kind is not ElectronicOccupationKind.INTEGER:
             raise ValueError("Orbital-Hessian stability requires integer occupations.")
+        self.integrals.require_exact("Orbital-Hessian stability")
         coordinate = jnp.asarray(positions)
         charges = jnp.asarray(self.system.atomic_numbers, dtype=coordinate.dtype)
         core = kinetic_matrix(self.basis, coordinate) + nuclear_attraction_matrix(
@@ -1445,14 +1588,63 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
     def analytic_gradient_atomic_units(
         self, positions: ArrayLike, state: MeanFieldState, /
     ) -> MolecularGradientResult:
-        coordinate = jnp.asarray(positions)
+        return self._gradient_at_geometry(jnp.asarray(positions), state, None)
+
+    def _gradient_at_geometry(
+        self, coordinate: Array, state: MeanFieldState, geometry: CuestGeometry | None, /
+    ) -> MolecularGradientResult:
         if state.owner_id != mean_field_owner_id(self.plan_id, coordinate):
             raise ValueError("Gradient state belongs to another HF plan or geometry.")
         if isinstance(state, GeneralizedMeanFieldState):
             raise ValueError(
                 "GHF analytic gradients require spinor response and are not admitted."
             )
+        if self.prepared_integrals.vendor is None:
+            self.integrals.require_exact("Analytic nuclear gradients")
+        if state.integral_definition_id != self.prepared_integrals.definition_id:
+            raise ValueError("Gradient state has a different integral definition.")
+        if self.occupations.kind is not ElectronicOccupationKind.INTEGER:
+            raise NotImplementedError(
+                "Conservative nuclear forces require integer ground-state occupations."
+            )
         charges = jnp.asarray(self.system.atomic_numbers, dtype=coordinate.dtype)
+        if self.prepared_integrals.vendor is not None:
+            if not isinstance(state, RestrictedMeanFieldState):
+                raise NotImplementedError(
+                    "cuEST contracted gradients currently require RHF."
+                )
+            energy_weighted = contract(
+                "pi,i,qi->pq",
+                state.coefficients,
+                state.occupations * state.orbital_energies,
+                jnp.conj(state.coefficients),
+            )
+            if geometry is None:
+                geometry = self.prepared_integrals.vendor.bind_geometry(
+                    coordinate, charges
+                )
+            elif geometry.prepared.definition_id != self.prepared_integrals.definition_id:
+                raise ValueError("Force binding belongs to another integral definition.")
+            if geometry.positions is not coordinate and not bool(
+                jnp.array_equal(geometry.positions, coordinate)
+            ):
+                raise ValueError("Force binding belongs to another geometry.")
+            one, two, pulay, integral_success = geometry.gradient(
+                state.density,
+                energy_weighted,
+                factors=(
+                    jnp.sqrt(state.occupations[: self.sector.alpha_electron_count])[
+                        :, None
+                    ]
+                    * state.coefficients[:, : self.sector.alpha_electron_count].T
+                ),
+            )
+            derivative_nuclear = jax.jacfwd(
+                lambda value: nuclear_repulsion_energy(value, charges)
+            )(coordinate)
+            return self._gradient_result(
+                state, one, two, pulay, derivative_nuclear, integral_success
+            )
         derivative_overlap = jax.jacfwd(lambda value: overlap_matrix(self.basis, value))(
             coordinate
         )
@@ -1504,8 +1696,81 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             )
             two = coulomb + exchange
         pulay = -contract("ab,abNx->Nx", energy_weighted, derivative_overlap)
+        return self._gradient_result(
+            state, one, two, pulay, derivative_nuclear, jnp.asarray(True)
+        )
+
+    def _gradient_result(
+        self,
+        state: RestrictedMeanFieldState | UnrestrictedMeanFieldState,
+        one: Array,
+        two: Array,
+        pulay: Array,
+        derivative_nuclear: Array,
+        integral_success: Array,
+        /,
+    ) -> MolecularGradientResult:
         gradient = jnp.real(one + two + pulay + derivative_nuclear)
-        finite = state.evidence.converged & jnp.all(jnp.isfinite(gradient))
+        if isinstance(state, RestrictedMeanFieldState):
+            reconstructed = _density(state.coefficients, state.occupations)
+            stationary = (
+                (
+                    jnp.max(jnp.abs(reconstructed - state.density), initial=0.0)
+                    <= self.convergence.density_tolerance
+                )
+                & (
+                    _commutator_norm(state.fock, state.density, state.overlap)
+                    <= self.convergence.commutator_tolerance
+                )
+                & (
+                    jnp.max(
+                        jnp.abs(
+                            state.fock @ state.coefficients
+                            - (state.overlap @ state.coefficients)
+                            * state.orbital_energies[None, :]
+                        ),
+                        initial=0.0,
+                    )
+                    <= self.convergence.commutator_tolerance
+                )
+            )
+        else:
+            stationary = (
+                (
+                    jnp.max(
+                        jnp.abs(
+                            _density(state.alpha_coefficients, state.alpha_occupations)
+                            - state.alpha_density
+                        ),
+                        initial=0.0,
+                    )
+                    <= self.convergence.density_tolerance
+                )
+                & (
+                    jnp.max(
+                        jnp.abs(
+                            _density(state.beta_coefficients, state.beta_occupations)
+                            - state.beta_density
+                        ),
+                        initial=0.0,
+                    )
+                    <= self.convergence.density_tolerance
+                )
+                & (
+                    _commutator_norm(state.alpha_fock, state.alpha_density, state.overlap)
+                    <= self.convergence.commutator_tolerance
+                )
+                & (
+                    _commutator_norm(state.beta_fock, state.beta_density, state.overlap)
+                    <= self.convergence.commutator_tolerance
+                )
+            )
+        finite = (
+            state.evidence.successful
+            & stationary
+            & integral_success
+            & jnp.all(jnp.isfinite(gradient))
+        )
         return MolecularGradientResult(
             gradient,
             -gradient,
@@ -1527,8 +1792,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             conversion_factor(HARTREE, self.system.units.scale.energy_unit)
         )
         coordinate_bohr = coordinate * length_to_bohr
-        state = self.solve_atomic_units(coordinate_bohr)
-        gradient = self.analytic_gradient_atomic_units(coordinate_bohr, state)
+        state, geometry = self._solve_with_geometry(coordinate_bohr)
+        gradient = self._gradient_at_geometry(coordinate_bohr, state, geometry)
         force_factor = energy_from_hartree * length_to_bohr
         return state, gradient.forces * force_factor
 

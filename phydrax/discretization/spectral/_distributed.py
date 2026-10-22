@@ -15,21 +15,31 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import Tracer
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 
+from ..._execution_collectives import CollectiveBinding, require_collective_lease
+from ..._execution_device import device_platform
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_context import inside_jax_transformation
 from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
 from ...typing import checked, parse
+from ._cudecomp import (
+    CudecompTransposeEvidence,
+    prepare_cudecomp_execution,
+    PreparedCudecompExecution,
+)
 from ._precision import SpectralPrecisionPolicy
 
 
 SpectralSchedule: TypeAlias = Literal["slab", "pencil", "channel"]
 SpectralRepresentation: TypeAlias = Literal["physical", "modal"]
+SpectralTransposeProvider: TypeAlias = Literal["native", "cudecomp"]
 _SpectralStageOperation: TypeAlias = Literal["fft", "transpose"]
 type _SpectralTransposePacking = Literal["direct", "pencil-to-slab", "slab-to-pencil"]
 
@@ -39,6 +49,9 @@ class _ForwardedPlanOptions(TypedDict, total=False):
     state_shape: Sequence[int]
     maximum_bytes: int
     horizontal_axes: Sequence[int]
+    transpose_provider: SpectralTransposeProvider
+    collective_binding: CollectiveBinding | None
+    maximum_external_scratch_bytes: int
 
 
 class _FromDiscretizationOptions(_ForwardedPlanOptions, total=False):
@@ -235,7 +248,7 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
     def require_available(self, /) -> None:
         available = {
             (device.platform, int(device.process_index), int(device.id))
-            for device in jax.devices()
+            for device in jax.devices(self.platform)
         }
         missing = tuple(
             key
@@ -851,6 +864,10 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
     collective_payload_bytes: int = eqx.field(static=True)
     peak_live_bytes: int = eqx.field(static=True)
     maximum_bytes: int = eqx.field(static=True)
+    transpose_packing_bytes: int = eqx.field(static=True)
+    external_device_scratch_bytes: int = eqx.field(static=True)
+    external_resident_device_bytes: int | None = eqx.field(static=True)
+    external_host_bytes: int | None = eqx.field(static=True)
     accepted: bool = eqx.field(static=True)
     reasons: tuple[str, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
@@ -865,6 +882,10 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
         peak_live_bytes: int,
         maximum_bytes: int,
         reasons: Sequence[str] = (),
+        transpose_packing_bytes: int = 0,
+        external_device_scratch_bytes: int = 0,
+        external_resident_device_bytes: int | None = 0,
+        external_host_bytes: int | None = 0,
     ) -> None:
         (
             canonical,
@@ -880,6 +901,19 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
             index(peak_live_bytes),
         )
         maximum = index(maximum_bytes)
+        packing = index(transpose_packing_bytes)
+        external_scratch = index(external_device_scratch_bytes)
+        if packing < 0 or external_scratch < 0:
+            raise ValueError(
+                "Transpose packing and external scratch bytes must be nonnegative."
+            )
+        if any(
+            value is not None and value < 0
+            for value in (external_resident_device_bytes, external_host_bytes)
+        ):
+            raise ValueError(
+                "External storage bytes must be nonnegative or explicitly unknown."
+            )
         if (
             any(value < 0 for value in (canonical, padded, workspace, collective, peak))
             or maximum <= 0
@@ -887,10 +921,10 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
             raise ValueError(
                 "Spectral resource byte counts must be non-negative and bounded."
             )
-        if peak != 2 * padded + workspace:
+        if peak != 2 * padded + workspace + external_scratch:
             raise ValueError(
-                "peak_live_bytes must count one source, one target, and one "
-                "transform workspace buffer."
+                "peak_live_bytes must count source, target, transform workspace, "
+                "and known retained external scratch."
             )
         reasons_ = tuple(str(reason) for reason in reasons)
         if any(not reason for reason in reasons_):
@@ -905,6 +939,10 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
         self.peak_live_bytes = peak
         self.maximum_bytes = maximum
         self.accepted = accepted
+        self.transpose_packing_bytes = packing
+        self.external_device_scratch_bytes = external_scratch
+        self.external_resident_device_bytes = external_resident_device_bytes
+        self.external_host_bytes = external_host_bytes
         self.reasons = reasons_
         self.report_id = canonical_fingerprint(
             {
@@ -917,6 +955,10 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
                 "maximum_bytes": maximum,
                 "accepted": accepted,
                 "reasons": list(reasons_),
+                "transpose_packing_bytes": packing,
+                "external_device_scratch_bytes": external_scratch,
+                "external_resident_device_bytes": external_resident_device_bytes,
+                "external_host_bytes": external_host_bytes,
             }
         )
 
@@ -1015,6 +1057,91 @@ def _prepare_fft_resource(
     return resource, collective_count, collective_payload
 
 
+def _with_cudecomp_storage(
+    resource: SpectralResourceReport,
+    packing_bytes: int,
+    external_scratch_bytes: int,
+    *,
+    reasons: tuple[str, ...] = (),
+) -> SpectralResourceReport:
+    return SpectralResourceReport(
+        canonical_storage_bytes=resource.canonical_storage_bytes,
+        padded_storage_bytes=resource.padded_storage_bytes,
+        transform_workspace_bytes=resource.transform_workspace_bytes + packing_bytes,
+        collective_payload_bytes=resource.collective_payload_bytes,
+        peak_live_bytes=resource.peak_live_bytes + packing_bytes + external_scratch_bytes,
+        maximum_bytes=resource.maximum_bytes,
+        transpose_packing_bytes=packing_bytes,
+        external_device_scratch_bytes=external_scratch_bytes,
+        external_resident_device_bytes=None,
+        external_host_bytes=None,
+        reasons=(*resource.reasons, *reasons),
+    )
+
+
+def _prepare_cudecomp_transpose(
+    binding: CollectiveBinding,
+    topology: SpectralMeshTopology,
+    shape: tuple[int, ...],
+    padded: tuple[int, ...],
+    precision: SpectralPrecisionPolicy,
+    admitted: tuple[tuple[int, ...], ...],
+    resource: SpectralResourceReport,
+    maximum_external_scratch_bytes: int,
+    sequence_ids: tuple[str, str, str, str],
+) -> tuple[
+    PreparedCudecompExecution,
+    SpectralResourceReport,
+    tuple[str, str, str, str],
+]:
+    payload_elements = max(prod(payload) for payload in admitted)
+    packing = (
+        2 * prod(padded) * payload_elements * np.dtype(precision.transform_dtype).itemsize
+        if payload_elements > 1
+        else 0
+    )
+    available = resource.maximum_bytes - resource.peak_live_bytes - packing
+    scratch_limit = min(
+        maximum_external_scratch_bytes, available // topology.device_count
+    )
+    if scratch_limit <= 0:
+        raise SpectralResourceError(
+            _with_cudecomp_storage(
+                resource,
+                packing,
+                0,
+                reasons=(
+                    "no byte budget remains for required positive cuDecomp scratch",
+                ),
+            )
+        )
+    execution = prepare_cudecomp_execution(
+        binding,
+        shape,
+        padded,
+        topology.mesh,
+        np.dtype(precision.transform_dtype),
+        scratch_limit,
+    )
+    external_scratch = (
+        topology.device_count * execution.evidence.external_device_scratch_bytes_per_rank
+    )
+    resource = _with_cudecomp_storage(resource, packing, external_scratch)
+    if not resource.accepted:
+        raise SpectralResourceError(resource)
+    forward, inverse, padded_forward, padded_inverse = (
+        canonical_fingerprint(
+            {
+                "kind": "provider-bound-spectral-sequence",
+                "native_sequence": sequence_id,
+                "transpose_execution": execution.evidence.execution_id,
+            }
+        )
+        for sequence_id in sequence_ids
+    )
+    return execution, resource, (forward, inverse, padded_forward, padded_inverse)
+
+
 def _plan_identities(
     owner: str,
     topology: SpectralMeshTopology,
@@ -1031,6 +1158,8 @@ def _plan_identities(
     trailing: tuple[int, ...],
     resource: SpectralResourceReport,
     sequence_ids: tuple[str, str, str, str],
+    transpose_provider: SpectralTransposeProvider,
+    maximum_external_scratch_bytes: int,
     /,
 ) -> tuple[str, str, str, str]:
     transform_families = (
@@ -1062,6 +1191,8 @@ def _plan_identities(
             "numerical": numerical_id,
             "topology": topology.topology_id,
             "schedule": schedule,
+            "transpose_provider": transpose_provider,
+            "maximum_external_scratch_bytes": maximum_external_scratch_bytes,
             "layouts": [
                 layouts.physical.layout_id,
                 layouts.modal.layout_id,
@@ -1102,6 +1233,8 @@ class DistributedSpectralPreparationReport(StrictModule, NonTrainableState):
     execution_id: str = eqx.field(static=True)
     precision_policy_id: str = eqx.field(static=True)
     schedule: SpectralSchedule = eqx.field(static=True)
+    transpose_provider: SpectralTransposeProvider = eqx.field(static=True)
+    transpose_evidence: CudecompTransposeEvidence | None
     spatial_shape: tuple[int, ...] = eqx.field(static=True)
     padded_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -1156,6 +1289,9 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     admitted_payload_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     schedule: SpectralSchedule = eqx.field(static=True)
+    transpose_provider: SpectralTransposeProvider = eqx.field(static=True)
+    maximum_external_scratch_bytes: int = eqx.field(static=True)
+    _cudecomp_execution: PreparedCudecompExecution | None
     physical_layout: SpectralLayout
     modal_layout: SpectralLayout
     padded_physical_layout: SpectralLayout
@@ -1191,6 +1327,9 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         padded_transform_scale: float | None = None,
         maximum_bytes: int = 2 * 1024**3,
         horizontal_axes: Sequence[int] = (0, 2),
+        transpose_provider: SpectralTransposeProvider = "native",
+        collective_binding: CollectiveBinding | None = None,
+        maximum_external_scratch_bytes: int = 256 * 1024**2,
     ) -> None:
         owner = canonical_identifier(owner_id, "owner_id")
         precision_ = (
@@ -1239,6 +1378,31 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         maximum = index(maximum_bytes)
         if maximum <= 0:
             raise ValueError("maximum_bytes must be positive.")
+        provider = parse(
+            transpose_provider, SpectralTransposeProvider, "transpose_provider"
+        )
+        external_maximum = index(maximum_external_scratch_bytes)
+        if external_maximum <= 0:
+            raise ValueError("maximum_external_scratch_bytes must be positive.")
+        cudecomp_binding = None
+        if provider == "native" and collective_binding is not None:
+            raise ValueError(
+                "Native spectral transposes do not consume a collective binding."
+            )
+        if provider == "cudecomp":
+            if schedule_ != "slab" or len(shape) != 3 or len(topology.mesh_shape) != 1:
+                raise ValueError(
+                    "cuDecomp supports canonical direct three-dimensional slabs only; no pencil fallback."
+                )
+            if not isinstance(collective_binding, CollectiveBinding):
+                raise TypeError("cuDecomp requires an explicit CollectiveBinding.")
+            cudecomp_binding = collective_binding
+            if any(
+                device_platform(device) != "cuda" for device in topology.mesh.devices.flat
+            ):
+                raise ValueError(
+                    "cuDecomp requires CUDA devices on every participating rank."
+                )
         layouts = _prepare_layouts(
             topology,
             shape,
@@ -1257,12 +1421,6 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         padded_inverse = layouts.padded_inverse
         horizontal = layouts.horizontal_axes
         sequence_ids = _sequence_ids(layouts, precision_, scale, padded_scale)
-        (
-            forward_id,
-            inverse_id,
-            padded_forward_id,
-            padded_inverse_id,
-        ) = sequence_ids
         resource, collective_count, collective_payload = _prepare_fft_resource(
             shape,
             padded,
@@ -1274,6 +1432,21 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         )
         if not resource.accepted:
             raise SpectralResourceError(resource)
+        cudecomp_execution = None
+        if cudecomp_binding is not None:
+            cudecomp_execution, resource, sequence_ids = _prepare_cudecomp_transpose(
+                cudecomp_binding,
+                topology,
+                shape,
+                padded,
+                precision_,
+                admitted,
+                resource,
+                external_maximum,
+                sequence_ids,
+            )
+        forward_id, inverse_id, padded_forward_id, padded_inverse_id = sequence_ids
+        sequence_ids = (forward_id, inverse_id, padded_forward_id, padded_inverse_id)
         numerical_id, execution_id, plan_id, report_id = _plan_identities(
             owner,
             topology,
@@ -1290,6 +1463,8 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             trailing,
             resource,
             sequence_ids,
+            provider,
+            external_maximum,
         )
         self.topology = topology
         self.owner_id = owner
@@ -1299,6 +1474,9 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         self.state_shape = trailing
         self.admitted_payload_shapes = admitted
         self.schedule = schedule_
+        self.transpose_provider = provider
+        self.maximum_external_scratch_bytes = external_maximum
+        self._cudecomp_execution = cudecomp_execution
         self.physical_layout = physical
         self.modal_layout = modal
         self.padded_physical_layout = padded_physical
@@ -1320,6 +1498,10 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             execution_id=execution_id,
             precision_policy_id=precision_.policy_id,
             schedule=schedule_,
+            transpose_provider=provider,
+            transpose_evidence=None
+            if cudecomp_execution is None
+            else cudecomp_execution.evidence,
             spatial_shape=shape,
             padded_shape=padded,
             state_shape=trailing,
@@ -1393,9 +1575,48 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             **forwarded,
         )
 
+    @property
+    def collective_binding(self) -> CollectiveBinding | None:
+        return (
+            None if self._cudecomp_execution is None else self._cudecomp_execution.binding
+        )
+
     def prepare(self, /) -> "DistributedSpectralExecutionPlan":
         self.topology.require_available()
-        return self
+        binding = self.collective_binding
+        if binding is None:
+            return self
+        if (
+            inside_jax_transformation()
+            or isinstance(binding.lease_id, Tracer)
+            or isinstance(binding.invocation_ticket, Tracer)
+        ):
+            raise ValueError(
+                "cuDecomp recipe re-admission is an explicit host phase, not a JIT operation."
+            )
+        # Restoration keeps a portable recipe, never an old native generation.
+        # Re-admission also rebuilds consumer-visible IDs if the site build changed.
+        lease = require_collective_lease(binding.spec)
+        return DistributedSpectralExecutionPlan(
+            self.topology,
+            self.spatial_shape,
+            owner_id=self.owner_id,
+            admitted_payload_shapes=self.admitted_payload_shapes,
+            precision=self.precision,
+            schedule=self.schedule,
+            padded_shape=self.padded_shape,
+            state_shape=self.state_shape,
+            domain_lengths=self.domain_lengths,
+            transform_scale=self.transform_scale,
+            padded_transform_scale=self.padded_transform_scale,
+            maximum_bytes=self.report.resource.maximum_bytes,
+            horizontal_axes=(0, 2)
+            if self.horizontal_axes is None
+            else self.horizontal_axes,
+            transpose_provider=self.transpose_provider,
+            collective_binding=lease.binding,
+            maximum_external_scratch_bytes=self.maximum_external_scratch_bytes,
+        )
 
     def _layout(
         self, representation: SpectralRepresentation, padded: bool, /
@@ -1499,6 +1720,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         /,
         *,
         inverse: bool,
+        padded: bool = False,
     ) -> Array:
         if self.schedule == "channel":
             raise ValueError(
@@ -1512,7 +1734,12 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         if not inverse:
             value = value * scale_value
         for stage in sequence:
-            value = stage.apply_local(value, inverse=inverse)
+            if stage.operation == "transpose" and self._cudecomp_execution is not None:
+                value = self._cudecomp_execution.apply_local(
+                    value, inverse=inverse, padded=padded
+                )
+            else:
+                value = stage.apply_local(value, inverse=inverse)
         if inverse:
             value = value / scale_value
         return value.astype(coefficient_dtype)
@@ -1531,6 +1758,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             self._padded_forward_sequence,
             self.padded_transform_scale,
             inverse=False,
+            padded=True,
         )
 
     def _inverse_local(self, local: Array, /) -> Array:
@@ -1546,6 +1774,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             local,
             self._padded_inverse_sequence,
             self.padded_transform_scale,
+            padded=True,
             inverse=True,
         )
 
@@ -1559,7 +1788,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             mesh=self.topology.mesh,
             in_specs=source.partition_spec,
             out_specs=target.partition_spec,
-            check_vma=False,
+            check_vma=self.transpose_provider == "cudecomp",
         )
         return mapped(placed)
 
@@ -1573,7 +1802,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             mesh=self.topology.mesh,
             in_specs=source.partition_spec,
             out_specs=target.partition_spec,
-            check_vma=False,
+            check_vma=self.transpose_provider == "cudecomp",
         )
         return mapped(placed)
 
@@ -1589,7 +1818,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             mesh=self.topology.mesh,
             in_specs=source.partition_spec,
             out_specs=target.partition_spec,
-            check_vma=False,
+            check_vma=self.transpose_provider == "cudecomp",
         )
         return mapped(placed)
 
@@ -1607,7 +1836,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             mesh=self.topology.mesh,
             in_specs=source.partition_spec,
             out_specs=target.partition_spec,
-            check_vma=False,
+            check_vma=self.transpose_provider == "cudecomp",
         )
         return mapped(placed)
 
@@ -1958,4 +2187,5 @@ __all__ = [
     "SpectralResourceError",
     "SpectralResourceReport",
     "SpectralTranspose",
+    "SpectralTransposeProvider",
 ]

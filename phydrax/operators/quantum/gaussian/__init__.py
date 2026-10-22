@@ -14,6 +14,7 @@ from ._ao import (
 )
 from ._basis import GaussianBasisPlan, PreparedGaussianBasis
 from ._boys import boys0, boys_values
+from ._cuest import CuestGeometry, CuestIntegralPlan, PreparedCuestIntegrals
 from ._derivatives import GaussianIntegralDerivativePlan, GaussianIntegralDerivativeResult
 from ._direct import DirectJKPlan, DirectJKResult, PreparedDirectJK
 from ._ecp import (
@@ -45,6 +46,14 @@ from ._integrals import (
     point_charge_potential_matrix,
     range_separated_electron_repulsion_tensor,
 )
+from ._provider import (
+    molecular_integral_definition_id,
+    MolecularDensityFactorizationEvidence,
+    MolecularIntegralPlan,
+    MolecularJKResult,
+    MolecularOneElectronResult,
+    PreparedMolecularIntegrals,
+)
 from ._screening import GaussianScreeningPlan, PreparedGaussianScreening
 from ._shell import (
     cartesian_angular_exponents,
@@ -59,6 +68,8 @@ __all__ = [
     "AOEvaluation",
     "AbstractECPIntegralProvider",
     "CallableECPIntegralProvider",
+    "CuestGeometry",
+    "CuestIntegralPlan",
     "DensityFittingPlan",
     "DirectJKPlan",
     "DirectJKResult",
@@ -74,11 +85,17 @@ __all__ = [
     "GaussianShellPlan",
     "GaussianShellRepresentation",
     "MolecularIntegralKernel",
+    "MolecularIntegralPlan",
+    "MolecularJKResult",
+    "MolecularOneElectronResult",
+    "MolecularDensityFactorizationEvidence",
     "PivotedCholeskyERIPlan",
+    "PreparedCuestIntegrals",
     "PreparedDirectJK",
     "PreparedECP",
     "PreparedGaussianBasis",
     "PreparedGaussianScreening",
+    "PreparedMolecularIntegrals",
     "ao_gradients",
     "ao_hessians",
     "ao_values",
@@ -95,6 +112,7 @@ __all__ = [
     "evaluate_ao",
     "kinetic_matrix",
     "molecular_integrals",
+    "molecular_integral_definition_id",
     "multipole_integrals",
     "nuclear_attraction_matrix",
     "nuclear_point_charge_energy",

@@ -647,6 +647,17 @@ CUDA 13 is the only supported CUDA major. GPU-direct mpi4jax requires a matching
 user-provided build. See [Installation](docs/installation.md)
 for diagnostics, architecture coverage, and distributed deployment.
 
+Optional prepared tensor and molecular implementations are selected separately:
+`phydrax[cuda13,cutensor]`, `phydrax[cuda13,cutensornet]`, and
+`phydrax[cuda13,cuest]`. They retain native planning, scientific identity,
+precision, failure, and resource ownership; installation never switches native
+defaults. cuEST's C runtime is a separate optional wheel. Site-bound cuDSS MGMN
+and cuDecomp require explicit, supervised, CUDA-aware MPI artifacts rather than
+a universal MPI dependency. See the
+[CUDA library installation contract](docs/installation.md#optional-numerical-cuda-libraries).
+Device visibility and peer-access reports are not numerical qualification; the
+eight-A40 transport history and scoped qualification are recorded in the installation guide.
+
 On Apple Silicon, `pip install "phydrax[metal]"` selects the exact
 `phydrax-metal` wheel (when published for the matching release), with JAX/JAXlib
 0.12.0 and standard CPython 3.13. The candidate profile is single-device

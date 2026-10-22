@@ -27,6 +27,13 @@ warm step execution, compiler memory, migration counts, the local-guarded
 stencil-truncation evidence, and, for strong scaling, the largest field
 difference from the one-device run (reduction-order roundoff).
 
+The default campaign explicitly selects 1/2/4/8 devices. Every warmup and
+measured attempt must commit exactly one finite, advancing, unrejected step.
+Acceptance audits run outside execution timing; rejected attempts remain in
+``sample_outcomes``. Strong-scaling field errors must be finite and at most
+1e-11 for reduced/global-FFT routes or 1e-2 for the explicitly approximate
+local-guarded route. Any failed gate retains its evidence and exits nonzero.
+
 Run on the visible accelerator devices. For CPU-only functional coverage use
 ``JAX_NUM_CPU_DEVICES=8 python -m benchmarks.pic_distributed``; forced host
 devices do not establish GPU performance.
@@ -38,6 +45,7 @@ import argparse
 import json
 import math
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -51,10 +59,12 @@ import phydrax as phx
 from benchmarks._runtime import (
     capture_environment,
     compiler_evidence,
+    DurationDistribution,
     logical_array_bytes,
     measure_lower_and_compile,
-    measure_repeated,
+    measure_synchronized,
 )
+from tools._accelerator_process import JSON_LIMIT, write_json_evidence
 
 
 _D = phx.discretization
@@ -276,8 +286,8 @@ def _case(
         lambda: jax.jit(lambda value: run.step_detailed(value, dt)).lower(state),
         lambda lowered: lowered.compile(),
     )
-    result, execution = measure_repeated(
-        lambda: compiled(state), warmup=warmup, repeats=repeats
+    result, execution, sample_outcomes = _measure_steps(
+        lambda: compiled(state), state, warmup=warmup, repeats=repeats
     )
     analysis = compiler_evidence(
         compiled.cost_analysis(),
@@ -328,23 +338,109 @@ def _case(
             "migrated": int(result.migration.migrated),
             "rejection_reason": int(result.rejection_reason),
         },
+        "acceptance": {
+            "all_samples_accepted": all(row["passed"] for row in sample_outcomes),
+            "finite_candidate": _finite_state(result.candidate_state),
+            "finite_accepted": _finite_state(result.accepted_state),
+            "accepted_step_delta": int(result.accepted_state.accepted_step)
+            - int(state.accepted_step),
+            "time_advanced": bool(result.accepted_state.time > state.time),
+            "field_absolute_tolerance": (
+                1e-2 if route.endswith("guarded-blocks") else 1e-11
+            ),
+        },
+        "sample_outcomes": sample_outcomes,
     }
     return record, result.accepted_state
 
 
+def _finite_state(state: Any) -> bool:
+    return all(
+        bool(np.all(np.isfinite(np.asarray(leaf))))
+        for leaf in jax.tree.leaves(state)
+        if np.issubdtype(np.asarray(leaf).dtype, np.inexact)
+    )
+
+
+def _measure_steps(
+    operation: Callable[[], Any], previous: Any, *, warmup: int, repeats: int
+) -> tuple[Any, DurationDistribution, list[dict[str, Any]]]:
+    """Audit every attempted step outside its synchronized execution timing."""
+    if warmup < 0 or repeats <= 0 or warmup + repeats > 1024:
+        raise ValueError(
+            "warmup must be nonnegative; repeats must be positive; at most 1024 samples"
+        )
+    samples = []
+    outcomes = []
+    result = None
+    for index in range(warmup + repeats):
+        result, seconds = measure_synchronized(operation)
+        successful = bool(result.successful)
+        reason = int(result.rejection_reason)
+        advanced = int(result.accepted_state.accepted_step) == int(
+            previous.accepted_step
+        ) + 1 and bool(result.accepted_state.time > previous.time)
+        finite = _finite_state(result.candidate_state) and _finite_state(
+            result.accepted_state
+        )
+        outcomes.append(
+            {
+                "index": index,
+                "warmup": index < warmup,
+                "successful": successful,
+                "rejection_reason": reason,
+                "advanced": advanced,
+                "finite": finite,
+                "passed": successful and reason == 0 and advanced and finite,
+            }
+        )
+        if index >= warmup:
+            samples.append(seconds)
+    if result is None:
+        raise RuntimeError("PIC measurement produced no step")
+    return result, DurationDistribution(tuple(samples)), outcomes
+
+
+def _case_errors(record: dict[str, Any], *, reference: bool = False) -> list[str]:
+    physics, acceptance = record["physics"], record["acceptance"]
+    errors = []
+    if physics["successful"] is not True or physics["rejection_reason"] != 0:
+        errors.append(f"PIC rejected the step: reason={physics['rejection_reason']}")
+    if acceptance["all_samples_accepted"] is not True:
+        errors.append("At least one measured or warmup PIC step failed acceptance")
+    if (
+        acceptance["finite_candidate"] is not True
+        or acceptance["finite_accepted"] is not True
+        or acceptance["accepted_step_delta"] != 1
+        or acceptance["time_advanced"] is not True
+    ):
+        errors.append("PIC did not commit one finite advancing step")
+    if reference:
+        difference = record["field_difference_from_one_device"]
+        if (
+            difference is None
+            or not math.isfinite(difference)
+            or difference > acceptance["field_absolute_tolerance"]
+            or difference < 0
+        ):
+            errors.append("PIC field difference exceeds the finite scientific tolerance")
+    return errors
+
+
 def _field_difference(left: Any, right: Any) -> float:
-    return max(
+    differences = [
         float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
         for a, b in zip(
             jax.tree.leaves(left.field), jax.tree.leaves(right.field), strict=True
         )
-    )
+    ]
+    return max(differences) if all(map(math.isfinite, differences)) else math.inf
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--routes", nargs="+", choices=_ROUTES, default=list(_ROUTES))
-    parser.add_argument("--parts", type=int, nargs="+", default=[1, 2, 4])
+    parser.add_argument("--parts", type=int, nargs="+", default=[1, 2, 4, 8])
     parser.add_argument("--cells-per-part", type=int, default=16)
     parser.add_argument("--slots-per-part", type=int, default=512)
     parser.add_argument("--packet-capacity", type=int, default=128)
@@ -352,15 +448,17 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    parts = sorted(set(args.parts))
+    parts = sorted(args.parts)
     if (
         parts[0] != 1
+        or len(set(parts)) != len(parts)
         or parts[-1] > len(jax.devices())
         or args.cells_per_part <= 0
         or args.slots_per_part <= 0
         or args.packet_capacity <= 0
         or args.warmup < 0
         or args.repeats <= 0
+        or args.warmup + args.repeats > 1024
     ):
         raise ValueError(
             "parts must be positive, start at 1, and fit the visible devices; cells, "
@@ -368,6 +466,7 @@ def main() -> None:
         )
     timing = (args.warmup, args.repeats)
     routes = {}
+    errors = []
     for route in args.routes:
         weak_problems, strong_problem = _problem_sizes(
             route, parts, args.cells_per_part, args.slots_per_part
@@ -376,6 +475,12 @@ def main() -> None:
             _case(route, count, problem, args.packet_capacity, *timing)[0]
             for count, problem in zip(parts, weak_problems, strict=True)
         ]
+        for record in weak:
+            failures = _case_errors(record)
+            record.update(passed=not failures, errors=failures)
+            errors.extend(
+                f"{route}/weak/{record['parts']}: {error}" for error in failures
+            )
         strong = []
         reference = None
         for count in parts:
@@ -383,12 +488,18 @@ def main() -> None:
                 route, count, strong_problem, args.packet_capacity, *timing
             )
             reference = state if reference is None else reference
-            record["field_difference_from_one_device"] = _field_difference(
-                state, reference
+            difference = _field_difference(state, reference)
+            record["field_difference_from_one_device"] = (
+                difference if math.isfinite(difference) else None
             )
+            failures = _case_errors(record, reference=True)
+            record.update(passed=not failures, errors=failures)
+            errors.extend(f"{route}/strong/{count}: {error}" for error in failures)
             strong.append(record)
         routes[route] = {"weak_scaling": weak, "strong_scaling": strong}
     payload = {
+        "passed": not errors,
+        "errors": errors,
         "environment": capture_environment().to_dict(),
         "configuration": {
             "routes": args.routes,
@@ -401,11 +512,15 @@ def main() -> None:
         },
         "routes": routes,
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, indent=2, allow_nan=False)
+    if len(encoded.encode("utf-8")) > JSON_LIMIT:
+        raise ValueError("PIC benchmark evidence exceeds the bounded JSON limit")
     if args.output is None:
         print(encoded)
     else:
-        args.output.write_text(encoded + "\n")
+        write_json_evidence(args.output, payload)
+    if errors:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

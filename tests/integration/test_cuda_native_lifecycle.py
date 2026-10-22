@@ -58,7 +58,16 @@ plan = plan_amgx(system, AmgXPolicy())
 prepared = prepare_amgx(system, plan)
 ready = solve_amgx(prepared, rhs)
 ready.value.block_until_ready()
-assert bool(ready.success)
+assert bool(ready.success), {
+    "device": str(device),
+    "device_index": DEVICE_INDEX,
+    "value": np.asarray(ready.value).tolist(),
+    "status": np.asarray(ready.status).tolist(),
+    "native_status": np.asarray(ready.diagnostics.native_status).tolist(),
+    "iterations": np.asarray(ready.diagnostics.iterations).tolist(),
+    "relative_residual": np.asarray(ready.diagnostics.relative_residual_norm).tolist(),
+    "native_residual": np.asarray(ready.diagnostics.native_residual_norm).tolist(),
+}
 assert ready.value.devices() == {device}
 np.testing.assert_allclose(ready.value, np.linalg.solve(np.asarray(matrix), np.asarray(rhs)), rtol=1e-8)
 from phydrax._cuda_native import cuda_native_resources
@@ -79,16 +88,21 @@ result = provider.gauge_action(links, 5.7, mask, lattice_shape=(4, 4, 4, 4), per
 }
 _AUDIT = """
 from phydrax._cuda_environment import cuda_environment
+from phydrax._cuda_environment import competing_cuda_libraries
 report = cuda_environment()
 assert report.facts.runtime_version[0] == component.major == 13
 assert component.preloaded, component
 wheel_paths = {path for path, major in report.facts.wheel_library_majors if major == component.major}
 assert all(path in wheel_paths for path in component.preloaded), component.preloaded
 assert all(item.major == component.major and item.path in wheel_paths for item in report.facts.mapped_libraries), report
-audit = {"preloaded": component.preloaded, "mapped": [(item.path, item.major) for item in report.facts.mapped_libraries]}
+challenge = competing_cuda_libraries(HOSTILE_LIBRARY_PATH, report.facts.mapped_libraries)
+assert challenge, "Hostile library path contains no alternate mapped CUDA SONAME"
+audit = {"preloaded": component.preloaded, "mapped": [(item.path, item.major) for item in report.facts.mapped_libraries], "hostile_candidates": challenge}
 """
 # A system CUDA toolkit directory whose sonames can shadow NVIDIA wheel libraries.
-_HOSTILE_LIBRARY_PATH = "/usr/local/cuda/lib64"
+_HOSTILE_LIBRARY_PATH = os.environ.get(
+    "PHYDRAX_CUDA_HOSTILE_LIBRARY_PATH", "/usr/local/cuda/lib64"
+)
 
 
 def _run(
@@ -102,7 +116,10 @@ def _run(
     environment.pop("LD_LIBRARY_PATH", None)
     if hostile:
         environment["LD_LIBRARY_PATH"] = _HOSTILE_LIBRARY_PATH
-    source = f"COMPONENT = {component!r}\nHOSTILE = {hostile!r}\n" + _SETUP
+    source = (
+        f"COMPONENT = {component!r}\nHOSTILE = {hostile!r}\n"
+        f"HOSTILE_LIBRARY_PATH = {_HOSTILE_LIBRARY_PATH!r}\n" + _SETUP
+    )
     operations = (
         "from phydrax._jax_config import default_device\n"
         "devices = jax.devices('gpu')\n"
@@ -158,12 +175,25 @@ def test_exit_with_live_native_state_and_inflight_work(
 ) -> None:
     import jax
 
+    from phydrax._cuda_environment import competing_cuda_libraries, cuda_environment
     from phydrax._cuda_native import CudaNativeUnavailableError, load_cuda_component
 
     try:
         load_cuda_component(component)
     except CudaNativeUnavailableError as error:
-        pytest.skip(str(error))
+        if error.issue.code == "backend-unavailable" or (
+            error.issue.code == "companion-missing" and not error.issue.paths
+        ):
+            pytest.skip(str(error))
+        raise
+    if hostile:
+        report = cuda_environment()
+        if not competing_cuda_libraries(
+            _HOSTILE_LIBRARY_PATH, report.facts.mapped_libraries
+        ):
+            pytest.skip(
+                "No alternate mapped CUDA SONAME exists in the hostile library path."
+            )
     visible = jax.devices("gpu")
     count = int(os.environ.get("PHYDRAX_CUDA_QUALIFICATION_GPUS", len(visible)))
     assert 0 < count <= len(visible), "Required native exit devices are unavailable"

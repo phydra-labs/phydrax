@@ -1,5 +1,5 @@
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .._jax_config import process_numerics
 
@@ -17,6 +17,7 @@ from ._canonical import __all__ as _canonical_all
 from ._causal_process import __all__ as _causal_process_all
 from ._compression import __all__ as _compression_all
 from ._contraction import __all__ as _contraction_all
+from ._contraction_provider import __all__ as _contraction_provider_all
 from ._core import __all__ as _core_all
 from ._ctmrg import __all__ as _ctmrg_all
 from ._environments import __all__ as _environments_all
@@ -61,6 +62,18 @@ from ._uniform_abelian import __all__ as _uniform_abelian_all
 from ._uniform_square import __all__ as _uniform_square_all
 
 
+if TYPE_CHECKING:
+    from ._contraction_provider import (
+        ContractionExecutionPolicy as ContractionExecutionPolicy,
+        ContractionPathPlanner as ContractionPathPlanner,
+    )
+    from ._slicing import (
+        execute_sliced_contraction as execute_sliced_contraction,
+        prepare_sliced_contraction as prepare_sliced_contraction,
+        PreparedSlicedContraction as PreparedSlicedContraction,
+    )
+
+
 _FACADE_EXPORT_MODULES = (
     "._abelian",
     "._abelian_core",
@@ -73,6 +86,7 @@ _FACADE_EXPORT_MODULES = (
     "._causal_process",
     "._compression",
     "._contraction",
+    "._contraction_provider",
     "._core",
     "._ctmrg",
     "._environments",
@@ -155,6 +169,7 @@ __all__ = list(
             *_platform_support_all,
             *_compression_all,
             *_contraction_all,
+            *_contraction_provider_all,
             *_core_all,
             *_ctmrg_all,
             *_environments_all,

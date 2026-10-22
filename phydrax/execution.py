@@ -6,10 +6,29 @@
 """Execution bootstrap, planning, worksets, observation, and checkpoints."""
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from ._execution_bootstrap import runtime_info, RuntimeInfo
 from ._jax_config import process_numerics
+
+
+if TYPE_CHECKING:
+    from ._execution_collectives import (
+        CollectiveBinding as CollectiveBinding,
+        CollectiveLease as CollectiveLease,
+        CollectiveLeaseError as CollectiveLeaseError,
+        CollectiveLeaseSpec as CollectiveLeaseSpec,
+        CollectiveMPIProvenance as CollectiveMPIProvenance,
+        CollectiveProgram as CollectiveProgram,
+        CollectiveProgramProvenance as CollectiveProgramProvenance,
+        CollectiveSupervisor as CollectiveSupervisor,
+        create_collective_lease as create_collective_lease,
+        prepare_collective_program as prepare_collective_program,
+    )
+    from ._execution_launch import (
+        LocalProcessSupervision as LocalProcessSupervision,
+        require_local_process_supervision as require_local_process_supervision,
+    )
 
 
 _SYMBOL_MODULES = {
@@ -20,6 +39,14 @@ _SYMBOL_MODULES = {
     "CallableIterationObserver": "._iteration",
     "CallableIterationSink": "._iteration",
     "CallableIterationStopRule": "._iteration",
+    "CollectiveBinding": "._execution_collectives",
+    "CollectiveLease": "._execution_collectives",
+    "CollectiveLeaseError": "._execution_collectives",
+    "CollectiveLeaseSpec": "._execution_collectives",
+    "CollectiveMPIProvenance": "._execution_collectives",
+    "CollectiveProgram": "._execution_collectives",
+    "CollectiveProgramProvenance": "._execution_collectives",
+    "CollectiveSupervisor": "._execution_collectives",
     "CancellationMode": "._execution_control",
     "CancellationToken": "._execution_control",
     "AxisBinding": "._execution_plan",
@@ -66,6 +93,7 @@ _SYMBOL_MODULES = {
     "LocalProcessLaunchError": "._execution_launch",
     "LocalProcessLaunchPlan": "._execution_launch",
     "LocalProcessResult": "._execution_launch",
+    "LocalProcessSupervision": "._execution_launch",
     "IterationRecord": "._iteration",
     "IterationScope": "._iteration",
     "IterationSession": "._iteration",
@@ -101,6 +129,9 @@ _SYMBOL_MODULES = {
     "global_boolean_consensus": "._execution_control",
     "materialize_observation": "._execution_control",
     "launch_local_processes": "._execution_launch",
+    "create_collective_lease": "._execution_collectives",
+    "prepare_collective_program": "._execution_collectives",
+    "require_local_process_supervision": "._execution_launch",
     "ValuePlacement": "._execution_plan",
     "bind_execution_group": "._execution_runtime",
     "discover_resource_inventory": "._execution_runtime",
@@ -152,6 +183,18 @@ __all__ = (
     "CallableIterationObserver",
     "CallableIterationSink",
     "CallableIterationStopRule",
+    "CollectiveBinding",
+    "CollectiveLease",
+    "CollectiveLeaseError",
+    "CollectiveLeaseSpec",
+    "CollectiveMPIProvenance",
+    "CollectiveProgram",
+    "CollectiveProgramProvenance",
+    "CollectiveSupervisor",
+    "LocalProcessSupervision",
+    "create_collective_lease",
+    "prepare_collective_program",
+    "require_local_process_supervision",
     "AxisBinding",
     "DeterminismScope",
     "DeviceResource",

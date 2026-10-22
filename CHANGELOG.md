@@ -11,6 +11,17 @@
   ROCm gather/scatter lowerings also preserve wide bounds. The shared indexing
   source changes Metal companion build identities; rebuild rather than relabel
   existing companion artifacts.
+- Make molecular integral representation an explicit `MolecularIntegralPlan`;
+  replace parallel Hartree–Fock `factorized_eri`/`direct_jk` constructor paths
+  and prevent response, correlation, or forces from silently switching a DF
+  reference to exact ERIs.
+- Require an explicit `PreparedSlicedContraction` binding for sliced execution.
+  Prepared executor, derivative-lowering, spectral transpose, and distributed
+  owner representations have new execution identities; reprepare affected
+  artifacts rather than relabeling old checkpoints.
+- Separate explicit collective staging from invocation. Live leases accept only
+  owned `CollectiveProgram` artifacts with admitted transformed schedules,
+  not arbitrary callbacks or opaque compiled executables.
 - Require the lockstep CUDA companion on Linux aarch64 as well as x86-64.
   CUDA intent without a JAX plugin is now an error on both supported Linux
   architectures. A missing ARM companion wheel no longer yields a JAX-only
@@ -83,6 +94,37 @@
   reduced PIC, and native-JAX FMM capacity sweeps, with five physical
   restart/refusal cases. These records preserve their original source and
   installation identities, not bundled-runtime or MI350X qualification.
+- Add optional cuTENSOR/cuTensorNet prepared tensor implementations and bounded
+  cuTensorNet path planning without changing ordinary `ein.contract` or native
+  defaults. Preserve dynamic operands, explicit precision/workspace/cache
+  contracts, native-owned derivatives, and host-only checkpoint orchestration.
+- Add optional cuEST density-fitted RHF through native Gaussian, SCF, typed
+  energy/force, and PES owners, with explicit bound geometry and same-definition
+  analytic first nuclear forces. The proprietary C runtime is a separate
+  checksum-pinned optional wheel, not a mandatory core CUDA dependency.
+- Extend cuDSS with explicit local-memory, single-process MG, and same-host
+  MGMN contracts. Add site-bound cuDecomp direct-slab transposes, owned ordered
+  collective leases, exact MPI-instance provenance, and authenticated bounded
+  MPI process supervision. These are candidate profiles, not automatic
+  hardware, multi-host, RDMA, or release qualification.
+- Add fail-closed physical CUDA peer/collective campaigns and optional
+  installed-wheel provider profiles. Qualification requires actual device
+  ownership and complete numerical/precision/lifecycle evidence; skips,
+  missing records, incorrect finite results, and timeouts cannot pass.
+- Check explicit spectral topology availability against its selected JAX
+  backend rather than the process default; an explicit CPU mesh remains valid
+  when CUDA is the default.
+- Keep the explicitly selected wheel's hash authoritative when a wheelhouse
+  contains an older artifact with the same filename.
+- Report opaque custom-call arithmetic and traffic as unknown, retaining raw
+  XLA estimates separately from known executable buffer sizes. Prepare native
+  sparse topology before tracing cuDSS benchmark execution.
+- Isolate AmgX memory-manager pools, allocation bookkeeping, and thread streams
+  by the current CUDA device. Independent solves no longer borrow the first
+  GPU's allocations; retain refresh, reverse-order reuse, and owning-device
+  shutdown coverage.
+- Preserve failed process supervision and unknown exit statuses in substrate
+  qualification even when every rank emitted a successful numerical record.
 - Add `phydrax[cpu]`, requesting `jax[cpu]>=0.12.0,<0.13` while preserving the
   base installation's JAX dependency and existing runtime backend selection.
 - Add upstream-backed `oneapi` and `tpu` extras, pure environment diagnostics,
@@ -239,6 +281,18 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Preserve Krylov breakdown enum semantics in distributed smoke gates:
+  certified happy breakdown is not a Boolean failure. Retain failed PIC physics
+  and reference checks and require successful scientific terminal records.
+- Solve dependent or zero SCF DIIS histories through native constrained
+  minimum-norm least squares, retaining rank, residual, and affine-constraint
+  evidence instead of adding jitter or silently disabling acceleration.
+- Preserve accumulation precision for empty sliced residual schedules and
+  ordered host reduction. Retain failed native scratch-release charges and
+  propagate cleanup errors instead of reporting reclaimed resources.
+- Reject vendor memory estimates as certified allocation bounds, and require
+  an actual alternate mapped CUDA SONAME before labeling a library-path
+  qualification hostile.
 - Retire partially mutated cuDSS factors and AmgX hierarchies after failed
   numeric refresh, preserving original immutable preparations and partition
   rebuild evidence. Drain queued native work before returning failed-call

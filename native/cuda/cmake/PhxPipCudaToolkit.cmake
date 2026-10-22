@@ -37,7 +37,13 @@ def link(source, relative):
 
 for distribution in sorted(metadata.distributions(), key=lambda item: item.metadata['Name']):
     name = distribution.metadata['Name'].lower().replace('_', '-')
-    if not name.startswith('nvidia-'):
+    if name.startswith('nvidia-'):
+        package_roots = ('nvidia',)
+    elif re.fullmatch(r'cutensor-cu\d+', name):
+        package_roots = ('cutensor',)
+    elif re.fullmatch(r'cutensornet-cu\d+', name):
+        package_roots = ('cuquantum',)
+    else:
         continue
     suffix = re.search(r'-cu(\d+)$', name)
     if suffix is not None and suffix.group(1) != '13':
@@ -46,7 +52,7 @@ for distribution in sorted(metadata.distributions(), key=lambda item: item.metad
     selected = []
     for record in files:
         parts = record.parts
-        if not parts or parts[0] != 'nvidia':
+        if not parts or parts[0] not in package_roots:
             continue
         if any(re.fullmatch(r'cu\d+', part) and part != 'cu13' for part in parts):
             raise RuntimeError(f'Foreign CUDA toolkit record: {name}: {record}')

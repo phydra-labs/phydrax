@@ -27,6 +27,7 @@ from ._registry import CapabilityProfile, SupportTuple
 # intentionally collapsed without changing the owner selected by the first producer.
 _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
+    ("phydrax.backends._cuda_profiles", "cuda_candidate_profiles"),
     ("phydrax.backends._metal_profiles", "metal_candidate_profiles"),
     ("phydrax.backends._oneapi_profiles", "oneapi_candidate_profiles"),
     ("phydrax.backends._rocm_profiles", "rocm_candidate_profiles"),
@@ -208,6 +209,7 @@ _PROFILE_PROVIDERS = (
 )
 
 _CANDIDATE_DECLARATION_PROVIDERS = (
+    ("phydrax.backends._cuda_profiles", "cuda_candidate_declarations"),
     ("phydrax.backends._metal_profiles", "metal_candidate_declarations"),
     ("phydrax.backends._oneapi_profiles", "oneapi_candidate_declarations"),
     ("phydrax.backends._rocm_profiles", "rocm_candidate_declarations"),

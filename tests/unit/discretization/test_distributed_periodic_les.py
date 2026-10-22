@@ -342,3 +342,49 @@ def test_distributed_periodic_les_resource_and_support_refusals_are_exact(
     monkeypatch.setattr(jax, "devices", lambda *_args, **_kwargs: [])
     with pytest.raises(RuntimeError, match="unavailable"):
         unavailable.prepare()
+
+
+@pytest.mark.parametrize(
+    "mesh_shape", [(8,), (2, 4), (4, 2)], ids=["slab8", "pencil2x4", "pencil4x2"]
+)
+def test_eight_owner_les_matches_scientific_reference(
+    mesh_shape: tuple[int, ...],
+) -> None:
+    devices = tuple(jax.devices())
+    if len(devices) < 8:
+        pytest.skip("Requires eight physical or explicitly configured devices.")
+    axis_names = ("spectral",) if len(mesh_shape) == 1 else ("px", "py")
+    topology = SpectralMeshTopology(
+        mesh_shape, devices=devices[:8], axis_names=axis_names
+    )
+    space = _space(16)
+    scientific = _scientific(space)
+    distributed = DistributedPeriodicLESPlan(
+        scientific,
+        topology,
+        schedule="slab" if len(mesh_shape) == 1 else "pencil",
+    ).prepare()
+    velocity = _velocity(space)
+    evaluate = jax.jit(distributed.evaluate)
+    for scale in (1.0, 0.7):
+        state = velocity * scale
+        reference = scientific.evaluate(state)
+        stage = evaluate(state)
+        np.testing.assert_allclose(
+            stage.projected_rate, reference.projected_rate, rtol=3e-8, atol=3e-8
+        )
+        np.testing.assert_allclose(
+            stage.modeled_dissipation,
+            reference.modeled_dissipation,
+            rtol=3e-8,
+            atol=3e-8,
+        )
+        np.testing.assert_allclose(
+            stage.modal_energy_rate, reference.modal_energy_rate, rtol=3e-8, atol=3e-8
+        )
+        assert bool(stage.energy_consistent)
+        assert len(stage.projected_rate.addressable_shards) == 8
+        assert (
+            stage.projected_rate.sharding
+            == distributed.execution.modal_layout.sharding(topology)
+        )

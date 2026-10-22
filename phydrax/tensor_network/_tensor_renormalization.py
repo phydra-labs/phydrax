@@ -25,7 +25,6 @@ from ._contraction import (
     ContractionResourcePolicy,
     execute_schedule,
     plan_contraction,
-    prepare_contraction,
 )
 from ._precision import TensorNetworkPrecisionPolicy
 from ._split import TensorTruncationEvidence, truncated_svd
@@ -724,9 +723,13 @@ def _execute_contraction(
     precision: TensorNetworkPrecisionPolicy,
     /,
 ) -> Array:
-    prepared = prepare_contraction(plan, operands)
-    values = precision.contraction(prepared.operands)
-    return precision.storage(execute_schedule(plan.schedule, values))
+    # This numerical kernel is explicitly native. Its immutable schedule was
+    # admitted at preparation; content-addressed host binding cannot run here.
+    values = precision.contraction(operands)
+    _, accumulation = precision.resolve_contraction(plan.dtype)
+    return precision.storage(
+        execute_schedule(plan.schedule, values, accumulation_dtype=accumulation)
+    )
 
 
 def _hotrg_isometry(

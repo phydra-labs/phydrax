@@ -21,8 +21,10 @@ MemoryEnvelope: TypeAlias = Literal["declared", "certified"]
 """`declared` checks ceilings against owner estimates; `certified` also requires
 measured available host memory and device allocator headroom for the placement."""
 
-ResourceMemoryBasis: TypeAlias = Literal["declared", "compiler_analysis", "sampled"]
-"""Provenance of candidate peak-byte estimates; a sampled peak is never a bound."""
+ResourceMemoryBasis: TypeAlias = Literal[
+    "declared", "compiler_analysis", "sampled", "provider_estimate"
+]
+"""Peak-byte provenance; samples and vendor estimates are not allocation bounds."""
 
 
 def _identifier(value: str, name: str) -> str:
@@ -288,11 +290,10 @@ class ResourceRequest:
 class ExecutionResourceEvidence:
     """Candidate memory/storage estimates and explicitly attested capabilities.
 
-    ``memory_basis`` states where the per-device and per-host peak estimates come
-    from: owner-declared capacity bounds, XLA compiled-memory analysis, or a
-    sampled measurement. A sampled peak is evidence of what ran, never an upper
-    bound, so it cannot satisfy a certified memory envelope. Live measurements
-    (RSS, allocator counters) belong to `ResourceInventory`, not here.
+    ``memory_basis`` distinguishes owner-declared capacity bounds, XLA compiled
+    analysis, samples, and vendor estimates. Neither samples nor vendor estimates
+    certify an allocation bound, including preparation and hidden host storage.
+    Live measurements (RSS, allocator counters) belong to `ResourceInventory`.
     """
 
     per_device_peak_bytes: int | None = None
