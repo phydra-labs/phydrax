@@ -552,6 +552,11 @@ def _require_certified_memory(
                 "certified memory envelope cannot use a sampled peak as an upper bound"
             )
             return
+        case "provider_estimate":
+            reasons.append(
+                "certified memory envelope cannot use a provider estimate as an upper bound"
+            )
+            return
         case _:
             assert_never(evidence.memory_basis)
     host_footprint = _known_total(

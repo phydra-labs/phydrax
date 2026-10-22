@@ -51,6 +51,128 @@ integer, explicit, maximum-overlap, and Fermi-Dirac occupations; damping, DIIS,
 and level shifting. SAD/SAP and unimplemented acceleration names fail closed
 rather than being approximated under the wrong label.
 
+### Integral definitions and optional cuEST DF-RHF
+
+`MolecularHartreeFockPlan(..., integrals=...)` takes the canonical
+`phydrax.operators.quantum.gaussian.MolecularIntegralPlan`. Its source selects
+the integral definition explicitly:
+
+| Integral plan | Definition |
+| --- | --- |
+| `MolecularIntegralPlan()` | Native exact dense full-range ERIs; the default |
+| `MolecularIntegralPlan(prepared_direct_jk)` | Native geometry-valid screened direct J/K |
+| `MolecularIntegralPlan(factorized_tensor)` | Explicit fixed `FactorizedERITensor` in the bound AO ordering |
+| `MolecularIntegralPlan(cuest_plan)` | Optional cuEST full-range density-fitting J/K |
+
+There are no separate HF `factorized_eri` or `direct_jk` keyword arguments.
+Direct and fixed-factor choices remain available through this integral owner;
+they do not acquire exact moving-geometry gradients or response by substitution.
+Equal AO dimensions alone do not establish scientific identity.
+
+cuEST accelerates integrals, not an end-to-end vendor SCF implementation.
+PhydraX still owns RHF iteration, damping, DIIS, convergence, orbital solves,
+energy assembly, Pulay terms, stationary-state admission, and result provenance.
+Install the optional dependencies with `pip install 'phydrax[cuda13,cuest]'`;
+the `cuest` extra and CUDA runtime wheels do not themselves supply the PhydraX
+native extension or qualify the runtime. Follow the
+[installation instructions](installation.md) for wheel/native-build and runtime
+requirements. Native exact execution does not require this extra.
+
+`CuestIntegralPlan(auxiliary_basis, ...)` requires an explicitly prepared
+auxiliary basis and explicit `fitting_cutoff`, `relative_conditioning`,
+`fitting_algorithm` (`"qr"` or `"matrix-power"`), `screening_threshold`,
+`variable_workspace_bytes`, and `maximum_workspace_bytes`. Optional
+`maximum_cached_geometries` and `density_factorization_tolerance` bound caching
+and actual-density PSD admission. These choices belong to the numerical
+definition; a generic density-fitting label cannot replace them.
+
+Density fitting approximates the four-center ERIs in the declared auxiliary
+Coulomb metric. It is **not exact ERI evaluation**, including when screening is
+zero. The metric cutoff is neither an energy-error certificate nor a measured
+metric rank; cuEST does not expose that rank here. Workspace bounds cover
+wrapper-owned resources, not total process, vendor-private, JAX, or JIT memory.
+
+The admitted cuEST mean-field route is nonperiodic, unpadded, all-electron,
+integer-occupation RHF in real native FP64, with `jax_enable_x64=True`.
+Orbital shells must use one uniform representation (Cartesian or real
+spherical); auxiliary shells must be real spherical. Both bases must belong to
+the same system and actual centers, with contiguous angular momenta starting at
+zero at each represented center. Basis preparation normalizes primitives and
+contractions; the cuEST layout converts native AO order and Cartesian component
+scales without normalizing twice. Densities, occupied factors, and
+energy-weighted densities use the corresponding contravariant conversion.
+Gaussian exponents use inverse bohr squared. Low-level integral and
+`*_atomic_units` calls use bohr, Hartree, and Hartree/bohr; the typed calculation
+provider and PES accept positions and return energies/forces in the declared
+atomistic unit system.
+
+Exchange is evaluated from the **actual density supplied to J/K**, including
+the damped density, not silently from the newest orbital coefficients.
+Optional rank-by-AO factors must reconstruct that density within the declared
+tolerance and certify its PSD lower bound. Otherwise a native eigensolve
+constructs factors; densities indefinite beyond tolerance are refused.
+`MolecularJKResult.factorization` retains reconstruction residual, tolerance,
+factor bytes, eigensolver-use flag, and spectral lower bound. Unmeasured
+eigenvalues/negative magnitudes are NaN rather than invented evidence.
+
+For cuEST, `analytic_gradient_atomic_units` contracts one- and two-electron
+derivatives and the overlap/Pulay contribution for the **same DF definition**
+as the energy, then adds nuclear repulsion. Successful forces require successful
+SCF and finite integrals, reconstructed-density agreement, a small commutator,
+and the restricted Fock/orbital stationary equation. Convergence alone is not
+force admission. These are first analytic nuclear forces, not arbitrary
+JVP/VJP, basis-parameter differentiation, analytic Hessians, or a JIT-SCF
+contract. CPHF/CPKS, orbital-Hessian stability, excited response, or correlated
+MO transformation must refuse an unsupported nonexact definition rather than
+silently use exact dense kernels.
+
+`MolecularRHFProvider(plan, model.model_chemistry_id)` exposes typed energy and
+energy/force tasks and `ElectronicPotentialEnergySurface`; pass
+`numerical=provider.numerical` to `ElectronicCalculationPlan`. This binds the
+actual source definition, not a display name. It admits native exact and cuEST
+RHF, not fixed-factor/direct analytic-force substitution, periodic cells,
+embedding/field contexts, arbitrary initial-guess contexts, batching, AD, or
+Hessian tasks. See the complete
+[typed energy/force/PES recipe](cookbook/production_computational_chemistry.md).
+
+### Rank-deficient DIIS and geometry lifecycle
+
+DIIS minimizes the residual subject to coefficients summing to one. An
+orthonormal Helmert nullspace reduces that constrained problem to native
+SVD least squares with minimum-norm coefficients, including rank-deficient
+histories. It does not add diagonal jitter, solve a singular bordered Gram
+system, or disable DIIS to hide rank loss. `state.evidence.diis` is
+`SCFDIISEvidence` when DIIS ran: it retains coefficients, affine-constraint
+residual/tolerance, original error scale, and `linear_solve` status, rank,
+rank cutoff, and normal residual. A failed native solve or constraint check
+fails explicitly; rank deficiency alone is not failure.
+
+For repeated low-level use, prepare once with
+`prepared = cuest_plan.prepare(orbital_basis)` and bind explicitly with
+`bound = prepared.bind_geometry(positions_bohr, nuclear_charges_fp64)`.
+`bound.one_electron()`, `bound.jk(density, factors=...)`, and
+`bound.gradient(density, energy_weighted_density, factors=...)` share that
+geometry. The gradient tuple is `(one, two, pulay, successful)`; it excludes
+the nuclear-repulsion derivative and is not by itself a stationary-force result.
+Use the HF/provider result to enforce the stationary checks above.
+
+`bound.refresh(positions=..., charges=...)` returns a newly certified binding;
+omitted arguments retain their current values. `bound.restore()` recertifies
+same-content restored dynamic arrays against the stored key and refuses changed
+data with the old key. Manual PyTree replacement does not authorize execution:
+use refresh for changed geometry or reprepare for a changed source definition.
+Bindings are host-only ephemeral objects, never durable SCF-state identities.
+Their prepared recipe, positions, charges, and key remain dynamic; private
+weak-reference guards and runtime object IDs are not portable scientific IDs.
+The runtime owner
+`phydrax._cuda_native.release_cuda_component("cuest")` drains outstanding
+effects and releases reconstructible native memos; the same valid binding
+rebuilds them on next use. Release at the host orchestration boundary, not
+inside a transformed numerical function. There is no
+`CuestGeometry.release()` method. See
+[backend resource lifecycle](api/backends.md) for the owning release interface.
+
+
 `MolecularKohnShamPlan` implements RKS/UKS over moving atom-centered
 radial-Lebedev grids with Becke partition derivatives. Native functionals include
 spin LDA exchange, PW92 correlation, PBE exchange/correlation, PBE0, a declared
@@ -59,12 +181,13 @@ meta correction. Functionals requiring unimplemented components fail at plan
 construction.
 
 Both molecular mean-field routes retain energy, density, commutator,
-electron-count, spin, iteration, stability, and finite-value evidence. Restricted
-HF stability uses orbital-rotation Hessians. Stationary Lagrangian gradients,
-implicit CPHF/CPKS electric response, and implicit nuclear Hessians do not
-differentiate through SCF iterations. Continuum GB/GK is native for fixed
-charges; PCM/COSMO and relativistic decoupling use exact provider/transform
-boundaries.
+electron-count, spin, iteration, stability, and finite-value evidence. With the
+native exact definition, restricted HF stability uses orbital-rotation Hessians;
+stationary Lagrangian gradients, implicit CPHF/CPKS electric response, and
+implicit nuclear Hessians do not differentiate through SCF iterations. The
+cuEST/nonexact limitations above are not overridden by those exact-native
+capabilities. Continuum GB/GK is native for fixed charges; PCM/COSMO and
+relativistic decoupling use exact provider/transform boundaries.
 
 ## Correlation and excited states
 

@@ -651,14 +651,16 @@ def test_amgx_same_plan_isolated_across_selected_devices(
                     problem,
                     problem.operator.coefficients * (2 * (index + 1)),
                 )
-                alternatives.append(amg.prepare_amgx(changed, prepared[index].plan))
+                alternatives.append(amg.refresh_amgx(prepared[index], changed))
+                assert int(alternatives[-1].native_rebuilds) == 0
         assert {item.plan.plan_id for item in (*prepared, *alternatives)} == {
             prepared[0].plan.plan_id
         }
         for items, scale in ((prepared, 1), (alternatives, 2)) * 3:
-            assert [check(index, item, scale) for index, item in enumerate(items)] == [
-                1
-            ] * count
+            # Revisit devices in reverse order after every device owns a pool.
+            assert [
+                check(index, items[index], scale) for index in reversed(range(count))
+            ] == [1] * count
             assert {
                 (entry.device, entry.live, entry.capacity) for entry in partitions()
             } == {(device.id, 1, 1) for device in devices}

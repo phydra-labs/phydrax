@@ -45,6 +45,49 @@ Use `phydrax.tensor_network` when a contraction requires admitted resource
 policies, immutable schedules, execution evidence, reverse replay, or
 caller-owned plan caching.
 
+### Explicit prepared execution, not an ein backend switch
+
+Optional cuTENSOR and cuTensorNet execution belongs to
+`phydrax.tensor_network.prepare_contraction`, through
+`ContractionExecutionPolicy("cutensor")` or
+`ContractionExecutionPolicy("cutensornet")`. Native execution is the default
+even when these libraries are installed. This does not register a new
+`ein.contract` backend or intercept existing einsum calls. A missing optional
+provider or non-CUDA operand is an error, not an implicit transfer or fallback.
+
+Keep path selection separate from execution:
+
+- `plan_contraction(..., path=...)` imports an explicit evolving-live-list path.
+- `plan_contraction(..., path_planner=ContractionPathPlanner(...))` requests
+  bounded, shape-only cuTensorNet FLOP-objective planning.
+- `optimizer`, `path`, and `path_planner` are mutually exclusive when explicitly
+  supplied. No explicit choice means native greedy planning.
+- Preparing one plan with different execution policies compares the same path.
+  Replanning with the vendor planner compares a different algorithmic path,
+  whether that new plan executes natively or through cuTensorNet.
+
+The [tensor platform guide](guides_tensor_platform.md#explicit-local-executors-and-path-planning)
+lists the exact policy/planner fields and provides a complete runnable native
+example with optional explicit CUDA execution and sliced binding:
+`binding = prepare_sliced_contraction(prepared, sliced_plan)`, then
+`execute_sliced_contraction(binding)`. Neither planning choice nor executor
+selection implies a speedup or hardware qualification.
+
+Prepared ordinary dense contractions intend fp32/fp64/c64/c128 admission;
+optional executors require equal resolved multiply/accumulation precision.
+Their native-owned JVP/VJP rules admit derivatives through order two and bounded
+serial batching. Host preparation, checkpointing, and distribution are not AD
+boundaries. This does not redirect charge/symmetry algorithms or TRG/HOTRG and
+never implicitly densifies their representations. External device
+workspace/cache bounds are explicit; opaque vendor host descriptor bytes are
+unknown, not zero. See the guide for memory evidence and native ownership.
+
+These boundaries follow the source owners:
+[`ein` imports](https://github.com/phydra-labs/phydrax/blob/main/phydrax/ein/__init__.py),
+[prepared contraction planning/execution](https://github.com/phydra-labs/phydrax/blob/main/phydrax/tensor_network/_contraction.py),
+[execution policies](https://github.com/phydra-labs/phydrax/blob/main/phydrax/tensor_network/_contraction_provider.py), and
+[optional-provider admission](https://github.com/phydra-labs/phydrax/blob/main/phydrax/tensor_network/_cutensor.py).
+
 ## Unary pattern grammar
 
 The unary operations use multi-character logical axis names:

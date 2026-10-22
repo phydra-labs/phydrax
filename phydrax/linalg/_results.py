@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
+from .._execution_resources import ExecutionResourceEvidence
 from .._iteration import IterationEvidence
 from .._strict import StrictModule
 from ..typing import checked, parse
@@ -109,6 +110,113 @@ def linear_status_message(status: int | LinearSolveStatus, /) -> str:
     return _STATUS_MESSAGES[LinearSolveStatus(int(status))]
 
 
+class CudssMemoryEvidence(StrictModule):
+    """Post-analysis vendor estimates, never certified all-phase bounds.
+
+    The last axes of ``byte_words`` are ``(device, 6, 2)``. The two uint32
+    words encode exact low/high bytes even when JAX x64 is disabled. An all-one
+    pair means unknown. Columns are permanent device, peak device, permanent
+    host, peak host, hybrid minimum device, and hybrid maximum host memory.
+    Host entries retain their calling-device attribution: MG host queries are
+    not documented to be additive. Analysis used one RHS column; changing RHS
+    count can invalidate these estimates. Retired factors and caller buffers
+    are not included.
+    """
+
+    byte_words: Array
+    device_indices: tuple[int, ...] = eqx.field(static=True)
+    memory_mode: Literal["device", "hybrid"] = eqx.field(static=True)
+    group_id: str | None = eqx.field(static=True)
+    process_index: int | None = eqx.field(static=True)
+    group_device_count: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        byte_words: Array,
+        *,
+        device_indices: tuple[int, ...] = (),
+        memory_mode: Literal["device", "hybrid"] = "device",
+        group_id: str | None = None,
+        process_index: int | None = None,
+        group_device_count: int | None = None,
+    ) -> None:
+        count = max(len(device_indices), 1)
+        if byte_words.dtype != jnp.dtype(jnp.uint32) or byte_words.shape[-3:] != (
+            count,
+            6,
+            2,
+        ):
+            raise ValueError(
+                "cuDSS memory evidence requires uint32 (..., devices, 6, 2)."
+            )
+        if memory_mode not in ("device", "hybrid"):
+            raise ValueError("Unknown cuDSS memory evidence mode.")
+        group_count = count if group_device_count is None else group_device_count
+        if type(group_count) is not int or group_count < count:
+            raise ValueError(
+                "group_device_count cannot be smaller than the queried device count."
+            )
+        if process_index is not None and (
+            type(process_index) is not int or process_index < 0
+        ):
+            raise ValueError("process_index must be a nonnegative integer or None.")
+        self.byte_words = byte_words
+        self.device_indices = device_indices
+        self.memory_mode = memory_mode
+        self.group_id = group_id
+        self.process_index = process_index
+        self.group_device_count = group_count
+
+    def host_estimates(self) -> np.ndarray:
+        """Explicitly observe exact bytes; unknown entries become ``None``."""
+        words = np.asarray(jax.device_get(self.byte_words), dtype=np.uint32)
+        values = words[..., 0].astype(np.uint64) | (
+            words[..., 1].astype(np.uint64) << np.uint64(32)
+        )
+        result = values.astype(object)
+        result[values == np.iinfo(np.uint64).max] = None
+        return result
+
+    def resource_evidence(
+        self, *, caller_device_bytes: tuple[int, ...]
+    ) -> ExecutionResourceEvidence:
+        """Observe a conservative uniform device estimate, leaving host unknown.
+
+        This is an explicit host admission boundary, not a numerical operation.
+        It covers the queried one-RHS analysis profile only. The caller must
+        separately charge all simultaneously resident cache/retired factors.
+        """
+        count = max(len(self.device_indices), 1)
+        if self.group_device_count != count:
+            raise ValueError(
+                "Rank-local cuDSS estimates require explicit all-rank resource evidence for group admission."
+            )
+        if len(caller_device_bytes) != count or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in caller_device_bytes
+        ):
+            raise ValueError(
+                "caller_device_bytes must provide nonnegative bytes per device."
+            )
+        estimates = self.host_estimates()[..., 1].reshape((-1, count))
+        known = all(value is not None for value in estimates.flat)
+        peak = (
+            max(
+                int(value) + caller_device_bytes[index]
+                for row in estimates
+                for index, value in enumerate(row)
+            )
+            if known
+            else None
+        )
+        return ExecutionResourceEvidence(
+            per_device_peak_bytes=peak,
+            per_host_peak_bytes=None,
+            backends=("cudss",),
+            memory_basis="provider_estimate",
+        )
+
+
 class LinearSolveDiagnostics(StrictModule):
     """JAX-compatible evidence retained per operator batch or right-hand side.
 
@@ -134,6 +242,7 @@ class LinearSolveDiagnostics(StrictModule):
     effective_block_rank: Array
     deflated_rhs_count: Array
     refinement_steps: Array
+    external_memory: CudssMemoryEvidence | None
 
     def __init__(
         self,
@@ -156,6 +265,7 @@ class LinearSolveDiagnostics(StrictModule):
         effective_block_rank: Any = -1,
         deflated_rhs_count: Any = 0,
         refinement_steps: Any = 0,
+        external_memory: CudssMemoryEvidence | None = None,
     ) -> None:
         self.residual_norm = jnp.asarray(residual_norm)
         self.relative_residual = jnp.asarray(relative_residual)
@@ -183,6 +293,7 @@ class LinearSolveDiagnostics(StrictModule):
             dtype=jnp.int32,
         )
         self.refinement_steps = jnp.asarray(refinement_steps, dtype=jnp.int32)
+        self.external_memory = external_memory
         self.singular_values = (
             None if singular_values is None else jnp.asarray(singular_values)
         )
@@ -952,6 +1063,7 @@ class RecycledLinearSolveResult(StrictModule):
 
 
 __all__ = [
+    "CudssMemoryEvidence",
     "InitialGuessDiagnostics",
     "LinearIterationMetrics",
     "LinearPrecisionEvidence",

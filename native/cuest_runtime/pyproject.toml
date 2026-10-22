@@ -1,0 +1,47 @@
+[build-system]
+requires = [
+  "scikit-build-core>=1.1.0,<2",
+  "cmake>=4.4.3,<5",
+  "ninja>=1.13.2,<2",
+]
+build-backend = "_build_backend"
+backend-path = ["."]
+
+[project]
+name = "phydrax-cuest"
+version = "0.2.2"
+description = "Private CUDA 13 cuEST runtime for the Phydrax molecular integral provider."
+requires-python = ">=3.13,<3.14"
+authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
+license = {text = "Phydra Non-Production License (PNPL); NVIDIA cuEST Software License Agreement and included third-party licenses"}
+classifiers = [
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.13",
+  "Environment :: GPU :: NVIDIA CUDA :: 13",
+  "Private :: Do Not Upload",
+]
+# cuSolver/cuSPARSE retain SONAME 12 in NVIDIA's CUDA 13 toolkit. These are the
+# CUDA 13 distributions, not the independently named *-cu12 distributions.
+dependencies = [
+  "phydrax-cuda-major==13.*",
+  "nvidia-cublas>=13.8.0.4,<14",
+  "nvidia-cusolver>=12.3.4.7,<13",
+  "nvidia-cusparse>=12.8.6.72,<13",
+  "nvidia-cuda-nvrtc>=13.4.92,<14",
+  "nvidia-cuda-runtime>=13.4.92,<14",
+  "nvidia-nvjitlink>=13.4.92,<14",
+]
+
+[tool.scikit-build]
+minimum-version = "1.1"
+cmake.version = ">=4.4.3,<5"
+ninja.version = ">=1.13.2,<2"
+cmake.build-type = "Release"
+cmake.source-dir = "."
+# This wheel carries an ELF runtime, not a CPython extension or a native SDK.
+wheel.py-api = "py3"
+wheel.platlib = true
+wheel.packages = ["python/phydrax_cuest"]
+# CMake retains the complete fetched NVIDIA license (including MPL and other
+# third-party terms), and repository application notices, in dist-info/licenses.
+wheel.license-files = []

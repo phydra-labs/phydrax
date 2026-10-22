@@ -13,9 +13,12 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.sharding import NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 
+from ..._execution_collectives import CollectiveBinding, require_collective_lease
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_context import inside_jax_transformation
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked, parse
@@ -356,6 +359,9 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
     schedule: DistributedPeriodicLESSchedule = eqx.field(static=True)
     checkpoint_count: int = eqx.field(static=True)
     maximum_bytes: int = eqx.field(static=True)
+    transpose_provider: Literal["native", "cudecomp"] = eqx.field(static=True)
+    collective_binding: CollectiveBinding | None
+    maximum_external_scratch_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -367,6 +373,9 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
         schedule: DistributedPeriodicLESSchedule = "slab",
         checkpoint_count: int = 0,
         maximum_bytes: int = 2 * 1024**3,
+        transpose_provider: Literal["native", "cudecomp"] = "native",
+        collective_binding: CollectiveBinding | None = None,
+        maximum_external_scratch_bytes: int = 256 * 1024**2,
     ) -> None:
         from ...equations._periodic_les import PreparedPeriodicAlgebraicLES
 
@@ -375,6 +384,22 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
         if not isinstance(topology, SpectralMeshTopology):
             raise TypeError("topology must be a SpectralMeshTopology.")
         schedule = parse(schedule, DistributedPeriodicLESSchedule, "schedule")
+        provider = parse(
+            transpose_provider, Literal["native", "cudecomp"], "transpose_provider"
+        )
+        external_scratch = index(maximum_external_scratch_bytes)
+        if external_scratch <= 0:
+            raise ValueError("maximum_external_scratch_bytes must be positive.")
+        if collective_binding is not None and not isinstance(
+            collective_binding, CollectiveBinding
+        ):
+            raise TypeError("collective_binding must be a CollectiveBinding or None.")
+        if provider == "native" and collective_binding is not None:
+            raise ValueError(
+                "native transpose_provider does not accept collective_binding."
+            )
+        if provider == "cudecomp" and collective_binding is None:
+            raise ValueError("cudecomp transpose_provider requires collective_binding.")
         checkpoints = index(checkpoint_count)
         maximum = index(maximum_bytes)
         if checkpoints < 0 or maximum <= 0:
@@ -389,11 +414,23 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Distributed periodic LES requires oversampled SGS evaluation."
             )
+        if collective_binding is not None:
+            if inside_jax_transformation():
+                raise ValueError(
+                    "cuDecomp LES preparation is an explicit host phase, "
+                    "not a JAX transformation."
+                )
+            collective_binding = require_collective_lease(
+                collective_binding.spec
+            ).binding_for(NamedSharding(topology.mesh, PartitionSpec()))
         self.scientific = scientific
         self.topology = topology
         self.schedule = schedule
         self.checkpoint_count = checkpoints
         self.maximum_bytes = maximum
+        self.transpose_provider = provider
+        self.collective_binding = collective_binding
+        self.maximum_external_scratch_bytes = external_scratch
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "distributed-periodic-les-plan",
@@ -406,6 +443,13 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
                 "checkpoint_count": checkpoints,
                 "maximum_bytes": maximum,
                 "qualification": "backend-specific-not-inherited",
+                "transpose_provider": provider,
+                "collective_configuration": (
+                    None
+                    if collective_binding is None
+                    else collective_binding.spec.identity
+                ),
+                "maximum_external_scratch_bytes": external_scratch,
             }
         )
 
@@ -475,6 +519,9 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
                 state_shape=(3,),
                 admitted_payload_shapes=_LES_PAYLOAD_SHAPES,
                 maximum_bytes=plan.maximum_bytes,
+                transpose_provider=plan.transpose_provider,
+                collective_binding=plan.collective_binding,
+                maximum_external_scratch_bytes=plan.maximum_external_scratch_bytes,
             )
         except SpectralResourceError as error:
             raise _DistributedPeriodicLESResourceError(

@@ -23,6 +23,7 @@ import jax
 from . import _jax_config
 from ._elf_dependencies import (
     DependencyClosure,
+    read_dynamic_section,
     resolve_dependency_closure,
     ResolvedDependency,
     UnresolvedDependency,
@@ -393,7 +394,7 @@ def assess_cuda_environment(facts: CudaEnvironmentFacts, /) -> CudaEnvironmentRe
 
 
 _CUDA_SONAME = re.compile(
-    r"lib(?:cudart|cublasLt|cublas|cusparse|cusolver|cufft|curand|nvJitLink|nvrtc|cudnn[^/]*|nccl|cudss|cupti|nvshmem_host)\.so(?:\.\d+)*\Z"
+    r"lib(?:cudart|cublasLt|cublas|cusparse|cusolver|cufft|curand|nvJitLink|nvrtc|cudnn[^/]*|nccl|cudss|cupti|nvshmem_host|cutensor|cutensornet|cuest)\.so(?:\.\d+)*\Z"
 )
 _MAJOR_SONAME = re.compile(
     r"lib(?:cudart|cublasLt|cublas|nvrtc|nvJitLink|cupti)\.so\.(\d+)(?:\.\d+)*\Z"
@@ -522,8 +523,33 @@ def _library_path() -> tuple[str, ...]:
     )
 
 
+def competing_cuda_libraries(
+    library_path: str, mapped_libraries: tuple[MappedCudaLibrary, ...], /
+) -> tuple[tuple[str, str], ...]:
+    """Find actual alternate ELF objects that can shadow mapped CUDA SONAMEs."""
+    directories = tuple(Path(entry) for entry in library_path.split(os.pathsep) if entry)
+    candidates: set[tuple[str, str]] = set()
+    for library in mapped_libraries:
+        mapped = Path(library.path).resolve()
+        soname = read_dynamic_section(mapped).soname
+        if soname is None or _CUDA_SONAME.fullmatch(soname) is None:
+            continue
+        for directory in directories:
+            candidate = directory / soname
+            if not candidate.is_file() or candidate.resolve() == mapped:
+                continue
+            if read_dynamic_section(candidate).soname != soname:
+                raise ValueError(
+                    f"Competing CUDA library {candidate} has a different SONAME."
+                )
+            candidates.add((soname, str(candidate.resolve())))
+    return tuple(sorted(candidates))
+
+
 def _distribution_major(distribution: importlib.metadata.Distribution, /) -> int | None:
     name = distribution.metadata["Name"]
+    if name.lower().replace("_", "-") == "phydrax-cuest":
+        return 13
     match = re.search(r"-cu(\d+)$", name.lower().replace("_", "-"))
     if match is not None:
         return int(match[1])
@@ -573,7 +599,11 @@ def collect_cuda_environment(*, initialize_backend: bool) -> CudaEnvironmentFact
         match = re.fullmatch(r"jax-cuda(\d+)-plugin", normalized)
         if match is not None:
             plugins.add(int(match[1]))
-        if normalized.startswith("nvidia-"):
+        if (
+            normalized.startswith("nvidia-")
+            or normalized == "phydrax-cuest"
+            or re.fullmatch(r"(?:cutensor|cutensornet)-cu\d+", normalized)
+        ):
             major = _distribution_major(distribution)
             if major is not None:
                 nvidia.append((name, major))

@@ -99,6 +99,15 @@ near-axis-corrected volumes for shape orders 1–3.
 
 ## Distributed PIC and restart
 
+Eight-device qualification keeps slab and 2×4/4×2 spectral layouts distinct from
+the three-dimensional 2×2×2 cochain mesh. The cubic case uses global dimensions
+larger than twice the guard width in every direction, populates all eight owners,
+and requires each guarded window to remain a strict subset of the global grid.
+Face, edge, and corner migration, conservation, constraint evidence, overflow
+rollback, and bitwise restart are checked against the single-device scientific
+owner. This is ordinary JAX mesh execution; it does not imply cuDecomp pencil,
+site-MPI, multi-host, or RDMA support.
+
 ::: phydrax.solver.distribute_pic_field_solver
 
 ---

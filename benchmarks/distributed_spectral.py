@@ -19,12 +19,14 @@ import argparse
 import math
 import os
 import platform
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
 import jax
 import numpy as np
+from jax.stages import Compiled
 
 from benchmarks._io import write_json_atomic
 from benchmarks._runtime import (
@@ -38,12 +40,18 @@ from benchmarks._runtime import (
     measure_synchronized,
 )
 from phydrax import config as pxconfig
+from phydrax._execution_collectives import (
+    CollectiveLease,
+    CollectiveProgram,
+    prepare_collective_program,
+)
 from phydrax._execution_sampling import sample_device_memory, sample_host_memory
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization.spectral import (
     DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
     SpectralPrecisionPolicy,
+    SpectralTransposeProvider,
 )
 from phydrax.typing import parse
 
@@ -178,9 +186,65 @@ def _distributed_defect(
     return float(error.maximum_absolute) / max(float(reference.maximum_absolute), 1.0)
 
 
+@jax.jit
+def _to_modal(plan: DistributedSpectralExecutionPlan, values: jax.Array) -> jax.Array:
+    return plan.to_modal(values)
+
+
+@jax.jit
+def _to_physical(plan: DistributedSpectralExecutionPlan, values: jax.Array) -> jax.Array:
+    return plan.to_physical(values)
+
+
+def _stage(
+    lease: CollectiveLease | None,
+    function: Callable[[DistributedSpectralExecutionPlan, jax.Array], jax.Array],
+    plan: DistributedSpectralExecutionPlan,
+    values: jax.Array,
+) -> tuple[Compiled | CollectiveProgram[jax.Array], dict[str, float | None]]:
+    if lease is None:
+        staged = jax.jit(function)
+        executable, timing = measure_lower_and_compile(
+            lambda: staged.lower(plan, values), lambda lowered: lowered.compile()
+        )
+        return executable, {
+            "program_staging_lowering_compilation_seconds": (
+                timing.lowering_seconds + timing.compilation_seconds
+            ),
+            "lowering_seconds": timing.lowering_seconds,
+            "compilation_seconds": timing.compilation_seconds,
+        }
+    program, seconds = measure_host(
+        lambda: prepare_collective_program(function, plan, values, lease_key=lease.spec)
+    )
+    return program, {
+        "program_staging_lowering_compilation_seconds": seconds,
+        "lowering_seconds": None,
+        "compilation_seconds": None,
+    }
+
+
+def _execute(
+    lease: CollectiveLease | None,
+    operation: Compiled | CollectiveProgram[jax.Array],
+    plan: DistributedSpectralExecutionPlan,
+    values: jax.Array,
+) -> jax.Array:
+    if isinstance(operation, CollectiveProgram):
+        if lease is None:
+            raise ValueError("A collective program requires its explicitly live lease.")
+        return lease.invoke(operation, plan, values)
+    if lease is not None:
+        raise TypeError(
+            "Collective execution requires an explicitly staged CollectiveProgram."
+        )
+    return operation(plan, values)
+
+
 def _small_numpy_reference(
     plan: DistributedSpectralExecutionPlan,
-) -> tuple[tuple[int, ...], float]:
+    collective_lease: CollectiveLease | None = None,
+) -> tuple[tuple[int, ...], float, dict[str, Any]]:
     # Every mesh factor divides each reference dimension, admitting either
     # transpose schedule without making the oracle grow with the campaign.
     multiple = math.lcm(*plan.topology.mesh_shape)
@@ -195,6 +259,9 @@ def _small_numpy_reference(
         admitted_payload_shapes=((),),
         state_shape=(),
         schedule=plan.schedule,
+        transpose_provider=plan.transpose_provider,
+        collective_binding=plan.collective_binding,
+        maximum_external_scratch_bytes=plan.maximum_external_scratch_bytes,
     ).prepare()
     host = _input_block(
         shape, (slice(None),) * len(shape), 0, np.dtype(plan.precision.coefficient_dtype)
@@ -208,13 +275,30 @@ def _small_numpy_reference(
         reference.modal_layout.sharding(reference.topology),
         lambda index: expected[index],
     )
+    reference_input = _placed_input(reference, 0)
+    operation, program_preparation = _stage(
+        collective_lease, _to_modal, reference, reference_input
+    )
     defect = _distributed_defect(
         reference,
-        reference.to_modal(_placed_input(reference, 0)),
+        _execute(collective_lease, operation, reference, reference_input),
         distributed_expected,
         modal=True,
     )
-    return shape, defect
+    return (
+        shape,
+        defect,
+        {
+            "execution_id": reference.execution_id,
+            "logical_resource_report": asdict(reference.report.resource),
+            "program_preparation_timing": program_preparation,
+            "transpose_preparation_evidence": (
+                None
+                if reference.report.transpose_evidence is None
+                else asdict(reference.report.transpose_evidence)
+            ),
+        },
+    )
 
 
 def _hardware_evidence(topology: SpectralMeshTopology) -> dict[str, Any]:
@@ -266,11 +350,20 @@ def _run(
     precision_name: Precision,
     repeats: int,
     maximum_bytes: int,
+    *,
+    transpose_provider: SpectralTransposeProvider = "native",
+    collective_lease: CollectiveLease | None = None,
+    maximum_external_scratch_bytes: int = 256 * 1024**2,
 ) -> dict[str, Any]:
     """Keep measurement/evidence in one scope so snapshots share buffer lifetimes."""
     if len(shape) < 2:
         raise ValueError("distributed C2C campaigns require spatial rank at least two.")
     _campaign_contract(campaign, schedule, mesh_shape)
+    provider = parse(transpose_provider, SpectralTransposeProvider, "transpose_provider")
+    if (provider == "cudecomp") != (collective_lease is not None):
+        raise ValueError(
+            "cuDecomp campaigns require one explicit live collective lease; native campaigns do not."
+        )
     if repeats < 1:
         raise ValueError("repeats must be positive.")
     precision = SpectralPrecisionPolicy(np.dtype(precision_name))
@@ -278,16 +371,23 @@ def _run(
     owner_id = canonical_fingerprint(
         {"kind": "distributed-spectral-benchmark-owner", "driver": Path(__file__).name}
     )
-    plan = DistributedSpectralExecutionPlan(
-        topology,
-        shape,
-        owner_id=owner_id,
-        precision=precision,
-        admitted_payload_shapes=((),),
-        state_shape=(),
-        schedule=schedule,
-        maximum_bytes=maximum_bytes,
-    ).prepare()
+    plan, preparation_seconds = measure_host(
+        lambda: DistributedSpectralExecutionPlan(
+            topology,
+            shape,
+            owner_id=owner_id,
+            precision=precision,
+            admitted_payload_shapes=((),),
+            state_shape=(),
+            schedule=schedule,
+            maximum_bytes=maximum_bytes,
+            transpose_provider=provider,
+            collective_binding=None
+            if collective_lease is None
+            else collective_lease.binding,
+            maximum_external_scratch_bytes=maximum_external_scratch_bytes,
+        ).prepare()
+    )
     baseline_memory = {
         "host": sample_host_memory().to_payload(),
         "devices": [
@@ -306,9 +406,15 @@ def _run(
             sample.to_payload() for sample in sample_device_memory(jax.local_devices())
         ],
     }
-    transformed = jax.jit(plan.to_modal)
-    compiled, compilation = measure_lower_and_compile(
-        lambda: transformed.lower(placed), lambda lowered: lowered.compile()
+    forward_operation, compilation = _stage(collective_lease, _to_modal, plan, placed)
+    placed_probe = _placed_input(plan, 3, modal=True)
+    inverse_operation, inverse_compilation = _stage(
+        collective_lease, _to_physical, plan, placed_probe
+    )
+    compiled = (
+        forward_operation.executable
+        if isinstance(forward_operation, CollectiveProgram)
+        else forward_operation
     )
     compiled_memory = {
         "host": sample_host_memory().to_payload(),
@@ -316,20 +422,26 @@ def _run(
             sample.to_payload() for sample in sample_device_memory(jax.local_devices())
         ],
     }
-    first, first_seconds = measure_synchronized(lambda: compiled(placed))
+    first, first_seconds = measure_synchronized(
+        lambda: _execute(collective_lease, forward_operation, plan, placed)
+    )
     warm_index = 0
 
     def changed_input_execution() -> jax.Array:
         nonlocal warm_index
         value = warm_placed[warm_index]
         warm_index = (warm_index + 1) % len(warm_placed)
-        return compiled(value)
+        return _execute(collective_lease, forward_operation, plan, value)
 
     warm_result, warm = measure_repeated(
         changed_input_execution, warmup=0, repeats=repeats
     )
+    cost = compiled.cost_analysis()
     compiler = compiler_evidence(
-        compiled.cost_analysis(), compiled.memory_analysis(), source="xla"
+        cost,
+        compiled.memory_analysis(),
+        source="xla",
+        opaque_custom_calls=provider == "cudecomp",
     )
 
     runtime_memory = {
@@ -340,17 +452,23 @@ def _run(
     }
     # Only replicated scalar diagnostics cross to the host, including on
     # multi-process runs whose scientific arrays are not fully addressable.
-    reference, reference_seconds = measure_host(lambda: _small_numpy_reference(plan))
-    reference_shape, numerical_defect = reference
-    round_trip_defect = _distributed_defect(
-        plan, plan.to_physical(first), placed, modal=False
+    reference, reference_seconds = measure_host(
+        lambda: _small_numpy_reference(plan, collective_lease)
     )
-    placed_probe = _placed_input(plan, 3, modal=True)
+    reference_shape, numerical_defect, reference_evidence = reference
+    round_trip_defect = _distributed_defect(
+        plan,
+        _execute(collective_lease, inverse_operation, plan, first),
+        placed,
+        modal=False,
+    )
     lhs = complex(plan.global_inner_product(first, placed_probe))
     rhs = (
         complex(
             plan.global_inner_product(
-                placed, plan.to_physical(placed_probe), representation="physical"
+                placed,
+                _execute(collective_lease, inverse_operation, plan, placed_probe),
+                representation="physical",
             )
         )
         * plan.transform_scale**2
@@ -361,6 +479,12 @@ def _run(
     return {
         "campaign": campaign,
         "schedule": schedule,
+        "transpose_provider": provider,
+        "transpose_preparation_evidence": (
+            None
+            if plan.report.transpose_evidence is None
+            else asdict(plan.report.transpose_evidence)
+        ),
         "shape": list(shape),
         "mesh_shape": list(mesh_shape),
         "ids": {
@@ -397,19 +521,22 @@ def _run(
             "collective_count": plan.report.collective_count,
         },
         "timing": {
+            "plan_and_provider_preparation_seconds": preparation_seconds,
             "bounded_numpy_reference_seconds": reference_seconds,
             "generate_and_place_seconds": generation_placement_seconds,
             "warm_changed_input_generate_and_place_seconds": (
                 warm_generation_placement_seconds
             ),
-            "lowering_seconds": compilation.lowering_seconds,
-            "compilation_seconds": compilation.compilation_seconds,
+            **compilation,
+            "inverse_program_preparation_timing": inverse_compilation,
+            "program_preparation_scope": "explicit host staging, semantic agreement, lowering and compilation",
             "first_synchronized_seconds": first_seconds,
             "warm_changed_input": warm.to_seconds_dict(),
         },
         "memory": {
             "logical_input_bytes": logical_array_bytes(placed),
             "logical_output_bytes": logical_array_bytes(warm_result),
+            "baseline_scope": "after plan and selected provider preparation",
             "baseline": baseline_memory,
             "after_warm_execution": runtime_memory,
             "after_placement": placed_memory,
@@ -423,8 +550,9 @@ def _run(
             },
             "retained_changed_input_count": len(warm_placed),
             "retained_changed_input_bytes": logical_array_bytes(warm_placed),
+            "retained_modal_probe_bytes": logical_array_bytes(placed_probe),
             "scope": "process-local samples; allocator peaks are since process start",
-            "compiler": asdict(compiler),
+            "compiler": {**asdict(compiler), "raw_cost_analysis": cost},
             "logical_resource_report": {
                 "canonical_storage_bytes": plan.report.resource.canonical_storage_bytes,
                 "padded_storage_bytes": plan.report.resource.padded_storage_bytes,
@@ -432,6 +560,10 @@ def _run(
                 "collective_payload_bytes": plan.report.resource.collective_payload_bytes,
                 "peak_live_bytes": plan.report.resource.peak_live_bytes,
                 "maximum_bytes": plan.report.resource.maximum_bytes,
+                "transpose_packing_bytes": plan.report.resource.transpose_packing_bytes,
+                "external_device_scratch_bytes": plan.report.resource.external_device_scratch_bytes,
+                "external_resident_device_bytes": plan.report.resource.external_resident_device_bytes,
+                "external_host_bytes": plan.report.resource.external_host_bytes,
             },
         },
         "defects": {
@@ -444,6 +576,7 @@ def _run(
             "maximum_coefficients": 65536,
             "campaign_payload_host_gather": False,
             "reduction_dtype": precision.reduction_dtype,
+            **reference_evidence,
         },
         "passed": all(
             np.isfinite(defect) and defect <= tolerance

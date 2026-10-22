@@ -285,7 +285,7 @@ def test_lane_owners_match_global_energy_forces_and_strain(layers: int) -> None:
     _assert_global_parity(plan, model, state, positions, species_ids)
 
 
-@pytest.mark.parametrize("owners", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("owners", [1, 2, 3, 4, 5, 8])
 def test_device_collective_owners_match_global(owners: int) -> None:
     model = _model(2)
     plan = _plan(model, owners=owners, devices=True)

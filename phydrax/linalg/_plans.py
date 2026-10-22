@@ -106,6 +106,7 @@ LinearBackend: TypeAlias = Literal[
     "jax-sparse",
     "host-sparse",
     "cudss",
+    "cudss-mgmn",
     "native-krylov",
     "native-block-krylov",
     "lineax",
@@ -744,6 +745,10 @@ def _auto_method(
     /,
 ) -> tuple[AbstractLinearMethod, str, tuple[str, ...]]:
     operator = problem.operator
+    from ._distributed_sparse import DistributedCSRLinearOperator
+
+    if isinstance(operator, DistributedCSRLinearOperator):
+        raise ValueError("Rank-local CSR requires explicit SparseLDLT MGMN execution.")
     rejected: list[str] = []
     projected_rejection = _projected_pcg_rejection(problem)
     if projected_rejection is None:
@@ -966,7 +971,7 @@ def _validate_dense_rectangular(
     return "jax-dense"
 
 
-def _validate_sparse_direct(
+def _validate_distributed_cudss(
     problem: AbstractLinearProblem,
     method: SparseQR | SparseLU | SparseCholesky | SparseLDLT,
     policy: LinearSolvePolicy,
@@ -974,33 +979,89 @@ def _validate_sparse_direct(
     preconditioner: PreconditioningPolicy | None,
     /,
 ) -> LinearBackend:
-    if not isinstance(problem, LinearSystem):
-        raise TypeError(f"{method.name} requires a LinearSystem.")
-    if not isinstance(operator, AbstractSparseLinearOperator):
-        raise TypeError(f"{method.name} requires canonical sparse storage.")
-    if _has_rank_cutoff(policy):
-        raise ValueError("Sparse direct methods cannot enforce a numerical rank cutoff.")
-    if operator.source.size != operator.target.size:
-        raise ValueError(f"{method.name} requires a square operator.")
-    if preconditioner is not None:
-        raise ValueError("Sparse direct methods do not accept preconditioners.")
-    if isinstance(method, SparseCholesky) and not operator.properties.certifies(
-        "positive_definite"
+    from .._execution_collectives import require_collective_lease
+    from ..backends.cudss import cudss_availability
+    from ._distributed_sparse import DistributedCSRLinearOperator
+
+    if not isinstance(operator, DistributedCSRLinearOperator):
+        raise TypeError("MGMN requires an explicit rank-local CSR operator.")
+    if not isinstance(method, SparseLDLT) or method.execution.mode != "mgmn":
+        raise ValueError("Rank-local CSR requires SparseLDLT with MGMN execution.")
+    if not isinstance(problem, LinearSystem) or problem.nullspace_policy is not None:
+        raise ValueError("MGMN requires an unconstrained rank-local LinearSystem.")
+    if preconditioner is not None or _has_rank_cutoff(policy):
+        raise ValueError(
+            "MGMN does not admit preconditioning or a numerical rank cutoff."
+        )
+    if not operator.storage.self_adjoint:
+        raise ValueError("MGMN requires certified global self-adjoint CSR structure.")
+    if policy.differentiation.mode == "algorithmic":
+        raise ValueError(
+            "MGMN exposes mathematical differentiation, not factorization AD."
+        )
+    group = method.execution.group
+    if group is None:
+        raise ValueError("MGMN requires an explicit execution group.")
+    if len({host for _, host in group.process_host_ids}) > 1:
+        raise ValueError(
+            "MGMN currently requires authenticated same-host process supervision."
+        )
+    operator.binding.spec.require_group(group)
+    if operator.binding.spec.provider_id != "cudss-mgmn":
+        raise ValueError("MGMN requires a cuDSS-specific collective lease.")
+    if group.process_indices[operator.storage.partition_index] != jax.process_index():
+        raise ValueError("MGMN CSR row partition does not belong to this process.")
+    require_collective_lease(operator.binding.spec)
+    availability = cudss_availability(execution_mode="mgmn")
+    if not availability.available:
+        raise ValueError(availability.reason)
+    return "cudss-mgmn"
+
+
+def _validate_resident_cudss(
+    method: SparseLDLT,
+    policy: LinearSolvePolicy,
+    operator: AbstractSparseLinearOperator,
+    /,
+) -> LinearBackend:
+    """Admit local/MG CSR ownership before allocating provider resources."""
+    if method.execution.mode == "mgmn":
+        raise ValueError("MGMN requires rank-local DistributedCSRLinearOperator storage.")
+    if not operator.properties.certifies("self_adjoint"):
+        raise ValueError("SparseLDLT requires certified self-adjoint structure.")
+    if operator.sparse_storage().index_width != 32:
+        raise ValueError("cuDSS execution requires 32-bit CSR indices.")
+    storage = operator.sparse_storage()
+    batch_count = prod(storage.batch_shape)
+    if max(storage.shape) * batch_count > jnp.iinfo(jnp.int32).max or (
+        storage.nnz * batch_count > jnp.iinfo(jnp.int32).max
     ):
-        raise ValueError("SparseCholesky requires certified positive-definite structure.")
-    if isinstance(method, SparseLDLT):
-        if not operator.properties.certifies("self_adjoint"):
-            raise ValueError("SparseLDLT requires certified self-adjoint structure.")
-        if operator.sparse_storage().index_width != 32:
-            raise ValueError("cuDSS execution requires 32-bit CSR indices.")
-        if policy.differentiation.mode == "algorithmic":
-            raise ValueError(
-                "SparseLDLT exposes mathematical differentiation, not an algorithmic factorization derivative."
-            )
-        availability = sparse_provider_availability(method.provider)
-        if not availability.available:
-            raise ValueError(availability.reason)
-        return "cudss"
+        raise ValueError("cuDSS expanded CSR dimensions overflow int32.")
+    if method.execution.mode == "mg":
+        from .backends._cudss_mg import mg_device_indices, require_mg_placement
+
+        if storage.batch_shape:
+            raise ValueError("cuDSS MG refuses matrix batches; use multiple RHS.")
+        mg_device_indices(method.execution)
+        require_mg_placement(
+            method.execution, storage.values, storage.indptr, storage.indices
+        )
+    if policy.differentiation.mode == "algorithmic":
+        raise ValueError(
+            "SparseLDLT exposes mathematical differentiation, not an algorithmic factorization derivative."
+        )
+    availability = sparse_provider_availability(method.provider)
+    if not availability.available:
+        raise ValueError(availability.reason)
+    return "cudss"
+
+
+def _validate_native_sparse_provider(
+    method: SparseQR | SparseLU | SparseCholesky | SparseLDLT,
+    policy: LinearSolvePolicy,
+    /,
+) -> LinearBackend | None:
+    """Enforce the selected native sparse provider's device and AD envelope."""
     if isinstance(method, SparseLU) and method.provider == "jax-cpu":
         if jax.default_backend() != "cpu":
             raise ValueError("SparseLU(provider='jax-cpu') requires the JAX CPU backend.")
@@ -1018,6 +1079,42 @@ def _validate_sparse_direct(
                 "SparseQR exposes mathematical differentiation, not an algorithmic QR derivative."
             )
         return "jax-sparse"
+    return None
+
+
+def _validate_sparse_direct(
+    problem: AbstractLinearProblem,
+    method: SparseQR | SparseLU | SparseCholesky | SparseLDLT,
+    policy: LinearSolvePolicy,
+    operator: AbstractLinearOperator,
+    preconditioner: PreconditioningPolicy | None,
+    /,
+) -> LinearBackend:
+    from ._distributed_sparse import DistributedCSRLinearOperator
+
+    if isinstance(operator, DistributedCSRLinearOperator):
+        return _validate_distributed_cudss(
+            problem, method, policy, operator, preconditioner
+        )
+    if not isinstance(problem, LinearSystem):
+        raise TypeError(f"{method.name} requires a LinearSystem.")
+    if not isinstance(operator, AbstractSparseLinearOperator):
+        raise TypeError(f"{method.name} requires canonical sparse storage.")
+    if _has_rank_cutoff(policy):
+        raise ValueError("Sparse direct methods cannot enforce a numerical rank cutoff.")
+    if operator.source.size != operator.target.size:
+        raise ValueError(f"{method.name} requires a square operator.")
+    if preconditioner is not None:
+        raise ValueError("Sparse direct methods do not accept preconditioners.")
+    if isinstance(method, SparseCholesky) and not operator.properties.certifies(
+        "positive_definite"
+    ):
+        raise ValueError("SparseCholesky requires certified positive-definite structure.")
+    if isinstance(method, SparseLDLT):
+        return _validate_resident_cudss(method, policy, operator)
+    native_backend = _validate_native_sparse_provider(method, policy)
+    if native_backend is not None:
+        return native_backend
     if policy.differentiation.mode != "none":
         raise ValueError(
             "Host sparse direct providers are non-JIT and require DifferentiationPolicy('none')."
@@ -1323,6 +1420,12 @@ def _validate_method(
     /,
 ) -> LinearBackend:
     operator = problem.operator
+    from ._distributed_sparse import DistributedCSRLinearOperator
+
+    if isinstance(operator, DistributedCSRLinearOperator) and (
+        not isinstance(method, SparseLDLT) or method.execution.mode != "mgmn"
+    ):
+        raise ValueError("Rank-local CSR requires explicit SparseLDLT MGMN execution.")
     preconditioner = policy.preconditioning
     preconditioner_properties = _preconditioner_properties(preconditioned, policy)
     if (
@@ -1794,6 +1897,10 @@ def _selected_estimate(
     /,
 ) -> LinearCostEstimate:
     rows, columns = problem.operator.target.size, problem.operator.source.size
+    from ._distributed_sparse import DistributedCSRLinearOperator
+
+    if isinstance(problem.operator, DistributedCSRLinearOperator):
+        rows, columns = problem.operator.storage.global_shape
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         rows += problem.regularizer.target.size
     itemsize = _coordinate_dtype(problem.operator.source).itemsize
@@ -1810,7 +1917,7 @@ def _selected_estimate(
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         regularizer_action_cost = estimate_operator_action_cost(problem.regularizer)
         existing += regularizer_action_cost.storage_bytes
-    sparse_direct = backend in ("jax-sparse", "host-sparse", "cudss")
+    sparse_direct = backend in ("jax-sparse", "host-sparse", "cudss", "cudss-mgmn")
     structured_direct = backend == "jax-structured"
     dense_requires_materialization = dense_direct and _requires_dense_materialization(
         problem
@@ -1843,9 +1950,9 @@ def _selected_estimate(
         factorization_bytes = sparse_lu_analysis.factor_bytes(itemsize, batch_count)
         preparation_workspace_bytes = sparse_lu_analysis.workspace_bytes(itemsize)
     elif sparse_direct:
-        # Providers that choose their own ordering keep the dense bound.
-        # Each plan owns a bounded partition; each entry holds the whole batch.
-        sparse_factor_count = batch_count if backend == "cudss" else 1
+        # Provider-owned fill/scratch remain estimates, not enforced allocation
+        # bounds. MG/MGMN never divide one global factor estimate across peers.
+        sparse_factor_count = batch_count if backend in ("cudss", "cudss-mgmn") else 1
         per_factor_bytes = sparse_factor_count * rows * columns * itemsize
         capacity = method.factor_cache_capacity if isinstance(method, SparseLDLT) else 1
         factorization_bytes = capacity * per_factor_bytes
@@ -2405,6 +2512,22 @@ def _method_configuration(
         if isinstance(method, SparseLDLT):
             configuration["reordering"] = method.reordering
             configuration["memory_mode"] = method.memory_mode
+            configuration["memory_policy"] = {
+                "hybrid_device_limit_bytes": method.memory_policy.hybrid_device_limit_bytes,
+                "host_limit_bytes": method.memory_policy.host_limit_bytes,
+                "require_certified_bounds": method.memory_policy.require_certified_bounds,
+            }
+            configuration["execution"] = {
+                "mode": method.execution.mode,
+                "group": (
+                    None
+                    if method.execution.group is None
+                    else method.execution.group.to_payload()
+                ),
+                "communication_library_path": method.execution.communication_library_path,
+                "communication_library_sha256": method.execution.communication_library_sha256,
+                "communication_build_identity": method.execution.communication_build_identity,
+            }
             configuration["refinement_steps"] = method.refinement_steps
             configuration["factor_cache_capacity"] = method.factor_cache_capacity
     return configuration

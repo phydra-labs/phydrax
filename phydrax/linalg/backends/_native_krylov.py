@@ -1932,6 +1932,14 @@ def _fgmres_raw(
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
 ) -> _FGMRESResult:
+    """Restarted Arnoldi with true-residual-owned convergence and progress.
+
+    An invariant subspace is happy only when its returned update satisfies the
+    original residual tolerance. A zero projected pivot retains the preceding
+    nonsingular update; it cannot nominate convergence or enter a triangular
+    divide. A near-invariant cycle may restart only while making true-residual
+    progress. No breakdown rule relaxes the requested residual certificate.
+    """
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     fixed_trip = _fixed_trip(driver)
@@ -2217,7 +2225,11 @@ def _fgmres_raw(
                         & jnp.all(jnp.isfinite(transformed))
                         & jnp.all(jnp.isfinite(column))
                     )
-                    converged = estimated_norm <= threshold
+                    # A zero projected pivot adds no solvable direction. In
+                    # particular, the identity rotation of a zero column leaves
+                    # a zero trailing RHS but has not solved the current row.
+                    projected_rank_loss = column[local_index] == 0
+                    converged = (estimated_norm <= threshold) & ~projected_rank_loss
                     improvement = estimated_norm < best_i * (
                         1.0 - jnp.sqrt(jnp.finfo(rhs.real.dtype).eps)
                     )
@@ -2231,15 +2243,19 @@ def _fgmres_raw(
                     step_breakdown = jnp.where(
                         finite_step,
                         jnp.where(
-                            converged,
-                            int(KrylovBreakdownStatus.HAPPY),
+                            projected_rank_loss,
+                            int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
                             jnp.where(
-                                stagnated,
-                                int(KrylovBreakdownStatus.STAGNATION),
+                                converged,
+                                int(KrylovBreakdownStatus.HAPPY),
                                 jnp.where(
-                                    near_breakdown,
-                                    int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
-                                    int(KrylovBreakdownStatus.NONE),
+                                    stagnated,
+                                    int(KrylovBreakdownStatus.STAGNATION),
+                                    jnp.where(
+                                        near_breakdown,
+                                        int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
+                                        int(KrylovBreakdownStatus.NONE),
+                                    ),
                                 ),
                             ),
                         ),
@@ -2271,6 +2287,7 @@ def _fgmres_raw(
                         finite_step
                         & ~converged
                         & ~near_breakdown
+                        & ~projected_rank_loss
                         & ~stagnated
                         & ~_iteration_stop(next_iteration),
                         step_breakdown,
@@ -2336,10 +2353,19 @@ def _fgmres_raw(
                     basis[:-1] if identity_preconditioner else preconditioned_basis
                 )
                 cycle_steps = final_iterations - starting_iterations
+                # Arnoldi stops on an invariant subspace. If its last projected
+                # pivot is zero, retain the preceding nonsingular prefix rather
+                # than divide by zero. The true residual below owns acceptance
+                # and whether this finite partial update made restart progress.
+                last_column = jnp.maximum(cycle_steps - 1, 0)
+                projected_rank_loss = (hessenberg[last_column, last_column] == 0) & (
+                    cycle_steps > 0
+                )
+                solved_steps = cycle_steps - projected_rank_loss.astype(jnp.int32)
                 coefficients = reduced_solve(
                     hessenberg,
                     reduced_rhs,
-                    cycle_steps,
+                    solved_steps,
                 )
                 candidate = cycle_base + jnp.sum(
                     coefficients[:, None] * update_basis,

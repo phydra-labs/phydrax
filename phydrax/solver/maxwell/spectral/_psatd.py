@@ -42,16 +42,20 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from itertools import product
 from math import factorial, pi
+from operator import index
 from typing import Any, assert_never, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.sharding import NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 
 from ...._dtype_names import RealPrecisionDType
+from ...._execution_collectives import CollectiveBinding, require_collective_lease
 from ...._fingerprint import canonical_fingerprint
+from ...._jax_context import inside_jax_transformation
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import StructuredCochainBridge
@@ -929,6 +933,9 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
     permittivity: float = eqx.field(static=True)
     permeability: float = eqx.field(static=True)
     topology: SpectralMeshTopology
+    transpose_provider: Literal["native", "cudecomp"] = eqx.field(static=True)
+    collective_binding: CollectiveBinding | None
+    maximum_external_scratch_bytes: int = eqx.field(static=True)
     counts: tuple[int, int, int] = eqx.field(static=True)
     spacing: tuple[float, float, float] = eqx.field(static=True)
     origin: tuple[float, float, float] = eqx.field(static=True)
@@ -958,6 +965,9 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         permittivity: float = 1.0,
         permeability: float = 1.0,
         topology: SpectralMeshTopology | None = None,
+        transpose_provider: Literal["native", "cudecomp"] = "native",
+        collective_binding: CollectiveBinding | None = None,
+        maximum_external_scratch_bytes: int = 256 * 1024**2,
     ) -> None:
         variant = parse(variant, SpectralMaxwellVariant, "variant")
         time_dependency = parse(
@@ -970,6 +980,22 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         decomposition = parse(decomposition, SpectralDecomposition, "decomposition")
         grid = parse(grid, SpectralGrid, "grid")
         absorber = parse(absorber, SpectralAbsorber, "absorber")
+        provider = parse(
+            transpose_provider, Literal["native", "cudecomp"], "transpose_provider"
+        )
+        external_scratch = index(maximum_external_scratch_bytes)
+        if external_scratch <= 0:
+            raise ValueError("maximum_external_scratch_bytes must be positive.")
+        if collective_binding is not None and not isinstance(
+            collective_binding, CollectiveBinding
+        ):
+            raise TypeError("collective_binding must be a CollectiveBinding or None.")
+        if provider == "native" and collective_binding is not None:
+            raise ValueError(
+                "native transpose_provider does not accept collective_binding."
+            )
+        if provider == "cudecomp" and collective_binding is None:
+            raise ValueError("cudecomp transpose_provider requires collective_binding.")
         metadata = _spectral_grid_metadata(bridge)
         epsilon, mu = float(permittivity), float(permeability)
         if not (np.isfinite(epsilon) and epsilon > 0.0 and np.isfinite(mu) and mu > 0.0):
@@ -1018,6 +1044,15 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         topology_ = SpectralMeshTopology.one_device() if topology is None else topology
         if not isinstance(topology_, SpectralMeshTopology):
             raise TypeError("topology must be SpectralMeshTopology or None.")
+        if collective_binding is not None:
+            if inside_jax_transformation():
+                raise ValueError(
+                    "cuDecomp Maxwell preparation is an explicit host phase, "
+                    "not a JAX transformation."
+                )
+            collective_binding = require_collective_lease(
+                collective_binding.spec
+            ).binding_for(NamedSharding(topology_.mesh, PartitionSpec()))
         self.bridge = bridge
         self.variant = variant
         self.time_dependency = time_dependency
@@ -1037,6 +1072,9 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         self.permittivity = epsilon
         self.permeability = mu
         self.topology = topology_
+        self.transpose_provider = provider
+        self.collective_binding = collective_binding
+        self.maximum_external_scratch_bytes = external_scratch
         self.counts = metadata.counts
         self.spacing = metadata.spacing
         self.origin = metadata.origin
@@ -1072,6 +1110,13 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
                     None if execution.guard_cells is None else list(execution.guard_cells)
                 ),
                 "topology": topology_.topology_id,
+                "transpose_provider": provider,
+                "collective_configuration": (
+                    None
+                    if collective_binding is None
+                    else collective_binding.spec.identity
+                ),
+                "maximum_external_scratch_bytes": external_scratch,
             }
         )
 
@@ -1381,6 +1426,14 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
         currents: Sequence[ChargeConservingCurrentPlan],
         /,
     ) -> None:
+        if (
+            plan.transpose_provider == "cudecomp"
+            and plan.decomposition == "local-guarded"
+        ):
+            raise ValueError(
+                "cuDecomp requires the canonical global-fft direct3D slab mapping; "
+                "local-guarded block transforms are unsupported."
+            )
         transfer_values = tuple(transfers)
         current_values = tuple(currents)
         if len(transfer_values) != len(current_values):
@@ -1437,6 +1490,9 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
                 schedule=schedule,
                 state_shape=(1, 3),
                 domain_lengths=lengths,
+                transpose_provider=plan.transpose_provider,
+                collective_binding=plan.collective_binding,
+                maximum_external_scratch_bytes=plan.maximum_external_scratch_bytes,
             ).prepare()
         )
         guarded = None

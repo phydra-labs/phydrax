@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `233166542263ae582306c826697b1a0d4c191b939594f7af849a8d8874fe85c0`
+Catalog ID: `eb630f1349228515f2f1ebd316b87309bca55aac00443864ff77c4b335aa235e`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 308 |
+| candidate | 316 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |
@@ -211,6 +211,14 @@ Catalog ID: `233166542263ae582306c826697b1a0d4c191b939594f7af849a8d8874fe85c0`
 | `core.uncertainty-quantification` | `phydrax.qualification` | candidate | candidate | 1 |
 | `correlation.modal-frf` | `phydrax.correlation` | candidate | implementation-qualified-candidate | 1 |
 | `coupled-phase-field-multiphysics` | `phydrax.applications.phase_field` | candidate | candidate | 8 |
+| `cuda-cudecomp-direct-slabs` | `phydrax.discretization.spectral` | candidate | unreleased-candidate | 1 |
+| `cuda-cudss-local` | `phydrax.linalg` | candidate | unreleased-candidate | 1 |
+| `cuda-cudss-mg` | `phydrax.linalg` | candidate | unreleased-candidate | 1 |
+| `cuda-cudss-mgmn` | `phydrax.linalg` | candidate | unreleased-candidate | 1 |
+| `cuda-cuest-df-rhf` | `phydrax.operators.quantum.gaussian` | candidate | unreleased-candidate | 1 |
+| `cuda-prepared-tensor` | `phydrax.tensor_network` | candidate | unreleased-candidate | 1 |
+| `cuda-tensor-host-slices` | `phydrax.tensor_network` | candidate | unreleased-candidate | 1 |
+| `cuda-tensor-path-planning` | `phydrax.tensor_network` | candidate | unreleased-candidate | 1 |
 | `diagnostic-photon-forward-model` | `phydrax.imaging` | candidate | candidate | 1 |
 | `diagnostic-photon-material-calibration` | `phydrax.imaging` | candidate | candidate | 1 |
 | `diagrammatic-field.lattice-parquet` | `phydrax.applications` | candidate | candidate | 1 |

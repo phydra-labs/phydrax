@@ -47,6 +47,11 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
         *,
         spin_sector: str = "singlet",
     ) -> None:
+        if hartree_fock.integrals.source is not None:
+            raise NotImplementedError(
+                "Excited HF response requires exact integrals; nonexact integral "
+                "response is not implemented."
+            )
         if not isinstance(state, RestrictedMeanFieldState) or not bool(
             state.evidence.converged
         ):
@@ -55,6 +60,10 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Excited response state belongs to another HF plan or geometry."
             )
+        if state.integral_definition_id != hartree_fock.integrals.definition_id(
+            hartree_fock.basis
+        ):
+            raise ValueError("Excited response state has another integral definition.")
         spin = str(spin_sector).strip().lower()
         if spin not in ("singlet", "triplet"):
             raise ValueError(

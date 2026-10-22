@@ -23,6 +23,7 @@ from ._contraction import (
     plan_contraction,
     prepare_contraction,
 )
+from ._contraction_provider import ContractionExecutionPolicy
 from ._precision import TensorNetworkPrecisionPolicy
 from ._topology import ContractionLeg, ContractionOperand, ContractionStructure
 
@@ -187,6 +188,12 @@ class PEPO(StrictModule):
 
 
 class PEPSContractionEvidence(StrictModule):
+    """Exact-network replay identity and nested prepared-executor evidence.
+
+    ``contraction`` describes only the prepared full-network contraction, not
+    native local transfer construction or approximate environment algorithms.
+    """
+
     network_id: str = eqx.field(static=True)
     replay_id: str = eqx.field(static=True)
     method: str = eqx.field(static=True)
@@ -267,9 +274,16 @@ def contract_peps_exact(
     /,
     *,
     resources: ContractionResourcePolicy | None = None,
+    execution: ContractionExecutionPolicy | None = None,
     optimizer: str = "greedy",
 ) -> PEPSContractionResult:
-    """Exactly contract a small finite PEPS overlap after resource admission."""
+    """Exactly contract ``<state|other>`` (the squared norm when omitted).
+
+    ``resources`` admits the exact network plan; ``execution`` explicitly selects
+    its prepared executor and external resource bounds, defaulting to native.
+    Local double-layer transfers remain native. Precision comes from the states,
+    whose policies must match. No approximate environment is accelerated.
+    """
 
     if not isinstance(state, PEPS) or (other is not None and not isinstance(other, PEPS)):
         raise TypeError("state and other must be PEPS values.")
@@ -290,13 +304,17 @@ def contract_peps_exact(
         ).reshape(shape)
         for first, second, shape in zip(state.tensors, right.tensors, shapes, strict=True)
     )
-    contracted = execute_contraction(prepare_contraction(plan, transfers))
+    contracted = execute_contraction(
+        prepare_contraction(plan, transfers, execution=execution)
+    )
     replay_id = canonical_fingerprint(
         {
             "kind": "exact-peps-overlap",
             "left": state.state_id,
             "right": right.state_id,
             "plan": plan.plan_id,
+            "execution": contracted.evidence.execution_id,
+            "contraction_replay": contracted.evidence.replay_id,
         }
     )
     evidence = PEPSContractionEvidence(
@@ -318,8 +336,14 @@ def peps_amplitude(
     /,
     *,
     resources: ContractionResourcePolicy | None = None,
+    execution: ContractionExecutionPolicy | None = None,
 ) -> PEPSContractionResult:
-    """Exactly contract one computational-basis amplitude."""
+    """Exactly contract one finite OBC computational-basis amplitude.
+
+    ``resources`` admits the exact network plan. ``execution`` selects only its
+    prepared executor and external resource bounds (native by default); the
+    state's precision policy is preserved.
+    """
 
     values = tuple(configuration)
     if len(values) != len(state.tensors) or any(
@@ -338,7 +362,9 @@ def peps_amplitude(
     arrays = tuple(
         tensor[..., value] for tensor, value in zip(state.tensors, values, strict=True)
     )
-    contracted = execute_contraction(prepare_contraction(plan, arrays))
+    contracted = execute_contraction(
+        prepare_contraction(plan, arrays, execution=execution)
+    )
     evidence = PEPSContractionEvidence(
         state.state_id,
         canonical_fingerprint(
@@ -347,6 +373,8 @@ def peps_amplitude(
                 "state": state.state_id,
                 "configuration": values,
                 "plan": plan.plan_id,
+                "execution": contracted.evidence.execution_id,
+                "contraction_replay": contracted.evidence.replay_id,
             }
         ),
         "exact-basis-amplitude",
@@ -364,8 +392,14 @@ def contract_pepo_trace_exact(
     /,
     *,
     resources: ContractionResourcePolicy | None = None,
+    execution: ContractionExecutionPolicy | None = None,
 ) -> PEPSContractionResult:
-    """Exactly contract the trace of a finite OBC PEPO."""
+    """Exactly contract the trace of a finite OBC PEPO.
+
+    ``resources`` admits the exact network plan. ``execution`` selects only its
+    prepared executor and external resource bounds (native by default); local
+    physical traces remain native and the operator's precision is preserved.
+    """
 
     if any(
         output != input_
@@ -388,7 +422,9 @@ def contract_pepo_trace_exact(
         ein.contract("urdlpp->urdl", tensor, optimize=False)
         for tensor in operator.tensors
     )
-    contracted = execute_contraction(prepare_contraction(plan, arrays))
+    contracted = execute_contraction(
+        prepare_contraction(plan, arrays, execution=execution)
+    )
     evidence = PEPSContractionEvidence(
         operator.operator_id,
         canonical_fingerprint(
@@ -396,6 +432,8 @@ def contract_pepo_trace_exact(
                 "kind": "exact-pepo-trace",
                 "operator": operator.operator_id,
                 "plan": plan.plan_id,
+                "execution": contracted.evidence.execution_id,
+                "contraction_replay": contracted.evidence.replay_id,
             }
         ),
         "exact-pepo-trace",

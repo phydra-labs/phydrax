@@ -4,13 +4,15 @@ from collections.abc import Callable
 
 import pytest
 
+from phydrax.backends import (
+    cuda_candidate_declarations,
+    cuda_candidate_profiles,
+    rocm_candidate_declarations,
+    rocm_candidate_profiles,
+)
 from phydrax.backends._oneapi_profiles import (
     oneapi_candidate_declarations,
     oneapi_candidate_profiles,
-)
-from phydrax.backends._rocm_profiles import (
-    rocm_candidate_declarations,
-    rocm_candidate_profiles,
 )
 from phydrax.backends._tpu_profiles import (
     tpu_candidate_declarations,
@@ -27,12 +29,31 @@ from phydrax.backends.spatial import (
     PALLAS_SPATIAL_CAPABILITIES,
     PALLAS_TPU_SPATIAL_CAPABILITIES,
 )
+from phydrax.qualification._builtin_catalog import builtin_candidate_profiles
 from phydrax.qualification._catalog import (
     CapabilityDeclaration,
     CapabilityDisposition,
     EvidenceState,
 )
 from phydrax.qualification._registry import CapabilityProfile
+
+
+def test_cuda_and_rocm_public_candidates_coexist_in_catalog() -> None:
+    profiles = (*cuda_candidate_profiles(), *rocm_candidate_profiles())
+    declarations = (*cuda_candidate_declarations(), *rocm_candidate_declarations())
+    expected = {profile.profile_id: profile.to_record() for profile in profiles}
+    assert len(expected) == len(profiles)
+    declared = {
+        profile.profile_id: profile.to_record()
+        for declaration in declarations
+        for profile in declaration.profiles
+    }
+    assert declared == expected
+    catalog = builtin_candidate_profiles()
+    identities = tuple(profile.profile_id for profile in catalog)
+    assert identities == tuple(sorted(set(identities)))
+    actual = {profile.profile_id: profile.to_record() for profile in catalog}
+    assert {identity: actual[identity] for identity in expected} == expected
 
 
 def test_intel_profile_uses_actual_upstream_platform_without_distributed_claims() -> None:

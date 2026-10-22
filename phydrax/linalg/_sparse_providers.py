@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from importlib.util import find_spec
 from typing import assert_never, Literal, TypeAlias
 
@@ -11,6 +12,7 @@ import equinox as eqx
 
 from .._execution_device import device_platform
 from .._strict import StrictModule
+from ..backends.cudss import CudssExecutionMode
 from ..typing import parse
 
 
@@ -41,6 +43,10 @@ class SparseProviderCapabilities(StrictModule):
     reliable_zero_inertia: bool = eqx.field(static=True, default=False)
     multiple_rhs: bool = eqx.field(static=True, default=True)
     explicit_release: bool = eqx.field(static=True, default=False)
+    execution_mode: CudssExecutionMode = eqx.field(static=True, default="local")
+    requires_execution_group: bool = eqx.field(static=True, default=False)
+    requires_collective_lease: bool = eqx.field(static=True, default=False)
+    certified_memory_bounds: bool = eqx.field(static=True, default=False)
 
 
 class SparseProviderAvailability(StrictModule):
@@ -133,6 +139,8 @@ SPARSE_PROVIDER_CATALOG = (
 def sparse_provider_capabilities(
     name: SparseProviderName,
     /,
+    *,
+    execution_mode: CudssExecutionMode = "local",
 ) -> SparseProviderCapabilities:
     """Return one provider declaration from the immutable built-in catalog.
 
@@ -145,9 +153,21 @@ def sparse_provider_capabilities(
     ``FailurePolicy("error")``; explicit CUDA QR selection remains available
     with either failure mode and still raises on singular systems.
     """
+    execution_mode = parse(execution_mode, CudssExecutionMode, "execution_mode")
+    if execution_mode != "local" and name != "cudss":
+        raise ValueError(f"Sparse provider {name!r} does not support {execution_mode!r}.")
     for capabilities in SPARSE_PROVIDER_CATALOG:
         if capabilities.name == name:
-            return capabilities
+            if execution_mode == "local":
+                return capabilities
+            return replace(
+                capabilities,
+                execution_mode=execution_mode,
+                batched_shared_pattern=False,
+                inertia=False,
+                requires_execution_group=True,
+                requires_collective_lease=execution_mode == "mgmn",
+            )
     raise ValueError(f"Unknown sparse provider {name!r}.")
 
 
@@ -159,10 +179,12 @@ def _package_available(package: str, /) -> bool:
 def sparse_provider_availability(
     name: SparseProviderName,
     /,
+    *,
+    execution_mode: CudssExecutionMode = "local",
 ) -> SparseProviderAvailability:
     """Inspect one provider without mutating global selection state."""
     name = parse(name, SparseProviderName, "name")
-    capabilities = sparse_provider_capabilities(name)
+    capabilities = sparse_provider_capabilities(name, execution_mode=execution_mode)
     match name:
         case "jax-cpu":
             import jax
@@ -192,7 +214,7 @@ def sparse_provider_availability(
         case "cudss":
             from ..backends.cudss import cudss_availability
 
-            discovery = cudss_availability()
+            discovery = cudss_availability(execution_mode=execution_mode)
             available = discovery.available
             reason = discovery.reason
         case "scipy-superlu" | "umfpack" | "cholmod" | "spqr":

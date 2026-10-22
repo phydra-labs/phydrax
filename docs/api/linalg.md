@@ -721,7 +721,7 @@ before any numeric setup runs.
 | `DenseLU`, `DenseCholesky`, `DenseQR`, `DenseSVD` | `jax-dense` | Explicitly materializable operators within entry, byte, factor, and workspace budgets |
 | `SparseQR(provider="jax-cuda")` | `jax-sparse` | Canonical CSR square system, including shared-pattern batches and complex coordinates, on CUDA through native JAX sparse QR with 32-bit indices. A singular system raises from the native call instead of returning failure status, so automatic planning selects it only under `FailurePolicy("error")` |
 | `SparseLU(provider="jax-cpu")` | `jax-sparse` | Canonical CSR square system through JAX's JIT-compatible CPU lowering to SciPy sparse LU; mathematical solve derivatives are supported, algorithmic factorization derivatives are not |
-| `SparseLDLT(provider="cudss", factor_cache_capacity=8)` | `cudss` | Linux x86-64 CUDA 13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
+| `SparseLDLT(provider="cudss", factor_cache_capacity=8)` | `cudss` / `cudss-mgmn` | CUDA 13 real symmetric solves: local canonical CSR, explicit full-input single-process MG, or site-MPI rank-local MGMN; ownership and memory contracts below are separate |
 | `SparseLU`, `SparseCholesky`, `SparseQR(provider="spqr")` | `host-sparse` | Explicit non-JIT host sparse direct providers |
 | `GMRES`, `PCG`, `MINRES`, `FGMRES`, `BiCGStab`, `LSMR`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods; `BiCGStab` requires Euclidean or diagonal-metric coordinates, and `LSMR` retains the real Euclidean unweighted envelope |
 | `ConjugateGradient` | `lineax` | Lineax-backed Euclidean or diagonal-metric CG with real coordinates |
@@ -1606,15 +1606,154 @@ value = compiled_solve(jnp.array([1.0, 2.0]))
 ```
 
 Device dense, structured, native Krylov, Lineax, native CUDA sparse QR, and
-cuDSS execution are JIT-compatible. Host sparse
-providers are intentionally non-JIT and require
-`DifferentiationPolicy("none")`. cuDSS preparation uses bounded per-plan native
-factor memos; call `phx.linalg.release(prepared)` to free entries early.
+local/MG cuDSS execution are JIT-compatible. Host sparse providers are
+intentionally non-JIT and require `DifferentiationPolicy("none")`.
+Local/MG cuDSS preparation uses bounded per-plan native factor memos; call
+`phx.linalg.release(prepared)` to retire entries early.
 `SparseLDLT.factor_cache_capacity` defaults to 8, must be positive, and changes
-policy/plan identity. Evicted factors rebuild from operands; solve provenance
-reports exact int32 `native_rebuilds`.
+policy/plan identity. Evicted factors rebuild from their dynamic CSR operands;
+solve provenance reports exact int32 `native_rebuilds`. Failed numeric refresh
+retires the affected memo without changing the original prepared value's
+coefficients or suppressing the provider error.
+Resident solves validate current CSR shape, placement, and structure identity
+without rebinding the factorized descriptor to transient caller storage.
+Numeric refresh owns coefficient-pointer replacement and refactorization.
 Public dense factorizations and matrix-function/spectral artifacts are currently
-unbatched; shared-pattern sparse LDLT values may carry explicit batch axes.
+unbatched; only local shared-pattern sparse LDLT values admit matrix-batch axes.
+
+### cuDSS memory and execution ownership
+
+`SparseLDLT` keeps `memory_mode="device" | "hybrid"` as its only memory-mode
+selector. The existing hybrid flag is not a certified capacity contract.
+`CudssMemoryPolicy(hybrid_device_limit_bytes=...)` sets the vendor's device
+limit **after analysis and before factorization**, and refuses a limit below
+`CUDSS_DATA_HYBRID_DEVICE_MEMORY_MIN`. It does not bound analysis, pinned host
+pages, host factor storage, other live factors, or retired work. Requests using
+`host_limit_bytes` or `require_certified_bounds=True` are refused before vendor
+allocation: cuDSS 0.8 supplies a device allocator interface, not an enforceable
+all-phase host/device bound. RSS or available host RAM is not a replacement.
+Hybrid-plus-MG/MGMN and hybrid execute mode are not admitted.
+
+```python
+method = phx.linalg.SparseLDLT(
+    memory_mode="hybrid",
+    memory_policy=phx.linalg.CudssMemoryPolicy(
+        hybrid_device_limit_bytes=2**30,
+    ),
+)
+```
+
+`CudssExecutionPolicy` selects a different ownership contract, not a second
+memory mode:
+
+- `"local"` preserves the existing canonical CSR lifecycle and shared-pattern
+  matrix batches.
+- `"mg"` requires an existing `ExecutionGroupSpec` with an explicitly ordered
+  set of 2, 4, or 8 GPUs in one process. Full CSR and RHS buffers must already
+  reside on its first, initiating device. One vendor MG factorization/solve
+  owns all peer scratch and streams; this is not one duplicate solve per JAX
+  shard. Distributed/replicated multi-device inputs, matrix-batch `vmap`,
+  capture, and conflicting live vendor reservations are refused. The group is
+  a declared execution reservation, not an OS-exclusive GPU allocation.
+  Phase return drains configured streams and provider-owned device work across
+  the reservation. Handle destruction performs a second device-wide drain;
+  failures in that drain or in device restoration reach the component channel.
+- `"mgmn"` requires `DistributedCSRStorage` and
+  `DistributedCSRLinearOperator`, one GPU per participating process on the same host, an exact
+  site-MPI communication-library path/SHA256/build identity, and a live
+  group-bound collective lease. It is not included by merely installing cuDSS.
+  The admitted supervisor authenticates same-host descendants only; the vendor
+  mode name does not imply Phydrax multi-host support.
+  Local rows form disjoint contiguous nonempty intervals from the existing
+  `DistributedCoordinateLayout`; columns are global int32 coordinates.
+  Unequal row counts are unpadded. Global JAX row-sharded arrays are not
+  reinterpreted as rank-local storage.
+
+```python
+mg_method = phx.linalg.SparseLDLT(
+    execution=phx.linalg.CudssExecutionPolicy("mg", group=group),
+)
+```
+
+MGMN preparation, binding, solve, refresh, derivatives, and release run through
+the execution lease owner's explicit `lease.invoke(program, *arguments)`.
+Use the public execution facade for lease creation and program preparation:
+
+```python
+from phydrax.execution import create_collective_lease, prepare_collective_program
+```
+
+Create the host-only `phydrax.execution.CollectiveProgram` at the explicit
+`prepare_collective_program(callable, *example_arguments, lease_key=...)`
+preparation boundary. See [execution ownership](execution.md) for authenticated
+supervision, MPI provenance, and lease creation. Staging may execute user Python
+code; it is not a
+side-effect-free numerical dispatch boundary. The owner derives the actual
+transformed collective schedule from the staged graph and compiles that exact
+graph once. Invocation accepts only the associated prepared artifact, never
+an arbitrary callback or an opaque cached executable. Keep this live compiled
+artifact outside scientific PyTrees and serialization. Pass prepared numerical
+state as dynamic arguments rather than closing over an old live binding.
+The owner agrees the schedule, rebinds dynamic invocation tickets, executes
+the exact prepared program, drains device work/effects, and retires the ticket.
+Bare cached
+executables, closed/stale tickets, foreign leases, concurrent host ownership,
+unadmitted control flow, and rematerialization are refused. Communicator
+retirement is explicit and collective; rank loss belongs to the bounded coupled
+process supervisor, not a speculative recovery status collective.
+
+MGMN residual/refinement and sparse sensitivities exchange needed remote vector
+coordinates, not a full-vector all-gather. Norms and failure status reduce owned
+contributions globally. Mathematical tangents solve `A dx = db - dA x`; adjoints
+use the transpose solve and accumulate each owned CSR value contribution once.
+True RHS blocks use block exchange and the vendor block solve, not one solve per
+column. In MGMN the vendor descriptors carry global dimensions and local dense
+leading dimensions.
+All ranks must execute the same admitted transformed program and AD activity.
+Materialized numerical-zero tangents/cotangents are distinct from
+rank-asymmetric symbolic-zero activity, which can erase a JAX collective and is
+refused by schedule admission. Algorithmic factorization AD and matrix batching
+are not implied by multiple RHS support.
+
+`result.diagnostics.external_memory` retains `CudssMemoryEvidence`: exact
+post-analysis vendor estimates encoded as uint32 low/high byte words, so
+float32 execution does not require narrowing 64-bit byte counts. The six
+columns are permanent device, peak device, permanent host, peak host, hybrid
+minimum device, and hybrid maximum host memory. Unknown entries stay unknown;
+the query uses one analysis RHS column and is not a bound for changed RHS
+counts. MG queries each calling device separately. The vendor does not specify
+that host entries from those queries are additive, so no per-host sum is
+inferred. `host_estimates()` is an explicit host observation boundary.
+`resource_evidence(caller_device_bytes=...)` supplies a conservative uniform
+device estimate with `memory_basis="provider_estimate"` and unknown host peak;
+the caller must separately charge cache/overlap/retired factors and other
+resident buffers. Provider estimates cannot satisfy a certified memory envelope.
+Each record also identifies its process and the reserved group device count.
+A rank-local table cannot claim remote device capacity: `resource_evidence`
+refuses incomplete group evidence until the owner explicitly aggregates actual
+all-rank observations.
+
+Only the preserved local mode reports its existing partial positive/negative
+inertia. MG/MGMN report unknown inertia rather than inheriting an unsupported
+diagonal query. No mode claims reliable zero inertia or gains structured-IPM
+admission from distributed execution.
+
+`benchmarks.cudss_execution.cudss_execution_case` generates equal global matrix
+and RHS inputs for local/device/hybrid/MG/MGMN phase comparisons. Compare only
+matching input hashes, precision, RHS count, and tolerances. Analysis, numeric
+binding, synchronized steady solves, refresh, and release are timed separately;
+the independent dense host oracle is outside those phases. MGMN uses the
+existing supplied lease, never a second distributed initializer.
+
+These contracts do not certify a machine's CUDA peer integrity or MPI transport.
+Qualification must exercise the selected device set, site ABI, actual data
+copies, repeated invocations, failures, and derivatives.
+See NVIDIA cuDSS 0.8
+[advanced features](https://docs.nvidia.com/cuda/cudss/0.8.0/advanced_features.html),
+[memory/data query definitions](https://docs.nvidia.com/cuda/cudss/0.8.0/types.html),
+and [MG/distribution functions](https://docs.nvidia.com/cuda/cudss/0.8.0/functions.html).
+
+### Iterative compiled execution
 
 All iterative methods use fixed-capacity states with dynamic iteration counts
 and breakdown status, so compiled shapes do not depend on convergence.
@@ -2822,9 +2961,9 @@ Current boundaries are deliberate and reported before execution:
 - iterative providers require an unbatched operator; use explicit outer
   `vmap`/batch policy rather than accidental batch semantics;
 - native device sparse QR requires CUDA canonical CSR;
-- cuDSS requires the CUDA 13 companion on Linux
-  x86-64, uses 32-bit canonical CSR indices, and reports
-  positive/negative inertia without claiming reliable zero inertia;
+- cuDSS requires the CUDA 13 companion on Linux x86-64 or aarch64 and int32
+  canonical CSR; local partial inertia is not reliable zero inertia, while
+  MG/MGMN inertia is unknown;
 - host sparse direct providers are non-JIT and non-differentiable;
 - provider-owned sparse LDLT resources require explicit release;
 - public dense factorization artifacts remain unbatched;

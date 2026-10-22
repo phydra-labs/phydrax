@@ -199,6 +199,18 @@ class TensorNetworkPrecisionPolicy(StrictModule, NonTrainableState):
     def contraction(self, value: _TreeT, /) -> _TreeT:
         return self._cast(value, self.contraction_dtype)
 
+    def resolve_contraction(self, storage_dtype: str, /) -> tuple[str, str]:
+        """Resolve actual multiply/reduction dtypes for prepared contractions."""
+        compute = _effective_dtype(self.contraction_dtype, storage_dtype)
+        accumulation = _effective_dtype(self.accumulation_dtype, compute)
+        if precision_itemsize(_real_component(accumulation)) < precision_itemsize(
+            _real_component(compute)
+        ):
+            raise ValueError("Contraction accumulation cannot narrow its multiply dtype.")
+        if (compute.startswith("complex")) != (accumulation.startswith("complex")):
+            raise ValueError("Contraction accumulation must preserve real/complex kind.")
+        return compute, accumulation
+
     def factorization(self, value: _TreeT, /) -> _TreeT:
         return self._cast(value, self.factorization_dtype)
 

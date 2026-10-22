@@ -6,8 +6,12 @@
 
 from __future__ import annotations
 
+import json
 import math
 import sys
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import jax
 import numpy as np
@@ -19,7 +23,7 @@ from benchmarks import pic_distributed as benchmark
 
 
 @pytest.mark.parametrize("route", benchmark._ROUTES)
-@pytest.mark.parametrize("parts", [[1, 2, 4], [1, 2, 3, 4, 5]])
+@pytest.mark.parametrize("parts", [[1, 2, 4], [1, 2, 3, 4, 5], [1, 2, 4, 8]])
 def test_campaign_sizes_preserve_weak_work_and_bound_strong_rounding(
     route: str, parts: list[int]
 ) -> None:
@@ -69,7 +73,7 @@ def test_campaign_sizes_preserve_weak_work_and_bound_strong_rounding(
             else [(16, 16, 8), (32, 16, 8), (32, 32, 8)]
         )
         assert [problem.counts for problem in weak] == expected
-    else:
+    elif parts == [1, 2, 3, 4, 5]:
         assert strong.capacity == 2580
         assert strong.counts == ((120,) if route == "reduced-slabs" else (90, 60, 8))
 
@@ -96,10 +100,10 @@ def test_prime_spectral_campaign_sizes_are_admitted_by_pic(
         assert base.plan.subdomains == problem.subdomains
 
 
-def test_mixed_prime_strong_campaign_executes_the_same_science() -> None:
-    if len(jax.devices()) < 5:
-        pytest.skip("Needs five devices.")
-    parts = [1, 2, 3, 4, 5]
+@pytest.mark.parametrize("parts", [[1, 2, 3, 4, 5], [1, 2, 4, 8]])
+def test_strong_campaign_executes_the_same_science(parts: list[int]) -> None:
+    if len(jax.devices()) < max(parts):
+        pytest.skip(f"Needs {max(parts)} devices.")
     _, problem = benchmark._problem_sizes("reduced-slabs", parts, 16, 32)
     reference = None
     for count in parts:
@@ -165,3 +169,162 @@ def test_cli_refuses_invalid_campaign_sizes(
     monkeypatch.setattr(sys, "argv", ["pic_distributed", "--parts", "1", *options])
     with pytest.raises(ValueError, match="must be positive"):
         benchmark.main()
+
+
+@pytest.mark.parametrize("fault", ["rejected", "rollback", "nonfinite", "reference"])
+def test_cli_scientific_failure_retains_evidence_and_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    output = tmp_path / "failed.json"
+    record: dict[str, Any] = {
+        "sample_outcomes": [],
+        "parts": 1,
+        "physics": {"successful": True, "rejection_reason": 0},
+        "acceptance": {
+            "finite_candidate": True,
+            "finite_accepted": True,
+            "all_samples_accepted": True,
+            "accepted_step_delta": 1,
+            "time_advanced": True,
+            "field_absolute_tolerance": 1e-11,
+        },
+    }
+    if fault == "rejected":
+        record["physics"].update(successful=False, rejection_reason=4)
+    elif fault == "rollback":
+        record["acceptance"].update(accepted_step_delta=0, time_advanced=False)
+    elif fault == "nonfinite":
+        record["acceptance"]["finite_candidate"] = False
+
+    def case(*args: Any) -> tuple[dict[str, Any], Any]:
+        import copy
+
+        field = np.asarray([float("nan") if fault == "reference" else 0.0])
+        return copy.deepcopy(record), SimpleNamespace(field=field)
+
+    monkeypatch.setattr(benchmark, "_case", case)
+    monkeypatch.setattr(
+        benchmark, "capture_environment", lambda: SimpleNamespace(to_dict=lambda: {})
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pic_distributed",
+            "--parts",
+            "1",
+            "--routes",
+            "reduced-slabs",
+            "--output",
+            str(output),
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        benchmark.main()
+    assert error.value.code == 1
+    payload = json.loads(output.read_text())
+    assert payload["passed"] is False
+    assert payload["errors"]
+    campaign = payload["routes"]["reduced-slabs"]
+    assert campaign["strong_scaling"][0]["passed"] is False
+    if fault == "rejected":
+        assert campaign["strong_scaling"][0]["physics"]["rejection_reason"] == 4
+
+
+def test_field_difference_does_not_hide_nonfinite_later_leaf() -> None:
+    left = SimpleNamespace(field=(np.asarray([0.0]), np.asarray([float("nan")])))
+    right = SimpleNamespace(field=(np.asarray([0.0]), np.asarray([0.0])))
+    assert not math.isfinite(benchmark._field_difference(left, right))
+
+
+def test_rejected_warmup_cannot_be_hidden_by_a_successful_final_sample() -> None:
+    previous = SimpleNamespace(accepted_step=0, time=0.0)
+    candidate = SimpleNamespace(accepted_step=1, time=1.0)
+    results = iter(
+        (
+            SimpleNamespace(
+                successful=False,
+                rejection_reason=4,
+                candidate_state=candidate,
+                accepted_state=previous,
+            ),
+            SimpleNamespace(
+                successful=True,
+                rejection_reason=0,
+                candidate_state=candidate,
+                accepted_state=candidate,
+            ),
+        )
+    )
+    final, timings, outcomes = benchmark._measure_steps(
+        lambda: next(results), previous, warmup=1, repeats=1
+    )
+    assert bool(final.successful)
+    assert len(timings.samples_seconds) == 1
+    assert [row["passed"] for row in outcomes] == [False, True]
+    assert outcomes[0]["rejection_reason"] == 4
+
+
+def test_cubic_scaling_executes_two_local_scientific_sizes() -> None:
+    if len(jax.local_devices()) < 8:
+        pytest.skip("Needs eight devices on one host.")
+    records, errors = benchmark._cubic_scaling(32, 0, 1)
+    assert not errors, errors
+    assert len(records) == 2
+    for record, width, slots in zip(records, (6, 8), (16, 32), strict=True):
+        assert record["passed"] is True
+        assert record["mesh_shape"] == [2, 2, 2]
+        assert record["grid_shape"] == [2 * width] * 3
+        assert record["local_cells"] == [width] * 3
+        assert record["slots_per_part"] == slots
+        assert record["slots_per_species"] == 8 * slots
+        for name in (
+            "field_difference_from_one_device",
+            "particle_difference_from_one_device",
+        ):
+            difference = record[name]
+            assert isinstance(difference, float)
+            assert difference <= 1e-11
+
+
+@pytest.mark.parametrize("fault", ["physics", "particle", "locality"])
+def test_cubic_acceptance_refuses_failed_science(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    population = SimpleNamespace(
+        active=np.asarray([True]),
+        id_hi=np.asarray([0], dtype=np.uint32),
+        id_lo=np.asarray([1], dtype=np.uint32),
+        mass=np.asarray([1.0]),
+    )
+
+    def case(
+        route: str, parts: int, problem: Any, packet: int, warmup: int, repeats: int
+    ) -> tuple[dict[str, Any], Any]:
+        failed = fault == "physics" and parts == 8
+        record = {
+            "physics": {"successful": not failed, "rejection_reason": 4 if failed else 0},
+            "acceptance": {
+                "all_samples_accepted": not failed,
+                "finite_candidate": True,
+                "finite_accepted": True,
+                "accepted_step_delta": 1,
+                "time_advanced": True,
+                "field_absolute_tolerance": 1e-11,
+            },
+            "evidence": {"all_windows_strictly_local": fault != "locality"},
+        }
+        particles = SimpleNamespace(
+            position=np.asarray([[1.0 if fault == "particle" and parts == 8 else 0.0]]),
+            proper_velocity=np.zeros((1, 3), dtype=np.float64),
+        )
+        state = SimpleNamespace(
+            field=np.asarray([0.0]),
+            species=(SimpleNamespace(population=population, particles=particles),),
+        )
+        return record, state
+
+    monkeypatch.setattr(benchmark, "_case", case)
+    records, errors = benchmark._cubic_scaling(32, 0, 1)
+    assert errors
+    assert all(record["passed"] is False for record in records)
