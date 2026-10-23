@@ -391,16 +391,37 @@ def test_none_preserves_original_transfer_and_deformation_operations() -> None:
     )
     original_affine = solve.value.swapaxes(-1, -2)
     gathered = gather_apic(routes, grid_velocity.reshape(-1, 2), active, 1e12)
-    np.testing.assert_array_equal(
-        gathered.velocity, jnp.where(active[:, None], original_velocity, 0.0)
+    # "none" routes are the ordinary routes, so the gather itself is identical.
+    for left, right in zip(
+        jax.tree.leaves(gathered),
+        jax.tree.leaves(
+            gather_apic(ordinary, grid_velocity.reshape(-1, 2), active, 1e12)
+        ),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(left, right)
+    # The fused gather uses bounded elementwise route sums, not batched GEMMs;
+    # agreement with the dense contraction oracle is to rounding, not bitwise.
+    np.testing.assert_allclose(
+        gathered.velocity,
+        jnp.where(active[:, None], original_velocity, 0.0),
+        rtol=1e-14,
+        atol=1e-14,
     )
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         gathered.velocity_gradient,
         jnp.where(active[:, None, None], original_gradient, 0.0),
+        rtol=1e-13,
+        atol=1e-13,
     )
-    np.testing.assert_array_equal(gathered.affine_moment, original_moment)
-    np.testing.assert_array_equal(
-        gathered.affine_velocity, jnp.where(active[:, None, None], original_affine, 0.0)
+    np.testing.assert_allclose(
+        gathered.affine_moment, original_moment, rtol=1e-14, atol=1e-14
+    )
+    np.testing.assert_allclose(
+        gathered.affine_velocity,
+        jnp.where(active[:, None, None], original_affine, 0.0),
+        rtol=1e-11,
+        atol=1e-11,
     )
     step = jnp.asarray(0.01, dtype=jnp.float64)
     expected_deformation = ein.contract(
@@ -451,7 +472,7 @@ def test_none_preserves_original_transfer_and_deformation_operations() -> None:
         acceleration,
         active,
     )
-    np.testing.assert_array_equal(actual_payload, expected_payload)
+    np.testing.assert_allclose(actual_payload, expected_payload, rtol=1e-14, atol=1e-14)
     assert bool(gathered.successful) and bool(solve.successful.all())
 
 

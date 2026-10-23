@@ -38,7 +38,9 @@ def _flat_leading(value: Array, output_ndim: int, /) -> Array:
     return value.reshape((prod(reduction_shape),) + output_shape)
 
 
-def _accumulate(flat: Array, carry: tuple[Array, Array], /) -> tuple[Array, Array]:
+def _accumulate_reference(
+    flat: Array, carry: tuple[Array, Array], /
+) -> tuple[Array, Array]:
     def step(
         current: tuple[Array, Array], term: Array
     ) -> tuple[tuple[Array, Array], None]:
@@ -47,6 +49,114 @@ def _accumulate(flat: Array, carry: tuple[Array, Array], /) -> tuple[Array, Arra
         return (next_high, correction + error), None
 
     return jax.lax.scan(step, carry, flat, unroll=1)[0]
+
+
+def _accumulate_pallas_real(
+    flat: Array, carry: tuple[Array, Array], /
+) -> tuple[Array, Array]:
+    from jax.experimental import pallas as pl
+    from jax.experimental.pallas import mosaic_gpu as plgpu
+
+    length = flat.shape[0]
+    output_shape = carry[0].shape
+    lane_count = carry[0].size
+    full_tiles, remainder = divmod(lane_count, 128)
+
+    def kernel(
+        terms_ref: jax.Ref,
+        high_ref: jax.Ref,
+        correction_ref: jax.Ref,
+        output_high_ref: jax.Ref,
+        output_correction_ref: jax.Ref,
+    ) -> None:
+        program = jax.lax.axis_index("lanes")
+
+        def run(start: Array, *, vector: bool) -> None:
+            window = pl.ds(start, 128) if vector else start
+            high = high_ref[window]
+            correction = correction_ref[window]
+            if vector:
+                layout = plgpu.Layout.WG_STRIDED((128,), vec_size=1)
+                high = plgpu.layout_cast(high, layout)
+                correction = plgpu.layout_cast(correction, layout)
+
+            def step(index: int, current: tuple[Array, Array]) -> tuple[Array, Array]:
+                high, correction = current
+                term = terms_ref[index, window]
+                if vector:
+                    term = plgpu.layout_cast(term, layout)
+                next_high, error = two_sum(high, term)
+                return next_high, correction + error
+
+            # A device-local loop preserves every seeded Sum2 operation.
+            high, correction = jax.lax.fori_loop(0, length, step, (high, correction))
+            output_high_ref[window] = high
+            output_correction_ref[window] = correction
+
+        if full_tiles:
+
+            @pl.when(program < full_tiles)
+            def vector_tile() -> None:
+                run(program * 128, vector=True)
+
+        if remainder:
+
+            @pl.when(program >= full_tiles)
+            def scalar_lane() -> None:
+                run(full_tiles * 128 + program - full_tiles, vector=False)
+
+    shape = jax.ShapeDtypeStruct((lane_count,), flat.dtype)
+    high, correction = plgpu.kernel(
+        kernel,
+        out_type=(shape, shape),
+        grid=(full_tiles + remainder,),
+        grid_names=("lanes",),
+        compiler_params=plgpu.CompilerParams(
+            lowering_semantics=plgpu.LoweringSemantics.Lane
+        ),
+        cost_estimate=pl.CostEstimate(
+            flops=7 * length * lane_count,
+            transcendentals=0,
+            bytes_accessed=(length + 4) * lane_count * flat.dtype.itemsize,
+        ),
+    )(
+        flat.reshape((length, lane_count)),
+        carry[0].reshape((lane_count,)),
+        carry[1].reshape((lane_count,)),
+    )
+    return high.reshape(output_shape), correction.reshape(output_shape)
+
+
+def _accumulate_pallas(flat: Array, carry: tuple[Array, Array], /) -> tuple[Array, Array]:
+    if jnp.issubdtype(flat.dtype, jnp.complexfloating):
+        # Mosaic GPU has no complex scalar type. Components obey independent,
+        # identically ordered add/subtract recurrences.
+        def components(value: Array) -> Array:
+            return jnp.stack((value.real, value.imag), axis=-1)
+
+        high, correction = _accumulate_pallas_real(
+            components(flat), (components(carry[0]), components(carry[1]))
+        )
+        return (
+            jax.lax.complex(high[..., 0], high[..., 1]),
+            jax.lax.complex(correction[..., 0], correction[..., 1]),
+        )
+    return _accumulate_pallas_real(flat, carry)
+
+
+def _accumulate(flat: Array, carry: tuple[Array, Array], /) -> tuple[Array, Array]:
+    if flat.shape[0] == 0 or carry[0].size == 0:
+        return carry
+    # Admit only shapes whose real-component flattened indices fit int32.
+    # Larger arrays retain the genuine reference rather than narrowing offsets.
+    components = 2 if jnp.issubdtype(flat.dtype, jnp.complexfloating) else 1
+    if flat.size * components > (1 << 31) - 1:
+        return _accumulate_reference(flat, carry)
+    from ._compensated_native import accumulate_native
+
+    # Platform-specific primitive lowerings choose execution at destination
+    # lowering time, without exposing GPU implementation details to callers.
+    return accumulate_native(flat, carry[0], carry[1])
 
 
 def _block_expansion(flat: Array, /) -> tuple[Array, Array]:

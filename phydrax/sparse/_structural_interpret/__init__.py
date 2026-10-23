@@ -8,8 +8,12 @@ The main entry point is `_prop_jaxpr`, which walks the computation graph
 and applies the appropriate handler for each equation.
 """
 
+from collections.abc import Callable
+from functools import partial
+
+import jax
 import numpy as np
-from jax._src.core import Jaxpr, JaxprEqn
+from jax._src.core import Jaxpr, JaxprEqn, ShapedArray
 
 from ._argmax import _prop_argmax
 from ._broadcast import _prop_broadcast_in_dim
@@ -39,6 +43,7 @@ from ._elementwise import (
     _prop_clamp,
     _prop_convert_element_type,
     _prop_integer_pow,
+    _prop_minmax,
     _prop_polynomial,
     _prop_sign,
     _prop_sub,
@@ -149,6 +154,73 @@ def _prop_nested_jaxpr(
     )
 
 
+def _prop_reference(
+    eqn: JaxprEqn,
+    reference: Callable[..., object],
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Trace a registered native primitive through its owning JAX reference."""
+    arguments = []
+    for atom in eqn.invars:
+        aval = atom.aval
+        if not isinstance(aval, ShapedArray):
+            raise TypeError("Native primitive operands must be shaped arrays.")
+        arguments.append(jax.ShapeDtypeStruct(aval.shape, aval.dtype))
+    program = jax.make_jaxpr(reference)(*arguments)
+    _prop_nested_jaxpr(
+        eqn.replace(params={"call_jaxpr": program}),
+        state_indices,
+        state_consts,
+        state_bounds,
+        "call_jaxpr",
+    )
+
+
+def _prop_compensated(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Expand only the registered ordered recurrence into its native reference."""
+    from ..._numerics._compensated_native import (
+        _forward,
+        _forward_p,
+        _transpose_p,
+        _transpose_reference,
+    )
+
+    if eqn.primitive is _forward_p:
+        reference = _forward
+    elif eqn.primitive is _transpose_p:
+        reference = partial(_transpose_reference, length=eqn.params["length"])
+    else:
+        raise NotImplementedError("Foreign compensated reduction primitive.")
+    _prop_reference(eqn, reference, state_indices, state_consts, state_bounds)
+
+
+def _prop_streaming_moments(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Expand only the registered APIC moment stream into its gather reference."""
+    from ...discretization.mpm._moments_native import _moments_p, _reference
+
+    if eqn.primitive is not _moments_p:
+        raise NotImplementedError("Foreign APIC streaming moment primitive.")
+    _prop_reference(
+        eqn,
+        partial(_reference, outputs=eqn.params["outputs"]),
+        state_indices,
+        state_consts,
+        state_bounds,
+    )
+
+
 def _prop_dispatch(
     eqn: JaxprEqn,
     state_indices: StateIndices,
@@ -227,11 +299,11 @@ def _prop_dispatch(
             _prop_sub(eqn, state_indices, state_consts, state_bounds)
         case "div":
             _prop_div(eqn, state_indices, state_consts, state_bounds)
+        case "min" | "max":
+            _prop_minmax(eqn, state_indices, state_consts, state_bounds)
         # Binary elementwise with nonzero partials wrt both operands
         case (
             "pow"  # ∂(x^y)/∂x = y·x^(y-1), ∂(x^y)/∂y = x^y·ln(x)
-            | "max"  # ∂max/∂x = 1 if x>y else 0, ∂max/∂y = 1 if y>x else 0
-            | "min"  # ∂min/∂x = 1 if x<y else 0, ∂min/∂y = 1 if y<x else 0
             | "atan2"  # ∂atan2(y,x)/∂y = x/(x²+y²), ∂/∂x = -y/(x²+y²)
             | "rem"  # ∂(x mod y)/∂x = 1, ∂(x mod y)/∂y = -⌊x/y⌋
             | "nextafter"
@@ -288,6 +360,13 @@ def _prop_dispatch(
             _prop_polynomial(eqn, state_indices)
         case "call_hi_primitive":
             _prop_stock_high(eqn, state_indices, state_consts, state_bounds)
+        case (
+            "phydrax_compensated_accumulate_linear"
+            | "phydrax_compensated_accumulate_transpose"
+        ):
+            _prop_compensated(eqn, state_indices, state_consts, state_bounds)
+        case "phydrax_apic_streaming_moments":
+            _prop_streaming_moments(eqn, state_indices, state_consts, state_bounds)
         case "reduce_sum" | "reduce_max" | "reduce_min" | "reduce_prod":
             _prop_reduce(eqn, state_indices)
         case (

@@ -327,6 +327,28 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Stream admitted Cartesian APIC moments through native CUDA lanes with explicit
+  tail-safe indexing and output-specific accumulation. Retain native reference
+  derivatives and generic fallbacks, and share compile-target Mosaic admission
+  with compensated reductions. Moment sums
+  use route order rather than the reference reduction tree, within the existing
+  numerical tolerance contract.
+- Lower native small-matrix solve/refinement and APIC transfer algebra to bounded
+  elementwise operations rather than generic batched contractions. Keep native
+  conditioning, failure evidence, masks, axisymmetric and volumetric corrections,
+  and JAX derivatives. Consumer compilation can eliminate unused transfer
+  outputs. Floating-point rounding and refinement acceptance can differ from
+  GEMM execution; numerical tolerances and reported refinement decisions remain
+  authoritative. The existing solver API is unchanged.
+- Execute the shared ordered compensated recurrence and its common derivative
+  routes inside native CUDA kernels rather than launching a kernel per scan
+  iteration. Preserve block-32 expansion, chunk order, seeded high/correction
+  arithmetic, complex components, and nonfinite behavior; CPU and other
+  platforms retain the reference execution. Compiler identities now identify
+  the owned reduction primitives explicitly; reprepare compiler-bound artifacts.
+  No alternate scientific reduction policy is introduced.
+- Preserve integer min/max bounds through sparse structural tracing, including
+  index clamps around bounded `nonzero` gathers.
 - Preserve Krylov breakdown enum semantics in distributed smoke gates:
   certified happy breakdown is not a Boolean failure. Retain failed PIC physics
   and reference checks and require successful scientific terminal records.

@@ -276,6 +276,34 @@ def _prop_binary_const(
     _propagate_const(eqn, state_consts)
 
 
+def _prop_minmax(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Retain integer index intervals through monotone clipping operations."""
+    _prop_binary_const(eqn, state_indices, state_consts)
+    aval = eqn.outvars[0].aval
+    if not isinstance(aval, ShapedArray) or not np.issubdtype(aval.dtype, np.integer):
+        return
+    left = _atom_value_bounds(eqn.invars[0], state_consts, state_bounds)
+    right = _atom_value_bounds(eqn.invars[1], state_consts, state_bounds)
+    if left is None or right is None:
+        return
+    match eqn.primitive.name:
+        case "min":
+            operation = np.minimum
+        case "max":
+            operation = np.maximum
+        case _:
+            raise ValueError("Integer clipping bounds require min or max.")
+    state_bounds[eqn.outvars[0]] = (
+        operation(left[0], right[0]),
+        operation(left[1], right[1]),
+    )
+
+
 def _prop_add(
     eqn: JaxprEqn,
     state_indices: StateIndices,

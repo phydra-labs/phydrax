@@ -243,14 +243,23 @@ class _CompilerPayload:
             return previous
         binding = self.primitives.get(primitive)
         if binding is None:
+            from ._numerics._compensated_native import _forward_p, _transpose_p
+            from .discretization.mpm._moments_native import _moments_p
             from .nonlinear._domain_cond import _domain_call
 
-            if primitive is not _domain_call:
+            if primitive is _domain_call:
+                binding = "phydrax.nonlinear._domain_cond._domain_call"
+            elif primitive is _forward_p:
+                binding = "phydrax._numerics._compensated_native._forward_p"
+            elif primitive is _transpose_p:
+                binding = "phydrax._numerics._compensated_native._transpose_p"
+            elif primitive is _moments_p:
+                binding = "phydrax.discretization.mpm._moments_native._moments_p"
+            else:
                 raise TypeError(
                     f"Foreign compiler primitive at {path}: "
                     f"{_type_id(primitive)} ({primitive.name}) needs an explicit identity."
                 )
-            binding = "phydrax.nonlinear._domain_cond._domain_call"
         payload = {
             "kind": "native-primitive",
             "binding": binding,
