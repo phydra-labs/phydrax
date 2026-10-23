@@ -892,6 +892,10 @@ def _spawn_mpi_launcher(
 
 
 def _accept_mpi_channels(state: _MPILaunchState) -> None:
+    if not hasattr(socket, "SO_PEERCRED"):
+        raise RuntimeError(
+            "Authenticated site MPI launching requires Linux peer credentials and /proc."
+        )
     while True:
         try:
             channel, _ = state.listener.accept()

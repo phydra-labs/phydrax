@@ -342,6 +342,7 @@ def operator_domain_view_from_points(
             quadrature_weights=geometry.quadrature_weights,
             mask=geometry.mask,
             topology=geometry.topology,
+            dtype=geometry.geometry_dtype,
         )
 
     operator_batch = OperatorBatch(
@@ -464,6 +465,7 @@ def operator_domain_view_from_grid(
             axes=geometry.axes,
             quadrature_weights=geometry.quadrature_weights,
             mask=geometry.mask,
+            dtype=geometry.geometry_dtype,
         )
     operator_batch = OperatorBatch(
         inputs=sources,

@@ -133,6 +133,7 @@ class FixedGridStressOperatorModel(AbstractArrayModel):
             topology=source.topology,
             support_id=source.support_id,
             measure_id=source.measure_id,
+            dtype=source.geometry_dtype,
         )
         batch = OperatorBatch(
             inputs=inputs,

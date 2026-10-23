@@ -200,6 +200,7 @@ def compress_operator_queries(
         mask=(selected_mask[0] if shared else selected_mask),
         support_id=f"coreset:{query.support_id}",
         measure_id=query.measure_id,
+        dtype=query.geometry_dtype,
     )
     queries = dict(dataset.batch.queries)
     queries[query_name] = selected_query

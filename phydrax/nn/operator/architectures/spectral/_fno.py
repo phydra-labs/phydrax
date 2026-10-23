@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -38,7 +39,12 @@ from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
-from ....._dtype_names import inexact_result_type
+from ....._dtype_names import (
+    complex_precision_dtype,
+    inexact_result_type,
+    real_precision_dtype_name,
+    RealPrecisionDType,
+)
 from .....typing import parse, PRNGKey
 
 
@@ -71,10 +77,17 @@ def _mode_tuple(modes: int | Sequence[int], ndim: int | None = None) -> tuple[in
     return result
 
 
-def _complex_normal(key: PRNGKey, shape: tuple[int, ...], scale: float) -> Array:
+def _complex_normal(
+    key: PRNGKey,
+    shape: tuple[int, ...],
+    scale: float,
+    dtype: RealPrecisionDType | None,
+) -> Array:
     real_key, imag_key = jr.split(key)
-    return scale * (
-        jr.normal(real_key, shape=shape) + 1j * jr.normal(imag_key, shape=shape)
+    # Explicit real/imaginary assembly: the complex companion of the real dtype.
+    return jax.lax.complex(
+        scale * jr.normal(real_key, shape=shape, dtype=dtype),
+        scale * jr.normal(imag_key, shape=shape, dtype=dtype),
     )
 
 
@@ -120,6 +133,10 @@ class SpectralConvND(StrictModule):
     real-FFT axis has independently learned positive and negative low-frequency
     blocks, so two-dimensional and higher-dimensional kernels do not silently omit
     signed modes.
+
+    `dtype` selects the real floating precision of the spectral weights, which
+    are stored in its complex companion (`complex64` for `float32`). It is a
+    construction choice, not an input cast; `None` keeps JAX's default dtype.
     """
 
     in_channels: int
@@ -145,7 +162,10 @@ class SpectralConvND(StrictModule):
         rank: int | float = 0.5,
         key: PRNGKey = DOC_KEY0,
         resources: SpectralConvolutionResourcePolicy | None = None,
+        dtype: DTypeLike | None = None,
     ) -> None:
+        # Resolve an explicit parameter dtype before any allocation.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -187,7 +207,12 @@ class SpectralConvND(StrictModule):
                 )
             case _:
                 raise AssertionError("Validated spectral factorization is exhaustive.")
-        parameter_bytes = parameter_elements * 16
+        element_bytes = (
+            16
+            if param_dtype is None
+            else jnp.dtype(complex_precision_dtype(param_dtype)).itemsize
+        )
+        parameter_bytes = parameter_elements * element_bytes
         if parameter_bytes > resource_policy.maximum_parameter_bytes:
             raise ValueError(
                 "Spectral convolution exceeds maximum_parameter_bytes: "
@@ -211,34 +236,42 @@ class SpectralConvND(StrictModule):
                     *self.n_modes,
                 ),
                 scale,
+                param_dtype,
             )
         elif factorization == "cp":
             keys = jr.split(key, len(self.n_modes) + 2)
             factor_scale = scale ** (1.0 / float(len(self.n_modes) + 2))
             self.factor_in = _complex_normal(
-                keys[0], (corners, self.in_channels, self.rank), factor_scale
+                keys[0], (corners, self.in_channels, self.rank), factor_scale, param_dtype
             )
             self.factor_out = _complex_normal(
-                keys[1], (corners, self.out_channels, self.rank), factor_scale
+                keys[1],
+                (corners, self.out_channels, self.rank),
+                factor_scale,
+                param_dtype,
             )
             self.factor_modes = tuple(
                 _complex_normal(
                     mode_key,
                     (corners, mode, self.rank),
                     factor_scale,
+                    param_dtype,
                 )
                 for mode_key, mode in zip(keys[2:], self.n_modes, strict=True)
             )
         else:
             keys = jr.split(key, 3)
-            self.factor_in = _complex_normal(keys[0], (self.in_channels, self.rank), 1.0)
+            self.factor_in = _complex_normal(
+                keys[0], (self.in_channels, self.rank), 1.0, param_dtype
+            )
             self.factor_out = _complex_normal(
-                keys[1], (self.out_channels, self.rank), 1.0
+                keys[1], (self.out_channels, self.rank), 1.0, param_dtype
             )
             self.core = _complex_normal(
                 keys[2],
                 (corners, self.rank, self.rank, *self.n_modes),
                 scale,
+                param_dtype,
             )
 
     def with_active_modes(self, modes: int | Sequence[int], /) -> SpectralConvND:

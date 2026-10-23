@@ -12,8 +12,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import DTypeLike
 
 from .._doc import DOC_KEY0
+from .._dtype_names import real_precision_dtype_name
 from .._mass import require_exact_mass
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -35,8 +37,8 @@ def _shape_tuple(shape: Sequence[int], /) -> tuple[int, ...]:
     return result
 
 
-def _bounds_array(bounds: Any, coord_dim: int, /) -> Array:
-    result = jnp.asarray(bounds, dtype=jnp.float64)
+def _bounds_array(bounds: Any, coord_dim: int, dtype: DTypeLike, /) -> Array:
+    result = jnp.asarray(bounds, dtype=dtype)
     if result.shape != (int(coord_dim), 2):
         raise ValueError(
             f"Latent bounds must have shape {(coord_dim, 2)}; got {result.shape}."
@@ -48,12 +50,17 @@ def _bounds_array(bounds: Any, coord_dim: int, /) -> Array:
     return result
 
 
-def _canonical_nodes(size: int, /) -> Array:
-    return (jnp.arange(int(size), dtype=jnp.float64) + 0.5) / float(size)
+def _canonical_nodes(size: int, dtype: DTypeLike, /) -> Array:
+    return (jnp.arange(int(size), dtype=dtype) + 0.5) / float(size)
 
 
 class TensorGridLatentGeometry(StrictModule, NonTrainableState):
-    """Persisted structured latent geometry for grid-based processors."""
+    """Persisted structured latent geometry for grid-based processors.
+
+    `dtype` selects the real floating dtype of the bounds, latent coordinates,
+    quadrature and axes; `None` keeps canonical float64. Case bounding boxes
+    promote with the source coordinates rather than downcasting them.
+    """
 
     global_bounds: Array
     shape: tuple[int, ...] = eqx.field(static=True)
@@ -72,7 +79,9 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
         axis_names: Sequence[str] | None = None,
         periodic: bool | Sequence[bool] = False,
         margin: float = 0.0,
+        dtype: DTypeLike | None = None,
     ) -> None:
+        geometry_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         shape_ = _shape_tuple(shape)
         coord_dim = len(shape_)
         bounds_policy = parse(bounds_policy, BoundsPolicy, "bounds_policy")
@@ -92,9 +101,19 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
         if len(periodic_) != coord_dim:
             raise ValueError("periodic must give one value per latent dimension.")
         bounds_ = (
-            jnp.stack((jnp.zeros((coord_dim,)), jnp.ones((coord_dim,))), axis=-1)
+            jnp.stack(
+                (
+                    jnp.zeros((coord_dim,), dtype=geometry_dtype),
+                    jnp.ones((coord_dim,), dtype=geometry_dtype),
+                ),
+                axis=-1,
+            )
             if bounds is None
-            else _bounds_array(bounds, coord_dim)
+            else _bounds_array(
+                bounds,
+                coord_dim,
+                jnp.float64 if geometry_dtype is None else geometry_dtype,
+            )
         )
         self.global_bounds = bounds_
         self.shape = shape_
@@ -113,13 +132,15 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
 
     def axes(self) -> tuple[OperatorAxis, ...]:
         """Return canonical uniformly spaced axes used by latent processors."""
+        dtype = self.global_bounds.dtype
         return tuple(
             OperatorAxis(
                 name,
-                _canonical_nodes(size),
-                quadrature_weights=jnp.full((size,), 1.0 / float(size)),
+                _canonical_nodes(size, dtype),
+                quadrature_weights=jnp.full((size,), 1.0 / float(size), dtype=dtype),
                 periodic=periodic,
                 basis="fourier" if periodic else "uniform",
+                dtype=dtype,
             )
             for name, size, periodic in zip(
                 self.axis_names, self.shape, self.periodic, strict=True
@@ -141,7 +162,16 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
             )
         if source_coordinates is None:
             raise ValueError("case_bbox latent geometry requires source_coordinates.")
-        coordinates = jnp.asarray(source_coordinates, dtype=jnp.float64)
+        coordinates = jnp.asarray(source_coordinates)
+        # Wider floating sources promote the grid; others take its dtype.
+        bounds_dtype = self.global_bounds.dtype
+        wider_source = (
+            jnp.issubdtype(coordinates.dtype, jnp.floating)
+            and coordinates.dtype.itemsize > bounds_dtype.itemsize
+        )
+        coordinates = coordinates.astype(
+            coordinates.dtype if wider_source else bounds_dtype
+        )
         expected_prefix = case_shape
         if tuple(coordinates.shape[:-2]) != expected_prefix:
             raise ValueError(
@@ -163,8 +193,18 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
             jnp.any(jnp.sum(mask, axis=-1) == 0),
             "case_bbox latent geometry requires one valid source point per case.",
         )
-        lower = jnp.min(jnp.where(mask[..., None], coordinates, jnp.inf), axis=-2)
-        upper = jnp.max(jnp.where(mask[..., None], coordinates, -jnp.inf), axis=-2)
+        lower = jnp.min(
+            jnp.where(
+                mask[..., None], coordinates, jnp.asarray(jnp.inf, coordinates.dtype)
+            ),
+            axis=-2,
+        )
+        upper = jnp.max(
+            jnp.where(
+                mask[..., None], coordinates, jnp.asarray(-jnp.inf, coordinates.dtype)
+            ),
+            axis=-2,
+        )
         span = upper - lower
         span = eqx.error_if(
             span,
@@ -192,7 +232,7 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
             source_mask=source_mask,
         )
         canonical_grids = jnp.meshgrid(
-            *(_canonical_nodes(size) for size in self.shape),
+            *(_canonical_nodes(size, bounds.dtype) for size in self.shape),
             indexing="ij",
         )
         canonical = jnp.stack(canonical_grids, axis=-1)

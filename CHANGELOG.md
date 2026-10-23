@@ -90,6 +90,26 @@
   policy and plan identities.
 
 ### Added
+- Restore reverse-mode QP and MPC sensitivities by keeping the implicit KKT
+  tangent action linear in its right-hand side. Matrix rank/finiteness still
+  control derivative validity; irregular systems retain poisoned derivatives.
+- Keep optional PySCF typing independent of installed extras and refuse
+  authenticated MPI channel admission on hosts without Linux peer credentials.
+- Extend explicit construction dtype through measure-aware attention, its
+  operator-model family, sample geometry, and latent tensor grids. Preserve
+  selected geometry precision through reconstruction without casting caller
+  values or changing omitted-dtype construction.
+- Stabilize saturated and empty-support attention higher derivatives. Preserve
+  fused XLA forward execution while differentiating the bounded native
+  reference; cuDNN retains its existing provider derivative route.
+- Add a CPU-only scientific TPU lowering preflight with independent numerical
+  checks and explicitly transformed derivative programs. Required exports and
+  expected callback refusals are reported separately; successful preflight is
+  neither complete export coverage nor TPU compilation/hardware qualification.
+- Require phase-separated compiled-region resource evidence in installed
+  accelerator qualification, including the Poisson PINN training update.
+  Bind records to the observed runtime and qualification invocation; preserve
+  unavailable allocator counters instead of substituting zeros.
 - Add the `rocm10` extra for standard CPython 3.13 and matched
   JAX/JAXlib/AMD plugin 0.12.0, with packaged ROCm 10.1.0 userspace and
   `gfx942`, `gfx950`, and `gfx1250` payloads targeting the MI300/MI350 families

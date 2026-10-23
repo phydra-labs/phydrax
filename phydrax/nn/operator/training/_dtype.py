@@ -241,6 +241,7 @@ class OperatorDTypePolicy:
             quadrature_weights=samples.quadrature_weights,
             mask=samples.mask,
             topology=samples.topology,
+            dtype=samples.geometry_dtype,
         )
 
     def cast_batch(self, batch: OperatorBatch, /) -> OperatorBatch:
