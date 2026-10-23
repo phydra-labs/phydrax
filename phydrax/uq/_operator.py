@@ -291,6 +291,7 @@ def _collapse_query(
         coordinates=coordinates,
         quadrature_weights=quadrature,
         mask=mask,
+        dtype=query.geometry_dtype,
     )
 
 

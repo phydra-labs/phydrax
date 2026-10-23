@@ -161,6 +161,8 @@ benchmarks/*
 !benchmarks/_memory.py
 !benchmarks/memory_*.py
 !benchmarks/memory_*.json
+# Accelerator-qualification compiled-region evidence driver (no retained record).
+!benchmarks/accelerator_region_evidence.py
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
 !tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv

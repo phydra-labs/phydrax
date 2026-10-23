@@ -138,6 +138,17 @@ Installation does not provision cloud resources.
 Intel and TPU hardware qualification remains pending. Read the
 [Intel guide](guides_oneapi_execution.md) and [TPU guide](guides_tpu_execution.md)
 for precise support boundaries and the installed-artifact workflow.
+Installed-wheel qualification also requires resource evidence for each declared
+compiled scientific region: lowering, compilation, first execution, and warm
+execution timings; logical retained output bytes; XLA's compiled argument,
+output, alias, temporary, and code bytes; and allocator samples of the selected
+device. A per-run nonce, the probed runtime and precision, and the compiled input
+signature bind each record. Missing compiled memory analysis refuses. Unavailable
+allocator counters stay explicit, never zero. This evidence does not replace
+passing numerical results and is not a performance claim. From a checkout,
+`python -m benchmarks.accelerator_region_evidence --platform cpu` reports the
+same evidence for the example's PINN training step; a CPU run only exercises
+the recording path.
 The [retained software evidence](data/accelerator_installation.json) distinguishes
 dependency resolution, CPU compatibility, refusal behavior, and the actual
 Metal shared-source regression from unperformed Intel/TPU execution.

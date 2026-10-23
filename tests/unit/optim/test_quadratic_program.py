@@ -369,6 +369,38 @@ def test_active_set_jvp_matches_regular_piecewise_solution_map() -> None:
     np.testing.assert_allclose(tangent, jnp.asarray((-0.5, 0.0)), atol=1e-7)
 
 
+def test_active_set_reverse_mode_transposes_the_regular_tangent_map() -> None:
+    def solution(linear: Any) -> Any:
+        return phx.optim.solve_quadratic_program_primal(
+            phx.optim.QuadraticProgram(
+                jnp.eye(2),
+                linear,
+                inequality_matrix=-jnp.eye(2),
+                inequality_rhs=jnp.zeros(2),
+            )
+        )
+
+    linear = jnp.asarray((-2.0, 2.0))
+    cotangent = jnp.asarray((1.0, 1.0))
+    _, pullback = jax.vjp(solution, linear)
+    (reverse,) = pullback(cotangent)
+    prepared = phx.optim.prepare_qp_sensitivity(
+        phx.optim.QuadraticProgram(
+            jnp.eye(2),
+            linear,
+            inequality_matrix=-jnp.eye(2),
+            inequality_rhs=jnp.zeros(2),
+        )
+    )
+
+    # The second bound is active, so only the free first coordinate responds.
+    np.testing.assert_allclose(reverse, jnp.asarray((-1.0, 0.0)), atol=1e-7)
+    np.testing.assert_allclose(
+        prepared.vjp(cotangent).linear, jnp.asarray((-1.0, 0.0)), atol=1e-7
+    )
+    assert bool(prepared.regular)
+
+
 def test_active_set_derivative_rejects_weak_complementarity() -> None:
     def solution(linear: Any) -> Any:
         return phx.optim.solve_quadratic_program_primal(

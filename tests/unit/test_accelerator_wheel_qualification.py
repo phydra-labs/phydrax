@@ -15,9 +15,11 @@ import time
 import zipfile
 from email.message import Message
 from pathlib import Path, PurePosixPath
+from typing import Any
 from unittest.mock import Mock
 from xml.etree import ElementTree
 
+import numpy as np
 import pytest
 
 from tools import qualify_accelerator_wheels as qualification
@@ -35,11 +37,16 @@ from tools.qualify_accelerator_wheels import (
     last_json,
     probe_record,
     REQUIRED_CASES,
+    resource_record_errors,
+    RESOURCE_REGIONS,
     ROCM_CASES,
     ROCM_ENVIRONMENT,
     runtime_errors,
     wheel_files,
 )
+
+
+NONCE = "0123456789abcdef0123456789abcdef"
 
 
 def _runtime(accelerator: Accelerator = Accelerator.TPU) -> dict[str, object]:
@@ -66,6 +73,107 @@ def _runtime(accelerator: Accelerator = Accelerator.TPU) -> dict[str, object]:
     }
 
 
+def _measurement(scope: str = "baseline") -> dict[str, object]:
+    return {
+        "method": "jax_memory_stats",
+        "scope": scope,
+        "value_bytes": None,
+        "resolution_bytes": None,
+        "unavailable_reason": "parser input: provider exposes no allocator statistics",
+    }
+
+
+def _phase(phase: str, runtime: dict[str, object]) -> dict[str, Any]:
+    sample = {
+        "process_index": 0,
+        "device_id": runtime["qualified_device_id"],
+        "platform": runtime["platform"],
+        "provider_id": runtime["client_platform"],
+        "provider_version": runtime["platform_version"],
+        "timestamp_ns": 1,
+        "allocator_limit": _measurement(),
+        "allocator_reserved": _measurement(),
+        "allocator_in_use": _measurement(),
+        "allocator_peak_in_use": _measurement("peak"),
+        "live_array_bytes": {
+            "method": "jax_live_arrays",
+            "scope": "baseline",
+            "value_bytes": 8,
+            "resolution_bytes": 1,
+            "unavailable_reason": None,
+        },
+    }
+    return {
+        "phase": phase,
+        "interval_seconds": 0.01,
+        "duration_seconds": 0.001,
+        "sample_count": 2,
+        "maximum_sample_gap_seconds": 0.001,
+        "sampled_peak_resident": {
+            "method": "interval_sampling",
+            "scope": "peak",
+            "value_bytes": 4096,
+            "resolution_bytes": 4096,
+            "unavailable_reason": None,
+        },
+        "devices": [
+            {
+                "baseline": sample,
+                "final": json.loads(json.dumps(sample)),
+                "sampled_peak_in_use": {
+                    **_measurement("peak"),
+                    "method": "interval_sampling",
+                },
+            }
+        ],
+    }
+
+
+def _resource(region: str, runtime: dict[str, object] | None = None) -> dict[str, Any]:
+    """Synthetic parser input shaped like the recorder, never device evidence."""
+    runtime = runtime or _runtime()
+    signature = [{"shape": [2], "dtype": "float32", "weak_type": False}]
+    return {
+        "region": region,
+        "evidence_nonce": NONCE,
+        "runtime": runtime,
+        "program_sha256": "6" * 64,
+        "input_signature": signature,
+        "output_signature": signature,
+        "lowering_seconds": 0.01,
+        "compilation_seconds": 0.02,
+        "first_execution_seconds": 0.003,
+        "warm_execution": {
+            "count": 1,
+            "samples_seconds": [0.001],
+            "min_seconds": 0.001,
+            "median_seconds": 0.001,
+            "mean_seconds": 0.001,
+            "std_seconds": 0.0,
+            "max_seconds": 0.001,
+        },
+        "logical_retained_bytes": 8,
+        "compiled_memory": {
+            "argument_bytes": 8,
+            "output_bytes": 8,
+            "alias_bytes": 0,
+            "temporary_bytes": 16,
+            "generated_code_bytes": 0,
+            "host_argument_bytes": 0,
+            "host_output_bytes": 0,
+            "host_alias_bytes": 0,
+            "host_temporary_bytes": 0,
+            "host_generated_code_bytes": 0,
+            "peak_bytes": None,
+        },
+        "compiled_memory_unavailable_reason": None,
+        "phase_memory": {
+            "first_execution": _phase("first-execution", runtime),
+            "warm_execution": _phase("warm-execution", runtime),
+        },
+    }
+
+
 def _xml(
     path: Path,
     names: tuple[str, ...] = REQUIRED_CASES,
@@ -73,6 +181,7 @@ def _xml(
     outcome: str | None = None,
     runtime: dict[str, object] | None = None,
     evidence: bool = True,
+    resources: dict[str, list[object]] | None = None,
 ) -> None:
     suite = ElementTree.Element("testsuite")
     for name in names:
@@ -93,21 +202,179 @@ def _xml(
                 name="accelerator_runtime",
                 value=json.dumps(runtime or _runtime()),
             )
+            records = (resources or {}).get(
+                name,
+                [_resource(region, runtime) for region in RESOURCE_REGIONS.get(name, ())],
+            )
+            for record in records:
+                ElementTree.SubElement(
+                    properties,
+                    "property",
+                    name="accelerator_resources",
+                    value=record if isinstance(record, str) else json.dumps(record),
+                )
     ElementTree.ElementTree(suite).write(path)
 
 
 def test_report_requires_exact_successful_case_set_and_runtime(tmp_path: Path) -> None:
     report = tmp_path / "report.xml"
     _xml(report)
-    errors, cases = case_report_errors(report, _runtime())
+    errors, cases = case_report_errors(report, _runtime(), NONCE)
     assert errors == [] and len(cases) == len(REQUIRED_CASES)
+
+
+def _break_resource(failure: str) -> list[object]:
+    record = _resource("bounded-pcg-solve")
+    warm = record["phase_memory"]["warm_execution"]
+    device = warm["devices"][0]
+    match failure:
+        case "missing":
+            return []
+        case "duplicate":
+            return [record, record]
+        case "unexpected-region":
+            return [record, _resource("fourier-resample")]
+        case "malformed":
+            return ["{not json"]
+        case "stale-nonce":
+            record["evidence_nonce"] = "f" * 32
+        case "unbound-nonce":
+            record["evidence_nonce"] = None
+        case "cpu-runtime":
+            record = _resource(
+                "bounded-pcg-solve",
+                {**_runtime(), "platform": "cpu", "client_platform": "cpu"},
+            )
+        case "other-device-sample":
+            device["final"]["device_id"] = 1
+        case "cpu-device-sample":
+            device["baseline"]["platform"] = "cpu"
+        case "unsampled-device":
+            warm["devices"] = []
+        case "missing-phase":
+            del record["phase_memory"]["first_execution"]
+        case "no-compiled-memory":
+            record["compiled_memory"] = None
+            record["compiled_memory_unavailable_reason"] = "provider exposes none"
+        case "missing-lowering":
+            record["lowering_seconds"] = None
+        case "nan-execution":
+            record["first_execution_seconds"] = float("nan")
+        case "no-warm-samples":
+            record["warm_execution"] = {
+                **record["warm_execution"],
+                "count": 0,
+                "samples_seconds": [],
+            }
+        case "unexplained-unavailable":
+            device["baseline"]["allocator_in_use"]["unavailable_reason"] = None
+        case "missing-signature":
+            record["input_signature"] = []
+        case "missing-retained-bytes":
+            del record["logical_retained_bytes"]
+        case "inconsistent-warm-summary":
+            record["warm_execution"] = {
+                "count": 2,
+                "samples_seconds": [0.001, 0.003],
+                "min_seconds": 0.001,
+                "median_seconds": 0.003,
+                "mean_seconds": 0.002,
+                "std_seconds": 0.001,
+                "max_seconds": 0.003,
+            }
+        case "nan-warm-summary":
+            record["warm_execution"]["mean_seconds"] = float("nan")
+        case "other-process-sample":
+            device["final"]["process_index"] = 1
+        case "foreign-provider-sample":
+            device["baseline"]["provider_id"] = "cpu"
+        case "unhashable-region":
+            record["region"] = ["bounded-pcg-solve"]
+    return [record]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "missing",
+        "duplicate",
+        "unexpected-region",
+        "malformed",
+        "stale-nonce",
+        "unbound-nonce",
+        "cpu-runtime",
+        "other-device-sample",
+        "cpu-device-sample",
+        "unsampled-device",
+        "missing-phase",
+        "no-compiled-memory",
+        "missing-lowering",
+        "nan-execution",
+        "no-warm-samples",
+        "unexplained-unavailable",
+        "missing-signature",
+        "missing-retained-bytes",
+        "inconsistent-warm-summary",
+        "nan-warm-summary",
+        "other-process-sample",
+        "foreign-provider-sample",
+        "unhashable-region",
+    ),
+)
+def test_resource_gate_refuses_absent_stale_or_foreign_evidence(
+    tmp_path: Path, failure: str
+) -> None:
+    report = tmp_path / "report.xml"
+    case = "test_bounded_linear_solve"
+    _xml(report, resources={case: _break_resource(failure)})
+    errors, _ = case_report_errors(report, _runtime(), NONCE)
+    assert errors and all(error.startswith(case) for error in errors)
+
+
+def test_cpu_recorder_satisfies_gate_only_for_its_own_runtime_and_run() -> None:
+    """Exercise the real recorder on CPU; neither accelerator nor performance evidence."""
+    import jax
+    import jax.numpy as jnp
+
+    from phydrax.execution import default_device
+    from tests._support.accelerator_qualification import compiled_region_evidence
+
+    device = jax.devices("cpu")[0]
+    with default_device(device):
+        gradient, evidence = compiled_region_evidence(
+            jax.grad(lambda point: point[0] ** 3 * point[1] ** 2),
+            (jnp.asarray([0.5, 0.25], dtype=jnp.float32),),
+            device=device,
+        )
+    np.testing.assert_array_equal(gradient, np.asarray([0.046875, 0.0625], np.float32))
+    assert gradient.devices() == {device}
+    runtime = {
+        **_runtime(),
+        "platform": device.platform,
+        "client_platform": device.client.platform,
+        "platform_version": device.client.platform_version,
+        "qualified_device_id": device.id,
+    }
+    record = json.loads(
+        json.dumps(
+            {
+                "region": "coordinate-gradient",
+                "evidence_nonce": NONCE,
+                "runtime": runtime,
+                **evidence,
+            }
+        )
+    )
+    assert resource_record_errors(record, runtime, NONCE) == []
+    assert resource_record_errors(record, _runtime(), NONCE)
+    assert resource_record_errors(record, runtime, "f" * 32)
 
 
 @pytest.mark.parametrize("outcome", ("skipped", "failure", "error"))
 def test_skipped_or_failed_cases_never_qualify(tmp_path: Path, outcome: str) -> None:
     report = tmp_path / "report.xml"
     _xml(report, outcome=outcome)
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
 
 
 @pytest.mark.parametrize(
@@ -123,18 +390,18 @@ def test_missing_duplicate_or_extra_case_refuses(
 ) -> None:
     report = tmp_path / "report.xml"
     _xml(report, names)
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
 
 
 def test_missing_or_wrong_actual_placement_refuses(tmp_path: Path) -> None:
     report = tmp_path / "report.xml"
     _xml(report, evidence=False)
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
     _xml(report, runtime={**_runtime(), "platform": "cpu"})
-    assert case_report_errors(report, _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
     report.write_text("not xml")
-    assert case_report_errors(report, _runtime())[0]
-    assert case_report_errors(tmp_path / "absent", _runtime())[0]
+    assert case_report_errors(report, _runtime(), NONCE)[0]
+    assert case_report_errors(tmp_path / "absent", _runtime(), NONCE)[0]
 
 
 @pytest.mark.parametrize("accelerator", tuple(Accelerator))
@@ -313,10 +580,10 @@ def test_rocm_report_requires_native_precision_on_each_selected_device(
     runtime = {**_runtime(accelerator), "qualified_device_id": 3}
     assert len(REQUIRED_CASES + ROCM_CASES) == 20
     _xml(path, REQUIRED_CASES, runtime=runtime)
-    assert case_report_errors(path, runtime)[0]
+    assert case_report_errors(path, runtime, NONCE)[0]
     _xml(path, REQUIRED_CASES + ROCM_CASES, runtime=runtime)
-    assert not case_report_errors(path, runtime)[0]
-    assert case_report_errors(path, {**runtime, "qualified_device_id": 0})[0]
+    assert not case_report_errors(path, runtime, NONCE)[0]
+    assert case_report_errors(path, {**runtime, "qualified_device_id": 0}, NONCE)[0]
 
 
 def test_core_wheel_content_identity_changes_with_bytes(tmp_path: Path) -> None:
@@ -739,13 +1006,13 @@ def test_probe_and_cases_require_same_frontend_patch(tmp_path: Path, field: str)
     assert isinstance(runtime, dict)
     cases = tmp_path / "cases.xml"
     _xml(cases, runtime=runtime)
-    assert not case_report_errors(cases, runtime)[0]
+    assert not case_report_errors(cases, runtime, NONCE)[0]
     patch = runtime["frontend_index_patch"]
     assert isinstance(patch, dict)
     patch[field] = "mismatched-parser-input"
     write_json_evidence(path, payload)
     assert probe_record(path, Accelerator.TPU) is None
-    assert case_report_errors(cases, runtime)[0]
+    assert case_report_errors(cases, runtime, NONCE)[0]
 
 
 @pytest.mark.parametrize(
@@ -819,6 +1086,7 @@ def test_example_frontend_patch_must_match_probe(
             }
         ),
     )
+    monkeypatch.setattr(qualification, "token_hex", Mock(return_value=NONCE))
     report = qualification._qualify_device(
         argparse.Namespace(tpu_autodetect=False, timeout=1),
         Accelerator.TPU,
@@ -831,6 +1099,46 @@ def test_example_frontend_patch_must_match_probe(
         "Advertised example failed or did not execute on the probed accelerator"
     ]
     assert not report["hardware_qualified"]
+
+
+@pytest.mark.parametrize("fresh", (True, False))
+def test_device_run_binds_resource_evidence_to_its_own_nonce(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fresh: bool
+) -> None:
+    payload = _probe_payload()
+    runtime = payload["runtime"]
+    assert isinstance(runtime, dict)
+    example = {
+        **runtime,
+        "accelerator": Accelerator.TPU.value,
+        "status": "passed",
+        "results_on_device": True,
+    }
+    write_json_evidence(tmp_path / "installed-runtime-device-0.json", payload)
+    # Complete evidence from an earlier run must not qualify a later one.
+    _xml(tmp_path / "cases-device-0.xml", runtime=runtime)
+    run_command = Mock(
+        return_value={"returncode": 0, "timed_out": False, "stdout": json.dumps(example)}
+    )
+    monkeypatch.setattr(qualification, "run", run_command)
+    monkeypatch.setattr(
+        qualification, "token_hex", Mock(return_value=NONCE if fresh else "e" * 32)
+    )
+    report = qualification._qualify_device(
+        argparse.Namespace(tpu_autodetect=False, timeout=1),
+        Accelerator.TPU,
+        tmp_path,
+        tmp_path / "venv",
+        tmp_path / "expected-core.json",
+        0,
+    )
+    environment = run_command.call_args_list[1].kwargs["environment"]
+    assert environment["PHYDRAX_QUALIFICATION_NONCE"] == report["evidence_nonce"]
+    assert report["hardware_qualified"] is fresh
+    assert fresh == (not report["errors"])
+    assert all(
+        "not bound to this qualification run" in error for error in report["errors"]
+    )
 
 
 @pytest.mark.parametrize(

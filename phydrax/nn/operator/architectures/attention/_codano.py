@@ -15,9 +15,11 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax._dtype_names import real_precision_dtype_name
 from phydrax._frozendict import frozendict
 from phydrax._strict import StrictModule
 from phydrax.geometry.operator import TensorGridLatentGeometry
@@ -39,6 +41,8 @@ from phydrax.nn.layers._measure_attention import (
 from phydrax.nn.operator.architectures.attention._upt import (
     _ChanneledAttentionOptions,
     _feature_norm_regularity,
+    _masked,
+    _scaled_normal,
 )
 from phydrax.nn.operator.architectures.spectral._fno import Factorization, SpectralConvND
 from phydrax.nn.operator.data import (
@@ -140,7 +144,11 @@ class CoDAOperatorState(StrictModule):
 
 
 class CoDABlock(StrictModule):
-    """Alternating within-field domain mixing and cross-field codomain attention."""
+    """Alternating within-field domain mixing and cross-field codomain attention.
+
+    `dtype` selects the real floating dtype of every learned parameter; the
+    spectral mixer stores its complex companion. `None` keeps JAX's default.
+    """
 
     domain_mixer: SpectralConvND
     pointwise: Linear
@@ -165,8 +173,11 @@ class CoDABlock(StrictModule):
         feed_forward_multiplier: float,
         factorization: Factorization,
         rank: int | float,
+        dtype: DTypeLike | None = None,
         key: PRNGKey,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.width = int(width)
         self.spatial_ndim = int(spatial_ndim)
         hidden = round(float(feed_forward_multiplier) * self.width)
@@ -179,28 +190,38 @@ class CoDABlock(StrictModule):
             n_modes=n_modes,
             factorization=factorization,
             rank=rank,
+            dtype=param_dtype,
             key=keys[0],
         )
         self.pointwise = Linear(
             in_size=self.width,
             out_size=self.width,
             activation=None,
+            dtype=param_dtype,
             key=keys[1],
         )
         self.codomain_attention = CodomainAttention(
             channels=self.width,
             num_heads=num_heads,
             head_dim=head_dim,
+            dtype=param_dtype,
             key=keys[2],
         )
-        self.domain_norm = eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
-        self.codomain_norm = eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
-        self.feed_forward_norm = eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
+        self.domain_norm = eqx.nn.RMSNorm(
+            self.width, eps=1e-6, use_bias=False, dtype=param_dtype
+        )
+        self.codomain_norm = eqx.nn.RMSNorm(
+            self.width, eps=1e-6, use_bias=False, dtype=param_dtype
+        )
+        self.feed_forward_norm = eqx.nn.RMSNorm(
+            self.width, eps=1e-6, use_bias=False, dtype=param_dtype
+        )
         self.gate = Linear(
             in_size=self.width,
             out_size=hidden,
             activation=None,
             use_bias=False,
+            dtype=param_dtype,
             key=keys[3],
         )
         self.value = Linear(
@@ -208,6 +229,7 @@ class CoDABlock(StrictModule):
             out_size=hidden,
             activation=None,
             use_bias=False,
+            dtype=param_dtype,
             key=keys[4],
         )
         self.output = Linear(
@@ -215,6 +237,7 @@ class CoDABlock(StrictModule):
             out_size=self.width,
             activation=None,
             use_bias=False,
+            dtype=param_dtype,
             key=keys[5],
         )
 
@@ -238,16 +261,16 @@ class CoDABlock(StrictModule):
         for _ in range(self.spatial_ndim):
             sample_mask = jnp.expand_dims(sample_mask, axis=case_ndim)
         sample_mask = jnp.broadcast_to(sample_mask, hidden.shape[:-1])
-        hidden = (hidden + mixed) * sample_mask[..., None]
+        hidden = _masked(hidden + mixed, sample_mask)
         attended = self.codomain_attention(
             _feature_norm(self.codomain_norm, hidden), sample_mask
         )
-        hidden = (hidden + attended) * sample_mask[..., None]
+        hidden = _masked(hidden + attended, sample_mask)
         normalized = _feature_norm(self.feed_forward_norm, hidden)
         feed_forward = self.output(
             jnn.silu(self.gate(normalized)) * self.value(normalized)
         )
-        return (hidden + feed_forward) * sample_mask[..., None]
+        return _masked(hidden + feed_forward, sample_mask)
 
     def _value_regularity(self) -> DerivativeRegularity | None:
         # The Fourier domain mixer is linear; field masks are fixed data.
@@ -308,7 +331,14 @@ def _predict_codano(
 
 
 class CoDANO(AbstractEncodedOperatorModel):
-    """Codomain-attention neural operator for variable multiphysics field sets."""
+    """Codomain-attention neural operator for variable multiphysics field sets.
+
+    `dtype` selects the real floating dtype of every learned parameter: lifts,
+    attention transfers and decoders, field embeddings, CoDA blocks (whose
+    spectral mixers store the complex companion) and projections. It also sets
+    the precision of the model-owned latent grid geometry. `None` keeps JAX's
+    default floating dtype and the canonical float64 latent geometry.
+    """
 
     operator_architecture = "CoDANO"
 
@@ -354,8 +384,11 @@ class CoDANO(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.fields = tuple(fields)
         if not self.fields or len({field.name for field in self.fields}) != len(
             self.fields
@@ -384,6 +417,7 @@ class CoDANO(AbstractEncodedOperatorModel):
             latent_shape,
             bounds=bounds,
             bounds_policy=bounds_policy,
+            dtype=param_dtype,
         )
         self.coord_dim = self.latent_geometry.coord_dim
         if min(self.width, self.depth, int(num_heads), int(head_dim)) <= 0:
@@ -402,6 +436,7 @@ class CoDANO(AbstractEncodedOperatorModel):
                 in_size=self._field(name).channel_count + self.coord_dim,
                 out_size=self.width,
                 activation=jnn.gelu,
+                dtype=param_dtype,
                 key=_named_key(key, f"source_lift:{name}"),
             )
             for name in self.source_names
@@ -416,6 +451,7 @@ class CoDANO(AbstractEncodedOperatorModel):
             "execution": attention_execution,
             "block_size": attention_block_size,
             "accumulation_dtype": accumulation_dtype,
+            "dtype": param_dtype,
         }
         self.source_transfer = tuple(
             MeasureAwareAttention(
@@ -428,17 +464,19 @@ class CoDANO(AbstractEncodedOperatorModel):
             in_size=self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=_named_key(key, "latent_query"),
         )
         self.field_embeddings = jnp.stack(
             tuple(
-                jr.normal(
+                _scaled_normal(
                     _named_key(key, f"field_embedding:{field.name}"),
                     (self.width,),
+                    param_dtype,
                 )
                 for field in self.fields
             )
-        ) / jnp.sqrt(float(self.width))
+        )
         self.blocks = tuple(
             CoDABlock(
                 width=self.width,
@@ -449,6 +487,7 @@ class CoDANO(AbstractEncodedOperatorModel):
                 feed_forward_multiplier=feed_forward_multiplier,
                 factorization=factorization,
                 rank=rank,
+                dtype=param_dtype,
                 key=_named_key(key, f"block:{index}"),
             )
             for index in range(self.depth)
@@ -458,6 +497,7 @@ class CoDANO(AbstractEncodedOperatorModel):
                 in_size=self.coord_dim,
                 out_size=self.width,
                 activation=jnn.gelu,
+                dtype=param_dtype,
                 key=_named_key(key, f"decode_query:{name}"),
             )
             for name in self.target_names
@@ -474,6 +514,7 @@ class CoDANO(AbstractEncodedOperatorModel):
                 in_size=self.width,
                 out_size=self._field(name).channel_count,
                 activation=None,
+                dtype=param_dtype,
                 key=_named_key(key, f"projection:{name}"),
             )
             for name in self.target_names
@@ -542,7 +583,9 @@ class CoDANO(AbstractEncodedOperatorModel):
         encoded_fields: list[Array] = []
         presence: list[Array] = []
         for field_index, field in enumerate(self.fields):
-            query_features = base_query + self.field_embeddings[field_index]
+            query_features = base_query + jnp.broadcast_to(
+                self.field_embeddings[field_index], base_query.shape
+            )
             if not field.is_source:
                 encoded_fields.append(query_features)
                 presence.append(jnp.ones((cases,), dtype=jnp.bool_))
@@ -593,8 +636,9 @@ class CoDANO(AbstractEncodedOperatorModel):
             model_presence = (
                 jnp.ones_like(field_presence) if field.is_target else field_presence
             )
+            encoded = query_features + transferred
             encoded_fields.append(
-                (query_features + transferred) * model_presence[:, None, None]
+                encoded * model_presence[:, None, None].astype(encoded.dtype)
             )
             presence.append(model_presence)
         stacked = jnp.stack(encoded_fields, axis=-2)
@@ -640,11 +684,11 @@ class CoDANO(AbstractEncodedOperatorModel):
             )
         cases = prod(state.case_shape) if state.case_shape else 1
         query_count = prod(query.sample_shape)
-        query_features = (
-            self.decode_query_lifts[target_index](
-                query_coordinates.reshape((cases, query_count, self.coord_dim))
-            )
-            + self.field_embeddings[field_index]
+        lifted_query = self.decode_query_lifts[target_index](
+            query_coordinates.reshape((cases, query_count, self.coord_dim))
+        )
+        query_features = lifted_query + jnp.broadcast_to(
+            self.field_embeddings[field_index], lifted_query.shape
         )
         source_values = state.values[..., field_index, :].reshape(
             (cases, self.latent_geometry.point_count, self.width)
@@ -662,7 +706,7 @@ class CoDANO(AbstractEncodedOperatorModel):
             ),
             query_mask=query_mask,
         )
-        projected = self.projections[target_index](decoded) * query_mask[..., None]
+        projected = _masked(self.projections[target_index](decoded), query_mask)
         shaped = projected.reshape(
             state.case_shape + query.sample_shape + (field.channel_count,)
         )

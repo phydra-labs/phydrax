@@ -25,9 +25,6 @@ from ...linalg import (
     DenseLinearOperator,
     DenseLU,
     DenseSVD,
-    DifferentiationPolicy,
-    FactorizationPolicy,
-    factorize,
     LeastSquaresProblem,
     LinearSolvePolicy,
     LinearSystem,
@@ -35,6 +32,7 @@ from ...linalg import (
     RankPolicy,
     solve as solve_linear,
 )
+from ...linalg._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._policy import (
     ConvexDifferentiationPolicy,
     ConvexSolvePolicy,
@@ -1943,25 +1941,17 @@ def _barrier_kkt(
     )
 
 
-# Traced once per KKT shape: every prepared sensitivity of one layout (for
-# example each MPC window of one topology) reuses the factorization program.
+# Implicit tangent maps must stay linear in their right-hand side so reverse
+# mode can transpose them. Regularity is decided from the primal KKT factors
+# alone; the status-certified `solve` gates its value on rhs-dependent
+# residual checks and is therefore not a linear action. Traced once per KKT
+# shape: every prepared sensitivity of one layout (for example each MPC window
+# of one topology) reuses the factorization program.
 @jax.jit
 def _regular_kkt_solve(matrix: Array, rhs: Array, /) -> tuple[Array, Array]:
-    factorization = factorize(
-        DenseLinearOperator(matrix),
-        FactorizationPolicy(
-            "svd",
-            rank=RankPolicy(require_full_rank=True),
-            differentiation=DifferentiationPolicy("rhs-only"),
-        ),
-    )
-    result = factorization.solve(rhs)
-    regular = (
-        (factorization.rank() == matrix.shape[0])
-        & jnp.all(jnp.isfinite(matrix))
-        & jnp.all(jnp.isfinite(factorization.singular_values()))
-    )
-    return result.value, regular
+    factors = factor_pseudoinverse(matrix, RankPolicy())
+    regular = (factors.rank == matrix.shape[0]) & factors.finite
+    return apply_pseudoinverse(factors, rhs), regular
 
 
 def _barrier_tangent_single(
