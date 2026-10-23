@@ -1,0 +1,17 @@
+diff --git a/jaxlib/tools/build_utils.py b/jaxlib/tools/build_utils.py
+--- a/jaxlib/tools/build_utils.py
++++ b/jaxlib/tools/build_utils.py
+@@ -139,1 +139,12 @@
+-  env["PYTHONPATH"] = os.pathsep.join([os.path.abspath(p) for p in sys.path])
++  python_paths = [os.path.abspath(p) for p in sys.path]
++  if is_windows():
++    # LoadLibraryExW still needs extended-length paths for native modules,
++    # including the hermetic interpreter's stdlib extensions in subprocesses.
++    prefix = "\\\\?\\"
++    python_paths = [
++        p if p.startswith(prefix) else
++        prefix + "UNC\\" + p[2:] if p.startswith("\\\\") else
++        prefix + p
++        for p in python_paths
++    ]
++  env["PYTHONPATH"] = os.pathsep.join(python_paths)

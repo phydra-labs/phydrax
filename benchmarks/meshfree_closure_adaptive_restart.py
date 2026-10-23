@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import resource
 import signal
 import subprocess
 import sys
@@ -28,6 +27,10 @@ from dataclasses import dataclass
 from math import comb, isqrt
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+
+
+if sys.platform != "win32":
+    import resource
 
 import jax
 import jax.numpy as jnp
@@ -2609,6 +2612,8 @@ def measure_restart_refused_epoch_interrupt(
 
 
 def _children_cpu() -> float:
+    if sys.platform == "win32":
+        raise RuntimeError("Child CPU accounting requires POSIX resource.getrusage.")
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     return usage.ru_utime + usage.ru_stime
 
@@ -2665,6 +2670,11 @@ def measure_restart_cli_sigkill(
     capacity: int, seed: int, config: MeshfreeConfig, /
 ) -> dict[str, Any]:
     """SIGKILL the production example mid-run; --resume must reach the reference result."""
+    if sys.platform == "win32":
+        raise RuntimeError(
+            "The restart-cli-sigkill benchmark requires POSIX SIGKILL and child CPU accounting."
+        )
+    sigkill = signal.SIGKILL
     _require_float64(config, "restart-cli-sigkill")
     points = 100  # examples.meshfree_production_restart: a fixed 10 x 10 periodic cloud.
     if capacity < points:
@@ -2699,7 +2709,7 @@ def measure_restart_cli_sigkill(
                         + (root / "killed.log").read_text(encoding="utf-8")[-4000:]
                     )
                 observed.append(line)
-            process.send_signal(signal.SIGKILL)
+            process.send_signal(sigkill)
             process.wait(timeout=60)
             return observed, process.returncode
 
@@ -2722,7 +2732,7 @@ def measure_restart_cli_sigkill(
     expected, final, start = reference[-1], resumed[-1], resumed[0]
     metrics: dict[str, Any] = {
         "reference_completed": expected.get("status") == "completed",
-        "killed_by_sigkill": returncode == -signal.SIGKILL,
+        "killed_by_sigkill": returncode == -sigkill,
         "killed_before_completion": not any('"status"' in line for line in observed),
         "resumed_from_committed_step": start.get("start") == "resume"
         and int(start.get("step", 0)) > 0,

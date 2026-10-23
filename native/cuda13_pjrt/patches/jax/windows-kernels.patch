@@ -1,0 +1,136 @@
+diff --git a/jaxlib/mosaic/gpu/BUILD b/jaxlib/mosaic/gpu/BUILD
+--- a/jaxlib/mosaic/gpu/BUILD
++++ b/jaxlib/mosaic/gpu/BUILD
+@@ -33,10 +33,19 @@
+     deps = [":mosaic_gpu_proto"],
+ )
+ 
++# winjax: Mosaic GPU has POSIX-only code (unistd.h, dlfcn.h, GNU ld version
++# scripts), so it is excluded from the Windows wheel for now. Pallas/Mosaic GPU
++# is not supported on Windows yet.
+ py_library(
+     name = "mosaic_gpu",
+-    data = [":libmosaic_gpu_runtime.so"],
+-    deps = [":_mosaic_gpu_ext"],
++    data = select({
++        "@platforms//os:windows": [],
++        "//conditions:default": [":libmosaic_gpu_runtime.so"],
++    }),
++    deps = select({
++        "@platforms//os:windows": [],
++        "//conditions:default": [":_mosaic_gpu_ext"],
++    }),
+ )
+ 
+ cc_library(
+diff --git a/jaxlib/tridiagonal_solve_perturbed.h b/jaxlib/tridiagonal_solve_perturbed.h
+--- a/jaxlib/tridiagonal_solve_perturbed.h
++++ b/jaxlib/tridiagonal_solve_perturbed.h
+@@ -61,6 +61,25 @@
+ 
+ namespace jax {
+ 
++// winjax: MSVC's ucrt declares the float C++ overload of copysign as a
++// host-only `static __inline` function, which the clang CUDA device pass
++// cannot emit code for (ptxas: unresolved '_ZL8copysignff'). Route through
++// the C99 functions, which have __device__ overloads in clang's CUDA math
++// wrappers.
++#ifdef _WIN32
++EIGEN_DEVICE_FUNC inline float CopySign(float a, float b) {
++  return ::copysignf(a, b);
++}
++EIGEN_DEVICE_FUNC inline double CopySign(double a, double b) {
++  return ::copysign(a, b);
++}
++#else
++template <typename T>
++EIGEN_DEVICE_FUNC inline T CopySign(T a, T b) {
++  return std::copysign(a, b);
++}
++#endif
++
+ // Adjust pivot such that neither 'rhs[i,:] / pivot' nor '1 / pivot' cause
+ // overflow, where i numerates the multiple right-hand-sides. During the
+ // back-substitution phase in
+@@ -92,7 +111,7 @@
+   // 'perturb' should never have magnitude smaller than safemin.
+   perturb = std::max(Eigen::numext::abs(perturb), safemin);
+   // Make sure perturb and pivot have the same sign.
+-  perturb = std::copysign(perturb, real(pivot));
++  perturb = CopySign(perturb, real(pivot));
+ 
+   bool stop = false;
+   const RealScalar max_factor = rhs_row.derived().array().abs().maxCoeff();
+@@ -268,14 +287,14 @@
+   if (n > 1) {
+     p = u(n - 2, 0);
+     rhs_row = x.row(n - 2) - u(n - 2, 1) * x.row(n - 1);
+-    MaybePerturbPivot(std::copysign(perturb, real(p)), p, rhs_row);
++    MaybePerturbPivot(CopySign(perturb, real(p)), p, rhs_row);
+     x.row(n - 2) = rhs_row * (Scalar(1.0) / p);
+   }
+ 
+   for (int k = n - 3; k >= 0; --k) {
+     p = u(k, 0);
+     rhs_row = x.row(k) - u(k, 1) * x.row(k + 1) - u(k, 2) * x.row(k + 2);
+-    MaybePerturbPivot(std::copysign(perturb, real(p)), p, rhs_row);
++    MaybePerturbPivot(CopySign(perturb, real(p)), p, rhs_row);
+     x.row(k) = rhs_row * (Scalar(1.0) / p);
+   }
+ }
+diff --git a/jaxlib/gpu/hybrid_kernels.cc b/jaxlib/gpu/hybrid_kernels.cc
+--- a/jaxlib/gpu/hybrid_kernels.cc
++++ b/jaxlib/gpu/hybrid_kernels.cc
+@@ -18,1 +18,5 @@
+-#include <dlfcn.h>
++#ifdef _WIN32
++#include <windows.h>
++#else
++#include <dlfcn.h>
++#endif
+@@ -48,1 +52,22 @@
+-namespace ffi = ::xla::ffi;
++namespace ffi = ::xla::ffi;
++
++#ifdef _WIN32
++namespace {
++constexpr int RTLD_LAZY = 0;
++void* dlopen(const char* path, int) {
++  HMODULE module = nullptr;
++  if (path == nullptr) {
++    GetModuleHandleExA(0, nullptr, &module);
++  } else {
++    module = LoadLibraryExA(path, nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
++  }
++  return module;
++}
++void* dlsym(void* handle, const char* name) {
++  return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(handle), name));
++}
++int dlclose(void* handle) {
++  return FreeLibrary(static_cast<HMODULE>(handle)) ? 0 : -1;
++}
++}  // namespace
++#endif
+@@ -154,2 +179,6 @@
+-    paths.push_back("libmagma.so.2");
+-    paths.push_back("libmagma.so");
++#ifdef _WIN32
++    paths.push_back("magma.dll");
++#else
++    paths.push_back("libmagma.so.2");
++    paths.push_back("libmagma.so");
++#endif
+diff --git a/jaxlib/tools/build_gpu_kernels_wheel.py b/jaxlib/tools/build_gpu_kernels_wheel.py
+--- a/jaxlib/tools/build_gpu_kernels_wheel.py
++++ b/jaxlib/tools/build_gpu_kernels_wheel.py
+@@ -151,4 +151,5 @@
+-          f"{source_file_prefix}jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}",
+-          f"{source_file_prefix}jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
+-          f"{source_file_prefix}jaxlib/version.py",
+-      ],
++          f"{source_file_prefix}jaxlib/version.py",
++      ] + ([] if build_utils.is_windows() else [
++          f"{source_file_prefix}jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}",
++          f"{source_file_prefix}jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
++      ]),

@@ -134,3 +134,77 @@ def test_configuration_bypass_audit_ignores_non_upstream_names(
     _write(tmp_path, "phydrax/module.py", text.format(jax=_UPSTREAM))
 
     assert configuration_bypass_errors(tmp_path) == ()
+
+
+@pytest.mark.parametrize(
+    ("relative", "function", "statement", "count"),
+    [
+        (
+            "tests/unit/test_jax_indexing.py",
+            "test_explicit_registration_is_device_inert_and_preserves_jax_surface",
+            "options = dict({upstream}.config.values)",
+            1,
+        ),
+        (
+            "tests/unit/test_jax_indexing.py",
+            "test_explicit_registration_is_device_inert_and_preserves_jax_surface",
+            "assert {upstream}.config.values == options",
+            2,
+        ),
+        (
+            "tests/unit/test_jax_indexing_frontend.py",
+            "test_installation_is_host_only_locked_idempotent_and_honestly_identified",
+            "assert {upstream}.config.values == options",
+            1,
+        ),
+        (
+            "tests/unit/test_jax_indexing_frontend.py",
+            "test_device_indices_do_not_require_host_synchronization",
+            'with {upstream}.transfer_guard_device_to_host("disallow"):\n    pass',
+            1,
+        ),
+    ],
+)
+def test_configuration_audit_allows_only_declared_isolated_probe_statements(
+    tmp_path: Path, relative: str, function: str, statement: str, count: int
+) -> None:
+    source = statement.format(upstream=_UPSTREAM) + "\n"
+    _write(
+        tmp_path, relative, f'def {function}():\n    script = """\n{source * count}"""\n'
+    )
+    assert configuration_bypass_errors(tmp_path) == ()
+
+    # An extra occurrence in the same probe is not covered by its declaration.
+    _write(
+        tmp_path,
+        relative,
+        f'def {function}():\n    script = """\n{source * (count + 1)}"""\n',
+    )
+    assert len(configuration_bypass_errors(tmp_path)) == count + 1
+
+    # Neither another function in the same file nor another file inherits policy.
+    _write(tmp_path, relative, f'def test_unreviewed():\n    script = """\n{source}"""\n')
+    assert len(configuration_bypass_errors(tmp_path)) == 1
+    _write(tmp_path, relative, "")
+    _write(
+        tmp_path,
+        "tests/unit/test_unreviewed.py",
+        f'def {function}():\n    script = """\n{source}"""\n',
+    )
+    assert len(configuration_bypass_errors(tmp_path)) == 1
+
+
+def test_isolated_probe_policy_does_not_allow_upstream_configuration_mutation(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path,
+        "tests/unit/test_jax_indexing.py",
+        "def test_explicit_registration_is_device_inert_and_preserves_jax_surface():\n"
+        '    script = """\n'
+        f'{_UPSTREAM}.config.update("jax_enable_x64", False)\n'
+        '"""\n',
+    )
+    assert configuration_bypass_errors(tmp_path) == (
+        f"configuration-bypass:tests/unit/test_jax_indexing.py:3:{_UPSTREAM}.config",
+    )

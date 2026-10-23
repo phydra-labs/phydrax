@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -470,7 +471,14 @@ def run(config: CampaignConfig, /) -> dict[str, Any]:
         "passed": bool(passed),
         "environment": capture_environment().to_dict(),
         "host_load": {
-            "load_average_1_5_15": list(os.getloadavg()),
+            "load_average_1_5_15": (
+                None if sys.platform == "win32" else list(os.getloadavg())
+            ),
+            "load_average_unavailable_reason": (
+                "Windows does not provide os.getloadavg"
+                if sys.platform == "win32"
+                else None
+            ),
             "logical_cpus": os.cpu_count(),
         },
         "resource_measurement": {

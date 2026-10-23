@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import assert_never, final, Literal, TypeAlias
 
+from .._cuda_capabilities import windows_topology_refusal
 from ..typing import parse
 from ._availability import probe_cuda_component
 from ._types import (
@@ -81,11 +82,22 @@ def cudss_availability(
             component = "cudss_mgmn"
         case _:
             assert_never(execution_mode)
+    refusal = windows_topology_refusal(
+        device_count=1 if execution_mode == "local" else 2,
+        site_mpi=execution_mode == "mgmn",
+    )
+    if refusal is not None:
+        return BackendAvailability(
+            capabilities=capabilities,
+            available=False,
+            requirement="a CUDA runtime supporting the requested cuDSS execution topology",
+            reason=refusal,
+        )
     return probe_cuda_component(
         capabilities,
         component=component,
         requirement=(
-            "install phydrax[cuda13] on Linux x86-64 or aarch64 "
+            "install phydrax[cuda13] on Linux x86-64/aarch64 or supported Windows x86-64 "
             "with NVIDIA Turing-or-newer devices"
             + (
                 " and exact site-built collective/cuDSS MGMN components using GPU-aware MPI"

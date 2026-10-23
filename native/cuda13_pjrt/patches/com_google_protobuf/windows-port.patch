@@ -1,0 +1,19 @@
+diff --git a/src/google/protobuf/port_def.inc b/src/google/protobuf/port_def.inc
+index dc6da96..aa4fc35 100644
+--- a/src/google/protobuf/port_def.inc
++++ b/src/google/protobuf/port_def.inc
+@@ -418,7 +418,14 @@ static_assert(PROTOBUF_ABSL_MIN(20230125, 3),
+ #error PROTOBUF_THREAD_LOCAL was previously defined
+ #endif
+ #if defined(_MSC_VER)
++#if defined(__CUDA_ARCH__)
++// clang rejects `__declspec(thread)` when compiling for a CUDA device target
++// (thread-local storage is not supported there). These variables are only
++// used from host code, so drop the keyword in the device compilation pass.
++#define PROTOBUF_THREAD_LOCAL
++#else
+ #define PROTOBUF_THREAD_LOCAL __declspec(thread)
++#endif
+ #else
+ #define PROTOBUF_THREAD_LOCAL __thread
+ #endif

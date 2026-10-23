@@ -82,6 +82,8 @@ def test_symlink_roots_components_and_files_are_rejected(tmp_path: Path) -> None
 
 
 def test_special_file_and_oversize_resource_fail_closed(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("FIFO source rejection requires POSIX named pipes.")
     fifo = tmp_path / "stream"
     os.mkfifo(fifo)
     oversized = tmp_path / "large.bin"

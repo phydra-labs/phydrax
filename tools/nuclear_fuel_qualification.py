@@ -10,7 +10,6 @@ import hashlib
 import json
 import math
 import os
-import resource
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -3358,6 +3357,10 @@ def qualify(
     Release-closure cases resolve the native closure matrix; supplemental cases
     are reported under ``supplemental_cases`` and only gate ``successful``.
     """
+    if os.name != "posix":
+        raise RuntimeError("Nuclear fuel resource qualification requires a POSIX host.")
+    import resource
+
     root = Path(__file__).resolve().parents[1]
     driver = Path(__file__).resolve()
     build_before = source_build_fingerprint(root)

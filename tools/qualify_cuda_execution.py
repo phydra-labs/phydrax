@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import sys
 import tempfile
 import uuid
@@ -163,6 +164,8 @@ def _peer_connectivity_errors(
 def peer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
     errors = _ownership_errors(record["ownership"], devices, 1, len(devices))
     errors.extend(_peer_connectivity_errors(record, devices))
+    if len(devices) == 1 and record.get("peer_matrix_status") != "not-applicable":
+        errors.append("Single-device peer matrix must be explicitly not-applicable")
     expected = {
         (route, source, destination, size, step)
         for route in ("cuda", "jax")
@@ -266,6 +269,8 @@ def peer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
 
 def consumer_errors(record: dict[str, Any], devices: Sequence[str]) -> list[str]:
     errors = _ownership_errors(record["ownership"], devices, 1, len(devices))
+    if len(devices) == 1 and record.get("peer_matrix_status") != "not-applicable":
+        errors.append("Single-device consumer matrix must be explicitly not-applicable")
     expected = {
         (route, source, destination, size, step)
         for route in CONSUMER_ROUTES
@@ -430,8 +435,13 @@ def _scenario(
     directory: Path,
     environment: dict[str, str],
     timeout: float,
+    *,
+    python: Path,
+    harness: Path,
 ) -> ScenarioEvidence:
     output = directory / f"{scenario}.json"
+    from tools.qualify_cuda_wheels import installed_command
+
     selected = (
         devices
         if scenario in ("peer-copies", "jax-consumers")
@@ -440,8 +450,6 @@ def _scenario(
     child_environment = dict(environment, CUDA_VISIBLE_DEVICES=",".join(selected))
     if scenario in ("peer-copies", "jax-consumers"):
         command = [
-            sys.executable,
-            "-m",
             "tests._support.cuda_execution_worker",
             "--case",
             scenario,
@@ -453,8 +461,6 @@ def _scenario(
     else:
         processes, local = scenario.split("x")
         command = [
-            sys.executable,
-            "-m",
             "tools.distributed_substrate_benchmark",
             "--local-processes",
             processes,
@@ -469,7 +475,12 @@ def _scenario(
             "--output",
             str(output),
         ]
-    completed = run(command, cwd=ROOT, environment=child_environment, timeout=timeout)
+    completed = run(
+        installed_command(python, harness, command[0], command[1:]),
+        cwd=harness,
+        environment=child_environment,
+        timeout=timeout,
+    )
     result: dict[str, Any] = {}
     errors = []
     try:
@@ -503,7 +514,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Whole-process-group seconds per scenario",
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--python", type=Path, required=True, help="Installed interpreter"
+    )
+    parser.add_argument("--work-root", type=Path, required=True)
     args = parser.parse_args(argv)
+    from tools.qualify_cuda_wheels import validate_work_path
+
+    args.work_root = args.work_root.absolute()
+    if sys.platform == "win32":
+        args.work_root = validate_work_path(args.work_root, Path.home())
+    args.python = validate_work_path(args.python, args.work_root)
+    args.output = validate_work_path(args.output, args.work_root)
+    if not args.python.is_file():
+        parser.error("installed interpreter does not exist")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
     record: dict[str, Any] = {
@@ -528,18 +552,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     }
     try:
         validate_selection(args.required_gpus, args.devices, args.scenarios)
+        if sys.platform == "win32" and args.required_gpus != 1:
+            raise ValueError("Windows CUDA qualification admits only one physical GPU")
         if not math.isfinite(args.timeout) or args.timeout <= 0:
             raise ValueError("timeout must be finite and positive")
         errors = environment_errors(environment)
         if errors:
             raise ValueError("; ".join(errors))
-        from benchmarks._runtime import (
-            benchmark_driver_fingerprint,
-            source_build_fingerprint,
-        )
+        from benchmarks._runtime import benchmark_driver_fingerprint
 
         record["identity"] = {
-            "source_build_fingerprint": source_build_fingerprint(ROOT),
             "qualification_driver_fingerprint": benchmark_driver_fingerprint(
                 ROOT, Path(__file__)
             ),
@@ -550,12 +572,23 @@ def main(argv: Sequence[str] | None = None) -> None:
         environment.update(
             JAX_PLATFORMS="cuda",
             JAX_ENABLE_X64="true",
-            PYTHONPATH=str(ROOT),
+            PYTHONSAFEPATH="1",
             PYTHONNOUSERSITE="1",
-            XLA_PYTHON_CLIENT_PREALLOCATE="false",
             OMP_NUM_THREADS="1",
             OPENBLAS_NUM_THREADS="1",
         )
+        environment.pop("PYTHONPATH", None)
+        environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+        for key, child in (
+            ("TEMP", "tmp"),
+            ("TMP", "tmp"),
+            ("CUDA_CACHE_PATH", "cuda-cache"),
+            ("JAX_COMPILATION_CACHE_DIR", "jax-cache"),
+            ("QUDA_RESOURCE_PATH", "quda-cache"),
+        ):
+            path = validate_work_path(args.work_root / child, args.work_root)
+            path.mkdir(exist_ok=True)
+            environment[key] = str(path)
         record["effective_environment"] = {
             key: value
             for key, value in sorted(environment.items())
@@ -567,17 +600,61 @@ def main(argv: Sequence[str] | None = None) -> None:
         directory = Path(
             tempfile.mkdtemp(prefix=f"{args.output.stem}-", dir=args.output.parent)
         )
+        from tools.qualify_cuda_wheels import copy_harness, INSTALLED_BOOTSTRAP
+
+        harness = directory / "harness"
+        record["harness_sha256"] = copy_harness(harness)
+        record["installed_python"] = str(args.python)
+        environment["PHYDRAX_QUALIFICATION_HARNESS"] = str(harness)
+        identity_command = run(
+            [
+                str(args.python),
+                "-I",
+                "-c",
+                INSTALLED_BOOTSTRAP
+                + "\nfrom benchmarks._runtime import installed_build_fingerprint\n"
+                + 'print("INSTALLED_BUILD_FINGERPRINT " + installed_build_fingerprint(), flush=True)\n',
+                str(harness),
+            ],
+            cwd=harness,
+            environment=environment,
+            timeout=args.timeout,
+        )
+        record["installed_build_identity_command"] = identity_command
+        fingerprints = [
+            line.removeprefix("INSTALLED_BUILD_FINGERPRINT ")
+            for line in identity_command["stdout"].splitlines()
+            if line.startswith("INSTALLED_BUILD_FINGERPRINT ")
+        ]
+        if (
+            identity_command["returncode"] != 0
+            or identity_command["timed_out"]
+            or len(fingerprints) != 1
+            or len(fingerprints[0]) != 64
+            or any(character not in "0123456789abcdef" for character in fingerprints[0])
+        ):
+            raise ValueError("Missing or invalid installed build identity evidence")
+        record["identity"]["installed_build_fingerprint"] = fingerprints[0]
+        record["host"] = {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "logical_cpus": os.cpu_count(),
+        }
         record["host_commands"] = [
-            run(command, cwd=ROOT, environment=environment, timeout=args.timeout)
-            for command in (
+            run(command, cwd=harness, environment=environment, timeout=args.timeout)
+            for command in [
                 [
                     "nvidia-smi",
                     "--query-gpu=uuid,pci.bus_id,name,driver_version,memory.total,memory.used",
                     "--format=csv",
                 ],
-                ["nvidia-smi", "topo", "-m"],
-                ["lscpu", "--json"],
-            )
+                *(
+                    [["nvidia-smi", "topo", "-m"], ["lscpu", "--json"]]
+                    if sys.platform != "win32"
+                    else []
+                ),
+            ]
         ]
         if any(
             command["returncode"] or command["timed_out"]
@@ -586,7 +663,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             record["errors"].append("Required physical host inventory command failed")
         for scenario in required_scenarios(args.required_gpus):
             result = _scenario(
-                scenario, args.devices, directory, environment, args.timeout
+                scenario,
+                args.devices,
+                directory,
+                environment,
+                args.timeout,
+                python=args.python,
+                harness=harness,
             )
             record["scenarios"].append(result)
             record["errors"].extend(f"{scenario}: {error}" for error in result["errors"])

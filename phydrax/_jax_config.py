@@ -239,6 +239,8 @@ def default_device(device: jax.Device, /) -> Iterator[None]:
     A device is a runtime object, not host configuration, so execution owners
     use this scope directly rather than through a configuration record.
     """
+    if not isinstance(device, jax.Device):
+        raise TypeError("default_device requires a live JAX device.")
     with jax.default_device(device):
         yield
 

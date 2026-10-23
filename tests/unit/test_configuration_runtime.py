@@ -132,6 +132,61 @@ def test_cpu_device_count_applies_before_backend_initialization() -> None:
     """)
 
 
+def test_execution_device_scope_restores_placement_after_nested_failure() -> None:
+    _child("""
+        from phydrax import config, execution
+        import jax
+        import jax.numpy as jnp
+
+        config.configure(config.RuntimeConfig(platforms=("cpu",), cpu_device_count=2))
+        first, second = jax.devices("cpu")
+        before = config.snapshot()
+        assert jnp.ones(1).devices() == {first}
+        with execution.default_device(second):
+            assert jnp.ones(1).devices() == {second}
+            try:
+                with execution.default_device(first):
+                    assert jnp.ones(1).devices() == {first}
+                    raise RuntimeError("scope exit")
+            except RuntimeError as error:
+                assert str(error) == "scope exit"
+            assert jnp.ones(1).devices() == {second}
+            assert config.snapshot() == before
+        assert jnp.ones(1).devices() == {first}
+        assert config.snapshot() == before
+    """)
+
+
+def test_execution_device_scope_refuses_a_platform_selector() -> None:
+    _child("""
+        from phydrax import config, execution
+        import pytest
+
+        before = config.snapshot()
+        with pytest.raises(TypeError):
+            with execution.default_device("cpu"):
+                raise AssertionError("A platform string is not a live device.")
+        assert config.snapshot() == before
+        assert not config.snapshot().backends_initialized
+    """)
+
+
+def test_public_frontend_identity_is_device_inert_and_returns_detached_evidence() -> None:
+    _child("""
+        from phydrax import backends, config
+
+        before = config.snapshot()
+        assert not before.backends_initialized
+        identity = backends.frontend_index_patch_identity()
+        assert identity is not None
+        assert len(identity["patch_source_sha256"]) == 64
+        original = dict(identity)
+        identity["algorithm"] = "foreign"
+        assert backends.frontend_index_patch_identity() == original
+        assert config.snapshot() == before
+    """)
+
+
 def test_late_cpu_device_count_is_refused_without_partial_application() -> None:
     _child("""
         from phydrax import config
@@ -232,6 +287,7 @@ def test_provider_absent_none_and_text_inputs(value: str | None) -> None:
 def test_failed_bootstrap_commits_successful_runtime_prefix() -> None:
     _child(
         """
+        import sys
         from phydrax import config
         before = config.snapshot()
         assert before.enable_x64
@@ -244,20 +300,23 @@ def test_failed_bootstrap_commits_successful_runtime_prefix() -> None:
             ))
         except config.ConfigurationApplicationError as error:
             assert error.setting == "bootstrap"
-            assert error.applied == (
+            assert error.applied == (() if sys.platform == "win32" else (
                 "cpu_collectives_implementation", "platforms", "cpu_device_count", "enable_x64"
-            )
+            ))
         else:
             raise AssertionError("unsupported cluster detection unexpectedly succeeded")
         after = config.snapshot()
-        assert after.requested == config.RuntimeConfig(
-            cpu_collectives_implementation="mpi",
-            platforms=("cpu",), cpu_device_count=2, enable_x64=False,
-        )
-        assert after.cpu_collectives_implementation == "mpi"
-        assert after.platforms == ("cpu",)
-        assert after.cpu_device_count == 2
-        assert not after.enable_x64
+        if sys.platform == "win32":
+            assert after == before
+        else:
+            assert after.requested == config.RuntimeConfig(
+                cpu_collectives_implementation="mpi",
+                platforms=("cpu",), cpu_device_count=2, enable_x64=False,
+            )
+            assert after.cpu_collectives_implementation == "mpi"
+            assert after.platforms == ("cpu",)
+            assert after.cpu_device_count == 2
+            assert not after.enable_x64
         assert not after.distributed_initialized
         assert not after.backends_initialized
         """,
@@ -266,15 +325,23 @@ def test_failed_bootstrap_commits_successful_runtime_prefix() -> None:
 
 
 def test_identical_explicit_field_commits_without_claiming_an_effect() -> None:
-    # JAX already uses gloo, so the explicit request needs no upstream effect.
+    # Explicitly requesting the host's effective selector has no upstream effect.
     _child("""
+        import sys
         from phydrax import config
+        from phydrax import _jax_config
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("Identical selector caused an upstream effect")
+
+        _jax_config.set_cpu_collectives_implementation = forbidden
         before = config.snapshot()
-        assert before.cpu_collectives_implementation == "gloo"
+        selected = before.cpu_collectives_implementation
+        assert selected in ("gloo", "mpi")
         assert before.requested.cpu_collectives_implementation is None
         try:
             config.configure(config.RuntimeConfig(
-                cpu_collectives_implementation="gloo",
+                cpu_collectives_implementation=selected,
                 bootstrap=config.RuntimeBootstrap(cluster_detection_method="phydrax-unsupported-launcher"),
             ))
         except config.ConfigurationApplicationError as error:
@@ -283,9 +350,17 @@ def test_identical_explicit_field_commits_without_claiming_an_effect() -> None:
         else:
             raise AssertionError("unsupported cluster detection unexpectedly succeeded")
         after = config.snapshot()
-        assert after.requested.cpu_collectives_implementation == "gloo"
+        if sys.platform == "win32":
+            assert after == before
+            # Admission refused the whole request; now prove an admitted identical
+            # field records intent while preserving the effective selector.
+            config.configure(config.RuntimeConfig(cpu_collectives_implementation=selected))
+            after = config.snapshot()
+        assert after.requested.cpu_collectives_implementation == selected
         assert after.requested.bootstrap is None
-        assert after.cpu_collectives_implementation == "gloo"
+        assert after.cpu_collectives_implementation == selected
+        assert not after.backends_initialized
+        assert not after.distributed_initialized
     """)
 
 
@@ -358,7 +433,7 @@ def test_rocm_preflight_is_device_inert_and_precedes_all_effects(valid: bool) ->
             selected_major=10,
             bundle_manifest="/owned/phydrax_rocm_runtime/runtime.json",
             bundle_version="10.1.0",
-            bundle_architectures=("gfx942", "gfx950"),
+            bundle_architectures=rocm.ARCHITECTURES,
             versions=(
                 ("jax", "0.12.0"), ("jaxlib", "0.12.0"),
                 ("jax-rocm10-plugin", "0.12.0"),

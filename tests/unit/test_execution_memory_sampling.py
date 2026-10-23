@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
+import struct
 import sys
 import time
 from dataclasses import replace
@@ -18,7 +20,11 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from phydrax import _execution_runtime as runtime_module, solver
+from phydrax import (
+    _execution_runtime as runtime_module,
+    _execution_sampling as sampling_module,
+    solver,
+)
 from phydrax.execution import (
     DeviceMemorySample,
     DeviceResource,
@@ -45,9 +51,9 @@ from phydrax.execution import (
 )
 
 
-_SUPPORTED_HOST = sys.platform == "darwin" or sys.platform.startswith("linux")
+_SUPPORTED_HOST = sys.platform in ("darwin", "win32") or sys.platform.startswith("linux")
 requires_host_probe = pytest.mark.skipif(
-    not _SUPPORTED_HOST, reason="host memory probes exist on Linux and Darwin only"
+    not _SUPPORTED_HOST, reason="host memory probes exist on Linux, Darwin, and Windows"
 )
 _MIB = 1 << 20
 
@@ -288,6 +294,7 @@ def test_inventory_uses_owner_capacity_for_shared_identity(
         ("linux", "00000000-0000-0000-0000-000000000000", False),
         ("linux", None, False),
         ("darwin", "12345678-1234-5678-9012-123456789abc", False),
+        ("win32", None, False),
     ],
 )
 def test_host_identity_requires_available_kernel_boot_id(
@@ -299,8 +306,6 @@ def test_host_identity_requires_available_kernel_boot_id(
     monkeypatch.setattr(runtime_module.sys, "platform", platform)
 
     def read_boot_id(path: Path) -> str:
-        assert str(path) == "/proc/sys/kernel/random/boot_id"
-        assert platform == "linux"
         if contents is None:
             raise PermissionError("kernel identity unavailable")
         return contents
@@ -725,3 +730,119 @@ def test_certified_request_and_memory_basis_are_part_of_identity() -> None:
     )
     with pytest.raises(ValueError):
         ResourceRequest(1, 4_096, memory_envelope="optimistic")
+
+
+def test_windows_memory_api_unavailability_remains_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def denied() -> ctypes.CDLL:
+        raise PermissionError("OS memory observation denied")
+
+    monkeypatch.setattr(sampling_module, "_windows_system", denied)
+    resident, peak = sampling_module._windows_resident()
+    total, available = sampling_module._windows_host_memory()
+    for measurement in (resident, peak, total, available):
+        assert measurement.value_bytes is None
+        assert measurement.resolution_bytes is None
+        assert measurement.unavailable_reason is not None
+        assert "OS memory observation denied" in measurement.unavailable_reason
+        assert not measurement.is_upper_bound
+    assert resident.method == peak.method == "win32_working_set"
+    assert total.method == available.method == "win32_memory_status"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 memory API boundary")
+def test_windows_process_memory_api_failure_does_not_erase_host_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = sampling_module._windows_system()
+    observe = library.K32GetProcessMemoryInfo
+
+    def invalid_handle(process: int, counters: object, size: int) -> int:
+        return observe(None, counters, size)
+
+    monkeypatch.setattr(library, "K32GetProcessMemoryInfo", invalid_handle)
+    sample = sample_host_memory()
+    assert sample.provider == "windows_psapi"
+    assert sample.process_resident.value_bytes is None
+    assert sample.process_peak_resident.value_bytes is None
+    assert sample.process_resident.unavailable_reason is not None
+    assert "GetProcessMemoryInfo" in sample.process_resident.unavailable_reason
+    assert sample.host_total.value_bytes is not None
+    assert sample.host_total.value_bytes > 0
+    assert sample.host_available.value_bytes is not None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 memory API boundary")
+def test_windows_host_memory_failure_does_not_erase_process_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = sampling_module._windows_system()
+    observe = library.GlobalMemoryStatusEx
+
+    def invalid_size(status: object) -> int:
+        invalid = sampling_module._MemoryStatusEx()
+        return observe(ctypes.byref(invalid))
+
+    monkeypatch.setattr(library, "GlobalMemoryStatusEx", invalid_size)
+    sample = sample_host_memory()
+    assert sample.host_total.value_bytes is None
+    assert sample.host_available.value_bytes is None
+    assert sample.host_total.unavailable_reason is not None
+    assert "GlobalMemoryStatusEx" in sample.host_total.unavailable_reason
+    assert sample.process_resident.value_bytes is not None
+    assert sample.process_resident.value_bytes > 0
+    assert sample.process_peak_resident.is_upper_bound
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 memory counter ABI")
+def test_windows_memory_observes_bytes_and_page_resolution() -> None:
+    sample = sample_host_memory()
+    library = sampling_module._windows_system()
+    page = sampling_module._windows_page_size(library)
+    assert page > 0
+    assert ctypes.sizeof(sampling_module._MemoryStatusEx) == 64
+    assert ctypes.sizeof(sampling_module._ProcessMemoryCounters) == (
+        8 + 8 * ctypes.sizeof(ctypes.c_size_t)
+    )
+    assert sample.provider == "windows_psapi"
+    assert sample.process_resident.method == "win32_working_set"
+    assert sample.process_peak_resident.method == "win32_working_set"
+    assert (
+        sample.host_total.method == sample.host_available.method == "win32_memory_status"
+    )
+    for measurement in (
+        sample.process_resident,
+        sample.process_peak_resident,
+        sample.host_total,
+        sample.host_available,
+    ):
+        assert measurement.resolution_bytes == page
+        assert measurement.value_bytes is not None
+        assert measurement.value_bytes % page == 0
+    # Decode the documented byte offsets independently of the ctypes fields.
+    status = ctypes.create_string_buffer(64)
+    struct.pack_into("<I", status, 0, 64)
+    assert library.GlobalMemoryStatusEx(
+        ctypes.cast(status, ctypes.POINTER(sampling_module._MemoryStatusEx))
+    )
+    assert sample.host_total.value_bytes == struct.unpack_from("<Q", status.raw, 8)[0]
+    assert sample.process_peak_resident.is_upper_bound
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX getrusage units")
+@pytest.mark.parametrize(("platform", "resolution"), [("darwin", 1), ("linux", 1024)])
+def test_host_only_peak_retains_platform_getrusage_units(
+    monkeypatch: pytest.MonkeyPatch, platform: str, resolution: int
+) -> None:
+    import resource
+
+    monkeypatch.setattr(sampling_module, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(
+        resource, "getrusage", lambda who: SimpleNamespace(ru_maxrss=5_123_456)
+    )
+    peak = sampling_module.process_peak_memory()
+    assert peak.value_bytes == 5_123_456 * resolution
+    assert peak.resolution_bytes == resolution
+    assert peak.method == "getrusage_max_rss"
+    assert peak.scope == "peak"

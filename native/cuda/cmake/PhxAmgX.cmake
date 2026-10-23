@@ -1,6 +1,11 @@
 # Pinned upstream sources, compiled as an internal static PIC dependency only.
 include(FetchContent)
-find_program(PHX_PATCH_EXECUTABLE patch REQUIRED)
+if(NOT PHX_PATCH_EXECUTABLE)
+  if(CMAKE_HOST_WIN32)
+    message(FATAL_ERROR "PHX_PATCH_EXECUTABLE must name the explicit patch tool")
+  endif()
+  find_program(PHX_PATCH_EXECUTABLE patch REQUIRED)
+endif()
 set(PHX_AMGX_ARCHIVE_URL "https://codeload.github.com/NVIDIA/AMGX/tar.gz/91a8413")
 # A shared development download cache avoids storing the archive per build tree.
 if(EXISTS "${PHX_CUDA_DOWNLOAD_DIR}/amgx-91a8413.tar.gz")
@@ -18,6 +23,7 @@ FetchContent_Declare(phx_amgx_source
         COMMAND "${PHX_PATCH_EXECUTABLE}" --binary -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-dddi-v-cycle.patch"
         COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-device-library-handles.patch"
         COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-device-memory-manager.patch"
+        COMMAND "${PHX_PATCH_EXECUTABLE}" -p1 -i "${CMAKE_CURRENT_LIST_DIR}/../patches/amgx-windows-static-api.patch"
 )
 # Populate without upstream's shared library, examples, tests, MPI discovery,
 # install rules, or global compiler flags. These are all outside our C API build.
@@ -40,6 +46,14 @@ target_include_directories(phx_amgx_static PUBLIC "${phx_amgx_source_SOURCE_DIR}
 target_compile_definitions(phx_amgx_static PRIVATE
   PHX_AMGX_DDDI_ONLY RAPIDJSON_DEFINED THRUST_CUB_WRAPPED_NAMESPACE=amgx)
 target_compile_options(phx_amgx_static PRIVATE
-  $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda;-Wno-deprecated-gpu-targets;-Xcompiler=-Wno-terminate>
-)
-target_link_libraries(phx_amgx_static PUBLIC CUDA::cudart CUDA::cublas CUDA::cusparse CUDA::cusolver m pthread)
+  $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda;-Wno-deprecated-gpu-targets>)
+target_link_libraries(phx_amgx_static PUBLIC CUDA::cudart CUDA::cublas CUDA::cusparse CUDA::cusolver)
+if(WIN32)
+  target_compile_definitions(phx_amgx_static PUBLIC PHX_AMGX_STATIC WIN32 NOMINMAX)
+  target_compile_options(phx_amgx_static PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/EHsc,/bigobj,/utf-8,/Zc:preprocessor,/Zc:__cplusplus>)
+else()
+  target_compile_options(phx_amgx_static PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-terminate>)
+  target_link_libraries(phx_amgx_static PUBLIC m pthread)
+endif()

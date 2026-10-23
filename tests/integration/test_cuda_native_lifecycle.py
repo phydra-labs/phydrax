@@ -7,15 +7,22 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from textwrap import indent
+from typing import Any
 
 import pytest
 
 from phydrax._cuda_native import CudaNativeComponentName
 
 
+_REPORT_PREFIX = "NATIVE_LIFECYCLE "
+
 _SETUP = """
 import json
 from pathlib import Path
+import os, sys
+_hostile_handles = []
+if HOSTILE and sys.platform == "win32":
+    _hostile_handles.append(os.add_dll_directory(HOSTILE_LIBRARY_PATH))
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +31,7 @@ from phydrax import config
 try:
     component = load_cuda_component(COMPONENT)
 except CudaNativeUnavailableError as error:
-    print(json.dumps({"refused": error.issue.code, "paths": list(error.issue.paths), "message": str(error)}))
+    print(REPORT_PREFIX + json.dumps({"refused": error.issue.code, "paths": list(error.issue.paths), "message": str(error)}), flush=True)
     raise SystemExit(78 if HOSTILE else 77)
 """
 _PROBLEM = """
@@ -90,7 +97,11 @@ _AUDIT = """
 from phydrax._cuda_environment import cuda_environment
 from phydrax._cuda_environment import competing_cuda_libraries
 report = cuda_environment()
-assert report.facts.runtime_version[0] == component.major == 13
+assert report.facts.compiled_cuda_major == component.major == 13
+if sys.platform == "win32":
+    assert dict(report.facts.runtime_identity)["owner"] == "display-driver"
+else:
+    assert report.facts.runtime_version[0] == component.major
 assert component.preloaded, component
 wheel_paths = {path for path, major in report.facts.wheel_library_majors if major == component.major}
 assert all(path in wheel_paths for path in component.preloaded), component.preloaded
@@ -99,10 +110,23 @@ challenge = competing_cuda_libraries(HOSTILE_LIBRARY_PATH, report.facts.mapped_l
 assert challenge, "Hostile library path contains no alternate mapped CUDA SONAME"
 audit = {"preloaded": component.preloaded, "mapped": [(item.path, item.major) for item in report.facts.mapped_libraries], "hostile_candidates": challenge}
 """
-# A system CUDA toolkit directory whose sonames can shadow NVIDIA wheel libraries.
+# Qualification supplies a user-local hostile DLL directory on Windows.
 _HOSTILE_LIBRARY_PATH = os.environ.get(
-    "PHYDRAX_CUDA_HOSTILE_LIBRARY_PATH", "/usr/local/cuda/lib64"
+    "PHYDRAX_CUDA_HOSTILE_LIBRARY_PATH",
+    "" if sys.platform == "win32" else "/usr/local/cuda/lib64",
 )
+
+
+def _report(stdout: str) -> dict[str, Any]:
+    records = [
+        line.removeprefix(_REPORT_PREFIX)
+        for line in stdout.splitlines()
+        if line.startswith(_REPORT_PREFIX)
+    ]
+    assert len(records) == 1, stdout
+    record = json.loads(records[0])
+    assert isinstance(record, dict), record
+    return record
 
 
 def _run(
@@ -115,8 +139,14 @@ def _run(
     }
     environment.pop("LD_LIBRARY_PATH", None)
     if hostile:
-        environment["LD_LIBRARY_PATH"] = _HOSTILE_LIBRARY_PATH
+        if sys.platform == "win32":
+            environment["PATH"] = (
+                _HOSTILE_LIBRARY_PATH + os.pathsep + environment.get("PATH", "")
+            )
+        else:
+            environment["LD_LIBRARY_PATH"] = _HOSTILE_LIBRARY_PATH
     source = (
+        f"REPORT_PREFIX = {_REPORT_PREFIX!r}\n"
         f"COMPONENT = {component!r}\nHOSTILE = {hostile!r}\n"
         f"HOSTILE_LIBRARY_PATH = {_HOSTILE_LIBRARY_PATH!r}\n" + _SETUP
     )
@@ -148,11 +178,18 @@ def _run(
             + operations
         )
     operations += _AUDIT if hostile else "\naudit = {}\n"
-    operations += '\nprint(json.dumps({"devices": covered, **audit}), flush=True)\n'
+    operations += (
+        '\nprint(REPORT_PREFIX + json.dumps({"devices": covered, **audit}), flush=True)\n'
+    )
     source += "\nwith config.context(config.NumericsConfig(enable_x64=True)):\n"
     source += indent(operations, "    ")
     return subprocess.run(
-        [sys.executable, "-c", source],
+        [
+            sys.executable,
+            *(["-I"] if "PHYDRAX_CUDA_QUALIFICATION_GPUS" in environment else []),
+            "-c",
+            source,
+        ],
         cwd=(
             Path.cwd()
             if "PHYDRAX_CUDA_QUALIFICATION_GPUS" in environment
@@ -208,7 +245,7 @@ def test_exit_with_live_native_state_and_inflight_work(
         if result.returncode == 77:
             pytest.skip(result.stdout.strip())
         if result.returncode == 78:
-            refusal = json.loads(result.stdout.splitlines()[-1])
+            refusal = _report(result.stdout)
             if refusal["refused"] == "companion-missing":
                 pytest.skip(refusal["message"])
         assert result.returncode == 0, result.stdout + result.stderr
@@ -221,7 +258,7 @@ def test_exit_with_live_native_state_and_inflight_work(
             "invalid device context",
         ):
             assert error not in output, result.stdout + result.stderr
-        evidence = json.loads(result.stdout.splitlines()[-1])
+        evidence = _report(result.stdout)
         assert evidence["devices"] == [visible[index].id for index in indices]
         covered.extend(evidence["devices"])
         if hostile:

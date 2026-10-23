@@ -12,6 +12,7 @@ from jax import Array
 
 import phydrax as phx
 from phydrax import config
+from phydrax.execution import default_device
 from phydrax.tensor_network import (
     ContractionExecutionPolicy,
     ContractionStructure,
@@ -27,7 +28,7 @@ tn = phx.tensor_network
 def _cpu_execution() -> Iterator[None]:
     with (
         config.context(config.NumericsConfig(enable_x64=True)),
-        jax.default_device(jax.devices("cpu")[0]),
+        default_device(jax.devices("cpu")[0]),
     ):
         yield
 

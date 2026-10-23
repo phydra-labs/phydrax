@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from uuid import UUID
@@ -69,7 +72,145 @@ _SLICE_PROFILE = LibraryProfile(
     _TENSOR_PRECISIONS,
 )
 
-_BOOTSTRAP = """
+
+def unavailable_libraries(libraries: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        library
+        for library in libraries
+        if sys.platform == "win32" and library in ("cutensornet", "cuest")
+    )
+
+
+def hostile_environment(
+    environment: dict[str, str], library_path: str | None
+) -> dict[str, str]:
+    result = dict(environment)
+    result.pop("LD_LIBRARY_PATH", None)
+    result.pop("PHYDRAX_CUDA_PROFILE_HOSTILE_PATH", None)
+    if library_path:
+        result["PHYDRAX_CUDA_PROFILE_HOSTILE_PATH"] = library_path
+        if sys.platform == "win32":
+            result["PATH"] = library_path + os.pathsep + result.get("PATH", "")
+        else:
+            result["LD_LIBRARY_PATH"] = library_path
+    return result
+
+
+HOSTILE_BOOTSTRAP = """
+import os, sys
+_hostile_handles = []
+if sys.platform == "win32":
+    for directory in os.environ.get("PHYDRAX_CUDA_PROFILE_HOSTILE_PATH", "").split(os.pathsep):
+        if directory:
+            _hostile_handles.append(os.add_dll_directory(directory))
+"""
+
+
+WINDOWS_LOADER_PROVENANCE = """
+def windows_loader_provenance():
+    import hashlib, importlib.metadata, json, re
+    from pathlib import Path
+    distribution = importlib.metadata.distribution("phydrax-cuda13")
+    manifests = [
+        Path(distribution.locate_file(member)).resolve()
+        for member in distribution.files or ()
+        if Path(str(member)).name == "phx_cuda_build.json"
+    ]
+    if len(manifests) != 1:
+        raise RuntimeError("Expected one owned CUDA companion build manifest")
+    path = manifests[0]
+    payload = path.read_bytes()
+    manifest = json.loads(payload)
+    linkage = {"kind": "driver-hybrid", "target_dll": "nvcudart_hybrid64.dll", "owner": "display-driver"}
+    if manifest.get("runtime_linkage") != linkage:
+        raise RuntimeError("Windows CUDA requires canonical driver-hybrid runtime linkage")
+    toolchain = manifest.get("toolchain", {})
+    libraries = {}
+    required = {
+        "cuda_link_library": ("driver-loader", "nvcuda.dll", {"cudaDriverLoader_initializeLoader", "cuGetProcAddress_v2"}),
+        "cudart_link_library": ("driver-hybrid", "nvcudart_hybrid64.dll", {"initializeHybridRuntimeLoaderOnce", "cuGetProcAddress_v2", "cuGetExportTable"}),
+    }
+    for name, (kind, target, symbols) in required.items():
+        record = toolchain.get(name, {})
+        members = record.get("archive_members")
+        dispatch = record.get("dispatch_symbols")
+        if (
+            record.get("kind") != kind or record.get("target_dll") != target
+            or not isinstance(record.get("path"), str) or not record["path"]
+            or re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256"))) is None
+            or not isinstance(members, list) or not members
+            or not all(isinstance(member, str) and member for member in members)
+            or not isinstance(dispatch, list) or not all(isinstance(symbol, str) for symbol in dispatch)
+            or not symbols.issubset(dispatch)
+        ):
+            raise RuntimeError(f"Missing canonical vendor loader archive provenance: {name}")
+        libraries[name] = record
+    if not manifest.get("toolkit_wheels"):
+        raise RuntimeError("Missing CUDA toolkit wheel provenance")
+    link_maps = manifest.get("link_maps")
+    if not isinstance(link_maps, dict) or not link_maps or not all(
+        isinstance(name, str) and isinstance(relative, str) and relative
+        for name, relative in link_maps.items()
+    ):
+        raise RuntimeError("Missing installed per-component linker maps")
+    return {
+        "manifest_path": str(path), "manifest_sha256": hashlib.sha256(payload).hexdigest(),
+        "runtime_linkage": linkage, "loader_archives": libraries,
+        "toolkit_wheels": manifest["toolkit_wheels"],
+        "link_maps": link_maps,
+    }
+
+def windows_component_dispatch(loader_provenance, components=None):
+    import base64, importlib.metadata, os
+    from pathlib import Path
+    from phydrax._pe_dependencies import inspect_cuda_runtime_linkage
+    if components is None:
+        from phydrax._cuda_native import cuda_native_resources
+        components = cuda_native_resources().components
+    if not components:
+        raise RuntimeError("No loaded native components for binary dispatch inspection")
+    distribution = importlib.metadata.distribution("phydrax-cuda13")
+    root = Path(distribution.locate_file("")).resolve()
+    records = {}
+    for member in distribution.files or ():
+        path = Path(distribution.locate_file(member)).resolve()
+        key = os.path.normcase(str(path))
+        if key in records:
+            raise RuntimeError(f"Duplicate companion RECORD path: {path}")
+        records[key] = member
+    def require_record(path, digest):
+        member = records.get(os.path.normcase(str(path)))
+        if (
+            not path.is_relative_to(root) or member is None or member.hash is None
+            or member.hash.mode != "sha256" or member.size != path.stat().st_size
+            or member.hash.value != base64.urlsafe_b64encode(bytes.fromhex(digest)).rstrip(b"=").decode("ascii")
+        ):
+            raise RuntimeError(f"Binary dispatch evidence lacks installed RECORD ownership: {path}")
+    manifest_path = Path(loader_provenance["manifest_path"]).resolve()
+    require_record(manifest_path, loader_provenance["manifest_sha256"])
+    result = {}
+    for component in components:
+        if component.name in result:
+            raise RuntimeError(f"Duplicate loaded component identity: {component.name}")
+        relative = loader_provenance["link_maps"].get(component.name)
+        if not isinstance(relative, str):
+            raise RuntimeError(f"Missing installed linker map for {component.name}")
+        map_path = (manifest_path.parent / relative).resolve()
+        if not map_path.is_relative_to(manifest_path.parent):
+            raise RuntimeError(f"Linker map escapes companion package: {relative}")
+        path = Path(component.path).resolve()
+        if map_path != path.with_suffix(".map"):
+            raise RuntimeError(f"Linker map does not belong to loaded component: {component.name}")
+        proof = inspect_cuda_runtime_linkage(path, map_path, loader_provenance["runtime_linkage"])
+        require_record(path, proof["sha256"])
+        require_record(map_path, proof["link_map_sha256"])
+        result[component.name] = proof | {"build_hash": component.build_hash}
+    return result
+"""
+
+_BOOTSTRAP = (
+    HOSTILE_BOOTSTRAP
+    + """
 import json, sys
 from pathlib import Path
 import phydrax
@@ -80,8 +221,10 @@ from tests._support.cuda_execution_worker import cuda_runtime, ownership
 observed = ownership(cuda_runtime())
 print('CUDA_PROFILE_DEVICES ' + json.dumps(observed, sort_keys=True), flush=True)
 """
+)
 _PROFILE_RUN = (
     _BOOTSTRAP
+    + WINDOWS_LOADER_PROVENANCE
     + """
 expected = json.loads(sys.argv[3])
 if [row['gpu_uuid'] for row in observed] != expected:
@@ -91,14 +234,22 @@ status = pytest.main(sys.argv[4:])
 from phydrax._cuda_environment import competing_cuda_libraries
 from phydrax.backends import cuda_environment
 report = cuda_environment()
-owned = {path for path, major in report.facts.wheel_library_majors if major == 13}
-foreign = [item.path for item in report.facts.mapped_libraries if item.major != 13 or item.path not in owned]
+owned = {os.path.normcase(str(Path(path).resolve())) for path, major in report.facts.wheel_library_majors if major == 13}
+foreign = [item.path for item in report.facts.mapped_libraries if item.major != 13 or os.path.normcase(str(Path(item.path).resolve())) not in owned]
+runtime_identity = dict(report.facts.runtime_identity) if sys.platform == "win32" else None
+loader_provenance = windows_loader_provenance() if sys.platform == "win32" else None
+component_dispatch = windows_component_dispatch(loader_provenance) if sys.platform == "win32" else None
+runtime_observed = sys.platform != "win32" or bool(runtime_identity and component_dispatch)
 hostile = os.environ.get('PHYDRAX_CUDA_PROFILE_HOSTILE_PATH')
 challenge = competing_cuda_libraries(hostile or '', report.facts.mapped_libraries)
-passed = status == 0 and report.successful and not foreign and (hostile is None or bool(challenge))
+passed = status == 0 and report.successful and not foreign and runtime_observed and (hostile is None or bool(challenge))
 print('CUDA_PROFILE_LIBRARIES ' + json.dumps({
     'passed': passed, 'foreign': foreign, 'hostile_candidates': challenge,
     'mapped': [(item.path, item.major) for item in report.facts.mapped_libraries],
+    'runtime_identity': runtime_identity, 'loader_provenance': loader_provenance,
+    'component_dispatch': component_dispatch,
+    'compiled_cuda_major': report.facts.compiled_cuda_major,
+    'driver_compatibility_version': report.facts.driver_compatibility_version,
 }, sort_keys=True), flush=True)
 raise SystemExit(0 if passed else 1)
 """
@@ -199,6 +350,80 @@ def _observed_uuids(command: CommandEvidence) -> tuple[str, ...]:
     return tuple(uuids)
 
 
+def validate_windows_runtime_evidence(report: dict[str, object]) -> None:
+    """Require observed driver identity, not metadata-only or static-runtime claims."""
+    identity = report.get("runtime_identity")
+    if not isinstance(identity, dict) or (
+        identity.get("linkage") != "driver-hybrid"
+        or identity.get("owner") != "display-driver"
+    ):
+        raise ValueError("Missing canonical Windows driver-hybrid runtime identity")
+    for name in ("runtime", "driver", "driver_dispatch"):
+        if (
+            not isinstance(identity.get(f"{name}_path"), str)
+            or not identity[f"{name}_path"]
+            or re.fullmatch(r"[0-9a-f]{64}", str(identity.get(f"{name}_sha256"))) is None
+        ):
+            raise ValueError(f"Incomplete Windows {name} identity")
+    compatibility = report.get("driver_compatibility_version")
+    if (
+        report.get("compiled_cuda_major") != 13
+        or not isinstance(compatibility, (tuple, list))
+        or len(compatibility) != 2
+        or any(type(part) is not int for part in compatibility)
+        or tuple(compatibility) < (13, 0)
+    ):
+        raise ValueError("Missing compiled CUDA 13 / compatible driver evidence")
+    provenance = report.get("loader_provenance")
+    if not isinstance(provenance, dict) or (
+        provenance.get("runtime_linkage")
+        != {
+            "kind": "driver-hybrid",
+            "target_dll": "nvcudart_hybrid64.dll",
+            "owner": "display-driver",
+        }
+        or not provenance.get("loader_archives")
+        or not provenance.get("toolkit_wheels")
+        or re.fullmatch(r"[0-9a-f]{64}", str(provenance.get("manifest_sha256"))) is None
+    ):
+        raise ValueError("Missing canonical Windows loader archive provenance")
+    dispatch = report.get("component_dispatch")
+    if not isinstance(dispatch, dict) or not dispatch:
+        raise ValueError("Missing loaded-component binary dispatch evidence")
+    for component, proof in dispatch.items():
+        if not isinstance(component, str) or not isinstance(proof, dict):
+            raise ValueError("Malformed loaded-component binary dispatch evidence")
+        if (
+            proof.get("machine") != 0x8664
+            or proof.get("runtime_linkage") != provenance["runtime_linkage"]
+            or proof.get("static_runtime_excluded") is not True
+            or proof.get("dispatch_markers")
+            != ["nvcudart_hybrid64.dll", "cuGetProcAddress_v2", "cuGetExportTable"]
+        ):
+            raise ValueError(f"Unproven canonical hybrid dispatch for {component}")
+        for field in ("path", "link_map_path", "build_hash"):
+            if not isinstance(proof.get(field), str) or not proof[field]:
+                raise ValueError(f"Missing {component} binary dispatch {field}")
+        for field in ("sha256", "link_map_sha256"):
+            if re.fullmatch(r"[0-9a-f]{64}", str(proof.get(field))) is None:
+                raise ValueError(f"Missing {component} binary dispatch {field}")
+        for field in ("imports", "delay_imports", "closure_imports"):
+            names = proof.get(field)
+            if not isinstance(names, list) or any(
+                not isinstance(name, str) or name.casefold().startswith("cudart")
+                for name in names
+            ):
+                raise ValueError(f"Invalid {component} binary dispatch imports")
+    builds = report.get("build_hashes")
+    if isinstance(builds, dict) and any(
+        name not in dispatch or dispatch[name].get("build_hash") != build
+        for name, build in builds.items()
+    ):
+        raise ValueError(
+            "Mandatory loaded components lack matching binary dispatch evidence"
+        )
+
+
 def _run_profile(
     python: Path,
     root: Path,
@@ -228,6 +453,7 @@ def _run_profile(
     command = run(
         [
             str(python),
+            "-I",
             "-c",
             _PROFILE_RUN,
             str(root),
@@ -257,6 +483,23 @@ def _run_profile(
     else:
         if observed != devices:
             errors.append("Optional provider physical device selection changed")
+    libraries: dict[str, object] | None = None
+    if sys.platform == "win32":
+        try:
+            lines = [
+                line.removeprefix("CUDA_PROFILE_LIBRARIES ")
+                for line in command["stdout"].splitlines()
+                if line.startswith("CUDA_PROFILE_LIBRARIES ")
+            ]
+            parsed = json.loads(lines[0]) if len(lines) == 1 else None
+            if not isinstance(parsed, dict) or parsed.get("passed") is not True:
+                raise ValueError("Missing successful Windows mapped-library evidence")
+            validate_windows_runtime_evidence(parsed)
+            if library not in parsed["component_dispatch"]:
+                raise ValueError(f"Missing executed {library} binary dispatch evidence")
+            libraries = parsed
+        except ValueError as error:
+            errors.append(str(error))
     evidence: dict[str, object] = {
         "devices": list(devices),
         "command": command,
@@ -265,6 +508,8 @@ def _run_profile(
         "errors": errors,
         "passed": not errors,
     }
+    if sys.platform == "win32":
+        evidence["libraries"] = libraries
     # XML proves assertions, but not the process's subsequent clean exit.
     report.with_suffix(".json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n"
@@ -282,8 +527,20 @@ def qualify_libraries(
     hostile_library_path: str,
 ) -> tuple[dict[str, object], list[str]]:
     """Run every selected local profile on every actual GPU, then host slicing."""
+    if required_gpus < 1:
+        raise ValueError("Hardware qualification requires a positive GPU count")
+    unavailable = unavailable_libraries(libraries)
+    if unavailable:
+        return {
+            "passed": False,
+            "hardware_qualified": False,
+            "refused": list(unavailable),
+        }, [
+            f"{library} has no supported Windows vendor artifacts; request refused, not numerical qualification"
+            for library in unavailable
+        ]
     discovery = run(
-        [str(python), "-c", _BOOTSTRAP, str(root), str(python.parent.parent)],
+        [str(python), "-I", "-c", _BOOTSTRAP, str(root), str(python.parent.parent)],
         cwd=root,
         environment=environment,
         timeout=timeout,
@@ -333,11 +590,7 @@ def qualify_libraries(
                 hostile, hostile_errors = _run_profile(
                     python,
                     root,
-                    environment
-                    | {
-                        "LD_LIBRARY_PATH": hostile_library_path,
-                        "PHYDRAX_CUDA_PROFILE_HOSTILE_PATH": hostile_library_path,
-                    },
+                    hostile_environment(environment, hostile_library_path),
                     timeout,
                     library,
                     hostile_profile,
@@ -347,6 +600,25 @@ def qualify_libraries(
                     + ("" if library == "cuest" else " and float64"),
                 )
                 hostile_results.append(hostile)
+                if sys.platform == "win32" and not hostile_errors:
+                    clean_libraries = result.get("libraries")
+                    hostile_libraries = hostile.get("libraries")
+                    if (
+                        not isinstance(clean_libraries, dict)
+                        or not isinstance(hostile_libraries, dict)
+                        or any(
+                            clean_libraries.get(key) != hostile_libraries.get(key)
+                            for key in (
+                                "runtime_identity",
+                                "loader_provenance",
+                                "component_dispatch",
+                            )
+                        )
+                    ):
+                        hostile_errors.append(
+                            "Windows hostile audit changed driver cohort, loader provenance or component dispatch"
+                        )
+                        hostile["passed"] = False
                 provider_errors.extend(
                     f"{library}/{device}/hostile: {message}" for message in hostile_errors
                 )

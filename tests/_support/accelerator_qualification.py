@@ -17,6 +17,7 @@ from packaging.utils import canonicalize_name
 
 from tools.check_accelerator_extras import Accelerator
 
+
 if TYPE_CHECKING:
     import jax
 
@@ -92,7 +93,8 @@ def accelerator_device() -> jax.Device:
 def runtime_evidence(*arrays: object) -> dict[str, object]:
     import jax
 
-    from phydrax._jax_indexing_frontend import frontend_index_patch_identity
+    from phydrax import config
+    from phydrax.backends import frontend_index_patch_identity
 
     device = accelerator_device()
     if not arrays:
@@ -103,6 +105,7 @@ def runtime_evidence(*arrays: object) -> dict[str, object]:
                 f"Scientific result is not placed exclusively on {device}: {array}"
             )
         array.block_until_ready()
+    settings = config.snapshot()
     return {
         "selected": selected_accelerator().value,
         "rocm_major": selected_accelerator().rocm_major,
@@ -118,8 +121,8 @@ def runtime_evidence(*arrays: object) -> dict[str, object]:
         "local_device_count": jax.local_device_count(
             selected_accelerator().runtime_platform
         ),
-        "x64_enabled": bool(jax.config.x64_enabled),
-        "matmul_precision": str(jax.config.jax_default_matmul_precision),
+        "x64_enabled": settings.enable_x64,
+        "matmul_precision": str(settings.matmul_precision),
         "frontend_index_patch": frontend_index_patch_identity(),
     }
 
@@ -174,7 +177,7 @@ def installed_provenance(
 ) -> dict[str, object]:
     """Bind actual installed bytes, including upstream RECORDs, to this fresh venv."""
     import phydrax
-    from phydrax._jax_indexing_frontend import frontend_index_patch_identity
+    from phydrax.backends import frontend_index_patch_identity
 
     selected = selected_accelerator()
     package = Path(phydrax.__file__).resolve()

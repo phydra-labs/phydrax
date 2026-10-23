@@ -8,35 +8,24 @@ from __future__ import annotations
 
 import os
 import struct
+import sys
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, final, Literal, TypeAlias
+from typing import BinaryIO, final
 
 import equinox as eqx
 
+from ._native_dependencies import (
+    _strings,
+    _text,
+    DependencyClosure,
+    NativeMachine,
+    ResolvedDependency,
+    UnresolvedDependency,
+)
 from ._strict import StrictModule
 from .typing import parse
-
-
-ElfMachine: TypeAlias = Literal["x86_64", "aarch64"]
-
-
-def _text(value: str, name: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or "\0" in value:
-        raise ValueError(f"{name} must be nonempty and contain no NUL.")
-    return value
-
-
-def _strings(values: tuple[str, ...], name: str, *, empty: bool = False) -> None:
-    if not isinstance(values, tuple):
-        raise TypeError(f"{name} must be a tuple.")
-    for value in values:
-        if empty and value == "":
-            continue
-        _text(value, name)
 
 
 @final
@@ -44,7 +33,7 @@ class ElfDynamic(StrictModule):
     """Unexpanded ELF dynamic metadata; RUNPATH suppresses RPATH."""
 
     path: str = eqx.field(static=True)
-    machine: ElfMachine = eqx.field(static=True)
+    machine: NativeMachine = eqx.field(static=True)
     soname: str | None = eqx.field(static=True)
     needed: tuple[str, ...] = eqx.field(static=True)
     rpath: tuple[str, ...] = eqx.field(static=True)
@@ -54,14 +43,14 @@ class ElfDynamic(StrictModule):
         self,
         *,
         path: str,
-        machine: ElfMachine,
+        machine: NativeMachine,
         soname: str | None,
         needed: tuple[str, ...],
         rpath: tuple[str, ...],
         runpath: tuple[str, ...],
     ) -> None:
         path = _text(path, "path")
-        machine = parse(machine, ElfMachine, "machine")
+        machine = parse(machine, NativeMachine, "machine")
         if soname is not None:
             _text(soname, "soname")
         _strings(needed, "needed")
@@ -77,84 +66,6 @@ class ElfDynamic(StrictModule):
         self.runpath = runpath
 
 
-@final
-class ResolvedDependency(StrictModule):
-    """First loader request satisfied by a file or a preloaded soname."""
-
-    soname: str = eqx.field(static=True)
-    path: str = eqx.field(static=True)
-    requested_by: str = eqx.field(static=True)
-    preloaded: bool = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        soname: str,
-        path: str,
-        requested_by: str,
-        preloaded: bool,
-    ) -> None:
-        soname = _text(soname, "soname")
-        path = _text(path, "path")
-        requested_by = _text(requested_by, "requested_by")
-        if not isinstance(preloaded, bool):
-            raise TypeError("preloaded must be a bool.")
-        self.soname = soname
-        self.path = path
-        self.requested_by = requested_by
-        self.preloaded = preloaded
-
-
-@final
-class UnresolvedDependency(StrictModule):
-    """A missing dependency and its first requesting object."""
-
-    soname: str = eqx.field(static=True)
-    requested_by: str = eqx.field(static=True)
-    reason: str = eqx.field(static=True)
-
-    def __init__(self, *, soname: str, requested_by: str, reason: str) -> None:
-        soname = _text(soname, "soname")
-        requested_by = _text(requested_by, "requested_by")
-        reason = _text(reason, "reason")
-        self.soname = soname
-        self.requested_by = requested_by
-        self.reason = reason
-
-
-@final
-class DependencyClosure(StrictModule):
-    """Fresh-process closure, with dependencies before their dependents."""
-
-    root: str = eqx.field(static=True)
-    machine: ElfMachine = eqx.field(static=True)
-    resolved: tuple[ResolvedDependency, ...] = eqx.field(static=True)
-    unresolved: tuple[UnresolvedDependency, ...] = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        root: str,
-        machine: ElfMachine,
-        resolved: tuple[ResolvedDependency, ...],
-        unresolved: tuple[UnresolvedDependency, ...],
-    ) -> None:
-        root = _text(root, "root")
-        machine = parse(machine, ElfMachine, "machine")
-        if not isinstance(resolved, tuple) or any(
-            not isinstance(item, ResolvedDependency) for item in resolved
-        ):
-            raise TypeError("resolved must be a tuple of ResolvedDependency.")
-        if not isinstance(unresolved, tuple) or any(
-            not isinstance(item, UnresolvedDependency) for item in unresolved
-        ):
-            raise TypeError("unresolved must be a tuple of UnresolvedDependency.")
-        self.root = root
-        self.machine = machine
-        self.resolved = resolved
-        self.unresolved = unresolved
-
-
 def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:
     stream.seek(offset)
     data = stream.read(size)
@@ -163,7 +74,7 @@ def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:
     return data
 
 
-def _elf_headers(stream: BinaryIO) -> tuple[ElfMachine, list[tuple[int, ...]]]:
+def _elf_headers(stream: BinaryIO) -> tuple[NativeMachine, list[tuple[int, ...]]]:
     header = _read_at(stream, 0, 64)
     if header[:4] != b"\x7fELF":
         raise ValueError("not an ELF file")
@@ -174,7 +85,7 @@ def _elf_headers(stream: BinaryIO) -> tuple[ElfMachine, list[tuple[int, ...]]]:
     machine_number = struct.unpack_from("<H", header, 18)[0]
     match machine_number:
         case 62:
-            machine: ElfMachine = "x86_64"
+            machine: NativeMachine = "x86_64"
         case 183:
             machine = "aarch64"
         case _:
@@ -249,7 +160,7 @@ def _read_elf(path: str) -> tuple[ElfDynamic, bool]:
         )
         runpath = tuple(_cstring(strings, tags[29][0]).split(":")) if 29 in tags else ()
         return ElfDynamic(
-            path=path,
+            path=path.replace("/", os.sep),
             machine=machine,
             soname=soname,
             needed=needed,
@@ -265,7 +176,7 @@ def read_dynamic_section(path: str | os.PathLike[str], /) -> ElfDynamic:
     return _read_elf(os.fspath(path))[0]
 
 
-def _cache_entries(path: str, machine: ElfMachine) -> dict[str, list[str]]:
+def _cache_entries(path: str, machine: NativeMachine) -> dict[str, list[str]]:
     try:
         data = Path(path).read_bytes()
     except OSError:
@@ -299,7 +210,7 @@ def _cache_entries(path: str, machine: ElfMachine) -> dict[str, list[str]]:
     return result
 
 
-def _candidate(path: str, machine: ElfMachine) -> tuple[ElfDynamic, bool] | None:
+def _candidate(path: str, machine: NativeMachine) -> tuple[ElfDynamic, bool] | None:
     try:
         dynamic, has_runpath = _read_elf(path)
     except (OSError, ValueError):
@@ -368,6 +279,8 @@ def _find_dependency(
         found = _candidate(path, requester.machine)
         if found is not None:
             return found, ""
+    if sys.platform != "linux":
+        return None, "requires $LIB/$PLATFORM expansion" if unsupported else "not found"
     triplet = "x86_64-linux-gnu" if requester.machine == "x86_64" else "aarch64-linux-gnu"
     for directory in (
         f"/lib/{triplet}",
@@ -404,12 +317,13 @@ def _validate_resolution_inputs(
     library_path: tuple[str, ...],
     executable: str | None,
     preloaded: tuple[tuple[str, str], ...],
-    ld_so_cache: str,
+    ld_so_cache: str | None,
 ) -> None:
     _strings(library_path, "library_path", empty=True)
     if executable is not None:
         _text(executable, "executable")
-    _text(ld_so_cache, "ld_so_cache")
+    if ld_so_cache is not None:
+        _text(ld_so_cache, "ld_so_cache")
     if not isinstance(preloaded, tuple):
         raise TypeError("preloaded must be a tuple of (soname, path) tuples.")
     for pair in preloaded:
@@ -489,10 +403,13 @@ def resolve_dependency_closure(
     library_path: tuple[str, ...],
     executable: str | None,
     preloaded: tuple[tuple[str, str], ...] = (),
-    ld_so_cache: str = "/etc/ld.so.cache",
+    ld_so_cache: str | None = None,
 ) -> DependencyClosure:
     """Model glibc's fresh-process breadth-first loads, never the live process."""
     _validate_resolution_inputs(library_path, executable, preloaded, ld_so_cache)
+    cache_path = ld_so_cache
+    if cache_path is None and sys.platform == "linux":
+        cache_path = "/etc/ld.so.cache"
     root, has_runpath = _read_elf(os.fspath(path))
     main = _candidate(executable, root.machine) if executable is not None else None
     main_dynamic = main[0] if main is not None and not main[1] else None
@@ -502,11 +419,12 @@ def resolve_dependency_closure(
         library_path,
         main_dynamic,
         preloaded,
-        _cache_entries(ld_so_cache, root.machine),
+        {} if cache_path is None else _cache_entries(cache_path, root.machine),
     )
     return DependencyClosure(
         root=root.path,
         machine=root.machine,
+        object_format="elf",
         resolved=_dependency_order(nodes),
         unresolved=unresolved,
     )

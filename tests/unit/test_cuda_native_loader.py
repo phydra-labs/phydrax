@@ -1,5 +1,6 @@
 """Real C ABI fixtures exercise companion refusals before FFI registration."""
 
+import ctypes
 import importlib.metadata
 import json
 import os
@@ -9,21 +10,28 @@ import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from types import ModuleType, SimpleNamespace
+from typing import Any, NoReturn
 
 import jax
 import numpy as np
 import pytest
 
 from phydrax import _cuda_native as native
-from phydrax._cuda_environment import CudaEnvironmentFacts
+from phydrax._cuda_environment import CudaEnvironmentFacts, CudaPluginInstallation
 
 
 @pytest.fixture
 def isolated_loader(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     registrations: list[str] = []
     facts = CudaEnvironmentFacts(
-        host_platform="linux", host_machine="x86_64", plugin_majors=(13,)
+        host_platform="linux",
+        host_machine="x86_64",
+        plugins=(
+            CudaPluginInstallation(
+                distribution="jax-cuda13-plugin", version="0.12.0", cuda_major=13
+            ),
+        ),
     )
     monkeypatch.setattr(native, "_cuda_facts", lambda: facts)
     monkeypatch.setattr(native, "_LOADED", {})
@@ -138,7 +146,11 @@ def test_unsupported_plugin_refuses_before_backend_initialization(
     facts = CudaEnvironmentFacts(
         host_platform="linux",
         host_machine="x86_64",
-        plugin_majors=(major,),
+        plugins=(
+            CudaPluginInstallation(
+                distribution=f"jax-cuda{major}-plugin", version="0.12.0", cuda_major=major
+            ),
+        ),
         selected_platforms=platforms,
     )
     monkeypatch.setattr(native, "_LOADED", {})
@@ -186,14 +198,14 @@ def test_provider_config_missing_override_names_setting(tmp_path: Path) -> None:
     source = f"""
 from phydrax import config
 from phydrax import _cuda_native as native
-from phydrax._cuda_environment import CudaEnvironmentFacts
-native._cuda_facts = lambda: CudaEnvironmentFacts(host_platform="linux", host_machine="x86_64", plugin_majors=(13,))
+from phydrax._cuda_environment import CudaEnvironmentFacts, CudaPluginInstallation
+native._cuda_facts = lambda: CudaEnvironmentFacts(host_platform="linux", host_machine="x86_64", plugins=(CudaPluginInstallation(distribution="jax-cuda13-plugin", version="0.12.0", cuda_major=13),))
 config.configure(config.ProviderConfig(library_paths={{"cuda_cudss": {missing!r}}}))
 available, reason, issues, versions = native.cuda_component_status("cudss")
 assert not available, reason
 assert issues[0].code == "companion-missing", issues
 assert "PHYDRAX_CUDA_CUDSS_LIBRARY" in reason, reason
-assert {missing!r} in reason, reason
+assert issues[0].paths == ({missing!r},), issues[0].paths
 """
     result = subprocess.run(
         [sys.executable, "-c", source],
@@ -408,6 +420,7 @@ assert not any("libfixture" in path for path in calls), calls
 @pytest.mark.parametrize("component", ["cudss", "amgx", "quda"])
 def test_real_component_registration_in_subprocess(component: str) -> None:
     source = f"""
+from pathlib import Path
 from phydrax._cuda_native import load_cuda_component, CudaNativeUnavailableError
 try:
     component = load_cuda_component({component!r})
@@ -415,7 +428,7 @@ except CudaNativeUnavailableError as error:
     print(str(error))
     raise SystemExit(77)
 assert component.major == 13
-assert component.path.startswith("/")
+assert Path(component.path).is_absolute()
 assert load_cuda_component({component!r}) is component
 print(component)
 """
@@ -434,3 +447,258 @@ print(component)
     if result.returncode == 77:
         pytest.skip(result.stdout.strip())
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _windows_sync_state(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    synchronize_status: int = 0,
+    restore_status: int = 0,
+    get_status: int = 0,
+    set_status: int = 0,
+    raise_synchronize: bool = False,
+) -> list[tuple[str, int]]:
+    events: list[tuple[str, int]] = []
+
+    def get_device(output: Any) -> int:
+        events.append(("get", 7))
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_int32))[0] = 7
+        return get_status
+
+    def set_device(device: int) -> int:
+        events.append(("set", device))
+        return restore_status if device == 7 else set_status
+
+    def synchronize() -> int:
+        events.append(("synchronize", 0))
+        if raise_synchronize:
+            raise RuntimeError("synchronization invocation failed")
+        return synchronize_status
+
+    api = SimpleNamespace(
+        cudaGetDevice=get_device,
+        cudaSetDevice=set_device,
+        cudaDeviceSynchronize=synchronize,
+    )
+    identity = native.CudaNativeComponent(
+        name="cudss",
+        path="admitted.dll",
+        version="0.2.2",
+        build_hash="a" * 64,
+        major=13,
+        preloaded=("admitted.dll",),
+    )
+    monkeypatch.setattr(
+        native,
+        "_LOADED",
+        {"cudss": native._Loaded(identity, ctypes.CDLL(None, handle=0), {}, (), api)},
+    )
+    monkeypatch.setattr(native, "sys", SimpleNamespace(platform="win32"))
+    module = ModuleType("phydrax_cuda13_pjrt.runtime")
+    monkeypatch.setattr(module, "runtime_identity", lambda: None, raising=False)
+    monkeypatch.setattr(
+        module,
+        "cuda_runtime_api",
+        lambda *_: pytest.fail("Shutdown must use its retained ABI"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "load_libraries",
+        lambda *_: pytest.fail("Shutdown must not load a DLL"),
+        raising=False,
+    )
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setitem(
+        sys.modules, "phydrax_cuda13_pjrt", ModuleType("phydrax_cuda13_pjrt")
+    )
+    monkeypatch.setattr(
+        jax, "local_devices", lambda: [SimpleNamespace(local_hardware_id=0)]
+    )
+    monkeypatch.setattr(native, "device_platform", lambda _: "cuda")
+    return events
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        ({}, None),
+        ({"synchronize_status": 9}, "synchronization failed.*status 9"),
+        ({"set_status": 8}, "synchronization failed.*status 8"),
+        ({"restore_status": 7}, "restoration failed.*status 7"),
+        ({"raise_synchronize": True}, "synchronization invocation failed"),
+    ],
+)
+def test_windows_sync_uses_owning_runtime_and_restores_caller_device(
+    monkeypatch: pytest.MonkeyPatch, failure: dict[str, Any], expected: str | None
+) -> None:
+    events = _windows_sync_state(monkeypatch, **failure)
+    if expected is None:
+        native._synchronize_devices()
+    else:
+        with pytest.raises(RuntimeError, match=expected):
+            native._synchronize_devices()
+    assert events[:2] == [("get", 7), ("set", 0)]
+    assert events[-1] == ("set", 7)
+    assert (("synchronize", 0) in events) is not bool(failure.get("set_status"))
+
+
+def test_windows_sync_failed_current_device_query_never_changes_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _windows_sync_state(monkeypatch, get_status=42)
+    with pytest.raises(RuntimeError, match="caller device query failed.*status 42"):
+        native._synchronize_devices()
+    assert events == [("get", 7)]
+
+
+def test_windows_sync_preserves_both_operation_and_restore_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _windows_sync_state(monkeypatch, synchronize_status=9, restore_status=7)
+    with pytest.raises(RuntimeError, match="status 9.*restoration failed.*status 7"):
+        native._synchronize_devices()
+
+
+def test_windows_identity_observation_failure_does_not_prevent_device_drain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _windows_sync_state(monkeypatch)
+    failure = OSError("module inventory refused")
+
+    def refuse_identity() -> NoReturn:
+        raise failure
+
+    monkeypatch.setattr(
+        sys.modules["phydrax_cuda13_pjrt.runtime"], "runtime_identity", refuse_identity
+    )
+    monkeypatch.setattr(
+        jax,
+        "local_devices",
+        lambda: [
+            SimpleNamespace(local_hardware_id=0),
+            SimpleNamespace(local_hardware_id=1),
+        ],
+    )
+    with pytest.raises((RuntimeError, OSError)) as caught:
+        native._synchronize_devices()
+    assert events == [
+        ("get", 7),
+        ("set", 0),
+        ("synchronize", 0),
+        ("set", 1),
+        ("synchronize", 0),
+        ("set", 7),
+    ]
+    assert str(failure) in str(caught.value)
+
+
+@pytest.mark.parametrize("state", ("empty", "no-dependencies", "missing-abi"))
+def test_windows_empty_or_partial_shutdown_never_loads_another_component(
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    events = _windows_sync_state(monkeypatch)
+    loaded = native._LOADED["cudss"]
+    preloaded = () if state == "no-dependencies" else loaded.identity.preloaded
+    identity = native.CudaNativeComponent(
+        name="cudss",
+        path="admitted.dll",
+        version="0.2.2",
+        build_hash="a" * 64,
+        major=13,
+        preloaded=preloaded,
+    )
+    monkeypatch.setattr(
+        native,
+        "_LOADED",
+        {}
+        if state == "empty"
+        else {"cudss": native._Loaded(identity, ctypes.CDLL(None, handle=0), {}, ())},
+    )
+    monkeypatch.setattr(
+        native, "load_cuda_component", lambda *_: pytest.fail("Unexpected component load")
+    )
+    monkeypatch.setattr(
+        jax, "local_devices", lambda: pytest.fail("Unexpected device query")
+    )
+    if state == "missing-abi":
+        with pytest.raises(RuntimeError, match="owning runtime ABI was not bound"):
+            native._synchronize_devices()
+    else:
+        native._synchronize_devices()
+    assert events == []
+
+
+@pytest.mark.parametrize("platform", ("win32", "linux"))
+def test_driver_hybrid_compatibility_is_not_compiled_cuda_major(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+) -> None:
+    facts = SimpleNamespace(plugins=(object(),))
+    monkeypatch.setattr(native, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(native, "collect_cuda_environment", lambda **_: facts)
+    monkeypatch.setattr(
+        native, "assess_cuda_environment", lambda _: SimpleNamespace(issues=())
+    )
+    monkeypatch.setattr(native, "device_platform", lambda _: "cuda")
+    monkeypatch.setattr(
+        jax,
+        "local_devices",
+        lambda: [SimpleNamespace(client=SimpleNamespace(platform_version="cuda 14010"))],
+    )
+    if platform == "win32":
+        assert native._cuda_facts() is facts
+    else:
+        with pytest.raises(native.CudaNativeUnavailableError, match="not compatible"):
+            native._cuda_facts()
+
+
+def test_windows_cleanup_drains_each_components_own_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _windows_sync_state(monkeypatch)
+
+    def get_device(output: Any) -> int:
+        events.append(("amgx.get", 3))
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_int32))[0] = 3
+        return 0
+
+    def set_device(device: int) -> int:
+        events.append(("amgx.set", device))
+        return 0
+
+    def synchronize() -> int:
+        events.append(("amgx.synchronize", 0))
+        return 0
+
+    identity = native.CudaNativeComponent(
+        name="amgx",
+        path="amgx.dll",
+        version="0.2.2",
+        build_hash="a" * 64,
+        major=13,
+        preloaded=("amgx.dll",),
+    )
+    native._LOADED["amgx"] = native._Loaded(
+        identity,
+        ctypes.CDLL(None, handle=0),
+        {},
+        (),
+        SimpleNamespace(
+            cudaGetDevice=get_device,
+            cudaSetDevice=set_device,
+            cudaDeviceSynchronize=synchronize,
+        ),
+    )
+    native._synchronize_devices()
+    assert events == [
+        ("get", 7),
+        ("set", 0),
+        ("synchronize", 0),
+        ("set", 7),
+        ("amgx.get", 3),
+        ("amgx.set", 0),
+        ("amgx.synchronize", 0),
+        ("amgx.set", 3),
+    ]

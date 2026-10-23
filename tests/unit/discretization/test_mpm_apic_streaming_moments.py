@@ -12,7 +12,8 @@ payload, and structural sparsity through traced derivative patterns.
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -21,15 +22,38 @@ import pytest
 from jax import Array
 from jax.typing import DTypeLike
 
+from phydrax import config
 from phydrax.discretization.mpm._moments_native import (
     _moments_p,
     _reference,
     streaming_moments,
 )
+from phydrax.execution import default_device
 from phydrax.sparse._structural_trace import DerivativeKind, trace_sparse_pattern
 
 
 pytestmark = pytest.mark.strict_jax
+
+
+@pytest.fixture(params=(False, True), ids=("installed-compiler", "without-mosaic"))
+def compiler_support(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    if request.param:
+        from phydrax.backends import _mosaic
+
+        inspect = _mosaic.cuda_compiler_capabilities
+        monkeypatch.setattr(
+            _mosaic,
+            "cuda_compiler_capabilities",
+            lambda client: replace(inspect(client), mosaic_gpu=False),
+        )
+    jax.clear_caches()
+    try:
+        yield
+    finally:
+        jax.clear_caches()
+
 
 type Operands = tuple[Array, Array, Array, Array, Array, Array]
 type Moments = tuple[Array, Array, Array]
@@ -196,7 +220,7 @@ def test_streaming_refuses_incompatible_route_extents() -> None:
 def test_mixed_precision_preserves_reference_promotion() -> None:
     operands = _operands(113, 7, 27, 97, 3, 3, 3, jnp.float64)
     mixed = operands[:-1] + (operands[-1].astype(jnp.float32),)
-    with jax.numpy_dtype_promotion("standard"):
+    with config.context(config.NumericsConfig(dtype_promotion="standard")):
         actual = jax.jit(_streaming_all)(*mixed)
         expected = jax.jit(_reference_all)(*mixed)
     for value, reference in zip(actual, expected, strict=True):
@@ -232,7 +256,7 @@ def test_cpu_and_cuda_routes_agree(dtype: DTypeLike) -> None:
     host = _operands(5, 130, 27, 97, 3, 3, 3, dtype)
     results = []
     for device in _route_devices():
-        with jax.default_device(device):
+        with default_device(device):
             operands = jax.device_put(host, device)
             result = jax.jit(_streaming_all)(*operands)
         assert all(value.devices() == {device} for value in result)
@@ -249,6 +273,7 @@ def test_cpu_and_cuda_routes_agree(dtype: DTypeLike) -> None:
             )
 
 
+@pytest.mark.usefixtures("compiler_support")
 @_DTYPES
 def test_masks_nonfinite_metadata_and_zero_weights(dtype: DTypeLike) -> None:
     indices, valid, weights, gradients, offsets, grid = (
@@ -270,6 +295,10 @@ def test_masks_nonfinite_metadata_and_zero_weights(dtype: DTypeLike) -> None:
         for value in (indices, valid, weights, gradients, offsets, grid)
     )
     velocity, velocity_gradient, affine_moment = jax.jit(_streaming_all)(*operands)
+    assert all(
+        value.devices() == operands[-1].devices()
+        for value in (velocity, velocity_gradient, affine_moment)
+    )
     _assert_moments((velocity, velocity_gradient, affine_moment), operands, dtype)
     _assert_moments(jax.jit(_reference_all)(*operands), operands, dtype)
 
@@ -348,6 +377,7 @@ def _probes(operands: Operands, seed: int) -> tuple[Array, Array, Array]:
     (_SHAPES["tile-tail"], _SHAPES["multi-tile-tail"], _SHAPES["mixed-widths"]),
     ids=("tile-tail", "multi-tile-tail", "mixed-widths"),
 )
+@pytest.mark.usefixtures("compiler_support")
 def test_gradient_jvp_and_hvp_through_metadata_match_reference(
     shape: Shape,
 ) -> None:
@@ -368,6 +398,7 @@ def test_gradient_jvp_and_hvp_through_metadata_match_reference(
         jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
     ):
         assert left.shape == right.shape and left.dtype == right.dtype
+        assert left.devices() == operands[-1].devices()
         assert bool(jnp.all(jnp.isfinite(left)))
         np.testing.assert_allclose(left, right, rtol=1e-10, atol=1e-10)
 

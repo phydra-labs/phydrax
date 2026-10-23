@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax.execution import default_device
 from tests._support.accelerator_qualification import accelerator_device, record_execution
 
 
@@ -21,7 +22,7 @@ def execution_device() -> Iterator[jax.Device]:
     if "PHYDRAX_ACCELERATOR" not in os.environ:
         pytest.skip("Explicit accelerator qualification process required")
     device = accelerator_device()
-    with jax.default_device(device):
+    with default_device(device):
         yield device
 
 

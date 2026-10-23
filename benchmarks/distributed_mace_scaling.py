@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, get_args, Literal, TypeAlias
@@ -432,7 +433,14 @@ def main() -> None:
         "passed": all(row["successful"] for row in rows),
         "environment": capture_environment().to_dict(),
         "host_load": {
-            "load_average_1_5_15": list(os.getloadavg()),
+            "load_average_1_5_15": (
+                None if sys.platform == "win32" else list(os.getloadavg())
+            ),
+            "load_average_unavailable_reason": (
+                "Windows does not provide os.getloadavg"
+                if sys.platform == "win32"
+                else None
+            ),
             "logical_cpus": os.cpu_count(),
         },
         "evidence_scope": sorted({row["evidence_scope"] for row in rows}),

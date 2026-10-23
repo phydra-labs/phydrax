@@ -13,8 +13,6 @@ buffers. Process peak RSS is observed evidence only and never a bound.
 from __future__ import annotations
 
 import math
-import resource
-import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -40,9 +38,20 @@ def host_allocation_peak[T](operation: Callable[[], T], /) -> tuple[T, int]:
 
 
 def process_peak_rss_bytes() -> int:
-    """Return the observed process high-water resident set size in bytes."""
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak if sys.platform == "darwin" else peak * 1024
+    """Return observed peak resident bytes, or refuse with the provider's reason.
+
+    Observation is host-only: it never queries JAX devices or a process rank.
+    Unlike a numeric zero, an unavailable counter cannot become memory evidence.
+    """
+    from phydrax._execution_sampling import process_peak_memory
+
+    measurement = process_peak_memory()
+    if measurement.value_bytes is None:
+        raise RuntimeError(
+            f"Process peak RSS unavailable ({measurement.method}): "
+            f"{measurement.unavailable_reason}"
+        )
+    return measurement.value_bytes
 
 
 def _validated_series(

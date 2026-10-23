@@ -41,7 +41,8 @@ _JAX_CONFIGURATION_NAMES = (
     "default_prng_impl",
     "default_device",
 )
-# Every upstream configuration capability; `phydrax/_jax_config.py` alone uses them.
+# Upstream configuration belongs to the adapter, except the exact isolated
+# source-boundary probes declared below (which must not import Phydrax).
 _BANNED_ORIGINS: Final = frozenset(
     {f"jax.{name}" for name in _JAX_CONFIGURATION_NAMES} | {"jax._src.config"}
 )
@@ -69,6 +70,33 @@ _SCOPES: Final = (
     ast.DictComp,
     ast.GeneratorExp,
 )
+
+# Each exception pins a file, enclosing test, exact source statement, and maximum
+# occurrence count. These standalone compiler probes deliberately load an owner
+# by filename before package startup: using the facade would invalidate their
+# no-import/no-configuration-mutation proof. No whole file or capability is exempt.
+_ISOLATED_COMPILER_PROBES: Final = {
+    (
+        "tests/unit/test_jax_indexing.py",
+        "test_explicit_registration_is_device_inert_and_preserves_jax_surface",
+    ): {
+        "options = dict({upstream}.config.values)": 1,
+        "assert {upstream}.config.values == options": 2,
+    },
+    (
+        "tests/unit/test_jax_indexing_frontend.py",
+        "test_installation_is_host_only_locked_idempotent_and_honestly_identified",
+    ): {
+        "options = dict({upstream}.config.values)": 1,
+        "assert {upstream}.config.values == options": 1,
+    },
+    (
+        "tests/unit/test_jax_indexing_frontend.py",
+        "test_device_indices_do_not_require_host_synchronization",
+    ): {
+        'with {upstream}.transfer_guard_device_to_host("disallow"):': 1,
+    },
+}
 
 # One name's binding in a scope: a JAX origin, a non-JAX value (`None`), or an
 # alias expression resolved against the scope chain.
@@ -415,11 +443,39 @@ def _example_private_imports(path: Path, /) -> tuple[str, ...]:
     return tuple(errors)
 
 
+def _isolated_probe_lines(relative: str, text: str, /) -> frozenset[int]:
+    """Allow only the reviewed statements inside their named standalone probes."""
+    policies = {
+        name: statements
+        for (path, name), statements in _ISOLATED_COMPILER_PROBES.items()
+        if path == relative
+    }
+    if not policies:
+        return frozenset()
+    lines = text.splitlines()
+    allowed: set[int] = set()
+    tree = ast.parse(text)
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name not in policies:
+            continue
+        for template, maximum in policies[node.name].items():
+            statement = template.format(upstream="jax")
+            matches = [
+                line
+                for line in range(node.lineno, (node.end_lineno or node.lineno) + 1)
+                if lines[line - 1].strip() == statement
+            ]
+            if len(matches) <= maximum:
+                allowed.update(matches)
+    return frozenset(allowed)
+
+
 def configuration_bypass_errors(root: Path, /) -> tuple[str, ...]:
     """Audit Python sources, embedded scripts, and documentation fences.
 
     Imports, aliases, and lexical scopes are analyzed statically; analyzed
-    material is parsed, never executed or imported.
+    material is parsed, never executed or imported. Only exact, named standalone
+    compiler probes may observe upstream state before package initialization.
     """
     paths = [
         path
@@ -446,9 +502,13 @@ def configuration_bypass_errors(root: Path, /) -> tuple[str, ...]:
             lines = tuple(range(1, text.count("\n") + 2))
             uses = _material_uses(_Fragment(text, lines))
         relative = path.relative_to(root).as_posix()
+        allowed = (
+            _isolated_probe_lines(relative, text) if path.suffix == ".py" else frozenset()
+        )
         errors.update(
             f"configuration-bypass:{relative}:{line}:{capability}"
             for line, capability in uses
+            if line not in allowed
         )
     return tuple(sorted(errors))
 

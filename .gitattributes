@@ -1,0 +1,7 @@
+/native/cuda/** text eol=lf
+/native/cuda13/** text eol=lf
+/native/cuda13_pjrt/** text eol=lf
+/tools/build_cuda_wheels.py text eol=lf
+/tools/build_cuda_pjrt_wheels.py text eol=lf
+/native/cuda/patches/*.patch -text
+/native/cuda13_pjrt/patches/** -text

@@ -4,6 +4,8 @@
 
 
 import math
+from collections.abc import Iterator
+from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +16,26 @@ from phydrax._numerics._compensated import compensated_sum, compensated_sum_chun
 
 
 pytestmark = pytest.mark.strict_jax
+
+
+@pytest.fixture(params=(False, True), ids=("installed-compiler", "without-mosaic"))
+def compiler_support(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    if request.param:
+        from phydrax.backends import _mosaic
+
+        inspect = _mosaic.cuda_compiler_capabilities
+        monkeypatch.setattr(
+            _mosaic,
+            "cuda_compiler_capabilities",
+            lambda client: replace(inspect(client), mosaic_gpu=False),
+        )
+    jax.clear_caches()
+    try:
+        yield
+    finally:
+        jax.clear_caches()
 
 
 def test_compensated_contracts() -> None:
@@ -106,6 +128,7 @@ def test_long_chunked_cancellation_retains_residuals(
     np.testing.assert_array_equal(actual, expected)
 
 
+@pytest.mark.usefixtures("compiler_support")
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64], ids=["float32", "float64"])
 def test_long_reduction_nonlinear_derivatives_and_batching(
     dtype: type[jnp.floating],
@@ -149,6 +172,7 @@ def test_long_reduction_nonfinite_lanes_remain_explicit(
     assert result[2] == 4096
 
 
+@pytest.mark.usefixtures("compiler_support")
 @pytest.mark.parametrize("length", [0, 65, 4097], ids=["empty", "tail", "long"])
 @pytest.mark.parametrize(
     "dtype",
@@ -175,6 +199,7 @@ def test_seeded_recurrence_preserves_reference_components(
     actual = jax.jit(_accumulate)(*arguments)
     expected = jax.jit(_accumulate_reference)(*arguments)
     for observed, reference in zip(actual, expected, strict=True):
+        assert observed.devices() == arguments[0].devices()
         observed_host, reference_host = np.asarray(observed), np.asarray(reference)
         real_dtype = observed_host.real.dtype
         unsigned = np.uint32 if real_dtype == np.dtype(np.float32) else np.uint64

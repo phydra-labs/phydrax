@@ -4,12 +4,14 @@
 
 """Admission, refusal and identity of the accelerated atomistic kernel backend."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 import phydrax.backends.atomistic as atomistic_backend
+from phydrax._cuda_capabilities import CudaCompilerCapabilities
 from phydrax.backends._types import BackendUnavailableError
 from phydrax.backends.atomistic import (
     AtomisticKernelAdmission,
@@ -126,8 +128,70 @@ def test_precision_and_accumulation_are_distinct_admitted_identities() -> None:
 def test_cuda_architecture_admission_is_explicit(
     monkeypatch: pytest.MonkeyPatch, capability: tuple[int, int], admitted: bool
 ) -> None:
-    device = SimpleNamespace(device_kind="test NVIDIA device")
+    device = SimpleNamespace(device_kind="test NVIDIA device", client=object())
     monkeypatch.setattr(atomistic_backend, "_cuda_device", lambda: (device, "test CUDA"))
     monkeypatch.setattr(atomistic_backend, "_compute_capability", lambda _: capability)
+    monkeypatch.setattr(
+        atomistic_backend,
+        "cuda_compiler_capabilities",
+        lambda _: _compiler(mosaic_gpu=True),
+    )
     availability = pallas_atomistic_availability("cuda")
     assert availability.available is admitted
+
+
+def _compiler(*, mosaic_gpu: bool, build_id: str = "build-a") -> CudaCompilerCapabilities:
+    return CudaCompilerCapabilities(
+        host_platform="win32",
+        distribution="phydrax-cuda13-pjrt",
+        version="test",
+        build_id=build_id,
+        jax_version="0.12.0",
+        jaxlib_version="0.12.0",
+        platform_version="cuda 13000",
+        mosaic_gpu=mosaic_gpu,
+        reason="The installed build does not declare Mosaic GPU.",
+    )
+
+
+def test_blackwell_architecture_does_not_imply_mosaic_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = SimpleNamespace(
+        device_kind="NVIDIA GeForce RTX 5090 Laptop GPU",
+        compute_capability="12.0",
+        client=SimpleNamespace(platform_version="cuda 13000"),
+    )
+    monkeypatch.setattr(atomistic_backend, "_cuda_device", lambda: (device, "CUDA"))
+    monkeypatch.setattr(
+        atomistic_backend,
+        "cuda_compiler_capabilities",
+        lambda _: _compiler(mosaic_gpu=False),
+    )
+    availability = pallas_atomistic_availability("cuda")
+    assert not availability.available
+    with pytest.raises(BackendUnavailableError, match="Mosaic GPU") as caught:
+        AtomisticKernelTarget("cuda")
+    assert caught.value.backend == "pallas-atomistic"
+    assert caught.value.capability == "atomistic.mace_edge_coupling.receiver"
+
+
+def test_atomistic_target_identity_distinguishes_compiler_builds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = SimpleNamespace(
+        device_kind="test NVIDIA device",
+        compute_capability="12.0",
+        client=SimpleNamespace(platform_version="cuda 13000"),
+    )
+    compiler = _compiler(mosaic_gpu=True)
+    monkeypatch.setattr(atomistic_backend, "_cuda_device", lambda: (device, "CUDA"))
+    monkeypatch.setattr(
+        atomistic_backend, "cuda_compiler_capabilities", lambda _: compiler
+    )
+    first = AtomisticKernelTarget("cuda")
+    assert first.target_id == AtomisticKernelTarget("cuda").target_id
+    compiler = replace(compiler, build_id="build-b")
+    second = AtomisticKernelTarget("cuda")
+    assert first.compiler_id != second.compiler_id
+    assert first.target_id != second.target_id

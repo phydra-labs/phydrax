@@ -245,25 +245,29 @@ and package-index large-file quotas are separate publication prerequisites.
 
 ## NVIDIA GPUs
 
-On Linux, install the CUDA 13 extra. `uv pip install` or `uv add` can be
-used instead of `pip install`. CUDA 13 is the only supported CUDA major.
+Use the same CUDA 13 extra for the Linux and native Windows packaging paths.
+`uv pip install` or `uv add` can replace `pip install`. CUDA 13 is the only
+supported CUDA major.
 
 | Install | Minimum driver-supported CUDA version | Driver family |
 | --- | --- | --- |
 | `pip install "phydrax[cuda13]"` | 13.0 | R580+ |
 
-The driver must report at least the listed CUDA version. Pip cannot install or
-upgrade the NVIDIA driver. The extra installs JAX's CUDA plugin, NVIDIA runtime
-and math-library wheels (including NCCL), and the metadata-only
-`phydrax-cuda-major==13.*` marker recording installed CUDA intent.
-A system CUDA toolkit and `LD_LIBRARY_PATH` are not required for
-this JAX setup. The extra does not install a CUDA backend on non-Linux platforms.
+The driver must report at least the listed CUDA version and support the
+qualified runtime's required features. Pip cannot install or upgrade the NVIDIA
+driver. Linux selects upstream JAX CUDA and NVIDIA runtime/math wheels,
+including NCCL. Windows selects stock JAX/JAXlib and the owned
+`phydrax-cuda13-pjrt` loader, PJRT DLL, and CUDA kernel extensions. Both record
+installed intent with the metadata-only `phydrax-cuda-major==13.*` marker.
+A user-installed CUDA toolkit and manual library-path configuration are not
+part of the wheel installation contract.
 
-The CUDA extra pins JAX, JAXlib, and the CUDA plugin to 0.12.0. Site collective
-programs use an exact source-verified private dispatch boundary from that release;
-a later 0.12.x installation is not admitted merely because its public version
-range would otherwise be compatible. The base and CPU extras retain their
-documented JAX ranges.
+The CUDA extra pins JAX and JAXlib to 0.12.0, with the matching upstream plugin
+on Linux. The Windows runtime is release-matched to Phydrax and source-matched
+to that JAX pair. Site collective programs use an exact source-verified private
+dispatch boundary; a later 0.12.x installation is not admitted merely because
+its public version range would otherwise be compatible. Base/CPU extras retain
+their documented ranges. Source and artifact guards are not disabled for Windows.
 
 On Linux x86-64 and aarch64, the extra also requires the lockstep wheel-only
 companion `phydrax-cuda13==0.2.2`:
@@ -282,9 +286,109 @@ Local builds do not imply publication. GPU-direct
 mpi4jax still requires a matching user-provided build. See
 [External solver backends](api/backends.md) for component contracts.
 
+### Native Windows release gate
+
+The Windows path targets standard CPython 3.13 on x86-64 and single-process,
+single-device CUDA execution. It requires both lockstep Windows binary wheels:
+`phydrax-cuda13` for cuDSS/AmgX/QUDA and `phydrax-cuda13-pjrt` for JAX integration.
+Neither a missing companion nor an unsupported Windows architecture is a
+marker-only success. Driver and standard Windows C-runtime prerequisites remain
+external; no installer modifies the driver, registry, or machine-wide PATH.
+
+Local release wheels have been qualified on one RTX 5090 Laptop GPU
+(24,463 MiB, driver 592.01), CPython 3.13.17, and stock JAX/JAXlib 0.12.0.
+A fresh environment containing only the `cuda13` extra executes GPU JIT and a
+native cuDSS solve without manual toolkit paths or build tools. Mandatory
+cuDSS/AmgX/QUDA numerics and lifecycle contracts, the full selected cuTENSOR
+profile, clean/hostile DLL ownership, and thirteen installation/refusal checks
+pass. The native-provider matrix contains 121 distinct passing cases and 24
+explicit compiler, provider, or topology skips; retained evidence distinguishes
+the initial failures from the complete affected-case rerun.
+Exact artifact hashes, failure corrections, qualification scope, and all 66
+passing phase-separated benchmark cases are retained in
+[`rtx_5090_windows_qualification.json`](../benchmarks/rtx_5090_windows_qualification.json).
+
+The physical 1×1 weighted reduction and PCG scenario passes. Peer matrices are
+not applicable on this one-device host; no multi-GPU or Linux qualification is
+inferred. Local qualification is not publication: the matching runtime,
+companion, and core release must be available on the package index before the
+public install command can supply these artifacts. See the
+[implementation and verification plan](plans/windows-cuda13.md) and
+[source-pinned runtime build instructions](../native/cuda13_pjrt/README.md).
+
+Windows math/compiler DLL dependencies are attributed to installed wheel records
+and loaded by absolute path. CUDA 13.3/13.4 instead supplies the runtime through
+NVIDIA's **driver-owned hybrid runtime**, `nvcudart_hybrid64.dll`. The canonical
+vendor `cuda.lib` and `cudart.lib` archives contain dispatch loaders: they are
+neither a complete static CUDA runtime nor a wheel-owned `cudart64_13.dll`.
+The hybrid DLL does not export public CUDA runtime functions; the companion's
+compiled vendor-loader boundary supplies those function addresses. The observed
+hybrid DLL and actual `nvcuda64.dll` must belong to the same Windows display-driver
+cohort, with `nvcuda.dll` dispatched from System32. Their absolute paths and hashes
+are separate evidence from the compiled CUDA 13 stack and wheel-owned math DLLs.
+A driver's reported CUDA API compatibility level is not the wheel's CUDA major:
+a newer compatible driver is allowed, while a driver below CUDA 13 is refused.
+NVIDIA's System32 `nvml.dll` dispatcher and its same-named backing library may
+coexist only when the latter belongs to that observed driver cohort. This
+ownership check applies before and after loading; unrelated duplicate DLLs
+remain conflicts.
+
+The runtime wheel owns `ptxas.exe`, `nvlink.exe`, and `libdevice.10.bc` in one
+RECORD-authenticated compiler tree; an ambient toolkit is not a substitute for
+a missing compiler asset. PTX capability discovery reads the installed assembler's
+actual diagnostics from both output streams. The Windows CUPTI dependency is
+pinned to the DLL ABI used by the compiled PJRT artifact, not simply the newest
+CUDA 13 package. CPython's stable and minor-version ABI DLLs are admitted only
+from the active interpreter installation.
+
+Installed qualification fingerprints the actual wheel-owned core files using the
+selected interpreter, alongside the runtime and companion manifests. It does not
+require an unrelated checkout dependency lock. Source-checkout benchmarks retain
+their separate source/build and lockfile identity contract.
+
+Driver absence, corrupt artifacts, competing plugin owners, unowned userland DLLs,
+and incompatible already-loaded CUDA libraries produce actionable refusals,
+not successful CPU execution. Select `JAX_PLATFORMS=cpu` before imports for
+deliberate CPU execution with an intact installation. PyTorch processes carrying
+an incompatible cuDNN family must be separated rather than patched in place.
+The WDDM default uses on-demand allocation unless the caller explicitly selects
+another allocator setting; no TDR/watchdog setting is changed.
+
+Windows hardware qualification requires the canonical vendor-loader archive
+provenance (`runtime_linkage`, archive SHA-256, members and dispatch symbols), the
+observed driver/hybrid cohort identity, and actual native-provider numerical and
+lifecycle execution. A hostile-DLL challenge must exercise competing NVIDIA
+userland DLLs while retaining wheel ownership and the same driver cohort; it
+does not demand a fictitious wheel-owned cudart DLL. Metadata-only installation
+and no-GPU refusal campaigns remain distinct and never set `hardware_qualified`.
+
+The Windows performance campaign disables JAX's persistent compilation cache.
+Its dense derivative rows explicitly reuse prepared primal factors with the same
+predeclared per-precision accuracy as their NumPy oracle. This is a benchmark
+policy, not a relaxation of the product's independently checked Krylov derivative
+defaults. Solver provenance retains the effective derivative tolerances.
+The campaign covers ordinary reductions/indexing/contractions, real and complex
+dense solves and FFTs, sparse actions, compensated reductions, MPM moments,
+cuDSS/AmgX preparation and reuse, QUDA gauge/Wilson operations, and cuTENSOR.
+Preparation, lowering, compilation, first/warm execution, transfers, derivatives,
+and memory evidence remain separate; these bounded measurements do not establish
+a general speedup.
+
+Ordinary numerical routes can use canonical JAX GPU lowerings when Mosaic is
+absent, including compensated accumulation and MPM moments. Explicit compiled
+MACE/Pallas requests require their actual compiler capabilities and refuse when
+unavailable. cuTENSOR has a Windows vendor wheel and a separately qualified
+optional wrapper. The pinned cuTensorNet/cuEST distributions have no Windows
+wheels; explicit requests fail rather than disappear through platform markers.
+NCCL, site MPI, cuDSS MG/MGMN, cuDecomp, and distributed bootstrap are not part of
+this Windows profile. CPU interpreter evidence is never GPU qualification.
+
+### Companion development
+
 For development, set `PHYDRAX_CUDA_CUDSS_LIBRARY`,
 `PHYDRAX_CUDA_AMGX_LIBRARY`, or `PHYDRAX_CUDA_QUDA_LIBRARY` to the absolute path
-of a built `libphydrax_cuda_<component>.so` before first use. These overrides
+of a built `libphydrax_cuda_<component>.so` on Linux or
+`phydrax_cuda_<component>.dll` on Windows before first use. These overrides
 retain component, release-version, CUDA-major, and handler validation. NVIDIA
 dependencies are preloaded by absolute path from installed NVIDIA wheels.
 
@@ -499,11 +603,14 @@ resolution, not the diagnostic list of libraries already mapped in this process.
 
 | Issue code | Meaning and remedy |
 | --- | --- |
-| `unsupported-cuda-major` | The active runtime or single-major mapped toolkit evidence identifies a major other than 13. Remove foreign-major packages and paths, install `phydrax[cuda13]`, and restart; use the CPU-only install if CUDA 13 is unavailable. |
-| `no-cuda-plugin` | A CUDA marker is installed without a JAX CUDA plugin. Reinstall the selected extra on supported Linux; use the CPU install on unsupported platforms. This is an error on Linux x86-64 and aarch64, and a warning elsewhere. |
+| `unsupported-cuda-major` | The compiled stack, Linux runtime, or single-major mapped toolkit evidence identifies a major other than 13. Windows driver API compatibility is not toolkit-major identity. Remove foreign-major packages and paths, install `phydrax[cuda13]`, and restart; use the CPU-only install if CUDA 13 is unavailable. |
+| `no-cuda-plugin` | A CUDA marker is installed without the required CUDA plugin. Reinstall the selected extra on supported Linux or native Windows; use the CPU install on unsupported platforms. This is an error on Linux x86-64/aarch64 and Windows, and a warning elsewhere. |
 | `duplicate-cuda-plugins` | Multiple CUDA plugins are installed. Remove the other-major plugin and its wheels, or create a fresh environment. |
 | `plugin-major-mismatch` | The installed CUDA intent marker or unique plugin does not match required major 13, including a foreign-only plugin without a marker. Remove foreign-major packages and reinstall `phydrax[cuda13]`. |
 | `foreign-nvidia-distributions` | Other-major NVIDIA wheels remain installed. Run the exact `pip uninstall` list in the message, then reinstall `phydrax[cuda13]`. |
+| `plugin-invalid` | Windows runtime metadata or plugin ownership is invalid. Install the lockstep Phydrax PJRT wheel and restart in a clean environment. |
+| `native-inspection-unavailable` | Required driver, hybrid cohort, or module inspection failed; missing evidence is not a clean-runtime claim. Inspect the retained error and repair the installation/driver before retrying. |
+| `unowned-cuda-library` | A mapped Windows NVIDIA userland DLL lacks CUDA 13 wheel ownership. Remove competing DLL paths or use a separate process for the conflicting stack, then restart. The driver-owned hybrid runtime is recorded separately. |
 | `driver-too-old` | The driver does not support CUDA 13. Upgrade to R580+ or use the CPU-only install. |
 | `cpu-platform-selected` | Configuration deliberately excludes CUDA despite an installed plugin. Keep this warning for CPU workers, or select CUDA before startup; see [Configuration](api/configuration.md#phases-and-startup). |
 | `backend-unavailable` | A device probe found no usable CUDA backend. Inspect the backend error in the message (`facts.backend_error`), GPU visibility, driver, and any listed library-path directories. Remove shadowing CUDA paths and restart. |
