@@ -228,6 +228,7 @@ class ArrayOperatorQuerySource(OperatorQuerySource):
             quadrature_weights=_take_query_axis(self.quadrature, indices, case_ndim),
             mask=_take_query_axis(self.mask, indices, case_ndim),
             topology=topology,
+            dtype=self.coordinates.dtype,
         )
         if valid < requested:
             samples = pad_function_samples(

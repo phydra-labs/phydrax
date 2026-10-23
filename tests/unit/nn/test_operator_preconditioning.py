@@ -202,6 +202,9 @@ def test_operator_preconditioning_scenario_1() -> None:
     problem = phx.linalg.LinearSystem(operator)
     policy = phx.linalg.LinearSolvePolicy(
         phx.linalg.FGMRES(restart=3),
+        # The default 1e-8 relative stop lies below float32 roundoff of the true
+        # residual; success must not depend on platform-specific rounding.
+        tolerance=phx.linalg.TolerancePolicy(relative=1e-6),
         preconditioning=phx.linalg.PreconditioningPolicy(builder, side="right"),
         differentiation=phx.linalg.DifferentiationPolicy("none"),
     )

@@ -166,6 +166,7 @@ def _geometry_only(samples: FunctionSamples, /) -> FunctionSamples:
         quadrature_weights=samples.quadrature_weights,
         mask=samples.mask,
         topology=samples.topology,
+        dtype=samples.geometry_dtype,
     )
 
 
@@ -304,6 +305,7 @@ def take_function_samples(
             if samples.topology is None
             else take_operator_topology(samples.topology, indices)
         ),
+        dtype=samples.geometry_dtype,
     )
 
 

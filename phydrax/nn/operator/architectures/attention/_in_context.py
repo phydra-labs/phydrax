@@ -12,9 +12,11 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import DTypeLike
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax._dtype_names import real_precision_dtype_name
 from phydrax._strict import StrictModule
 from phydrax.nn._contracts import compose_regularity, sum_regularity
 from phydrax.nn._keys import EvalKey
@@ -30,8 +32,10 @@ from phydrax.nn.operator.architectures.attention._upt import (
     _feature_norm,
     _flatten_function_values,
     _flatten_geometry,
+    _masked,
     _pooled_tokens_regularity,
     _query_decoder_regularity,
+    _scaled_normal,
     LatentTokenProcessor,
 )
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
@@ -113,7 +117,12 @@ class InContextOperatorState(StrictModule):
 
 
 class InContextOperator(AbstractEncodedOperatorModel):
-    """ICON-style operator that conditions on supervised function demonstrations."""
+    """ICON-style operator that conditions on supervised function demonstrations.
+
+    `dtype` selects the real floating dtype of every learned parameter: lifts,
+    token bank, role embeddings, attention, processors, normalization and
+    projection. `None` keeps JAX's default floating dtype.
+    """
 
     operator_architecture = "InContextOperator"
 
@@ -158,8 +167,11 @@ class InContextOperator(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)
@@ -192,20 +204,20 @@ class InContextOperator(AbstractEncodedOperatorModel):
             in_size=self.in_channels + self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=keys[0],
         )
         self.target_lift = Linear(
             in_size=self.out_channels + self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=keys[1],
         )
-        self.token_bank = jr.normal(keys[2], (self.num_tokens, self.width)) / jnp.sqrt(
-            float(self.width)
+        self.token_bank = _scaled_normal(
+            keys[2], (self.num_tokens, self.width), param_dtype
         )
-        self.role_embeddings = jr.normal(keys[3], (3, self.width)) / jnp.sqrt(
-            float(self.width)
-        )
+        self.role_embeddings = _scaled_normal(keys[3], (3, self.width), param_dtype)
         attention_kwargs: _ChanneledAttentionOptions = {
             "source_channels": self.width,
             "query_channels": self.width,
@@ -216,6 +228,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
             "execution": attention_execution,
             "block_size": attention_block_size,
             "accumulation_dtype": accumulation_dtype,
+            "dtype": param_dtype,
         }
         self.prompt_source_attention = MeasureAwareAttention(
             key=keys[4], **attention_kwargs
@@ -233,6 +246,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
             execution=attention_execution,
             block_size=attention_block_size,
             accumulation_dtype=accumulation_dtype,
+            dtype=param_dtype,
             key=keys[6],
         )
         self.current_attention = MeasureAwareAttention(key=keys[7], **attention_kwargs)
@@ -247,20 +261,25 @@ class InContextOperator(AbstractEncodedOperatorModel):
             execution=attention_execution,
             block_size=attention_block_size,
             accumulation_dtype=accumulation_dtype,
+            dtype=param_dtype,
             key=keys[9],
         )
         self.query_lift = Linear(
             in_size=self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=keys[10],
         )
         self.decoder_attention = MeasureAwareAttention(key=keys[11], **attention_kwargs)
-        self.decoder_norm = eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
+        self.decoder_norm = eqx.nn.RMSNorm(
+            self.width, eps=1e-6, use_bias=False, dtype=param_dtype
+        )
         self.projection = Linear(
             in_size=self.width,
             out_size=self.out_channels,
             activation=None,
+            dtype=param_dtype,
             key=keys[12],
         )
 
@@ -292,13 +311,15 @@ class InContextOperator(AbstractEncodedOperatorModel):
         targets: Array,
         /,
     ) -> tuple[Array, Array, Array]:
+        source_query = batch.require_single_query()
         query = FunctionSamples(
             values=targets,
-            axes=batch.require_single_query().axes,
-            coordinates=batch.require_single_query().coordinates,
-            quadrature_weights=batch.require_single_query().quadrature_weights,
-            mask=batch.require_single_query().mask,
-            topology=batch.require_single_query().topology,
+            axes=source_query.axes,
+            coordinates=source_query.coordinates,
+            quadrature_weights=source_query.quadrature_weights,
+            mask=source_query.mask,
+            topology=source_query.topology,
+            dtype=source_query.geometry_dtype,
         )
         values = _flatten_function_values(query, batch.case_shape, self.out_channels)
         coordinates, weights, mask = _flatten_geometry(query, batch.case_shape)
@@ -323,7 +344,8 @@ class InContextOperator(AbstractEncodedOperatorModel):
         sample_count = features.shape[-2]
         source = features.reshape((cases, sample_count, self.width))
         tokens = jnp.broadcast_to(
-            self.token_bank + self.role_embeddings[role_index],
+            self.token_bank
+            + jnp.broadcast_to(self.role_embeddings[role_index], self.token_bank.shape),
             (cases, self.num_tokens, self.width),
         )
         return tokens + attention(
@@ -368,7 +390,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
             )
             token_weights = jnp.ones(token_mask.shape, dtype=combined.dtype)
             combined = self.prompt_processor(
-                combined * token_mask[..., None], token_weights, token_mask
+                _masked(combined, token_mask), token_weights, token_mask
             )
             examples.append(combined)
             masks.append(token_mask)
@@ -397,7 +419,8 @@ class InContextOperator(AbstractEncodedOperatorModel):
         cases = prod(batch.case_shape) if batch.case_shape else 1
         source_count = features.shape[-2]
         tokens = jnp.broadcast_to(
-            self.token_bank + self.role_embeddings[2],
+            self.token_bank
+            + jnp.broadcast_to(self.role_embeddings[2], self.token_bank.shape),
             (cases, self.num_tokens, self.width),
         )
         token_mask = jnp.ones((cases, self.num_tokens), dtype=jnp.bool_)
@@ -472,7 +495,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
             query_mask=query_mask,
         )
         decoded = _feature_norm(self.decoder_norm, decoded)
-        output = self.projection(decoded) * query_mask[..., None]
+        output = _masked(self.projection(decoded), query_mask)
         shaped = output.reshape(
             state.case_shape + query.sample_shape + (self.out_channels,)
         )

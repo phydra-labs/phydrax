@@ -158,6 +158,7 @@ def _expand_batch(
             ),
             mask=expand_geometry(samples.mask, len(samples.sample_shape)),
             topology=topology,
+            dtype=samples.geometry_dtype,
         )
 
     return OperatorBatch(

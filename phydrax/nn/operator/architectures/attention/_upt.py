@@ -13,10 +13,13 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import Array
+from jax.typing import DTypeLike
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from phydrax._frozendict import frozendict
 from phydrax._strict import StrictModule
 from phydrax.nn._contracts import (
@@ -64,6 +67,7 @@ class _AttentionOptions(TypedDict):
     execution: AttentionExecution
     block_size: int | None
     accumulation_dtype: str
+    dtype: RealPrecisionDType | None
 
 
 class _ChanneledAttentionOptions(_AttentionOptions):
@@ -76,6 +80,21 @@ def _feature_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
     array = jnp.asarray(values)
     flattened = array.reshape((-1, array.shape[-1]))
     return jax.vmap(norm)(flattened).reshape(array.shape)
+
+
+def _scaled_normal(
+    key: PRNGKey, shape: tuple[int, ...], dtype: RealPrecisionDType | None, /
+) -> Array:
+    """Standard-normal embeddings scaled by ``1/sqrt(shape[-1])`` in ``dtype``."""
+    # A typed width keeps the scale constant at the selected parameter dtype.
+    return jr.normal(key, shape, dtype=dtype) / jnp.sqrt(
+        jnp.asarray(float(shape[-1]), dtype=dtype)
+    )
+
+
+def _masked(values: Array, mask: Array, /) -> Array:
+    """Zero masked rows; the Boolean row mask enters in the values' dtype."""
+    return values * mask[..., None].astype(values.dtype)
 
 
 def _feature_norm_regularity(norm: eqx.nn.RMSNorm, /) -> DerivativeRegularity | None:
@@ -157,7 +176,11 @@ def _flatten_geometry(
 
 
 class LatentTokenBlock(StrictModule):
-    """Quadrature-aware pre-normalized transformer block for abstract tokens."""
+    """Quadrature-aware pre-normalized transformer block for abstract tokens.
+
+    `dtype` selects the real floating dtype of the attention, normalization and
+    feed-forward parameters; `None` keeps JAX's default floating dtype.
+    """
 
     attention: MeasureAwareAttention
     attention_norm: eqx.nn.RMSNorm
@@ -180,8 +203,11 @@ class LatentTokenBlock(StrictModule):
         block_size: int | None = None,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.width = int(width)
         hidden = round(float(feed_forward_multiplier) * self.width)
         resolved_head_dim = (
@@ -204,19 +230,21 @@ class LatentTokenBlock(StrictModule):
             execution=execution,
             block_size=block_size,
             accumulation_dtype=accumulation_dtype,
+            dtype=param_dtype,
             key=attention_key,
         )
         self.attention_norm = eqx.nn.RMSNorm(
-            self.width, eps=float(norm_eps), use_bias=False
+            self.width, eps=float(norm_eps), use_bias=False, dtype=param_dtype
         )
         self.feed_forward_norm = eqx.nn.RMSNorm(
-            self.width, eps=float(norm_eps), use_bias=False
+            self.width, eps=float(norm_eps), use_bias=False, dtype=param_dtype
         )
         self.gate = Linear(
             in_size=self.width,
             out_size=hidden,
             activation=None,
             use_bias=False,
+            dtype=param_dtype,
             key=gate_key,
         )
         self.value = Linear(
@@ -224,6 +252,7 @@ class LatentTokenBlock(StrictModule):
             out_size=hidden,
             activation=None,
             use_bias=False,
+            dtype=param_dtype,
             key=value_key,
         )
         self.output = Linear(
@@ -231,6 +260,7 @@ class LatentTokenBlock(StrictModule):
             out_size=self.width,
             activation=None,
             use_bias=False,
+            dtype=param_dtype,
             key=output_key,
         )
 
@@ -261,7 +291,7 @@ class LatentTokenBlock(StrictModule):
         feed_forward = self.output(
             jnn.silu(self.gate(normalized)) * self.value(normalized)
         )
-        updated = (updated + feed_forward) * flattened_mask[..., None]
+        updated = _masked(updated + feed_forward, flattened_mask)
         return updated.reshape(array.shape)
 
     def _value_regularity(self) -> DerivativeRegularity | None:
@@ -287,7 +317,11 @@ class LatentTokenBlock(StrictModule):
 
 
 class LatentTokenProcessor(StrictModule):
-    """Shared fixed-cardinality latent processor used by UPT-style models."""
+    """Shared fixed-cardinality latent processor used by UPT-style models.
+
+    `dtype` selects the real floating dtype of every block parameter; `None`
+    keeps JAX's default floating dtype.
+    """
 
     blocks: tuple[LatentTokenBlock, ...]
     width: int
@@ -307,8 +341,11 @@ class LatentTokenProcessor(StrictModule):
         block_size: int | None = None,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.width = int(width)
         self.depth = int(depth)
         if self.depth <= 0:
@@ -324,6 +361,7 @@ class LatentTokenProcessor(StrictModule):
                 block_size=block_size,
                 accumulation_dtype=accumulation_dtype,
                 norm_eps=norm_eps,
+                dtype=param_dtype,
                 key=block_key,
             )
             for block_key in jr.split(key, self.depth)
@@ -374,7 +412,13 @@ class LatentTokenProcessor(StrictModule):
 
 
 class UPT(AbstractEncodedOperatorModel):
-    """Universal Physics Transformer with fixed latent tokens and query decoding."""
+    """Universal Physics Transformer with fixed latent tokens and query decoding.
+
+    `dtype` selects the real floating dtype of every learned parameter: lifts,
+    latent tokens, attention, processor, normalization and projection. It is a
+    construction choice, not an input cast; `None` keeps JAX's default floating
+    dtype.
+    """
 
     operator_architecture = "UPT"
 
@@ -412,8 +456,11 @@ class UPT(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)
@@ -445,10 +492,11 @@ class UPT(AbstractEncodedOperatorModel):
             in_size=self.in_channels + self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=keys[0],
         )
-        self.latent_tokens = jr.normal(keys[1], (self.num_tokens, self.width)) / jnp.sqrt(
-            float(self.width)
+        self.latent_tokens = _scaled_normal(
+            keys[1], (self.num_tokens, self.width), param_dtype
         )
         attention_kwargs: _AttentionOptions = {
             "num_heads": int(num_heads),
@@ -457,6 +505,7 @@ class UPT(AbstractEncodedOperatorModel):
             "execution": attention_execution,
             "block_size": attention_block_size,
             "accumulation_dtype": accumulation_dtype,
+            "dtype": param_dtype,
         }
         self.encoder_attention = MeasureAwareAttention(
             source_channels=self.width,
@@ -475,12 +524,14 @@ class UPT(AbstractEncodedOperatorModel):
             execution=attention_execution,
             block_size=attention_block_size,
             accumulation_dtype=accumulation_dtype,
+            dtype=param_dtype,
             key=keys[3],
         )
         self.query_lift = Linear(
             in_size=self.coord_dim,
             out_size=self.width,
             activation=jnn.gelu,
+            dtype=param_dtype,
             key=keys[4],
         )
         self.decoder_attention = MeasureAwareAttention(
@@ -490,11 +541,14 @@ class UPT(AbstractEncodedOperatorModel):
             key=keys[5],
             **attention_kwargs,
         )
-        self.decoder_norm = eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
+        self.decoder_norm = eqx.nn.RMSNorm(
+            self.width, eps=1e-6, use_bias=False, dtype=param_dtype
+        )
         self.projection = Linear(
             in_size=self.width,
             out_size=self.out_channels,
             activation=None,
+            dtype=param_dtype,
             key=keys[6],
         )
 
@@ -592,7 +646,7 @@ class UPT(AbstractEncodedOperatorModel):
             query_mask=query_mask,
         )
         decoded = _feature_norm(self.decoder_norm, query_features + attended)
-        output = self.projection(decoded) * query_mask[..., None]
+        output = _masked(self.projection(decoded), query_mask)
         shaped = output.reshape(
             state.case_shape + query.sample_shape + (self.out_channels,)
         )
@@ -655,7 +709,11 @@ def _predict_abupt(
 
 
 class ABUPT(AbstractEncodedOperatorModel):
-    """Anchored-branched UPT with typed physical branches and cross-attention."""
+    """Anchored-branched UPT with typed physical branches and cross-attention.
+
+    `dtype` selects the real floating dtype of every learned parameter; `None`
+    keeps JAX's default floating dtype.
+    """
 
     operator_architecture = "ABUPT"
     _operator_prediction_builder: ClassVar = staticmethod(_predict_abupt)
@@ -699,8 +757,11 @@ class ABUPT(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
+        dtype: DTypeLike | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        # Resolve an explicit parameter dtype before any key use.
+        param_dtype = None if dtype is None else real_precision_dtype_name(dtype)
         self.graph = graph
         self.conditioning_names = graph.conditioning_names
         self.prediction_names = graph.prediction_names
@@ -785,13 +846,14 @@ class ABUPT(AbstractEncodedOperatorModel):
                 in_size=self.input_channels[name] + self.coord_dims[name],
                 out_size=self.width,
                 activation=jnn.gelu,
+                dtype=param_dtype,
                 key=next(keys),
             )
             for name in self.conditioning_names
         )
-        self.role_embeddings = jr.normal(
-            next(keys), (len(self.conditioning_names), self.width)
-        ) / jnp.sqrt(float(self.width))
+        self.role_embeddings = _scaled_normal(
+            next(keys), (len(self.conditioning_names), self.width), param_dtype
+        )
         self.self_processors = tuple(
             tuple(
                 LatentTokenBlock(
@@ -803,6 +865,7 @@ class ABUPT(AbstractEncodedOperatorModel):
                     execution=attention_execution,
                     block_size=attention_block_size,
                     accumulation_dtype=accumulation_dtype,
+                    dtype=param_dtype,
                     key=next(keys),
                 )
                 for _ in self.conditioning_names
@@ -819,6 +882,7 @@ class ABUPT(AbstractEncodedOperatorModel):
             "execution": attention_execution,
             "block_size": attention_block_size,
             "accumulation_dtype": accumulation_dtype,
+            "dtype": param_dtype,
         }
         self.interaction_attention = tuple(
             MeasureAwareAttention(key=next(keys), **attention_kwargs) for _ in groups
@@ -828,6 +892,7 @@ class ABUPT(AbstractEncodedOperatorModel):
                 in_size=self.coord_dims[name],
                 out_size=self.width,
                 activation=jnn.gelu,
+                dtype=param_dtype,
                 key=next(keys),
             )
             for name in self.prediction_names
@@ -837,7 +902,7 @@ class ABUPT(AbstractEncodedOperatorModel):
             for _ in self.prediction_names
         )
         self.decoder_norms = tuple(
-            eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
+            eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False, dtype=param_dtype)
             for _ in self.prediction_names
         )
 
@@ -851,6 +916,7 @@ class ABUPT(AbstractEncodedOperatorModel):
                 in_size=self.width,
                 out_size=output_size(name),
                 activation=None,
+                dtype=param_dtype,
                 key=next(keys),
             )
             for name in self.prediction_names
@@ -893,15 +959,18 @@ class ABUPT(AbstractEncodedOperatorModel):
             raise ValueError(
                 f"ABUPT branch {name!r} cannot choose {anchors} anchors from {count} points."
             )
-        selected = jnp.rint(jnp.linspace(0, count - 1, anchors)).astype(jnp.int32)
+        # Static anchor indices are host data; no floating index grid is traced.
+        selected = np.rint(np.linspace(0, count - 1, anchors)).astype(np.int32)
         anchor_values = jnp.take(features, selected, axis=-2)
-        anchor_values = anchor_values + self.role_embeddings[index]
+        anchor_values = anchor_values + jnp.broadcast_to(
+            self.role_embeddings[index], anchor_values.shape
+        )
         anchor_coordinates = jnp.take(coordinates, selected, axis=-2)
         anchor_weights = jnp.take(weights, selected, axis=-1)
         anchor_mask = jnp.take(mask, selected, axis=-1)
         return EncodedOperatorState(
             kind="sampled_anchor",
-            values=anchor_values * anchor_mask[..., None],
+            values=_masked(anchor_values, anchor_mask),
             coordinates=anchor_coordinates,
             weights=anchor_weights,
             mask=anchor_mask,
@@ -976,7 +1045,7 @@ class ABUPT(AbstractEncodedOperatorModel):
             query_mask=query_mask,
         )
         decoded = _feature_norm(self.decoder_norms[index], query_features + attended)
-        output = self.projections[index](decoded) * query_mask[..., None]
+        output = _masked(self.projections[index](decoded), query_mask)
         spec = self.graph.branch(branch_name).output_spec
         assert spec is not None
         channels = _get_size(spec.channels)

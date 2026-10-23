@@ -446,6 +446,7 @@ replace-imports-with-any = [
   "parameter_targets.**",
   "petsc4py.**",
   "psutil.**",
+  "pyscf.**",
   "pyvista.**",
   "qdesignoptimizer.**",
   "qiskit_metal.**",
