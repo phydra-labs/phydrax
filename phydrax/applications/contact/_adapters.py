@@ -17,9 +17,14 @@ from jaxtyping import PyTree
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.contact import (
+from ...discretization.contact._compiled_search import (
+    CompiledContactSearchPlan,
+    ContactSearchPlan,
+    LBVHContactSearchPlan,
+)
+from ...discretization.contact._participant import ContactParticipantScene
+from ...discretization.contact._search import (
     ContactCandidateEpoch,
-    ContactParticipantScene,
     DenseContactSearchPlan,
     SweepAndPruneContactSearchPlan,
 )
@@ -56,7 +61,7 @@ class NeuralContactAdapter(StrictModule, NonTrainableState):
     """
 
     scene: ContactParticipantScene
-    search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan
+    search: ContactSearchPlan
     closure_plan: ContactClosurePlan
     route_state: ContactRouteState
     candidate_epoch: ContactCandidateEpoch
@@ -71,7 +76,12 @@ class NeuralContactAdapter(StrictModule, NonTrainableState):
     def __init__(
         self,
         scene: ContactParticipantScene,
-        search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan,
+        search: (
+            DenseContactSearchPlan
+            | SweepAndPruneContactSearchPlan
+            | CompiledContactSearchPlan
+            | LBVHContactSearchPlan
+        ),
         closure_plan: ContactClosurePlan,
         route_state: ContactRouteState,
         candidate_epoch: ContactCandidateEpoch,
@@ -85,11 +95,20 @@ class NeuralContactAdapter(StrictModule, NonTrainableState):
         activation_distance: float | None = None,
     ) -> None:
         if not isinstance(
-            search, (DenseContactSearchPlan, SweepAndPruneContactSearchPlan)
+            search,
+            (
+                DenseContactSearchPlan,
+                SweepAndPruneContactSearchPlan,
+                CompiledContactSearchPlan,
+                LBVHContactSearchPlan,
+            ),
         ):
             raise TypeError("search must be a canonical contact search plan.")
-        if candidate_epoch.search_id != search.plan_id:
-            raise ValueError("candidate_epoch belongs to another search plan.")
+        if (
+            candidate_epoch.search_id != search.plan_id
+            or candidate_epoch.topology_id != scene.scene_id
+        ):
+            raise ValueError("candidate_epoch belongs to another search plan or scene.")
         if route_state.closure_id != closure_plan.closure_id:
             raise ValueError("route_state belongs to another contact closure.")
         if not callable(state_trace) or (

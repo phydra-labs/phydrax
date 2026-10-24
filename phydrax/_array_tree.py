@@ -179,6 +179,19 @@ class ArrayPyTreeSchema(StrictModule):
     def leaf_paths(self) -> tuple[str, ...]:
         return tuple(leaf.path for leaf in self.leaves)
 
+    @checked
+    def same_intrinsic_contract(self, other: ArrayPyTreeSchema, /) -> bool:
+        """Compare structure/leaf contracts, not case axes or scientific identity."""
+        return (
+            self.treedef == other.treedef
+            and len(self.leaves) == len(other.leaves)
+            and all(
+                (first.path, first.shape, first.dtype)
+                == (second.path, second.shape, second.dtype)
+                for first, second in zip(self.leaves, other.leaves, strict=True)
+            )
+        )
+
     def validate(self, tree: PyTree[Any], /) -> tuple[int, ...]:
         """Validate exact structure, paths, intrinsic shapes, and dtypes."""
         path_leaves, treedef = jax.tree_util.tree_flatten_with_path(tree)

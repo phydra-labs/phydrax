@@ -51,6 +51,7 @@ from ...backends._mosaic import lower_mosaic_or_reference
 
 
 type Tangent = Array | ad.Zero
+type Primal = Array | ad.UndefinedPrimal
 
 _VELOCITY = 0
 _VELOCITY_GRADIENT = 1
@@ -472,6 +473,47 @@ def _jvp(
     return result, tuple(tangent)
 
 
+def _transpose(
+    cotangents: tuple[Tangent, ...],
+    *operands: Primal,
+    outputs: tuple[int, ...],
+) -> tuple[Tangent | None, ...]:
+    """Transpose the reference with the known route operands held fixed."""
+
+    live_outputs = tuple(
+        output
+        for output, cotangent in zip(outputs, cotangents, strict=True)
+        if not isinstance(cotangent, ad.Zero)
+    )
+    if not live_outputs:
+        return tuple(
+            ad.Zero(value.aval) if isinstance(value, ad.UndefinedPrimal) else None
+            for value in operands
+        )
+
+    def reference(*values: Array) -> tuple[Array, ...]:
+        iterator = iter(values)
+        arguments = tuple(
+            next(iterator) if isinstance(value, ad.UndefinedPrimal) else value
+            for value in operands
+        )
+        return _reference(*arguments, outputs=live_outputs)
+
+    templates = tuple(
+        jax.ShapeDtypeStruct(value.aval.shape, value.aval.dtype)
+        for value in operands
+        if isinstance(value, ad.UndefinedPrimal)
+    )
+    pullback = jax.linear_transpose(reference, *templates)
+    result = iter(
+        pullback(tuple(value for value in cotangents if not isinstance(value, ad.Zero)))
+    )
+    return tuple(
+        next(result) if isinstance(value, ad.UndefinedPrimal) else None
+        for value in operands
+    )
+
+
 def _placeholder(dtype: jnp.dtype, /) -> Array:
     return jnp.zeros((), dtype=dtype)
 
@@ -530,6 +572,7 @@ def _dead_code_elimination(
 
 
 ad.primitive_jvps[_moments_p] = _jvp
+ad.primitive_transposes[_moments_p] = _transpose
 batching.primitive_batchers[_moments_p] = _batch
 pe.dce_rules[_moments_p] = _dead_code_elimination
 

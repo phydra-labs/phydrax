@@ -29,7 +29,7 @@ from ._constraints import SampledControlFeasibility
 from ._cost import SampledControlLoss
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
-from ._problem import _identifier, ControlProblem
+from ._problem import _identifier, _require_array_dynamics, ControlProblem
 from ._trajectory import ControlResult, ControlTrajectory
 
 
@@ -518,7 +518,7 @@ def _stage_model_factory(
     flow: ILQRFlow | None,
     /,
 ) -> tuple[_StageModel, Array, Array]:
-    state_layout = problem.dynamics.system.state_layout
+    state_layout = _require_array_dynamics(problem).system.state_layout
     geometry = state_layout.geometry
     state_size = state_layout.local_size
     control_size = int(np.prod(problem.control_shape))

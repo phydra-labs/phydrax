@@ -11,9 +11,9 @@
 - `context` enters thread-local numerical settings for a lexical scope.
 - `environment` projects runtime settings into the environment of a child
   process that has not started.
-- `snapshot`, `x64_enabled`, `logging_enabled`, and
-  `default_prng_implementation` observe effective settings without initializing
-  any JAX backend.
+- `snapshot`, `x64_enabled`, `compilation_cache_enabled`, `logging_enabled`,
+  and `default_prng_implementation` observe effective settings without
+  initializing any JAX backend.
 
 Scientific precision, execution plans, and observed runtime facts remain with
 their owners; these settings only select the process environment they run in.
@@ -50,7 +50,11 @@ from ._config_types import (
     TransferGuard,
     WorkerSetting,
 )
-from ._jax_config import default_prng_implementation, x64_enabled
+from ._jax_config import (
+    compilation_cache_enabled,
+    default_prng_implementation,
+    x64_enabled,
+)
 
 
 __all__ = [
@@ -73,6 +77,7 @@ __all__ = [
     "RuntimeConfig",
     "TransferGuard",
     "WorkerSetting",
+    "compilation_cache_enabled",
     "configure",
     "context",
     "default_prng_implementation",

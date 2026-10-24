@@ -133,6 +133,8 @@ the NVIDIA dependencies selected from installed wheels.
 
 ::: phydrax.config.x64_enabled
 
+::: phydrax.config.compilation_cache_enabled
+
 ::: phydrax.config.logging_enabled
 
 ::: phydrax.config.default_prng_implementation

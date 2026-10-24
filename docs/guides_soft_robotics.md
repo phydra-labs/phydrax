@@ -16,7 +16,7 @@ inspect each result's `successful`, `status`, `valid`, and residual fields.
 | Complete vector codecs | `phydrax.dynamics` | `PlantStateVectorCodec`, `ControlVectorCodec`, `EncodedPlantState`, `EncodedPlantVector`, `EncodedControl`, `PlantPowerEvidence` |
 | Native and reduced rods | `phydrax.applications.solid_mechanics` | `RodPlan`, `RodStrainBasisPlan`, `ReducedRodPlan`, `RodReconstructionPlan`, `PreparedReducedRodDynamics` |
 | Tendons and other rod actuators | `phydrax.applications.solid_mechanics` | `TendonRoutePlan`, `FrictionlessElasticTendonPlan`, `TendonDrivenRodPlant`, pressure, intrinsic-strain, variable-stiffness, and magnetic plans |
-| Capsule contact | `phydrax.applications.contact` | `RodCapsuleGeometryPlan`, `RodContactSearchPlan`, `RodContactCCDPlan`, `RodContactManifoldState`, `CompositeContactResponse` |
+| Capsule contact | `phydrax.applications.contact` | `RodCapsuleGeometryPlan`, `RodContactSearchPlan`, `RodContactCCDPlan`, `ContactManifoldState`, `CompositeContactResponse` |
 | Atomic reduced-rod contact | `phydrax.applications.solid_mechanics` | `PreparedReducedRodContactPlant`, `FRICTIONLESS_ROD_CONTACT_CAPABILITY`, `ISOTROPIC_COULOMB_ROD_CONTACT_CAPABILITY` |
 | Tasks, observations, control, inference | `phydrax.applications.robotics` | continuum IK, trajectory, observation, calibration, co-design, and MPC contracts |
 | Floating and rigid–soft composition | solid mechanics and robotics | `FloatingReducedRodPlant`, plant ports, attachment plans, `HybridRigidSoftPlant` |
@@ -310,17 +310,27 @@ plane capacity, and exact `dense` or `bvh` route. Search returns a full
 traversal is failure, never truncation. Canonical route keys distinguish
 capsule–capsule and capsule–plane features and filter adjacent self-contact.
 
-`RodContactManifoldState` is complete persistent contact history: occupied and
-active masks, route keys, witnesses, normals, tangent bases, impulses,
-stick/slip, age, retention, and material revision. Its transition remaps by
-canonical route key; it does not match contacts by array position.
+Rod contact history is the generic device `ContactManifoldState` of the search
+catalogue (`empty_rod_contact_manifold`): occupied and active masks, route keys,
+left/right surface witnesses, normals, tangent bases, impulses, branch labels,
+slip, age, retention, material and transaction revisions.
+`update_rod_contact_manifold` joins witnesses by a device sorted-key join with
+deterministic retention and eviction; active overflow, duplicate keys and
+cross-catalogue keys refuse. Rod contact frames are built from body-fixed
+capsule axes, so retained impulses follow the material frame
+(`ContactFrameTransport.MATERIAL_FRAME`). `record_contact_response` records
+accepted impulses, branches and slip by key. Plane routes carry the selected
+capsule endpoint as their witness slot, so an endpoint switch is a new route.
 
 `RodContactCCDPlan` uses conservative advancement over start/end centerlines.
 `RodContactCCDEvidence` distinguishes a full-step-safe interval, an impact, and
 a certified safe prefix. A safe prefix alone is not a successful full requested
 step. `CompositeContactResponse` composes participant blocks through the true
-Delassus action and returns candidate and accepted impulses with cone,
-complementarity, equation, dissipation, duality, and finite evidence.
+Delassus action and lowers it to the common operator cone program with an
+explicit `ContactCertificatePolicy`; it returns candidate and accepted impulses
+with the cone's physical certificates plus per-block duality and finite
+evidence. `solve_dense_authority` solves the same law over the explicitly
+materialized bounded authority for parity checks.
 
 `PreparedReducedRodContactPlant` is exactly one of these spatial 3-D tuples:
 

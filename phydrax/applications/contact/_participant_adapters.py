@@ -20,6 +20,11 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization.contact._articulated_geometry import (
+    ArticulatedCollisionGeometry,
+    ArticulatedContactTrajectory,
+    ArticulatedLiftedPath,
+)
 from ...discretization.contact._guarantee import (
     ContactCapability,
     ContactGuaranteeEvidence,
@@ -32,6 +37,7 @@ from ...discretization.contact._inversion import (
 )
 from ...discretization.contact._participant import (
     AbstractContactParticipant,
+    ContactParticipantScene,
     FunctionContactParticipant,
     LinearContactParticipant,
     ParticipantTrajectoryBounds,
@@ -47,6 +53,9 @@ from ...discretization.contact._surface import (
 from ...discretization.fem._generic import FiniteElementDiscretization
 from ...discretization.mpm._transfer import gather_apic
 from ...discretization.mpm._types import MPMRuntimeState
+from ...discretization.particle._reduced_articulation import (
+    PreparedReducedArticulation,
+)
 from ...equations._finite_element_material import MaterialTransaction
 from ...equations._finite_element_variational import (
     CompiledFiniteElementProblem,
@@ -318,6 +327,150 @@ def make_articulated_contact_participant(
         effort_pullback_action=effort_pullback_action,
         bounds_action=bounds_action,
         participant_id=participant_id,
+    )
+
+
+@final
+class ArticulatedPrimitiveContactParticipant(AbstractContactParticipant):
+    """Body-attached spheres/capsules of one prepared reduced articulation.
+
+    The source state is the lifted generalized configuration; its tangent is
+    the articulation's generalized velocity space shared with the mass and
+    Jacobian operators. Contact vertices are sphere centers and capsule axis
+    endpoints placed by native forward kinematics. Endpoint trajectory bounds
+    use the lifted straight coordinate path ``q(s) = q0 + s (q1 - q0)``;
+    contact steps bind their exact segment path through :meth:`trajectory`.
+    """
+
+    articulation: PreparedReducedArticulation
+    geometry: ArticulatedCollisionGeometry
+    configuration_space: ArraySpace
+    contact_space: ArraySpace
+    _participant_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        articulation: PreparedReducedArticulation,
+        geometry: ArticulatedCollisionGeometry,
+        /,
+    ) -> None:
+        if geometry.articulation_id != articulation.prepared_id:
+            raise ValueError("Collision geometry belongs to another articulation.")
+        dtype = articulation.reference_position.dtype
+        self.articulation = articulation
+        self.geometry = geometry
+        self.configuration_space = ArraySpace(
+            (articulation.nq,),
+            dtype=dtype,
+            space_id=f"{articulation.prepared_id}:lifted-configuration",
+        )
+        self.contact_space = ArraySpace((geometry.vertex_count, 3), dtype=dtype)
+        self._participant_id = canonical_fingerprint(
+            {
+                "kind": "articulated-primitive-contact-participant",
+                "geometry": geometry.geometry_id,
+            }
+        )
+
+    @property
+    def source_space(self) -> AbstractVectorSpace:
+        return self.configuration_space
+
+    @property
+    def tangent_space(self) -> AbstractVectorSpace:
+        return self.articulation.generalized_velocity_space
+
+    @property
+    def contact_velocity_space(self) -> ArraySpace:
+        return self.contact_space
+
+    @property
+    def surface_plan(self) -> CollisionSurfacePlan:
+        return self.geometry.surface_plan
+
+    @property
+    def participant_id(self) -> str:
+        return self._participant_id
+
+    @property
+    def capabilities(self) -> ContactCapability:
+        return (
+            ContactCapability.STATIC_DISTANCE
+            | ContactCapability.NONLINEAR_TRAJECTORY
+            | ContactCapability.DIFFERENTIABLE_KINEMATICS
+            | ContactCapability.EFFORT_PULLBACK
+        )
+
+    def positions(self, state: PyTree[Any], /) -> Array:
+        configuration = self.source_space.validate(state)
+        return self.geometry.vertex_positions(self.articulation, configuration)
+
+    def velocities(self, state: PyTree[Any], rates: PyTree[Any], /) -> Array:
+        configuration = self.source_space.validate(state)
+        velocity = self.tangent_space.validate(rates)
+        return self.contact_velocity_space.validate(
+            self.geometry.vertex_velocities(self.articulation, configuration, velocity)
+        )
+
+    def effort_pullback(
+        self, state: PyTree[Any], surface_effort: ArrayLike, /
+    ) -> PyTree[Array]:
+        configuration = self.source_space.validate(state)
+        effort = self.contact_effort_space.validate(
+            jnp.asarray(surface_effort, dtype=self.contact_velocity_space.dtype)
+        )
+        return self.effort_space.validate(
+            self.geometry.vertex_force_pullback(self.articulation, configuration, effort)
+        )
+
+    def trajectory(
+        self,
+        start_configuration: ArrayLike,
+        velocity: ArrayLike,
+        step_size: ArrayLike,
+        /,
+        *,
+        revision: ArrayLike = 0,
+    ) -> ArticulatedContactTrajectory:
+        """Bind the segment path ``q(s) = q0 + s h v`` used by every consumer."""
+        return ArticulatedContactTrajectory(
+            self.geometry,
+            ArticulatedLiftedPath(
+                self.articulation,
+                start_configuration,
+                velocity,
+                step_size,
+                revision=revision,
+            ),
+        )
+
+    def trajectory_bounds(
+        self, start_state: PyTree[Any], end_state: PyTree[Any], /
+    ) -> ParticipantTrajectoryBounds:
+        start = self.source_space.validate(start_state)
+        end = self.source_space.validate(end_state)
+        enclosure = self.trajectory(start, end - start, 1.0).enclosure(0.0, 1.0)
+        return ParticipantTrajectoryBounds(
+            enclosure.lower,
+            enclosure.upper,
+            enclosure.guarantee_level,
+            enclosure.finite,
+            enclosure.successful,
+            self.participant_id,
+        )
+
+
+@checked
+def prepare_articulated_contact_scene(
+    articulation: PreparedReducedArticulation,
+    geometry: ArticulatedCollisionGeometry,
+    /,
+) -> ContactParticipantScene:
+    """One-participant contact scene with the geometry's static planes."""
+    return ContactParticipantScene(
+        (ArticulatedPrimitiveContactParticipant(articulation, geometry),),
+        planes=geometry.planes,
     )
 
 
@@ -1251,8 +1404,10 @@ def prepare_implicit_mpm_contact_participant(
 
 
 __all__ = [
+    "ArticulatedPrimitiveContactParticipant",
     "RigidContactParticipant",
     "make_articulated_contact_participant",
+    "prepare_articulated_contact_scene",
     "prepare_mpm_contact_participant",
     "prepare_point_contact_participant",
     "FiniteElementContactParticipant",

@@ -235,7 +235,7 @@ def test_static_static_features_do_not_generate_routes() -> None:
         edge_edge_capacity=0,
         face_vertex_capacity=0,
         activation_distance=0.1,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
     lbvh = LBVHContactSearchPlan(
         scene,
         edge_vertex_capacity=8,
@@ -243,11 +243,11 @@ def test_static_static_features_do_not_generate_routes() -> None:
         face_vertex_capacity=0,
         activation_distance=0.1,
         maximum_traversal_visits=256,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
 
     assert int(epoch.edge_vertex.actual_count) == 0
-    assert int(compiled.edge_vertex.actual_count) == 0
-    assert int(lbvh.edge_vertex.actual_count) == 0
+    assert int(compiled.epoch.edge_vertex.actual_count) == 0
+    assert int(lbvh.epoch.edge_vertex.actual_count) == 0
 
 
 def test_dense_compiled_and_lbvh_search_share_feature_policy_semantics() -> None:
@@ -293,7 +293,7 @@ def test_dense_compiled_and_lbvh_search_share_feature_policy_semantics() -> None
         edge_edge_capacity=0,
         face_vertex_capacity=0,
         activation_distance=0.06,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
     lbvh = LBVHContactSearchPlan(
         scene,
         edge_vertex_capacity=8,
@@ -301,11 +301,19 @@ def test_dense_compiled_and_lbvh_search_share_feature_policy_semantics() -> None
         face_vertex_capacity=0,
         activation_distance=0.06,
         maximum_traversal_visits=256,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
 
     assert int(dense.edge_vertex.actual_count) > 0
-    assert int(compiled.edge_vertex.actual_count) > 0
-    assert int(lbvh.edge_vertex.actual_count) > 0
+    assert int(compiled.epoch.edge_vertex.actual_count) > 0
+    assert int(lbvh.epoch.edge_vertex.actual_count) > 0
+    np.testing.assert_array_equal(
+        np.asarray(compiled.epoch.edge_vertex.route_keys),
+        np.asarray(dense.edge_vertex.route_keys),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(lbvh.epoch.edge_vertex.route_keys),
+        np.asarray(dense.edge_vertex.route_keys),
+    )
     assert bool(compiled.evidence.complete)
     kinematics = evaluate_contact_kinematics(
         scene,

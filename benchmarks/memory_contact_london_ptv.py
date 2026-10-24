@@ -194,11 +194,11 @@ def main() -> None:
         contact = _contact
         ptv = _ptv
         if not options.baseline:
-            from phydrax.applications.contact._route_state import _route_matches
+            from phydrax.applications.contact._route_state import match_route_keys
             from phydrax.velocimetry.synthetic import PTVScenarioKind, PTVScenarioPlan
             from phydrax.velocimetry.synthetic._ptv import _occlusion_camera
 
-            contact = lambda k, v: _route_matches(k, v, k, v)
+            contact = lambda k, v: match_route_keys(k, v, k, v)
             ptv_plan = PTVScenarioPlan(
                 PTVScenarioKind.OCCLUSION,
                 particle_capacity=count,

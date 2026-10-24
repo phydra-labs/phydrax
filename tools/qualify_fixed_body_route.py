@@ -30,14 +30,10 @@ _URDF = """
 
 
 def _prepared_route() -> Any:
-    # ty: ignore[missing-argument]
-    adaptation = parse_urdf_text(_URDF)
-    particles = adaptation.particles.prepare()
-    bodies = adaptation.bodies.prepare(particles)
-    graph = adaptation.joints.prepare(bodies, adaptation.reference)
-    articulation = adaptation.articulation.prepare(graph, adaptation.reference)
-    base = int(adaptation.link_ids.id_for_name("base"))
-    link = int(adaptation.link_ids.id_for_name("link"))
+    model = parse_urdf_text(_URDF, root_policy="fixed_world").model
+    articulation = model.prepare().articulation
+    base = int(model.body_names.id_for_name("base"))
+    link = int(model.body_names.id_for_name("link"))
     route = FixedBodyRoutePlan(("route",), (0, 2), (base, link)).prepare(
         articulation, jnp.asarray([[0.0, 0.7, 0.0], [0.5, -0.2, 0.0]])
     )

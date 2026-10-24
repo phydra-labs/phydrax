@@ -67,6 +67,11 @@ def x64_enabled() -> bool:
     return bool(jax.enable_x64.value)
 
 
+def compilation_cache_enabled() -> bool:
+    """Observe persistent compilation caching without initializing a backend."""
+    return bool(jax.config.jax_enable_compilation_cache)
+
+
 def process_x64_enabled() -> bool:
     """Process-wide 64-bit enablement, ignoring any scoped context."""
     return bool(jax.enable_x64.get_global())
@@ -438,6 +443,7 @@ __all__ = [
     "RUNTIME_ENVIRONMENT_KEYS",
     "XLA_FLAGS_ENVIRONMENT",
     "backends_initialized",
+    "compilation_cache_enabled",
     "configuration_values",
     "cpu_collectives_implementation",
     "cpu_device_count",

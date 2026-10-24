@@ -504,3 +504,47 @@ def test_reduced_articulation_scenario_3() -> None:
                 body_ids[:-1],
                 body_ids[1:],
             ).prepare(graph, reference)
+
+
+def test_body_id_lookups_compile_with_closed_over_articulation() -> None:
+    body_ids, _, articulation = _chain()
+    tip = int(body_ids[3])
+    configuration = jnp.asarray([0.4, -0.15])
+    velocity = jnp.asarray([0.7, -0.3])
+
+    def frame_actions(point: jax.Array, rate: jax.Array) -> tuple[jax.Array, ...]:
+        operator = articulation.frame_jacobian_operator(point, tip)
+        return (
+            operator.mv(rate),
+            operator.transpose_mv(jnp.ones((6,))),
+            articulation.body_transform(point, tip),
+        )
+
+    compiled = jax.jit(frame_actions)(configuration, velocity)
+    eager = frame_actions(configuration, velocity)
+
+    for compiled_value, eager_value in zip(compiled, eager, strict=True):
+        assert jnp.allclose(compiled_value, eager_value, atol=1.0e-12)
+    assert jnp.array_equal(articulation.body_ids, body_ids)
+    with pytest.raises(ValueError, match="not part of this articulation"):
+        articulation.body_transform(configuration, 999)
+
+
+def test_generalized_spaces_and_hinge_coordinates() -> None:
+    _, _, articulation = _chain()
+    configuration = jnp.asarray([0.4, -0.15])
+    velocity_space = articulation.generalized_velocity_space
+    effort_space = articulation.generalized_effort_space
+
+    assert velocity_space.shape == (articulation.nv,)
+    assert effort_space.primal.compatible(velocity_space)
+    assert not effort_space.compatible(velocity_space)
+    assert articulation.body_jacobian_operator(configuration).source.compatible(
+        velocity_space
+    )
+    assert articulation.hinge_dof_indices == (0,)
+    wrapped = articulation.integrate_configuration(
+        jnp.asarray([3.0, 0.0]), jnp.asarray([1.0, 1.0]), 1.0
+    )
+    assert jnp.allclose(wrapped[0], 4.0 - 2.0 * jnp.pi)
+    assert jnp.allclose(wrapped[1], 1.0)

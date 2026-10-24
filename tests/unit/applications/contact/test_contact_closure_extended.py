@@ -11,10 +11,54 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.applications.contact._closure_sensitivity import ContactConeTangent
 from phydrax.applications.contact._cone import (
     contact_cone_numeric_revision_matches,
     contact_cone_result_is_certified,
+    contact_cone_space,
+    ContactBlockLayout,
+    ContactCertificatePolicy,
+    ContactConeProgram,
+    dense_contact_response,
+    local_block_contact_response,
 )
+from phydrax.linalg.svd import DenseSVD, SVDSolvePolicy
+
+
+def _certificate(tolerance: float = 1.0e-8) -> ContactCertificatePolicy:
+    return ContactCertificatePolicy(
+        ("contact",),
+        reference_velocity=1.0,
+        impulse_tolerance=tolerance,
+        law_velocity_tolerance=tolerance,
+        slip_speed_tolerance=tolerance,
+        complementarity_work_tolerance=tolerance,
+        friction_work_tolerance=tolerance,
+    )
+
+
+def _single_program(
+    free: Any,
+    program_id: str,
+    *,
+    key: int = 1,
+    tolerance: float = 1.0e-8,
+    mechanical_available: bool = True,
+) -> ContactConeProgram:
+    return ContactConeProgram(
+        dense_contact_response(
+            jnp.eye(2, dtype=jnp.float64), contact_cone_space(1, 2, jnp.float64)
+        ),
+        jnp.asarray(free, dtype=jnp.float64),
+        0.0,
+        0.5,
+        jnp.asarray((key,), dtype=jnp.int64),
+        jnp.asarray((True,)),
+        ContactBlockLayout.coulomb(1, 2),
+        _certificate(tolerance),
+        program_id,
+        mechanical_available=mechanical_available,
+    )
 
 
 def _closure_case() -> Any:
@@ -167,8 +211,13 @@ def test_contact_closure_extended_scenario_1() -> None:
         dynamic_friction=0.5,
         restitution=0.2,
     )
+    certificate = _certificate()
     program = phx.applications.contact.build_contact_cone_program(
-        kinematics, materials, blocks, compliance=1.0e-8
+        kinematics,
+        materials,
+        local_block_contact_response(blocks),
+        certificate=certificate,
+        compliance=1.0e-8,
     )
     result = phx.applications.contact.solve_contact_cone(program)
     rolling = phx.applications.contact.evaluate_rolling_spinning_resistance(
@@ -181,15 +230,8 @@ def test_contact_closure_extended_scenario_1() -> None:
         jnp.broadcast_to(jnp.asarray((0.0, 0.0, 1.0)), (route_count, 3)),
         jnp.ones((route_count,)),
     )
-    differentiable_program = phx.applications.contact.ContactConeProgram(
-        jnp.asarray(((-1.0, 0.0),)),
-        jnp.eye(2),
-        jnp.zeros((2,)),
-        jnp.asarray((0.5,)),
-        jnp.asarray((1,), dtype=jnp.int64),
-        jnp.asarray((True,)),
-        1,
-        "interior-cone-derivative",
+    differentiable_program = _single_program(
+        jnp.asarray(((-1.0, 0.0),)), "interior-cone-derivative"
     )
     differentiable_result = phx.applications.contact.solve_contact_cone(
         differentiable_program
@@ -197,20 +239,21 @@ def test_contact_closure_extended_scenario_1() -> None:
     cone_derivative = phx.applications.contact.contact_cone_solution_jvp(
         differentiable_program,
         differentiable_result,
-        jnp.asarray(((0.1, 0.0),)),
-        jnp.zeros((2, 2)),
+        ContactConeTangent(differentiable_program, free_velocity=((0.1, 0.0),)),
+        regularity=SVDSolvePolicy(DenseSVD(algorithm="qr")),
     )
 
     assert bool(result.evidence.successful)
     assert bool(rolling.successful)
-    assert result.evidence.cone_defect < 1.0e-8
+    assert bool(result.evidence.certificate.cone_valid)
     assert jnp.all(rolling.dissipated_work >= 0.0)
     assert bool(cone_derivative.evidence.successful)
-    assert jnp.all(jnp.isfinite(cone_derivative.impulse_tangent))
+    np.testing.assert_allclose(
+        cone_derivative.impulse_tangent, ((-0.1, 0.0),), atol=1.0e-10
+    )
     assert (
         # ty: ignore[unresolved-attribute]
         cone_derivative.evidence.numeric_revision.solver_id
-        # ty: ignore[unresolved-attribute]
         == differentiable_result.evidence.numeric_revision.solver_id
     )
     np.testing.assert_array_equal(
@@ -363,15 +406,8 @@ def test_contact_closure_extended_scenario_2() -> None:
 
 
 def test_contact_closure_extended_scenario_3() -> None:
-    program = phx.applications.contact.ContactConeProgram(
-        jnp.asarray(((-1.0, 0.0),)),
-        jnp.eye(2),
-        jnp.zeros((2,)),
-        jnp.asarray((0.5,)),
-        jnp.asarray((1,), dtype=jnp.int64),
-        jnp.asarray((True,)),
-        1,
-        "advanced-cone-program",
+    program = _single_program(
+        jnp.asarray(((-1.0, 0.0),)), "advanced-cone-program", tolerance=1.0e-6
     )
     sap = phx.applications.contact.solve_contact_sap(
         program,
@@ -392,7 +428,6 @@ def test_contact_closure_extended_scenario_3() -> None:
     assert bool(semismooth.evidence.successful)
     assert bool(primal_dual.evidence.successful)
     for result in (sap, semismooth, primal_dual):
-        assert result.evidence.numeric_revision is not None
         assert bool(contact_cone_numeric_revision_matches(program, result))
         assert bool(contact_cone_result_is_certified(program, result))
         np.testing.assert_allclose(result.candidate_impulse, result.impulse)
@@ -407,16 +442,7 @@ def test_contact_closure_extended_scenario_3() -> None:
     np.testing.assert_allclose(sap.impulse, ((1.0, 0.0),), atol=1.0e-6)
     np.testing.assert_allclose(semismooth.impulse, ((1.0, 0.0),), atol=1.0e-6)
     np.testing.assert_allclose(primal_dual.impulse, ((1.0, 0.0),), atol=1.0e-4)
-    program = phx.applications.contact.ContactConeProgram(
-        jnp.asarray(((-1.0, 0.0),)),
-        jnp.eye(2),
-        jnp.zeros((2,)),
-        jnp.asarray((0.5,)),
-        jnp.asarray((7,), dtype=jnp.int64),
-        jnp.asarray((True,)),
-        1,
-        "cone-fail-closed",
-    )
+    program = _single_program(jnp.asarray(((-1.0, 0.0),)), "cone-fail-closed", key=7)
     result = phx.applications.contact.solve_contact_sap(
         program,
         solver=phx.applications.contact.SAPContactSolverPlan(
@@ -424,37 +450,17 @@ def test_contact_closure_extended_scenario_3() -> None:
             tolerance=1.0e-8,
         ),
     )
-    stale = phx.applications.contact.ContactConeProgram(
-        jnp.asarray(((-2.0, 0.0),)),
-        program.effective_mass,
-        program.compliance,
-        program.friction,
-        program.route_keys,
-        program.valid,
-        program.tangent_dimension,
-        program.program_id,
-        static_friction=program.static_friction,
-        restitution=program.restitution,
-        mechanical_available=program.mechanical_available,
+    stale = eqx.tree_at(
+        lambda value: value.free_velocity, program, jnp.asarray(((-2.0, 0.0),))
     )
     stale_derivative = phx.applications.contact.contact_cone_solution_jvp(
-        stale,
-        result,
-        jnp.zeros_like(stale.free_velocity),
-        jnp.zeros_like(stale.effective_mass),
+        stale, result, ContactConeTangent(stale)
     )
-    unavailable = phx.applications.contact.ContactConeProgram(
+    unavailable = _single_program(
         program.free_velocity,
-        program.effective_mass,
-        program.compliance,
-        program.friction,
-        program.route_keys,
-        program.valid,
-        program.tangent_dimension,
         "cone-unavailable-material",
-        static_friction=program.static_friction,
-        restitution=program.restitution,
-        mechanical_available=jnp.asarray((False,)),
+        key=7,
+        mechanical_available=False,
     )
     failed = phx.applications.contact.solve_contact_sap(
         unavailable,
@@ -464,18 +470,15 @@ def test_contact_closure_extended_scenario_3() -> None:
         ),
     )
     failed_derivative = phx.applications.contact.contact_cone_solution_jvp(
-        unavailable,
-        failed,
-        jnp.zeros_like(unavailable.free_velocity),
-        jnp.zeros_like(unavailable.effective_mass),
+        unavailable, failed, ContactConeTangent(unavailable)
     )
 
     assert not bool(contact_cone_numeric_revision_matches(stale, result))
     assert not bool(contact_cone_result_is_certified(stale, result))
     assert not bool(stale_derivative.evidence.successful)
     np.testing.assert_array_equal(stale_derivative.impulse_tangent, 0.0)
-    assert failed.evidence.numeric_revision is not None
     assert not bool(failed.evidence.successful)
+    assert not bool(failed.evidence.certificate.material_law_complete)
     assert not bool(contact_cone_result_is_certified(unavailable, failed))
     np.testing.assert_array_equal(failed.impulse, 0.0)
     assert jnp.linalg.norm(failed.candidate_impulse) > 0.0

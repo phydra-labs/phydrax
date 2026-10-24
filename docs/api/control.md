@@ -85,6 +85,38 @@ aliases for the context-last signatures described above.
 
 ::: phydrax.control.DifferentialControlDynamics
 
+### Complete-state plant dynamics
+
+`PlantControlDynamics(plant, state_codec, control_codec, *, parameters,
+retention="endpoint", maximum_retained_bytes=64 MiB)` rolls out an explicitly
+controlled `phydrax.dynamics.AbstractDiscretePlant`. The complete
+`PlantRuntimeState` (payload, clock, step index and key) is the scan carry; the
+state codec is only the controller's continuous view, and failed candidates
+never feed the next step. `parameters` is a required `PlantParameters` and is
+never inferred from the plant. `ControlProblem` keeps the complete initial state
+for plant dynamics while its public `initial_state` is the continuous view.
+`ControlTrajectory.plant_history` is a `PlantControlHistory` holding the
+initial, final and final-candidate complete states; with `retention="full"` it
+also holds time-leading accepted and candidate `PlantRuntimeHistory` stacks,
+and `state_at(index)` restores an ordinary runtime state.
+`maximum_retained_bytes` bounds the per-rollout retained-storage estimate in
+both retention modes before the rollout runs. Sampling MPC accepts these
+dynamics and keeps the selected replay's `plant_history`. With explicit
+`SamplingMPCRealizations`, planning checks the global
+`model_count × retained_storage_bytes` budget against
+`maximum_retained_bytes`, and the replay history declares `realization_count`
+with time-leading retained histories. Realizations are not plant cases:
+`state_at` refuses on such a history until `select_realization(index)` removes
+the model axis, leaving the plant's case axes unchanged. Mode-changing forward
+rollout is supported; no derivative through discrete plant transitions is
+claimed.
+
+::: phydrax.control.PlantControlDynamics
+
+::: phydrax.control.PlantControlHistory
+
+::: phydrax.control.PlantRuntimeHistory
+
 ## Costs and constraints
 
 `evaluate_sampled_cost` uses the left endpoint on every interval and multiplies the

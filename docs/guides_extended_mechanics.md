@@ -11,7 +11,7 @@ Phydrax separates geometric admissibility, physical laws, numerical algorithms, 
 - A planar ball joint is the native revolute anchor-coincidence relation. `HingeJointSetPlan` remains spatial-only.
 - Prismatic joints leave one axial displacement free. Distance joints use a scaled squared-length residual and reject zero rest length.
 
-`prepare_rigid_joint_coordinates` evaluates fixed errors, ball relative rotation, hinge angle/rate, prismatic position/rate, distance/rate, and chart evidence. `RigidJointCoordinateState` supplies multi-turn hinge unwrapping without modifying immutable graph geometry.
+`prepare_rigid_joint_coordinates` evaluates fixed errors, ball relative rotation, hinge angle/rate, prismatic position/rate, distance/rate, and chart evidence. `RigidJointCoordinateState` supplies multi-turn hinge unwrapping without modifying immutable graph geometry; because maximal coordinates only expose poses, it compares consecutive principal endpoints and is valid while each accepted increment stays inside the reported chart margin. Reduced articulations integrate generalized coordinates directly, so `PreparedLiftedJointCoordinates` advances an integer winding history from the actual increment `q0 + h v` instead, with an explicit counter range and overflow refusal.
 
 ## Compliance, damping, and actuation
 
@@ -19,8 +19,10 @@ Joint laws are physical models prepared against stable graph joint IDs:
 
 - `CompliantRigidJointLawPlan` supplies conservative energy and equal/opposite body loads.
 - `DissipativeRigidJointLawPlan` supplies a PSD dissipation law and nonnegative loss rate.
-- `RigidJointEffortMotorPlan` applies generalized effort to a free coordinate.
-- `RigidJointPDServoPlan` provides bounded position/rate feedback with source-power and saturation evidence.
+- `RigidJointEffortMotorPlan` applies a bounded runtime commanded effort to a free hinge-axial or prismatic-axial coordinate.
+- `RigidJointPDServoPlan` provides bounded position/rate feedback toward runtime target coordinates and rates, on hinge-axial (unwrapped) or prismatic-axial coordinates, with source-power and saturation evidence.
+
+Commands are stateless runtime inputs, never plan data. Reduced articulations use `ScalarJointMotorPlan` (command clip, signed gear, effort clip; a zero effort limit is a disabled motor) and executed `ScalarJointDampingPlan` directly on generalized effort, bound to DOFs by joint ID.
 
 A law evaluation reports coordinates, rates, `RigidBodyLoad`, stored energy, dissipation rate, actuator source power, chart margins, compatibility, and finite/valid evidence. Hard-row compatibility is checked explicitly; a spring or motor is not silently applied to a coordinate annihilated by hard projection.
 
@@ -28,7 +30,9 @@ A law evaluation reports coordinates, rates, `RigidBodyLoad`, stored energy, dis
 
 `FixedCapacityUnilateralPlan` and `PreparedUnilateralRows` implement nonnegative fixed-capacity variational-inequality rows with candidate/accepted warm starts and complementarity certificates.
 
-`JointLimitPlan` adds lower and upper hinge stops. It distinguishes free, active, and releasing states; reports gap and velocity complementarity; and atomically rolls back coordinate and impulse state on failure. Limits remain separate from bilateral multipliers.
+`JointLimitPlan` adds lower and upper hinge stops for maximal-coordinate graphs. It distinguishes free, active, and releasing states; reports gap and velocity complementarity; and atomically rolls back coordinate and impulse state on failure. Limits remain separate from bilateral multipliers.
+
+`ReducedJointStopPlan` assembles hinge and prismatic stop rows for reduced articulations on lifted coordinates. Its prepared rows are normal-only, `(joint, side)`-typed, with an exact generalized Jacobian and transpose, and are solved in the same generalized response as contacts rather than as an independent correction after forward dynamics.
 
 ## Hard contact, restitution, and friction
 

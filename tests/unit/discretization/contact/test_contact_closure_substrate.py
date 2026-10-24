@@ -96,9 +96,25 @@ def test_contact_closure_substrate_scenario_1() -> None:
         skin=0.2,
         rebuild_fraction=0.9,
     )
-    permissive_state = permissive.initialize(scene, initial_positions)
-    unsafe = scene.positions(jnp.broadcast_to(jnp.asarray((0.0, -0.11)), source.shape))
-    assert not bool(permissive.update(scene, permissive_state, unsafe).reused)
+
+    def lowered(offset: float) -> Any:
+        return scene.positions(
+            jnp.broadcast_to(jnp.asarray((0.0, -offset)), source.shape)
+        )
+
+    permissive_state = permissive.initialize(scene, lowered(0.3))
+    # The search activated pairs within 2 * envelope, so a per-vertex motion of
+    # 0.11 <= 0.9 * 0.2 keeps the cached epoch complete: every route active at
+    # the moved configuration (zero-envelope search) is already a candidate.
+    # A motion of 0.19 exceeds the 0.18 reuse threshold and forces a rebuild.
+    covered_update = permissive.update(scene, permissive_state, lowered(0.41))
+    assert bool(covered_update.reused)
+    exact = _two_segment_scene()[2].build(scene, lowered(0.41))
+    assert _candidate_rows(exact.edge_vertex)
+    assert _candidate_rows(exact.edge_vertex) <= _candidate_rows(
+        covered_update.candidate.epoch.edge_vertex
+    )
+    assert not bool(permissive.update(scene, permissive_state, lowered(0.49)).reused)
 
     foreign_scene = phx.discretization.PreparedCollisionScene(
         tuple(reversed(scene.surfaces))
@@ -127,7 +143,7 @@ def test_contact_closure_substrate_scenario_1() -> None:
         activation_distance=0.1,
     )
     with pytest.raises(ValueError, match="must have shape"):
-        compiled.evaluate(positions[:-1])
+        compiled.evaluate(scene, positions[:-1])
 
 
 def test_contact_closure_substrate_scenario_2() -> None:
@@ -255,7 +271,7 @@ def test_contact_closure_substrate_scenario_3() -> None:
         edge_edge_capacity=0,
         face_vertex_capacity=0,
         activation_distance=0.1,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
     lbvh = phx.discretization.LBVHContactSearchPlan(
         scene,
         edge_vertex_capacity=16,
@@ -265,16 +281,24 @@ def test_contact_closure_substrate_scenario_3() -> None:
         morton_bits=10,
         maximum_tree_depth=16,
         maximum_traversal_visits=64,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
 
     assert bool(compiled.evidence.complete)
     assert int(compiled.evidence.candidate_count) == int(host.candidate_count)
     assert bool(lbvh.evidence.complete)
     assert int(lbvh.evidence.candidate_count) == int(host.candidate_count)
 
-    assert _candidate_rows(lbvh.edge_vertex) == _candidate_rows(compiled.edge_vertex)
-    assert _candidate_rows(lbvh.edge_edge) == _candidate_rows(compiled.edge_edge)
-    assert _candidate_rows(lbvh.face_vertex) == _candidate_rows(compiled.face_vertex)
+    assert _candidate_rows(lbvh.epoch.edge_vertex) == _candidate_rows(
+        compiled.epoch.edge_vertex
+    )
+    assert _candidate_rows(host.edge_vertex) == _candidate_rows(
+        compiled.epoch.edge_vertex
+    )
+    np.testing.assert_array_equal(
+        np.asarray(lbvh.epoch.edge_vertex.route_keys),
+        np.asarray(host.edge_vertex.route_keys),
+    )
+    assert lbvh.epoch.catalogue_id == host.catalogue_id == compiled.epoch.catalogue_id
     primitive_count = scene.vertex_count + scene.edges.shape[0] + scene.faces.shape[0]
     assert int(lbvh.evidence.node_count) == 2 * primitive_count - 1
     assert int(lbvh.evidence.tree_depth) == 4
@@ -309,7 +333,7 @@ def test_contact_closure_substrate_scenario_3() -> None:
         edge_edge_capacity=64,
         face_vertex_capacity=32,
         activation_distance=0.1,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
     lbvh = phx.discretization.LBVHContactSearchPlan(
         scene,
         edge_vertex_capacity=0,
@@ -318,14 +342,18 @@ def test_contact_closure_substrate_scenario_3() -> None:
         activation_distance=0.1,
         maximum_tree_depth=16,
         maximum_traversal_visits=196,
-    ).evaluate(positions)
+    ).evaluate(scene, positions)
 
     assert bool(compiled.evidence.complete)
     assert bool(lbvh.evidence.complete)
     assert int(lbvh.evidence.candidate_count) > 0
     assert int(lbvh.evidence.candidate_count) == int(compiled.evidence.candidate_count)
-    assert _candidate_rows(lbvh.edge_edge) == _candidate_rows(compiled.edge_edge)
-    assert _candidate_rows(lbvh.face_vertex) == _candidate_rows(compiled.face_vertex)
+    assert _candidate_rows(lbvh.epoch.edge_edge) == _candidate_rows(
+        compiled.epoch.edge_edge
+    )
+    assert _candidate_rows(lbvh.epoch.face_vertex) == _candidate_rows(
+        compiled.epoch.face_vertex
+    )
     assert int(lbvh.evidence.node_count) == 27
     assert int(lbvh.evidence.tree_depth) == 5
     assert int(lbvh.evidence.traversal_visits) == 196
@@ -362,7 +390,7 @@ def test_contact_closure_substrate_scenario_3() -> None:
         maximum_tree_depth=16,
         maximum_traversal_visits=1,
     )
-    result = plan.evaluate(positions)
+    result = plan.evaluate(scene, positions)
 
     primitive_count = vertex_count + edges.shape[0]
     assert plan.tree_left.shape == (primitive_count - 1,)

@@ -244,18 +244,40 @@ class _CompilerPayload:
         binding = self.primitives.get(primitive)
         if binding is None:
             from ._numerics._compensated_native import _forward_p, _transpose_p
+            from .backends._result_storage import _publish_p, _reserve_p
             from .discretization.mpm._moments_native import _moments_p
+            from .discretization.particle._articulated_kinematics import (
+                _motion_p,
+                _poses_p,
+                _velocity_p,
+                _velocity_transpose_p,
+            )
+            from .discretization.particle._articulated_sweeps import (
+                _factor_p,
+                _forces_p,
+                _solve_p,
+            )
             from .nonlinear._domain_cond import _domain_call
 
-            if primitive is _domain_call:
-                binding = "phydrax.nonlinear._domain_cond._domain_call"
-            elif primitive is _forward_p:
-                binding = "phydrax._numerics._compensated_native._forward_p"
-            elif primitive is _transpose_p:
-                binding = "phydrax._numerics._compensated_native._transpose_p"
-            elif primitive is _moments_p:
-                binding = "phydrax.discretization.mpm._moments_native._moments_p"
-            else:
+            self.primitives.update(
+                {
+                    _forward_p: "phydrax._numerics._compensated_native._forward_p",
+                    _transpose_p: "phydrax._numerics._compensated_native._transpose_p",
+                    _publish_p: "phydrax.backends._result_storage._publish_p",
+                    _reserve_p: "phydrax.backends._result_storage._reserve_p",
+                    _moments_p: "phydrax.discretization.mpm._moments_native._moments_p",
+                    _motion_p: "phydrax.discretization.particle._articulated_kinematics._motion_p",
+                    _poses_p: "phydrax.discretization.particle._articulated_kinematics._poses_p",
+                    _velocity_p: "phydrax.discretization.particle._articulated_kinematics._velocity_p",
+                    _velocity_transpose_p: "phydrax.discretization.particle._articulated_kinematics._velocity_transpose_p",
+                    _factor_p: "phydrax.discretization.particle._articulated_sweeps._factor_p",
+                    _solve_p: "phydrax.discretization.particle._articulated_sweeps._solve_p",
+                    _forces_p: "phydrax.discretization.particle._articulated_sweeps._forces_p",
+                    _domain_call: "phydrax.nonlinear._domain_cond._domain_call",
+                }
+            )
+            binding = self.primitives.get(primitive)
+            if binding is None:
                 raise TypeError(
                     f"Foreign compiler primitive at {path}: "
                     f"{_type_id(primitive)} ({primitive.name}) needs an explicit identity."

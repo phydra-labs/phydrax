@@ -57,21 +57,19 @@ URDF = """
 
 
 adaptation = parse_urdf_text(URDF, root_policy="fixed_world")
-if not adaptation.negotiation.valid or adaptation.evidence.loss_paths:
+if not adaptation.report.negotiation.valid or adaptation.evidence.loss_paths:
     raise RuntimeError("the self-contained URDF did not adapt losslessly")
 
-particles = adaptation.particles.prepare()
-bodies = adaptation.bodies.prepare(particles)
-graph = adaptation.joints.prepare(bodies, adaptation.reference)
-articulation = adaptation.articulation.prepare(graph, adaptation.reference)
+model = adaptation.model
+articulation = model.prepare().articulation
 
 if articulation.nq != 2 or articulation.nv != 2:
     raise RuntimeError("the hinge/prismatic tree must have two scalar DOFs")
 
 expected_joint_ids = np.asarray(
     [
-        adaptation.joint_ids.id_for_name("joint_0_hinge"),
-        adaptation.joint_ids.id_for_name("joint_1_slider"),
+        model.joint_names.id_for_name("joint_0_hinge"),
+        model.joint_names.id_for_name("joint_1_slider"),
     ],
     dtype=np.int64,
 )
@@ -85,7 +83,7 @@ kinematics = articulation.forward_kinematics(configuration, velocity)
 if not bool(kinematics.successful):
     raise RuntimeError("forward kinematics rejected the finite state")
 
-slider_id = int(adaptation.link_ids.id_for_name("slider_link"))
+slider_id = int(model.body_names.id_for_name("slider_link"))
 slider_transform = articulation.body_transform(configuration, slider_id)
 angle = float(configuration[0])
 extension = 0.5 + float(configuration[1])

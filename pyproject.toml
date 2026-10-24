@@ -412,6 +412,9 @@ max-line-length = 90
 
 [tool.ty.environment]
 python-version = "3.13"
+# Windows, Linux, and macOS paths are all first-party; check every platform's
+# APIs so the diagnostic set does not depend on the host running the gate.
+python-platform = "all"
 extra-paths = ["native/cuda13_pjrt/python"]
 
 [tool.ty.src]

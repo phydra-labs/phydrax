@@ -31,7 +31,6 @@ from ...linalg import (
     RankPolicy,
     saddle_point_system,
     solve as solve_linear,
-    svd as svd_linalg,
     TolerancePolicy,
 )
 from ...nonlinear import (
@@ -55,6 +54,14 @@ from ._rigid_body import (
     rigid_body_world_inertia,
     RigidBodyKinematics,
     RigidBodyLoad,
+)
+from ._rigid_constraint_rank import (
+    empty_rigid_constraint_rank_evidence,
+    prepare_rigid_constraint_rank,
+    PreparedRigidConstraintRank,
+    RigidConstraintRankAudit,
+    RigidConstraintRankEvidence,
+    RigidConstraintRankStatus,
 )
 from ._rigid_joints import (
     _RigidMobileIncrement,
@@ -88,12 +95,14 @@ class RigidConstraintRejectionReason(IntFlag):
     ENERGY_PROJECTION = 1 << 13
     NONFINITE = 1 << 14
     RANK_OR_CONDITION = 1 << 15
+    RANK_INCONCLUSIVE = 1 << 16
 
 
 class RigidConstraintSolverPlan(StrictModule, NonTrainableState):
     position_method: AbstractNonlinearMethod
     position_termination: NonlinearTermination
     velocity_policy: LinearSolvePolicy
+    rank_audit: RigidConstraintRankAudit
     characteristic_length: float = eqx.field(static=True)
     position_tolerance: float = eqx.field(static=True)
     stationarity_tolerance: float = eqx.field(static=True)
@@ -112,6 +121,7 @@ class RigidConstraintSolverPlan(StrictModule, NonTrainableState):
         position_method: AbstractNonlinearMethod | None = None,
         position_termination: NonlinearTermination | None = None,
         velocity_policy: LinearSolvePolicy | None = None,
+        rank_audit: RigidConstraintRankAudit | None = None,
         characteristic_length: float = 1.0,
         position_tolerance: float = 1.0e-8,
         stationarity_tolerance: float = 1.0e-8,
@@ -148,12 +158,15 @@ class RigidConstraintSolverPlan(StrictModule, NonTrainableState):
             else position_termination
         )
         velocity = default_linear if velocity_policy is None else velocity_policy
+        audit = RigidConstraintRankAudit() if rank_audit is None else rank_audit
         if not isinstance(method, AbstractNonlinearMethod):
             raise TypeError("position_method must be an AbstractNonlinearMethod or None.")
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("position_termination must be NonlinearTermination or None.")
         if not isinstance(velocity, LinearSolvePolicy):
             raise TypeError("velocity_policy must be LinearSolvePolicy or None.")
+        if not isinstance(audit, RigidConstraintRankAudit):
+            raise TypeError("rank_audit must be RigidConstraintRankAudit or None.")
         positive = tuple(
             float(value)
             for value in (
@@ -189,12 +202,14 @@ class RigidConstraintSolverPlan(StrictModule, NonTrainableState):
                     "maximum_steps": termination.maximum_steps,
                 },
                 "velocity_method": velocity.method.name,
+                "rank_audit": audit.audit_id,
                 "values": positive,
             }
         )
         self.position_method = method
         self.position_termination = termination
         self.velocity_policy = velocity
+        self.rank_audit = audit
         (
             self.characteristic_length,
             self.position_tolerance,
@@ -286,8 +301,7 @@ class RigidConstraintDiagnostics(StrictModule):
     kinetic_energy_before_projection: Array
     kinetic_energy_after_projection: Array
     velocity_projection_energy_increase: Array
-    constraint_rank: Array
-    constraint_condition: Array
+    rank: RigidConstraintRankEvidence
     finite: Array
     locally_valid: Array
 
@@ -496,6 +510,31 @@ class _PositionProjectionValidity(StrictModule, NonTrainableState):
         )
 
 
+def _constraint_operator(
+    graph: PreparedRigidJointGraph,
+    characteristic_length: float,
+    kinematics: RigidBodyKinematics,
+    prepared_id: str,
+    /,
+) -> FunctionLinearOperator:
+    """The audited Jacobian: scaled velocity residuals of mobile increments."""
+    zero = graph.empty_increment(kinematics.position.dtype)
+    template = _scaled_residuals(graph.residuals(kinematics), characteristic_length)
+
+    def action(value: _RigidMobileIncrement) -> RigidJointResiduals:
+        return _scaled_residuals(
+            graph.velocity_residuals(kinematics, value.translation, value.rotation),
+            characteristic_length,
+        )
+
+    return FunctionLinearOperator(
+        action,
+        source=PyTreeSpace(zero),
+        target=PyTreeSpace(template),
+        operator_id=f"rigid-joint-jacobian/{prepared_id}",
+    )
+
+
 class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     bodies: PreparedRigidBodySet
     joints: PreparedRigidJointGraph
@@ -504,6 +543,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     external_load_id: str | None = eqx.field(static=True)
     position_problem: NonlinearSystemProblem | None
     position_template: PreparedNonlinearSolve | None
+    rank: PreparedRigidConstraintRank
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -546,14 +586,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 termination=solver.position_termination,
                 args=args,
             )
-        self.bodies = bodies
-        self.joints = joints
-        self.solver = solver
-        self.external_load = external_load
-        self.external_load_id = external_load_id
-        self.position_problem = problem
-        self.position_template = template
-        self.prepared_id = canonical_fingerprint(
+        prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-rigid-constraint-dynamics",
                 "plan": plan_id,
@@ -563,6 +596,27 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 "external_load": external_load_id,
             }
         )
+        rank = prepare_rigid_constraint_rank(
+            solver.rank_audit,
+            joints,
+            None
+            if joints.constraint_count == 0
+            else _constraint_operator(
+                joints, solver.characteristic_length, reference, prepared_id
+            ),
+            rank_tolerance=solver.rank_tolerance,
+            problem_id=f"rigid-joint-rank/{prepared_id}",
+            dtype=reference.position.dtype,
+        )
+        self.bodies = bodies
+        self.joints = joints
+        self.solver = solver
+        self.external_load = external_load
+        self.external_load_id = external_load_id
+        self.position_problem = problem
+        self.position_template = template
+        self.rank = rank
+        self.prepared_id = prepared_id
 
     def initialize_state(
         self,
@@ -647,17 +701,11 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         RigidBodyKinematics,
         RigidJointMultipliers,
         RigidJointResiduals,
-        Array,
-        Array,
-        Array,
+        RigidConstraintRankEvidence,
     ]:
         graph = self.joints
         zero = graph.empty_increment(kinematics.position.dtype)
-        constraint_template = _scaled_residuals(
-            graph.residuals(kinematics), self.solver.characteristic_length
-        )
         primal_space = PyTreeSpace(zero)
-        constraint_space = PyTreeSpace(constraint_template)
         mobile = graph.mobile_indices
         masses = self.bodies.particles.safe_masses[mobile]
         inertia = _projection_inertia(self.bodies, kinematics.orientation, mobile)
@@ -685,14 +733,8 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             ),
             operator_id=f"rigid-mass/{self.prepared_id}",
         )
-        constraint = FunctionLinearOperator(
-            lambda value: _scaled_residuals(
-                graph.velocity_residuals(kinematics, value.translation, value.rotation),
-                self.solver.characteristic_length,
-            ),
-            source=primal_space,
-            target=constraint_space,
-            operator_id=f"rigid-joint-jacobian/{self.prepared_id}",
+        constraint = _constraint_operator(
+            graph, self.solver.characteristic_length, kinematics, self.prepared_id
         )
         system = saddle_point_system(
             mass,
@@ -719,39 +761,29 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             kinematics.orientation,
             angular,
         )
-        rank_result = svd_linalg.svd(
-            svd_linalg.SVDProblem(
-                constraint,
-                problem_id=f"rigid-joint-rank/{self.prepared_id}",
-            ),
-            policy=svd_linalg.SVDSolvePolicy(
-                count=graph.constraint_count,
-                rank=RankPolicy(
-                    relative_cutoff=self.solver.rank_tolerance,
-                    require_full_rank=True,
-                ),
-            ),
-        )
-        numerical_rank = svd_linalg.require_exact_svd_rank(rank_result)
-        singular_values = rank_result.singular_values
-        smallest = jnp.min(singular_values)
-        condition = jnp.max(singular_values) / jnp.maximum(
-            smallest, jnp.finfo(singular_values.dtype).tiny
-        )
-        rank_valid = (
-            rank_result.successful
-            & (numerical_rank == graph.constraint_count)
-            & jnp.isfinite(condition)
-        )
         return (
             result,
             projected,
             _residuals_to_multipliers(dual),
             graph.current_velocity_residuals(projected),
-            rank_valid,
-            numerical_rank,
-            condition,
+            self.rank.evidence(graph, constraint, kinematics.position.dtype),
         )
+
+    def constraint_rank_evidence(
+        self, kinematics: RigidBodyKinematics, /
+    ) -> RigidConstraintRankEvidence:
+        """Rank evidence of the scaled joint Jacobian at ``kinematics`` alone.
+
+        This is the audit a step applies to its closing-kick kinematics before the
+        velocity projection is accepted.
+        """
+        dtype = kinematics.position.dtype
+        if self.joints.constraint_count == 0:
+            return empty_rigid_constraint_rank_evidence(self.solver.rank_audit, dtype)
+        constraint = _constraint_operator(
+            self.joints, self.solver.characteristic_length, kinematics, self.prepared_id
+        )
+        return self.rank.evidence(self.joints, constraint, dtype)
 
     def _empty_evaluation(
         self,
@@ -781,8 +813,9 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             kinetic_before,
             kinetic_after,
             jnp.maximum(kinetic_after - kinetic_before, 0.0),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(1.0, dtype=candidate.kinematics.position.dtype),
+            empty_rigid_constraint_rank_evidence(
+                self.solver.rank_audit, candidate.kinematics.position.dtype
+            ),
             tree_allfinite(candidate),
             successful,
         )
@@ -927,10 +960,12 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             candidate_kinematics,
             velocity_multipliers,
             velocity_residuals,
-            rank_valid,
-            constraint_rank,
-            constraint_condition,
+            rank_evidence,
         ) = self._solve_velocity(closed, state.velocity_multiplier_guess)
+        rank_valid = rank_evidence.full_row_rank
+        rank_inconclusive = rank_evidence.status == int(
+            RigidConstraintRankStatus.INCONCLUSIVE
+        )
         kinetic_after = self._kinetic_energy(candidate_kinematics)
         energy_increase = jnp.maximum(kinetic_after - kinetic_before, 0.0)
         velocity_maximum = rigid_joint_maximum_residual(velocity_residuals)
@@ -1032,7 +1067,11 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 velocity_maximum <= self.solver.velocity_tolerance,
                 RigidConstraintRejectionReason.VELOCITY_CONSTRAINT,
             ),
-            (rank_valid, RigidConstraintRejectionReason.RANK_OR_CONDITION),
+            (
+                rank_valid | rank_inconclusive,
+                RigidConstraintRejectionReason.RANK_OR_CONDITION,
+            ),
+            (~rank_inconclusive, RigidConstraintRejectionReason.RANK_INCONCLUSIVE),
             (fixed_valid, RigidConstraintRejectionReason.FIXED_BODY),
             (quaternion_valid, RigidConstraintRejectionReason.QUATERNION),
             (
@@ -1056,8 +1095,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             kinetic_before,
             kinetic_after,
             energy_increase,
-            constraint_rank,
-            constraint_condition,
+            rank_evidence,
             finite,
             successful,
         )

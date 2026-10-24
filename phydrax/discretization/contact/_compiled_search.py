@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from math import isfinite
 
 import equinox as eqx
 import jax
@@ -16,101 +16,484 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import checked
 from ..spatial import morton_encode_integer
-from ._stencils import ContactStencilKind
-from ._surface import PreparedCollisionScene
+from ._participant import ContactParticipantScene
+from ._search import (
+    contact_route_capacity_bounds,
+    contact_search_capacities,
+    box_distance_squared,
+    contact_epoch_identity,
+    contact_route_families,
+    ContactCandidateEpoch,
+    ContactRouteFamily,
+    ContactRouteLayouts,
+    ContactSearchScene,
+    ContactSearchStatus,
+    ROUTE_KIND_ORDER,
+    route_batch_tuple,
+    RouteBatches,
+    scene_route_geometry,
+    DenseContactSearchPlan,
+    enclosure_admits,
+    enclosure_binding,
+    feature_boxes,
+    legal_route_pairs,
+    plane_box_clearance,
+    route_pair_radius,
+    scene_excluded_vertex_pairs,
+    SweepAndPruneContactSearchPlan,
+    vertex_path_boxes,
+)
+from ._stencils import (
+    contact_stencil_symmetric,
+    ContactPrimitiveProfile,
+    ContactStencilBatch,
+    ContactStencilKind,
+    ContactStencilLayout,
+    pack_contact_stencil_batch,
+    route_endpoints,
+    scene_feature_endpoints,
+)
+from ._surface import CollisionFeatureKind, PreparedCollisionScene
+from ._trajectory import ContactPathEnclosure
 
 
-_CandidateOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
-_TraversalState: TypeAlias = tuple[Array, Array, Array, Array, Array, _CandidateOutputs]
-_ActiveTraversalState: TypeAlias = tuple[Array, Array, Array, Array, _CandidateOutputs]
+_PLANE_KINDS = (ContactStencilKind.VERTEX_PLANE, ContactStencilKind.EDGE_PLANE)
 
 
-def _scene_excluded_vertex_pairs(scene: PreparedCollisionScene, /) -> np.ndarray:
-    pairs: list[tuple[int, int]] = []
-    for surface_index, surface in enumerate(scene.surfaces):
-        offset = scene.vertex_offsets[surface_index]
-        for left, right in np.asarray(
-            surface.plan.pair_policy.excluded_vertex_pairs
-        ).tolist():
-            pairs.append(
-                (
-                    min(offset + int(left), offset + int(right)),
-                    max(offset + int(left), offset + int(right)),
-                )
-            )
-    return np.asarray(sorted(set(pairs)), dtype=np.int32).reshape((-1, 2))
+class PreparedRouteCandidates(StrictModule, NonTrainableState):
+    """Every legal oriented witness row of one route family (topology only).
 
+    Prepared once on the host from the scene topology, pair policy and
+    exclusions; runtime only evaluates geometric activation on these rows.
+    """
 
-def _primitive_vertices(scene: PreparedCollisionScene, /) -> np.ndarray:
-    vertices = [(index, -1, -1) for index in range(scene.vertex_count)]
-    vertices.extend(
-        (int(left), int(right), -1) for left, right in np.asarray(scene.edges)
-    )
-    vertices.extend(
-        (int(first), int(second), int(third))
-        for first, second, third in np.asarray(scene.faces)
-    )
-    return np.asarray(vertices, dtype=np.int32)
-
-
-def _primitive_pair_is_legal(
-    scene: PreparedCollisionScene,
-    left_feature: int,
-    right_feature: int,
-    primitive_vertices: np.ndarray,
-    excluded: set[tuple[int, int]],
-    /,
-) -> bool:
-    left_vertices = tuple(
-        int(value) for value in primitive_vertices[left_feature] if value >= 0
-    )
-    right_vertices = tuple(
-        int(value) for value in primitive_vertices[right_feature] if value >= 0
-    )
-    if set(left_vertices) & set(right_vertices):
-        return False
-    static = np.asarray(scene.feature_static_mask, dtype=np.bool_)
-    if bool(static[left_feature]) and bool(static[right_feature]):
-        return False
-    participants = np.asarray(scene.feature_participant_ids, dtype=np.int64)
-    if not scene.pair_policy.allows(
-        int(participants[left_feature]), int(participants[right_feature])
-    ):
-        return False
-    return not any(
-        (min(left, right), max(left, right)) in excluded
-        for left in left_vertices
-        for right in right_vertices
-    )
-
-
-class CompiledCandidateBatch(StrictModule):
-    vertex_indices: Array
-    valid: Array
-    actual_count: Array
-    overflow_count: Array
+    endpoints: Array
+    left_features: Array
+    right_features: Array
+    witness_slots: Array
     kind: ContactStencilKind = eqx.field(static=True)
-    capacity: int = eqx.field(static=True)
+
+
+def prepare_route_candidates(
+    scene: ContactSearchScene,
+    family: ContactRouteFamily,
+    endpoint_table: np.ndarray,
+    excluded: np.ndarray,
+    /,
+) -> PreparedRouteCandidates:
+    """Enumerate legal oriented candidate rows of a route family."""
+    kind, left_set, right_set, slots = family
+    left = np.repeat(left_set, right_set.size)
+    right = np.tile(right_set, left_set.size)
+    legal = legal_route_pairs(
+        scene, kind, left, right, endpoints=endpoint_table, excluded=excluded
+    )
+    left = np.repeat(left[legal], slots)
+    right = np.repeat(right[legal], slots)
+    witness = np.tile(np.arange(slots, dtype=np.int64), left.size // slots)
+    table = jnp.asarray(endpoint_table, dtype=jnp.int32)
+    endpoints = route_endpoints(
+        kind,
+        table,
+        jnp.asarray(left, dtype=jnp.int32),
+        jnp.asarray(right, dtype=jnp.int32),
+    ).reshape((-1, 4))
+    return PreparedRouteCandidates(
+        endpoints.astype(jnp.int32),
+        jnp.asarray(left, dtype=jnp.int32),
+        jnp.asarray(right, dtype=jnp.int32),
+        jnp.asarray(witness, dtype=jnp.int32),
+        kind,
+    )
+
+
+def empty_route_candidates(kind: ContactStencilKind, /) -> PreparedRouteCandidates:
+    return PreparedRouteCandidates(
+        jnp.zeros((0, 4), dtype=jnp.int32),
+        jnp.zeros((0,), dtype=jnp.int32),
+        jnp.zeros((0,), dtype=jnp.int32),
+        jnp.zeros((0,), dtype=jnp.int32),
+        kind,
+    )
+
+
+def route_activation_mask(
+    scene: ContactSearchScene,
+    candidates: PreparedRouteCandidates,
+    feature_lower: Array,
+    feature_upper: Array,
+    extents: Array,
+    plane_normals: Array,
+    plane_offsets: Array,
+    activation_distance: float,
+    envelope_radius: float,
+    /,
+) -> Array:
+    """Device activation test of prepared rows against full-path feature boxes.
+
+    Plane rows use the exact box support bound and therefore require validated
+    unit normals (see :func:`scene_route_geometry`).
+    """
+    left = candidates.left_features
+    right = candidates.right_features
+    radius = route_pair_radius(
+        activation_distance,
+        envelope_radius,
+        extents[left],
+        extents[right],
+        candidates.kind in _PLANE_KINDS,
+    )
+    if candidates.kind in _PLANE_KINDS:
+        plane = right - (scene.feature_count - scene.plane_count)
+        clearance = plane_box_clearance(
+            feature_lower[left],
+            feature_upper[left],
+            plane_normals[plane],
+            plane_offsets[plane],
+        )
+        return clearance <= radius
+    distance = box_distance_squared(
+        feature_lower[left], feature_upper[left], feature_lower[right], feature_upper[right]
+    )
+    return distance <= radius * radius
+
+
+def _epoch_status(
+    admitted: Array,
+    traversal_exhausted: Array,
+    overflow: Array,
+    duplicates: Array,
+    invalid_addresses: Array,
+    /,
+) -> Array:
+    return jnp.where(
+        ~admitted,
+        int(ContactSearchStatus.INVALID_INPUT),
+        jnp.where(
+            invalid_addresses > 0,
+            int(ContactSearchStatus.INVALID_ROUTE_ADDRESS),
+            jnp.where(
+                traversal_exhausted,
+                int(ContactSearchStatus.TRAVERSAL_EXHAUSTED),
+                jnp.where(
+                    overflow,
+                    int(ContactSearchStatus.CANDIDATE_OVERFLOW),
+                    jnp.where(
+                        duplicates > 0,
+                        int(ContactSearchStatus.DUPLICATE_ROUTE),
+                        int(ContactSearchStatus.SUCCESS),
+                    ),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+
+
+def _assemble_epoch(
+    scene: ContactSearchScene,
+    search_id: str,
+    epoch_id: str,
+    batches: RouteBatches,
+    start: Array,
+    lower: Array,
+    upper: Array,
+    envelope_radius: float,
+    path_enclosure: ContactPathEnclosure | None,
+    revision: ArrayLike | None,
+    geometry: tuple[Array, Array, Array],
+    status: Array,
+    /,
+) -> ContactCandidateEpoch:
+    lower_time, upper_time, revision_, trajectory_id = enclosure_binding(
+        path_enclosure, revision, start.dtype
+    )
+    candidate_count = sum(
+        (batch.actual_count for batch in batches), jnp.asarray(0, dtype=jnp.int32)
+    )
+    vertex_vertex, edge_vertex, edge_edge, face_vertex, vertex_plane, edge_plane = (
+        batches
+    )
+    contact_extents, plane_normals, plane_offsets = geometry
+    return ContactCandidateEpoch(
+        vertex_vertex=vertex_vertex,
+        edge_vertex=edge_vertex,
+        edge_edge=edge_edge,
+        face_vertex=face_vertex,
+        vertex_plane=vertex_plane,
+        edge_plane=edge_plane,
+        reference_positions=start,
+        coverage_lower=lower,
+        coverage_upper=upper,
+        envelope_radius=jnp.asarray(envelope_radius, dtype=start.dtype),
+        lower_time=lower_time,
+        upper_time=upper_time,
+        revision=revision_,
+        contact_extents=contact_extents,
+        plane_normals=plane_normals,
+        plane_offsets=plane_offsets,
+        candidate_count=candidate_count,
+        status=status,
+        complete=status == int(ContactSearchStatus.SUCCESS),
+        search_id=search_id,
+        catalogue_id=scene.feature_catalogue.catalogue_id,
+        topology_id=scene.scene_id,
+        routing_id=scene.routing_id,
+        trajectory_id=trajectory_id,
+        epoch_id=epoch_id,
+    )
+
+
+def _check_device_plan_inputs(
+    scene: ContactSearchScene,
+    scene_id: str,
+    /,
+) -> None:
+    if not isinstance(scene, (PreparedCollisionScene, ContactParticipantScene)):
+        raise TypeError(
+            "scene must be PreparedCollisionScene or ContactParticipantScene."
+        )
+    if scene.scene_id != scene_id:
+        raise ValueError("Device contact search plan belongs to another scene.")
+
+
+def _validated_search_scalars(
+    activation_distance: float,
+    envelope_radius: float,
+    primitive_profile: ContactPrimitiveProfile,
+    /,
+) -> tuple[float, float]:
+    activation = float(activation_distance)
+    envelope = float(envelope_radius)
+    if not isfinite(activation) or activation <= 0.0:
+        raise ValueError("activation_distance must be finite and positive.")
+    if not isfinite(envelope) or envelope < 0.0:
+        raise ValueError("envelope_radius must be finite and nonnegative.")
+    if not isinstance(primitive_profile, ContactPrimitiveProfile):
+        raise TypeError("primitive_profile must be ContactPrimitiveProfile.")
+    return activation, envelope
 
 
 class CompiledContactSearchEvidence(StrictModule):
     candidate_count: Array
     overflow_count: Array
+    duplicate_route_count: Array
     finite: Array
     complete: Array
     plan_id: str = eqx.field(static=True)
 
 
 class CompiledContactSearchResult(StrictModule):
-    edge_vertex: CompiledCandidateBatch
-    edge_edge: CompiledCandidateBatch
-    face_vertex: CompiledCandidateBatch
+    epoch: ContactCandidateEpoch
     evidence: CompiledContactSearchEvidence
 
 
+class CompiledContactSearchPlan(StrictModule, NonTrainableState):
+    """Fixed-shape device search over predeclared legal oriented route rows.
+
+    Preparation enumerates every legal witness row of each route family once.
+    Runtime evaluates full-path activation, then canonicalizes, counts and
+    orders accepted rows on device into the shared :class:`ContactCandidateEpoch`
+    schema. This is the deterministic compiled authority for the LBVH backend.
+    """
+
+    layouts: ContactRouteLayouts
+    candidates: tuple[PreparedRouteCandidates, ...]
+    feature_endpoints: Array
+    activation_distance: float = eqx.field(static=True)
+    envelope_radius: float = eqx.field(static=True)
+    primitive_profile: ContactPrimitiveProfile = eqx.field(static=True)
+    scene_id: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+    epoch_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        scene: ContactSearchScene,
+        /,
+        *,
+        edge_vertex_capacity: int,
+        edge_edge_capacity: int,
+        face_vertex_capacity: int,
+        activation_distance: float,
+        envelope_radius: float = 0.0,
+        vertex_vertex_capacity: int = 0,
+        vertex_plane_capacity: int = 0,
+        edge_plane_capacity: int = 0,
+        primitive_profile: ContactPrimitiveProfile = ContactPrimitiveProfile.MESH,
+    ) -> None:
+        _check_device_plan_inputs(scene, scene.scene_id)
+        capacities = contact_search_capacities(
+            vertex_vertex_capacity,
+            edge_vertex_capacity,
+            edge_edge_capacity,
+            face_vertex_capacity,
+            vertex_plane_capacity,
+            edge_plane_capacity,
+        )
+        activation, envelope = _validated_search_scalars(
+            activation_distance, envelope_radius, primitive_profile
+        )
+        layouts = ContactRouteLayouts(
+            scene, capacities=capacities, profile=primitive_profile
+        )
+        families = {
+            family[0]: family
+            for family in contact_route_families(scene, primitive_profile)
+        }
+        table = scene_feature_endpoints(scene)
+        excluded = scene_excluded_vertex_pairs(scene)
+        candidates = tuple(
+            prepare_route_candidates(scene, families[layout.kind], table, excluded)
+            if layout.kind in families
+            else empty_route_candidates(layout.kind)
+            for layout in layouts.layouts
+        )
+        self.layouts = layouts
+        self.candidates = candidates
+        self.feature_endpoints = jnp.asarray(table, dtype=jnp.int32)
+        self.activation_distance = activation
+        self.envelope_radius = envelope
+        self.primitive_profile = primitive_profile
+        self.scene_id = scene.scene_id
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "compiled-contact-search-plan",
+                "scene": scene.scene_id,
+                "layouts": layouts.layouts_id,
+                "candidates": [
+                    array_tree_fingerprint(
+                        (
+                            np.asarray(value.left_features),
+                            np.asarray(value.right_features),
+                            np.asarray(value.witness_slots),
+                        )
+                    )
+                    for value in candidates
+                ],
+                "activation_distance": float(activation).hex(),
+                "envelope_radius": float(envelope).hex(),
+            }
+        )
+        self.epoch_id = contact_epoch_identity(self.plan_id, scene, layouts)
+
+    def evaluate(
+        self,
+        scene: ContactSearchScene,
+        positions: ArrayLike,
+        /,
+        *,
+        end_positions: ArrayLike | None = None,
+        path_enclosure: ContactPathEnclosure | None = None,
+        revision: ArrayLike | None = None,
+    ) -> CompiledContactSearchResult:
+        _check_device_plan_inputs(scene, self.scene_id)
+        start, lower, upper = vertex_path_boxes(
+            scene, positions, end_positions, path_enclosure
+        )
+        end = (
+            start
+            if end_positions is None
+            else jnp.asarray(end_positions, dtype=start.dtype)
+        )
+        extents, normals, offsets, geometry_valid = scene_route_geometry(
+            scene, start.dtype
+        )
+        admitted = geometry_valid & enclosure_admits(
+            path_enclosure, start, end, lower, upper
+        )
+        feature_lower, feature_upper = feature_boxes(
+            self.feature_endpoints, lower, upper
+        )
+        geometry = (extents, normals, offsets)
+        catalogue = scene.feature_catalogue
+        batches: list[ContactStencilBatch] = []
+        duplicates = jnp.asarray(0, dtype=jnp.int32)
+        addresses = jnp.asarray(0, dtype=jnp.int32)
+        for layout, candidates in zip(
+            self.layouts.layouts, self.candidates, strict=True
+        ):
+            mask = admitted & route_activation_mask(
+                scene,
+                candidates,
+                feature_lower,
+                feature_upper,
+                extents,
+                normals,
+                offsets,
+                self.activation_distance,
+                self.envelope_radius,
+            )
+            packing = pack_contact_stencil_batch(
+                layout,
+                catalogue,
+                candidates.endpoints,
+                candidates.left_features,
+                candidates.right_features,
+                candidates.witness_slots,
+                extents[candidates.left_features] + extents[candidates.right_features],
+                mask,
+            )
+            batches.append(packing.batch)
+            duplicates = duplicates + packing.duplicate_count
+            addresses = addresses + packing.invalid_address_count
+        overflow_count = sum(
+            (batch.overflow_count for batch in batches), jnp.asarray(0, dtype=jnp.int32)
+        )
+        status = _epoch_status(
+            admitted, jnp.asarray(False), overflow_count > 0, duplicates, addresses
+        )
+        epoch = _assemble_epoch(
+            scene,
+            self.plan_id,
+            self.epoch_id,
+            route_batch_tuple(batches),
+            start,
+            lower,
+            upper,
+            self.envelope_radius,
+            path_enclosure,
+            revision,
+            geometry,
+            status,
+        )
+        evidence = CompiledContactSearchEvidence(
+            epoch.candidate_count,
+            overflow_count,
+            duplicates,
+            admitted,
+            epoch.complete,
+            self.plan_id,
+        )
+        return CompiledContactSearchResult(epoch, evidence)
+
+    def build(
+        self,
+        scene: ContactSearchScene,
+        positions: ArrayLike,
+        /,
+        *,
+        end_positions: ArrayLike | None = None,
+        path_enclosure: ContactPathEnclosure | None = None,
+        revision: ArrayLike | None = None,
+    ) -> ContactCandidateEpoch:
+        return self.evaluate(
+            scene,
+            positions,
+            end_positions=end_positions,
+            path_enclosure=path_enclosure,
+            revision=revision,
+        ).epoch
+
+
 class LBVHContactSearchEvidence(StrictModule):
+    """LBVH backend evidence.
+
+    ``traversal_visits`` and per-kind discovered counts are work actually
+    discovered; when traversal is exhausted they are not the total required
+    capacity.
+    """
+
     candidate_count: Array
     node_count: Array
     tree_depth: Array
@@ -119,80 +502,121 @@ class LBVHContactSearchEvidence(StrictModule):
     stack_overflow: Array
     visit_overflow: Array
     output_overflow: Array
+    duplicate_route_count: Array
+    plane_pair_work: Array
     finite_bounds: Array
     complete: Array
     plan_id: str = eqx.field(static=True)
 
 
 class LBVHContactSearchResult(StrictModule):
-    edge_vertex: CompiledCandidateBatch
-    edge_edge: CompiledCandidateBatch
-    face_vertex: CompiledCandidateBatch
+    epoch: ContactCandidateEpoch
     evidence: LBVHContactSearchEvidence
+
+
+type _FamilyBuffer = tuple[Array, Array, Array, Array, Array]
+type _TraversalState = tuple[Array, Array, Array, Array, Array, tuple[_FamilyBuffer, ...]]
+
+
+class _TreeFamily(StrictModule, NonTrainableState):
+    """One tree-traversed route family: feature classes and witness slots."""
+
+    layout_index: int = eqx.field(static=True)
+    kind: ContactStencilKind = eqx.field(static=True)
+    left_class: int = eqx.field(static=True)
+    right_class: int = eqx.field(static=True)
+    witness_slot_count: int = eqx.field(static=True)
+
+
+_FEATURE_CLASS = {
+    CollisionFeatureKind.VERTEX: 0,
+    CollisionFeatureKind.EDGE: 1,
+    CollisionFeatureKind.FACE: 2,
+}
+
+_TREE_FEATURE_KINDS = {
+    ContactStencilKind.VERTEX_VERTEX: (0, 0),
+    ContactStencilKind.EDGE_VERTEX: (0, 1),
+    ContactStencilKind.EDGE_EDGE: (1, 1),
+    ContactStencilKind.FACE_VERTEX: (0, 2),
+}
 
 
 class LBVHContactSearchPlan(StrictModule, NonTrainableState):
     """Deterministic fixed-budget device broad phase over Morton-ordered AABBs.
 
-    Primitive AABBs are ordered by Morton code and assembled into a balanced
-    binary hierarchy. A depth-first node-pair traversal emits candidates
-    directly into fixed-capacity buffers, so neither legal-pair tables nor
-    dense overlap matrices are materialized. Search selection is
-    stop-gradient topology.
+    Finite primitive full-path boxes (inflated per axis by contact extent and
+    envelope) are ordered by Morton code and assembled into a balanced binary
+    hierarchy. A depth-first node-pair traversal applies the exact pair
+    activation and legality at leaves and emits oriented witness rows into
+    fixed buffers, which are then canonicalized on device into the shared
+    epoch. Static planes use the bounded analytic plane route, never a box:
+    planes are streamed one at a time against the prepared primitive set into
+    the fixed output capacity, so no primitive x plane table is stored.
+    Search selection is stop-gradient topology.
     """
 
-    edges: Array
-    faces: Array
+    layouts: ContactRouteLayouts
+    plane_left_sets: tuple[Array, Array]
     tree_left: Array
     tree_right: Array
     node_leaf_count: Array
-    primitive_vertices: Array
+    feature_endpoints: Array
+    feature_class: Array
+    vertex_admitted: Array
     feature_participant_ids: Array
     feature_static_mask: Array
-    feature_contact_extent: Array
     allowed_participant_pairs: Array
     excluded_vertex_pairs: Array
+    tree_families: tuple[_TreeFamily, ...]
     unrestricted_pairs: bool = eqx.field(static=True)
-    vertex_count: int = eqx.field(static=True)
-    ambient_dimension: int = eqx.field(static=True)
+    primitive_count: int = eqx.field(static=True)
     hierarchy_root: int = eqx.field(static=True)
     hierarchy_depth: int = eqx.field(static=True)
-    edge_vertex_capacity: int = eqx.field(static=True)
-    edge_edge_capacity: int = eqx.field(static=True)
-    face_vertex_capacity: int = eqx.field(static=True)
     activation_distance: float = eqx.field(static=True)
+    envelope_radius: float = eqx.field(static=True)
+    primitive_profile: ContactPrimitiveProfile = eqx.field(static=True)
     morton_bits: int = eqx.field(static=True)
     maximum_tree_depth: int = eqx.field(static=True)
     maximum_traversal_visits: int = eqx.field(static=True)
+    plane_pair_work: int = eqx.field(static=True)
+    scene_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    epoch_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
-        scene: PreparedCollisionScene,
+        scene: ContactSearchScene,
         /,
         *,
         edge_vertex_capacity: int,
         edge_edge_capacity: int,
         face_vertex_capacity: int,
         activation_distance: float,
+        maximum_traversal_visits: int,
+        envelope_radius: float = 0.0,
+        vertex_vertex_capacity: int = 0,
+        vertex_plane_capacity: int = 0,
+        edge_plane_capacity: int = 0,
+        primitive_profile: ContactPrimitiveProfile = ContactPrimitiveProfile.MESH,
         morton_bits: int = 10,
         maximum_tree_depth: int = 64,
-        maximum_traversal_visits: int,
     ) -> None:
-        capacities = (
-            int(edge_vertex_capacity),
-            int(edge_edge_capacity),
-            int(face_vertex_capacity),
+        _check_device_plan_inputs(scene, scene.scene_id)
+        capacities = contact_search_capacities(
+            vertex_vertex_capacity,
+            edge_vertex_capacity,
+            edge_edge_capacity,
+            face_vertex_capacity,
+            vertex_plane_capacity,
+            edge_plane_capacity,
         )
-        if any(value < 0 for value in capacities) or sum(capacities) <= 0:
-            raise ValueError("LBVH output capacities are invalid.")
-        activation = float(activation_distance)
+        activation, envelope = _validated_search_scalars(
+            activation_distance, envelope_radius, primitive_profile
+        )
         bits = int(morton_bits)
         depth = int(maximum_tree_depth)
         visits = int(maximum_traversal_visits)
-        if not np.isfinite(activation) or activation <= 0.0:
-            raise ValueError("activation_distance must be finite and positive.")
         if bits <= 0 or bits > 10:
             raise ValueError("morton_bits must lie in [1, 10] for uint32 codes.")
         if depth <= 0 or visits <= 0:
@@ -201,102 +625,185 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "LBVH traversal visit budget exceeds int32 evidence capacity."
             )
-        primitive_vertices = _primitive_vertices(scene)
-        primitive_count = primitive_vertices.shape[0]
-        excluded = _scene_excluded_vertex_pairs(scene)
+        layouts = ContactRouteLayouts(
+            scene, capacities=capacities, profile=primitive_profile
+        )
+        families = {
+            family[0]: family
+            for family in contact_route_families(scene, primitive_profile)
+        }
+        # Exact host proof that discovered-row counters (int32 evidence) and
+        # the streamed plane work counter cannot wrap: tree families discover
+        # at most one pair per traversal visit, plane families at most every
+        # primitive x plane row.
+        bounds = contact_route_capacity_bounds(scene, primitive_profile)
+        count_limit = int(np.iinfo(np.int32).max)
+        total = 0
+        for kind, bound in zip(ROUTE_KIND_ORDER, bounds, strict=True):
+            slots = families[kind][3] if kind in families else 1
+            discovered = bound if kind in _PLANE_KINDS else min(bound, slots * visits)
+            total += discovered
+            if discovered > count_limit or total > count_limit:
+                raise ValueError(
+                    f"LBVH {kind.name} discovery counts may exceed int32 evidence; "
+                    "reduce the traversal budget or partition the scene."
+                )
+        plane_work = sum(
+            families[kind][1].size * scene.plane_count
+            for kind in _PLANE_KINDS
+            if kind in families
+        )
+        work_dtype = np.dtype(jax.dtypes.canonicalize_dtype(jnp.int64))
+        if plane_work > int(np.iinfo(work_dtype).max):
+            raise ValueError("LBVH plane-route work exceeds the device integer range.")
+        table = scene_feature_endpoints(scene)
+        excluded = scene_excluded_vertex_pairs(scene)
+        primitive_count = scene.feature_count - scene.plane_count
+        kinds = np.asarray(scene.feature_catalogue.feature_kinds)[:primitive_count]
+        feature_class = np.asarray(
+            [_FEATURE_CLASS[CollisionFeatureKind(int(kind))] for kind in kinds],
+            dtype=np.int32,
+        )
+        admitted = np.zeros((scene.vertex_count,), dtype=np.bool_)
+        tree_families: list[_TreeFamily] = []
+        for index, layout in enumerate(layouts.layouts):
+            family = families.get(layout.kind)
+            if family is None or layout.kind in _PLANE_KINDS:
+                continue
+            left_class, right_class = _TREE_FEATURE_KINDS[layout.kind]
+            for feature_set, feature_class_ in (
+                (family[1], left_class),
+                (family[2], right_class),
+            ):
+                if feature_class_ == 0:
+                    admitted[feature_set] = True
+            tree_families.append(
+                _TreeFamily(
+                    index, layout.kind, left_class, right_class, family[3]
+                )
+            )
         left, right, leaf_count, root, hierarchy_depth = _balanced_morton_hierarchy(
             primitive_count
         )
-        self.edges = jnp.asarray(scene.edges, dtype=jnp.int32)
-        self.faces = jnp.asarray(scene.faces, dtype=jnp.int32)
+        policy = scene.pair_policy
+        self.layouts = layouts
+        vertex_planes, edge_planes = (
+            jnp.asarray(
+                families[kind][1] if kind in families else np.zeros((0,)),
+                dtype=jnp.int32,
+            )
+            for kind in _PLANE_KINDS
+        )
+        self.plane_left_sets = (vertex_planes, edge_planes)
         self.tree_left = jnp.asarray(left, dtype=jnp.int32)
         self.tree_right = jnp.asarray(right, dtype=jnp.int32)
         self.node_leaf_count = jnp.asarray(leaf_count, dtype=jnp.int32)
-        self.primitive_vertices = jnp.asarray(primitive_vertices, dtype=jnp.int32)
+        self.feature_endpoints = jnp.asarray(table, dtype=jnp.int32)
+        self.feature_class = jnp.asarray(feature_class, dtype=jnp.int32)
+        self.vertex_admitted = jnp.asarray(admitted)
         self.feature_participant_ids = jnp.asarray(
             scene.feature_participant_ids, dtype=jnp.int64
         )
         self.feature_static_mask = jnp.asarray(scene.feature_static_mask, dtype=jnp.bool_)
-        self.feature_contact_extent = jnp.asarray(scene.feature_contact_extent)
         self.allowed_participant_pairs = jnp.asarray(
-            scene.pair_policy.allowed_participant_pairs, dtype=jnp.int64
+            policy.allowed_participant_pairs, dtype=jnp.int64
+        ).reshape((-1, 2))
+        self.excluded_vertex_pairs = jnp.asarray(excluded, dtype=jnp.int32).reshape(
+            (-1, 2)
         )
-        self.excluded_vertex_pairs = jnp.asarray(excluded, dtype=jnp.int32)
-        self.unrestricted_pairs = scene.pair_policy.unrestricted
-        self.vertex_count = scene.vertex_count
-        self.ambient_dimension = scene.ambient_dimension
+        self.tree_families = tuple(tree_families)
+        self.unrestricted_pairs = policy.unrestricted
+        self.primitive_count = primitive_count
         self.hierarchy_root = root
         self.hierarchy_depth = hierarchy_depth
-        (
-            self.edge_vertex_capacity,
-            self.edge_edge_capacity,
-            self.face_vertex_capacity,
-        ) = capacities
         self.activation_distance = activation
+        self.envelope_radius = envelope
+        self.primitive_profile = primitive_profile
         self.morton_bits = bits
         self.maximum_tree_depth = depth
         self.maximum_traversal_visits = visits
+        self.plane_pair_work = plane_work
+        self.scene_id = scene.scene_id
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "lbvh-contact-search-plan",
                 "scene": scene.scene_id,
-                "capacities": capacities,
-                "activation_distance": activation.hex(),
+                "layouts": layouts.layouts_id,
+                "activation_distance": float(activation).hex(),
+                "envelope_radius": float(envelope).hex(),
                 "morton_bits": bits,
                 "maximum_tree_depth": depth,
                 "maximum_traversal_visits": visits,
             }
         )
+        self.epoch_id = contact_epoch_identity(self.plan_id, scene, layouts)
+
+    def _pair_legal(self, left: Array, right: Array, /) -> Array:
+        nonstatic = ~(self.feature_static_mask[left] & self.feature_static_mask[right])
+        participant_pair = jnp.sort(
+            jnp.stack(
+                (
+                    self.feature_participant_ids[left],
+                    self.feature_participant_ids[right],
+                )
+            )
+        )
+        participant_allowed = self.unrestricted_pairs | jnp.any(
+            jnp.all(self.allowed_participant_pairs == participant_pair[None, :], axis=1)
+        )
+        left_vertices = self.feature_endpoints[left][:, None]
+        right_vertices = self.feature_endpoints[right][None, :]
+        present = (left_vertices >= 0) & (right_vertices >= 0)
+        shared = jnp.any(present & (left_vertices == right_vertices))
+        low = jnp.minimum(left_vertices, right_vertices)
+        high = jnp.maximum(left_vertices, right_vertices)
+        pairs = jnp.stack((low, high), axis=-1)
+        excluded = jnp.any(
+            present[..., None]
+            & jnp.all(
+                pairs[..., None, :] == self.excluded_vertex_pairs[None, None, :, :],
+                axis=-1,
+            )
+        )
+        return nonstatic & participant_allowed & ~shared & ~excluded
 
     def evaluate(
         self,
+        scene: ContactSearchScene,
         positions: ArrayLike,
         /,
         *,
         end_positions: ArrayLike | None = None,
+        path_enclosure: ContactPathEnclosure | None = None,
+        revision: ArrayLike | None = None,
     ) -> LBVHContactSearchResult:
-        start = jnp.asarray(positions)
+        _check_device_plan_inputs(scene, self.scene_id)
+        start, lower, upper = vertex_path_boxes(
+            scene, positions, end_positions, path_enclosure
+        )
         end = (
             start
             if end_positions is None
             else jnp.asarray(end_positions, dtype=start.dtype)
         )
-        expected = (self.vertex_count, self.ambient_dimension)
-        if start.shape != expected or end.shape != expected:
-            raise ValueError(f"LBVH positions must have shape {expected}.")
-        finite_positions = jnp.all(jnp.isfinite(start)) & jnp.all(jnp.isfinite(end))
-        if self.hierarchy_depth > self.maximum_tree_depth:
-            return _empty_lbvh_result(
-                self,
-                finite_positions,
-                stack_overflow=True,
-                visit_overflow=False,
-            )
-
-        point_min = jnp.minimum(start, end)
-        point_max = jnp.maximum(start, end)
-        edge_start = start[self.edges]
-        edge_end = end[self.edges]
-        edge_min = jnp.minimum(edge_start, edge_end).min(axis=1)
-        edge_max = jnp.maximum(edge_start, edge_end).max(axis=1)
-        face_start = start[self.faces]
-        face_end = end[self.faces]
-        face_min = (
-            jnp.minimum(face_start, face_end).min(axis=1)
-            if self.faces.size
-            else jnp.empty((0, self.ambient_dimension), dtype=start.dtype)
+        dtype = start.dtype
+        extents, normals, offsets, geometry_valid = scene_route_geometry(scene, dtype)
+        admitted = geometry_valid & enclosure_admits(
+            path_enclosure, start, end, lower, upper
         )
-        face_max = (
-            jnp.maximum(face_start, face_end).max(axis=1)
-            if self.faces.size
-            else jnp.empty((0, self.ambient_dimension), dtype=start.dtype)
+        feature_lower, feature_upper = feature_boxes(
+            self.feature_endpoints, lower, upper
         )
-        primitive_min = jnp.concatenate((point_min, edge_min, face_min), axis=0)
-        primitive_max = jnp.concatenate((point_max, edge_max, face_max), axis=0)
-        inflation = self.feature_contact_extent.astype(start.dtype)[:, None]
-        primitive_min = primitive_min - inflation
-        primitive_max = primitive_max + inflation
-        finite_bounds = jnp.all(jnp.isfinite(primitive_min)) & jnp.all(
+        geometry = (extents, normals, offsets)
+        catalogue = scene.feature_catalogue
+        ranks = catalogue.canonical_ranks
+        count = self.primitive_count
+        raw_lower = feature_lower[:count]
+        raw_upper = feature_upper[:count]
+        inflation = (extents[:count] + self.envelope_radius)[:, None]
+        primitive_min = raw_lower - inflation
+        primitive_max = raw_upper + inflation
+        finite_bounds = admitted & jnp.all(jnp.isfinite(primitive_min)) & jnp.all(
             jnp.isfinite(primitive_max)
         )
         centroid = 0.5 * primitive_min + 0.5 * primitive_max
@@ -311,493 +818,157 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             jnp.clip(normalized, 0.0, 1.0) * maximum_code_coordinate
         ).astype(jnp.uint32)
         codes = morton_encode_integer(quantized, self.morton_bits)
-        primitive_kind = jnp.concatenate(
-            (
-                jnp.zeros((self.vertex_count,), dtype=jnp.int32),
-                jnp.ones((self.edges.shape[0],), dtype=jnp.int32),
-                jnp.full((self.faces.shape[0],), 2, dtype=jnp.int32),
-            )
-        )
-        stable_id = jnp.arange(codes.size, dtype=jnp.int32)
-        order = jnp.lexsort((stable_id, primitive_kind, codes)).astype(jnp.int32)
+        stable_id = jnp.arange(count, dtype=jnp.int32)
+        order = jnp.lexsort((stable_id, self.feature_class, codes)).astype(jnp.int32)
         sorted_codes = codes[order]
         duplicate_codes = jnp.sum(sorted_codes[1:] == sorted_codes[:-1], dtype=jnp.int32)
-
-        primitive_count = codes.size
-        node_count = 2 * primitive_count - 1
-        node_min = jnp.zeros(
-            (node_count, self.ambient_dimension), dtype=primitive_min.dtype
+        node_count = 2 * count - 1
+        node_min = jnp.zeros((node_count, scene.ambient_dimension), dtype=dtype)
+        node_max = jnp.zeros((node_count, scene.ambient_dimension), dtype=dtype)
+        node_min = node_min.at[:count].set(primitive_min[order])
+        node_max = node_max.at[:count].set(primitive_max[order])
+        buffers = tuple(
+            (
+                jnp.full((self.layouts.layouts[family.layout_index].capacity, 4), -1,
+                         dtype=jnp.int32),
+                jnp.zeros((self.layouts.layouts[family.layout_index].capacity,),
+                          dtype=jnp.int32),
+                jnp.zeros((self.layouts.layouts[family.layout_index].capacity,),
+                          dtype=jnp.int32),
+                jnp.zeros((self.layouts.layouts[family.layout_index].capacity,),
+                          dtype=jnp.int32),
+                jnp.asarray(0, dtype=jnp.int32),
+            )
+            for family in self.tree_families
         )
-        node_max = jnp.zeros(
-            (node_count, self.ambient_dimension), dtype=primitive_max.dtype
-        )
-        node_min = node_min.at[:primitive_count].set(primitive_min[order])
-        node_max = node_max.at[:primitive_count].set(primitive_max[order])
-
-        if primitive_count > 1:
+        exhausted_depth = self.hierarchy_depth > self.maximum_tree_depth
+        stack_overflow = jnp.asarray(exhausted_depth)
+        visit_overflow = jnp.asarray(False)
+        traversal_visits = jnp.asarray(0, dtype=jnp.int32)
+        if count > 1 and not exhausted_depth:
 
             def combine_bounds(
                 index: Array, bounds: tuple[Array, Array]
             ) -> tuple[Array, Array]:
-                lower, upper = bounds
-                left = self.tree_left[index]
-                right = self.tree_right[index]
-                parent = primitive_count + index
-                lower = lower.at[parent].set(jnp.minimum(lower[left], lower[right]))
-                upper = upper.at[parent].set(jnp.maximum(upper[left], upper[right]))
-                return lower, upper
+                low, high = bounds
+                left_child = self.tree_left[index]
+                right_child = self.tree_right[index]
+                parent = count + index
+                low = low.at[parent].set(jnp.minimum(low[left_child], low[right_child]))
+                high = high.at[parent].set(
+                    jnp.maximum(high[left_child], high[right_child])
+                )
+                return low, high
 
             node_min, node_max = jax.lax.fori_loop(
-                0,
-                primitive_count - 1,
-                combine_bounds,
-                (node_min, node_max),
+                0, count - 1, combine_bounds, (node_min, node_max)
             )
-        else:
-            root_overlap = _aabb_mask(
-                node_min[0],
-                node_max[0],
-                node_min[0],
-                node_max[0],
-                self.activation_distance,
+            buffers, traversal_visits, stack_overflow, visit_overflow = self._traverse(
+                node_min,
+                node_max,
+                order,
+                raw_lower,
+                raw_upper,
+                extents,
+                ranks,
+                buffers,
             )
-            edge_vertex = _empty_candidate_batch(
-                ContactStencilKind.EDGE_VERTEX, self.edge_vertex_capacity
+        tree_batches: dict[int, ContactStencilBatch] = {}
+        duplicates = jnp.asarray(0, dtype=jnp.int32)
+        addresses = jnp.asarray(0, dtype=jnp.int32)
+        for family, buffer in zip(self.tree_families, buffers, strict=True):
+            layout = self.layouts.layouts[family.layout_index]
+            endpoints, left, right, slots, discovered = buffer
+            accepted = jnp.arange(layout.capacity, dtype=jnp.int32) < jnp.minimum(
+                discovered, layout.capacity
             )
-            edge_edge = _empty_candidate_batch(
-                ContactStencilKind.EDGE_EDGE, self.edge_edge_capacity
+            packing = pack_contact_stencil_batch(
+                layout,
+                catalogue,
+                endpoints,
+                left,
+                right,
+                slots,
+                extents[left] + extents[right],
+                accepted,
+                discovered_count=discovered,
             )
-            face_vertex = _empty_candidate_batch(
-                ContactStencilKind.FACE_VERTEX, self.face_vertex_capacity
+            tree_batches[family.layout_index] = packing.batch
+            duplicates = duplicates + packing.duplicate_count
+            addresses = addresses + packing.invalid_address_count
+        plane_work = jnp.asarray(self.plane_pair_work, dtype=jnp.int64)
+        for kind, left_set in zip(_PLANE_KINDS, self.plane_left_sets, strict=True):
+            index = ROUTE_KIND_ORDER.index(kind)
+            layout = self.layouts.layouts[index]
+            endpoints, left, right, slots, discovered = self._stream_plane_rows(
+                scene,
+                layout,
+                left_set,
+                feature_lower,
+                feature_upper,
+                extents,
+                normals,
+                offsets,
+                admitted,
             )
-            evidence = LBVHContactSearchEvidence(
-                jnp.asarray(0, dtype=jnp.int32),
-                jnp.asarray(1, dtype=jnp.int32),
-                jnp.asarray(1, dtype=jnp.int32),
-                jnp.asarray(1, dtype=jnp.int32),
-                duplicate_codes,
-                jnp.asarray(False),
-                jnp.asarray(False),
-                jnp.asarray(0, dtype=jnp.int32),
-                finite_bounds,
-                finite_bounds & root_overlap,
-                self.plan_id,
+            accepted = jnp.arange(layout.capacity, dtype=jnp.int32) < jnp.minimum(
+                discovered, layout.capacity
             )
-            return LBVHContactSearchResult(edge_vertex, edge_edge, face_vertex, evidence)
-
-        stack_capacity = 4 * self.hierarchy_depth
-        stack_first = jnp.full((stack_capacity,), -1, dtype=jnp.int32)
-        stack_second = jnp.full((stack_capacity,), -1, dtype=jnp.int32)
-        stack_first = stack_first.at[0].set(self.hierarchy_root)
-        stack_second = stack_second.at[0].set(self.hierarchy_root)
-        edge_vertex_indices = jnp.full(
-            (self.edge_vertex_capacity, 4), -1, dtype=jnp.int32
+            packing = pack_contact_stencil_batch(
+                layout,
+                catalogue,
+                endpoints,
+                left,
+                right,
+                slots,
+                extents[left] + extents[right],
+                accepted,
+                discovered_count=discovered,
+            )
+            tree_batches[index] = packing.batch
+            duplicates = duplicates + packing.duplicate_count
+            addresses = addresses + packing.invalid_address_count
+        batches = tuple(
+            tree_batches[index]
+            if index in tree_batches
+            else pack_contact_stencil_batch(
+                layout,
+                catalogue,
+                jnp.zeros((0, 4), dtype=jnp.int32),
+                jnp.zeros((0,), dtype=jnp.int32),
+                jnp.zeros((0,), dtype=jnp.int32),
+                jnp.zeros((0,), dtype=jnp.int32),
+                jnp.zeros((0,), dtype=dtype),
+                jnp.zeros((0,), dtype=jnp.bool_),
+            ).batch
+            for index, layout in enumerate(self.layouts.layouts)
         )
-        edge_edge_indices = jnp.full((self.edge_edge_capacity, 4), -1, dtype=jnp.int32)
-        face_vertex_indices = jnp.full(
-            (self.face_vertex_capacity, 4), -1, dtype=jnp.int32
+        output_overflow = sum(
+            (batch.overflow_count for batch in batches), jnp.asarray(0, dtype=jnp.int32)
         )
-        outputs = (
-            edge_vertex_indices,
-            jnp.asarray(0, dtype=jnp.int32),
-            edge_edge_indices,
-            jnp.asarray(0, dtype=jnp.int32),
-            face_vertex_indices,
-            jnp.asarray(0, dtype=jnp.int32),
+        status = _epoch_status(
+            finite_bounds,
+            stack_overflow | visit_overflow,
+            output_overflow > 0,
+            duplicates,
+            addresses,
         )
-        initial = (
-            stack_first,
-            stack_second,
-            jnp.asarray(1, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(False),
-            outputs,
-        )
-
-        def continue_traversal(state: _TraversalState) -> Array:
-            _, _, stack_size, visits, stack_overflow, _ = state
-            return (
-                (stack_size > 0)
-                & (visits < self.maximum_traversal_visits)
-                & ~stack_overflow
-            )
-
-        def pair_policy_legal(first_feature: Array, second_feature: Array) -> Array:
-            nonstatic = ~(
-                self.feature_static_mask[first_feature]
-                & self.feature_static_mask[second_feature]
-            )
-            participant_pair = jnp.sort(
-                jnp.stack(
-                    (
-                        self.feature_participant_ids[first_feature],
-                        self.feature_participant_ids[second_feature],
-                    )
-                )
-            )
-            participant_allowed = self.unrestricted_pairs | jnp.any(
-                jnp.all(
-                    self.allowed_participant_pairs == participant_pair[None, :],
-                    axis=1,
-                )
-            )
-            left_vertices = self.primitive_vertices[first_feature]
-            right_vertices = self.primitive_vertices[second_feature]
-            left_grid = left_vertices[:, None]
-            right_grid = right_vertices[None, :]
-            valid_vertices = (left_grid >= 0) & (right_grid >= 0)
-            low = jnp.minimum(left_grid, right_grid)
-            high = jnp.maximum(left_grid, right_grid)
-            candidate_pairs = jnp.stack((low, high), axis=-1)
-            excluded = jnp.any(
-                valid_vertices[..., None]
-                & jnp.all(
-                    candidate_pairs[..., None, :]
-                    == self.excluded_vertex_pairs[None, None, :, :],
-                    axis=-1,
-                )
-            )
-            return nonstatic & participant_allowed & ~excluded
-
-        def record_leaf_pair(
-            first: Array, second: Array, current_outputs: _CandidateOutputs
-        ) -> _CandidateOutputs:
-            (
-                edge_vertex_output,
-                edge_vertex_count,
-                edge_edge_output,
-                edge_edge_count,
-                face_vertex_output,
-                face_vertex_count,
-            ) = current_outputs
-            original_first = order[first]
-            original_second = order[second]
-            first_kind = primitive_kind[original_first]
-            second_kind = primitive_kind[original_second]
-            minus_one = jnp.asarray(-1, dtype=jnp.int32)
-            feature_legal = pair_policy_legal(original_first, original_second)
-            if (self.ambient_dimension == 2 or not self.faces.size) and self.edges.size:
-                is_edge_vertex = ((first_kind == 0) & (second_kind == 1)) | (
-                    (first_kind == 1) & (second_kind == 0)
-                )
-                vertex = jnp.where(first_kind == 0, original_first, original_second)
-                edge = (
-                    jnp.where(first_kind == 1, original_first, original_second)
-                    - self.vertex_count
-                )
-                edge = jnp.clip(edge, 0, self.edges.shape[0] - 1)
-                legal = jnp.all(self.edges[edge] != vertex)
-                row = jnp.stack(
-                    (
-                        vertex,
-                        self.edges[edge, 0],
-                        self.edges[edge, 1],
-                        minus_one,
-                    )
-                )
-                edge_vertex_output, edge_vertex_count = _append_traversal_candidate(
-                    edge_vertex_output,
-                    edge_vertex_count,
-                    row,
-                    is_edge_vertex & legal & feature_legal,
-                    self.edge_vertex_capacity,
-                )
-            elif self.faces.size:
-                is_face_vertex = ((first_kind == 0) & (second_kind == 2)) | (
-                    (first_kind == 2) & (second_kind == 0)
-                )
-                vertex = jnp.where(first_kind == 0, original_first, original_second)
-                face = (
-                    jnp.where(first_kind == 2, original_first, original_second)
-                    - self.vertex_count
-                    - self.edges.shape[0]
-                )
-                face = jnp.clip(face, 0, self.faces.shape[0] - 1)
-                face_legal = jnp.all(self.faces[face] != vertex)
-                face_row = jnp.concatenate((vertex[None], self.faces[face]))
-                face_vertex_output, face_vertex_count = _append_traversal_candidate(
-                    face_vertex_output,
-                    face_vertex_count,
-                    face_row,
-                    is_face_vertex & face_legal & feature_legal,
-                    self.face_vertex_capacity,
-                )
-                if self.edges.size:
-                    is_edge_edge = (
-                        (first_kind == 1)
-                        & (second_kind == 1)
-                        & (original_first != original_second)
-                    )
-                    first_edge = jnp.clip(
-                        original_first - self.vertex_count,
-                        0,
-                        self.edges.shape[0] - 1,
-                    )
-                    second_edge = jnp.clip(
-                        original_second - self.vertex_count,
-                        0,
-                        self.edges.shape[0] - 1,
-                    )
-                    lower_edge = jnp.minimum(first_edge, second_edge)
-                    upper_edge = jnp.maximum(first_edge, second_edge)
-                    edge_legal = jnp.all(
-                        self.edges[lower_edge, :, None] != self.edges[upper_edge, None, :]
-                    )
-                    edge_row = jnp.concatenate(
-                        (self.edges[lower_edge], self.edges[upper_edge])
-                    )
-                    edge_edge_output, edge_edge_count = _append_traversal_candidate(
-                        edge_edge_output,
-                        edge_edge_count,
-                        edge_row,
-                        is_edge_edge & edge_legal & feature_legal,
-                        self.edge_edge_capacity,
-                    )
-            return (
-                edge_vertex_output,
-                edge_vertex_count,
-                edge_edge_output,
-                edge_edge_count,
-                face_vertex_output,
-                face_vertex_count,
-            )
-
-        def traverse_one(state: _TraversalState) -> _TraversalState:
-            (
-                first_stack,
-                second_stack,
-                stack_size,
-                visits,
-                stack_overflow,
-                current_outputs,
-            ) = state
-            stack_slot = stack_size - 1
-            first = first_stack[stack_slot]
-            second = second_stack[stack_slot]
-            active = (
-                first_stack,
-                second_stack,
-                stack_slot,
-                stack_overflow,
-                current_outputs,
-            )
-            overlap = _aabb_mask(
-                node_min[first],
-                node_max[first],
-                node_min[second],
-                node_max[second],
-                self.activation_distance,
-            )
-
-            def push_pairs(
-                active_state: _ActiveTraversalState, new_first: Array, new_second: Array
-            ) -> _ActiveTraversalState:
-                active_size = active_state[2]
-                pair_count = new_first.shape[0]
-                has_capacity = active_size + pair_count <= stack_capacity
-
-                def store_pairs(
-                    store_state: _ActiveTraversalState,
-                ) -> _ActiveTraversalState:
-                    (
-                        store_first,
-                        store_second,
-                        store_size,
-                        store_overflow,
-                        store_outputs,
-                    ) = store_state
-                    slots = store_size + jnp.arange(pair_count, dtype=jnp.int32)
-                    store_first = store_first.at[slots].set(new_first)
-                    store_second = store_second.at[slots].set(new_second)
-                    return (
-                        store_first,
-                        store_second,
-                        store_size + pair_count,
-                        store_overflow,
-                        store_outputs,
-                    )
-
-                def report_overflow(
-                    overflow_state: _ActiveTraversalState,
-                ) -> _ActiveTraversalState:
-                    (
-                        overflow_first,
-                        overflow_second,
-                        overflow_size,
-                        _,
-                        overflow_outputs,
-                    ) = overflow_state
-                    return (
-                        overflow_first,
-                        overflow_second,
-                        overflow_size,
-                        jnp.asarray(True),
-                        overflow_outputs,
-                    )
-
-                return jax.lax.cond(
-                    has_capacity, store_pairs, report_overflow, active_state
-                )
-
-            def process_overlap(
-                active_state: _ActiveTraversalState,
-            ) -> _ActiveTraversalState:
-                first_is_leaf = first < primitive_count
-                second_is_leaf = second < primitive_count
-
-                def process_leaves(
-                    leaf_state: _ActiveTraversalState,
-                ) -> _ActiveTraversalState:
-                    (
-                        leaf_first,
-                        leaf_second,
-                        leaf_size,
-                        leaf_overflow,
-                        leaf_outputs,
-                    ) = leaf_state
-                    return (
-                        leaf_first,
-                        leaf_second,
-                        leaf_size,
-                        leaf_overflow,
-                        record_leaf_pair(first, second, leaf_outputs),
-                    )
-
-                def expand_nodes(
-                    node_state: _ActiveTraversalState,
-                ) -> _ActiveTraversalState:
-                    first_internal = jnp.clip(
-                        first - primitive_count, 0, primitive_count - 2
-                    )
-                    second_internal = jnp.clip(
-                        second - primitive_count, 0, primitive_count - 2
-                    )
-                    first_left = self.tree_left[first_internal]
-                    first_right = self.tree_right[first_internal]
-                    second_left = self.tree_left[second_internal]
-                    second_right = self.tree_right[second_internal]
-
-                    def expand_self(
-                        self_state: _ActiveTraversalState,
-                    ) -> _ActiveTraversalState:
-                        return push_pairs(
-                            self_state,
-                            jnp.stack((first_right, first_left, first_left)),
-                            jnp.stack((first_right, first_right, first_left)),
-                        )
-
-                    def expand_distinct(
-                        distinct_state: _ActiveTraversalState,
-                    ) -> _ActiveTraversalState:
-                        split_first = (~first_is_leaf) & (
-                            second_is_leaf
-                            | (
-                                self.node_leaf_count[first]
-                                >= self.node_leaf_count[second]
-                            )
-                        )
-
-                        def split_first_node(
-                            split_state: _ActiveTraversalState,
-                        ) -> _ActiveTraversalState:
-                            return push_pairs(
-                                split_state,
-                                jnp.stack((first_right, first_left)),
-                                jnp.stack((second, second)),
-                            )
-
-                        def split_second_node(
-                            split_state: _ActiveTraversalState,
-                        ) -> _ActiveTraversalState:
-                            return push_pairs(
-                                split_state,
-                                jnp.stack((first, first)),
-                                jnp.stack((second_right, second_left)),
-                            )
-
-                        return jax.lax.cond(
-                            split_first,
-                            split_first_node,
-                            split_second_node,
-                            distinct_state,
-                        )
-
-                    return jax.lax.cond(
-                        first == second, expand_self, expand_distinct, node_state
-                    )
-
-                return jax.lax.cond(
-                    first_is_leaf & second_is_leaf,
-                    process_leaves,
-                    expand_nodes,
-                    active_state,
-                )
-
-            active = jax.lax.cond(overlap, process_overlap, lambda value: value, active)
-            (
-                first_stack,
-                second_stack,
-                stack_size,
-                stack_overflow,
-                current_outputs,
-            ) = active
-            return (
-                first_stack,
-                second_stack,
-                stack_size,
-                visits + 1,
-                stack_overflow,
-                current_outputs,
-            )
-
-        (
-            _,
-            _,
-            remaining,
-            traversal_visits,
-            stack_overflow,
-            outputs,
-        ) = jax.lax.while_loop(continue_traversal, traverse_one, initial)
-        (
-            edge_vertex_indices,
-            edge_vertex_count,
-            edge_edge_indices,
-            edge_edge_count,
-            face_vertex_indices,
-            face_vertex_count,
-        ) = outputs
-        edge_vertex = _traversal_candidate_batch(
-            ContactStencilKind.EDGE_VERTEX,
-            edge_vertex_indices,
-            edge_vertex_count,
-            self.edge_vertex_capacity,
-        )
-        edge_edge = _traversal_candidate_batch(
-            ContactStencilKind.EDGE_EDGE,
-            edge_edge_indices,
-            edge_edge_count,
-            self.edge_edge_capacity,
-        )
-        face_vertex = _traversal_candidate_batch(
-            ContactStencilKind.FACE_VERTEX,
-            face_vertex_indices,
-            face_vertex_count,
-            self.face_vertex_capacity,
-        )
-        output_overflow = (
-            edge_vertex.overflow_count
-            + edge_edge.overflow_count
-            + face_vertex.overflow_count
-        )
-        visit_overflow = remaining > 0
-        candidate_count = (
-            edge_vertex.actual_count + edge_edge.actual_count + face_vertex.actual_count
-        )
-        complete = (
-            finite_bounds & ~stack_overflow & ~visit_overflow & (output_overflow == 0)
+        epoch = _assemble_epoch(
+            scene,
+            self.plan_id,
+            self.epoch_id,
+            route_batch_tuple(batches),
+            start,
+            lower,
+            upper,
+            self.envelope_radius,
+            path_enclosure,
+            revision,
+            geometry,
+            status,
         )
         evidence = LBVHContactSearchEvidence(
-            candidate_count,
+            epoch.candidate_count,
             jnp.asarray(node_count, dtype=jnp.int32),
             jnp.asarray(self.hierarchy_depth, dtype=jnp.int32),
             traversal_visits,
@@ -805,237 +976,351 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             stack_overflow,
             visit_overflow,
             output_overflow,
+            duplicates,
+            plane_work,
             finite_bounds,
-            complete,
+            epoch.complete,
             self.plan_id,
         )
-        return LBVHContactSearchResult(edge_vertex, edge_edge, face_vertex, evidence)
+        return LBVHContactSearchResult(epoch, evidence)
 
-
-class CompiledContactSearchPlan(StrictModule, NonTrainableState):
-    """Fixed-shape device search over predeclared legal primitive pairs.
-
-    The runtime filter is fully JAX compilable. Preparation enumerates legal
-    pairs once; runtime evaluates swept/static AABB separation and packs each
-    kind under fixed capacity. This is the deterministic compiled authority
-    before a future asymptotically faster device LBVH backend.
-    """
-
-    edge_vertex_pairs: Array
-    edge_edge_pairs: Array
-    face_vertex_pairs: Array
-    edge_vertex_radius: Array
-    edge_edge_radius: Array
-    face_vertex_radius: Array
-    edges: Array
-    faces: Array
-    vertex_count: int = eqx.field(static=True)
-    ambient_dimension: int = eqx.field(static=True)
-    edge_vertex_capacity: int = eqx.field(static=True)
-    edge_edge_capacity: int = eqx.field(static=True)
-    face_vertex_capacity: int = eqx.field(static=True)
-    activation_distance: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    @checked
-    def __init__(
+    def build(
         self,
-        scene: PreparedCollisionScene,
-        /,
-        *,
-        edge_vertex_capacity: int,
-        edge_edge_capacity: int,
-        face_vertex_capacity: int,
-        activation_distance: float,
-    ) -> None:
-        capacities = (
-            int(edge_vertex_capacity),
-            int(edge_edge_capacity),
-            int(face_vertex_capacity),
-        )
-        if any(value < 0 for value in capacities) or sum(capacities) <= 0:
-            raise ValueError("Compiled search capacities are invalid.")
-        activation = float(activation_distance)
-        if not np.isfinite(activation) or activation <= 0.0:
-            raise ValueError("activation_distance must be finite and positive.")
-        edges = np.asarray(scene.edges, dtype=np.int32)
-        faces = np.asarray(scene.faces, dtype=np.int32)
-        primitives = _primitive_vertices(scene)
-        excluded_array = _scene_excluded_vertex_pairs(scene)
-        excluded = {(int(pair[0]), int(pair[1])) for pair in excluded_array.tolist()}
-        extent = np.asarray(scene.feature_contact_extent, dtype=np.float64)
-        edge_offset = scene.vertex_count
-        face_offset = edge_offset + edges.shape[0]
-        edge_vertex: list[tuple[int, int]] = []
-        edge_vertex_radius: list[float] = []
-        edge_edge: list[tuple[int, int]] = []
-        edge_edge_radius: list[float] = []
-        face_vertex: list[tuple[int, int]] = []
-        face_vertex_radius: list[float] = []
-        if scene.ambient_dimension == 2 or faces.size == 0:
-            for vertex in range(scene.vertex_count):
-                for edge_index in range(edges.shape[0]):
-                    edge_feature = edge_offset + edge_index
-                    if _primitive_pair_is_legal(
-                        scene, vertex, edge_feature, primitives, excluded
-                    ):
-                        edge_vertex.append((vertex, edge_index))
-                        edge_vertex_radius.append(
-                            activation + extent[vertex] + extent[edge_feature]
-                        )
-        else:
-            for vertex in range(scene.vertex_count):
-                for face_index in range(faces.shape[0]):
-                    face_feature = face_offset + face_index
-                    if _primitive_pair_is_legal(
-                        scene, vertex, face_feature, primitives, excluded
-                    ):
-                        face_vertex.append((vertex, face_index))
-                        face_vertex_radius.append(
-                            activation + extent[vertex] + extent[face_feature]
-                        )
-            for first in range(edges.shape[0]):
-                for second in range(first + 1, edges.shape[0]):
-                    first_feature = edge_offset + first
-                    second_feature = edge_offset + second
-                    if _primitive_pair_is_legal(
-                        scene,
-                        first_feature,
-                        second_feature,
-                        primitives,
-                        excluded,
-                    ):
-                        edge_edge.append((first, second))
-                        edge_edge_radius.append(
-                            activation + extent[first_feature] + extent[second_feature]
-                        )
-        self.edge_vertex_pairs = jnp.asarray(
-            np.asarray(edge_vertex, dtype=np.int32).reshape((-1, 2))
-        )
-        self.edge_edge_pairs = jnp.asarray(
-            np.asarray(edge_edge, dtype=np.int32).reshape((-1, 2))
-        )
-        self.face_vertex_pairs = jnp.asarray(
-            np.asarray(face_vertex, dtype=np.int32).reshape((-1, 2))
-        )
-        self.edges = jnp.asarray(edges)
-        self.faces = jnp.asarray(faces)
-        self.vertex_count = scene.vertex_count
-        self.ambient_dimension = scene.ambient_dimension
-        self.edge_vertex_radius = jnp.asarray(edge_vertex_radius)
-        self.edge_edge_radius = jnp.asarray(edge_edge_radius)
-        self.face_vertex_radius = jnp.asarray(face_vertex_radius)
-        (
-            self.edge_vertex_capacity,
-            self.edge_edge_capacity,
-            self.face_vertex_capacity,
-        ) = capacities
-        self.activation_distance = activation
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "compiled-contact-search-plan",
-                "scene": scene.scene_id,
-                "edge_vertex": array_tree_fingerprint(edge_vertex),
-                "edge_edge": array_tree_fingerprint(edge_edge),
-                "face_vertex": array_tree_fingerprint(face_vertex),
-                "capacities": capacities,
-                "activation_distance": activation.hex(),
-            }
-        )
-
-    def evaluate(
-        self,
+        scene: ContactSearchScene,
         positions: ArrayLike,
         /,
         *,
         end_positions: ArrayLike | None = None,
-    ) -> CompiledContactSearchResult:
-        start = jnp.asarray(positions)
-        end = (
-            start
-            if end_positions is None
-            else jnp.asarray(end_positions, dtype=start.dtype)
-        )
-        expected = (self.vertex_count, self.ambient_dimension)
-        if start.shape != expected or end.shape != expected:
-            raise ValueError(f"Compiled search positions must have shape {expected}.")
-        point_min = jnp.minimum(start, end)
-        point_max = jnp.maximum(start, end)
-        edge_start = start[self.edges]
-        edge_end = end[self.edges]
-        edge_min = jnp.minimum(edge_start, edge_end).min(axis=1)
-        edge_max = jnp.maximum(edge_start, edge_end).max(axis=1)
-        if self.faces.size:
-            face_start = start[self.faces]
-            face_end = end[self.faces]
-            face_min = jnp.minimum(face_start, face_end).min(axis=1)
-            face_max = jnp.maximum(face_start, face_end).max(axis=1)
-        else:
-            face_min = jnp.empty((0, start.shape[1]), dtype=start.dtype)
-            face_max = jnp.empty((0, start.shape[1]), dtype=start.dtype)
+        path_enclosure: ContactPathEnclosure | None = None,
+        revision: ArrayLike | None = None,
+    ) -> ContactCandidateEpoch:
+        return self.evaluate(
+            scene,
+            positions,
+            end_positions=end_positions,
+            path_enclosure=path_enclosure,
+            revision=revision,
+        ).epoch
 
-        edge_vertex = _pack_compiled_pairs(
-            ContactStencilKind.EDGE_VERTEX,
-            self.edge_vertex_pairs,
-            self.edge_vertex_capacity,
-            point_min,
-            point_max,
-            edge_min,
-            edge_max,
-            self.edges,
-            self.edge_vertex_radius.astype(start.dtype),
+    def _stream_plane_rows(
+        self,
+        scene: ContactSearchScene,
+        layout: ContactStencilLayout,
+        left_set: Array,
+        feature_lower: Array,
+        feature_upper: Array,
+        extents: Array,
+        normals: Array,
+        offsets: Array,
+        admitted: Array,
+        /,
+    ) -> _FamilyBuffer:
+        """Stream planes one at a time into fixed-capacity plane-route rows.
+
+        Working storage is O(primitives + capacity); the total legality and
+        activation work, primitives x planes, is reported as evidence.
+        """
+        capacity = layout.capacity
+        slots = layout.witness_slot_count
+        empty: _FamilyBuffer = (
+            jnp.full((capacity, 4), -1, dtype=jnp.int32),
+            jnp.zeros((capacity,), dtype=jnp.int32),
+            jnp.zeros((capacity,), dtype=jnp.int32),
+            jnp.zeros((capacity,), dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
         )
-        edge_edge = _pack_compiled_same_pairs(
-            ContactStencilKind.EDGE_EDGE,
-            self.edge_edge_pairs,
-            self.edge_edge_capacity,
-            edge_min,
-            edge_max,
-            self.edges,
-            self.edge_edge_radius.astype(start.dtype),
+        plane_count = scene.plane_count
+        if left_set.shape[0] == 0 or plane_count == 0:
+            return empty
+        first_plane = scene.feature_count - plane_count
+        left_lower = feature_lower[left_set]
+        left_upper = feature_upper[left_set]
+        left_extent = extents[left_set]
+        left_participant = self.feature_participant_ids[left_set]
+        left_static = self.feature_static_mask[left_set]
+        slot_values = jnp.arange(slots, dtype=jnp.int32)
+
+        def stream(plane: Array, buffer: _FamilyBuffer, /) -> _FamilyBuffer:
+            endpoints, lefts, rights, witness, discovered = buffer
+            feature = first_plane + plane
+            radius = route_pair_radius(
+                self.activation_distance,
+                self.envelope_radius,
+                left_extent,
+                extents[feature],
+                True,
+            )
+            near = (
+                plane_box_clearance(left_lower, left_upper, normals[plane], offsets[plane])
+                <= radius
+            )
+            pair = jnp.stack(
+                (
+                    jnp.minimum(left_participant, self.feature_participant_ids[feature]),
+                    jnp.maximum(left_participant, self.feature_participant_ids[feature]),
+                ),
+                axis=-1,
+            )
+            allowed = self.unrestricted_pairs | jnp.any(
+                jnp.all(
+                    pair[:, None, :] == self.allowed_participant_pairs[None, :, :],
+                    axis=-1,
+                ),
+                axis=-1,
+            )
+            accepted = (
+                admitted
+                & near
+                & allowed
+                & ~(left_static & self.feature_static_mask[feature])
+            )
+            order = jnp.cumsum(accepted.astype(jnp.int32)) - 1
+            plane_feature = jnp.full(left_set.shape, feature, dtype=jnp.int32)
+            rows = route_endpoints(
+                layout.kind, self.feature_endpoints, left_set, plane_feature
+            )
+            for slot in range(slots):
+                target = discovered + order * slots + slot
+                target = jnp.where(accepted & (target < capacity), target, capacity)
+                endpoints, lefts, rights, witness = _append_rows(
+                    (endpoints, lefts, rights, witness),
+                    target,
+                    rows,
+                    left_set,
+                    plane_feature,
+                    jnp.broadcast_to(slot_values[slot], left_set.shape),
+                )
+            discovered = discovered + slots * jnp.sum(accepted, dtype=jnp.int32)
+            return endpoints, lefts, rights, witness, discovered
+
+        return jax.lax.fori_loop(0, plane_count, stream, empty)
+
+    def _record_leaf_pair(
+        self,
+        first: Array,
+        second: Array,
+        raw_lower: Array,
+        raw_upper: Array,
+        extents: Array,
+        ranks: Array,
+        buffers: tuple[_FamilyBuffer, ...],
+        /,
+    ) -> tuple[_FamilyBuffer, ...]:
+        first_class = self.feature_class[first]
+        second_class = self.feature_class[second]
+        distinct = first != second
+        updated: list[_FamilyBuffer] = []
+        for family, buffer in zip(self.tree_families, buffers, strict=True):
+            endpoints, lefts, rights, slots, discovered = buffer
+            capacity = lefts.shape[0]
+            if contact_stencil_symmetric(family.kind):
+                match = (
+                    (first_class == family.left_class)
+                    & (second_class == family.left_class)
+                    & distinct
+                )
+                first_lower = ranks[first] < ranks[second]
+                left = jnp.where(first_lower, first, second)
+                right = jnp.where(first_lower, second, first)
+            else:
+                forward = (first_class == family.left_class) & (
+                    second_class == family.right_class
+                )
+                reverse = (first_class == family.right_class) & (
+                    second_class == family.left_class
+                )
+                match = forward | reverse
+                left = jnp.where(forward, first, second)
+                right = jnp.where(forward, second, first)
+            vertex_limit = self.vertex_admitted.shape[0] - 1
+            if family.left_class == 0:
+                match = match & self.vertex_admitted[jnp.clip(left, 0, vertex_limit)]
+            if family.right_class == 0:
+                match = match & self.vertex_admitted[jnp.clip(right, 0, vertex_limit)]
+            radius = route_pair_radius(
+                self.activation_distance,
+                self.envelope_radius,
+                extents[left],
+                extents[right],
+                False,
+            )
+            near = box_distance_squared(
+                raw_lower[left], raw_upper[left], raw_lower[right], raw_upper[right]
+            ) <= radius * radius
+            accepted = match & near & self._pair_legal(left, right)
+            row = route_endpoints(
+                family.kind, self.feature_endpoints, left[None], right[None]
+            )[0]
+            for slot in range(family.witness_slot_count):
+                target = jnp.where(
+                    accepted & (discovered < capacity), discovered, capacity
+                )
+                endpoints, lefts, rights, slots = _append_rows(
+                    (endpoints, lefts, rights, slots),
+                    target,
+                    row,
+                    left,
+                    right,
+                    jnp.asarray(slot, dtype=jnp.int32),
+                )
+                discovered = discovered + accepted.astype(jnp.int32)
+            updated.append((endpoints, lefts, rights, slots, discovered))
+        return tuple(updated)
+
+    def _traverse(
+        self,
+        node_min: Array,
+        node_max: Array,
+        order: Array,
+        raw_lower: Array,
+        raw_upper: Array,
+        extents: Array,
+        ranks: Array,
+        buffers: tuple[_FamilyBuffer, ...],
+        /,
+    ) -> tuple[tuple[_FamilyBuffer, ...], Array, Array, Array]:
+        count = self.primitive_count
+        stack_capacity = 4 * self.hierarchy_depth
+        stack_first = jnp.full((stack_capacity,), -1, dtype=jnp.int32)
+        stack_second = jnp.full((stack_capacity,), -1, dtype=jnp.int32)
+        stack_first = stack_first.at[0].set(self.hierarchy_root)
+        stack_second = stack_second.at[0].set(self.hierarchy_root)
+        initial: _TraversalState = (
+            stack_first,
+            stack_second,
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(False),
+            buffers,
         )
-        face_vertex = _pack_compiled_pairs(
-            ContactStencilKind.FACE_VERTEX,
-            self.face_vertex_pairs,
-            self.face_vertex_capacity,
-            point_min,
-            point_max,
-            face_min,
-            face_max,
-            self.faces,
-            self.face_vertex_radius.astype(start.dtype),
+
+        def continue_traversal(state: _TraversalState) -> Array:
+            _, _, stack_size, visits, overflow, _ = state
+            return (
+                (stack_size > 0)
+                & (visits < self.maximum_traversal_visits)
+                & ~overflow
+            )
+
+        def traverse_one(state: _TraversalState) -> _TraversalState:
+            first_stack, second_stack, stack_size, visits, overflow, outputs = state
+            stack_size = stack_size - 1
+            first = first_stack[stack_size]
+            second = second_stack[stack_size]
+            delta = jnp.maximum(
+                0.0,
+                jnp.maximum(
+                    node_min[first] - node_max[second], node_min[second] - node_max[first]
+                ),
+            )
+            overlap = jnp.sum(delta * delta) <= self.activation_distance**2
+            first_leaf = first < count
+            second_leaf = second < count
+            leaves = overlap & first_leaf & second_leaf
+            outputs = jax.lax.cond(
+                leaves,
+                lambda values: self._record_leaf_pair(
+                    order[jnp.clip(first, 0, count - 1)],
+                    order[jnp.clip(second, 0, count - 1)],
+                    raw_lower,
+                    raw_upper,
+                    extents,
+                    ranks,
+                    values,
+                ),
+                lambda values: values,
+                outputs,
+            )
+            internal_first = jnp.clip(first - count, 0, count - 2)
+            internal_second = jnp.clip(second - count, 0, count - 2)
+            first_left = self.tree_left[internal_first]
+            first_right = self.tree_right[internal_first]
+            second_left = self.tree_left[internal_second]
+            second_right = self.tree_right[internal_second]
+            same = first == second
+            split_first = (~first_leaf) & (
+                second_leaf
+                | (self.node_leaf_count[first] >= self.node_leaf_count[second])
+            )
+            new_first = jnp.where(
+                same,
+                jnp.stack((first_right, first_left, first_left)),
+                jnp.where(
+                    split_first,
+                    jnp.stack((first_right, first_left, first_left)),
+                    jnp.stack((first, first, first)),
+                ),
+            )
+            new_second = jnp.where(
+                same,
+                jnp.stack((first_right, first_right, first_left)),
+                jnp.where(
+                    split_first,
+                    jnp.stack((second, second, second)),
+                    jnp.stack((second_right, second_left, second_left)),
+                ),
+            )
+            pushes = jnp.where(
+                overlap & ~(first_leaf & second_leaf), jnp.where(same, 3, 2), 0
+            ).astype(jnp.int32)
+            fits = stack_size + pushes <= stack_capacity
+            slots = stack_size + jnp.arange(3, dtype=jnp.int32)
+            target = jnp.where(
+                (jnp.arange(3, dtype=jnp.int32) < pushes) & fits,
+                slots,
+                stack_capacity,
+            )
+            first_stack = first_stack.at[target].set(new_first, mode="drop")
+            second_stack = second_stack.at[target].set(new_second, mode="drop")
+            return (
+                first_stack,
+                second_stack,
+                jnp.where(fits, stack_size + pushes, stack_size),
+                visits + 1,
+                overflow | ~fits,
+                outputs,
+            )
+
+        _, _, remaining, visits, overflow, outputs = jax.lax.while_loop(
+            continue_traversal, traverse_one, initial
         )
-        count = (
-            edge_vertex.actual_count + edge_edge.actual_count + face_vertex.actual_count
-        )
-        overflow = (
-            edge_vertex.overflow_count
-            + edge_edge.overflow_count
-            + face_vertex.overflow_count
-        )
-        finite = jnp.all(jnp.isfinite(start)) & jnp.all(jnp.isfinite(end))
-        evidence = CompiledContactSearchEvidence(
-            count,
-            overflow,
-            finite,
-            finite & (overflow == 0),
-            self.plan_id,
-        )
-        return CompiledContactSearchResult(edge_vertex, edge_edge, face_vertex, evidence)
+        return outputs, visits, overflow, (remaining > 0) & ~overflow
 
 
-def _aabb_mask(
-    first_min: Array,
-    first_max: Array,
-    second_min: Array,
-    second_max: Array,
-    radius: float | Array,
-) -> Array:
-    delta = jnp.maximum(
-        0.0,
-        jnp.maximum(first_min - second_max, second_min - first_max),
+type ContactSearchPlan = (
+    DenseContactSearchPlan
+    | SweepAndPruneContactSearchPlan
+    | CompiledContactSearchPlan
+    | LBVHContactSearchPlan
+)
+
+
+type _RowBuffers = tuple[Array, Array, Array, Array]
+
+
+def _append_rows(
+    buffers: _RowBuffers,
+    target: Array,
+    endpoints: Array,
+    left: Array,
+    right: Array,
+    slot: Array,
+    /,
+) -> _RowBuffers:
+    """Scatter accepted rows to ``target`` (``capacity`` means dropped).
+
+    Zero-capacity buffers are returned unchanged without indexing their empty
+    axis; callers still count discovered rows, so overflow stays observable.
+    """
+    row_endpoints, lefts, rights, slots = buffers
+    if lefts.shape[0] == 0:
+        return buffers
+    return (
+        row_endpoints.at[target].set(endpoints, mode="drop"),
+        lefts.at[target].set(left, mode="drop"),
+        rights.at[target].set(right, mode="drop"),
+        slots.at[target].set(slot, mode="drop"),
     )
-    return jnp.sum(delta * delta, axis=-1) <= radius * radius
 
 
 def _balanced_morton_hierarchy(
@@ -1070,179 +1355,15 @@ def _balanced_morton_hierarchy(
     )
 
 
-def _empty_candidate_batch(
-    kind: ContactStencilKind, capacity: int
-) -> CompiledCandidateBatch:
-    return CompiledCandidateBatch(
-        jnp.full((capacity, 4), -1, dtype=jnp.int32),
-        jnp.zeros((capacity,), dtype=jnp.bool_),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        kind,
-        capacity,
-    )
-
-
-def _empty_lbvh_result(
-    plan: LBVHContactSearchPlan,
-    finite_bounds: ArrayLike,
-    /,
-    *,
-    stack_overflow: bool,
-    visit_overflow: bool,
-) -> LBVHContactSearchResult:
-    edge_vertex = _empty_candidate_batch(
-        ContactStencilKind.EDGE_VERTEX, plan.edge_vertex_capacity
-    )
-    edge_edge = _empty_candidate_batch(
-        ContactStencilKind.EDGE_EDGE, plan.edge_edge_capacity
-    )
-    face_vertex = _empty_candidate_batch(
-        ContactStencilKind.FACE_VERTEX, plan.face_vertex_capacity
-    )
-    evidence = LBVHContactSearchEvidence(
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(stack_overflow, dtype=jnp.bool_),
-        jnp.asarray(visit_overflow, dtype=jnp.bool_),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(finite_bounds, dtype=jnp.bool_),
-        jnp.asarray(False),
-        plan.plan_id,
-    )
-    return LBVHContactSearchResult(edge_vertex, edge_edge, face_vertex, evidence)
-
-
-def _append_traversal_candidate(
-    indices: Array, count: Array, row: Array, accepted: ArrayLike, capacity: int
-) -> tuple[Array, Array]:
-    accepted = jnp.asarray(accepted, dtype=jnp.bool_)
-    if capacity == 0:
-        return indices, count + accepted.astype(jnp.int32)
-
-    def store(values: tuple[Array, Array]) -> Array:
-        output, slot = values
-        return output.at[slot].set(row)
-
-    indices = jax.lax.cond(
-        accepted & (count < capacity),
-        store,
-        lambda values: values[0],
-        (indices, count),
-    )
-    return indices, count + accepted.astype(jnp.int32)
-
-
-def _traversal_candidate_batch(
-    kind: ContactStencilKind, indices: Array, count: Array, capacity: int
-) -> CompiledCandidateBatch:
-    valid = jnp.arange(capacity, dtype=jnp.int32) < jnp.minimum(count, capacity)
-    overflow = jnp.maximum(count - capacity, 0)
-    return CompiledCandidateBatch(indices, valid, count, overflow, kind, capacity)
-
-
-def _pack_indices(mask: Array, capacity: int) -> tuple[Array, Array, Array, Array]:
-    count = jnp.sum(mask, dtype=jnp.int32)
-    selected = jnp.nonzero(mask, size=capacity, fill_value=0)[0]
-    valid = jnp.arange(capacity) < jnp.minimum(count, capacity)
-    overflow = jnp.maximum(count - capacity, 0)
-    return selected, valid, count, overflow
-
-
-def _pack_compiled_pairs(
-    kind: ContactStencilKind,
-    pairs: Array,
-    capacity: int,
-    point_min: Array,
-    point_max: Array,
-    primitive_min: Array,
-    primitive_max: Array,
-    primitive_topology: Array,
-    radius: Array,
-    *,
-    legal: ArrayLike | None = None,
-) -> CompiledCandidateBatch:
-    if pairs.shape[0] == 0:
-        return CompiledCandidateBatch(
-            jnp.full((capacity, 4), -1, dtype=jnp.int32),
-            jnp.zeros((capacity,), dtype=jnp.bool_),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            kind,
-            capacity,
-        )
-    point = pairs[:, 0]
-    primitive = pairs[:, 1]
-    mask = _aabb_mask(
-        point_min[point],
-        point_max[point],
-        primitive_min[primitive],
-        primitive_max[primitive],
-        radius,
-    )
-    if legal is not None:
-        mask = mask & jnp.asarray(legal, dtype=jnp.bool_)
-    selected, valid, count, overflow = _pack_indices(mask, capacity)
-    selected_pairs = pairs[selected]
-    endpoints = primitive_topology[selected_pairs[:, 1]]
-    padding = 4 - (1 + endpoints.shape[1])
-    indices = jnp.concatenate(
-        (
-            selected_pairs[:, :1],
-            endpoints,
-            jnp.full((capacity, padding), -1, dtype=jnp.int32),
-        ),
-        axis=1,
-    )
-    return CompiledCandidateBatch(indices, valid, count, overflow, kind, capacity)
-
-
-def _pack_compiled_same_pairs(
-    kind: ContactStencilKind,
-    pairs: Array,
-    capacity: int,
-    lower: Array,
-    upper: Array,
-    topology: Array,
-    radius: Array,
-    *,
-    legal: ArrayLike | None = None,
-) -> CompiledCandidateBatch:
-    if pairs.shape[0] == 0:
-        return CompiledCandidateBatch(
-            jnp.full((capacity, 4), -1, dtype=jnp.int32),
-            jnp.zeros((capacity,), dtype=jnp.bool_),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            kind,
-            capacity,
-        )
-    first = pairs[:, 0]
-    second = pairs[:, 1]
-    mask = _aabb_mask(lower[first], upper[first], lower[second], upper[second], radius)
-    if legal is not None:
-        mask = mask & jnp.asarray(legal, dtype=jnp.bool_)
-    selected, valid, count, overflow = _pack_indices(mask, capacity)
-    selected_pairs = pairs[selected]
-    indices = jnp.concatenate(
-        (
-            topology[selected_pairs[:, 0]],
-            topology[selected_pairs[:, 1]],
-        ),
-        axis=1,
-    )
-    return CompiledCandidateBatch(indices, valid, count, overflow, kind, capacity)
-
-
 __all__ = [
-    "CompiledCandidateBatch",
     "CompiledContactSearchEvidence",
     "CompiledContactSearchPlan",
     "CompiledContactSearchResult",
+    "ContactSearchPlan",
     "LBVHContactSearchEvidence",
     "LBVHContactSearchPlan",
     "LBVHContactSearchResult",
+    "PreparedRouteCandidates",
+    "prepare_route_candidates",
+    "route_activation_mask",
 ]

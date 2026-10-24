@@ -19,6 +19,7 @@ from ..dynamics._system import DiscreteTransitionEvidence
 from ..typing import checked
 from ._constraints import SampledControlFeasibility
 from ._cost import SampledControlLoss
+from ._plant_history import PlantControlHistory
 from ._problem import _identifier
 
 
@@ -38,6 +39,7 @@ class ControlTrajectory(StrictModule):
     status: Array
     backend_status: Any
     transition_evidence: DiscreteTransitionEvidence | None
+    plant_history: PlantControlHistory | None
     case_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
@@ -60,6 +62,7 @@ class ControlTrajectory(StrictModule):
         status: ArrayLike,
         backend_status: Any,
         transition_evidence: DiscreteTransitionEvidence | None = None,
+        plant_history: PlantControlHistory | None = None,
         case_shape: Sequence[int],
         state_shape: Sequence[int],
         control_shape: Sequence[int],
@@ -124,6 +127,11 @@ class ControlTrajectory(StrictModule):
                     f"shape {expected_transition_states}; got "
                     f"{transition_evidence.candidate_states.shape}."
                 )
+        if plant_history is not None:
+            if not isinstance(plant_history, PlantControlHistory):
+                raise TypeError("plant_history must be PlantControlHistory or None.")
+            if plant_history.final_state.time.shape != cases:
+                raise ValueError("Plant endpoint cases do not match the trajectory.")
         self.time_grid = time_grid
         self.states = states_
         self.controls = controls_
@@ -131,6 +139,7 @@ class ControlTrajectory(StrictModule):
         self.status = status_
         self.backend_status = backend_status
         self.transition_evidence = transition_evidence
+        self.plant_history = plant_history
         self.case_shape = cases
         self.state_shape = states_shape
         self.control_shape = controls_shape

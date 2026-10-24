@@ -23,10 +23,13 @@ from .._bounds import Bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
+from ..dynamics._plant import PlantRuntimeState
 from ..optim import AbstractRiskMeasure, CVaRRisk, EntropicRisk, MeanVarianceRisk
 from ..typing import Bool, Dim, Inexact, parse, Size
 from ._dynamics import DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
+from ._plant_dynamics import PlantControlDynamics
+from ._plant_history import PlantControlHistory, PlantRuntimeHistory
 from ._problem import ControlProblem
 from ._trajectory import ControlResult
 
@@ -304,6 +307,7 @@ class SamplingMPCSelectedReplay(StrictModule, NonTrainableState):
     realization_batch_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     replay_id: str = eqx.field(static=True)
+    plant_history: PlantControlHistory | None = None
 
     @property
     def accepted(self) -> Array:
@@ -425,6 +429,77 @@ def _risk_identity(risk: AbstractRiskMeasure, /) -> object:
     return {"risk_id": risk.risk_id, "parameters": parameters}
 
 
+def _prepare_model_axis(
+    problem: ControlProblem,
+    model_weights: ArrayLike | None,
+    model_support: ArrayLike | None,
+    realizations: SamplingMPCRealizations | None,
+    realization_binding: SamplingMPCRealizationBinding | None,
+    realization_binding_id: str | None,
+    dtype: np.dtype,
+    /,
+) -> tuple[tuple[int, ...], int, Array, Array, str]:
+    """Admit one model-axis owner and its complete-state retention requirement."""
+    if realizations is None:
+        if realization_binding is not None or realization_binding_id is not None:
+            raise ValueError(
+                "realization_binding is only valid with explicit realizations."
+            )
+        model_shape = problem.case_shape
+        weights, support = _model_distribution(
+            model_weights, model_support, model_shape, dtype
+        )
+        return (
+            model_shape,
+            prod(model_shape) if model_shape else 1,
+            weights,
+            support,
+            "sampling-mpc:legacy-case-axis",
+        )
+    if not isinstance(realizations, SamplingMPCRealizations):
+        raise TypeError("realizations must be SamplingMPCRealizations or None.")
+    if problem.case_shape:
+        raise ValueError(
+            "Explicit realization mode requires a scalar-case ControlProblem; "
+            "the realization capacity is the sole model axis."
+        )
+    if model_weights is not None or model_support is not None:
+        raise ValueError(
+            "model_weights/model_support are owned by explicit realizations."
+        )
+    if realization_binding is not None and not callable(realization_binding):
+        raise TypeError("realization_binding must be callable or None.")
+    if realization_binding_id is None:
+        binding_id = (
+            "sampling-mpc:replace-problem-args" if realization_binding is None else ""
+        )
+    else:
+        binding_id = str(realization_binding_id)
+    if not binding_id:
+        raise ValueError(
+            "A custom realization_binding requires a non-empty realization_binding_id."
+        )
+    if isinstance(problem.dynamics, PlantControlDynamics):
+        initial = problem._initial_state
+        if not isinstance(initial, PlantRuntimeState):
+            raise ValueError("Plant realizations require a complete initial state.")
+        required = realizations.count * problem.dynamics.retained_storage_bytes(
+            initial, problem.time_grid.num_steps
+        )
+        if required > problem.dynamics.maximum_retained_bytes:
+            raise ValueError(
+                f"Plant realization replay retention requires {required} bytes; "
+                f"capacity is {problem.dynamics.maximum_retained_bytes}."
+            )
+    return (
+        (realizations.count,),
+        realizations.count,
+        realizations.weights,
+        realizations.support_mask,
+        binding_id,
+    )
+
+
 def plan_sampling_mpc(
     problem: ControlProblem,
     parameterization: AbstractControlParameterization,
@@ -450,7 +525,7 @@ def plan_sampling_mpc(
 
     if not isinstance(problem, ControlProblem):
         raise TypeError("problem must be a ControlProblem.")
-    if not isinstance(problem.dynamics, DiscreteControlDynamics):
+    if not isinstance(problem.dynamics, (DiscreteControlDynamics, PlantControlDynamics)):
         raise ValueError("Sampling MPC currently supports discrete dynamics only.")
     if not isinstance(parameterization, AbstractControlParameterization):
         raise TypeError(
@@ -502,48 +577,15 @@ def plan_sampling_mpc(
         )
 
     dtype = np.dtype(problem.initial_state.real.dtype)
-    if realizations is None:
-        if realization_binding is not None or realization_binding_id is not None:
-            raise ValueError(
-                "realization_binding is only valid with explicit realizations."
-            )
-        model_shape = problem.case_shape
-        model_count = prod(model_shape) if model_shape else 1
-        weights, support = _model_distribution(
-            model_weights,
-            model_support,
-            model_shape,
-            dtype,
-        )
-        binding_id = "sampling-mpc:legacy-case-axis"
-    else:
-        if not isinstance(realizations, SamplingMPCRealizations):
-            raise TypeError("realizations must be SamplingMPCRealizations or None.")
-        if problem.case_shape:
-            raise ValueError(
-                "Explicit realization mode requires a scalar-case ControlProblem; "
-                "the realization capacity is the sole model axis."
-            )
-        if model_weights is not None or model_support is not None:
-            raise ValueError(
-                "model_weights/model_support are owned by explicit realizations."
-            )
-        if realization_binding is not None and not callable(realization_binding):
-            raise TypeError("realization_binding must be callable or None.")
-        if realization_binding_id is None:
-            binding_id = (
-                "sampling-mpc:replace-problem-args" if realization_binding is None else ""
-            )
-        else:
-            binding_id = str(realization_binding_id)
-        if not binding_id:
-            raise ValueError(
-                "A custom realization_binding requires a non-empty realization_binding_id."
-            )
-        model_shape = (realizations.count,)
-        model_count = realizations.count
-        weights = realizations.weights
-        support = realizations.support_mask
+    model_shape, model_count, weights, support, binding_id = _prepare_model_axis(
+        problem,
+        model_weights,
+        model_support,
+        realizations,
+        realization_binding,
+        realization_binding_id,
+        dtype,
+    )
     bound_identity: object = None
     if bounds is not None:
         template = jnp.zeros(parameter_shape, dtype=dtype)
@@ -827,6 +869,40 @@ def _realization_metadata(
     )
 
 
+def _realization_plant_history(
+    history: PlantControlHistory | None, count: int, /
+) -> PlantControlHistory | None:
+    if history is None:
+        return None
+
+    def time_first(retained: PlantRuntimeHistory | None) -> PlantRuntimeHistory | None:
+        if retained is None:
+            return None
+        reordered = jax.tree.map(lambda leaf: jnp.swapaxes(leaf, 0, 1), retained)
+        return PlantRuntimeHistory(
+            PlantRuntimeState(
+                reordered.payload,
+                reordered.time,
+                reordered.step_index,
+                reordered.key,
+                reordered.semantic_provenance_id,
+                reordered.numeric_revision_id,
+                reordered.state_schema_id,
+                reordered.execution_signature_id,
+            )
+        )
+
+    return PlantControlHistory(
+        history.initial_state,
+        history.final_state,
+        history.final_candidate_state,
+        time_first(history.accepted),
+        time_first(history.candidates),
+        count * history.retained_bytes,
+        realization_count=count,
+    )
+
+
 def _selected_replay(
     plan: SamplingMPCPlan,
     controls: Array,
@@ -843,6 +919,9 @@ def _selected_replay(
         raise ValueError("Sampling MPC discrete replay requires transition evidence.")
     realization_ids, posterior_id, campaign_id, _, batch_id = _realization_metadata(plan)
     stopped = lambda value: jax.lax.stop_gradient(value)
+    plant_history = trajectory.plant_history
+    if plan.realizations is not None:
+        plant_history = _realization_plant_history(plant_history, plan.model_count)
     return SamplingMPCSelectedReplay(
         stopped(
             trajectory.states.reshape(
@@ -899,6 +978,7 @@ def _selected_replay(
         canonical_fingerprint(
             {"kind": "sampling-mpc-selected-replay", "plan": plan.plan_id}
         ),
+        plant_history=jax.tree.map(jax.lax.stop_gradient, plant_history),
     )
 
 

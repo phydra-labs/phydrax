@@ -571,7 +571,7 @@ def campaign(repeats: int, cutensor: bool, record: dict[str, Any]) -> None:
         raise ValueError("Windows campaign requires exactly one process and one GPU")
     if jax.local_devices()[0].platform != "gpu" or not pxconfig.x64_enabled():
         raise ValueError("CUDA GPU with enabled x64 is required")
-    if jax.config.jax_enable_compilation_cache:
+    if pxconfig.compilation_cache_enabled():
         raise ValueError("Compilation timing requires the persistent JAX cache disabled")
     record["persistent_jax_compilation_cache"] = False
     record["installed_build_fingerprint"] = installed_build_fingerprint()

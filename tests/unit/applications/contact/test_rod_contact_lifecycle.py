@@ -10,17 +10,21 @@ import jax.numpy as jnp
 import numpy as np
 
 from phydrax.applications.contact._cone import (
+    ContactCertificatePolicy,
+    ContactConeBranch,
     ContactConeSolverPlan,
     project_signorini_coulomb_product,
 )
+from phydrax.applications.contact._manifold import record_contact_response
 from phydrax.applications.contact._rod_contact_lifecycle import (
     CompositeContactParticipantBlock,
     CompositeContactResponse,
+    empty_rod_contact_manifold,
     RodContactCCDPlan,
-    RodContactManifoldState,
     RodContactSearchFailure,
     RodContactSearchPlan,
     RodContactWitnessBatch,
+    update_rod_contact_manifold,
 )
 from phydrax.discretization.contact._implicit_geometry import PlaneContactGeometry
 from phydrax.discretization.contact._stencils import ContactStencilKind
@@ -224,14 +228,14 @@ def test_rod_contact_lifecycle_scenario_2() -> None:
     valid = np.asarray(result.witnesses.valid)
     assert int(np.count_nonzero(valid)) == 1
     assert np.asarray(result.witnesses.stencil_kinds)[valid].item() == int(
-        ContactStencilKind.EDGE_VERTEX
+        ContactStencilKind.EDGE_PLANE
     )
     np.testing.assert_allclose(
         np.asarray(result.witnesses.physical_gap)[valid], np.asarray((0.05,))
     )
     np.testing.assert_array_equal(
-        np.asarray(result.epoch.edge_vertex.route_keys)[
-            np.asarray(result.epoch.edge_vertex.valid)
+        np.asarray(result.epoch.edge_plane.route_keys)[
+            np.asarray(result.epoch.edge_plane.valid)
         ],
         _active_keys(result),
     )
@@ -243,13 +247,19 @@ def test_rod_contact_lifecycle_scenario_2() -> None:
         )
     )
     first = _history_witness((20, 10), normal, frame)
-    state = RodContactManifoldState.empty(3)
-    born = state.update(first, material_revision=7, retention_steps=2)
-    assert int(born.born_count) == 2
-    stored = born.state.record_response(
+    state = empty_rod_contact_manifold(3, catalogue_id="rod-history-test")
+    born = update_rod_contact_manifold(
+        state, first, material_revision=7, retention_steps=2
+    )
+    assert int(born.manifold.born_count) == 2
+    stored = record_contact_response(
+        born.manifold.commit(),
         first.route_keys,
         np.asarray(((2.0, 0.4, -0.2), (1.0, -0.3, 0.1))),
-        np.asarray((False, True)),
+        np.asarray(
+            (int(ContactConeBranch.SLIDING), int(ContactConeBranch.STICKING)),
+            dtype=np.int8,
+        ),
         np.asarray(((0.2, 0.0), (0.0, 0.0))),
         step_size=0.5,
     )
@@ -258,38 +268,45 @@ def test_rod_contact_lifecycle_scenario_2() -> None:
     next_normal = normal @ rotation.T
     next_frame = np.einsum("ij,cjk->cik", rotation, frame)
     second = _history_witness((10, 30), next_normal, next_frame)
-    transition = stored.update(second, material_revision=7, retention_steps=2)
+    transition = update_rod_contact_manifold(
+        stored, second, material_revision=7, retention_steps=2
+    )
+    candidate = transition.manifold.candidate
 
-    assert int(transition.born_count) == 1
+    assert int(transition.manifold.born_count) == 1
     np.testing.assert_array_equal(
-        np.asarray(transition.state.route_keys)[np.asarray(transition.state.occupied)],
+        np.asarray(candidate.route_keys)[np.asarray(candidate.occupied)],
         np.asarray((10, 20, 30)),
     )
     np.testing.assert_allclose(
-        np.asarray(transition.warm_start)[0], np.asarray((1.0, -0.3, 0.1))
+        np.asarray(transition.manifold.warm_start)[0], np.asarray((1.0, -0.3, 0.1))
     )
     old_world_tangent = frame[1] @ np.asarray((-0.3, 0.1))
     new_world_tangent = (
         np.asarray(transition.witnesses.tangent_basis)[0]
-        @ np.asarray(transition.warm_start)[0, 1:]
+        @ np.asarray(transition.manifold.warm_start)[0, 1:]
     )
     np.testing.assert_allclose(new_world_tangent, rotation @ old_world_tangent)
 
-    changed = transition.state.update(second, material_revision=8, retention_steps=2)
-    np.testing.assert_allclose(np.asarray(changed.warm_start), 0.0)
-    assert int(changed.material_changed_count) == 2
-    assert 20 in np.asarray(changed.died_keys).tolist()
-    once_missing = changed.state.update(
+    changed = update_rod_contact_manifold(
+        candidate, second, material_revision=8, retention_steps=2
+    )
+    np.testing.assert_allclose(np.asarray(changed.manifold.warm_start), 0.0)
+    assert int(changed.manifold.material_changed_count) == 2
+    assert 20 in np.asarray(changed.manifold.died_keys).tolist()
+    once_missing = update_rod_contact_manifold(
+        changed.manifold.candidate,
         _history_witness((10,), next_normal[:1], next_frame[:1]),
         material_revision=8,
         retention_steps=2,
     )
-    twice_missing = once_missing.state.update(
+    twice_missing = update_rod_contact_manifold(
+        once_missing.manifold.candidate,
         _history_witness((10,), next_normal[:1], next_frame[:1]),
         material_revision=8,
         retention_steps=2,
     )
-    assert 30 in np.asarray(twice_missing.died_keys).tolist()
+    assert 30 in np.asarray(twice_missing.manifold.died_keys).tolist()
 
 
 def test_rod_contact_lifecycle_scenario_3() -> None:
@@ -406,12 +423,21 @@ def test_rod_contact_lifecycle_scenario_3() -> None:
     response = CompositeContactResponse(
         blocks,
         witnesses,
+        certificate=ContactCertificatePolicy(
+            ("translational-contact",),
+            reference_velocity=1.0,
+            impulse_tolerance=1.0e-7,
+            law_velocity_tolerance=1.0e-7,
+            slip_speed_tolerance=1.0e-7,
+            complementarity_work_tolerance=1.0e-7,
+            friction_work_tolerance=1.0e-7,
+        ),
         dynamic_friction=0.5,
         static_friction=0.6,
         solver=ContactConeSolverPlan(
             maximum_iterations=400,
-            absolute_tolerance=1.0e-9,
-            relative_tolerance=1.0e-7,
+            absolute_tolerance=1.0e-11,
+            relative_tolerance=0.0,
         ),
     )
 

@@ -172,15 +172,22 @@ class SphereContactGeometry(AbstractImplicitContactGeometry):
 
 
 class PlaneContactGeometry(AbstractImplicitContactGeometry):
+    """Half-space boundary ``n·x = offset`` with free side ``n·x > offset``.
+
+    The unit normal and offset are dynamic numerical leaves. ``geometry_id``
+    binds only dimension and the analytic feature identity, so numerical plane
+    updates do not change compiled or catalogue identity.
+    """
+
     unit_normal: Array
-    offset: float = eqx.field(static=True)
+    offset: Array
     _feature_policy: CollisionFeaturePolicy
     _geometry_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         normal: ArrayLike,
-        offset: float,
+        offset: ArrayLike,
         /,
         *,
         feature_policy: CollisionFeaturePolicy,
@@ -191,19 +198,20 @@ class PlaneContactGeometry(AbstractImplicitContactGeometry):
         norm = jnp.sqrt(jnp.sum(normal_ * normal_))
         if not bool(jnp.isfinite(norm)) or norm <= 0.0:
             raise ValueError("Plane normal must be finite and nonzero.")
-        offset_ = float(offset)
-        if not np.isfinite(offset_):
+        unit_normal = normal_ / norm
+        offset_ = jnp.asarray(offset, dtype=unit_normal.dtype)
+        if offset_.shape != ():
+            raise ValueError("Plane offset must be one scalar.")
+        if not bool(jnp.isfinite(offset_)):
             raise ValueError("Plane offset must be finite.")
         features = _analytic_feature_policy(feature_policy)
-        self.unit_normal = normal_ / norm
+        self.unit_normal = unit_normal
         self.offset = offset_
         self._feature_policy = features
         self._geometry_id = canonical_fingerprint(
             {
                 "kind": "plane-contact-geometry",
-                "normal": array_tree_fingerprint(np.asarray(self.unit_normal)),
                 "dimension": normal_.size,
-                "offset": offset_.hex(),
                 "feature_policy": features.policy_id,
             }
         )

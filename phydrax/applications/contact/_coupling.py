@@ -13,6 +13,11 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from ..._strict import StrictModule
+from ...discretization.contact._compiled_search import (
+    CompiledContactSearchPlan,
+    ContactSearchPlan,
+    LBVHContactSearchPlan,
+)
 from ...discretization.contact._kinematics import (
     ContactKinematicsEpoch,
     evaluate_contact_kinematics,
@@ -70,7 +75,7 @@ def evaluate_cross_discretization_contact(
     scene: ContactParticipantScene,
     states: Sequence[PyTree[Any]],
     rates: Sequence[PyTree[Any]],
-    search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan,
+    search: ContactSearchPlan,
     closure_plan: ContactClosurePlan,
     route_state: ContactRouteState,
     step_size: ArrayLike,
@@ -83,7 +88,15 @@ def evaluate_cross_discretization_contact(
 ) -> CrossDiscretizationContactResult:
     if not isinstance(scene, ContactParticipantScene):
         raise TypeError("scene must be ContactParticipantScene.")
-    if not isinstance(search, (DenseContactSearchPlan, SweepAndPruneContactSearchPlan)):
+    if not isinstance(
+        search,
+        (
+            DenseContactSearchPlan,
+            SweepAndPruneContactSearchPlan,
+            CompiledContactSearchPlan,
+            LBVHContactSearchPlan,
+        ),
+    ):
         raise TypeError("search must be a concrete contact search plan.")
     positions = scene.positions(states)
     velocities = scene.velocities(states, rates)

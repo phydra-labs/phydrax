@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
+from ._reduced_articulation import PreparedReducedArticulation
 from ._rigid_body import (
     _quaternion_conjugate,
     _quaternion_multiply,
@@ -28,6 +29,7 @@ from ._rigid_body import (
     RigidBodyKinematics,
     RigidBodyLoad,
 )
+from ._rigid_joint_coordinates import reduced_scalar_joint_dofs
 from ._rigid_joints import PreparedRigidJointGraph, RigidJointKind
 
 
@@ -38,6 +40,7 @@ class RigidJointCoordinate(StrEnum):
     BALL_ORIENTATION = "ball-orientation"
     HINGE_ANCHOR = "hinge-anchor"
     HINGE_AXIAL = "hinge-axial"
+    PRISMATIC_AXIAL = "prismatic-axial"
 
 
 _COORDINATE_DIMENSIONS = {
@@ -47,6 +50,7 @@ _COORDINATE_DIMENSIONS = {
     RigidJointCoordinate.BALL_ORIENTATION: 3,
     RigidJointCoordinate.HINGE_ANCHOR: 3,
     RigidJointCoordinate.HINGE_AXIAL: 1,
+    RigidJointCoordinate.PRISMATIC_AXIAL: 1,
 }
 _COORDINATE_JOINT_KINDS = {
     RigidJointCoordinate.FIXED_TRANSLATION: RigidJointKind.FIXED,
@@ -55,9 +59,17 @@ _COORDINATE_JOINT_KINDS = {
     RigidJointCoordinate.BALL_ORIENTATION: RigidJointKind.BALL,
     RigidJointCoordinate.HINGE_ANCHOR: RigidJointKind.HINGE,
     RigidJointCoordinate.HINGE_AXIAL: RigidJointKind.HINGE,
+    RigidJointCoordinate.PRISMATIC_AXIAL: RigidJointKind.PRISMATIC,
 }
 _FREE_COORDINATES = frozenset(
-    (RigidJointCoordinate.BALL_ORIENTATION, RigidJointCoordinate.HINGE_AXIAL)
+    (
+        RigidJointCoordinate.BALL_ORIENTATION,
+        RigidJointCoordinate.HINGE_AXIAL,
+        RigidJointCoordinate.PRISMATIC_AXIAL,
+    )
+)
+_SCALAR_AXIAL_COORDINATES = frozenset(
+    (RigidJointCoordinate.HINGE_AXIAL, RigidJointCoordinate.PRISMATIC_AXIAL)
 )
 
 
@@ -169,6 +181,16 @@ def _chart_tolerance(value: float, /) -> float:
     if not np.isfinite(tolerance) or tolerance < 0.0 or tolerance >= 1.0:
         raise ValueError("chart_tolerance must be finite and lie in [0, 1).")
     return tolerance
+
+
+def _scalar_axial_coordinate(value: RigidJointCoordinate, /) -> RigidJointCoordinate:
+    if not isinstance(value, RigidJointCoordinate):
+        raise TypeError("coordinate must be a RigidJointCoordinate.")
+    if value not in _SCALAR_AXIAL_COORDINATES:
+        raise ValueError(
+            "Scalar actuators require the hinge-axial or prismatic-axial coordinate."
+        )
+    return value
 
 
 def _plan_identifier(
@@ -317,38 +339,43 @@ class DissipativeRigidJointLawPlan(StrictModule, NonTrainableState):
 
 
 class RigidJointEffortMotorPlan(StrictModule, NonTrainableState):
+    """Stateless bounded effort motors on free scalar joint coordinates.
+
+    The commanded effort is a runtime input of `PreparedRigidJointEffortMotor`
+    and is never stored in the plan.
+    """
+
     joint_ids: Array
-    commanded_effort: Array
     effort_limit: Array
+    coordinate: RigidJointCoordinate = eqx.field(static=True)
     chart_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         joint_ids: ArrayLike,
-        commanded_effort: ArrayLike,
         /,
         *,
         effort_limit: ArrayLike,
+        coordinate: RigidJointCoordinate = RigidJointCoordinate.HINGE_AXIAL,
         chart_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
     ) -> None:
         identifiers = _joint_identifiers(joint_ids)
-        effort = _scalar_values("commanded_effort", commanded_effort, identifiers.size)
+        axial = _scalar_axial_coordinate(coordinate)
         limit = _scalar_values(
             "effort_limit", effort_limit, identifiers.size, positive=True
         )
         tolerance = _chart_tolerance(chart_tolerance)
         self.joint_ids = jnp.asarray(identifiers)
-        self.commanded_effort = jnp.asarray(effort)[:, None]
         self.effort_limit = jnp.asarray(limit)[:, None]
+        self.coordinate = axial
         self.chart_tolerance = tolerance
         self.plan_id = _plan_identifier(
             "rigid-joint-effort-motor-plan",
-            RigidJointCoordinate.HINGE_AXIAL,
+            axial,
             {
                 "joint_ids": identifiers,
-                "commanded_effort": effort,
                 "effort_limit": limit,
                 "chart_tolerance": np.asarray(tolerance),
             },
@@ -359,42 +386,42 @@ class RigidJointEffortMotorPlan(StrictModule, NonTrainableState):
     def count(self) -> int:
         return self.joint_ids.shape[0]
 
-    @property
-    def coordinate(self) -> RigidJointCoordinate:
-        return RigidJointCoordinate.HINGE_AXIAL
-
     def prepare(self, graph: PreparedRigidJointGraph, /) -> PreparedRigidJointEffortMotor:
         return PreparedRigidJointEffortMotor(self, graph)
 
 
 class RigidJointPDServoPlan(StrictModule, NonTrainableState):
+    """Stateless bounded proportional-derivative servos on scalar coordinates.
+
+    Target coordinates and rates are runtime command inputs of
+    `PreparedRigidJointPDServo`; the plan owns only gains, limits, and scales.
+    Hinge targets are compared with the unwrapped coordinate.
+    """
+
     joint_ids: Array
-    target_coordinate: Array
-    target_rate: Array
     proportional_gain: Array
     derivative_gain: Array
     effort_limit: Array
     coordinate_scale: Array
+    coordinate: RigidJointCoordinate = eqx.field(static=True)
     chart_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         joint_ids: ArrayLike,
-        target_coordinate: ArrayLike,
         /,
         *,
         proportional_gain: ArrayLike,
         derivative_gain: ArrayLike,
         effort_limit: ArrayLike,
-        target_rate: ArrayLike = 0.0,
+        coordinate: RigidJointCoordinate = RigidJointCoordinate.HINGE_AXIAL,
         coordinate_scale: ArrayLike = 1.0,
         chart_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
     ) -> None:
         identifiers = _joint_identifiers(joint_ids)
-        target = _scalar_values("target_coordinate", target_coordinate, identifiers.size)
-        rate = _scalar_values("target_rate", target_rate, identifiers.size)
+        axial = _scalar_axial_coordinate(coordinate)
         proportional = _scalar_values(
             "proportional_gain",
             proportional_gain,
@@ -412,20 +439,17 @@ class RigidJointPDServoPlan(StrictModule, NonTrainableState):
         )
         tolerance = _chart_tolerance(chart_tolerance)
         self.joint_ids = jnp.asarray(identifiers)
-        self.target_coordinate = jnp.asarray(target)[:, None]
-        self.target_rate = jnp.asarray(rate)[:, None]
         self.proportional_gain = jnp.asarray(proportional)[:, None]
         self.derivative_gain = jnp.asarray(derivative)[:, None]
         self.effort_limit = jnp.asarray(limit)[:, None]
         self.coordinate_scale = jnp.asarray(scale)[:, None]
+        self.coordinate = axial
         self.chart_tolerance = tolerance
         self.plan_id = _plan_identifier(
             "rigid-joint-pd-servo-plan",
-            RigidJointCoordinate.HINGE_AXIAL,
+            axial,
             {
                 "joint_ids": identifiers,
-                "target_coordinate": target,
-                "target_rate": rate,
                 "proportional_gain": proportional,
                 "derivative_gain": derivative,
                 "effort_limit": limit,
@@ -438,10 +462,6 @@ class RigidJointPDServoPlan(StrictModule, NonTrainableState):
     @property
     def count(self) -> int:
         return self.joint_ids.shape[0]
-
-    @property
-    def coordinate(self) -> RigidJointCoordinate:
-        return RigidJointCoordinate.HINGE_AXIAL
 
     def prepare(self, graph: PreparedRigidJointGraph, /) -> PreparedRigidJointPDServo:
         return PreparedRigidJointPDServo(self, graph)
@@ -465,14 +485,16 @@ def _plan_coordinate_and_ids(
     ),
     /,
 ) -> tuple[RigidJointCoordinate, np.ndarray]:
-    if isinstance(plan, CompliantRigidJointLawPlan):
+    if isinstance(
+        plan,
+        (
+            CompliantRigidJointLawPlan,
+            DissipativeRigidJointLawPlan,
+            RigidJointEffortMotorPlan,
+            RigidJointPDServoPlan,
+        ),
+    ):
         return plan.coordinate, np.asarray(plan.joint_ids)
-    if isinstance(plan, DissipativeRigidJointLawPlan):
-        return plan.coordinate, np.asarray(plan.joint_ids)
-    if isinstance(plan, RigidJointEffortMotorPlan):
-        return RigidJointCoordinate.HINGE_AXIAL, np.asarray(plan.joint_ids)
-    if isinstance(plan, RigidJointPDServoPlan):
-        return RigidJointCoordinate.HINGE_AXIAL, np.asarray(plan.joint_ids)
     raise TypeError("plan must be a rigid-joint law or actuator plan.")
 
 
@@ -645,14 +667,17 @@ class _PreparedRigidJointCoordinate(StrictModule, NonTrainableState):
         chart_tolerance: float,
         /,
     ) -> None:
-        joint_kind = _COORDINATE_JOINT_KINDS[coordinate]
-        joint_plan = (
-            graph.plan.fixed
-            if joint_kind is RigidJointKind.FIXED
-            else graph.plan.ball
-            if joint_kind is RigidJointKind.BALL
-            else graph.plan.hinge
-        )
+        match _COORDINATE_JOINT_KINDS[coordinate]:
+            case RigidJointKind.FIXED:
+                joint_plan = graph.plan.fixed
+            case RigidJointKind.BALL:
+                joint_plan = graph.plan.ball
+            case RigidJointKind.HINGE:
+                joint_plan = graph.plan.hinge
+            case RigidJointKind.PRISMATIC:
+                joint_plan = graph.plan.prismatic
+            case kind:
+                raise ValueError(f"No scalar joint law coordinate for kind {kind!r}.")
         if joint_plan is None:
             indices = np.empty((0,), dtype=np.int32)
         else:
@@ -749,6 +774,35 @@ class _PreparedRigidJointCoordinate(StrictModule, NonTrainableState):
                 - kinematics.position[right]
                 - right_offset
             )
+            margin = jnp.ones((self.count,), dtype=value.dtype)
+        elif self.coordinate is RigidJointCoordinate.PRISMATIC_AXIAL:
+            # The signed slide along the left-frame axis; it is globally
+            # defined, so the chart margin is identically one.
+            rotation = quaternion_rotation_matrix(kinematics.orientation)
+            left = self.graph.prismatic_left[self.indices]
+            right = self.graph.prismatic_right[self.indices]
+            left_offset = contract(
+                "...ij,...j->...i",
+                rotation[left],
+                self.graph.prismatic_anchor_left[self.indices],
+            )
+            right_offset = contract(
+                "...ij,...j->...i",
+                rotation[right],
+                self.graph.prismatic_anchor_right[self.indices],
+            )
+            axis = contract(
+                "...ij,...j->...i",
+                rotation[left],
+                self.graph.prismatic_axis_left[self.indices],
+            )
+            separation = (
+                kinematics.position[right]
+                + right_offset
+                - kinematics.position[left]
+                - left_offset
+            )
+            value = jnp.sum(axis * separation, axis=-1)[:, None]
             margin = jnp.ones((self.count,), dtype=value.dtype)
         else:
             rotation = quaternion_rotation_matrix(kinematics.orientation)
@@ -1167,7 +1221,7 @@ class PreparedRigidJointEffortMotor(StrictModule, NonTrainableState):
         self.coordinate = _PreparedRigidJointCoordinate(
             graph,
             plan.joint_ids,
-            RigidJointCoordinate.HINGE_AXIAL,
+            plan.coordinate,
             plan.chart_tolerance,
         )
         self.prepared_id = _prepared_identifier(
@@ -1182,13 +1236,16 @@ class PreparedRigidJointEffortMotor(StrictModule, NonTrainableState):
     def evaluate(
         self,
         kinematics: RigidBodyKinematics,
+        command: ArrayLike,
         state: RigidJointHingeCoordinateState | None = None,
         /,
     ) -> RigidJointLawEvaluation:
+        """Apply the runtime commanded effort, clipped to the plan limit."""
+
         coordinate, rate, margin, candidate, current = self.coordinate.evaluate(
             kinematics, state
         )
-        requested = self.plan.commanded_effort.astype(coordinate.dtype)
+        requested = _scalar_command(command, self.plan.count, coordinate.dtype)
         limit = self.plan.effort_limit.astype(coordinate.dtype)
         effort = jnp.clip(requested, -limit, limit)
         saturation_margin = limit - jnp.abs(requested)
@@ -1232,7 +1289,7 @@ class PreparedRigidJointPDServo(StrictModule, NonTrainableState):
         self.coordinate = _PreparedRigidJointCoordinate(
             graph,
             plan.joint_ids,
-            RigidJointCoordinate.HINGE_AXIAL,
+            plan.coordinate,
             plan.chart_tolerance,
         )
         self.prepared_id = _prepared_identifier(
@@ -1247,15 +1304,21 @@ class PreparedRigidJointPDServo(StrictModule, NonTrainableState):
     def evaluate(
         self,
         kinematics: RigidBodyKinematics,
+        target_coordinate: ArrayLike,
+        target_rate: ArrayLike,
         state: RigidJointHingeCoordinateState | None = None,
         /,
     ) -> RigidJointLawEvaluation:
+        """Track runtime targets; hinge targets use the unwrapped coordinate."""
+
         coordinate, rate, margin, candidate, current = self.coordinate.evaluate(
             kinematics, state
         )
+        target = _scalar_command(target_coordinate, self.plan.count, coordinate.dtype)
+        target_velocity = _scalar_command(target_rate, self.plan.count, coordinate.dtype)
         scale = self.plan.coordinate_scale.astype(coordinate.dtype)
-        coordinate_error = (self.plan.target_coordinate - coordinate) / scale
-        rate_error = (self.plan.target_rate - rate) / scale
+        coordinate_error = (target - coordinate) / scale
+        rate_error = (target_velocity - rate) / scale
         requested = (
             self.plan.proportional_gain * coordinate_error
             + self.plan.derivative_gain * rate_error
@@ -1285,6 +1348,297 @@ class PreparedRigidJointPDServo(StrictModule, NonTrainableState):
         )
 
 
+def _scalar_command(value: ArrayLike, count: int, dtype: DTypeLike, /) -> Array:
+    command = jnp.asarray(value, dtype=dtype)
+    if command.shape != (count,):
+        raise ValueError(f"Scalar joint commands must have shape {(count,)}.")
+    return command[:, None]
+
+
+def _vector_values(
+    name: str,
+    value: ArrayLike,
+    count: int,
+    /,
+) -> np.ndarray:
+    values = np.asarray(value, dtype=np.float64)
+    if values.ndim == 0:
+        values = np.full((count,), values, dtype=np.float64)
+    elif values.shape != (count,):
+        raise ValueError(f"{name} must be scalar or have shape ({count},).")
+    if np.any(np.isnan(values)):
+        raise ValueError(f"{name} must not contain NaN.")
+    return values
+
+
+class ScalarJointMotorPlan(StrictModule, NonTrainableState):
+    """Stateless motors mapping a command space to reduced generalized effort.
+
+    Motor ``i`` acts on the scalar coordinate of ``joint_ids[i]``. The
+    transmission order is fixed: the command is first clipped to
+    ``[command_lower, command_upper]``, multiplied by the signed ``gear``,
+    and the result is clipped to ``[-effort_limit, effort_limit]``. The
+    effort is then added to the joint's generalized-effort component, so a
+    positive effort does positive work on a positive coordinate rate. An
+    ``effort_limit`` of exactly zero is an explicitly disabled motor that
+    produces zero effort for every command; infinite bounds declare an
+    unbounded side. Effort units are N m on hinges and N on prismatic joints;
+    command units are those implied by ``gear``.
+    """
+
+    joint_ids: Array
+    gear: Array
+    command_lower: Array
+    command_upper: Array
+    effort_limit: Array
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        joint_ids: ArrayLike,
+        gear: ArrayLike,
+        /,
+        *,
+        effort_limit: ArrayLike,
+        command_lower: ArrayLike = -np.inf,
+        command_upper: ArrayLike = np.inf,
+        plan_id: str | None = None,
+    ) -> None:
+        identifiers = np.asarray(joint_ids)
+        if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
+            raise TypeError("joint_ids must be a rank-1 integer array.")
+        identifiers = identifiers.astype(np.int64, copy=False)
+        count = identifiers.size
+        gear_ = _scalar_values("gear", gear, count)
+        if np.any(gear_ == 0.0):
+            raise ValueError("gear must be nonzero; disable a motor by effort_limit=0.")
+        lower = _vector_values("command_lower", command_lower, count)
+        upper = _vector_values("command_upper", command_upper, count)
+        if np.any(lower >= upper) or np.any(lower == np.inf) or np.any(upper == -np.inf):
+            raise ValueError("command_lower must lie below command_upper.")
+        limit = _vector_values("effort_limit", effort_limit, count)
+        if np.any(limit < 0.0):
+            raise ValueError("effort_limit must be nonnegative.")
+        generated = canonical_fingerprint(
+            {
+                "kind": "scalar-joint-motor-plan",
+                "values": array_tree_fingerprint(
+                    {
+                        "joint_ids": identifiers,
+                        "gear": gear_,
+                        "command_lower": lower,
+                        "command_upper": upper,
+                        "effort_limit": limit,
+                    }
+                ),
+            }
+        )
+        identifier = generated if plan_id is None else str(plan_id)
+        if not identifier:
+            raise ValueError("plan_id must be nonempty.")
+        self.joint_ids = jnp.asarray(identifiers)
+        self.gear = jnp.asarray(gear_)
+        self.command_lower = jnp.asarray(lower)
+        self.command_upper = jnp.asarray(upper)
+        self.effort_limit = jnp.asarray(limit)
+        self.plan_id = identifier
+
+    @property
+    def count(self) -> int:
+        return self.joint_ids.shape[0]
+
+    def prepare(
+        self, articulation: PreparedReducedArticulation, /
+    ) -> PreparedScalarJointMotors:
+        return PreparedScalarJointMotors(self, articulation)
+
+
+class ScalarJointMotorEvaluation(StrictModule):
+    """Motor efforts, saturation margins, and actuator source power.
+
+    Margins are positive inside the linear transmission range; a negative
+    margin identifies the saturated side. ``source_power`` is the exact
+    generalized power ``tau . v`` delivered by the motors.
+    """
+
+    generalized_effort: Array
+    actuator_effort: Array
+    clamped_command: Array
+    command_margin: Array
+    effort_margin: Array
+    command_saturated: Array
+    effort_saturated: Array
+    disabled: Array
+    joint_rate: Array
+    source_power: Array
+    finite: Array
+    successful: Array
+
+
+class PreparedScalarJointMotors(StrictModule, NonTrainableState):
+    """Scalar joint motors bound to reduced velocity DOFs by joint ID."""
+
+    plan: ScalarJointMotorPlan
+    dof_indices: Array
+    hinge_mask: Array
+    nv: int = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        plan: ScalarJointMotorPlan,
+        articulation: PreparedReducedArticulation,
+        /,
+    ) -> None:
+        dofs, hinge = reduced_scalar_joint_dofs(
+            articulation, np.asarray(plan.joint_ids), "Motor"
+        )
+        self.plan = plan
+        self.dof_indices = jnp.asarray(dofs)
+        self.hinge_mask = jnp.asarray(hinge)
+        self.nv = articulation.nv
+        self.prepared_id = _prepared_identifier(
+            "prepared-scalar-joint-motors", plan.plan_id, articulation.prepared_id
+        )
+
+    def evaluate(self, command: ArrayLike, velocity: ArrayLike, /) -> ScalarJointMotorEvaluation:
+        rate = jnp.asarray(velocity)
+        if rate.shape != (self.nv,) or not jnp.issubdtype(rate.dtype, jnp.floating):
+            raise ValueError(f"velocity must be a floating vector of shape {(self.nv,)}.")
+        requested = jnp.asarray(command, dtype=rate.dtype)
+        if requested.shape != (self.plan.count,):
+            raise ValueError(f"command must have shape {(self.plan.count,)}.")
+        lower = self.plan.command_lower.astype(rate.dtype)
+        upper = self.plan.command_upper.astype(rate.dtype)
+        limit = self.plan.effort_limit.astype(rate.dtype)
+        clamped = jnp.clip(requested, lower, upper)
+        transmitted = self.plan.gear.astype(rate.dtype) * clamped
+        effort = jnp.clip(transmitted, -limit, limit)
+        command_margin = jnp.minimum(requested - lower, upper - requested)
+        effort_margin = limit - jnp.abs(transmitted)
+        joint_rate = rate[self.dof_indices]
+        generalized = jnp.zeros_like(rate).at[self.dof_indices].add(effort)
+        source_power = jnp.sum(effort * joint_rate)
+        finite = (
+            jnp.all(jnp.isfinite(requested))
+            & jnp.all(jnp.isfinite(rate))
+            & jnp.all(jnp.isfinite(generalized))
+            & jnp.isfinite(source_power)
+        )
+        return ScalarJointMotorEvaluation(
+            generalized,
+            effort,
+            clamped,
+            command_margin,
+            effort_margin,
+            (requested < lower) | (requested > upper),
+            jnp.abs(transmitted) > limit,
+            limit == 0.0,
+            joint_rate,
+            source_power,
+            finite,
+            finite,
+        )
+
+
+class ScalarJointDampingPlan(StrictModule, NonTrainableState):
+    """Executed linear viscous damping on reduced scalar joint coordinates.
+
+    The generalized effort is ``-c v`` on each listed joint and the
+    dissipation rate ``c v^2`` is nonnegative. Units of ``c`` are N m s/rad on
+    hinges and N s/m on prismatic joints.
+    """
+
+    joint_ids: Array
+    damping: Array
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        joint_ids: ArrayLike,
+        damping: ArrayLike,
+        /,
+        *,
+        plan_id: str | None = None,
+    ) -> None:
+        identifiers = _joint_identifiers(joint_ids)
+        coefficients = _scalar_values(
+            "damping", damping, identifiers.size, nonnegative=True
+        )
+        generated = canonical_fingerprint(
+            {
+                "kind": "scalar-joint-damping-plan",
+                "values": array_tree_fingerprint(
+                    {"joint_ids": identifiers, "damping": coefficients}
+                ),
+            }
+        )
+        identifier = generated if plan_id is None else str(plan_id)
+        if not identifier:
+            raise ValueError("plan_id must be nonempty.")
+        self.joint_ids = jnp.asarray(identifiers)
+        self.damping = jnp.asarray(coefficients)
+        self.plan_id = identifier
+
+    @property
+    def count(self) -> int:
+        return self.joint_ids.shape[0]
+
+    def prepare(
+        self, articulation: PreparedReducedArticulation, /
+    ) -> PreparedScalarJointDamping:
+        return PreparedScalarJointDamping(self, articulation)
+
+
+class ScalarJointDampingEvaluation(StrictModule):
+    generalized_effort: Array
+    joint_rate: Array
+    dissipation_rate: Array
+    finite: Array
+    successful: Array
+
+
+class PreparedScalarJointDamping(StrictModule, NonTrainableState):
+    """Viscous joint damping bound to reduced velocity DOFs by joint ID."""
+
+    plan: ScalarJointDampingPlan
+    dof_indices: Array
+    nv: int = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        plan: ScalarJointDampingPlan,
+        articulation: PreparedReducedArticulation,
+        /,
+    ) -> None:
+        dofs, _ = reduced_scalar_joint_dofs(
+            articulation, np.asarray(plan.joint_ids), "Damping"
+        )
+        self.plan = plan
+        self.dof_indices = jnp.asarray(dofs)
+        self.nv = articulation.nv
+        self.prepared_id = _prepared_identifier(
+            "prepared-scalar-joint-damping", plan.plan_id, articulation.prepared_id
+        )
+
+    def evaluate(self, velocity: ArrayLike, /) -> ScalarJointDampingEvaluation:
+        rate = jnp.asarray(velocity)
+        if rate.shape != (self.nv,) or not jnp.issubdtype(rate.dtype, jnp.floating):
+            raise ValueError(f"velocity must be a floating vector of shape {(self.nv,)}.")
+        coefficients = self.plan.damping.astype(rate.dtype)
+        joint_rate = rate[self.dof_indices]
+        effort = -coefficients * joint_rate
+        generalized = jnp.zeros_like(rate).at[self.dof_indices].add(effort)
+        dissipation = jnp.sum(coefficients * joint_rate * joint_rate)
+        finite = jnp.all(jnp.isfinite(rate)) & jnp.all(jnp.isfinite(generalized))
+        return ScalarJointDampingEvaluation(
+            generalized, joint_rate, dissipation, finite, finite
+        )
+
+
 __all__ = [
     "CompliantRigidJointLawPlan",
     "DissipativeRigidJointLawPlan",
@@ -1292,6 +1646,8 @@ __all__ = [
     "PreparedDissipativeRigidJointLaw",
     "PreparedRigidJointEffortMotor",
     "PreparedRigidJointPDServo",
+    "PreparedScalarJointDamping",
+    "PreparedScalarJointMotors",
     "RigidJointCoordinate",
     "RigidJointEffortMotorPlan",
     "RigidJointHingeCoordinateState",
@@ -1300,6 +1656,10 @@ __all__ = [
     "RigidJointLawEvaluation",
     "RigidJointLawEvidence",
     "RigidJointPDServoPlan",
+    "ScalarJointDampingEvaluation",
+    "ScalarJointDampingPlan",
+    "ScalarJointMotorEvaluation",
+    "ScalarJointMotorPlan",
     "accept_rigid_joint_hinge_coordinate",
     "candidate_rigid_joint_hinge_coordinate",
     "evaluate_rigid_joint_law_compatibility",
