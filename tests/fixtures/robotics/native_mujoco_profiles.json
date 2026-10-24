@@ -1,0 +1,180 @@
+{
+  "kind": "native-mujoco-qualification-profiles",
+  "provenance": {
+    "authored_for_provider": "mujoco 3.12.0 / mujoco-mjx 3.12.0",
+    "source_hash": "sha256 of the UTF-8 MJCF fixture bytes; compiled-model identity is recorded per run from mj_saveModel",
+    "state_seed": 20261022,
+    "state_count": 4
+  },
+  "tolerances": {
+    "float64": {
+      "position_m": 1e-12,
+      "rotation": 1e-12,
+      "jacobian": 1e-11,
+      "mass_relative": 1e-11,
+      "effort_relative": 1e-10,
+      "acceleration_relative": 1e-9,
+      "actuation_relative": 1e-12,
+      "power_relative": 1e-11,
+      "step_state": 1e-10,
+      "signed_distance_m": 1e-10,
+      "adjoint_relative": 1e-12
+    },
+    "float32": {
+      "position_m": 1e-5,
+      "rotation": 1e-5,
+      "jacobian": 1e-5,
+      "mass_relative": 1e-4,
+      "effort_relative": 1e-4,
+      "acceleration_relative": 1e-3,
+      "actuation_relative": 1e-5,
+      "power_relative": 1e-4,
+      "step_state": 1e-5,
+      "signed_distance_m": 1e-5,
+      "adjoint_relative": 1e-5
+    }
+  },
+  "fixtures": [
+    {
+      "name": "arm_smooth",
+      "file": "native_mujoco/arm_smooth.xml",
+      "source_sha256": "355d3f8d7a0886025b2df70edb2b7fef5e5995fba11dd8a51a9a35eb0ac980ea",
+      "adaptation": {"contact": null, "joint_stops": null},
+      "supported_fields": [
+        "body masses, COM offsets, inertial quaternions, principal inertias",
+        "hinge ref offset qpos0",
+        "hinge and slide axes and anchors",
+        "jointless body as native fixed edge",
+        "motor gain, gear, ctrlrange, symmetric forcerange",
+        "viscous dof damping",
+        "body-origin and site frames",
+        "jointpos, jointvel, site framepos and clock sensors"
+      ],
+      "tiers": [
+        "smooth-model-mapping",
+        "smooth-actuation",
+        "matched-stepping",
+        "fixed-branch-ad"
+      ]
+    },
+    {
+      "name": "arm_contact",
+      "file": "native_mujoco/arm_contact.xml",
+      "source_sha256": "263067ed120b9d2f44b21d50751969f17beb4e43c3d2ef872cfbd5d5569edc7b",
+      "adaptation": {
+        "contact": {
+          "kind": "native-inelastic-coulomb",
+          "material_pairs": [[0, 0]],
+          "static_friction": [0.8],
+          "dynamic_friction": [0.6],
+          "default_material_id": 0,
+          "rationale": "qualification compares geometry and invariants under the declared native hard-contact law"
+        },
+        "joint_stops": null
+      },
+      "supported_fields": [
+        "world plane normal and offset",
+        "capsule fromto endpoints and radius",
+        "offset sphere center and radius",
+        "parent-child pair filtering as a native excluded body pair"
+      ],
+      "native_contact": {
+        "description": "released from rest 0.06 m above the floor; the foot sphere lands and rests under the native inelastic hard-contact law",
+        "step_duration_s": 0.01,
+        "steps": 40,
+        "refined_step_duration_s": 0.005,
+        "refined_steps": 80,
+        "search_backend": "lbvh",
+        "maximum_traversal_visits": 256,
+        "reference_search_backend": "exhaustive",
+        "activation_distance_m": 0.05,
+        "route_capacities": [0, 0, 0, 0, 1, 2],
+        "certificate": {
+          "contact_reference_velocity": 1.0,
+          "hinge_reference_velocity": 1.0,
+          "prismatic_reference_velocity": 1.0,
+          "contact_impulse_tolerance": 1e-9,
+          "hinge_impulse_tolerance": 1e-9,
+          "prismatic_impulse_tolerance": 1e-9,
+          "contact_gap_tolerance": 1e-9,
+          "hinge_gap_tolerance": 1e-9,
+          "prismatic_gap_tolerance": 1e-9,
+          "slip_speed_tolerance": 1e-9,
+          "complementarity_work_tolerance": 1e-8,
+          "friction_work_tolerance": 1e-8,
+          "contact_work_tolerance": 1e-8,
+          "contact_energy_tolerance": 1e-8,
+          "ledger_tolerance": 1e-8,
+          "energy_surplus_tolerance": 1e-8,
+          "momentum_energy_tolerance": 1e-14,
+          "discretization_energy_budget": 1.0
+        },
+        "path": {"gap_tolerance_m": 1e-9, "maximum_intervals": 4096},
+        "cone_solver": {
+          "maximum_iterations": 2000,
+          "absolute_tolerance": 1e-14,
+          "relative_tolerance": 1e-13
+        },
+        "smooth": {
+          "maximum_step_size": 1.0,
+          "absolute_energy_tolerance": 1.0,
+          "relative_energy_tolerance": 1e-2
+        },
+        "root": {
+          "maximum_root_iterations": 200,
+          "root_absolute_tolerance": 1e-13,
+          "root_relative_tolerance": 1e-12,
+          "maximum_subdivision_depth": 8,
+          "maximum_segment_attempts": 64,
+          "minimum_segment_duration": 1e-6
+        },
+        "tolerances": {
+          "penetration_m": 1e-9,
+          "energy_increase_J": 1e-8,
+          "positive_contact_work_J": 1e-8,
+          "ledger_identity_J": 1e-8,
+          "rest_speed_m_per_s": 1e-6,
+          "rest_gap_m": 1e-8,
+          "refinement_rest_gap_m": 1e-8,
+          "provider_settle_s": 1.0,
+          "provider_rest_gap_m": 5e-3,
+          "provider_rest_speed_m_per_s": 1e-3
+        }
+      },
+      "tiers": ["smooth-model-mapping", "different-native-contact-physics"]
+    },
+    {
+      "name": "arm_limited",
+      "file": "native_mujoco/arm_limited.xml",
+      "source_sha256": "3ce6534767340ac78bd6c0ef48715527df36ab5e53970194e8ff8fe3e473f72f",
+      "adaptation": {
+        "contact": null,
+        "joint_stops": {
+          "rationale": "qualification requests native hard stops in place of regularized limits"
+        }
+      },
+      "supported_fields": [
+        "limit ranges shifted by qpos0 into lifted native stop bounds"
+      ],
+      "tiers": ["smooth-model-mapping"]
+    }
+  ],
+  "invalid_requests": [
+    {
+      "fixture": "arm_contact",
+      "tier": "matched-stepping",
+      "reason": "MuJoCo soft contact and native hard contact are different laws"
+    },
+    {
+      "fixture": "arm_limited",
+      "tier": "matched-stepping",
+      "reason": "MuJoCo regularized limits and native hard stops are different laws"
+    },
+    {
+      "fixture": "arm_smooth",
+      "tier": "matched-stepping",
+      "integrator_override": "RK4",
+      "reason": "native semi-implicit velocity Euler is not MuJoCo RK4"
+    }
+  ]
+}

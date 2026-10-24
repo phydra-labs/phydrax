@@ -42,6 +42,19 @@ class EdgeEdgeFeature(IntEnum):
     EDGE_EDGE = 8
 
 
+class ContactWitnessSlot(IntEnum):
+    """Stable witness rows of one primitive-pair route.
+
+    Capsule-plane slot ``k`` is capsule endpoint ``k`` in body-attached order.
+    Parallel capsule-capsule slots are the lower and upper extremal pairs of the
+    overlap along the left capsule's first-to-second axis. Unique closest-feature
+    branches use only ``FIRST``.
+    """
+
+    FIRST = 0
+    SECOND = 1
+
+
 class ContactDistanceEvaluation(StrictModule):
     squared_distance: Array
     distance_vector: Array
@@ -493,6 +506,215 @@ def edge_edge_distance(
     )
 
 
+def point_plane_distance(
+    point: ArrayLike,
+    unit_normal: ArrayLike,
+    offset: ArrayLike,
+    /,
+    *,
+    tolerance: float = 1.0e-12,
+) -> ContactDistanceEvaluation:
+    """Signed distance from a core point to the half-space boundary ``n·x = offset``.
+
+    The free side is ``n·x > offset``. The plane normal and the affine signed
+    gap are defined for every point, including penetrating trial points, so
+    geometric validity (``nondegenerate``) only requires a unit normal within
+    ``max(tolerance, 64 eps)``; whether a negative gap is admissible is decided
+    by the configuration certificate, not here. ``distance_vector`` is
+    ``(n·x - offset) n``, so the signed value is
+    ``sum(distance_vector * normal)``; ``squared_distance`` discards the sign.
+    The single analytic feature has no selection branch, so the feature margin
+    is infinite.
+    """
+    point_ = jnp.asarray(point)
+    if point_.ndim < 1 or point_.shape[-1] not in (2, 3):
+        raise ValueError("Point-plane points require trailing dimension two or three.")
+    normal_ = jnp.broadcast_to(jnp.asarray(unit_normal, dtype=point_.dtype), point_.shape)
+    offset_ = jnp.broadcast_to(jnp.asarray(offset, dtype=point_.dtype), point_.shape[:-1])
+    tolerance_ = float(tolerance)
+    if not tolerance_ >= 0.0:
+        raise ValueError("tolerance must be nonnegative.")
+    signed = jnp.sum(point_ * normal_, axis=-1) - offset_
+    displacement = signed[..., None] * normal_
+    projection = point_ - displacement
+    unit_tolerance = max(tolerance_, 64.0 * float(jnp.finfo(point_.dtype).eps))
+    unit = jnp.abs(_squared_norm(normal_) - 1.0) <= unit_tolerance
+    coefficients = jnp.zeros(point_.shape[:-1] + (4,), dtype=point_.dtype)
+    coefficients = coefficients.at[..., 0].set(1.0)
+    finite = (
+        jnp.isfinite(signed)
+        & jnp.all(jnp.isfinite(point_), axis=-1)
+        & jnp.all(jnp.isfinite(normal_), axis=-1)
+    )
+    return ContactDistanceEvaluation(
+        signed * signed,
+        displacement,
+        coefficients,
+        point_,
+        projection,
+        normal_,
+        jnp.zeros(point_.shape[:-1], dtype=jnp.int32),
+        jnp.full(signed.shape, jnp.inf, dtype=point_.dtype),
+        unit & finite,
+        finite,
+    )
+
+
+def segment_segment_support_distance(
+    first_a: ArrayLike,
+    second_a: ArrayLike,
+    first_b: ArrayLike,
+    second_b: ArrayLike,
+    slot: ArrayLike,
+    /,
+    *,
+    tolerance: float = 1.0e-12,
+    parallel_tolerance: float = 1.0e-9,
+    support_tolerance: float = 1.0e-9,
+) -> tuple[ContactDistanceEvaluation, Array]:
+    """Return one witness row of the rigid support manifold of two capsule cores.
+
+    Nonparallel axes and disjoint or collapsed parallel overlaps use the unique
+    closest-feature branch in ``FIRST``; ``SECOND`` is then inactive. Parallel
+    axes whose axial projections overlap on a positive length emit the two
+    extremal closest-point pairs of that overlap, ordered along the left
+    segment's ``first_a -> second_a`` axis, provided both pairs reproduce the
+    unique minimum distance within ``support_tolerance``. Otherwise the unique
+    branch is used. Support rows report zero feature margin: the primal support
+    is valid, while derivatives through the nonunique support are not admitted.
+    Coincident axes, degenerate segments, and zero normals report
+    ``nondegenerate`` false; they never acquire a fallback normal.
+    """
+    tolerance_ = float(tolerance)
+    parallel_ = float(parallel_tolerance)
+    support_ = float(support_tolerance)
+    if not tolerance_ > 0.0:
+        raise ValueError("tolerance must be positive.")
+    if not 0.0 < parallel_ < 1.0:
+        raise ValueError("parallel_tolerance must lie strictly between zero and one.")
+    if not support_ >= 0.0:
+        raise ValueError("support_tolerance must be nonnegative.")
+    unique = edge_edge_distance(first_a, second_a, first_b, second_b, tolerance=tolerance_)
+    a0 = jnp.asarray(first_a)
+    a1 = jnp.asarray(second_a, dtype=a0.dtype)
+    b0 = jnp.asarray(first_b, dtype=a0.dtype)
+    b1 = jnp.asarray(second_b, dtype=a0.dtype)
+    slot_ = jnp.asarray(slot)
+    if not jnp.issubdtype(slot_.dtype, jnp.integer):
+        raise TypeError("slot must contain integer witness slots.")
+    slot_ = jnp.broadcast_to(slot_, a0.shape[:-1])
+    known_slot = (slot_ == int(ContactWitnessSlot.FIRST)) | (
+        slot_ == int(ContactWitnessSlot.SECOND)
+    )
+    second_slot = slot_ == int(ContactWitnessSlot.SECOND)
+    u = a1 - a0
+    w = b1 - b0
+    uu = _squared_norm(u)
+    ww = _squared_norm(w)
+    edges_valid = (uu > tolerance_ * tolerance_) & (ww > tolerance_ * tolerance_)
+    cross_squared = _squared_norm(jnp.cross(u, w))
+    near_parallel = edges_valid & (cross_squared <= parallel_ * parallel_ * uu * ww)
+    safe_uu = jnp.where(edges_valid, uu, 1.0)
+    projected_first = jnp.sum((b0 - a0) * u, axis=-1) / safe_uu
+    projected_second = jnp.sum((b1 - a0) * u, axis=-1) / safe_uu
+    overlap_lower = jnp.maximum(0.0, jnp.minimum(projected_first, projected_second))
+    overlap_upper = jnp.minimum(1.0, jnp.maximum(projected_first, projected_second))
+    overlap_length = (overlap_upper - overlap_lower) * jnp.sqrt(safe_uu)
+    overlapping = near_parallel & (overlap_length > tolerance_)
+
+    def extremal(coordinate: Array, /) -> tuple[Array, Array, Array, Array, Array]:
+        left = a0 + coordinate[..., None] * u
+        right, weights, squared, valid, _, _ = _point_segment_data(
+            left, b0, b1, tolerance_
+        )
+        return left, right, weights, squared, valid
+
+    lower_left, lower_right, lower_weights, lower_squared, lower_valid = extremal(
+        overlap_lower
+    )
+    upper_left, upper_right, upper_weights, upper_squared, upper_valid = extremal(
+        overlap_upper
+    )
+    unique_distance = jnp.sqrt(jnp.maximum(unique.squared_distance, 0.0))
+    worst_support = jnp.sqrt(jnp.maximum(jnp.maximum(lower_squared, upper_squared), 0.0))
+    support_branch = jax.lax.stop_gradient(
+        overlapping
+        & lower_valid
+        & upper_valid
+        & (worst_support - unique_distance <= support_)
+    )
+    coordinate = jnp.where(second_slot, overlap_upper, overlap_lower)
+    left_support = jnp.where(second_slot[..., None], upper_left, lower_left)
+    right_support = jnp.where(second_slot[..., None], upper_right, lower_right)
+    right_weights = jnp.where(second_slot[..., None], upper_weights, lower_weights)
+    support_squared = jnp.where(second_slot, upper_squared, lower_squared)
+    support_coefficients = jnp.stack(
+        (
+            1.0 - coordinate,
+            coordinate,
+            -right_weights[..., 0],
+            -right_weights[..., 1],
+        ),
+        axis=-1,
+    )
+    selected = support_branch[..., None]
+    left_witness = jnp.where(selected, left_support, unique.left_witness)
+    right_witness = jnp.where(selected, right_support, unique.right_witness)
+    displacement = left_witness - right_witness
+    normal, positive = _safe_normal(displacement, tolerance_)
+    squared = jnp.where(support_branch, support_squared, unique.squared_distance)
+    coefficients = jnp.where(selected, support_coefficients, unique.coefficients)
+    feature = jnp.where(
+        support_branch, int(EdgeEdgeFeature.EDGE_EDGE), unique.feature
+    ).astype(jnp.int32)
+    margin = jnp.where(support_branch | near_parallel, 0.0, unique.feature_margin)
+    active = known_slot & (~second_slot | support_branch)
+    finite = (
+        unique.finite & jnp.isfinite(squared) & jnp.all(jnp.isfinite(normal), axis=-1)
+    )
+    return (
+        ContactDistanceEvaluation(
+            squared,
+            displacement,
+            coefficients,
+            left_witness,
+            right_witness,
+            normal,
+            jax.lax.stop_gradient(feature),
+            jnp.maximum(margin, 0.0),
+            edges_valid & positive & known_slot,
+            finite,
+        ),
+        active,
+    )
+
+
+def offset_surface_witnesses(
+    evaluation: ContactDistanceEvaluation,
+    left_radius: ArrayLike,
+    right_radius: ArrayLike,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Return the physical gap and surface contact points of offset cores.
+
+    Spheres and capsules are cores offset by positive physical radii. With the
+    right-to-left unit normal ``n`` of ``evaluation`` the gap is
+    ``(left_core - right_core)·n - r_left - r_right`` (signed for planes), the
+    left surface point is ``left_core - r_left n`` and the right surface point is
+    ``right_core + r_right n``. Tangential friction acts at these surface points,
+    not at the cores. Rows whose ``nondegenerate`` flag is false have no normal
+    and must be refused by the caller.
+    """
+    normal = evaluation.normal
+    left = jnp.asarray(left_radius, dtype=normal.dtype)
+    right = jnp.asarray(right_radius, dtype=normal.dtype)
+    core = jnp.sum(evaluation.distance_vector * normal, axis=-1)
+    gap = core - left - right
+    left_point = evaluation.left_witness - left[..., None] * normal
+    right_point = evaluation.right_witness + right[..., None] * normal
+    return gap, left_point, right_point
+
+
 def edge_edge_mollifier_threshold(
     rest_first_a: ArrayLike,
     rest_second_a: ArrayLike,
@@ -553,6 +775,7 @@ def contact_tangent_basis(normal: ArrayLike, /) -> Array:
 
 __all__ = [
     "ContactDistanceEvaluation",
+    "ContactWitnessSlot",
     "EdgeEdgeFeature",
     "PointEdgeFeature",
     "PointTriangleFeature",
@@ -560,7 +783,9 @@ __all__ = [
     "edge_edge_distance",
     "edge_edge_mollifier",
     "edge_edge_mollifier_threshold",
-    "point_edge_distance",
+    "offset_surface_witnesses",
+    "point_plane_distance",
     "point_point_distance",
     "point_triangle_distance",
+    "segment_segment_support_distance",
 ]

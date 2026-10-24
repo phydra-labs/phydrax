@@ -19,12 +19,17 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, FunctionLinearOperator
+from ...linalg import ArraySpace, DualSpace, FunctionLinearOperator
 from ...metrix._state_geometry import AbstractStateGeometry
 from ...typing import checked
+from ._articulated_kinematics import (
+    articulated_body_velocity,
+    articulated_motion,
+    articulated_poses,
+    KinematicTopology,
+)
 from ._rigid_body import (
     _quaternion_conjugate,
-    _quaternion_increment,
     _quaternion_multiply,
     PreparedRigidBodySet,
     quaternion_rotation_matrix,
@@ -49,11 +54,6 @@ def _integer_vector(value: ArrayLike, name: str, /) -> np.ndarray:
 
 def _principal_angle(value: Array, /) -> Array:
     return jnp.arctan2(jnp.sin(value), jnp.cos(value))
-
-
-def _normalize_preserving_sign(value: Array, /) -> Array:
-    norm = jnp.sqrt(jnp.sum(value * value, axis=-1, keepdims=True))
-    return value / jnp.maximum(norm, jnp.finfo(value.dtype).tiny)
 
 
 def _configuration_increment(
@@ -381,7 +381,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
     _kind_order: tuple[int, ...] = eqx.field(static=True)
     _edge_dof_order: tuple[int, ...] = eqx.field(static=True)
     _hinge_dof_indices: tuple[int, ...] = eqx.field(static=True)
-    _body_id_order: tuple[Array, ...] = eqx.field(static=True)
+    _body_id_order: tuple[int, ...] = eqx.field(static=True)
     _body_index_order: tuple[int, ...] = eqx.field(static=True)
 
     @checked
@@ -748,12 +748,16 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         self.joint_configuration_slices = tuple(configuration_slices)
         self.joint_velocity_slices = tuple(velocity_slices)
         self.prepared_id = prepared_id
-        self._parent_order = tuple(parent_indices)
-        self._child_order = tuple(child_indices)
+        self._parent_order = tuple(int(index) for index in parent_indices)
+        self._child_order = tuple(int(index) for index in child_indices)
         self._kind_order = tuple(int(value) for value in joint_kinds)
         self._edge_dof_order = tuple(edge_dofs)
         self._hinge_dof_indices = tuple(hinge_dofs)
-        self._body_id_order = tuple(self.body_ids)
+        # Host execution metadata: exact original IDs as Python integers. The
+        # scientific payload remains the dynamic ``body_ids`` array.
+        self._body_id_order = tuple(
+            int(identifier) for identifier in body_id_values[np.asarray(body_order)]
+        )
         self._body_index_order = tuple(body_order)
 
     @property
@@ -763,6 +767,28 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
     @property
     def state_size(self) -> int:
         return self.nq + self.nv
+
+    @property
+    def hinge_dof_indices(self) -> tuple[int, ...]:
+        """Configuration indices of hinge coordinates, in DOF order."""
+
+        return self._hinge_dof_indices
+
+    @property
+    def generalized_velocity_space(self) -> ArraySpace:
+        """Generalized velocity space shared by Jacobian and mass operators."""
+
+        return ArraySpace(
+            (self.nv,),
+            dtype=self.reference_position.dtype,
+            space_id=f"{self.prepared_id}:generalized-velocity",
+        )
+
+    @property
+    def generalized_effort_space(self) -> DualSpace:
+        """True dual of `generalized_velocity_space`: generalized effort/impulse."""
+
+        return DualSpace(self.generalized_velocity_space)
 
     @property
     def parent_reference_transforms(self) -> Array:
@@ -858,46 +884,30 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         point_array = self._configuration(point, "Point configuration")
         return _configuration_delta(reference_array, point_array, self._hinge_dof_indices)
 
+    def _kinematic_topology(self, /) -> KinematicTopology:
+        """Static tree of the existing host edge order."""
+
+        return KinematicTopology(
+            self._kind_order,
+            self._edge_dof_order,
+            self._parent_order,
+            self._child_order,
+        )
+
+    def _tree_geometry(self, /) -> tuple[Array, Array, Array, Array, Array, Array]:
+        return (
+            self.reference_position,
+            self.reference_orientation,
+            self.parent_reference_translation,
+            self.parent_reference_orientation,
+            self.parent_axes,
+            self.parent_anchors,
+        )
+
     def _poses(self, configuration: Array, /) -> tuple[Array, Array]:
-        position = self.reference_position
-        orientation = self.reference_orientation
-        for edge, (parent, child, kind, dof) in enumerate(
-            zip(
-                self._parent_order,
-                self._child_order,
-                self._kind_order,
-                self._edge_dof_order,
-            )
-        ):
-            parent_orientation = orientation[parent]
-            parent_rotation = quaternion_rotation_matrix(parent_orientation)
-            relative_translation = self.parent_reference_translation[edge]
-            relative_orientation = self.parent_reference_orientation[edge]
-            if kind == int(RigidJointKind.HINGE):
-                joint_orientation = _quaternion_increment(
-                    self.parent_axes[edge] * configuration[dof]
-                )
-                joint_rotation = quaternion_rotation_matrix(joint_orientation)
-                arm = relative_translation - self.parent_anchors[edge]
-                relative_translation = self.parent_anchors[edge] + contract(
-                    "ij,j->i", joint_rotation, arm
-                )
-                relative_orientation = _quaternion_multiply(
-                    joint_orientation, relative_orientation
-                )
-            elif kind == int(RigidJointKind.PRISMATIC):
-                relative_translation = (
-                    relative_translation + self.parent_axes[edge] * configuration[dof]
-                )
-            child_position = position[parent] + contract(
-                "ij,j->i", parent_rotation, relative_translation
-            )
-            child_orientation = _normalize_preserving_sign(
-                _quaternion_multiply(parent_orientation, relative_orientation)
-            )
-            position = position.at[child].set(child_position)
-            orientation = orientation.at[child].set(child_orientation)
-        return position, orientation
+        return articulated_poses(
+            self._kinematic_topology(), *self._tree_geometry(), configuration
+        )
 
     def _body_velocity_from_poses(
         self,
@@ -906,49 +916,33 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         orientation: Array,
         /,
     ) -> Array:
-        linear = jnp.zeros_like(position)
-        angular = jnp.zeros_like(position)
-        for edge, (parent, child, kind, dof) in enumerate(
-            zip(
-                self._parent_order,
-                self._child_order,
-                self._kind_order,
-                self._edge_dof_order,
-            )
-        ):
-            parent_linear = linear[parent]
-            parent_angular = angular[parent]
-            parent_position = position[parent]
-            child_position = position[child]
-            parent_rotation = quaternion_rotation_matrix(orientation[parent])
-            if kind == int(RigidJointKind.HINGE):
-                axis_world = contract("ij,j->i", parent_rotation, self.parent_axes[edge])
-                anchor_world = parent_position + contract(
-                    "ij,j->i", parent_rotation, self.parent_anchors[edge]
-                )
-                child_angular = parent_angular + generalized_velocity[dof] * axis_world
-                anchor_velocity = parent_linear + jnp.cross(
-                    parent_angular, anchor_world - parent_position
-                )
-                child_linear = anchor_velocity + jnp.cross(
-                    child_angular, child_position - anchor_world
-                )
-            elif kind == int(RigidJointKind.PRISMATIC):
-                axis_world = contract("ij,j->i", parent_rotation, self.parent_axes[edge])
-                child_angular = parent_angular
-                child_linear = (
-                    parent_linear
-                    + jnp.cross(parent_angular, child_position - parent_position)
-                    + generalized_velocity[dof] * axis_world
-                )
-            else:
-                child_angular = parent_angular
-                child_linear = parent_linear + jnp.cross(
-                    parent_angular, child_position - parent_position
-                )
-            linear = linear.at[child].set(child_linear)
-            angular = angular.at[child].set(child_angular)
-        return jnp.concatenate((linear, angular), axis=-1)
+        return articulated_body_velocity(
+            self._kinematic_topology(),
+            self.parent_axes,
+            self.parent_anchors,
+            position,
+            orientation,
+            generalized_velocity[None],
+        )[0]
+
+    def _motion(
+        self, configuration: Array, rates: Array, directions: Array, /
+    ) -> tuple[Array, Array, Array, Array]:
+        """Poses plus ``(K, C, 6)`` twist and directional-derivative columns.
+
+        ``rates`` ``(K, nv)`` and ``directions`` ``(K, nq)`` must already have
+        the configuration dtype. Column ``k`` is ``J(q) rates[k]`` and the
+        ``jax.jvp`` of ``q -> J(q) rates[k]`` along ``directions[k]``; columns
+        are independent.
+        """
+
+        return articulated_motion(
+            self._kinematic_topology(),
+            *self._tree_geometry(),
+            configuration,
+            rates,
+            directions,
+        )
 
     @staticmethod
     def _homogeneous_transforms(position: Array, orientation: Array, /) -> Array:
@@ -959,6 +953,34 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             position.shape[:-1] + (1, 4),
         )
         return jnp.concatenate((upper, bottom), axis=-2)
+
+    def _kinematics_from_motion(
+        self,
+        configuration: Array,
+        generalized_velocity: Array,
+        position: Array,
+        orientation: Array,
+        body_velocity: Array,
+        /,
+    ) -> ArticulationKinematics:
+        """Assemble kinematics and finiteness evidence from evaluated motion."""
+
+        bodies = RigidBodyKinematics(
+            position,
+            body_velocity[:, :3],
+            orientation,
+            body_velocity[:, 3:],
+        )
+        transforms = self._homogeneous_transforms(position, orientation)
+        finite = (
+            jnp.all(jnp.isfinite(configuration))
+            & jnp.all(jnp.isfinite(generalized_velocity))
+            & jnp.all(jnp.isfinite(position))
+            & jnp.all(jnp.isfinite(orientation))
+            & jnp.all(jnp.isfinite(body_velocity))
+            & jnp.all(jnp.isfinite(transforms))
+        )
+        return ArticulationKinematics(bodies, transforms, finite, finite)
 
     def forward_kinematics(
         self,
@@ -976,22 +998,9 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         body_velocity = self._body_velocity_from_poses(
             velocity_array, position, orientation
         )
-        bodies = RigidBodyKinematics(
-            position,
-            body_velocity[:, :3],
-            orientation,
-            body_velocity[:, 3:],
+        return self._kinematics_from_motion(
+            configuration_array, velocity_array, position, orientation, body_velocity
         )
-        transforms = self._homogeneous_transforms(position, orientation)
-        finite = (
-            jnp.all(jnp.isfinite(configuration_array))
-            & jnp.all(jnp.isfinite(velocity_array))
-            & jnp.all(jnp.isfinite(position))
-            & jnp.all(jnp.isfinite(orientation))
-            & jnp.all(jnp.isfinite(body_velocity))
-            & jnp.all(jnp.isfinite(transforms))
-        )
-        return ArticulationKinematics(bodies, transforms, finite, finite)
 
     def body_transforms(self, configuration: ArrayLike, /) -> Array:
         configuration_array = self._configuration(configuration, "Configuration")
@@ -1039,7 +1048,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
     ) -> FunctionLinearOperator:
         configuration_array = self._configuration(configuration, "Configuration")
         position, orientation = self._poses(configuration_array)
-        source = ArraySpace((self.nv,), dtype=configuration_array.dtype)
+        source = self.generalized_velocity_space
         target = ArraySpace(
             (self.graph.bodies.capacity, 6), dtype=configuration_array.dtype
         )
@@ -1076,7 +1085,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         offset_world = contract(
             "ij,j->i", quaternion_rotation_matrix(orientation[index]), local
         )
-        source = ArraySpace((self.nv,), dtype=configuration_array.dtype)
+        source = self.generalized_velocity_space
         target = ArraySpace((6,), dtype=configuration_array.dtype)
 
         def action(generalized_velocity: Array) -> Array:
@@ -1110,30 +1119,46 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Rigid-body load arrays must have body-capacity shape (N,3)."
             )
-        wrench = jnp.concatenate((force, torque), axis=-1)
         position, orientation = self._poses(configuration_array)
+        return self._body_load_pullback_from_poses(
+            configuration_array, velocity_array, force, torque, position, orientation
+        )
+
+    def _body_load_pullback_from_poses(
+        self,
+        configuration: Array,
+        generalized_velocity: Array,
+        force: Array,
+        torque: Array,
+        position: Array,
+        orientation: Array,
+        /,
+    ) -> tuple[Array, ArticulationDualityEvidence]:
+        """Pull validated body loads back through ``J(q)ᵀ`` at evaluated poses."""
+
+        wrench = jnp.concatenate((force, torque), axis=-1)
 
         def velocity_action(value: Array) -> Array:
             return self._body_velocity_from_poses(value, position, orientation)
 
-        body_velocity = velocity_action(velocity_array)
+        body_velocity = velocity_action(generalized_velocity)
         transpose_action = jax.linear_transpose(
             velocity_action,
-            jnp.zeros((self.nv,), dtype=configuration_array.dtype),
+            jnp.zeros((self.nv,), dtype=configuration.dtype),
         )
         generalized_load = transpose_action(wrench)[0]
         body_power = jnp.sum(body_velocity * wrench)
-        generalized_power = jnp.sum(velocity_array * generalized_load)
+        generalized_power = jnp.sum(generalized_velocity * generalized_load)
         residual = body_power - generalized_power
         scale = jnp.maximum(
             1.0, jnp.maximum(jnp.abs(body_power), jnp.abs(generalized_power))
         )
-        tolerance = jnp.finfo(configuration_array.dtype).eps * max(
+        tolerance = jnp.finfo(configuration.dtype).eps * max(
             64, 8 * self.graph.bodies.capacity * 6 * max(self.nv, 1)
         )
         finite = (
-            jnp.all(jnp.isfinite(configuration_array))
-            & jnp.all(jnp.isfinite(velocity_array))
+            jnp.all(jnp.isfinite(configuration))
+            & jnp.all(jnp.isfinite(generalized_velocity))
             & jnp.all(jnp.isfinite(wrench))
             & jnp.all(jnp.isfinite(body_velocity))
             & jnp.all(jnp.isfinite(generalized_load))

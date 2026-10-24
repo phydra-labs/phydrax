@@ -11,13 +11,15 @@ from jax._src.lib.mlir import ir
 from jax._src.sharding_impls import ShardingContext, SPMDAxisContext
 from jax.interpreters import mlir
 
+from ..execution import default_device
+
 
 def lower_mosaic_or_reference(
-    native: Callable[..., tuple[Array, ...]],
-    reference: Callable[..., tuple[Array, ...]],
+    native: Callable[..., Sequence[Array]],
+    reference: Callable[..., Sequence[Array]],
     ctx: mlir.LoweringRuleContext,
     *operands: ir.Value,
-    **parameters: int | tuple[int, ...],
+    **parameters: object,
 ) -> Sequence[ir.Value]:
     """Use Mosaic only for explicitly resolved Ampere-or-newer CUDA targets."""
     axis_context = ctx.module_context.axis_context
@@ -45,7 +47,11 @@ def lower_mosaic_or_reference(
         ):
             admitted = False
             break
-    implementation = native if admitted else reference
-    return mlir.lower_fun(implementation, multiple_results=True)(
-        ctx, *operands, **parameters
-    )
+    if admitted and devices:
+        # Mosaic infers its architecture while constructing the kernel module;
+        # the caller's default device need not be the compilation target.
+        with default_device(devices[0]):
+            return mlir.lower_fun(native, multiple_results=True)(
+                ctx, *operands, **parameters
+            )
+    return mlir.lower_fun(reference, multiple_results=True)(ctx, *operands, **parameters)

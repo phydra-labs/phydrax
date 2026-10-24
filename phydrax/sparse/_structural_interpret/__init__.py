@@ -221,6 +221,86 @@ def _prop_streaming_moments(
     )
 
 
+def _prop_result_storage(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Keep workspace lifetime constraints out of numerical derivative support."""
+    from ...backends._result_storage import (
+        _publish_p,
+        _publish_reference,
+        _reserve_p,
+        _reserve_reference,
+    )
+
+    if eqn.primitive is _reserve_p:
+        reference = _reserve_reference
+    elif eqn.primitive is _publish_p:
+        reference = _publish_reference
+    else:
+        raise NotImplementedError("Foreign result-storage primitive.")
+    _prop_reference(
+        eqn,
+        partial(reference, **eqn.params),
+        state_indices,
+        state_consts,
+        state_bounds,
+    )
+
+
+def _prop_articulated_sweeps(
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> None:
+    """Expand registered articulated tree operations through their owning references."""
+    from ...discretization.particle._articulated_kinematics import (
+        _motion_p,
+        _motion_reference,
+        _poses_p,
+        _poses_reference,
+        _velocity_p,
+        _velocity_reference,
+        _velocity_transpose_p,
+        _velocity_transpose_reference,
+    )
+    from ...discretization.particle._articulated_sweeps import (
+        _factor_p,
+        _factor_reference,
+        _forces_p,
+        _forces_reference,
+        _solve_p,
+        _solve_reference,
+    )
+
+    if eqn.primitive is _factor_p:
+        reference = _factor_reference
+    elif eqn.primitive is _solve_p:
+        reference = _solve_reference
+    elif eqn.primitive is _forces_p:
+        reference = _forces_reference
+    elif eqn.primitive is _poses_p:
+        reference = _poses_reference
+    elif eqn.primitive is _velocity_p:
+        reference = _velocity_reference
+    elif eqn.primitive is _velocity_transpose_p:
+        reference = _velocity_transpose_reference
+    elif eqn.primitive is _motion_p:
+        reference = _motion_reference
+    else:
+        raise NotImplementedError("Foreign articulated sweep primitive.")
+    _prop_reference(
+        eqn,
+        partial(reference, **eqn.params),
+        state_indices,
+        state_consts,
+        state_bounds,
+    )
+
+
 def _prop_dispatch(
     eqn: JaxprEqn,
     state_indices: StateIndices,
@@ -367,6 +447,18 @@ def _prop_dispatch(
             _prop_compensated(eqn, state_indices, state_consts, state_bounds)
         case "phydrax_apic_streaming_moments":
             _prop_streaming_moments(eqn, state_indices, state_consts, state_bounds)
+        case (
+            "phydrax_articulated_inertia_factor"
+            | "phydrax_articulated_factor_solve"
+            | "phydrax_articulated_force_reduction"
+            | "phydrax_articulated_poses"
+            | "phydrax_articulated_body_velocity"
+            | "phydrax_articulated_body_velocity_transpose"
+            | "phydrax_articulated_motion"
+        ):
+            _prop_articulated_sweeps(eqn, state_indices, state_consts, state_bounds)
+        case "phydrax_result_storage_reserve" | "phydrax_result_storage_publish":
+            _prop_result_storage(eqn, state_indices, state_consts, state_bounds)
         case "reduce_sum" | "reduce_max" | "reduce_min" | "reduce_prod":
             _prop_reduce(eqn, state_indices)
         case (

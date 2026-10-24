@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from enum import IntEnum
 from math import isfinite
 from typing import Any
@@ -14,26 +14,33 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
-
-import phydrax.ein as ein
-from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.contact._distance import edge_edge_distance
 from ...discretization.contact._implicit_geometry import PlaneContactGeometry
-from ...discretization.contact._participant import AbstractContactParticipant
+from ...discretization.contact._participant import (
+    AbstractContactParticipant,
+    ContactParticipantScene,
+    FunctionContactParticipant,
+)
 from ...discretization.contact._search import (
+    contact_epoch_identity,
     ContactCandidateEpoch,
+    ContactRouteLayouts,
     ContactSearchStatus,
+    scene_route_geometry,
 )
 from ...discretization.contact._stencils import (
-    canonical_contact_route_keys,
+    ContactPrimitiveProfile,
     ContactStencilBatch,
     ContactStencilKind,
+    ContactStencilLayout,
+    empty_contact_stencil_batch,
+    prepare_contact_stencil_batch,
 )
 from ...discretization.contact._surface import CollisionSurfacePlan
 from ...linalg import (
@@ -46,11 +53,34 @@ from ...linalg import (
     materialize,
 )
 from ...typing import checked
-from ._cone import ContactConeSolverPlan, project_signorini_coulomb_product
+from ._cone import (
+    contact_cone_space,
+    ContactBlockLayout,
+    ContactCertificatePolicy,
+    ContactConeBranch,
+    ContactConeEvidence,
+    ContactConeProgram,
+    ContactConeResult,
+    ContactConeSolverPlan,
+    dense_contact_response,
+    solve_contact_cone,
+)
+from ._manifold import (
+    ContactFrameTransport,
+    ContactManifoldObservation,
+    ContactManifoldPolicy,
+    ContactManifoldState,
+    ContactManifoldTransition,
+    update_contact_manifold,
+)
 from ._rod_capsule import (
     PreparedRodCapsuleGeometry,
     ReducedRodCapsuleContactParticipant,
 )
+
+
+_ROD_VERTEX_LINEAR_PATH = "rod-vertex-linear-path"
+"""Swept rod epochs bind coverage to linearly interpolated vertex paths."""
 
 
 class RodContactSearchRoute(IntEnum):
@@ -64,6 +94,7 @@ class RodContactSearchFailure(IntEnum):
     TREE_DEPTH_OVERFLOW = 2
     TRAVERSAL_OVERFLOW = 3
     WITNESS_FAILURE = 4
+    INVALID_ROUTE_GEOMETRY = 5
 
 
 class RodContactSearchEvidence(StrictModule):
@@ -446,6 +477,12 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
     edge_contact_extent: Array
     excluded_vertex_pairs: Array
     allowed_participant_pairs: Array
+    scene: ContactParticipantScene
+    layouts: ContactRouteLayouts
+    edge_scene_features: Array
+    edge_ranks: Array
+    plane_scene_features: Array
+    plane_ranks: Array
     pair_policy_unrestricted: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
@@ -535,6 +572,49 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
             surface_plan.pair_policy.allowed_participant_pairs, dtype=jnp.int64
         )
         self.pair_policy_unrestricted = surface_plan.pair_policy.unrestricted
+        vertex_space = ArraySpace((surface_plan.vertex_count, 3), dtype=np.float64)
+
+        def vertex_positions(configuration: Array) -> Array:
+            return configuration
+
+        scene = ContactParticipantScene(
+            (
+                FunctionContactParticipant(
+                    surface_plan,
+                    vertex_space,
+                    vertex_positions,
+                    tangent_space=vertex_space,
+                    participant_id=canonical_fingerprint(
+                        {
+                            "kind": "rod-contact-vertex-participant",
+                            "surface": surface_plan.topology_id,
+                            "features": features.policy_id,
+                        }
+                    ),
+                ),
+            ),
+            planes=planes_,
+        )
+        layouts = ContactRouteLayouts(
+            scene,
+            capacities=(0, 0, plan.capacity, 0, 0, plan.plane_capacity),
+            profile=ContactPrimitiveProfile.MESH,
+        )
+        ranks = np.asarray(scene.feature_catalogue.canonical_ranks, dtype=np.int64)
+        edge_features = surface_plan.vertex_count + np.arange(
+            surface_plan.edge_count, dtype=np.int64
+        )
+        plane_features = (
+            surface_plan.vertex_count
+            + surface_plan.edge_count
+            + np.arange(len(planes_), dtype=np.int64)
+        )
+        self.scene = scene
+        self.layouts = layouts
+        self.edge_scene_features = jnp.asarray(edge_features)
+        self.edge_ranks = jnp.asarray(ranks[edge_features])
+        self.plane_scene_features = jnp.asarray(plane_features)
+        self.plane_ranks = jnp.asarray(ranks[plane_features])
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-rod-contact-search",
@@ -543,8 +623,14 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
                 "features": features.policy_id,
                 "planes": [value.geometry_id for value in planes_],
                 "segment_indices": array_tree_fingerprint(segment_indices),
+                "scene": scene.scene_id,
+                "layouts": layouts.layouts_id,
             }
         )
+
+    @property
+    def catalogue_id(self) -> str:
+        return self.scene.feature_catalogue.catalogue_id
 
     def search(
         self,
@@ -744,6 +830,39 @@ def _objective_tangent_basis(
     return np.stack((first, second), axis=-1)
 
 
+def _ordered_rows(
+    keys: np.ndarray, capacity: int, /
+) -> np.ndarray:
+    return np.argsort(keys, kind="stable")[:capacity]
+
+
+def _stencil_batch(
+    prepared: PreparedRodContactSearch,
+    layout: ContactStencilLayout,
+    left: np.ndarray,
+    right: np.ndarray,
+    slots: np.ndarray,
+    separation: np.ndarray,
+    active: np.ndarray,
+    actual: int,
+    overflow: int,
+    dtype: DTypeLike,
+    /,
+) -> ContactStencilBatch:
+    return prepare_contact_stencil_batch(
+        prepared.scene,
+        layout,
+        left,
+        right,
+        witness_slots=slots,
+        minimum_separation=separation,
+        valid=active,
+        actual_count=actual,
+        overflow_count=overflow,
+        dtype=dtype,
+    )
+
+
 def _pack_witnesses(
     prepared: PreparedRodContactSearch,
     positions: np.ndarray,
@@ -751,26 +870,43 @@ def _pack_witnesses(
     failure: RodContactSearchFailure,
     /,
 ) -> tuple[ContactStencilBatch, RodContactWitnessBatch, RodContactSearchFailure]:
+    """Pack edge-edge capsule witnesses in canonical key order.
+
+    Rows are oriented with the lower canonical feature rank on the left and
+    use the single unique-closest-feature witness slot of the rod profile.
+    """
+
     capacity = prepared.plan.capacity
+    layout = prepared.layouts.edge_edge
     actual = len(records)
     overflow = max(actual - capacity, 0)
     edges = np.asarray(prepared.edges, dtype=np.int32)
     feature_ids = np.asarray(prepared.edge_feature_ids, dtype=np.int64)
+    ranks = np.asarray(prepared.edge_ranks, dtype=np.int64)
+    scene_features = np.asarray(prepared.edge_scene_features, dtype=np.int64)
     radii = np.asarray(prepared.edge_physical_radius, dtype=positions.dtype)
     extents = np.asarray(prepared.edge_contact_extent, dtype=positions.dtype)
     ordered_records: list[tuple[int, int, int]] = []
     if records:
-        first_features = np.asarray([feature_ids[first] for first, _ in records])
-        second_features = np.asarray([feature_ids[second] for _, second in records])
-        keys = canonical_contact_route_keys(
-            ContactStencilKind.EDGE_EDGE, first_features, second_features
-        )
-        order = np.argsort(keys, kind="stable")
+        oriented = [
+            (first, second) if ranks[first] < ranks[second] else (second, first)
+            for first, second in records
+        ]
+        keys = np.asarray(
+            layout.schema.encode(
+                int(ContactStencilKind.EDGE_EDGE),
+                np.asarray([ranks[first] for first, _ in oriented]),
+                np.asarray([ranks[second] for _, second in oriented]),
+                np.zeros((len(oriented),), dtype=np.int64),
+            )
+        ).astype(np.int64)
         ordered_records = [
-            (records[index][0], records[index][1], int(keys[index]))
-            for index in order[:capacity]
+            (oriented[index][0], oriented[index][1], int(keys[index]))
+            for index in _ordered_rows(keys, capacity)
         ]
     indices = np.full((capacity, 4), -1, dtype=np.int32)
+    left_features = np.full((capacity,), -1, dtype=np.int64)
+    right_features = np.full((capacity,), -1, dtype=np.int64)
     left_ids = np.zeros((capacity,), dtype=np.int64)
     right_ids = np.zeros((capacity,), dtype=np.int64)
     route_keys = np.zeros((capacity,), dtype=np.int64)
@@ -798,9 +934,8 @@ def _pack_witnesses(
     right_radius = np.zeros((capacity,), dtype=positions.dtype)
     finite = np.zeros((capacity,), dtype=np.bool_)
     witness_failure = False
+    segment_indices = np.asarray(prepared.surface_segment_indices)
     for slot, (first, second, key) in enumerate(ordered_records):
-        if feature_ids[first] > feature_ids[second]:
-            first, second = second, first
         first_edge = edges[first]
         second_edge = edges[second]
         evaluation = edge_edge_distance(
@@ -815,11 +950,13 @@ def _pack_witnesses(
             np.asarray(evaluation.nondegenerate)
         )
         indices[slot] = np.concatenate((first_edge, second_edge))
+        left_features[slot] = scene_features[first]
+        right_features[slot] = scene_features[second]
         left_ids[slot] = feature_ids[first]
         right_ids[slot] = feature_ids[second]
         route_keys[slot] = key
-        left_segments[slot] = int(np.asarray(prepared.surface_segment_indices)[first])
-        right_segments[slot] = int(np.asarray(prepared.surface_segment_indices)[second])
+        left_segments[slot] = int(segment_indices[first])
+        right_segments[slot] = int(segment_indices[second])
         separation[slot] = extents[first] + extents[second]
         parameters[slot] = (coefficient[1], -coefficient[3])
         coefficients[slot] = coefficient
@@ -856,17 +993,17 @@ def _pack_witnesses(
     if witness_failure and failure == RodContactSearchFailure.NONE:
         failure = RodContactSearchFailure.WITNESS_FAILURE
         active[:] = False
-    batch = ContactStencilBatch(
-        ContactStencilKind.EDGE_EDGE,
-        indices,
-        left_ids,
-        right_ids,
-        capacity=capacity,
-        minimum_separation=separation,
-        valid=active,
-        actual_count=actual,
-        overflow_count=overflow,
-        route_keys=route_keys,
+    batch = _stencil_batch(
+        prepared,
+        layout,
+        left_features,
+        right_features,
+        np.zeros((capacity,), dtype=np.int64),
+        separation,
+        active,
+        actual,
+        overflow,
+        positions.dtype,
     )
     witnesses = RodContactWitnessBatch(
         indices,
@@ -910,19 +1047,25 @@ def _pack_plane_witnesses(
     RodContactWitnessBatch | None,
     RodContactSearchFailure,
 ]:
+    """Pack capsule-plane witnesses at the lower edge endpoint.
+
+    The rod profile keeps one witness per capsule-plane pair; its witness slot
+    is the selected endpoint, so an endpoint switch is a new route rather than
+    an invented continuation.
+    """
+
     capacity = prepared.plan.plane_capacity
+    layout = prepared.layouts.edge_plane
     if capacity == 0:
-        return (
-            ContactStencilBatch.empty(
-                ContactStencilKind.EDGE_VERTEX, 0, dtype=positions.dtype
-            ),
-            None,
-            failure,
-        )
+        return empty_contact_stencil_batch(layout, dtype=positions.dtype), None, failure
     actual = len(records)
     overflow = max(actual - capacity, 0)
     edges = np.asarray(prepared.edges, dtype=np.int32)
     feature_ids = np.asarray(prepared.edge_feature_ids, dtype=np.int64)
+    edge_ranks = np.asarray(prepared.edge_ranks, dtype=np.int64)
+    edge_features = np.asarray(prepared.edge_scene_features, dtype=np.int64)
+    plane_ranks = np.asarray(prepared.plane_ranks, dtype=np.int64)
+    plane_features = np.asarray(prepared.plane_scene_features, dtype=np.int64)
     segment_indices = np.asarray(prepared.surface_segment_indices, dtype=np.int32)
     radii = np.asarray(prepared.edge_physical_radius, dtype=positions.dtype)
     extents = np.asarray(prepared.edge_contact_extent, dtype=positions.dtype)
@@ -937,24 +1080,42 @@ def _pack_plane_witnesses(
         ],
         dtype=np.int64,
     )
+
+    def endpoint_distance(edge_index: int, plane_index: int) -> np.ndarray:
+        plane = prepared.planes[plane_index]
+        plane_normal = np.asarray(plane.unit_normal, dtype=positions.dtype)
+        return positions[edges[edge_index]] @ plane_normal - float(plane.offset)
+
     if records:
-        keys = canonical_contact_route_keys(
-            ContactStencilKind.EDGE_VERTEX,
-            np.asarray([feature_ids[edge] for edge, _ in records]),
-            np.asarray([plane_ids[plane] for _, plane in records]),
+        axial_slots = np.asarray(
+            [
+                int(endpoint_distance(edge, plane)[1] < endpoint_distance(edge, plane)[0])
+                for edge, plane in records
+            ],
+            dtype=np.int64,
         )
-        order = np.argsort(keys, kind="stable")
+        keys = np.asarray(
+            layout.schema.encode(
+                int(ContactStencilKind.EDGE_PLANE),
+                np.asarray([edge_ranks[edge] for edge, _ in records]),
+                np.asarray([plane_ranks[plane] for _, plane in records]),
+                axial_slots,
+            )
+        ).astype(np.int64)
         ordered = [
-            (records[index][0], records[index][1], int(keys[index]))
-            for index in order[:capacity]
+            (records[index][0], records[index][1], int(axial_slots[index]), int(keys[index]))
+            for index in _ordered_rows(keys, capacity)
         ]
     else:
         ordered = []
     indices = np.full((capacity, 4), -1, dtype=np.int32)
+    left_features = np.full((capacity,), -1, dtype=np.int64)
+    right_features = np.full((capacity,), -1, dtype=np.int64)
+    slots = np.zeros((capacity,), dtype=np.int64)
     left_ids = np.zeros((capacity,), dtype=np.int64)
     right_ids = np.zeros((capacity,), dtype=np.int64)
     route_keys = np.zeros((capacity,), dtype=np.int64)
-    kinds = np.full((capacity,), int(ContactStencilKind.EDGE_VERTEX), dtype=np.int32)
+    kinds = np.full((capacity,), int(ContactStencilKind.EDGE_PLANE), dtype=np.int32)
     left_segments = np.full((capacity,), -1, dtype=np.int32)
     right_segments = np.full((capacity,), -1, dtype=np.int32)
     parameters = np.zeros((capacity, 2), dtype=positions.dtype)
@@ -976,23 +1137,23 @@ def _pack_plane_witnesses(
     finite = np.zeros((capacity,), dtype=np.bool_)
     active = np.zeros((capacity,), dtype=np.bool_)
     witness_failure = False
-    for slot, (edge_index, plane_index, key) in enumerate(ordered):
+    for slot, (edge_index, plane_index, axial, key) in enumerate(ordered):
         edge = edges[edge_index]
         plane = prepared.planes[plane_index]
         plane_normal = np.asarray(plane.unit_normal, dtype=positions.dtype)
-        endpoint_distance = positions[edge] @ plane_normal - float(plane.offset)
-        axial = int(endpoint_distance[1] < endpoint_distance[0])
+        distances = endpoint_distance(edge_index, plane_index)
         center = positions[edge[axial]]
-        signed = float(endpoint_distance[axial])
+        signed = float(distances[axial])
         radius = float(radii[edge_index])
         axis = positions[edge[1]] - positions[edge[0]]
         axis_norm = float(np.linalg.norm(axis))
         finite_ = bool(
-            np.all(np.isfinite(endpoint_distance))
-            and np.all(np.isfinite(axis))
-            and axis_norm > 0.0
+            np.all(np.isfinite(distances)) and np.all(np.isfinite(axis)) and axis_norm > 0.0
         )
-        indices[slot] = (edge[0], edge[1], edge[0], -1)
+        indices[slot] = (edge[0], edge[1], -1, -1)
+        left_features[slot] = edge_features[edge_index]
+        right_features[slot] = plane_features[plane_index]
+        slots[slot] = axial
         left_ids[slot] = feature_ids[edge_index]
         right_ids[slot] = plane_ids[plane_index]
         route_keys[slot] = key
@@ -1028,17 +1189,17 @@ def _pack_plane_witnesses(
     if witness_failure and failure == RodContactSearchFailure.NONE:
         failure = RodContactSearchFailure.WITNESS_FAILURE
         active[:] = False
-    batch = ContactStencilBatch(
-        ContactStencilKind.EDGE_VERTEX,
-        indices,
-        left_ids,
-        right_ids,
-        capacity=capacity,
-        minimum_separation=separation,
-        valid=active,
-        actual_count=actual,
-        overflow_count=overflow,
-        route_keys=route_keys,
+    batch = _stencil_batch(
+        prepared,
+        layout,
+        left_features,
+        right_features,
+        slots,
+        separation,
+        active,
+        actual,
+        overflow,
+        positions.dtype,
     )
     witnesses = RodContactWitnessBatch(
         indices,
@@ -1072,20 +1233,9 @@ def _pack_plane_witnesses(
 
 
 def _invalidate_batch(batch: ContactStencilBatch, /) -> ContactStencilBatch:
-    return ContactStencilBatch(
-        batch.kind,
-        batch.vertex_indices,
-        batch.left_feature_ids,
-        batch.right_feature_ids,
-        capacity=batch.capacity,
-        weights=batch.weights,
-        minimum_separation=batch.minimum_separation,
-        valid=np.zeros((batch.capacity,), dtype=np.bool_),
-        actual_count=batch.actual_count,
-        overflow_count=batch.overflow_count,
-        route_keys=batch.route_keys,
-        batch_id=batch.batch_id,
-    )
+    """Keep discovered diagnostic rows but mark every row invalid."""
+
+    return eqx.tree_at(lambda value: value.valid, batch, jnp.zeros_like(batch.valid))
 
 
 def _merge_witnesses(
@@ -1333,9 +1483,13 @@ def _search_rod_capsules(
             if not permitted or (bool(static[edge_index]) and plane_static):
                 policy_filtered += 1
                 continue
-            signed = min(
-                float(np.min(start[edge] @ normal - plane.offset)),
-                float(np.min(end[edge] @ normal - plane.offset)),
+            box_lower = np.minimum(start[edge], end[edge])
+            box_upper = np.maximum(start[edge], end[edge])
+            signed = float(
+                np.min(
+                    np.sum(np.minimum(normal * box_lower, normal * box_upper), axis=-1)
+                )
+                - plane.offset
             )
             threshold = (
                 float(extents[edge_index])
@@ -1348,7 +1502,7 @@ def _search_rod_capsules(
     edge_edge, pair_witnesses, pair_failure = _pack_witnesses(
         prepared, start, pair_records, failure
     )
-    edge_vertex, plane_witnesses, plane_failure = _pack_plane_witnesses(
+    edge_plane, plane_witnesses, plane_failure = _pack_plane_witnesses(
         prepared, start, plane_records, failure
     )
     failure = max(pair_failure, plane_failure, key=int)
@@ -1357,47 +1511,63 @@ def _search_rod_capsules(
     overflow = pair_overflow + plane_overflow
     if overflow and failure == RodContactSearchFailure.NONE:
         failure = RodContactSearchFailure.CAPACITY_OVERFLOW
+    contact_extents, plane_normals, plane_offsets, geometry_valid = (
+        scene_route_geometry(prepared.scene, jnp.dtype(start.dtype))
+    )
+    if not bool(geometry_valid) and failure == RodContactSearchFailure.NONE:
+        failure = RodContactSearchFailure.INVALID_ROUTE_GEOMETRY
     complete = failure == RodContactSearchFailure.NONE
     if not complete:
         edge_edge = _invalidate_batch(edge_edge)
-        edge_vertex = _invalidate_batch(edge_vertex)
+        edge_plane = _invalidate_batch(edge_plane)
     witnesses = _merge_witnesses(pair_witnesses, plane_witnesses, complete=complete)
-    status = (
-        ContactSearchStatus.SUCCESS
-        if complete
-        else (
-            ContactSearchStatus.CANDIDATE_OVERFLOW
-            if failure == RodContactSearchFailure.CAPACITY_OVERFLOW
-            else ContactSearchStatus.MEMORY_LIMIT
-        )
-    )
-    face_vertex = ContactStencilBatch.empty(
-        ContactStencilKind.FACE_VERTEX, 0, dtype=start.dtype
-    )
+    if complete:
+        status = ContactSearchStatus.SUCCESS
+    elif failure == RodContactSearchFailure.CAPACITY_OVERFLOW:
+        status = ContactSearchStatus.CANDIDATE_OVERFLOW
+    elif failure in (
+        RodContactSearchFailure.TREE_DEPTH_OVERFLOW,
+        RodContactSearchFailure.TRAVERSAL_OVERFLOW,
+    ):
+        status = ContactSearchStatus.TRAVERSAL_EXHAUSTED
+    else:
+        status = ContactSearchStatus.INVALID_INPUT
     candidate_count = len(pair_records) + len(plane_records)
-    epoch_id = canonical_fingerprint(
-        {
-            "kind": "rod-contact-candidate-epoch",
-            "prepared": prepared.prepared_id,
-            "positions": array_tree_fingerprint(start),
-            "edge_vertex": edge_vertex.batch_id,
-            "edge_edge": edge_edge.batch_id,
-            "complete": complete,
-        }
-    )
+    layouts = prepared.layouts
+    trajectory_id = _ROD_VERTEX_LINEAR_PATH if swept else ""
+    dtype = start.dtype
+
+    def empty(layout: ContactStencilLayout) -> ContactStencilBatch:
+        return empty_contact_stencil_batch(layout, dtype=dtype)
+
     epoch = ContactCandidateEpoch(
-        edge_vertex,
-        edge_edge,
-        face_vertex,
-        jnp.asarray(start),
-        jnp.asarray(0.0, dtype=start.dtype),
-        jnp.asarray(candidate_count, dtype=jnp.int32),
-        jnp.asarray(candidate_count * 192, dtype=jnp.int64),
-        jnp.asarray(0.0, dtype=start.dtype),
-        jnp.asarray(int(status), dtype=jnp.int32),
-        jnp.asarray(complete),
-        prepared.plan.plan_id,
-        epoch_id,
+        vertex_vertex=empty(layouts.vertex_vertex),
+        edge_vertex=empty(layouts.edge_vertex),
+        edge_edge=edge_edge,
+        face_vertex=empty(layouts.face_vertex),
+        vertex_plane=empty(layouts.vertex_plane),
+        edge_plane=edge_plane,
+        reference_positions=jnp.asarray(start),
+        coverage_lower=jnp.asarray(np.minimum(start, end)),
+        coverage_upper=jnp.asarray(np.maximum(start, end)),
+        envelope_radius=jnp.asarray(
+            0.5 * prepared.plan.activation_distance, dtype=dtype
+        ),
+        lower_time=jnp.asarray(0.0, dtype=dtype),
+        upper_time=jnp.asarray(1.0, dtype=dtype),
+        revision=jnp.asarray(0, dtype=jnp.int64),
+        contact_extents=contact_extents,
+        plane_normals=plane_normals,
+        plane_offsets=plane_offsets,
+        candidate_count=jnp.asarray(candidate_count, dtype=jnp.int32),
+        status=jnp.asarray(int(status), dtype=jnp.int32),
+        complete=jnp.asarray(complete),
+        search_id=prepared.plan.plan_id,
+        catalogue_id=prepared.catalogue_id,
+        topology_id=prepared.scene.scene_id,
+        routing_id=prepared.scene.routing_id,
+        trajectory_id=trajectory_id,
+        epoch_id=contact_epoch_identity(prepared.plan.plan_id, prepared.scene, layouts),
     )
     finite = jnp.all(jnp.isfinite(jnp.asarray(start))) & jnp.all(
         jnp.isfinite(jnp.asarray(end))
@@ -1424,534 +1594,86 @@ def _search_rod_capsules(
     )
 
 
-class RodContactManifoldState(StrictModule, NonTrainableState):
-    """Persistent key-addressed rod contact history with retained inactive routes."""
+class RodContactManifoldTransition(StrictModule):
+    """Generic manifold transition plus the rod witnesses that produced it."""
 
-    route_keys: Array
-    occupied: Array
-    active: Array
-    left_witness: Array
-    right_witness: Array
-    normal: Array
-    tangent_basis: Array
-    impulse: Array
-    sticking: Array
-    slip: Array
-    age: Array
-    retention: Array
-    material_revision: Array
-    capacity: int = eqx.field(static=True)
-    tangent_dimension: int = eqx.field(static=True)
-
-    def __init__(
-        self,
-        route_keys: ArrayLike,
-        occupied: ArrayLike,
-        active: ArrayLike,
-        left_witness: ArrayLike,
-        right_witness: ArrayLike,
-        normal: ArrayLike,
-        tangent_basis: ArrayLike,
-        impulse: ArrayLike,
-        sticking: ArrayLike,
-        slip: ArrayLike,
-        age: ArrayLike,
-        retention: ArrayLike,
-        material_revision: ArrayLike,
-        /,
-        *,
-        capacity: int,
-        tangent_dimension: int = 2,
-    ) -> None:
-        count = int(capacity)
-        tangent = int(tangent_dimension)
-        if count <= 0 or tangent != 2:
-            raise ValueError("Rod manifold requires positive capacity and two tangents.")
-        keys = np.asarray(route_keys)
-        occupied_ = np.asarray(occupied, dtype=np.bool_)
-        active_ = np.asarray(active, dtype=np.bool_)
-        left = np.asarray(left_witness)
-        right = np.asarray(right_witness)
-        normal_ = np.asarray(normal)
-        basis = np.asarray(tangent_basis)
-        impulse_ = np.asarray(impulse)
-        sticking_ = np.asarray(sticking, dtype=np.bool_)
-        slip_ = np.asarray(slip)
-        age_ = np.asarray(age)
-        retention_ = np.asarray(retention)
-        revision = np.asarray(material_revision)
-        if keys.shape != (count,) or not np.issubdtype(keys.dtype, np.integer):
-            raise TypeError("Manifold route keys must be one integer capacity vector.")
-        if occupied_.shape != (count,) or active_.shape != (count,):
-            raise ValueError("Manifold masks must have capacity shape.")
-        if np.any(active_ & ~occupied_):
-            raise ValueError("Active manifold routes must be occupied.")
-        if np.unique(keys[occupied_]).size != int(np.count_nonzero(occupied_)):
-            raise ValueError("Occupied manifold route keys must be unique.")
-        for value in (left, right, normal_):
-            if value.shape != (count, 3):
-                raise ValueError(
-                    "Manifold witness vectors must have shape (capacity, 3)."
-                )
-        if basis.shape != (count, 3, tangent):
-            raise ValueError("Manifold tangent bases have invalid shape.")
-        if impulse_.shape != (count, 1 + tangent) or slip_.shape != (count, tangent):
-            raise ValueError("Manifold impulse/slip arrays have invalid shape.")
-        if sticking_.shape != (count,):
-            raise ValueError("Manifold sticking flags must have capacity shape.")
-        for value in (age_, retention_, revision):
-            if value.shape != (count,) or not np.issubdtype(value.dtype, np.integer):
-                raise TypeError(
-                    "Manifold age, retention, and revision must be integer vectors."
-                )
-        if np.any(age_ < 0) or np.any(retention_ < 0):
-            raise ValueError("Manifold age and retention must be nonnegative.")
-        self.route_keys = jnp.asarray(keys, dtype=jnp.int64)
-        self.occupied = jnp.asarray(occupied_)
-        self.active = jnp.asarray(active_)
-        dtype = jnp.result_type(left, right, normal_, basis, impulse_, slip_)
-        self.left_witness = jnp.asarray(left, dtype=dtype)
-        self.right_witness = jnp.asarray(right, dtype=dtype)
-        self.normal = jnp.asarray(normal_, dtype=dtype)
-        self.tangent_basis = jnp.asarray(basis, dtype=dtype)
-        self.impulse = jnp.asarray(impulse_, dtype=dtype)
-        self.sticking = jnp.asarray(sticking_)
-        self.slip = jnp.asarray(slip_, dtype=dtype)
-        self.age = jnp.asarray(age_, dtype=jnp.int32)
-        self.retention = jnp.asarray(retention_, dtype=jnp.int32)
-        self.material_revision = jnp.asarray(revision, dtype=jnp.int64)
-        self.capacity = count
-        self.tangent_dimension = tangent
-
-    @classmethod
-    def empty(
-        cls,
-        capacity: int,
-        /,
-        *,
-        tangent_dimension: int = 2,
-        dtype: Any = np.float64,
-    ) -> RodContactManifoldState:
-        count = int(capacity)
-        tangent = int(tangent_dimension)
-        vectors = np.zeros((count, 3), dtype=dtype)
-        return cls(
-            np.zeros((count,), dtype=np.int64),
-            np.zeros((count,), dtype=np.bool_),
-            np.zeros((count,), dtype=np.bool_),
-            vectors,
-            vectors,
-            vectors,
-            np.zeros((count, 3, tangent), dtype=dtype),
-            np.zeros((count, 1 + tangent), dtype=dtype),
-            np.zeros((count,), dtype=np.bool_),
-            np.zeros((count, tangent), dtype=dtype),
-            np.zeros((count,), dtype=np.int32),
-            np.zeros((count,), dtype=np.int32),
-            np.zeros((count,), dtype=np.int64),
-            capacity=count,
-            tangent_dimension=tangent,
-        )
-
-    def update(
-        self,
-        witnesses: RodContactWitnessBatch,
-        /,
-        *,
-        material_revision: ArrayLike,
-        retention_steps: int = 2,
-    ) -> RodContactManifoldTransition:
-        return _update_manifold(
-            self,
-            witnesses,
-            material_revision=material_revision,
-            retention_steps=retention_steps,
-        )
-
-    def record_response(
-        self,
-        route_keys: ArrayLike,
-        impulses: ArrayLike,
-        sticking: ArrayLike,
-        slip_velocity: ArrayLike,
-        /,
-        *,
-        step_size: ArrayLike,
-    ) -> RodContactManifoldState:
-        keys = np.asarray(route_keys)
-        impulse_ = np.asarray(impulses)
-        sticking_ = np.asarray(sticking, dtype=np.bool_)
-        slip_rate = np.asarray(slip_velocity)
-        step = float(np.asarray(step_size))
-        if not isfinite(step) or step < 0.0:
-            raise ValueError("step_size must be finite and nonnegative.")
-        count = keys.size
-        if keys.shape != (count,) or impulse_.shape != (count, 3):
-            raise ValueError("Response keys/impulses have inconsistent shapes.")
-        if sticking_.shape != (count,) or slip_rate.shape != (count, 2):
-            raise ValueError("Response stick/slip arrays have inconsistent shapes.")
-        stored_keys = np.asarray(self.route_keys)
-        occupied = np.asarray(self.occupied)
-        impulse = np.asarray(self.impulse).copy()
-        stick = np.asarray(self.sticking).copy()
-        slip = np.asarray(self.slip).copy()
-        lookup = {
-            int(key): index
-            for index, key in enumerate(stored_keys.tolist())
-            if occupied[index]
-        }
-        for response_index, key in enumerate(keys.tolist()):
-            state_index = lookup.get(int(key))
-            if state_index is None:
-                continue
-            impulse[state_index] = impulse_[response_index]
-            stick[state_index] = sticking_[response_index]
-            slip[state_index] += step * slip_rate[response_index]
-        return RodContactManifoldState(
-            self.route_keys,
-            self.occupied,
-            self.active,
-            self.left_witness,
-            self.right_witness,
-            self.normal,
-            self.tangent_basis,
-            impulse,
-            stick,
-            slip,
-            self.age,
-            self.retention,
-            self.material_revision,
-            capacity=self.capacity,
-            tangent_dimension=self.tangent_dimension,
-        )
-
-    @checked
-    def commit(
-        self,
-        witnesses: RodContactWitnessBatch,
-        response: CompositeContactResult,
-        /,
-        *,
-        step_size: ArrayLike,
-    ) -> RodContactManifoldState:
-        if response.response_id != witnesses.batch_id:
-            raise ValueError("Response and witness batches do not match.")
-        return self.record_response(
-            witnesses.route_keys,
-            response.impulse,
-            response.sticking,
-            response.slip_velocity,
-            step_size=step_size,
-        )
-
-
-class RodContactManifoldTransition(StrictModule, NonTrainableState):
-    state: RodContactManifoldState
+    manifold: ContactManifoldTransition
     witnesses: RodContactWitnessBatch
-    warm_start: Array
-    born_keys: Array
-    died_keys: Array
-    resurrected_keys: Array
-    born_count: Array
-    died_count: Array
-    resurrected_count: Array
-    material_changed_count: Array
-    frame_transport_residual: Array
-    finite: Array
-    successful: Array
 
 
-class _HistoryRecord:
-    __slots__ = (
-        "key",
-        "active",
-        "left",
-        "right",
-        "normal",
-        "basis",
-        "impulse",
-        "sticking",
-        "slip",
-        "age",
-        "retention",
-        "revision",
+def empty_rod_contact_manifold(
+    capacity: int,
+    /,
+    *,
+    catalogue_id: str,
+    dtype: DTypeLike = jnp.float64,
+) -> ContactManifoldState:
+    """Empty mechanical history with left/right capsule surface witnesses."""
+
+    return ContactManifoldState.empty(
+        capacity,
+        catalogue_id=catalogue_id,
+        ambient_dimension=3,
+        witness_count=2,
+        dtype=dtype,
     )
 
-    def __init__(
-        self,
-        key: int,
-        active: bool,
-        left: np.ndarray,
-        right: np.ndarray,
-        normal: np.ndarray,
-        basis: np.ndarray,
-        impulse: np.ndarray,
-        sticking: bool,
-        slip: np.ndarray,
-        age: int,
-        retention: int,
-        revision: int,
-    ) -> None:
-        self.key = key
-        self.active = active
-        self.left = left
-        self.right = right
-        self.normal = normal
-        self.basis = basis
-        self.impulse = impulse
-        self.sticking = sticking
-        self.slip = slip
-        self.age = age
-        self.retention = retention
-        self.revision = revision
 
-
-def _revision_vector(
-    material_revision: ArrayLike,
+def rod_contact_manifold_observation(
     witnesses: RodContactWitnessBatch,
     /,
-) -> np.ndarray:
-    revision = np.asarray(material_revision)
-    if revision.shape == ():
-        return np.full((witnesses.capacity,), int(revision), dtype=np.int64)
-    if revision.shape != (witnesses.capacity,) or not np.issubdtype(
-        revision.dtype, np.integer
-    ):
-        raise TypeError("material_revision must be an integer scalar or capacity vector.")
-    return revision.astype(np.int64, copy=False)
+    *,
+    material_revision: ArrayLike,
+    geometry_revision: ArrayLike,
+    catalogue_id: str,
+) -> ContactManifoldObservation:
+    """Observe rod witnesses: keys, material frames and surface witness points."""
 
-
-def _witnesses_with_frames(
-    witnesses: RodContactWitnessBatch, frames: np.ndarray, /
-) -> RodContactWitnessBatch:
-    return RodContactWitnessBatch(
-        witnesses.vertex_indices,
-        witnesses.left_feature_ids,
-        witnesses.right_feature_ids,
+    if not isinstance(witnesses, RodContactWitnessBatch):
+        raise TypeError("witnesses must be RodContactWitnessBatch.")
+    return ContactManifoldObservation(
         witnesses.route_keys,
-        witnesses.stencil_kinds,
-        witnesses.left_segment_indices,
-        witnesses.right_segment_indices,
-        witnesses.left_parameters,
-        witnesses.right_parameters,
-        witnesses.coefficients,
-        witnesses.left_centerline_witness,
-        witnesses.right_centerline_witness,
-        witnesses.left_surface_witness,
-        witnesses.right_surface_witness,
-        witnesses.left_axis,
-        witnesses.right_axis,
-        witnesses.normal,
-        frames,
-        witnesses.centerline_distance,
-        witnesses.physical_gap,
-        witnesses.activation_gap,
-        witnesses.left_radius,
-        witnesses.right_radius,
         witnesses.valid,
-        capacity=witnesses.capacity,
-        finite=witnesses.finite,
-        batch_id=witnesses.batch_id,
+        witnesses.normal,
+        witnesses.tangent_basis,
+        jnp.stack(
+            (witnesses.left_surface_witness, witnesses.right_surface_witness), axis=1
+        ),
+        material_revision,
+        geometry_revision,
+        catalogue_id=catalogue_id,
     )
 
 
-def _update_manifold(
-    state: RodContactManifoldState,
+def update_rod_contact_manifold(
+    state: ContactManifoldState,
     witnesses: RodContactWitnessBatch,
     /,
     *,
     material_revision: ArrayLike,
     retention_steps: int,
 ) -> RodContactManifoldTransition:
-    if not isinstance(state, RodContactManifoldState):
-        raise TypeError("state must be RodContactManifoldState.")
-    if not isinstance(witnesses, RodContactWitnessBatch):
-        raise TypeError("witnesses must be RodContactWitnessBatch.")
-    if witnesses.capacity > state.capacity:
-        raise ValueError("Witness capacity exceeds manifold history capacity.")
-    retention_limit = int(retention_steps)
-    if retention_limit < 0:
-        raise ValueError("retention_steps must be nonnegative.")
-    revisions = _revision_vector(material_revision, witnesses)
-    old_occupied = np.asarray(state.occupied)
-    old_active = np.asarray(state.active)
-    old_keys = np.asarray(state.route_keys)
-    old_lookup = {
-        int(key): index
-        for index, key in enumerate(old_keys.tolist())
-        if old_occupied[index]
-    }
-    witness_active = np.asarray(witnesses.valid)
-    witness_keys = np.asarray(witnesses.route_keys)
-    frames = np.asarray(witnesses.tangent_basis).copy()
-    warm = np.zeros((witnesses.capacity, 3), dtype=np.asarray(state.impulse).dtype)
-    records: list[_HistoryRecord] = []
-    born: list[int] = []
-    resurrected: list[int] = []
-    material_changed = 0
-    active_key_set: set[int] = set()
-    for slot in np.flatnonzero(witness_active).tolist():
-        key = int(witness_keys[slot])
-        active_key_set.add(key)
-        old_slot = old_lookup.get(key)
-        revision = int(revisions[slot])
-        if old_slot is None:
-            born.append(key)
-            impulse = np.zeros((3,), dtype=warm.dtype)
-            slip = np.zeros((2,), dtype=warm.dtype)
-            sticking = True
-            age = 0
-        else:
-            if not old_active[old_slot]:
-                resurrected.append(key)
-            changed = int(np.asarray(state.material_revision)[old_slot]) != revision
-            material_changed += int(changed)
-            if changed:
-                impulse = np.zeros((3,), dtype=warm.dtype)
-                slip = np.zeros((2,), dtype=warm.dtype)
-                sticking = True
-            else:
-                impulse = np.asarray(state.impulse)[old_slot].copy()
-                slip = np.asarray(state.slip)[old_slot].copy()
-                sticking = bool(np.asarray(state.sticking)[old_slot])
-            age = int(np.asarray(state.age)[old_slot]) + 1
-            warm[slot] = impulse
-        records.append(
-            _HistoryRecord(
-                key,
-                True,
-                np.asarray(witnesses.left_surface_witness)[slot].copy(),
-                np.asarray(witnesses.right_surface_witness)[slot].copy(),
-                np.asarray(witnesses.normal)[slot].copy(),
-                frames[slot].copy(),
-                impulse,
-                sticking,
-                slip,
-                age,
-                retention_limit,
-                revision,
-            )
-        )
-    for old_slot in np.flatnonzero(old_occupied).tolist():
-        key = int(old_keys[old_slot])
-        if key in active_key_set:
-            continue
-        remaining = int(np.asarray(state.retention)[old_slot]) - 1
-        if remaining <= 0:
-            continue
-        records.append(
-            _HistoryRecord(
-                key,
-                False,
-                np.asarray(state.left_witness)[old_slot].copy(),
-                np.asarray(state.right_witness)[old_slot].copy(),
-                np.asarray(state.normal)[old_slot].copy(),
-                np.asarray(state.tangent_basis)[old_slot].copy(),
-                np.asarray(state.impulse)[old_slot].copy(),
-                bool(np.asarray(state.sticking)[old_slot]),
-                np.asarray(state.slip)[old_slot].copy(),
-                int(np.asarray(state.age)[old_slot]) + 1,
-                remaining,
-                int(np.asarray(state.material_revision)[old_slot]),
-            )
-        )
-    active_records = [record for record in records if record.active]
-    retained_records = [record for record in records if not record.active]
-    retained_records.sort(key=lambda record: (-record.retention, -record.age, record.key))
-    kept = (
-        active_records + retained_records[: max(state.capacity - len(active_records), 0)]
+    """Join rod witnesses into generic history with material-frame transport.
+
+    Rod contact frames are built from body-fixed capsule axes, so retained local
+    impulses and slips follow the material carrier.  Rod geometry has no
+    separate geometry revision; the state's revision is carried unchanged.
+    """
+
+    if not isinstance(state, ContactManifoldState):
+        raise TypeError("state must be ContactManifoldState.")
+    policy = ContactManifoldPolicy(
+        retention_steps=retention_steps,
+        frame_transport=ContactFrameTransport.MATERIAL_FRAME,
     )
-    kept.sort(key=lambda record: record.key)
-    kept_keys = {record.key for record in kept}
-    died = sorted(
-        int(key)
-        for index, key in enumerate(old_keys.tolist())
-        if old_occupied[index] and int(key) not in kept_keys
-    )
-    capacity = state.capacity
-    keys = np.zeros((capacity,), dtype=np.int64)
-    occupied = np.zeros((capacity,), dtype=np.bool_)
-    active = np.zeros((capacity,), dtype=np.bool_)
-    dtype = np.asarray(state.impulse).dtype
-    left = np.zeros((capacity, 3), dtype=dtype)
-    right = np.zeros((capacity, 3), dtype=dtype)
-    normal = np.zeros((capacity, 3), dtype=dtype)
-    basis = np.zeros((capacity, 3, 2), dtype=dtype)
-    impulse = np.zeros((capacity, 3), dtype=dtype)
-    sticking = np.zeros((capacity,), dtype=np.bool_)
-    slip = np.zeros((capacity, 2), dtype=dtype)
-    age = np.zeros((capacity,), dtype=np.int32)
-    retention = np.zeros((capacity,), dtype=np.int32)
-    revision = np.zeros((capacity,), dtype=np.int64)
-    for slot, record in enumerate(kept):
-        keys[slot] = record.key
-        occupied[slot] = True
-        active[slot] = record.active
-        left[slot] = record.left
-        right[slot] = record.right
-        normal[slot] = record.normal
-        basis[slot] = record.basis
-        impulse[slot] = record.impulse
-        sticking[slot] = record.sticking
-        slip[slot] = record.slip
-        age[slot] = record.age
-        retention[slot] = record.retention
-        revision[slot] = record.revision
-    new_state = RodContactManifoldState(
-        keys,
-        occupied,
-        active,
-        left,
-        right,
-        normal,
-        basis,
-        impulse,
-        sticking,
-        slip,
-        age,
-        retention,
-        revision,
-        capacity=capacity,
-        tangent_dimension=2,
-    )
-    born_keys = np.full((capacity,), -1, dtype=np.int64)
-    died_keys = np.full((capacity,), -1, dtype=np.int64)
-    resurrected_keys = np.full((capacity,), -1, dtype=np.int64)
-    born_keys[: len(born)] = sorted(born)
-    died_keys[: len(died)] = died
-    resurrected_keys[: len(resurrected)] = sorted(resurrected)
-    active_frames = frames[witness_active]
-    active_normals = np.asarray(witnesses.normal)[witness_active]
-    if active_frames.size:
-        normal_residual = np.max(
-            np.abs(ein.contract("nij,ni->nj", active_frames, active_normals))
-        )
-        gram = ein.contract("nij,nik->njk", active_frames, active_frames)
-        orthogonal_residual = np.max(np.abs(gram - np.eye(2)))
-        frame_residual = max(float(normal_residual), float(orthogonal_residual))
-    else:
-        frame_residual = 0.0
-    finite = bool(
-        np.all(np.isfinite(left[occupied]))
-        and np.all(np.isfinite(right[occupied]))
-        and np.all(np.isfinite(basis[occupied]))
-        and np.all(np.isfinite(impulse[occupied]))
-        and np.all(np.isfinite(slip[occupied]))
+    observation = rod_contact_manifold_observation(
+        witnesses,
+        material_revision=material_revision,
+        geometry_revision=state.geometry_revision,
+        catalogue_id=state.catalogue_id,
     )
     return RodContactManifoldTransition(
-        new_state,
-        _witnesses_with_frames(witnesses, frames),
-        jnp.asarray(warm),
-        jnp.asarray(born_keys),
-        jnp.asarray(died_keys),
-        jnp.asarray(resurrected_keys),
-        jnp.asarray(len(born), dtype=jnp.int32),
-        jnp.asarray(len(died), dtype=jnp.int32),
-        jnp.asarray(len(resurrected), dtype=jnp.int32),
-        jnp.asarray(material_changed, dtype=jnp.int32),
-        jnp.asarray(frame_residual, dtype=new_state.impulse.dtype),
-        jnp.asarray(finite),
-        jnp.asarray(finite),
+        update_contact_manifold(state, observation, policy=policy), witnesses
     )
 
 
@@ -2168,7 +1890,7 @@ def _rod_contact_ccd(
     maximum_speed = 0.0
     for slot in np.flatnonzero(active).tolist():
         endpoints = indices[slot]
-        if stencil_kinds[slot] == int(ContactStencilKind.EDGE_VERTEX):
+        if stencil_kinds[slot] == int(ContactStencilKind.EDGE_PLANE):
             plane = planes_by_feature[int(right_feature_ids[slot])]
             speed = max(
                 float(np.linalg.norm(displacement[endpoints[0]])),
@@ -2207,7 +1929,7 @@ def _rod_contact_ccd(
         pair_impact = False
         supported_initial_plane = (
             int(route_keys[slot]) in supported_plane_route_keys
-            and stencil_kinds[slot] == int(ContactStencilKind.EDGE_VERTEX)
+            and stencil_kinds[slot] == int(ContactStencilKind.EDGE_PLANE)
             and gap <= plan.distance_tolerance
         )
         if supported_initial_plane:
@@ -2564,13 +2286,9 @@ def prepare_composite_contact_block(
 
 
 class CompositeContactResponseEvidence(StrictModule):
-    converged: Array
-    iterations: Array
-    projected_residual: Array
-    complementarity_defect: Array
-    cone_defect: Array
-    minimum_normal_impulse: Array
-    minimum_normal_velocity: Array
+    """Cone evidence plus per-block true-dual application evidence."""
+
+    cone: ContactConeEvidence
     duality_residual: Array
     duality_scale: Array
     duality_valid: Array
@@ -2583,15 +2301,18 @@ class CompositeContactResponseEvidence(StrictModule):
 
 
 class CompositeContactResult(StrictModule):
+    """Applied composite impulse; ``post_contact_velocity`` is physical."""
+
     impulse: Array
     candidate_impulse: Array
     generalized_impulses: tuple[PyTree[Array], ...]
     velocity_updates: tuple[PyTree[Array], ...]
     post_velocities: tuple[PyTree[Array], ...]
     post_contact_velocity: Array
-    sticking: Array
+    branch: Array
     slip_velocity: Array
     route_keys: Array
+    cone: ContactConeResult
     evidence: CompositeContactResponseEvidence
     response_id: str = eqx.field(static=True)
 
@@ -2601,15 +2322,16 @@ class CompositeContactResult(StrictModule):
 
 
 class CompositeContactResponse(StrictModule, NonTrainableState):
-    """Block response through the true-dual composite ``G M^-1 G*``."""
+    """Composite true-dual response ``G M^-1 G*`` lowered to the common cone.
+
+    The rod law is the common fixed-route Signorini--Coulomb program with the
+    witness gap rate as normal law bias; certificates are the program's
+    dimensional physical certificates.
+    """
 
     blocks: tuple[CompositeContactParticipantBlock, ...]
     witnesses: RodContactWitnessBatch
-    delassus_operator: AbstractLinearOperator
-    free_contact_velocity: Array
-    dynamic_friction: Array
-    static_friction: Array
-    compliance: Array
+    program: ContactConeProgram
     solver: ContactConeSolverPlan
     response_id: str = eqx.field(static=True)
 
@@ -2620,6 +2342,7 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
         witnesses: RodContactWitnessBatch,
         /,
         *,
+        certificate: ContactCertificatePolicy,
         dynamic_friction: ArrayLike,
         static_friction: ArrayLike | None = None,
         compliance: ArrayLike = 0.0,
@@ -2633,52 +2356,14 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
             raise TypeError(
                 "blocks must contain CompositeContactParticipantBlock values."
             )
-        contact_space = values[0].velocity_operator.target
-        expected = ArraySpace(
-            (witnesses.capacity, 3),
-            dtype=witnesses.normal.dtype,
-        )
-        if not contact_space.compatible(expected) or any(
+        contact_space = contact_cone_space(witnesses.capacity, 3, witnesses.normal.dtype)
+        if any(
             not value.velocity_operator.target.compatible(contact_space)
-            for value in values[1:]
+            for value in values
         ):
             raise ValueError(
                 "Composite contact blocks must share the witness contact space."
             )
-        dynamic = _route_values(
-            dynamic_friction,
-            witnesses.capacity,
-            witnesses.normal.dtype,
-            "dynamic_friction",
-        )
-        static = (
-            dynamic
-            if static_friction is None
-            else _route_values(
-                static_friction,
-                witnesses.capacity,
-                witnesses.normal.dtype,
-                "static_friction",
-            )
-        )
-        if np.any(np.asarray(dynamic) < 0.0) or np.any(
-            np.asarray(static) < np.asarray(dynamic)
-        ):
-            raise ValueError("Friction coefficients require static >= dynamic >= 0.")
-        compliance_ = _local_values(
-            compliance,
-            witnesses.capacity,
-            witnesses.normal.dtype,
-            "compliance",
-        )
-        if np.any(np.asarray(compliance_) < 0.0):
-            raise ValueError("Contact compliance must be nonnegative.")
-        bias = _route_values(
-            normal_bias,
-            witnesses.capacity,
-            witnesses.normal.dtype,
-            "normal_bias",
-        )
         solver_ = ContactConeSolverPlan() if solver is None else solver
         if not isinstance(solver_, ContactConeSolverPlan):
             raise TypeError("solver must be ContactConeSolverPlan or None.")
@@ -2707,25 +2392,36 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
         free = contact_space.zeros()
         for block in values:
             free = free + block.velocity_operator.mv(block.free_velocity)
-        free = free.at[:, 0].add(bias)
         free = jnp.where(witnesses.valid[:, None], free, 0.0)
-        identifier = witnesses.batch_id
         self.blocks = values
         self.witnesses = witnesses
-        self.delassus_operator = delassus
-        self.free_contact_velocity = free
-        self.dynamic_friction = dynamic
-        self.static_friction = static
-        self.compliance = compliance_
+        self.program = _composite_program(
+            delassus,
+            witnesses,
+            free,
+            certificate,
+            dynamic_friction,
+            static_friction,
+            compliance,
+            normal_bias,
+            "matrix-free",
+        )
         self.solver = solver_
-        self.response_id = identifier
+        self.response_id = witnesses.batch_id
+
+    @property
+    def delassus_operator(self) -> AbstractLinearOperator:
+        return self.program.response
 
     def solve(
         self, /, *, initial_impulse: ArrayLike | None = None
     ) -> CompositeContactResult:
         """Solve with matrix-free Delassus actions; failures apply zero impulse."""
 
-        return _solve_composite_response(self, initial_impulse, backend="matrix-free")
+        cone = solve_contact_cone(
+            self.program, solver=self.solver, initial_impulse=initial_impulse
+        )
+        return _apply_composite_response(self, self.program, cone, "matrix-free")
 
     def solve_dense_authority(
         self,
@@ -2734,7 +2430,7 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
         initial_impulse: ArrayLike | None = None,
         materialization_policy: MaterializationPolicy | None = None,
     ) -> CompositeContactResult:
-        """Solve the bounded dense correctness authority for parity evidence."""
+        """Solve the same law over the explicitly materialized bounded authority."""
 
         policy = (
             MaterializationPolicy()
@@ -2745,346 +2441,158 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
             raise TypeError(
                 "materialization_policy must be MaterializationPolicy or None."
             )
-        dense = materialize(self.delassus_operator, policy).reshape(
-            (
-                self.witnesses.capacity,
-                3,
-                self.witnesses.capacity,
-                3,
-            )
+        program = self.program
+        dense = dense_contact_response(
+            materialize(program.response, policy),
+            program.contact_space,
+            operator_id=f"{program.response.operator_id}/dense-authority",
         )
-        return _solve_composite_response(
-            self, initial_impulse, backend="dense-authority", dense=dense
+        authority = _composite_program(
+            dense,
+            self.witnesses,
+            program.free_velocity,
+            program.certificate,
+            program.dynamic_friction,
+            program.static_friction,
+            program.compliance,
+            program.normal_bias,
+            "dense-authority",
         )
+        cone = solve_contact_cone(
+            authority, solver=self.solver, initial_impulse=initial_impulse
+        )
+        return _apply_composite_response(self, authority, cone, "dense-authority")
 
 
-def _route_values(
-    value: ArrayLike,
-    capacity: int,
-    dtype: Any,
-    name: str,
-    /,
-) -> Array:
-    array = np.asarray(value, dtype=np.dtype(dtype))
-    if array.shape == ():
-        array = np.full((capacity,), float(array), dtype=np.dtype(dtype))
-    if array.shape != (capacity,) or np.any(~np.isfinite(array)):
-        raise ValueError(f"{name} must be a finite scalar or capacity vector.")
-    return jnp.asarray(array)
-
-
-def _local_values(
-    value: ArrayLike,
-    capacity: int,
-    dtype: Any,
-    name: str,
-    /,
-) -> Array:
-    array = np.asarray(value, dtype=np.dtype(dtype))
-    if array.shape == ():
-        array = np.full((capacity, 3), float(array), dtype=np.dtype(dtype))
-    elif array.shape == (capacity,):
-        array = np.repeat(array[:, None], 3, axis=1)
-    if array.shape != (capacity, 3) or np.any(~np.isfinite(array)):
-        raise ValueError(f"{name} must be finite and scalar, capacity, or (capacity, 3).")
-    return jnp.asarray(array)
-
-
-def _matrix_free_contact_solve(
-    action: Callable[[Array], Array],
+def _composite_program(
+    response: AbstractLinearOperator,
+    witnesses: RodContactWitnessBatch,
     free: Array,
-    compliance: Array,
-    friction: Array,
-    valid: Array,
-    initial: Array,
-    solver: ContactConeSolverPlan,
-    /,
-) -> tuple[Array, Array, Array]:
-    mask = valid[:, None]
-
-    def law_action(value: Array) -> Array:
-        active = jnp.where(mask, value, 0.0)
-        return jnp.where(mask, action(active) + compliance * active, 0.0)
-
-    vector = jnp.where(mask, jnp.ones_like(initial), 0.0)
-    vector_norm = jnp.sqrt(jnp.sum(vector * vector))
-    vector = jnp.where(vector_norm > 0.0, vector / vector_norm, vector)
-    spectral = jnp.asarray(0.0, dtype=free.dtype)
-    for _ in range(16):
-        image = law_action(vector)
-        image_norm = jnp.sqrt(jnp.sum(image * image))
-        vector = jnp.where(image_norm > 0.0, image / image_norm, vector)
-        spectral = jnp.maximum(spectral, image_norm)
-    step = solver.relaxation / jnp.maximum(
-        1.05 * spectral, jnp.asarray(1.0, dtype=free.dtype)
-    )
-    tolerance = solver.absolute_tolerance + solver.relative_tolerance * jnp.maximum(
-        1.0, jnp.sqrt(jnp.sum(free * free))
-    )
-    value = jnp.where(
-        mask,
-        project_signorini_coulomb_product(initial, friction),
-        0.0,
-    )
-    converged = jnp.asarray(False)
-    first_converged = jnp.asarray(solver.maximum_iterations, dtype=jnp.int32)
-    residual_norm = jnp.asarray(jnp.inf, dtype=free.dtype)
-
-    def iteration_body(
-        iteration: Array, state: tuple[Array, Array, Array, Array]
-    ) -> tuple[Array, Array, Array, Array]:
-        value_, converged_, first_converged_, residual_norm_ = state
-        gradient = law_action(value_) + free
-        projected = project_signorini_coulomb_product(
-            value_ - step * gradient,
-            friction,
-        )
-        projected = jnp.where(mask, projected, 0.0)
-        residual = value_ - projected
-        norm = jnp.sqrt(jnp.sum(residual * residual))
-        now = norm <= tolerance
-        first_converged_ = jnp.where(
-            (~converged_) & now,
-            jnp.asarray(iteration + 1, dtype=jnp.int32),
-            first_converged_,
-        )
-        value_ = jnp.where(converged_, value_, projected)
-        converged_ = converged_ | now
-        residual_norm_ = jnp.where(
-            converged_,
-            jnp.minimum(residual_norm_, norm),
-            norm,
-        )
-        return value_, converged_, first_converged_, residual_norm_
-
-    value, _, first_converged, residual_norm = jax.lax.fori_loop(
-        0,
-        solver.maximum_iterations,
-        iteration_body,
-        (value, converged, first_converged, residual_norm),
-    )
-    return value, first_converged, residual_norm
-
-
-def _solve_composite_response(
-    response: CompositeContactResponse,
-    initial_impulse: ArrayLike | None,
-    /,
-    *,
+    certificate: ContactCertificatePolicy,
+    dynamic_friction: ArrayLike,
+    static_friction: ArrayLike | None,
+    compliance: ArrayLike,
+    normal_bias: ArrayLike,
     backend: str,
-    dense: Array | None = None,
+    /,
+) -> ContactConeProgram:
+    return ContactConeProgram(
+        response,
+        free,
+        compliance,
+        dynamic_friction,
+        witnesses.route_keys,
+        witnesses.valid,
+        ContactBlockLayout.coulomb(
+            witnesses.capacity, 3, family_count=certificate.family_count
+        ),
+        certificate,
+        canonical_fingerprint(
+            {
+                "kind": "rod-composite-contact-program",
+                "witnesses": witnesses.batch_id,
+                "response": response.operator_id,
+                "backend": backend,
+            }
+        ),
+        static_friction=static_friction,
+        normal_bias=normal_bias,
+    )
+
+
+def _apply_composite_response(
+    response: CompositeContactResponse,
+    program: ContactConeProgram,
+    cone: ContactConeResult,
+    backend: str,
+    /,
 ) -> CompositeContactResult:
-    capacity = response.witnesses.capacity
-    dtype = response.free_contact_velocity.dtype
-    initial = (
-        jnp.zeros((capacity, 3), dtype=dtype)
-        if initial_impulse is None
-        else jnp.asarray(initial_impulse, dtype=dtype)
-    )
-    if initial.shape != (capacity, 3):
-        raise ValueError("initial_impulse must have witness contact shape.")
-    valid = response.witnesses.valid
-    if dense is None:
-        action = response.delassus_operator.mv
-    else:
-        action = lambda value: contract("aibj,bj->ai", dense, value)
-    static_candidate, _, _ = _matrix_free_contact_solve(
-        action,
-        response.free_contact_velocity,
-        response.compliance,
-        response.static_friction,
-        valid,
-        initial,
-        response.solver,
-    )
-    static_velocity = (
-        action(static_candidate)
-        + response.compliance * static_candidate
-        + response.free_contact_velocity
-    )
-    static_tangent_norm = jnp.sqrt(
-        jnp.sum(static_velocity[:, 1:] * static_velocity[:, 1:], axis=-1)
-    )
-    static_impulse_norm = jnp.sqrt(
-        jnp.sum(static_candidate[:, 1:] * static_candidate[:, 1:], axis=-1)
-    )
-    tolerance = response.solver.absolute_tolerance + response.solver.relative_tolerance
-    static_sticking = (
-        valid
-        & (static_tangent_norm <= tolerance)
-        & (
-            static_impulse_norm
-            <= response.static_friction * jnp.maximum(static_candidate[:, 0], 0.0)
-            + tolerance
-        )
-    )
-    selected_friction = jnp.where(
-        static_sticking, response.static_friction, response.dynamic_friction
-    )
-    candidate, iterations, residual = _matrix_free_contact_solve(
-        action,
-        response.free_contact_velocity,
-        response.compliance,
-        selected_friction,
-        valid,
-        static_candidate,
-        response.solver,
-    )
-    law_velocity = (
-        action(candidate)
-        + response.compliance * candidate
-        + response.free_contact_velocity
-    )
-    tangent_norm = jnp.sqrt(jnp.sum(candidate[:, 1:] ** 2, axis=-1))
-    cone_defect = jnp.max(
-        jnp.where(
-            valid,
-            jnp.maximum(
-                tangent_norm - selected_friction * jnp.maximum(candidate[:, 0], 0.0),
-                0.0,
-            ),
-            0.0,
-        ),
-        initial=0.0,
-    )
-    complementarity = jnp.max(
-        jnp.where(
-            valid,
-            jnp.abs(jnp.minimum(candidate[:, 0], law_velocity[:, 0])),
-            0.0,
-        ),
-        initial=0.0,
-    )
-    active = jnp.any(valid)
-    minimum_impulse = jnp.where(
-        active,
-        jnp.min(jnp.where(valid, candidate[:, 0], jnp.inf)),
-        jnp.asarray(0.0, dtype=dtype),
-    )
-    minimum_velocity = jnp.where(
-        active,
-        jnp.min(jnp.where(valid, law_velocity[:, 0], jnp.inf)),
-        jnp.asarray(0.0, dtype=dtype),
-    )
-    finite = (
-        jnp.all(jnp.isfinite(candidate))
-        & jnp.all(jnp.isfinite(law_velocity))
-        & jnp.isfinite(residual)
-    )
-    certificate_scale = jnp.maximum(
-        1.0,
-        jnp.sqrt(jnp.sum(response.free_contact_velocity**2)),
-    )
-    certificate_tolerance = jnp.maximum(
-        response.solver.absolute_tolerance
-        + response.solver.relative_tolerance * certificate_scale,
-        jnp.finfo(dtype).eps
-        * max(64, 8 * int(np.sqrt(response.free_contact_velocity.size)))
-        * certificate_scale,
-    )
-    converged = residual <= certificate_tolerance
-    preliminary_success = (
-        converged
-        & finite
-        & (cone_defect <= certificate_tolerance)
-        & (complementarity <= certificate_tolerance)
-        & (minimum_impulse >= -certificate_tolerance)
-        & (minimum_velocity >= -certificate_tolerance)
-    )
-    accepted = jnp.where(preliminary_success, candidate, jnp.zeros_like(candidate))
-    generalized_impulses: list[PyTree[Array]] = []
-    velocity_updates: list[PyTree[Array]] = []
-    post_velocities: list[PyTree[Array]] = []
-    duality_residuals: list[Array] = []
-    duality_scales: list[Array] = []
-    contact_dual = DualSpace(response.delassus_operator.target)
+    accepted = cone.impulse
+    dtype = accepted.dtype
+    contact_dual = DualSpace(program.contact_space)
+    generalized: list[PyTree[Array]] = []
+    updates: list[PyTree[Array]] = []
+    residuals: list[Array] = []
+    scales: list[Array] = []
+    finite = cone.evidence.finite
     for block in response.blocks:
         effort = dual_transpose(block.velocity_operator).mv(accepted)
         update = block.inverse_mass_operator.mv(effort)
-        post = jax.tree.map(lambda free, delta: free + delta, block.free_velocity, update)
         local_update = block.velocity_operator.mv(update)
         contact_power = contact_dual.pair(accepted, local_update)
-        generalized_power = DualSpace(block.velocity_operator.source).pair(effort, update)
-        difference = contact_power - generalized_power
-        scale = jnp.maximum(
-            1.0, jnp.maximum(jnp.abs(contact_power), jnp.abs(generalized_power))
+        generalized_power = DualSpace(block.velocity_operator.source).pair(
+            effort, update
         )
-        generalized_impulses.append(effort)
-        velocity_updates.append(update)
-        post_velocities.append(post)
-        duality_residuals.append(jnp.abs(difference))
-        duality_scales.append(scale)
-    duality_residual = jnp.max(jnp.stack(tuple(duality_residuals)), initial=0.0)
-    duality_scale = jnp.max(jnp.stack(tuple(duality_scales)), initial=1.0)
+        residuals.append(jnp.abs(contact_power - generalized_power))
+        scales.append(
+            jnp.maximum(
+                1.0, jnp.maximum(jnp.abs(contact_power), jnp.abs(generalized_power))
+            )
+        )
+        finite = finite & _tree_finite(effort) & _tree_finite(update)
+        generalized.append(effort)
+        updates.append(update)
+    duality_residual = jnp.max(jnp.stack(tuple(residuals)), initial=0.0)
+    duality_scale = jnp.max(jnp.stack(tuple(scales)), initial=1.0)
     duality_tolerance = jnp.finfo(dtype).eps * max(
         64,
-        8 * response.delassus_operator.source.size,
+        8 * program.contact_space.size,
         *(8 * block.velocity_operator.source.size for block in response.blocks),
     )
     duality_valid = duality_residual <= duality_tolerance * duality_scale
-    successful = preliminary_success & duality_valid
-    accepted = jnp.where(successful, accepted, jnp.zeros_like(accepted))
-    if generalized_impulses:
-        generalized_impulses = [
-            jax.tree.map(lambda value: jnp.where(successful, value, 0.0), effort)
-            for effort in generalized_impulses
-        ]
-        velocity_updates = [
-            jax.tree.map(lambda value: jnp.where(successful, value, 0.0), update)
-            for update in velocity_updates
-        ]
-        post_velocities = [
-            jax.tree.map(
-                lambda free, update: free + update,
-                block.free_velocity,
-                update,
-            )
-            for block, update in zip(response.blocks, velocity_updates, strict=True)
-        ]
-    post_contact = action(accepted) + response.free_contact_velocity
-    slip_velocity = post_contact[:, 1:]
-    slip_norm = jnp.sqrt(jnp.sum(slip_velocity * slip_velocity, axis=-1))
-    impulse_tangent_norm = jnp.sqrt(jnp.sum(accepted[:, 1:] ** 2, axis=-1))
-    sticking = (
-        valid
-        & (slip_norm <= certificate_tolerance)
-        & (
-            impulse_tangent_norm
-            <= response.static_friction * jnp.maximum(accepted[:, 0], 0.0)
-            + certificate_tolerance
-        )
+    successful = cone.evidence.successful & duality_valid & finite
+    impulse = jnp.where(successful, accepted, 0.0)
+    generalized_ = tuple(
+        jax.tree.map(lambda value: jnp.where(successful, value, 0.0), effort)
+        for effort in generalized
     )
+    updates_ = tuple(
+        jax.tree.map(lambda value: jnp.where(successful, value, 0.0), update)
+        for update in updates
+    )
+    post_velocities = tuple(
+        jax.tree.map(lambda free, delta: free + delta, block.free_velocity, update)
+        for block, update in zip(response.blocks, updates_, strict=True)
+    )
+    post_contact = jnp.where(
+        successful, cone.post_relative_velocity, program.free_velocity
+    )
+    zero_applied = jnp.max(jnp.abs(impulse), initial=0.0) == 0.0
     evidence = CompositeContactResponseEvidence(
-        converged,
-        iterations,
-        residual,
-        complementarity,
-        cone_defect,
-        minimum_impulse,
-        minimum_velocity,
+        cone.evidence,
         duality_residual,
         duality_scale,
         duality_valid,
         finite,
         successful,
-        ~successful,
+        successful | zero_applied,
         successful,
         backend,
         response.response_id,
     )
     return CompositeContactResult(
-        accepted,
-        candidate,
-        tuple(generalized_impulses),
-        tuple(velocity_updates),
-        tuple(post_velocities),
+        impulse,
+        cone.candidate_impulse,
+        generalized_,
+        updates_,
+        post_velocities,
         post_contact,
-        sticking,
-        slip_velocity,
+        jnp.where(successful, cone.branch, int(ContactConeBranch.UNCLASSIFIED)).astype(
+            jnp.int8
+        ),
+        post_contact[:, 1:],
         response.witnesses.route_keys,
+        cone,
         evidence,
         response.response_id,
     )
+
+
+def _tree_finite(value: PyTree[Array], /) -> Array:
+    leaves = jax.tree.leaves(value)
+    if not leaves:
+        return jnp.asarray(True)
+    return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)))
 
 
 __all__ = [
@@ -3094,13 +2602,14 @@ __all__ = [
     "CompositeContactResponse",
     "CompositeContactResponseEvidence",
     "CompositeContactResult",
+    "empty_rod_contact_manifold",
     "prepare_composite_contact_block",
     "PreparedRodContactSearch",
+    "rod_contact_manifold_observation",
     "RodContactCCDEvidence",
     "RodContactCCDPlan",
     "RodContactCCDResult",
     "RodContactCCDStatus",
-    "RodContactManifoldState",
     "RodContactManifoldTransition",
     "RodContactSearchEvidence",
     "RodContactSearchFailure",
@@ -3108,4 +2617,5 @@ __all__ = [
     "RodContactSearchResult",
     "RodContactSearchRoute",
     "RodContactWitnessBatch",
+    "update_rod_contact_manifold",
 ]

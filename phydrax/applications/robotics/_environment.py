@@ -29,12 +29,16 @@ from ..._jax_config import default_prng_implementation
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics._plant import (
+    _broadcast_template,
+    _plant_ids,
+    _select_runtime_state,
     AbstractDiscretePlant,
     ArrayDiscreteSystemPlant,
     PlantParameters,
     PlantRuntimeState,
     PlantStepContext,
 )
+from ...dynamics._plant_codec import ControlVectorCodec, EncodedControl
 from ...dynamics._system import DiscreteSystem
 from ...typing import checked
 
@@ -87,17 +91,35 @@ def _split_key_data(key: Array, count: int, /) -> tuple[Array, ...]:
     return tuple(data[..., index, :] for index in range(count))
 
 
-def _select_keys(
-    selector: Array,
-    candidate: Array,
-    source: Array,
-    case_shape: tuple[int, ...],
-    /,
-) -> Array:
-    candidate_data = jax.random.key_data(candidate)
-    source_data = jax.random.key_data(source)
-    selected = jnp.where(selector[..., None], candidate_data, source_data)
-    return jax.random.wrap_key_data(selected) if source.shape == case_shape else selected
+def _decode_action(codec: ControlVectorCodec, vector: Array, /) -> Any:
+    """Decode shared or casewise command vectors with the unbatched codec."""
+
+    def decode(values: Array) -> Any:
+        return codec.decode_command(
+            EncodedControl(
+                values,
+                semantic_id=codec.semantic_id,
+                numeric_revision_id=codec.numeric_revision_id,
+                schema_id=codec.schema_id,
+                executable_signature_id=codec.executable_signature_id,
+                codec_id=codec.codec_id,
+            )
+        )
+
+    if vector.ndim == 0 or vector.shape[-1] != codec.size:
+        raise ValueError(
+            f"Vector actions must end in the control codec size {codec.size}."
+        )
+    cases = vector.shape[:-1]
+    if not cases:
+        return decode(vector)
+    count = prod(cases)
+    commands = jax.vmap(decode)(jnp.reshape(vector, (count, codec.size)))
+
+    def restore(value: Array) -> Array:
+        return jnp.reshape(value, cases + value.shape[1:])
+
+    return jax.tree.map(restore, commands)
 
 
 def _type_id(value: Any, /) -> str:
@@ -246,39 +268,6 @@ def _select_tree(
         return jnp.where(expanded, proposed_array, previous_array)
 
     return jax.tree.map(select, candidate, source)
-
-
-def _select_plant_state(
-    plant: AbstractDiscretePlant,
-    predicate: Array,
-    candidate: PlantRuntimeState,
-    source: PlantRuntimeState,
-    case_shape: tuple[int, ...],
-    /,
-) -> PlantRuntimeState:
-    return PlantRuntimeState(
-        plant.state_schema.select_cases(
-            predicate,
-            candidate.payload,
-            source.payload,
-        ),
-        jnp.where(predicate, candidate.time, source.time),
-        jnp.where(predicate, candidate.step_index, source.step_index),
-        _select_keys(predicate, candidate.key, source.key, case_shape),
-        source.semantic_provenance_id,
-        source.numeric_revision_id,
-        source.state_schema_id,
-        source.execution_signature_id,
-    )
-
-
-def _plant_ids(plant: AbstractDiscretePlant, /) -> tuple[str, str, str, str]:
-    return (
-        plant.semantic_provenance.semantic_id,
-        plant.numeric_revision.revision_id,
-        plant.state_schema.schema_id,
-        plant.execution_signature.signature_id,
-    )
 
 
 class RobotTaskEvaluation(StrictModule):
@@ -434,7 +423,13 @@ class RobotEnvironmentEvidence(StrictModule):
 
 
 class RobotEnvironmentTransition(StrictModule):
-    """Candidate, accepted, and optional reset products of one external step."""
+    """Candidate, accepted, and optional reset products of one external step.
+
+    ``final_observation`` belongs to ``accepted_state``; ``observation`` belongs
+    to ``reset_state``. ``reset_successful``/``reset_status`` report the plant
+    reset transaction of cases with ``reset_performed`` (false/zero elsewhere);
+    a failed plant reset leaves those cases at the plant's reset fallback.
+    """
 
     candidate_state: RobotEnvironmentState
     accepted_state: RobotEnvironmentState
@@ -448,6 +443,8 @@ class RobotEnvironmentTransition(StrictModule):
     truncated: Array
     descriptor: Array
     reset_performed: Array
+    reset_successful: Array
+    reset_status: Array
     evidence: RobotEnvironmentEvidence
     reward_component_names: tuple[str, ...] = eqx.field(static=True)
     environment_id: str = eqx.field(static=True)
@@ -483,12 +480,24 @@ class _RobotSubstep(StrictModule):
 
 
 class PreparedRobotEnvironment(StrictModule, NonTrainableState):
-    """Prepared composition of one complete-state plant, task, and wrappers."""
+    """Prepared composition of one complete-state plant, task, and wrappers.
+
+    The plant's ``AbstractDiscretePlant`` transaction owns every mechanics
+    commit; the environment carries the complete ``PlantRuntimeState`` (payload,
+    clock, step index and key) without projecting it to a vector. Autonomous
+    plants (``control_schema is None``) take ``action=None``. With a bound
+    ``control_codec`` (unbatched, describing the complete plant command and
+    bound to the plant's semantic, numeric and executable identities), actions
+    are command vectors decoded per case; otherwise actions are complete plant
+    commands. The task receives the same validated command the plant receives.
+    """
 
     plant: AbstractDiscretePlant
     parameters: PlantParameters
     task: AbstractRobotTask
     wrappers: tuple[AbstractRobotEnvironmentWrapper, ...]
+    control_codec: ControlVectorCodec | None
+    horizons: tuple[int | None, ...] = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
     action_repeat: int = eqx.field(static=True)
     auto_reset: bool = eqx.field(static=True)
@@ -505,10 +514,25 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         /,
         *,
         step_size: float,
+        control_codec: ControlVectorCodec | None = None,
         environment_id: str | None = None,
     ) -> None:
-        if plant.control_schema is None:
-            raise ValueError("Robot environments require a plant control_schema.")
+        if control_codec is not None:
+            if plant.control_schema is None:
+                raise ValueError("Autonomous plants do not accept a ControlVectorCodec.")
+            if control_codec.schema.case_ndim != 0:
+                raise ValueError("Robot environment control codecs must be unbatched.")
+            if not plant.control_schema.same_intrinsic_contract(control_codec.schema):
+                raise ValueError(
+                    "Control codec does not describe the complete plant command."
+                )
+            if (
+                control_codec.semantic_id != plant.semantic_provenance.semantic_id
+                or control_codec.numeric_revision_id != plant.numeric_revision.revision_id
+                or control_codec.executable_signature_id
+                != plant.execution_signature.signature_id
+            ):
+                raise ValueError("Control codec identities do not match the plant.")
         if parameters.schema_id != plant.parameter_schema.schema_id:
             raise ValueError("PlantParameters schema_id does not match the plant.")
         if (
@@ -541,14 +565,17 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
 
         wrapper_ids: list[str] = []
         repeats: list[int] = []
+        horizons: list[int | None] = []
         for wrapper in wrapper_tuple:
             wrapper_ids.append(_identifier(wrapper.wrapper_id, "wrapper_id"))
             repeat = int(wrapper.action_repeat)
             if repeat <= 0:
                 raise ValueError("Wrapper action_repeat must be positive.")
             repeats.append(repeat)
-            if wrapper.horizon is not None and int(wrapper.horizon) <= 0:
+            horizon = None if wrapper.horizon is None else int(wrapper.horizon)
+            if horizon is not None and horizon <= 0:
                 raise ValueError("Wrapper horizon must be positive or None.")
+            horizons.append(horizon)
             if not isinstance(wrapper.auto_reset, bool):
                 raise TypeError("Wrapper auto_reset must be bool.")
 
@@ -567,11 +594,14 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                     "execution_signature_id": plant_ids[3],
                 },
                 "parameter_schema_id": parameters.schema_id,
+                "control_codec_id": (
+                    None if control_codec is None else control_codec.codec_id
+                ),
                 "task": _provenance_value(task, "task"),
                 "wrappers": _provenance_value(wrapper_tuple, "wrappers"),
                 "step_size": resolved_step,
                 "action_repeat": resolved_repeat,
-                "horizons": [wrapper.horizon for wrapper in wrapper_tuple],
+                "horizons": horizons,
                 "auto_reset": resolved_auto_reset,
                 "prng_representation": {
                     "format": "legacy-key-data",
@@ -586,6 +616,8 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         self.parameters = parameters
         self.task = task
         self.wrappers = wrapper_tuple
+        self.control_codec = control_codec
+        self.horizons = tuple(horizons)
         self.step_size = resolved_step
         self.action_repeat = resolved_repeat
         self.auto_reset = resolved_auto_reset
@@ -687,10 +719,16 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         case_shape: tuple[int, ...],
         /,
     ) -> PlantRuntimeState:
+        # Invalid cases never commit; they propose from the plant's admissible
+        # reset fallback so that the plant transaction sees a valid payload.
         payload = self.plant.state_schema.select_cases(
             valid,
             state.payload,
-            self.plant.state_schema.zeros(case_shape),
+            _broadcast_template(
+                self.plant.state_schema,
+                self.plant.reset_fallback,
+                case_shape,
+            ),
         )
         return PlantRuntimeState(
             payload,
@@ -712,14 +750,14 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         /,
     ) -> RobotEnvironmentState:
         return RobotEnvironmentState(
-            _select_plant_state(
-                self.plant,
+            _select_runtime_state(
+                self.plant.state_schema,
                 predicate,
                 candidate.plant_state,
                 source.plant_state,
                 case_shape,
             ),
-            _select_keys(predicate, candidate.key, source.key, case_shape),
+            jnp.where(predicate[..., None], candidate.key, source.key),
             jnp.where(
                 predicate,
                 candidate.episode_step_index,
@@ -748,8 +786,9 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         case_shape: tuple[int, ...],
         /,
     ) -> RobotEnvironmentReset:
+        # The environment owns raw uint32 key data; plants receive typed keys.
         plant_reset = self.plant.reset(
-            plant_key,
+            jax.random.wrap_key_data(_key_data(plant_key, case_shape)),
             self.parameters,
             case_shape=case_shape,
             initial_time=jnp.zeros(case_shape),
@@ -820,15 +859,33 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         )
         return self._reset(plant_key, environment_key, resolved_case_shape)
 
+    def _plant_command(self, action: Any, case_shape: tuple[int, ...], /) -> Any:
+        """Return the complete plant command named by one external action."""
+        control_schema = self.plant.control_schema
+        if control_schema is None:
+            if action is not None:
+                raise ValueError("Autonomous plant environments accept only action=None.")
+            return None
+        command = (
+            action
+            if self.control_codec is None
+            else _decode_action(self.control_codec, jnp.asarray(action))
+        )
+        command_case_shape = control_schema.validate(command)
+        if command_case_shape not in ((), case_shape):
+            raise ValueError("Action case shape must be shared or match the plant cases.")
+        return command
+
     def _substep(
         self,
         state: RobotEnvironmentState,
-        plant_action: Any,
-        task_action: Any,
+        plant_command: Any,
+        task_command: Any,
         case_shape: tuple[int, ...],
         /,
     ) -> _RobotSubstep:
-        target_time = state.plant_state.time + self.step_size
+        source_time = state.plant_state.time
+        target_time = source_time + jnp.asarray(self.step_size, dtype=source_time.dtype)
         context = PlantStepContext(
             state.plant_state.time,
             target_time,
@@ -837,7 +894,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         plant_result = self.plant.step(
             context,
             state.plant_state,
-            plant_action,
+            plant_command,
             self.parameters,
         )
         accepted_plant = plant_result.accepted_state
@@ -846,7 +903,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             context,
             state.plant_state,
             accepted_plant,
-            task_action,
+            task_command,
             state.task_state,
             keys[1],
         )
@@ -860,8 +917,9 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         outputs_finite = task_outputs_finite
         wrapper_states: list[Any] = []
         wrapper_truncated = jnp.zeros(case_shape, dtype=jnp.bool_)
-        for wrapper, wrapper_state, wrapper_key in zip(
+        for wrapper, horizon, wrapper_state, wrapper_key in zip(
             self.wrappers,
+            self.horizons,
             state.wrapper_states,
             keys[2:],
             strict=True,
@@ -889,9 +947,9 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 raise ValueError("Wrapper truncated must have the plant case shape.")
             wrapper_states.append(update.wrapper_state)
             wrapper_truncated = wrapper_truncated | truncated
-            if wrapper.horizon is not None:
+            if horizon is not None:
                 wrapper_truncated = wrapper_truncated | (
-                    state.episode_step_index + 1 >= int(wrapper.horizon)
+                    state.episode_step_index + 1 >= horizon
                 )
 
         runtime_state = (
@@ -951,12 +1009,8 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 "RobotEnvironmentState episode_step_index must have the plant case shape."
             )
 
-        control_schema = self.plant.control_schema
-        assert control_schema is not None
-        action_case_shape = control_schema.validate(action)
-        if action_case_shape not in ((), case_shape):
-            raise ValueError("Action case shape must be shared or match the plant cases.")
-        safe_action = _finite_or_zero_tree(action)
+        command = self._plant_command(action, case_shape)
+        safe_command = _finite_or_zero_tree(command)
 
         payload_finite = (
             self.plant.state_schema.finite_mask(state.plant_state.payload)
@@ -1017,14 +1071,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         last_candidate = state
         candidate_observation = source_evaluation.observation
         candidate_descriptor = source_evaluation.descriptor
-        result_dtype = jnp.result_type(
-            *jax.tree.leaves(state.plant_state.payload),
-            *jax.tree.leaves(action),
-        )
-        accumulated_rewards = jnp.zeros(
-            case_shape + (len(self.task.reward_component_names),),
-            dtype=result_dtype,
-        )
+        accumulated_rewards: Array | None = None
         active = initial_valid
         all_mechanics_successful = jnp.ones(case_shape, dtype=jnp.bool_)
         all_outputs_finite = jnp.ones(case_shape, dtype=jnp.bool_)
@@ -1038,7 +1085,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         plant_evidence_values: list[Any] = []
 
         for _ in range(self.action_repeat):
-            proposal = self._substep(working, action, safe_action, case_shape)
+            proposal = self._substep(working, command, safe_command, case_shape)
             attempted = active & proposal.plant_attempted
             mechanics_successful = jnp.asarray(
                 proposal.mechanics_successful,
@@ -1091,10 +1138,15 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 proposal.task.descriptor,
                 candidate_descriptor,
             )
-            accumulated_rewards = accumulated_rewards + jnp.where(
+            committed_rewards = jnp.where(
                 commit_substep[..., None],
                 proposal.task.reward_components,
                 jnp.zeros_like(proposal.task.reward_components),
+            )
+            accumulated_rewards = (
+                committed_rewards
+                if accumulated_rewards is None
+                else accumulated_rewards + committed_rewards
             )
             terminated_now = commit_substep & proposal.task.terminated
             truncated_now = (
@@ -1125,6 +1177,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 & ~truncated_now
             )
 
+        assert accumulated_rewards is not None
         candidate_total_reward = jnp.sum(accumulated_rewards, axis=-1)
         aggregate_outputs_finite = _tree_case_all_finite(
             (
@@ -1203,9 +1256,17 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 fresh.observation,
                 final_observation,
             )
+            reset_successful = reset_performed & fresh.successful
+            reset_status = jnp.where(
+                reset_performed,
+                fresh.status,
+                jnp.zeros_like(fresh.status),
+            )
         else:
             reset_state = accepted_state
             observation = final_observation
+            reset_successful = jnp.zeros(case_shape, dtype=jnp.bool_)
+            reset_status = jnp.zeros(case_shape, dtype=jnp.int32)
 
         plant_ids = _plant_ids(self.plant)
         evidence = RobotEnvironmentEvidence(
@@ -1239,6 +1300,8 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             truncated,
             descriptor,
             reset_performed,
+            reset_successful,
+            reset_status,
             evidence,
             self.task.reward_component_names,
             self.environment_id,

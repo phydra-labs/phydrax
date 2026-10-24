@@ -8,7 +8,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax.applications.contact._cone import ContactConeSolverPlan
+from phydrax.applications.contact._cone import (
+    ContactCertificatePolicy,
+    ContactConeSolverPlan,
+)
 from phydrax.applications.contact._rod_capsule import (
     prepare_reduced_rod_contact_participant,
     RodCapsuleGeometryPlan,
@@ -50,6 +53,27 @@ from phydrax.discretization.contact._surface import (
     CollisionFeaturePolicy,
 )
 from phydrax.dynamics import PlantStepContext
+
+
+# float32 fast-impact budgets. Scales: impulses ~130 N s, law velocities ~60-90
+# m/s (gap rate g/h included), kinetic energies ~5e3 J.
+# - Law/slip velocity 5e-4 m/s: below the old rod acceptance of 64 ulp x 90 m/s
+#   = 6.9e-4 m/s.
+# - Impulse 2e-3 N s (1.5e-5 relative): repeated float32 evaluations of the
+#   composite response action on one impulse differ by up to 1.5e-5 m/s
+#   (4 ulp at 62 m/s). The Coulomb sliding law amplifies that by
+#   mu p_n / |w_t| (0.6 x ~20 N s / 0.15 m/s) to ~1.2e-3 N s. A smaller budget
+#   would not be reproducible when the certificate is re-evaluated.
+# - Work 5e-2 J: ~90 float32 ulp of the ~5e3 J kinetic energy.
+_ROD_CERTIFICATE = ContactCertificatePolicy(
+    ("translational-contact",),
+    reference_velocity=1.0,
+    impulse_tolerance=2.0e-3,
+    law_velocity_tolerance=5.0e-4,
+    slip_speed_tolerance=5.0e-4,
+    complementarity_work_tolerance=5.0e-2,
+    friction_work_tolerance=5.0e-2,
+)
 
 
 def _straight_positions(*, height: float = 0.55) -> Any:
@@ -170,6 +194,7 @@ def _prepared_plant(
         participant,
         search,
         RodContactCCDPlan() if ccd is None else ccd,
+        contact_certificate=_ROD_CERTIFICATE,
         dynamic_friction=friction,
         static_friction=friction,
         cone_solver=solver,
@@ -502,6 +527,7 @@ def test_frictionless_capability_id_is_explicit_and_not_a_fallback() -> None:
             plant.participant,
             plant.search,
             plant.ccd,
+            contact_certificate=_ROD_CERTIFICATE,
             dynamic_friction=0.0,
             capability_id=ISOTROPIC_COULOMB_ROD_CONTACT_CAPABILITY,
         )

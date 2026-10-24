@@ -23,10 +23,14 @@ from ..._trainable import NonTrainableState
 from ...linalg import AbstractVectorSpace, ArraySpace, DualSpace
 from ...typing import checked
 from ._guarantee import ContactCapability, ContactGuaranteeLevel
+from ._implicit_geometry import PlaneContactGeometry
 from ._surface import (
     CollisionSurfacePlan,
+    ContactFeatureCatalogue,
     ContactPairPolicy,
+    contact_routing_identity,
     PreparedCollisionSurface,
+    scene_feature_catalogue,
 )
 
 
@@ -417,20 +421,39 @@ class FunctionContactParticipant(AbstractContactParticipant):
 
 
 class ContactParticipantScene(StrictModule, NonTrainableState):
-    """Several independently parameterized contact participants."""
+    """Several independently parameterized contact participants.
+
+    Scene feature indices concatenate participant vertices, edges and faces
+    (each in participant order) followed by one analytic feature per explicit
+    static plane. Planes are unbounded analytic geometry: they never receive a
+    finite bounding box and are paired with finite primitives only through the
+    bounded analytic plane route of the contact search.
+    """
 
     participants: tuple[AbstractContactParticipant, ...]
+    planes: tuple[PlaneContactGeometry, ...]
+    feature_catalogue: ContactFeatureCatalogue
     vertex_offsets: tuple[int, ...] = eqx.field(static=True)
     edge_offsets: tuple[int, ...] = eqx.field(static=True)
     face_offsets: tuple[int, ...] = eqx.field(static=True)
     scene_id: str = eqx.field(static=True)
+    routing_id: str = eqx.field(static=True)
 
-    def __init__(self, participants: Sequence[AbstractContactParticipant], /) -> None:
+    def __init__(
+        self,
+        participants: Sequence[AbstractContactParticipant],
+        /,
+        *,
+        planes: Sequence[PlaneContactGeometry] = (),
+    ) -> None:
         values = tuple(participants)
         if not values or not all(
             isinstance(value, AbstractContactParticipant) for value in values
         ):
             raise TypeError("participants must contain contact participant values.")
+        plane_values = tuple(planes)
+        if not all(isinstance(plane, PlaneContactGeometry) for plane in plane_values):
+            raise TypeError("planes must contain PlaneContactGeometry values.")
         dimension = values[0].surface_plan.ambient_dimension
         reference_pair_policy = values[0].surface_plan.pair_policy
         for value in values[1:]:
@@ -467,6 +490,27 @@ class ContactParticipantScene(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"Contact participant scene {kind_name} feature IDs must be globally unique."
                 )
+        for plane in plane_values:
+            policy = plane.feature_policy
+            if plane.ambient_dimension != dimension:
+                raise ValueError("Contact planes must share the scene dimension.")
+            if not bool(np.all(np.asarray(policy.static_mask)[policy.analytic_slice])):
+                raise ValueError(
+                    "Contact planes are static analytic geometry; declare static_mask."
+                )
+        if plane_values:
+            plane_identifiers = np.concatenate(
+                tuple(
+                    np.asarray(plane.feature_policy.feature_ids)[
+                        plane.feature_policy.analytic_slice
+                    ]
+                    for plane in plane_values
+                )
+            )
+            if np.unique(plane_identifiers).size != plane_identifiers.size:
+                raise ValueError(
+                    "Contact participant scene plane feature IDs must be globally unique."
+                )
         vertex_offsets = [0]
         edge_offsets = [0]
         face_offsets = [0]
@@ -475,14 +519,25 @@ class ContactParticipantScene(StrictModule, NonTrainableState):
             edge_offsets.append(edge_offsets[-1] + value.surface_plan.edge_count)
             face_offsets.append(face_offsets[-1] + value.surface_plan.face_count)
         self.participants = values
+        self.planes = plane_values
+        self.feature_catalogue = scene_feature_catalogue(
+            tuple(value.surface_plan.feature_policy for value in values),
+            tuple(plane.feature_policy for plane in plane_values),
+        )
         self.vertex_offsets = tuple(vertex_offsets)
         self.edge_offsets = tuple(edge_offsets)
         self.face_offsets = tuple(face_offsets)
-        self.scene_id = canonical_fingerprint(
-            {
-                "kind": "contact-participant-scene",
-                "participants": [value.participant_id for value in values],
-            }
+        identity: dict[str, str | list[str]] = {
+            "kind": "contact-participant-scene",
+            "participants": [value.participant_id for value in values],
+        }
+        if plane_values:
+            identity["planes"] = [plane.geometry_id for plane in plane_values]
+        self.scene_id = canonical_fingerprint(identity)
+        self.routing_id = contact_routing_identity(
+            self.feature_catalogue,
+            tuple(value.surface_plan.pair_policy for value in values),
+            np.asarray(self.feature_static_mask),
         )
 
     @property
@@ -500,6 +555,28 @@ class ContactParticipantScene(StrictModule, NonTrainableState):
     @property
     def face_count(self) -> int:
         return self.face_offsets[-1]
+
+    @property
+    def plane_count(self) -> int:
+        return len(self.planes)
+
+    @property
+    def feature_count(self) -> int:
+        return self.feature_catalogue.feature_count
+
+    @property
+    def plane_normals(self) -> Array:
+        """World unit normals of the static planes, shape ``(planes, dimension)``."""
+        if not self.planes:
+            return jnp.empty((0, self.ambient_dimension))
+        return jnp.stack(tuple(plane.unit_normal for plane in self.planes))
+
+    @property
+    def plane_offsets(self) -> Array:
+        """Plane offsets ``d`` in ``n·x = d``, shape ``(planes,)``."""
+        if not self.planes:
+            return jnp.empty((0,))
+        return jnp.stack(tuple(jnp.asarray(plane.offset) for plane in self.planes))
 
     @property
     def edges(self) -> Array:
@@ -538,6 +615,12 @@ class ContactParticipantScene(StrictModule, NonTrainableState):
                 self._feature_values(name, "vertex_slice"),
                 self._feature_values(name, "edge_slice"),
                 self._feature_values(name, "face_slice"),
+                *(
+                    getattr(plane.feature_policy, name)[
+                        plane.feature_policy.analytic_slice
+                    ]
+                    for plane in self.planes
+                ),
             )
         )
 

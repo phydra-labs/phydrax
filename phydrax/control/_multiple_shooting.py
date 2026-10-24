@@ -40,7 +40,7 @@ from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 from ._parameterization import PiecewiseConstantControlParameterization
-from ._problem import ControlProblem
+from ._problem import _require_array_dynamics, ControlProblem
 from ._trajectory import (
     CONTROL_DYNAMICS_FAILED,
     CONTROL_SUCCESS,
@@ -577,7 +577,7 @@ def _segment_state(
     *,
     solver_options: dict[str, Any],
 ) -> Array:
-    dynamics = problem.dynamics
+    dynamics = _require_array_dynamics(problem)
     time0 = problem.time_grid.times[segment]
     time1 = problem.time_grid.times[segment + 1]
     if isinstance(dynamics, DiscreteControlDynamics):
@@ -638,7 +638,7 @@ def _segment_state_and_validity(
     *,
     solver_options: dict[str, Any],
 ) -> tuple[Array, Array]:
-    dynamics = problem.dynamics
+    dynamics = _require_array_dynamics(problem)
     if isinstance(dynamics, DiscreteControlDynamics):
         time0 = problem.time_grid.times[segment]
         time1 = problem.time_grid.times[segment + 1]
@@ -968,7 +968,7 @@ def linearize_multiple_shooting(
     regularization = float(hessian_regularization)
     if not isfinite(regularization) or regularization < 0.0:
         raise ValueError("hessian_regularization must be finite and nonnegative.")
-    state_layout = problem.dynamics.system.state_layout
+    state_layout = _require_array_dynamics(problem).system.state_layout
     geometry = state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(
@@ -1299,7 +1299,7 @@ def solve_multiple_shooting(
         line_search_contraction=line_search_contraction,
         max_line_search_iterations=max_line_search_iterations,
     )
-    state_layout = problem.dynamics.system.state_layout
+    state_layout = _require_array_dynamics(problem).system.state_layout
     geometry = state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(
@@ -1621,7 +1621,7 @@ def compile_structured_multiple_shooting(
 ) -> StructuredMultipleShootingCompilation:
     """Lower fixed-topology multiple shooting to the canonical structured NLP."""
     _validate_problem(problem)
-    state_layout = problem.dynamics.system.state_layout
+    state_layout = _require_array_dynamics(problem).system.state_layout
     geometry = state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(

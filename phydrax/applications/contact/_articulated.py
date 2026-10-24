@@ -2,6 +2,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Fixed-route articulated contact through the operator-valued cone program.
+
+The contact response is the composed operator ``W = G M^-1 G*``.  It is
+positive semidefinite when ``M^-1`` is a symmetric positive semidefinite map
+from the generalized tangent dual to the tangent and ``G*`` is the algebraic
+dual transpose of ``G``.  That hypothesis comes from a prepared articulated
+mass (verified positive pivots; the matrix-free route) or from a dense property
+verification of an explicit inverse-mass operator's represented bilinear
+matrix, obtained from its stored dense matrix or under the caller's explicit
+bounded materialization policy.  Preparation also records two deterministic
+adjoint/nonnegativity probes of ``W`` as finite-precision evidence only.  No
+dense Delassus matrix is formed.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,7 +24,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
@@ -18,22 +31,27 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.contact._kinematics import ContactKinematicsEpoch
 from ...discretization.contact._participant import AbstractContactParticipant
+from ...discretization.particle._articulated_mass import PreparedArticulatedMass
 from ...linalg import (
     AbstractLinearOperator,
     ArraySpace,
     DenseLinearOperator,
+    DensePropertyEvidence,
+    DensePropertyVerificationPolicy,
     dual_transpose,
     DualSpace,
-    eigen as eigen_api,
     FunctionLinearOperator,
     MaterializationPolicy,
     materialize,
-    OperatorProperties,
+    verify_dense_properties,
 )
+from ...typing import ConvertibleToArray
 from ._cone import (
     build_contact_cone_program,
+    certify_contact_cone_impulse,
     contact_cone_numeric_revision_matches,
     contact_cone_result_is_certified,
+    ContactCertificatePolicy,
     ContactConeEvidence,
     ContactConeProgram,
     ContactConeResult,
@@ -43,24 +61,45 @@ from ._cone import (
 from ._materials import ContactMaterialPairTable
 
 
+class InverseMassOperatorCertificate(StrictModule):
+    """Dense property certificate of an explicit true-dual inverse-mass operator.
+
+    ``property_evidence`` is the native dense property evidence of the
+    operator's represented bilinear matrix ``A`` (``⟨f, M⁻¹ g⟩ = f·A g`` under
+    the algebraic dual pairing): Hermitian defect, eigenvalues, tolerance and
+    the Hermitian/semidefinite flags.  ``route`` records whether ``A`` was the
+    stored matrix of an explicit dense operator or a bounded materialization
+    under the caller's policy.  A zero-dimensional map has no evidence and is
+    trivially successful.
+    """
+
+    property_evidence: DensePropertyEvidence | None
+    successful: Array
+    operator_id: str = eqx.field(static=True)
+    route: str = eqx.field(static=True)
+    degrees_of_freedom: int = eqx.field(static=True)
+
+
 class ArticulatedContactPreparationEvidence(StrictModule):
+    """Preparation evidence; probe fields are finite-precision evidence only."""
+
     kinematics_successful: Array
     participant_routes_complete: Array
     material_law_complete: Array
     velocity_residual: Array
     velocity_scale: Array
     velocity_consistent: Array
-    delassus_symmetry_residual: Array
-    delassus_scale: Array
-    minimum_delassus_diagonal: Array
-    nonnegative_delassus_diagonal: Array
-    minimum_delassus_eigenvalue: Array
-    delassus_spectral_residual: Array
-    delassus_spectral_valid: Array
+    mass_successful: Array
+    response_probe_adjoint_residual: Array
+    response_probe_scale: Array
+    response_probe_adjoint_consistent: Array
+    response_probe_nonnegative: Array
     finite: Array
     successful: Array
     participant_id: str = eqx.field(static=True)
     kinematics_id: str = eqx.field(static=True)
+    mass_hypothesis: str = eqx.field(static=True)
+    inverse_mass_certificate: InverseMassOperatorCertificate | None = None
 
 
 class ArticulatedContactDualityEvidence(StrictModule):
@@ -76,22 +115,36 @@ class ArticulatedContactDualityEvidence(StrictModule):
 class PreparedArticulatedContact(StrictModule, NonTrainableState):
     velocity_operator: AbstractLinearOperator
     inverse_mass_operator: AbstractLinearOperator
-    delassus_operator: AbstractLinearOperator
     program: ContactConeProgram
     free_velocity: PyTree[Array]
     evidence: ArticulatedContactPreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @property
+    def delassus_operator(self) -> AbstractLinearOperator:
+        return self.program.response
+
 
 class ArticulatedContactEvidence(StrictModule):
+    """Application evidence; law and physical normal velocities are distinct.
+
+    ``minimum_law_normal_velocity`` is the biased law residual (it includes
+    restitution targets, compliance and any position-level gap bias);
+    ``minimum_physical_normal_velocity`` is the post-impulse contact velocity
+    ``G v_post``.
+    """
+
     preparation: ArticulatedContactPreparationEvidence
     cone: ContactConeEvidence
     duality: ArticulatedContactDualityEvidence
-    minimum_post_normal_velocity: Array
-    post_contact_feasible: Array
-    certificate_tolerance: Array
+    minimum_law_normal_velocity: Array
+    minimum_physical_normal_velocity: Array
+    law_feasible: Array
     numeric_revision_matches: Array
     contact_equation_residual: Array
+    contact_equation_valid: Array
+    physical_velocity_residual: Array
+    physical_velocity_valid: Array
     contact_certificate_valid: Array
     finite: Array
     applied: Array
@@ -222,6 +275,8 @@ def _route_validity(kinematics: ContactKinematicsEpoch, /) -> Array:
 
 def _tree_finite(value: PyTree[Array], /) -> Array:
     leaves = jax.tree.leaves(value)
+    if not leaves:
+        return jnp.asarray(True)
     return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)))
 
 
@@ -276,6 +331,78 @@ def build_contact_velocity_operator(
     )
 
 
+def build_mixed_contact_velocity_operator(
+    contact_operator: AbstractLinearOperator,
+    stop_operator: AbstractLinearOperator,
+    /,
+    *,
+    width: int = 3,
+) -> AbstractLinearOperator:
+    """Stack contact rows and normal-only stop rows into one fixed-width ``G``.
+
+    ``contact_operator`` maps the generalized tangent to ``(contacts, width)``
+    local contact velocities; ``stop_operator`` maps it to ``(stops,)`` stop
+    rates.  Stop rows occupy the normal component of trailing blocks and their
+    padded components are identically zero, so the dual transpose pulls back
+    only the stop normal impulse.
+    """
+
+    if not isinstance(contact_operator, AbstractLinearOperator) or not isinstance(
+        stop_operator, AbstractLinearOperator
+    ):
+        raise TypeError("Mixed rows require AbstractLinearOperator values.")
+    if contact_operator.batch_shape or stop_operator.batch_shape:
+        raise ValueError("Mixed contact rows cannot be operator-batched.")
+    tangent = contact_operator.source
+    if not stop_operator.source.compatible(tangent):
+        raise ValueError("Contact and stop rows must share the generalized tangent.")
+    width_ = int(width)
+    contact_target = contact_operator.target
+    stop_target = stop_operator.target
+    if (
+        not isinstance(contact_target, ArraySpace)
+        or len(contact_target.shape) != 2
+        or contact_target.shape[1] != width_
+    ):
+        raise ValueError("contact_operator must target (contacts, width) blocks.")
+    if not isinstance(stop_target, ArraySpace) or len(stop_target.shape) != 1:
+        raise ValueError("stop_operator must target one normal row per stop.")
+    contacts = contact_target.shape[0]
+    stops = stop_target.shape[0]
+    dtype = contact_target.dtype
+    space = ArraySpace((contacts + stops, width_), dtype=dtype)
+    contact_dual = dual_transpose(contact_operator)
+    stop_dual = dual_transpose(stop_operator)
+
+    def action(rates: PyTree[Array]) -> Array:
+        stop_rows = (
+            jnp.zeros((stops, width_), dtype=dtype).at[:, 0].set(stop_operator.mv(rates))
+        )
+        return jnp.concatenate((contact_operator.mv(rates), stop_rows), axis=0)
+
+    def transpose_action(local_impulse: Array) -> PyTree[Array]:
+        return jax.tree.map(
+            lambda left, right: left + right,
+            contact_dual.mv(local_impulse[:contacts]),
+            stop_dual.mv(local_impulse[contacts:, 0]),
+        )
+
+    return FunctionLinearOperator(
+        action,
+        source=tangent,
+        target=space,
+        transpose_action=transpose_action,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "mixed-contact-velocity-operator",
+                "contact": contact_operator.operator_id,
+                "stop": stop_operator.operator_id,
+                "width": width_,
+            }
+        ),
+    )
+
+
 def build_delassus_operator(
     velocity_operator: AbstractLinearOperator,
     inverse_mass_operator: AbstractLinearOperator,
@@ -303,7 +430,7 @@ def build_delassus_operator(
 def contact_duality_evidence(
     velocity_operator: AbstractLinearOperator,
     generalized_velocity: PyTree[Any],
-    contact_impulse: ArrayLike,
+    contact_impulse: ConvertibleToArray,
     /,
 ) -> ArticulatedContactDualityEvidence:
     """Certify contact/generalized force-power duality for one operator action."""
@@ -341,27 +468,155 @@ def contact_duality_evidence(
     )
 
 
+def certify_inverse_mass_operator(
+    operator: AbstractLinearOperator,
+    policy: MaterializationPolicy | None,
+    /,
+    *,
+    verification: DensePropertyVerificationPolicy | None = None,
+) -> InverseMassOperatorCertificate:
+    """Certify symmetric semidefiniteness of an explicit inverse-mass map.
+
+    An explicit ``DenseLinearOperator`` is verified from its stored matrix
+    (route ``explicit-dense-matrix``).  Any other operator is materialized only
+    under the caller's explicit bounded ``policy`` (route
+    ``bounded-materialization``); without one it is refused, and a policy too
+    small for the operator raises ``LinearCapabilityError``.  The matrix-free
+    route is a ``PreparedArticulatedMass``.  Verification is delegated to
+    :func:`phydrax.linalg.verify_dense_properties`, which must require both
+    Hermitian symmetry and positive semidefiniteness; the default policy uses
+    its explicit relative tolerance ``64 eps max|λ|`` and zero absolute
+    tolerance.  The original matrix remains the response; nothing is repaired.
+    A zero-dimensional map is trivially symmetric semidefinite and carries no
+    dense property evidence.
+    """
+
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be AbstractLinearOperator.")
+    if operator.batch_shape:
+        raise ValueError("Inverse mass cannot be operator-batched.")
+    if not operator.source.compatible(DualSpace(operator.target)):
+        raise ValueError("Inverse mass must map the tangent dual to the tangent.")
+    verification_ = (
+        DensePropertyVerificationPolicy(
+            require_hermitian=True,
+            require_positive_semidefinite=True,
+            relative_tolerance=64.0,
+            absolute_tolerance=0.0,
+        )
+        if verification is None
+        else verification
+    )
+    if not isinstance(verification_, DensePropertyVerificationPolicy):
+        raise TypeError("verification must be DensePropertyVerificationPolicy or None.")
+    if not (
+        verification_.require_hermitian and verification_.require_positive_semidefinite
+    ):
+        raise ValueError(
+            "Inverse-mass verification must require Hermitian symmetry and "
+            "positive semidefiniteness."
+        )
+    if isinstance(operator, DenseLinearOperator):
+        matrix = operator.matrix
+        route = "explicit-dense-matrix"
+    elif policy is None:
+        raise ValueError(
+            "A matrix-free inverse-mass operator requires an explicit bounded "
+            "inverse_mass_materialization policy; use PreparedArticulatedMass "
+            "for the matrix-free route."
+        )
+    elif not isinstance(policy, MaterializationPolicy):
+        raise TypeError("policy must be MaterializationPolicy or None.")
+    else:
+        matrix = materialize(operator, policy)
+        route = "bounded-materialization"
+    size = int(matrix.shape[-1])
+    if size == 0:
+        return InverseMassOperatorCertificate(
+            None, jnp.asarray(True), operator.operator_id, route, size
+        )
+    evidence = verify_dense_properties(matrix, policy=verification_)
+    return InverseMassOperatorCertificate(
+        evidence, evidence.successful, operator.operator_id, route, size
+    )
+
+
+def _response_probes(
+    response: AbstractLinearOperator, space: ArraySpace, /
+) -> tuple[Array, Array, Array, Array]:
+    """Two deterministic probes of ``W``: adjoint consistency and nonnegativity."""
+
+    dtype = space.dtype
+    first = jnp.ones(space.shape, dtype=dtype)
+    second = jnp.where(
+        (jnp.arange(space.size).reshape(space.shape) % 2) == 0, 1.0, -1.0
+    ).astype(dtype)
+    first_image = response.mv(first)
+    second_image = response.mv(second)
+    cross = jnp.sum(first * second_image) - jnp.sum(second * first_image)
+    scale = jnp.maximum(
+        jnp.sqrt(jnp.sum(first * first)) * jnp.sqrt(jnp.sum(second_image**2))
+        + jnp.sqrt(jnp.sum(second * second)) * jnp.sqrt(jnp.sum(first_image**2)),
+        jnp.finfo(dtype).tiny,
+    )
+    tolerance = jnp.finfo(dtype).eps * max(64, 8 * space.size)
+    nonnegative = (jnp.sum(first * first_image) >= -tolerance * scale) & (
+        jnp.sum(second * second_image) >= -tolerance * scale
+    )
+    return jnp.abs(cross), scale, jnp.abs(cross) <= tolerance * scale, nonnegative
+
+
 def prepare_articulated_contact(
     participant: AbstractContactParticipant,
     configuration: PyTree[Any],
     free_velocity: PyTree[Any],
     kinematics: ContactKinematicsEpoch,
     materials: ContactMaterialPairTable,
-    inverse_mass_operator: AbstractLinearOperator,
+    inverse_mass: AbstractLinearOperator | PreparedArticulatedMass,
     /,
     *,
+    certificate: ContactCertificatePolicy,
     vertex_offset: int = 0,
-    compliance: ArrayLike = 0.0,
-    materialization_policy: MaterializationPolicy | None = None,
+    compliance: ConvertibleToArray = 0.0,
+    inverse_mass_materialization: MaterializationPolicy | None = None,
+    inverse_mass_verification: DensePropertyVerificationPolicy | None = None,
 ) -> PreparedArticulatedContact:
-    """Lower fixed-route articulated kinematics to the native cone program.
+    """Lower fixed-route articulated kinematics to the operator cone program.
 
-    ``vertex_offset`` locates the participant in a concatenated contact scene.
-    Other scene vertices are treated as fixed by this reduced response.
+    ``inverse_mass`` is either a prepared articulated mass (the matrix-free
+    route: its verified pivots supply the semidefinite hypothesis and its
+    binding is bound into the cone revision) or an explicit true-dual
+    inverse-mass operator certified by :func:`certify_inverse_mass_operator`:
+    a ``DenseLinearOperator`` from its stored matrix, any other operator only
+    under the caller's explicit bounded ``inverse_mass_materialization``, with
+    the optional ``inverse_mass_verification`` dense property policy.
+    ``vertex_offset`` locates the participant in a concatenated contact scene;
+    other scene vertices are fixed by this response.
     """
 
     if not isinstance(materials, ContactMaterialPairTable):
         raise TypeError("materials must be ContactMaterialPairTable.")
+    operator_certificate: InverseMassOperatorCertificate | None
+    if isinstance(inverse_mass, PreparedArticulatedMass):
+        inverse_mass_operator: AbstractLinearOperator = inverse_mass.inverse_mass_operator
+        mass_successful = inverse_mass.successful
+        binding: PyTree[Array] = inverse_mass.binding
+        hypothesis = "prepared-articulated-mass"
+        operator_certificate = None
+    elif isinstance(inverse_mass, AbstractLinearOperator):
+        inverse_mass_operator = inverse_mass
+        operator_certificate = certify_inverse_mass_operator(
+            inverse_mass,
+            inverse_mass_materialization,
+            verification=inverse_mass_verification,
+        )
+        mass_successful = operator_certificate.successful
+        binding = ()
+        hypothesis = f"certified-operator/{operator_certificate.route}"
+    else:
+        raise TypeError(
+            "inverse_mass must be PreparedArticulatedMass or AbstractLinearOperator."
+        )
     velocity_operator = build_contact_velocity_operator(
         participant,
         configuration,
@@ -370,18 +625,14 @@ def prepare_articulated_contact(
     )
     free = participant.tangent_space.validate(free_velocity)
     delassus = build_delassus_operator(velocity_operator, inverse_mass_operator)
-    policy = (
-        MaterializationPolicy()
-        if materialization_policy is None
-        else materialization_policy
-    )
-    if not isinstance(policy, MaterializationPolicy):
-        raise TypeError("materialization_policy must be MaterializationPolicy or None.")
-    dense_delassus = materialize(delassus, policy)
     program = build_contact_cone_program(
-        kinematics, materials, dense_delassus, compliance=compliance
+        kinematics,
+        materials,
+        delassus,
+        certificate=certificate,
+        compliance=compliance,
+        response_binding=binding,
     )
-
     local_free = velocity_operator.mv(free)
     recorded = _recorded_contact_velocity(kinematics)
     valid = _route_validity(kinematics)[:, None]
@@ -394,72 +645,31 @@ def prepare_articulated_contact(
             jnp.max(jnp.abs(jnp.where(valid, recorded, 0.0)), initial=0.0),
         ),
     )
-    dtype = dense_delassus.dtype
+    dtype = local_free.dtype
     tolerance = jnp.finfo(dtype).eps * max(64, 8 * delassus.source.size)
-    adjoint_dense = jnp.conj(jnp.swapaxes(dense_delassus, -1, -2))
-    symmetry_residual = jnp.max(jnp.abs(dense_delassus - adjoint_dense), initial=0.0)
-    delassus_scale = jnp.maximum(1.0, jnp.max(jnp.abs(dense_delassus), initial=0.0))
-    minimum_diagonal = jnp.min(jnp.real(jnp.diag(dense_delassus)), initial=jnp.inf)
-    hermitian_delassus = 0.5 * (dense_delassus + adjoint_dense)
-    spectral_operator = DenseLinearOperator(
-        hermitian_delassus,
-        source=velocity_operator.target,
-        target=velocity_operator.target,
-        properties=OperatorProperties(
-            self_adjoint=True,
-            evidence={"self_adjoint": "verified"},
-        ),
-        operator_id=f"{delassus.operator_id}/spectral-certificate",
-    )
-    spectral_result = eigen_api.eigensolve(
-        eigen_api.Eigenproblem(spectral_operator),
-        policy=eigen_api.EigenSolvePolicy(
-            eigen_api.DenseEigh(),
-            count=delassus.source.size,
-            which="smallest-algebraic",
-        ),
-    )
-    minimum_eigenvalue = jnp.min(
-        jnp.where(spectral_result.mode_mask, spectral_result.eigenvalues, jnp.inf)
-    )
-    spectral_residual = jnp.max(
-        jnp.where(
-            spectral_result.mode_mask,
-            spectral_result.diagnostics.relative_residuals,
-            0.0,
-        ),
-        initial=0.0,
-    )
-    spectral_finite = jnp.all(jnp.isfinite(spectral_result.eigenvalues)) & jnp.isfinite(
-        spectral_residual
-    )
-    spectral_valid = (
-        spectral_result.successful
-        & (spectral_result.effective_count == delassus.source.size)
-        & spectral_finite
-        & (minimum_eigenvalue >= -tolerance * delassus_scale)
+    probe_residual, probe_scale, probe_adjoint, probe_nonnegative = _response_probes(
+        delassus, program.contact_space
     )
     participant_routes_complete = _participant_routes_complete(
         participant, kinematics, int(vertex_offset)
     )
     material_law_complete = jnp.all((~program.valid) | program.mechanical_available)
     velocity_consistent = velocity_residual <= tolerance * velocity_scale
-    nonnegative_diagonal = minimum_diagonal >= -tolerance * delassus_scale
     finite = (
-        jnp.all(jnp.isfinite(dense_delassus))
-        & jnp.all(jnp.isfinite(local_free))
+        jnp.all(jnp.isfinite(local_free))
         & jnp.all(jnp.isfinite(recorded))
         & _tree_finite(free)
-        & spectral_finite
+        & jnp.isfinite(probe_residual)
+        & jnp.isfinite(probe_scale)
     )
     successful = (
         kinematics.evidence.successful
         & participant_routes_complete
         & material_law_complete
         & velocity_consistent
-        & (symmetry_residual <= tolerance * delassus_scale)
-        & nonnegative_diagonal
-        & spectral_valid
+        & mass_successful
+        & probe_adjoint
+        & probe_nonnegative
         & finite
     )
     evidence = ArticulatedContactPreparationEvidence(
@@ -469,17 +679,17 @@ def prepare_articulated_contact(
         velocity_residual=velocity_residual,
         velocity_scale=velocity_scale,
         velocity_consistent=velocity_consistent,
-        delassus_symmetry_residual=symmetry_residual,
-        delassus_scale=delassus_scale,
-        minimum_delassus_diagonal=minimum_diagonal,
-        nonnegative_delassus_diagonal=nonnegative_diagonal,
-        minimum_delassus_eigenvalue=minimum_eigenvalue,
-        delassus_spectral_residual=spectral_residual,
-        delassus_spectral_valid=spectral_valid,
+        mass_successful=jnp.asarray(mass_successful, dtype=jnp.bool_),
+        response_probe_adjoint_residual=probe_residual,
+        response_probe_scale=probe_scale,
+        response_probe_adjoint_consistent=probe_adjoint,
+        response_probe_nonnegative=probe_nonnegative,
         finite=finite,
         successful=successful,
         participant_id=participant.participant_id,
         kinematics_id=kinematics.epoch_id,
+        mass_hypothesis=hypothesis,
+        inverse_mass_certificate=operator_certificate,
     )
     prepared_id = canonical_fingerprint(
         {
@@ -489,12 +699,12 @@ def prepare_articulated_contact(
             "materials": materials.table_id,
             "velocity_operator": velocity_operator.operator_id,
             "inverse_mass_operator": inverse_mass_operator.operator_id,
+            "program": program.program_id,
         }
     )
     return PreparedArticulatedContact(
         velocity_operator,
         inverse_mass_operator,
-        delassus,
         program,
         free,
         evidence,
@@ -515,7 +725,7 @@ def apply_articulated_contact_impulse(
         raise TypeError("cone_result must be ContactConeResult.")
     if cone_result.evidence.program_id != prepared.program.program_id:
         raise ValueError("Cone result does not belong to the prepared contact program.")
-
+    program = prepared.program
     candidate_impulse = DualSpace(prepared.velocity_operator.target).validate(
         cone_result.impulse
     )
@@ -528,54 +738,55 @@ def apply_articulated_contact_impulse(
     )
     candidate_contact_velocity = prepared.velocity_operator.mv(candidate_post)
     contact_velocity_update = prepared.velocity_operator.mv(candidate_update)
-    expected_contact_update = (
-        prepared.program.effective_mass @ candidate_impulse.reshape((-1,))
-    ).reshape(candidate_impulse.shape)
-    contact_equation_residual = jnp.max(
-        jnp.abs(contact_velocity_update - expected_contact_update), initial=0.0
+    certificate = certify_contact_cone_impulse(program, candidate_impulse)
+    velocity_tolerance = jnp.concatenate(
+        (
+            certificate.law_velocity_tolerance[:, None],
+            jnp.broadcast_to(
+                certificate.slip_speed_tolerance[:, None],
+                (program.contact_count, program.tangent_dimension),
+            ),
+        ),
+        axis=-1,
     )
-    law_velocity = (
-        (prepared.program.effective_mass + jnp.diag(prepared.program.compliance))
-        @ candidate_impulse.reshape((-1,))
-        + prepared.program.free_velocity.reshape((-1,))
-    ).reshape(candidate_impulse.shape)
+    valid = program.valid
+    equation_difference = jnp.where(
+        valid[:, None],
+        contact_velocity_update - program.response_action(candidate_impulse),
+        0.0,
+    )
+    contact_equation_residual = jnp.max(jnp.abs(equation_difference), initial=0.0)
+    contact_equation_valid = jnp.all(jnp.abs(equation_difference) <= velocity_tolerance)
+    physical_difference = jnp.where(
+        valid[:, None], candidate_contact_velocity - certificate.post_velocity, 0.0
+    )
+    physical_velocity_residual = jnp.max(jnp.abs(physical_difference), initial=0.0)
+    physical_velocity_valid = jnp.all(jnp.abs(physical_difference) <= velocity_tolerance)
     duality = contact_duality_evidence(
         prepared.velocity_operator, prepared.free_velocity, candidate_impulse
     )
-    valid = prepared.program.valid
     active = jnp.any(valid)
-    minimum_post_normal = jnp.where(
+    dtype = candidate_impulse.dtype
+    minimum_law_normal = jnp.where(
         active,
-        jnp.min(jnp.where(valid, law_velocity[:, 0], jnp.inf)),
-        jnp.asarray(0.0, dtype=law_velocity.dtype),
+        jnp.min(jnp.where(valid, certificate.law_velocity[:, 0], jnp.inf)),
+        jnp.asarray(0.0, dtype=dtype),
     )
-    dtype = candidate_contact_velocity.dtype
-    certificate_scale = jnp.maximum(
-        1.0,
-        jnp.maximum(
-            jnp.max(jnp.abs(prepared.program.free_velocity), initial=0.0),
-            jnp.max(jnp.abs(candidate_contact_velocity), initial=0.0),
-        ),
+    minimum_physical_normal = jnp.where(
+        active,
+        jnp.min(jnp.where(valid, candidate_contact_velocity[:, 0], jnp.inf)),
+        jnp.asarray(0.0, dtype=dtype),
     )
-    tolerance = jnp.maximum(
-        cone_result.evidence.certificate_tolerance,
-        jnp.sqrt(jnp.finfo(dtype).eps) * certificate_scale,
-    )
-    post_feasible = minimum_post_normal >= -tolerance
-    numeric_revision_matches = contact_cone_numeric_revision_matches(
-        prepared.program, cone_result
-    )
-    cone_certificate_valid = contact_cone_result_is_certified(
-        prepared.program, cone_result
-    )
+    law_feasible = certificate.law_normal_valid
+    numeric_revision_matches = contact_cone_numeric_revision_matches(program, cone_result)
+    cone_certificate_valid = contact_cone_result_is_certified(program, cone_result)
     candidate_finite = (
         jnp.all(jnp.isfinite(candidate_impulse))
         & _tree_finite(candidate_generalized)
         & _tree_finite(candidate_update)
         & _tree_finite(candidate_post)
         & jnp.all(jnp.isfinite(candidate_contact_velocity))
-        & jnp.all(jnp.isfinite(law_velocity))
-        & jnp.isfinite(contact_equation_residual)
+        & certificate.finite
     )
     finite = (
         prepared.evidence.finite
@@ -586,24 +797,28 @@ def apply_articulated_contact_impulse(
     contact_certificate_valid = (
         cone_certificate_valid
         & numeric_revision_matches
-        & (contact_equation_residual <= tolerance)
+        & contact_equation_valid
+        & physical_velocity_valid
         & duality.valid
-        & post_feasible
+        & law_feasible
         & finite
     )
     successful = prepared.evidence.successful & contact_certificate_valid
 
-    zero_impulse = jnp.zeros_like(candidate_impulse)
     zero_generalized = DualSpace(prepared.velocity_operator.source).zeros()
     zero_update = prepared.velocity_operator.source.zeros()
-    applied_impulse = jnp.where(successful, candidate_impulse, zero_impulse)
+    applied_impulse = jnp.where(successful, candidate_impulse, 0.0)
     generalized = _tree_where(successful, candidate_generalized, zero_generalized)
     update = _tree_where(successful, candidate_update, zero_update)
     post = jax.tree.map(
         lambda free, increment: free + increment, prepared.free_velocity, update
     )
-    post_contact_velocity = prepared.velocity_operator.mv(post)
-    zero_update = (
+    post_contact_velocity = jnp.where(
+        successful,
+        candidate_contact_velocity,
+        prepared.velocity_operator.mv(prepared.free_velocity),
+    )
+    zero_update_output = (
         jnp.max(jnp.abs(prepared.velocity_operator.source.flatten(update)), initial=0.0)
         == 0.0
     )
@@ -615,16 +830,21 @@ def apply_articulated_contact_impulse(
         == 0.0
     )
     zero_applied = jnp.max(jnp.abs(applied_impulse), initial=0.0) == 0.0
-    fail_closed = successful | (zero_update & zero_generalized_output & zero_applied)
+    fail_closed = successful | (
+        zero_update_output & zero_generalized_output & zero_applied
+    )
     evidence = ArticulatedContactEvidence(
         preparation=prepared.evidence,
         cone=cone_result.evidence,
         duality=duality,
-        minimum_post_normal_velocity=minimum_post_normal,
-        post_contact_feasible=post_feasible,
-        certificate_tolerance=tolerance,
+        minimum_law_normal_velocity=minimum_law_normal,
+        minimum_physical_normal_velocity=minimum_physical_normal,
+        law_feasible=law_feasible,
         numeric_revision_matches=numeric_revision_matches,
         contact_equation_residual=contact_equation_residual,
+        contact_equation_valid=contact_equation_valid,
+        physical_velocity_residual=physical_velocity_residual,
+        physical_velocity_valid=physical_velocity_valid,
         contact_certificate_valid=contact_certificate_valid,
         finite=finite,
         applied=successful,
@@ -648,7 +868,7 @@ def solve_articulated_contact(
     /,
     *,
     solver: ContactConeSolverPlan | None = None,
-    initial_impulse: ArrayLike | None = None,
+    initial_impulse: ConvertibleToArray | None = None,
 ) -> ArticulatedContactResult:
     """Solve and fail-closed apply one prepared articulated contact impulse."""
 
@@ -669,6 +889,9 @@ __all__ = [
     "apply_articulated_contact_impulse",
     "build_contact_velocity_operator",
     "build_delassus_operator",
+    "build_mixed_contact_velocity_operator",
+    "certify_inverse_mass_operator",
+    "InverseMassOperatorCertificate",
     "contact_duality_evidence",
     "prepare_articulated_contact",
     "solve_articulated_contact",

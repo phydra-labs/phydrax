@@ -204,6 +204,19 @@ from ._factorizations import (
     pseudoinverse,
     refresh_factorization,
 )
+from ._forest_bounds import (
+    BlockForestRankCertificate,
+    BlockForestRankStatus,
+    BlockForestTopology,
+    certify_block_forest_rank,
+    ForestColumnDim,
+    ForestLevelDim,
+    ForestRowDim,
+    ForestVertexDim,
+    prepare_block_forest,
+    PreparedBlockForest,
+    refresh_block_forest,
+)
 from ._geophysical_preconditioners import (
     porous_cpr_preconditioner,
     shifted_helmholtz_preconditioner,
@@ -807,6 +820,17 @@ from .krylov import (
 
 
 __all__ = [
+    "BlockForestRankCertificate",
+    "BlockForestRankStatus",
+    "BlockForestTopology",
+    "ForestColumnDim",
+    "ForestLevelDim",
+    "ForestRowDim",
+    "ForestVertexDim",
+    "PreparedBlockForest",
+    "certify_block_forest_rank",
+    "prepare_block_forest",
+    "refresh_block_forest",
     "AbstractInitialGuessProvider",
     "AbstractLinearMethod",
     "AbstractLinearOperator",

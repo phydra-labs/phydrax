@@ -134,13 +134,18 @@ The smoothly clamped barrier originates in Li et al. §4.2; squared clearance,
 physical scaling, and reference-measure weighting above state the actual
 Phydrax convention rather than identifying it with the paper's notation.
 
-Candidate search is an explicit host preparation boundary. A finite-capacity
-`ContactCandidateEpoch` is frozen through Newton and friction refresh, including
-route order. Its conservative motion envelope must cover every possible route
-for the whole step. Bounds prevent leaving that envelope. Overflow, incomplete
-coverage, memory/work exhaustion, or unsafe geometry refuses the complete step;
-prepare a larger fixed plan at the next accepted boundary, never grow capacity
-inside a compiled solve.
+Candidate search is an explicit preparation boundary: a host dense or
+sweep-and-prune authority, or a scene-bound `CompiledContactSearchPlan` /
+`LBVHContactSearchPlan`, all producing the same canonical
+`ContactCandidateEpoch` with the mesh primitive profile. The finite-capacity
+epoch is frozen through Newton and friction refresh, including route order.
+Its conservative motion envelope must cover every possible route for the whole
+step: the search activates pairs within twice the per-object envelope, and
+every trial path box is checked with `epoch.covers`. Bounds prevent leaving
+that envelope. Overflow, incomplete coverage, memory/work exhaustion, failed
+candidate witnesses, or unsafe geometry refuses the complete step; prepare a
+larger fixed plan at the next accepted boundary, never grow capacity inside a
+compiled solve.
 Empty primitive sets (including isolated-vertex surfaces without edges) produce
 complete empty candidate batches at the declared fixed capacities.
 

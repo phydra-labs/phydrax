@@ -48,17 +48,8 @@ _TWO_LINK = """
 
 
 def _prepare(adaptation: Any) -> Any:
-    particles = adaptation.particles.prepare()
-    bodies = adaptation.bodies.prepare(particles)
-    reference = bodies.kinematics(
-        adaptation.reference.position,
-        adaptation.reference.velocity,
-        adaptation.reference.orientation,
-        adaptation.reference.angular_velocity,
-    )
-    graph = adaptation.joints.prepare(bodies, reference)
-    articulation = adaptation.articulation.prepare(graph, reference)
-    return bodies, graph, articulation, reference
+    prepared = adaptation.model.prepare()
+    return prepared.bodies, prepared.graph, prepared.articulation, prepared.reference
 
 
 def _link(name: str, *, body_mass: float = 1.0, inertia: str = "1 1 1") -> str:
@@ -75,32 +66,32 @@ def _link(name: str, *, body_mass: float = 1.0, inertia: str = "1 1 1") -> str:
 
 def test_robot_urdf_scenario_1() -> None:
     adaptation = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
+    model = adaptation.model
 
     assert adaptation.report.status == AdapterStatus.LOSSLESS
     assert adaptation.report.valid
-    assert adaptation.negotiation.valid
-    assert adaptation.dimensions.length_unit.symbol == "m"
-    assert adaptation.dimensions.mass_unit.symbol == "kg"
-    assert adaptation.dimensions.time_unit.symbol == "s"
-    assert adaptation.link_ids.names == ("base", "tool")
-    assert adaptation.joint_ids is not None
-    assert adaptation.joint_ids.names == ("shoulder",)
-    assert np.asarray(adaptation.link_ids.ids).dtype == np.dtype(np.int64)
-    assert np.asarray(adaptation.joint_ids.ids).dtype == np.dtype(np.int64)
-    assert np.allclose(np.asarray(adaptation.particles.masses), [5.0, 2.0])
+    assert adaptation.report.negotiation.valid
+    assert adaptation.report.target_id == model.model_id
+    assert adaptation.evidence.target_id == model.model_id
+    assert model.dimensions.length_unit.symbol == "m"
+    assert model.dimensions.mass_unit.symbol == "kg"
+    assert model.dimensions.time_unit.symbol == "s"
+    assert model.body_names.names == ("base", "tool")
+    assert model.joint_names.names == ("shoulder",)
+    assert np.asarray(model.body_names.ids).dtype == np.dtype(np.int64)
+    assert np.asarray(model.joint_names.ids).dtype == np.dtype(np.int64)
+    assert np.allclose(np.asarray(model.particles.masses), [5.0, 2.0])
     assert np.allclose(
-        np.asarray(adaptation.bodies.inertia_body),
+        np.asarray(model.bodies.inertia_body),
         np.asarray((np.diag([1.0, 1.1, 1.2]), np.diag([0.2, 0.3, 0.4]))),
     )
-    assert adaptation.joints.hinge is not None
+    assert model.joints.hinge is not None
+    assert np.allclose(np.asarray(model.joints.hinge.reference_axes), [[0.0, 1.0, 0.0]])
     assert np.allclose(
-        np.asarray(adaptation.joints.hinge.reference_axes), [[0.0, 1.0, 0.0]]
+        np.asarray(model.joints.hinge.reference_anchors), [[0.0, 0.0, 1.0]]
     )
     assert np.allclose(
-        np.asarray(adaptation.joints.hinge.reference_anchors), [[0.0, 0.0, 1.0]]
-    )
-    assert np.allclose(
-        np.asarray(adaptation.reference.position), [[0.0, 0.0, 0.0], [0.1, 0.0, 1.0]]
+        np.asarray(model.reference.position), [[0.0, 0.0, 0.0], [0.1, 0.0, 1.0]]
     )
     joint_evidence = adaptation.evidence.joints[0]
     assert joint_evidence.lower_limit == -1.0
@@ -108,6 +99,11 @@ def test_robot_urdf_scenario_1() -> None:
     assert joint_evidence.effort_limit == 20.0
     assert joint_evidence.velocity_limit == 3.0
     assert joint_evidence.damping == 0.25
+    assert model.damping is not None
+    assert np.allclose(np.asarray(model.damping.damping), [0.25])
+    assert model.stops is None
+    assert model.motors is None
+    assert model.collision is None
 
     _, _, articulation, reference = _prepare(adaptation)
     assert articulation.nq == articulation.nv == 1
@@ -133,30 +129,36 @@ def test_robot_urdf_scenario_1() -> None:
     </robot>
     """
     adaptation = parse_urdf_text(text, root_policy="fixed_world")
-    child_id = int(adaptation.link_ids.id_for_name("child"))
+    child_id = int(adaptation.model.body_names.id_for_name("child"))
 
     assert np.allclose(
-        np.asarray(adaptation.reference.position)[child_id], [2.0, 1.0, 0.0], atol=1.0e-14
+        np.asarray(adaptation.model.reference.position)[child_id],
+        [2.0, 1.0, 0.0],
+        atol=1.0e-14,
     )
     assert np.allclose(
-        np.asarray(adaptation.reference.orientation)[child_id],
+        np.asarray(adaptation.model.reference.orientation)[child_id],
         [np.sqrt(0.5), 0.0, 0.0, np.sqrt(0.5)],
         atol=1.0e-14,
     )
     assert np.allclose(
-        np.asarray(adaptation.bodies.inertia_body)[child_id],
+        np.asarray(adaptation.model.bodies.inertia_body)[child_id],
         np.diag([2.0, 1.0, 2.5]),
         atol=1.0e-14,
     )
     child = next(item for item in adaptation.evidence.links if item.name == "child")
     assert child.com_in_link_frame_m == (1.0, 0.0, 0.0)
     assert child.link_frame_in_body_m == (-1.0, -0.0, -0.0)
+    frames = adaptation.model.frames
+    child_frame = int(frames.names.id_for_name("child"))
+    assert int(np.asarray(frames.body_ids)[child_frame]) == child_id
+    assert np.allclose(np.asarray(frames.translation)[child_frame], [-1.0, 0.0, 0.0])
     first = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
     second = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
 
-    assert first.link_name_to_id == second.link_name_to_id
-    assert first.joint_name_to_id == second.joint_name_to_id
-    assert first.target_id == second.target_id
+    assert first.model.body_names.name_to_id == second.model.body_names.name_to_id
+    assert first.model.joint_names.name_to_id == second.model.joint_names.name_to_id
+    assert first.model.model_id == second.model.model_id
     assert first.evidence.evidence_id == second.evidence.evidence_id
     assert first.report.report_id == second.report.report_id
     assert (
@@ -338,8 +340,8 @@ def test_robot_urdf_scenario_4() -> None:
         parse_urdf_text(_TWO_LINK)
 
     fixed = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
-    root_id = int(fixed.link_ids.id_for_name(fixed.evidence.root_link))
-    assert bool(np.asarray(fixed.bodies.fixed_mask)[root_id])
+    root_id = int(fixed.model.body_names.id_for_name(fixed.evidence.root_link))
+    assert bool(np.asarray(fixed.model.bodies.fixed_mask)[root_id])
     assert fixed.evidence.root_policy == "fixed_world"
     assert "fixed_world" in fixed.evidence.execution_policy[-1]
 

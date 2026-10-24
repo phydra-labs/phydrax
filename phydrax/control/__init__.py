@@ -249,6 +249,8 @@ from ._parameterization import (
     PiecewiseConstantControlParameterization,
     PiecewiseLinearControlParameterization,
 )
+from ._plant_dynamics import PlantControlDynamics, PlantHistoryRetention
+from ._plant_history import PlantControlHistory, PlantRuntimeHistory
 from ._prepared_ilqr import (
     ILQRPlan,
     plan_ilqr,
@@ -310,7 +312,11 @@ from ._sampling_mpc import (
     SamplingMPCBoundPolicy,
     SamplingMPCEvidence,
     SamplingMPCPlan,
+    SamplingMPCRealizationBinding,
+    SamplingMPCRealizationPolicy,
+    SamplingMPCRealizations,
     SamplingMPCResult,
+    SamplingMPCSelectedReplay,
     SamplingMPCState,
     SamplingMPCStatus,
     SamplingMPCUpdate,
@@ -340,6 +346,10 @@ from ._trajectory_optimization import (
 
 
 __all__ = [
+    "PlantControlDynamics",
+    "PlantControlHistory",
+    "PlantHistoryRetention",
+    "PlantRuntimeHistory",
     "gaussian_chance_constraint",
     "GaussianChanceConstraint",
     "h2_state_feedback",
@@ -422,7 +432,11 @@ __all__ = [
     "SamplingMPCBoundPolicy",
     "SamplingMPCEvidence",
     "SamplingMPCPlan",
+    "SamplingMPCRealizationBinding",
+    "SamplingMPCRealizationPolicy",
+    "SamplingMPCRealizations",
     "SamplingMPCResult",
+    "SamplingMPCSelectedReplay",
     "SamplingMPCState",
     "SamplingMPCStatus",
     "SamplingMPCUpdate",

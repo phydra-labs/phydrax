@@ -20,17 +20,20 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
+from ...linalg import ArraySpace, FunctionLinearOperator
 from ...nonlinear import (
     NonlinearTermination,
     SemismoothNewton,
     VariationalInequalityProblem,
 )
 from ...typing import checked
+from ._reduced_articulation import PreparedReducedArticulation
 from ._rigid_body import (
     PreparedRigidBodySet,
     rigid_body_world_inertia,
     RigidBodyKinematics,
 )
+from ._rigid_joint_coordinates import reduced_scalar_joint_dofs
 from ._rigid_joints import PreparedRigidJointGraph
 
 
@@ -921,6 +924,208 @@ def accept_joint_limit_candidate(
     return tree_where(predicate, candidate, current)
 
 
+class ReducedJointStopPlan(StrictModule, NonTrainableState):
+    """Unilateral lower/upper stops on lifted reduced scalar joint coordinates.
+
+    Bounds are lifted coordinates in the articulation's native chart: radians
+    measured with full winding for hinges and meters for prismatic joints. An
+    infinite bound declares an absent side; every listed joint must have at
+    least one finite side. Stops are physical constraints, not effort or
+    velocity bounds, and they never clip coordinates: they contribute
+    normal-only rows to the same generalized contact response.
+    """
+
+    joint_ids: Array
+    lower: Array
+    upper: Array
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        joint_ids: ArrayLike,
+        lower: ArrayLike,
+        upper: ArrayLike,
+        /,
+        *,
+        plan_id: str | None = None,
+    ) -> None:
+        identifiers = np.asarray(joint_ids)
+        if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
+            raise TypeError("joint_ids must be a rank-1 integer array.")
+        identifiers = identifiers.astype(np.int64, copy=False)
+        if np.unique(identifiers).size != identifiers.size:
+            raise ValueError("Joint-stop joint IDs must be unique.")
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
+        if lower_.shape != identifiers.shape or upper_.shape != identifiers.shape:
+            raise ValueError("Joint-stop bounds must match joint_ids.")
+        if (
+            np.any(np.isnan(lower_))
+            or np.any(np.isnan(upper_))
+            or np.any(lower_ == np.inf)
+            or np.any(upper_ == -np.inf)
+            or np.any(lower_ >= upper_)
+        ):
+            raise ValueError(
+                "Joint-stop lower bounds must lie below upper bounds; +inf lower "
+                "and -inf upper bounds are invalid."
+            )
+        if np.any(~np.isfinite(lower_) & ~np.isfinite(upper_)):
+            raise ValueError("Every joint stop must have at least one finite side.")
+        generated = canonical_fingerprint(
+            {
+                "kind": "reduced-joint-stop-plan",
+                "values": array_tree_fingerprint(
+                    {"joint_ids": identifiers, "lower": lower_, "upper": upper_}
+                ),
+            }
+        )
+        identifier = generated if plan_id is None else str(plan_id)
+        if not identifier:
+            raise ValueError("plan_id must be nonempty.")
+        self.joint_ids = jnp.asarray(identifiers)
+        self.lower = jnp.asarray(lower_)
+        self.upper = jnp.asarray(upper_)
+        self.plan_id = identifier
+
+    @property
+    def count(self) -> int:
+        return self.joint_ids.shape[0]
+
+    def prepare(
+        self, articulation: PreparedReducedArticulation, /
+    ) -> PreparedReducedJointStops:
+        return PreparedReducedJointStops(self, articulation)
+
+
+class PreparedReducedJointStops(StrictModule, NonTrainableState):
+    """Normal-only stop rows sharing the generalized contact response.
+
+    Rows are ordered ``(joint, side)`` with ``side`` 0 for the lower stop
+    (``sign = +1``, gap ``q - lower``) and 1 for the upper stop
+    (``sign = -1``, gap ``upper - q``), so ``row_joint_ids``/``row_sides`` is
+    the typed row identity, distinct from geometric contact keys. Absent
+    (infinite) sides are masked by ``row_valid`` and contribute nothing. The
+    row Jacobian ``G`` maps generalized velocity to signed joint rate, and
+    `generalized_impulse` is its exact transpose ``G*`` from row impulses to
+    the generalized-effort dual. Gaps are affine in lifted coordinates, so
+    the minimum over the linear lifted path ``q0 + s (q1 - q0)`` is exactly
+    the minimum of its endpoint gaps. ``row_units`` gives each gap's unit;
+    reactions are generalized impulses in N m s (hinge) or N s (prismatic).
+    """
+
+    plan: ReducedJointStopPlan
+    row_joint_ids: Array
+    row_sides: Array
+    row_dof: Array
+    row_sign: Array
+    row_bound: Array
+    row_valid: Array
+    velocity_space: ArraySpace
+    row_space: ArraySpace
+    row_units: tuple[str, ...] = eqx.field(static=True)
+    nv: int = eqx.field(static=True)
+    capacity: int = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        plan: ReducedJointStopPlan,
+        articulation: PreparedReducedArticulation,
+        /,
+    ) -> None:
+        dofs, hinge = reduced_scalar_joint_dofs(
+            articulation, np.asarray(plan.joint_ids), "Joint stop"
+        )
+        lower = np.asarray(plan.lower)
+        upper = np.asarray(plan.upper)
+        count = plan.count
+        bounds = np.stack((lower, upper), axis=-1).reshape((-1,))
+        valid = np.isfinite(bounds)
+        prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-reduced-joint-stops",
+                "plan": plan.plan_id,
+                "articulation": articulation.prepared_id,
+            }
+        )
+        dtype = np.dtype(articulation.reference_position.dtype)
+        self.plan = plan
+        self.row_joint_ids = jnp.asarray(np.repeat(np.asarray(plan.joint_ids), 2))
+        self.row_sides = jnp.asarray(np.tile(np.asarray([0, 1], dtype=np.int32), count))
+        self.row_dof = jnp.asarray(np.repeat(dofs, 2))
+        self.row_sign = jnp.asarray(
+            np.tile(np.asarray([1.0, -1.0], dtype=dtype), count)
+        )
+        self.row_bound = jnp.asarray(np.where(valid, bounds, 0.0).astype(dtype))
+        self.row_valid = jnp.asarray(valid)
+        self.velocity_space = articulation.generalized_velocity_space
+        self.row_space = ArraySpace(
+            (2 * count,), dtype=dtype, space_id=f"{prepared_id}:stop-rows"
+        )
+        self.row_units = tuple(
+            "rad" if bool(flag) else "m" for flag in np.repeat(hinge, 2)
+        )
+        self.nv = articulation.nv
+        self.capacity = 2 * count
+        self.prepared_id = prepared_id
+
+    def _vector(self, value: ArrayLike, size: int, name: str, /) -> Array:
+        array = jnp.asarray(value)
+        if array.shape != (size,) or not jnp.issubdtype(array.dtype, jnp.floating):
+            raise ValueError(f"{name} must be a floating vector of shape {(size,)}.")
+        return array
+
+    def gaps(self, lifted_configuration: ArrayLike, /) -> Array:
+        """Signed stop gaps; masked (absent) rows report zero."""
+
+        point = self._vector(lifted_configuration, self.nv, "lifted_configuration")
+        gap = self.row_sign.astype(point.dtype) * (
+            point[self.row_dof] - self.row_bound.astype(point.dtype)
+        )
+        return jnp.where(self.row_valid, gap, 0.0)
+
+    def path_minimum_gaps(
+        self, start_configuration: ArrayLike, end_configuration: ArrayLike, /
+    ) -> Array:
+        """Exact row minima over the lifted segment between two coordinates."""
+
+        return jnp.minimum(
+            self.gaps(start_configuration), self.gaps(end_configuration)
+        )
+
+    def row_velocity(self, generalized_velocity: ArrayLike, /) -> Array:
+        """``G v``: the signed joint rate of every valid row."""
+
+        rate = self._vector(generalized_velocity, self.nv, "generalized_velocity")
+        return jnp.where(
+            self.row_valid,
+            self.row_sign.astype(rate.dtype) * rate[self.row_dof],
+            0.0,
+        )
+
+    def generalized_impulse(self, row_impulse: ArrayLike, /) -> Array:
+        """``G* p``: the generalized impulse of row impulses."""
+
+        impulse = self._vector(row_impulse, self.capacity, "row_impulse")
+        signed = jnp.where(
+            self.row_valid, self.row_sign.astype(impulse.dtype) * impulse, 0.0
+        )
+        return jnp.zeros((self.nv,), dtype=impulse.dtype).at[self.row_dof].add(signed)
+
+    def jacobian_operator(self, /) -> FunctionLinearOperator:
+        """Row Jacobian ``G`` from generalized velocity to stop-row rates."""
+
+        return FunctionLinearOperator(
+            self.row_velocity,
+            source=self.velocity_space,
+            target=self.row_space,
+            transpose_action=self.generalized_impulse,
+            operator_id=f"{self.prepared_id}:stop-jacobian",
+        )
+
+
 __all__ = [
     "FixedCapacityUnilateralPlan",
     "JointLimitCertificate",
@@ -929,7 +1134,9 @@ __all__ = [
     "JointLimitState",
     "JointLimitStepResult",
     "PreparedJointLimits",
+    "PreparedReducedJointStops",
     "PreparedUnilateralRows",
+    "ReducedJointStopPlan",
     "UnilateralCertificate",
     "UnilateralEvaluation",
     "UnilateralState",

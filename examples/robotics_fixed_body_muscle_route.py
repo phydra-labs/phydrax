@@ -23,14 +23,10 @@ urdf = """
   </joint>
 </robot>
 """
-# ty: ignore[missing-argument]
-adaptation = parse_urdf_text(urdf)
-particles = adaptation.particles.prepare()
-bodies = adaptation.bodies.prepare(particles)
-graph = adaptation.joints.prepare(bodies, adaptation.reference)
-articulation = adaptation.articulation.prepare(graph, adaptation.reference)
-base = int(adaptation.link_ids.id_for_name("base"))
-arm = int(adaptation.link_ids.id_for_name("arm"))
+model = parse_urdf_text(urdf, root_policy="fixed_world").model
+articulation = model.prepare().articulation
+base = int(model.body_names.id_for_name("base"))
+arm = int(model.body_names.id_for_name("arm"))
 route = FixedBodyRoutePlan(("elbow-flexor",), (0, 2), (base, arm)).prepare(
     articulation,
     jnp.asarray([[0.0, 0.25, 0.0], [0.35, -0.10, 0.0]]),

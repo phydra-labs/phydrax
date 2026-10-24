@@ -1,0 +1,20 @@
+<mujoco model="native-arm-contact">
+  <compiler angle="radian" inertiafromgeom="false"/>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 1"/>
+    <body name="base" pos="0 0 0.6">
+      <inertial pos="0 0 0" mass="5" diaginertia="0.1 0.1 0.1"/>
+      <body name="link" pos="0 0 0">
+        <joint name="lift" type="slide" axis="0 0 1"/>
+        <inertial pos="0 0 -0.2" mass="1" diaginertia="0.01 0.01 0.001"/>
+        <geom name="link_capsule" type="capsule" fromto="0 0 0 0 0 -0.4" size="0.03"/>
+        <body name="foot" pos="0 0 -0.4">
+          <joint name="ankle" type="hinge" axis="0 1 0"/>
+          <inertial pos="0 0 -0.05" mass="0.3" diaginertia="0.001 0.001 0.0005"/>
+          <geom name="foot_ball" type="sphere" size="0.04" pos="0 0 -0.1"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

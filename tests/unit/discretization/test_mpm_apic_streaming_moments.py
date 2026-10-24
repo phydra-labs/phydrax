@@ -21,11 +21,13 @@ import pytest
 from jax import Array
 from jax.typing import DTypeLike
 
+from phydrax import config as pxconfig
 from phydrax.discretization.mpm._moments_native import (
     _moments_p,
     _reference,
     streaming_moments,
 )
+from phydrax.execution import default_device
 from phydrax.sparse._structural_trace import DerivativeKind, trace_sparse_pattern
 
 
@@ -196,7 +198,7 @@ def test_streaming_refuses_incompatible_route_extents() -> None:
 def test_mixed_precision_preserves_reference_promotion() -> None:
     operands = _operands(113, 7, 27, 97, 3, 3, 3, jnp.float64)
     mixed = operands[:-1] + (operands[-1].astype(jnp.float32),)
-    with jax.numpy_dtype_promotion("standard"):
+    with pxconfig.context(pxconfig.NumericsConfig(dtype_promotion="standard")):
         actual = jax.jit(_streaming_all)(*mixed)
         expected = jax.jit(_reference_all)(*mixed)
     for value, reference in zip(actual, expected, strict=True):
@@ -232,7 +234,7 @@ def test_cpu_and_cuda_routes_agree(dtype: DTypeLike) -> None:
     host = _operands(5, 130, 27, 97, 3, 3, 3, dtype)
     results = []
     for device in _route_devices():
-        with jax.default_device(device):
+        with default_device(device):
             operands = jax.device_put(host, device)
             result = jax.jit(_streaming_all)(*operands)
         assert all(value.devices() == {device} for value in result)
@@ -391,6 +393,69 @@ def test_gradient_jvp_and_hvp_through_metadata_match_reference(
 _SUBSETS = tuple(
     subset for size in (1, 2, 3) for subset in itertools.combinations(_ALL, size)
 )
+
+
+@_DTYPES
+@pytest.mark.parametrize("outputs", _SUBSETS, ids=lambda s: "-".join(map(str, s)))
+def test_direct_grid_transpose_preserves_virtual_work(
+    outputs: tuple[int, ...], dtype: DTypeLike
+) -> None:
+    operands = _operands(127, 7, 27, 40, 3, 3, 3, dtype)
+    indices, valid, weights, gradients, offsets, grid = operands
+    if 0 not in outputs and 2 not in outputs:
+        weights = jnp.full_like(weights, jnp.nan)
+    if 1 not in outputs:
+        gradients = jnp.full_like(gradients, jnp.nan)
+    if 2 not in outputs:
+        offsets = jnp.full_like(offsets, jnp.nan)
+    operands = (indices, valid, weights, gradients, offsets, grid)
+    probes = _probes(operands, 131)
+    cotangent = tuple(probes[index] for index in outputs)
+
+    def action(grid: Array) -> tuple[Array, ...]:
+        values = streaming_moments(*operands[:-1], grid)
+        return tuple(values[index] for index in outputs)
+
+    def reference(grid: Array) -> tuple[Array, ...]:
+        return _reference(*operands[:-1], grid, outputs=outputs)
+
+    pullback = jax.jit(jax.linear_transpose(action, operands[-1]))(cotangent)[0]
+    expected = jax.vjp(reference, operands[-1])[1](cotangent)[0]
+    tolerance = 3e-5 if np.dtype(dtype) == np.dtype(np.float32) else 1e-11
+    np.testing.assert_allclose(pullback, expected, rtol=tolerance, atol=tolerance)
+    work = sum(
+        jnp.sum(value * dual)
+        for value, dual in zip(action(operands[-1]), cotangent, strict=True)
+    )
+    np.testing.assert_allclose(
+        jnp.sum(operands[-1] * pullback), work, rtol=tolerance, atol=tolerance
+    )
+
+
+@pytest.mark.parametrize(
+    ("position", "outputs"),
+    [(2, (0, 2)), (3, (1,)), (4, (2,))],
+    ids=("weights", "gradients", "offsets"),
+)
+def test_direct_metadata_transpose_matches_reference(
+    position: int, outputs: tuple[int, ...]
+) -> None:
+    operands = _operands(137, 7, 27, 40, 3, 3, 3, jnp.float64)
+    probes = _probes(operands, 139)
+    cotangent = tuple(probes[index] for index in outputs)
+
+    def action(value: Array) -> tuple[Array, ...]:
+        arguments = operands[:position] + (value,) + operands[position + 1 :]
+        values = streaming_moments(*arguments)
+        return tuple(values[index] for index in outputs)
+
+    def reference(value: Array) -> tuple[Array, ...]:
+        arguments = operands[:position] + (value,) + operands[position + 1 :]
+        return _reference(*arguments, outputs=outputs)
+
+    actual = jax.jit(jax.linear_transpose(action, operands[position]))(cotangent)[0]
+    expected = jax.vjp(reference, operands[position])[1](cotangent)[0]
+    np.testing.assert_allclose(actual, expected, rtol=1e-11, atol=1e-11)
 
 
 @_DTYPES
