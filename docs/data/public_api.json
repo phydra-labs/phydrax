@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "2930fee3621e41300b26c830ce5aa5bc0d9dde32cf057707067da0fdc602ed23",
+  "manifest_id": "3445782568fd31b73f2b377f10cc03492d75084df07e1cf50b23d83f39878593",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -11628,6 +11628,7 @@
       "phydrax.config.RuntimeConfig",
       "phydrax.config.TransferGuard",
       "phydrax.config.WorkerSetting",
+      "phydrax.config.compilation_cache_enabled",
       "phydrax.config.configure",
       "phydrax.config.context",
       "phydrax.config.default_prng_implementation",

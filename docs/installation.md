@@ -317,7 +317,7 @@ explicit compiler, provider, or topology skips; retained evidence distinguishes
 the initial failures from the complete affected-case rerun.
 Exact artifact hashes, failure corrections, qualification scope, and all 66
 passing phase-separated benchmark cases are retained in
-[`rtx_5090_windows_qualification.json`](../benchmarks/rtx_5090_windows_qualification.json).
+[`rtx_5090_windows_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/rtx_5090_windows_qualification.json).
 
 The physical 1×1 weighted reduction and PCG scenario passes. Peer matrices are
 not applicable on this one-device host; no multi-GPU or Linux qualification is
@@ -325,7 +325,7 @@ inferred. Local qualification is not publication: the matching runtime,
 companion, and core release must be available on the package index before the
 public install command can supply these artifacts. See the
 [implementation and verification plan](plans/windows-cuda13.md) and
-[source-pinned runtime build instructions](../native/cuda13_pjrt/README.md).
+[source-pinned runtime build instructions](https://github.com/phydra-labs/phydrax/blob/dev/native/cuda13_pjrt/README.md).
 
 Windows math/compiler DLL dependencies are attributed to installed wheel records
 and loaded by absolute path. CUDA 13.3/13.4 instead supplies the runtime through

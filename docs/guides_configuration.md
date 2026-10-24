@@ -145,6 +145,11 @@ effects that ran. `snapshot()` never discovers devices;
 `phydrax.execution.runtime_info()` does. These settings do not replace scientific
 precision policies, explicit array dtypes, or execution plans.
 
+`config.compilation_cache_enabled()` observes JAX's effective persistent
+compilation-cache flag without initializing a backend. Qualification drivers use
+it to refuse cold-compilation timing when persistent caching is active; checking
+only a launch environment variable would miss later runtime changes.
+
 Apple GPU execution uses the same runtime record, not a separate configuration
 API: select `RuntimeConfig(platforms=("mps",), enable_x64=True)` before numerical
 imports. Admission checks the matching Metal companion before applying settings.
