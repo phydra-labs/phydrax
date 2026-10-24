@@ -89,6 +89,8 @@ benchmarks/*
 !benchmarks/metal_execution_scaling.py
 !benchmarks/m1_max_qualification.json
 !benchmarks/m1_max_optimization.json
+!benchmarks/metal_runtime_completion.py
+!benchmarks/metal_runtime_completion.json
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
 !benchmarks/analyze_adaptive_campaign.py

@@ -24,13 +24,32 @@ retain the exact build and hardware qualification reports for each artifact.
   Single-device Shardy annotations are handled by the native runtime.
 - Execution is synchronous. Host callbacks are explicit effects with owned
   lifetimes; they are not numerical CPU fallback routes.
-- Unsupported numerical kernels fail rather than secretly calling CPU LAPACK.
+- There is no CPU numerical route. Program admission refuses every
+  `stablehlo.custom_call` target without a Metal GPU handler anywhere in the
+  module, including unselected and nested branches, before an executable
+  exists. The inherited CPU-LAPACK `mps.eigh`, `mps.qr`, and `mps.svd` handlers
+  are removed rather than retained as dead routes; jaxlib `lapack_*_ffi` targets
+  are refused the same way. Host callbacks, single-device sharding annotations,
+  and admitted GPU custom calls remain. This is not a GPU factorization claim.
   Shape-derived immutable FFT planning tables are host preparation, not execution
   of the caller's numerical arrays on CPU.
+- Bitwise XOR reductions are exact at the declared bool or integer width through
+  the strict custom reduction shader; they are not a parallel-reduction or
+  performance claim.
 - Compile-time per-value allocation admission uses actual native limits and
   checked size arithmetic. It is not a bound on total program working-set memory.
 - Raw pointer and zero-copy export APIs must report unsupported contracts rather
   than return a successful null pointer.
+- PJRT `OptimizedProgram`, used by `Compiled.as_text()` and `hlo_modules()`,
+  returns MLIR text (`mlir`) of the finalized module the executable runs. It is
+  printed once, cached for the executable's lifetime, and never compiles,
+  executes, or runs callbacks. The executed module is never rewritten. For XLA's
+  HLO conversion, single-device Shardy constraints are reported as the
+  replicated `@Sharding` call and admitted `mhlo.*` custom calls as `mps.mhlo.*`,
+  which the companion admits and executes identically. Unknown targets in either
+  namespace are refused. Undersized buffers return `INVALID_ARGUMENT`.
+  Executable serialization remains unimplemented, and reports containing host
+  callbacks cannot be recompiled in another process.
 - Native source identity, binary asset hashes, and the matched JAX pair are
   verified separately. Installation or successful initialization does not grant
   scientific or performance qualification.
@@ -119,9 +138,12 @@ The hardware qualifier requires a fresh environment outside the checkout,
 installed-file provenance, the current approved source identity, real MPS
 placement, all required case outcomes, and the standalone scientific example.
 Missing, failed, skipped, expected-failing, duplicated, or stale cases fail the
-campaign. Each device file runs in its own process with `JAX_PLATFORMS=mps` and
-`JAX_ENABLE_X64=1`; host-only import cases run separately. Do not switch backends
-after numerical imports have initialized JAX.
+campaign. The exact inventory covers primitive, scientific, import, lifetime,
+custom-call admission (including CPU-LAPACK targets in unselected and nested
+branches), XOR and lineage, and optimized-program inspection cases. Each device
+file runs in its own process with `JAX_PLATFORMS=mps` and `JAX_ENABLE_X64=1`;
+host-only import cases run separately. Do not switch backends after numerical
+imports have initialized JAX.
 
 Run performance campaigns only after numerical and lifecycle qualification,
 without concurrent builds or tests. Preserve preparation, lowering, compilation,

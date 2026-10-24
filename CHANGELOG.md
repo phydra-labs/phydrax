@@ -110,6 +110,15 @@
   policy and plan identities.
 
 ### Added
+- Refuse inherited CPU-LAPACK Metal custom calls during native compilation,
+  including unreachable branches, while preserving explicit host callbacks.
+  Add exact-width Boolean/integer XOR reductions and low-rank lineage support
+  through the existing bounded reduction kernels.
+- Implement read-only Metal optimized-program inspection with checked PJRT
+  size/fill semantics and cached module text. Preserve the executed module,
+  adapt single-device Shardy annotations for reporting, and normalize admitted
+  MHLO custom-call names at the interchange boundary without widening admission.
+  New companion source/build identities require rebuilt, qualified artifacts.
 - Restore reverse-mode QP and MPC sensitivities by keeping the implicit KKT
   tangent action linear in its right-hand side. Matrix rank/finiteness still
   control derivative validity; irregular systems retain poisoned derivatives.
