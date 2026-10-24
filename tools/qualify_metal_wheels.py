@@ -398,6 +398,21 @@ REQUIRED_FILES: Mapping[str, RequiredFile] = {
                 "scalar-sum",
                 "scalar-prod",
             ),
+            *_cases(
+                "test_reduce_window_xor_exact_padding_and_dilation",
+                *(
+                    f"{case}-{dtype}"
+                    for case in (
+                        "padded",
+                        "cumulative",
+                        "dilated",
+                        "cropped-two-axis",
+                        "empty-input",
+                        "scalar",
+                    )
+                    for dtype in ("bool", "int8", "uint64")
+                ),
+            ),
             *_cases("test_reduce_extrema_nan_and_signed_zero", "max", "min"),
             *_cases(
                 "test_paired_arg_reduction_full_width_ties_and_nan",
@@ -490,23 +505,40 @@ REQUIRED_FILES: Mapping[str, RequiredFile] = {
             ),
             *_cases(
                 "test_associative_reduction_empty_and_no_axes",
-                "empty-reduced-sum",
-                "empty-reduced-prod",
-                "empty-reduced-all",
-                "empty-reduced-any",
-                "no-axes-sum",
-                "no-axes-prod",
-                "no-axes-all",
-                "no-axes-any",
-                "scalar-sum",
-                "scalar-prod",
-                "scalar-all",
-                "scalar-any",
-                "empty-output-sum",
-                "empty-output-prod",
-                "empty-output-all",
-                "empty-output-any",
+                *(
+                    f"{case}-{kind}"
+                    for case in ("empty-reduced", "no-axes", "scalar", "empty-output")
+                    for kind in ("sum", "prod", "all", "any", "xor")
+                ),
             ),
+            *_cases(
+                "test_xor_reduction_exact_declared_width_and_initial",
+                *(
+                    f"{initial}-{axes}-{dtype}"
+                    for initial in ("neutral", "nonidentity-plugin-specific")
+                    for axes in ("axes0", "axes1", "axes2")
+                    for dtype in (
+                        "bool",
+                        "int8",
+                        "uint8",
+                        "int16",
+                        "uint16",
+                        "int32",
+                        "uint32",
+                        "int64",
+                        "uint64",
+                    )
+                ),
+            ),
+            *_cases(
+                "test_xor_reduction_long_axes_and_many_outputs",
+                *(
+                    f"{layout}-{dtype}"
+                    for layout in ("long-axis", "many-outputs")
+                    for dtype in ("bool", "int8", "uint64")
+                ),
+            ),
+            "test_array_tree_lineage_uint64_matches_independent_host_mix",
         ),
     ),
     "tests/integration/test_metal_device_regions.py": RequiredFile(
@@ -556,6 +588,50 @@ REQUIRED_FILES: Mapping[str, RequiredFile] = {
             ),
             "test_weighted_uvu_preserves_staged_reduction",
             "test_weighted_uvu_singleton_signed_zero",
+        ),
+    ),
+    "tests/integration/test_metal_native_admission.py": RequiredFile(
+        "device",
+        (
+            *_cases(
+                "test_cpu_lapack_custom_call_refused_at_compile",
+                *(
+                    f"{placement}-{target}"
+                    for placement in (
+                        "entry",
+                        "unselected-cond-branch",
+                        "while-nested-switch-branch",
+                    )
+                    for target in ("mps.eigh", "mps.qr", "mps.svd", "lapack_ssyevd_ffi")
+                ),
+            ),
+            *_cases(
+                "test_admitted_gpu_custom_call_executes_in_branches",
+                "entry",
+                "selected-cond-branch",
+            ),
+        ),
+    ),
+    "tests/integration/test_metal_optimized_program.py": RequiredFile(
+        "device",
+        (
+            "test_optimized_program_is_the_inlined_executed_module",
+            "test_optimized_program_converts_active_chlo_and_shardy_modules",
+            "test_optimized_program_is_identical_before_and_after_execution",
+            "test_optimized_program_query_never_runs_host_callbacks",
+            "test_optimized_program_concurrent_queries_and_executable_lifetime",
+            *_cases(
+                "test_optimized_program_publishes_admitted_mhlo_targets",
+                "mhlo.sinh",
+                "mhlo.erf_inv",
+                "mhlo.topk",
+            ),
+            *_cases(
+                "test_optimized_program_namespace_never_admits_unknown_targets",
+                "mhlo.not_a_target",
+                "mps.mhlo.not_a_target",
+                "mps.mhlo.eigh",
+            ),
         ),
     ),
 }
